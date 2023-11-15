@@ -47,7 +47,7 @@ jobs:
   build-macos:
     strategy:
       matrix:
-        # macos-12-xlarge = ARM M1
+        # macos-13-xlarge = ARM M1
         # macos-latest = x64
         # if you change OS definitions then you need to change conditions in cache-save steps below
         os: [ macos-13-xlarge, macos-latest ]
@@ -78,7 +78,7 @@ jobs:
             core/src/main/resources/io/questdb/bin/osx/libquestdb.dylib
           key: nativelibs-osx-${{ github.sha }}
   build-others:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
     env:
       generator: "CodeBlocks - Unix Makefiles"
     steps:
