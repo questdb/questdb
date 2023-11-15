@@ -25,15 +25,21 @@
 package io.questdb.griffin.engine.functions.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
-import io.questdb.griffin.engine.table.TableListRecordCursorFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
+import static io.questdb.griffin.engine.functions.catalogue.TableListFunctionFactory.TableListCursorFactory;
+
 public class AllTablesFunctionFactory implements FunctionFactory {
+
+    public static final RecordMetadata METADATA = new GenericRecordMetadata();
+    public static final String PLAN = "all_tables()";
 
     @Override
     public String getSignature() {
@@ -47,12 +53,10 @@ public class AllTablesFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new CursorFunction(new TableListRecordCursorFactory()) {
-            @Override
-            public boolean isRuntimeConstant() {
-                return true;
-            }
-        };
+        return new CursorFunction(new TableListCursorFactory(configuration, METADATA, PLAN));
     }
 
+    static {
+        ((GenericRecordMetadata) METADATA).add(TableListCursorFactory.TABLE_NAME_COLUMN_META);
+    }
 }
