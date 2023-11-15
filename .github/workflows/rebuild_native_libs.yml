@@ -198,7 +198,7 @@ jobs:
           git add core/src/main/resources/io/questdb/bin/linux/libquestdb.so
           git add core/src/main/resources/io/questdb/bin/armlinux/libquestdb.so
           git add core/src/main/resources/io/questdb/bin/windows/libquestdb.dll
-          git commit -m "Rebuild Native Libraries"
+          git commit -m "chore(build): Rebuild Native Libraries"
       - name: Check git status
         run: |
           git status
