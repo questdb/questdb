@@ -338,9 +338,9 @@ public enum PropertyKey implements ConfigProperty {
     PG_NET_RECV_BUF_SIZE("pg.net.recv.buf.size"),
     PG_NET_CONNECTION_RCVBUF("pg.net.connection.rcvbuf"),
     PG_NET_SEND_BUF_SIZE("pg.net.send.buf.size"),
-    PG_PASSWORD("pg.password"),
+    PG_PASSWORD("pg.password", true),
     PG_USER("pg.user"),
-    PG_RO_PASSWORD("pg.readonly.password"),
+    PG_RO_PASSWORD("pg.readonly.password", true),
     PG_RO_USER("pg.readonly.user"),
     PG_RO_USER_ENABLED("pg.readonly.user.enabled"),
     PG_SECURITY_READONLY("pg.security.readonly"),
@@ -432,9 +432,15 @@ public enum PropertyKey implements ConfigProperty {
 
     private static final Map<String, PropertyKey> nameMapping;
     private final String propertyPath;
+    private final boolean sensitive;
 
     PropertyKey(String propertyPath) {
+        this(propertyPath, false);
+    }
+
+    PropertyKey(String propertyPath, boolean sensitive) {
         this.propertyPath = propertyPath;
+        this.sensitive = sensitive;
     }
 
     public static Optional<PropertyKey> getByString(String name) {
@@ -444,6 +450,11 @@ public enum PropertyKey implements ConfigProperty {
     @Override
     public String getPropertyPath() {
         return propertyPath;
+    }
+
+    @Override
+    public boolean isSensitive() {
+        return sensitive;
     }
 
     @Override
