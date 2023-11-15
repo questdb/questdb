@@ -476,6 +476,25 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
+    private static void assertCalculateSize(RecordCursorFactory factory) throws SqlException {
+        long size;
+        SqlExecutionCircuitBreaker circuitBreaker = sqlExecutionContext.getCircuitBreaker();
+
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            size = cursor.calculateSize(circuitBreaker);
+            cursor.toTop();
+            long sizeAfterToTop = cursor.calculateSize(circuitBreaker);
+
+            Assert.assertEquals(size, sizeAfterToTop);
+        }
+
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            long sizeAfterReopen = cursor.calculateSize(circuitBreaker);
+
+            Assert.assertEquals(size, sizeAfterReopen);
+        }
+    }
+
     private static void assertException0(CharSequence sql, SqlExecutionContext sqlExecutionContext, boolean fullFatJoins) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             compiler.setFullFatJoins(fullFatJoins);
@@ -1142,6 +1161,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
         node1.getConfigurationOverrides().setDefaultTableWriteMode(defaultTableWriteMode);
     }
 
+    protected static void configOverrideEnv(Map<String, String> env) {
+        node1.getConfigurationOverrides().setEnv(env);
+    }
+
     @SuppressWarnings("SameParameterValue")
     protected static void configOverrideHideTelemetryTable(boolean hideTelemetryTable) {
         node1.getConfigurationOverrides().setHideTelemetryTable(hideTelemetryTable);
@@ -1158,10 +1181,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected static void configOverrideMaxUncommittedRows(int maxUncommittedRows) {
         node1.getConfigurationOverrides().setMaxUncommittedRows(maxUncommittedRows);
-    }
-
-    protected static void configOverrideEnv(Map<String, String> env) {
-        node1.getConfigurationOverrides().setEnv(env);
     }
 
     protected static void configOverrideO3ColumnMemorySize(int size) {
@@ -1463,6 +1482,9 @@ public abstract class AbstractCairoTest extends AbstractTest {
                     }
                 }
             }
+
+            // make sure calculateSize() produces consistent result
+            assertCalculateSize(factory);
         } finally {
             Misc.free(factory);
         }
