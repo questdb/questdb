@@ -37,12 +37,10 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.TelemetryTask;
-import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cairo.TableUtils.META_FILE_NAME;
 
 public class TableListFunctionFactory implements FunctionFactory {
-
     private static final int DEDUP_NAME_COLUMN;
     private static final int DESIGNATED_TIMESTAMP_COLUMN;
     private static final int DIRECTORY_NAME_COLUMN;
@@ -65,13 +63,7 @@ public class TableListFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(
-            int position,
-            ObjList<Function> args,
-            IntList argPositions,
-            CairoConfiguration configuration,
-            SqlExecutionContext sqlExecutionContext
-    ) {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         return new CursorFunction(new TableListCursorFactory(configuration)) {
             @Override
             public boolean isRuntimeConstant() {
@@ -83,19 +75,25 @@ public class TableListFunctionFactory implements FunctionFactory {
     public static class TableListCursorFactory extends AbstractRecordCursorFactory {
         public static final String TABLE_NAME_COLUMN_NAME = "table_name";
         public static final TableColumnMetadata TABLE_NAME_COLUMN_META = new TableColumnMetadata(TABLE_NAME_COLUMN_NAME, ColumnType.STRING);
-        private final TableListRecordCursor cursor;
+        private final TableListRecordCursor cursor = new TableListRecordCursor();
+        private final boolean hideTelemetryTables;
+        private Path path;
+        private final CharSequence sysTablePrefix;
+        private TableReaderMetadata tableReaderMetadata;
+        private final CharSequence tempPendingRenameTablePrefix;
         private final String toPlan;
+        private CairoEngine engine;
+        private TableToken tableToken;
 
         public TableListCursorFactory(CairoConfiguration configuration, RecordMetadata metadata, String toPlan) {
             super(metadata);
-            cursor = new TableListRecordCursor(
-                    configuration.getRoot(),
-                    configuration.getSystemTableNamePrefix(),
-                    configuration.getTempRenamePendingTablePrefix(),
-                    configuration.getTelemetryConfiguration().hideTables(),
-                    new TableReaderMetadata(configuration),
-                    metadata
-            );
+            if (metadata == METADATA) {
+                path = new Path().of(configuration.getRoot()).$();
+                tableReaderMetadata = new TableReaderMetadata(configuration);
+            }
+            tempPendingRenameTablePrefix = configuration.getTempRenamePendingTablePrefix();
+            sysTablePrefix = configuration.getSystemTableNamePrefix();
+            hideTelemetryTables = configuration.getTelemetryConfiguration().hideTables();
             this.toPlan = toPlan;
         }
 
@@ -105,7 +103,9 @@ public class TableListFunctionFactory implements FunctionFactory {
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
-            return cursor.of(executionContext.getCairoEngine());
+            engine = executionContext.getCairoEngine();
+            cursor.toTop();
+            return cursor;
         }
 
         @Override
@@ -121,204 +121,155 @@ public class TableListFunctionFactory implements FunctionFactory {
         @Override
         protected void _close() {
             cursor.close();
-        }
-    }
-
-    public static class TableListRecordCursor implements NoRandomAccessRecordCursor {
-        private final Path path;
-        private final TableListRecord record;
-        private final ObjHashSet<TableToken> tableBucket = new ObjHashSet<>();
-        private final TableReaderMetadata tableReaderMetadata;
-        private final CharSequence tempPendingRenameTablePrefix;
-        private CairoEngine engine;
-        private int tableIndex = -1;
-
-        TableListRecordCursor(
-                String pathRoot,
-                CharSequence sysTablePrefix,
-                CharSequence tempPendingRenameTablePrefix,
-                boolean hideTelemetryTables,
-                TableReaderMetadata tableReaderMetadata,
-                RecordMetadata metadata
-        ) {
-            path = new Path().of(pathRoot).$();
-            record = new TableListRecord(path, sysTablePrefix, hideTelemetryTables, tableReaderMetadata, metadata);
-            this.tempPendingRenameTablePrefix = tempPendingRenameTablePrefix;
-            this.tableReaderMetadata = tableReaderMetadata;
-        }
-
-        @Override
-        public void close() {
-            engine = null;
-            tableIndex = -1;
             tableReaderMetadata.clear(); // release FD of last table on the list
-            Misc.free(tableReaderMetadata);
-            Misc.free(path);
+            tableReaderMetadata = Misc.free(tableReaderMetadata);
+            path = Misc.free(path);
         }
 
-        @Override
-        public Record getRecord() {
-            return record;
-        }
+        private class TableListRecordCursor implements NoRandomAccessRecordCursor {
+            private final TableListRecord record = new TableListRecord();
+            private final ObjHashSet<TableToken> tableBucket = new ObjHashSet<>();
+            private int tableIndex = -1;
 
-        @Override
-        public boolean hasNext() {
-            if (tableIndex < 0) {
-                engine.getTableTokens(tableBucket, false);
+            @Override
+            public void close() {
                 tableIndex = -1;
             }
-            tableIndex++;
-            int n = tableBucket.size();
-            for (; tableIndex < n; tableIndex++) {
-                TableToken tableToken = tableBucket.get(tableIndex);
-                record.of(tableToken);
-                if (!TableUtils.isPendingRenameTempTableName(tableToken.getTableName(), tempPendingRenameTablePrefix) && record.open(tableToken)) {
-                    break;
-                }
-            }
-            return tableIndex < n;
-        }
 
-        @Override
-        public long size() {
-            return -1;
-        }
-
-        @Override
-        public void toTop() {
-            tableIndex = -1;
-        }
-
-        private TableListRecordCursor of(@NotNull CairoEngine cairoEngine) {
-            engine = cairoEngine;
-            toTop();
-            return this;
-        }
-
-        private static class TableListRecord implements Record {
-            private final boolean hideTelemetryTables;
-            private final RecordMetadata metadata;
-            private final Path path;
-            private final CharSequence sysTablePrefix;
-            private final TableReaderMetadata tableReaderMetadata;
-            private boolean isSoftLink;
-            private int maxUncommittedRows;
-            private long o3MaxLag;
-            private int partitionBy;
-            private int tableId;
-            private TableToken tableToken;
-
-            private TableListRecord(
-                    Path path,
-                    CharSequence sysTablePrefix,
-                    boolean hideTelemetryTables,
-                    TableReaderMetadata tableReaderMetadata,
-                    RecordMetadata metadata
-            ) {
-                this.path = path;
-                this.sysTablePrefix = sysTablePrefix;
-                this.hideTelemetryTables = hideTelemetryTables;
-                this.tableReaderMetadata = tableReaderMetadata;
-                this.metadata = metadata;
+            @Override
+            public Record getRecord() {
+                return record;
             }
 
             @Override
-            public boolean getBool(int col) {
-                if (col == WAL_ENABLED_COLUMN) {
-                    return tableReaderMetadata.isWalEnabled();
+            public boolean hasNext() {
+                if (tableIndex < 0) {
+                    engine.getTableTokens(tableBucket, false);
+                    tableIndex = -1;
                 }
-                if (col == DEDUP_NAME_COLUMN) {
-                    int timestampIndex = tableReaderMetadata.getTimestampIndex();
-                    return timestampIndex >= 0 && tableReaderMetadata.isWalEnabled() && tableReaderMetadata.isDedupKey(timestampIndex);
-                }
-                return false;
-            }
-
-            @Override
-            public int getInt(int col) {
-                if (col == ID_COLUMN) {
-                    return tableId;
-                }
-                assert col == MAX_UNCOMMITTED_ROWS_COLUMN;
-                return maxUncommittedRows;
-            }
-
-            @Override
-            public long getLong(int col) {
-                assert col == O3_MAX_LAG_COLUMN;
-                return o3MaxLag;
-            }
-
-            @Override
-            public CharSequence getStr(int col) {
-                if (Chars.equals(TableListCursorFactory.TABLE_NAME_COLUMN_NAME, metadata.getColumnName(col))) {
-                    return tableToken.getTableName();
-                }
-                if (col == PARTITION_BY_COLUMN) {
-                    return PartitionBy.toString(partitionBy);
-                }
-                if (col == DESIGNATED_TIMESTAMP_COLUMN) {
-                    if (tableReaderMetadata.getTimestampIndex() > -1) {
-                        return tableReaderMetadata.getColumnName(tableReaderMetadata.getTimestampIndex());
+                tableIndex++;
+                int n = tableBucket.size();
+                for (; tableIndex < n; tableIndex++) {
+                    tableToken = tableBucket.get(tableIndex);
+                    if (!TableUtils.isPendingRenameTempTableName(tableToken.getTableName(), tempPendingRenameTablePrefix) && record.open(tableToken)) {
+                        break;
                     }
                 }
-                if (col == DIRECTORY_NAME_COLUMN) {
-                    if (isSoftLink) {
-                        return tableToken.getDirName() + " (->)";
+                return tableIndex < n;
+            }
+
+            @Override
+            public long size() {
+                return -1;
+            }
+
+            @Override
+            public void toTop() {
+                tableIndex = -1;
+            }
+
+            private class TableListRecord implements Record {
+                private boolean isSoftLink;
+                private int maxUncommittedRows;
+                private long o3MaxLag;
+                private int partitionBy;
+                private int tableId;
+
+                @Override
+                public boolean getBool(int col) {
+                    if (col == WAL_ENABLED_COLUMN) {
+                        return tableReaderMetadata.isWalEnabled();
                     }
-                    return tableToken.getDirName();
-                }
-                return null;
-            }
-
-            @Override
-            public CharSequence getStrB(int col) {
-                return getStr(col);
-            }
-
-            @Override
-            public int getStrLen(int col) {
-                CharSequence str = getStr(col);
-                return str != null ? str.length() : -1;
-            }
-
-            public boolean open(TableToken tableToken) {
-                if (hideTelemetryTables && (Chars.equals(tableToken.getTableName(), TelemetryTask.TABLE_NAME)
-                        || Chars.equals(tableToken.getTableName(), TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME)
-                        || Chars.startsWith(tableToken.getTableName(), sysTablePrefix))) {
+                    if (col == DEDUP_NAME_COLUMN) {
+                        int timestampIndex = tableReaderMetadata.getTimestampIndex();
+                        return timestampIndex >= 0 && tableReaderMetadata.isWalEnabled() && tableReaderMetadata.isDedupKey(timestampIndex);
+                    }
                     return false;
                 }
 
-                int pathLen = path.size();
-                try {
-                    path.concat(tableToken).$();
-                    isSoftLink = Files.isSoftLink(path);
-                    path.concat(META_FILE_NAME).$();
-                    tableReaderMetadata.load(path);
-
-                    // Pre-read as much as possible to skip record instead of failing on column fetch
-                    tableId = tableReaderMetadata.getTableId();
-                    maxUncommittedRows = tableReaderMetadata.getMaxUncommittedRows();
-                    o3MaxLag = tableReaderMetadata.getO3MaxLag();
-                    partitionBy = tableReaderMetadata.getPartitionBy();
-                } catch (CairoException e) {
-                    // perhaps this folder is not a table
-                    // remove it from the result set
-                    LOG.info()
-                            .$("cannot query table metadata [table=").$(tableToken)
-                            .$(", error=").$(e.getFlyweightMessage())
-                            .$(", errno=").$(e.getErrno())
-                            .I$();
-                    return false;
-                } finally {
-                    path.trimTo(pathLen).$();
+                @Override
+                public int getInt(int col) {
+                    if (col == ID_COLUMN) {
+                        return tableId;
+                    }
+                    assert col == MAX_UNCOMMITTED_ROWS_COLUMN;
+                    return maxUncommittedRows;
                 }
 
-                return true;
-            }
+                @Override
+                public long getLong(int col) {
+                    assert col == O3_MAX_LAG_COLUMN;
+                    return o3MaxLag;
+                }
 
-            private void of(TableToken tableToken) {
-                this.tableToken = tableToken;
+                @Override
+                public CharSequence getStr(int col) {
+                    if (Chars.equals(TableListCursorFactory.TABLE_NAME_COLUMN_NAME, getMetadata().getColumnName(col))) {
+                        return tableToken.getTableName();
+                    }
+                    if (col == PARTITION_BY_COLUMN) {
+                        return PartitionBy.toString(partitionBy);
+                    }
+                    if (col == DESIGNATED_TIMESTAMP_COLUMN) {
+                        if (tableReaderMetadata.getTimestampIndex() > -1) {
+                            return tableReaderMetadata.getColumnName(tableReaderMetadata.getTimestampIndex());
+                        }
+                    }
+                    if (col == DIRECTORY_NAME_COLUMN) {
+                        if (isSoftLink) {
+                            return tableToken.getDirName() + " (->)";
+                        }
+                        return tableToken.getDirName();
+                    }
+                    return null;
+                }
+
+                @Override
+                public CharSequence getStrB(int col) {
+                    return getStr(col);
+                }
+
+                @Override
+                public int getStrLen(int col) {
+                    CharSequence str = getStr(col);
+                    return str != null ? str.length() : -1;
+                }
+
+                private boolean open(TableToken tableToken) {
+                    if (hideTelemetryTables && (Chars.equals(tableToken.getTableName(), TelemetryTask.TABLE_NAME)
+                            || Chars.equals(tableToken.getTableName(), TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME)
+                            || Chars.startsWith(tableToken.getTableName(), sysTablePrefix))) {
+                        return false;
+                    }
+
+                    if (path != null) { // path is null when getMetadata() != METADATA
+                        int pathLen = path.size();
+                        try {
+                            path.concat(tableToken).$();
+                            isSoftLink = Files.isSoftLink(path);
+                            path.concat(META_FILE_NAME).$();
+                            tableReaderMetadata.load(path);
+
+                            // Pre-read as much as possible to skip record instead of failing on column fetch
+                            tableId = tableReaderMetadata.getTableId();
+                            maxUncommittedRows = tableReaderMetadata.getMaxUncommittedRows();
+                            o3MaxLag = tableReaderMetadata.getO3MaxLag();
+                            partitionBy = tableReaderMetadata.getPartitionBy();
+                        } catch (CairoException e) {
+                            // perhaps this folder is not a table
+                            // remove it from the result set
+                            LOG.info()
+                                    .$("cannot query table metadata [table=").$(tableToken)
+                                    .$(", error=").$(e.getFlyweightMessage())
+                                    .$(", errno=").$(e.getErrno())
+                                    .I$();
+                            return false;
+                        } finally {
+                            path.trimTo(pathLen).$();
+                        }
+                    }
+                    return true;
+                }
             }
         }
     }
