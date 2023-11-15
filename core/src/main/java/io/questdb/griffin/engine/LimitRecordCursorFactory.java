@@ -176,7 +176,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public long size() {
-            return size > -1 ? size : -1;
+            return areRowsCounted ? size : -1;
         }
 
         @Override
@@ -213,8 +213,10 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                 long baseRowCount = base.size();
                 if (baseRowCount > -1) { // we don't want to cause a pass-through whole data set
                     limit = Math.min(baseRowCount, lo);
+                    areRowsCounted = true;
                 } else {
                     limit = lo;
+                    areRowsCounted = false;
                 }
                 size = limit;
             } else {
@@ -258,8 +260,10 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                         long baseRowCount = base.size();
                         if (baseRowCount > -1L) { // we don't want to cause a pass-through whole data set
                             limit = Math.max(0, Math.min(baseRowCount, hi) - lo);
+                            areRowsCounted = true;
                         } else {
                             limit = Math.max(0, hi - lo); // doesn't handle hi exceeding number of rows
+                            areRowsCounted = false;
                         }
                         size = limit;
 

@@ -125,6 +125,16 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
         }
 
         @Override
+        public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
+            if (baseCursor != null) {
+                buildFactories();
+                baseCursor = Misc.free(baseCursor);
+            }
+
+            delegate.calculateSize(circuitBreaker, counter);
+        }
+
+        @Override
         public void close() {
             baseCursor = Misc.free(baseCursor);
             delegate.close();
@@ -194,6 +204,11 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
 
         @Override
         public void skipRows(Counter rowCount) {
+            if (baseCursor != null) {
+                buildFactories();
+                baseCursor = Misc.free(baseCursor);
+            }
+
             delegate.skipRows(rowCount);
         }
 

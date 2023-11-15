@@ -36,6 +36,25 @@ import java.io.Closeable;
  */
 public interface RecordCursor extends Closeable, SymbolTableSource {
 
+    static void calculateSize(RecordCursor cursor, SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
+        if (circuitBreaker != null) {
+            while (cursor.hasNext()) {
+                counter.inc();
+                circuitBreaker.statefulThrowExceptionIfTripped();
+            }
+        } else {
+            while (cursor.hasNext()) {
+                counter.inc();
+            }
+        }
+    }
+
+    static void skipRows(RecordCursor cursor, Counter rowCount) throws DataUnavailableException {
+        while (rowCount.get() > 0 && cursor.hasNext()) {
+            rowCount.dec();
+        }
+    }
+
     /**
      * Counts remaining number of records in this cursor, moving the cursor to the end.
      * <p>
