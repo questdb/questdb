@@ -433,8 +433,14 @@ public interface CairoConfiguration {
 
     int getStrFunctionMaxBufferLength();
 
+    long getSystemDataAppendPageSize();
+
+    int getSystemO3ColumnMemorySize();
+
     @NotNull
     CharSequence getSystemTableNamePrefix();
+
+    long getSystemWalDataAppendPageSize();
 
     long getTableRegistryAutoReloadFrequency();
 
@@ -493,6 +499,8 @@ public interface CairoConfiguration {
 
     int getWalTxnNotificationQueueCapacity();
 
+    int getWalWriterPoolMaxSegments();
+
     int getWindowColumnPoolCapacity();
 
     int getWithClauseModelPoolCapacity();
@@ -508,6 +516,8 @@ public interface CairoConfiguration {
     long getWriterCommandQueueSlotSize();
 
     long getWriterFileOpenOpts();
+
+    long getWriterMemoryLimit();
 
     int getWriterTickRowsCountMod();
 

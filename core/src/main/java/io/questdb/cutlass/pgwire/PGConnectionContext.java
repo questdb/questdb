@@ -1704,8 +1704,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         try {
             r = authenticator.handleIO();
             if (r == Authenticator.OK) {
-                CharSequence principal = authenticator.getPrincipal();
-                SecurityContext securityContext = securityContextFactory.getInstance(principal, SecurityContextFactory.PGWIRE);
+                SecurityContext securityContext = securityContextFactory.getInstance(
+                        authenticator.getPrincipal(),
+                        authenticator.getAuthType(),
+                        SecurityContextFactory.PGWIRE
+                );
                 try {
                     securityContext.authorizePGWire();
                     sqlExecutionContext.with(securityContext, bindVariableService, rnd, getFd(), circuitBreaker);

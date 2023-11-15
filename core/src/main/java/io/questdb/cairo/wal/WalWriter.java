@@ -63,6 +63,7 @@ public class WalWriter implements TableWriterAPI {
     private final AlterOperation alterOp = new AlterOperation();
     private final ObjList<MemoryMA> columns;
     private final CairoConfiguration configuration;
+    private final long dataAppendPageSize;
     private final DdlListener ddlListener;
     private final WalWriterEvents events;
     private final FilesFacade ff;
@@ -131,6 +132,11 @@ public class WalWriter implements TableWriterAPI {
         this.metrics = metrics;
         this.open = true;
         this.symbolMapMem = Vm.getMARInstance(configuration.getCommitMode());
+        if (tableToken.isSystem()) {
+            this.dataAppendPageSize = configuration.getSystemWalDataAppendPageSize();
+        } else {
+            this.dataAppendPageSize = configuration.getWalDataAppendPageSize();
+        }
 
         try {
             lockWal();
@@ -1182,7 +1188,7 @@ public class WalWriter implements TableWriterAPI {
             mem1.of(
                     ff,
                     dFile(path.trimTo(pathTrimToLen), name),
-                    configuration.getWalDataAppendPageSize(),
+                    dataAppendPageSize,
                     -1,
                     MemoryTag.MMAP_TABLE_WRITER,
                     configuration.getWriterFileOpenOpts(),
@@ -1195,7 +1201,7 @@ public class WalWriter implements TableWriterAPI {
                 mem2.of(
                         ff,
                         iFile(path.trimTo(pathTrimToLen), name),
-                        configuration.getWalDataAppendPageSize(),
+                        dataAppendPageSize,
                         -1,
                         MemoryTag.MMAP_TABLE_WRITER,
                         configuration.getWriterFileOpenOpts(),

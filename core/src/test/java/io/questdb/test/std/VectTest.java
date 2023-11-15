@@ -47,6 +47,102 @@ public class VectTest {
     }
 
     @Test
+    public void testAggregateBoundary() {
+        abstract class TestCase {
+            final long sizeBytes;
+
+            TestCase(long sizeBytes) {
+                this.sizeBytes = sizeBytes;
+            }
+
+            abstract void run(long ptr, long count);
+        }
+
+        final int nMax = 1024;
+        final TestCase[] testCases = new TestCase[]{
+                new TestCase(Short.BYTES) {
+                    @Override
+                    void run(long ptr, long count) {
+                        if (count == 0) {
+                            Assert.assertEquals("short sum, count: 0", Numbers.LONG_NaN, Vect.sumShort(ptr, 0));
+                            Assert.assertEquals("short min, count: 0", Numbers.INT_NaN, Vect.minShort(ptr, 0));
+                            Assert.assertEquals("short max, count: 0", Numbers.INT_NaN, Vect.maxShort(ptr, 0));
+                        } else {
+                            Assert.assertEquals("short sum, count: " + count, 0, Vect.sumShort(ptr, count));
+                            Assert.assertEquals("short min, count: " + count, 0, Vect.minShort(ptr, count));
+                            Assert.assertEquals("short max, count: " + count, 0, Vect.maxShort(ptr, count));
+                        }
+                    }
+                },
+                new TestCase(Integer.BYTES) {
+                    @Override
+                    void run(long ptr, long count) {
+                        if (count == 0) {
+                            Assert.assertEquals("int sum, count: 0", Numbers.LONG_NaN, Vect.sumInt(ptr, 0));
+                            Assert.assertEquals("int min, count: 0", Numbers.INT_NaN, Vect.minInt(ptr, 0));
+                            Assert.assertEquals("int max, count: 0", Numbers.INT_NaN, Vect.maxInt(ptr, 0));
+                            Assert.assertEquals("int count, count: 0", 0, Vect.countInt(ptr, 0));
+                        } else {
+                            Assert.assertEquals("int sum, count: " + count, 0, Vect.sumInt(ptr, count));
+                            Assert.assertEquals("int min, count: " + count, 0, Vect.minInt(ptr, count));
+                            Assert.assertEquals("int max, count: " + count, 0, Vect.maxInt(ptr, count));
+                            Assert.assertEquals("int count, count: " + count, count, Vect.countInt(ptr, count));
+                        }
+                    }
+                },
+                new TestCase(Long.BYTES) {
+                    @Override
+                    void run(long ptr, long count) {
+                        if (count == 0) {
+                            Assert.assertEquals("long sum, count: 0", Numbers.LONG_NaN, Vect.sumLong(ptr, 0));
+                            Assert.assertEquals("long min, count: 0", Numbers.LONG_NaN, Vect.minLong(ptr, 0));
+                            Assert.assertEquals("long max, count: 0", Numbers.LONG_NaN, Vect.maxLong(ptr, 0));
+                            Assert.assertEquals("long count, count: 0", 0, Vect.countLong(ptr, 0));
+                        } else {
+                            Assert.assertEquals("long sum, count: " + count, 0, Vect.sumLong(ptr, count));
+                            Assert.assertEquals("long min, count: " + count, 0, Vect.minLong(ptr, count));
+                            Assert.assertEquals("long max, count: " + count, 0, Vect.maxLong(ptr, count));
+                            Assert.assertEquals("long count, count: " + count, count, Vect.countLong(ptr, count));
+                        }
+                    }
+                },
+                new TestCase(Double.BYTES) {
+                    @Override
+                    void run(long ptr, long count) {
+                        if (count == 0) {
+                            Assert.assertTrue("double sum, count: 0", Double.isNaN(Vect.sumDouble(ptr, 0)));
+                            Assert.assertTrue("double Kahan sum, count: 0", Double.isNaN(Vect.sumDoubleKahan(ptr, 0)));
+                            Assert.assertTrue("double Neumaier sum, count: 0", Double.isNaN(Vect.sumDoubleNeumaier(ptr, 0)));
+                            Assert.assertTrue("double min, count: 0", Double.isNaN(Vect.minDouble(ptr, 0)));
+                            Assert.assertTrue("double max, count: 0", Double.isNaN(Vect.maxDouble(ptr, 0)));
+                            Assert.assertEquals("double count, count: 0", 0, Vect.countDouble(ptr, 0));
+                        } else {
+                            Assert.assertEquals("double sum, count: " + count, 0.0, Vect.sumDouble(ptr, count), 0.001);
+                            Assert.assertEquals("double Kahan sum, count: " + count, 0.0, Vect.sumDoubleKahan(ptr, count), 0.001);
+                            Assert.assertEquals("double Neumaier sum, count: " + count, 0.0, Vect.sumDoubleNeumaier(ptr, count), 0.001);
+                            Assert.assertEquals("double min, count: " + count, 0.0, Vect.minDouble(ptr, count), 0.001);
+                            Assert.assertEquals("double max, count: " + count, 0.0, Vect.maxDouble(ptr, count), 0.001);
+                            Assert.assertEquals("double count, count: " + count, count, Vect.countDouble(ptr, count));
+                        }
+                    }
+                }
+        };
+
+        for (TestCase testCase : testCases) {
+            for (int i = 0; i < nMax; i++) {
+                final long size = i * testCase.sizeBytes;
+                final long ptr = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+                Vect.memset(ptr, size, 0);
+                try {
+                    testCase.run(ptr, i);
+                } finally {
+                    Unsafe.free(ptr, size, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        }
+    }
+
+    @Test
     public void testBinarySearchIndexT() {
         int count = 1000;
         final int size = count * 2 * Long.BYTES;
@@ -239,18 +335,6 @@ public class VectTest {
             }
         } finally {
             Misc.freeObjList(keys);
-        }
-    }
-
-    @Test
-    public void testMaxInt() {
-        long size = 100;
-        long ptr = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
-        try {
-            Vect.setMemoryInt(ptr, -1, size / 4);
-            Assert.assertEquals(-1, Vect.maxInt(ptr, size / 4));
-        } finally {
-            Unsafe.free(ptr, size, MemoryTag.NATIVE_DEFAULT);
         }
     }
 

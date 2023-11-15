@@ -103,6 +103,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         private final Function loFunction;
         private boolean areRowsCounted;
         private RecordCursor base;
+        private SqlExecutionCircuitBreaker circuitBreaker;
         private long hi;
         private boolean isLimitCounted;
         private long limit;
@@ -163,6 +164,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             if (hiFunction != null) {
                 hiFunction.init(base, executionContext);
             }
+            this.circuitBreaker = executionContext.getCircuitBreaker();
             toTop();
         }
 
@@ -192,7 +194,6 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             if (lo < 0 && hiFunction == null) {
                 // last N rows
                 countRows();
-
 
                 // lo is negative, -5 for example
                 // if we have 12 records, we need to skip 12-5 = 7
@@ -279,9 +280,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             }
 
             if (!areRowsCounted) {
-                while (base.hasNext()) {
-                    rowCount++;
-                }
+                rowCount = base.calculateSize(circuitBreaker);
                 areRowsCounted = true;
             }
         }
@@ -292,12 +291,8 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                 base.toTop();
             }
             if (skipToRows > 0) {
-                if (base.skipTo(rowCount)) {
-                    skipToRows = 0;
-                }
-                while (skipToRows > 0 && base.hasNext()) {
-                    skipToRows--;
-                }
+                base.skipTo(rowCount);
+                skipToRows = 0;
             }
         }
     }

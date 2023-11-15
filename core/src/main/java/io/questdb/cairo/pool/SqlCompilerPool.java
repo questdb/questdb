@@ -17,9 +17,9 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
     // note: we should not use too many colours otherwise the pool might create more compiler instances
     // then with no pooling at all. This is because we have to have a separate compiler for each colour.
     private static final TableToken[] TOKENS = {
-            new TableToken("blue", "/compilers/blue/", 0, false, false),
-            new TableToken("red", "/compilers/red/", 0, false, false),
-            new TableToken("green", "/compilers/green/", 0, false, false)
+            new TableToken("blue", "/compilers/blue/", 0, false, false, false),
+            new TableToken("red", "/compilers/red/", 0, false, false, false),
+            new TableToken("green", "/compilers/green/", 0, false, false, false)
     };
     private final CairoEngine engine;
     private final Rnd rnd = new Rnd();
