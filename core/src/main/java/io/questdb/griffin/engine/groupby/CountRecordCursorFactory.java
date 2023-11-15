@@ -86,6 +86,14 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
         private boolean hasNext = true;
 
         @Override
+        public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
+            if (hasNext) {
+                counter.add(1);
+                hasNext = false;
+            }
+        }
+
+        @Override
         public void close() {
             baseCursor = Misc.free(baseCursor);
         }

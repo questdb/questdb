@@ -119,6 +119,25 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
+        public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
+            if (areRowsCounted && limit > 0) {
+                counter.add(size);
+                limit = 0;
+                return;
+            }
+
+            if (!isLimitCounted) {
+                countLimit();
+                isLimitCounted = true;
+            }
+
+            while (limit > 0 && base.hasNext()) {
+                limit--;
+                counter.inc();
+            }
+        }
+
+        @Override
         public void close() {
             base.close();
         }

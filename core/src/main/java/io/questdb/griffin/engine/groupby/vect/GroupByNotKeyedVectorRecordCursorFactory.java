@@ -156,6 +156,14 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
         }
 
         @Override
+        public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
+            if (countDown > 0) {
+                counter.add(countDown);
+                countDown = 0;
+            }
+        }
+
+        @Override
         public void close() {
             Misc.free(pageFrameCursor);
         }
