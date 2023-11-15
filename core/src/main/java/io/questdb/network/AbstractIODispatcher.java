@@ -398,12 +398,6 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     protected void publishOperation(int operation, C context) {
         long cursor = ioEventPubSeq.nextBully();
         IOEvent<C> evt = ioEventQueue.get(cursor);
-        System.out.println("publish io context: " + context);
-        try {
-            throw new RuntimeException("publishing io context: " + context);
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
         evt.context = context;
         evt.operation = operation;
         ioEventPubSeq.done(cursor);
