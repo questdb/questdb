@@ -190,6 +190,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
             circuitBreaker = executionContext.getCircuitBreaker();
             initState = INIT_PENDING;
             Function.init(groupByFunctions, baseCursor, executionContext);
+            toTop();
             return this;
         }
     }

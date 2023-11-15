@@ -187,6 +187,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
             this.bus = bus;
             this.circuitBreaker = circuitBreaker;
             areFunctionsBuilt = false;
+            toTop();
             return this;
         }
 
