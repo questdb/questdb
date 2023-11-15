@@ -384,7 +384,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 suspendEvent = e.getEvent();
                 dispatcher.registerChannel(this, IOOperation.WRITE);
             } catch (ServerDisconnectException e) {
-                LOG.info().$("kicked out 1 [fd=").$(getFd()).I$();
+                LOG.info().$("kicked out [fd=").$(getFd()).I$();
                 dispatcher.disconnect(this, DISCONNECT_REASON_KICKED_OUT_AT_RERUN);
             }
         }
@@ -715,7 +715,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 dispatcher.disconnect(this, DISCONNECT_REASON_PEER_DISCONNECT_AT_RECV);
                 busyRecv = false;
             } catch (ServerDisconnectException e) {
-                LOG.info().$("kicked out 2 [fd=").$(getFd()).I$();
+                LOG.info().$("kicked out [fd=").$(getFd()).I$();
                 dispatcher.disconnect(this, DISCONNECT_REASON_KICKED_OUT_AT_RECV);
                 busyRecv = false;
             } catch (PeerIsSlowToReadException e) {
@@ -762,7 +762,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             } catch (PeerDisconnectedException ignore) {
                 dispatcher.disconnect(this, DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND);
             } catch (ServerDisconnectException ignore) {
-                LOG.info().$("kicked out 3 [fd=").$(getFd()).I$();
+                LOG.info().$("kicked out [fd=").$(getFd()).I$();
                 dispatcher.disconnect(this, DISCONNECT_REASON_KICKED_OUT_AT_SEND);
             }
         } else {
