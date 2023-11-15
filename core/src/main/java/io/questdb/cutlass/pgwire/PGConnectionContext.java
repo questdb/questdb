@@ -530,6 +530,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 if (e.isEntityDisabled()) {
                     throw PeerDisconnectedException.INSTANCE;
                 }
+            } catch (PeerDisconnectedException | PeerIsSlowToReadException | PeerIsSlowToWriteException |
+                     QueryPausedException | BadProtocolException e) {
+                throw e;
+            } catch (Throwable th) {
+                handleException(-1, th.getMessage(), true, -1, true);
             }
         } catch (PeerDisconnectedException | PeerIsSlowToReadException | PeerIsSlowToWriteException e) {
             // BAU, not error metric

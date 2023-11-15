@@ -196,11 +196,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         } catch (DataUnavailableException e) {
             LOG.info().$("[fd=").$(context.getFd()).$("] data is in cold storage, will retry").$();
             throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
-        } catch (CairoError e) {
-            internalError(context.getChunkedResponseSocket(), context.getLastRequestBytesSent(), e.getFlyweightMessage(),
-                    400, e, state, context.getMetrics()
-            );
-            readyForNextRequest(context);
         } catch (CairoException e) {
             internalError(context.getChunkedResponseSocket(), context.getLastRequestBytesSent(), e.getFlyweightMessage(),
                     e.isAuthorizationError() ? 403 : 400, e, state, context.getMetrics()
@@ -213,8 +208,10 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             // re-throw the exception
             throw e;
         } catch (Throwable e) {
-            state.critical().$("Uh-oh. Error!").$(e).$();
-            throw ServerDisconnectException.INSTANCE;
+            internalError(context.getChunkedResponseSocket(), context.getLastRequestBytesSent(), e.getMessage(),
+                    500, e, state, context.getMetrics()
+            );
+            readyForNextRequest(context);
         }
     }
 
@@ -292,7 +289,8 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                 doResumeSend(state, context, sqlExecutionContext);
             } catch (CairoError | CairoException e) {
                 internalError(context.getChunkedResponseSocket(), context.getLastRequestBytesSent(), e.getFlyweightMessage(),
-                        400, e, state, context.getMetrics());
+                        400, e, state, context.getMetrics()
+                );
             }
         }
     }

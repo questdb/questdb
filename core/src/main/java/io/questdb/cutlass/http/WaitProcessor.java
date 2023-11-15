@@ -169,7 +169,6 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
     }
 
     private void reschedule(Retry retry, int attempt, long waitStartMs) {
-        System.out.println("retry: " + retry + ", attempt: " + attempt);
         long now = clock.getTicks();
         retry.getAttemptDetails().attempt = attempt;
         retry.getAttemptDetails().lastRunTimestamp = now;

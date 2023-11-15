@@ -740,6 +740,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             LOG.error().$("http error [fd=").$(getFd()).$(", e=`").$(e.getFlyweightMessage()).$("`]").$();
             dispatcher.disconnect(this, DISCONNECT_REASON_PROTOCOL_VIOLATION);
             busyRecv = false;
+        } catch (Throwable e) {
+            LOG.error().$("critical error [fd=").$(getFd()).$(", e=`").$(e.getMessage()).$("`]").$();
+            dispatcher.disconnect(this, DISCONNECT_REASON_PROTOCOL_VIOLATION);
+            busyRecv = false;
         }
         return busyRecv;
     }
