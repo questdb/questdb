@@ -188,12 +188,6 @@ jobs:
           path: |
             core/src/main/resources/io/questdb/bin/windows/libquestdb.dll
           key: nativelibs-windows-${{ github.sha }}
-      - name: Check git status
-        run: |
-          git status
-      - name: Print file sizes after
-        run: |
-          find ./core/src/main/resources/io/questdb/bin/ -type f -exec ls -l {} \;
       - name: Commit the files
         run: |
           git config --global user.name 'GitHub Actions - Rebuild Native Libraries'
@@ -205,6 +199,12 @@ jobs:
           git add core/src/main/resources/io/questdb/bin/armlinux/libquestdb.so
           git add core/src/main/resources/io/questdb/bin/windows/libquestdb.dll
           git commit -m "Rebuild Native Libraries"
+      - name: Check git status
+        run: |
+          git status
+      - name: Print file sizes after
+        run: |
+          find ./core/src/main/resources/io/questdb/bin/ -type f -exec ls -l {} \;
       - name: Push the files to the current branch
         uses: ad-m/github-push-action@d91a481090679876dfc4178fef17f286781251df
         # Why do we use a commit hash instead of a tag for the github-push-action?
