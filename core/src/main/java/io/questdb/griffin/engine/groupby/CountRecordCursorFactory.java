@@ -100,10 +100,7 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
                 } else {
                     count = 0;
                     try {
-                        while (baseCursor.hasNext()) {
-                            circuitBreaker.statefulThrowExceptionIfTripped();
-                            count++;
-                        }
+                        count = baseCursor.calculateSize(circuitBreaker);
                     } catch (DataUnavailableException e) {
                         baseCursor.toTop();
                         throw e;

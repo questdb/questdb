@@ -29,6 +29,13 @@ import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
 public interface SecurityContext {
+    // Implementations are free to define unique authentication types.
+    // The user authenticated with credentials.
+    byte AUTH_TYPE_CREDENTIALS = 1;
+    // The user authenticated with a JWK token.
+    byte AUTH_TYPE_JWK_TOKEN = 2;
+    // The context is not aware of authentication types.
+    byte AUTH_TYPE_NONE = 0;
 
     void authorizeAdminAction();
 
@@ -105,6 +112,13 @@ public interface SecurityContext {
         final CharSequence principal = getPrincipal();
         final CharSequence sessionPrincipal = getSessionPrincipal();
         return sessionPrincipal == null || sessionPrincipal.equals(principal) ? null : principal;
+    }
+
+    /**
+     * Returns authentication type that led to the context creation.
+     */
+    default byte getAuthType() {
+        return AUTH_TYPE_NONE;
     }
 
     /**

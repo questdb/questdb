@@ -6,7 +6,7 @@ public final class ReadOnlySecurityContextFactory implements SecurityContextFact
     public static final ReadOnlySecurityContextFactory INSTANCE = new ReadOnlySecurityContextFactory();
 
     @Override
-    public SecurityContext getInstance(CharSequence principal, int interfaceId) {
+    public SecurityContext getInstance(CharSequence principal, byte authType, int interfaceId) {
         return ReadOnlySecurityContext.INSTANCE;
     }
 }

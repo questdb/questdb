@@ -37,8 +37,8 @@ import org.jetbrains.annotations.NotNull;
 
 public class FirstIPv4GroupByFunction extends IPv4Function implements GroupByFunction, UnaryFunction {
 
-    private final Function arg;
-    private int valueIndex;
+    protected final Function arg;
+    protected int valueIndex;
 
     public FirstIPv4GroupByFunction(@NotNull Function arg) {
         super();

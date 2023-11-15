@@ -84,7 +84,7 @@ public class TableReaderReloadBenchmark {
 
     @Setup(Level.Iteration)
     public void setup() throws NumericException {
-        TableToken tableToken = new TableToken("test", "test", 0, false, false);
+        TableToken tableToken = new TableToken("test", "test", 0, false, false, false);
         writer = new TableWriter(configuration, tableToken, Metrics.disabled());
         writer.truncate();
         // create 10 partitions

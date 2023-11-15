@@ -182,7 +182,7 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
         }
 
         @Override
-        public boolean skipTo(long rowCount) {
+        public long skipTo(long rowCount) {
             return delegate.skipTo(rowCount);
         }
 
