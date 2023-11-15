@@ -33,9 +33,9 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 
-import static io.questdb.std.ServerVersion.SERVER_VERSION;
-
 public class ShowServerVersionCursorFactory extends AbstractRecordCursorFactory {
+
+    public static final String SERVER_VERSION = Constants.PG_COMPATIBLE_VERSION + " (questdb)";
 
     private static final int SIZE = 1;
     private static final GenericRecordMetadata METADATA = new GenericRecordMetadata();

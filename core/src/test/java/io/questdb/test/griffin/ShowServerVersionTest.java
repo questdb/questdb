@@ -25,16 +25,17 @@
 package io.questdb.test.griffin;
 
 import io.questdb.griffin.SqlException;
-import io.questdb.std.ServerVersion;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
+
+import static io.questdb.griffin.engine.functions.catalogue.ShowServerVersionCursorFactory.SERVER_VERSION;
 
 public class ShowServerVersionTest extends AbstractCairoTest {
 
     @Test
     public void testShowServerVersion() throws SqlException {
         final String expected = "server_version\n" +
-                ServerVersion.SERVER_VERSION + "\n";
+                SERVER_VERSION + "\n";
         assertQuery(
                 expected,
                 "show server_version",
