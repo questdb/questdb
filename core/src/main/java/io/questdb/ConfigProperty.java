@@ -26,7 +26,7 @@ package io.questdb;
 
 public interface ConfigProperty {
     /**
-     * Returns then environment variable name of the property.
+     * Returns the environment variable name of the property.
      */
     String getEnvVarEquivalent();
 
