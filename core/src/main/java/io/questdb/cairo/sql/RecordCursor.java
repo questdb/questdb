@@ -38,7 +38,7 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
 
     /**
      * Counts remaining number of records in this cursor, moving the cursor to the end.
-     * <p/>
+     * <p>
      * Note - this method should handle return correct result even it's interrupted by {@link DataUnavailableException}
      * The number of rows counted so far is kept in the counter parameter.
      *
