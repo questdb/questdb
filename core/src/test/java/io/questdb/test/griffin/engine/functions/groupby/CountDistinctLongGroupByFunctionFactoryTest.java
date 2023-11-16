@@ -45,6 +45,19 @@ public class CountDistinctLongGroupByFunctionFactoryTest extends AbstractCairoTe
     }
 
     @Test
+    public void testConstantDefaultHashSetNoEntryValue() throws Exception {
+        assertQuery(
+                "count_distinct\n" +
+                        "1\n",
+                "select count_distinct(l) from x",
+                "create table x as (select -1::long as l from long_sequence(10))",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
     public void testExpression() throws Exception {
         final String expected = "a\tcount_distinct\n" +
                 "a\t4\n" +
