@@ -28,7 +28,9 @@ public interface ConfigProperty {
     /**
      * Returns the environment variable name of the property.
      */
-    String getEnvVarEquivalent();
+    default String getEnvVarEquivalent() {
+        return "QDB_" + getPropertyPath().replace('.', '_').toUpperCase();
+    }
 
 
     /**
