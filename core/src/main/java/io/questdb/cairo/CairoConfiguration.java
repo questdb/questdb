@@ -331,6 +331,8 @@ public interface CairoConfiguration {
 
     double getSqlCompactMapLoadFactor();
 
+    int getSqlCompilerPoolMaxSegments();
+
     int getSqlCopyBufferSize();
 
     // null input root disables "copy" sql

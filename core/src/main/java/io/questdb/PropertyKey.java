@@ -65,6 +65,7 @@ public enum PropertyKey implements ConfigProperty {
     CAIRO_FAST_MAP_LOAD_FACTOR("cairo.fast.map.load.factor"),
     CAIRO_SQL_JOIN_CONTEXT_POOL_CAPACITY("cairo.sql.join.context.pool.capacity"),
     CAIRO_LEXER_POOL_CAPACITY("cairo.lexer.pool.capacity"),
+    CAIRO_SQL_COMPILER_POOL_MAX_SEGMENTS("cairo.sql.compiler.pool.max.segments"),
     CAIRO_SQL_MAP_KEY_CAPACITY("cairo.sql.map.key.capacity"),
     CAIRO_SQL_SMALL_MAP_KEY_CAPACITY("cairo.sql.small.map.key.capacity"),
     CAIRO_SQL_SMALL_MAP_PAGE_SIZE("cairo.sql.small.map.page.size"),

@@ -246,6 +246,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlColumnCastModelPoolCapacity;
     private final int sqlColumnPoolCapacity;
     private final double sqlCompactMapLoadFactor;
+    private final int sqlCompilerPoolMaxSegments;
     private final int sqlCopyBufferSize;
     private final int sqlCopyModelPoolCapacity;
     private final int sqlCreateTableModelPoolCapacity;
@@ -356,6 +357,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long writerDataIndexKeyAppendPageSize;
     private final long writerDataIndexValueAppendPageSize;
     private final long writerFileOpenOpts;
+    private final long writerMemoryLimit;
     private final long writerMiscAppendPageSize;
     private final boolean writerMixedIOEnabled;
     private final int writerTickRowsCountMod;
@@ -468,7 +470,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean stringToCharCastAllowed;
     private boolean symbolAsFieldSupported;
     private long symbolCacheWaitUsBeforeReload;
-    private final long writerMemoryLimit;
 
     public PropServerConfiguration(
             String root,
@@ -844,6 +845,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.parallelIndexThreshold = getInt(properties, env, PropertyKey.CAIRO_PARALLEL_INDEX_THRESHOLD, 100000);
             this.readerPoolMaxSegments = getInt(properties, env, PropertyKey.CAIRO_READER_POOL_MAX_SEGMENTS, 10);
             this.walWriterPoolMaxSegments = getInt(properties, env, PropertyKey.CAIRO_WAL_WRITER_POOL_MAX_SEGMENTS, 10);
+            this.sqlCompilerPoolMaxSegments = getInt(properties, env, PropertyKey.CAIRO_SQL_COMPILER_POOL_MAX_SEGMENTS, 10);
             this.spinLockTimeout = getLong(properties, env, PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 1_000);
             this.httpSqlCacheEnabled = getBoolean(properties, env, PropertyKey.HTTP_QUERY_CACHE_ENABLED, true);
             this.httpSqlCacheBlockCount = getInt(properties, env, PropertyKey.HTTP_QUERY_CACHE_BLOCK_COUNT, 4);
@@ -1632,26 +1634,32 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             registerDeprecated(
                     PropertyKey.CAIRO_SQL_ANALYTIC_COLUMN_POOL_CAPACITY,
-                    PropertyKey.CAIRO_SQL_WINDOW_COLUMN_POOL_CAPACITY);
+                    PropertyKey.CAIRO_SQL_WINDOW_COLUMN_POOL_CAPACITY
+            );
             registerDeprecated(
                     PropertyKey.CAIRO_SQL_ANALYTIC_STORE_PAGE_SIZE,
-                    PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE);
+                    PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE
+            );
             registerDeprecated(
                     PropertyKey.CAIRO_SQL_ANALYTIC_STORE_MAX_PAGES,
-                    PropertyKey.CAIRO_SQL_WINDOW_STORE_MAX_PAGES);
+                    PropertyKey.CAIRO_SQL_WINDOW_STORE_MAX_PAGES
+            );
             registerDeprecated(
                     PropertyKey.CAIRO_SQL_ANALYTIC_ROWID_PAGE_SIZE,
-                    PropertyKey.CAIRO_SQL_WINDOW_ROWID_PAGE_SIZE);
+                    PropertyKey.CAIRO_SQL_WINDOW_ROWID_PAGE_SIZE
+            );
             registerDeprecated(
                     PropertyKey.CAIRO_SQL_ANALYTIC_ROWID_MAX_PAGES,
-                    PropertyKey.CAIRO_SQL_WINDOW_ROWID_MAX_PAGES);
+                    PropertyKey.CAIRO_SQL_WINDOW_ROWID_MAX_PAGES
+            );
             registerDeprecated(
                     PropertyKey.CAIRO_SQL_ANALYTIC_TREE_PAGE_SIZE,
-                    PropertyKey.CAIRO_SQL_WINDOW_TREE_PAGE_SIZE);
+                    PropertyKey.CAIRO_SQL_WINDOW_TREE_PAGE_SIZE
+            );
             registerDeprecated(
                     PropertyKey.CAIRO_SQL_ANALYTIC_TREE_MAX_PAGES,
-                    PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_PAGES);
-
+                    PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_PAGES
+            );
         }
 
         public ValidationResult validate(Properties properties) {
@@ -2253,6 +2261,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public double getSqlCompactMapLoadFactor() {
             return sqlCompactMapLoadFactor;
+        }
+
+        @Override
+        public int getSqlCompilerPoolMaxSegments() {
+            return sqlCompilerPoolMaxSegments;
         }
 
         @Override

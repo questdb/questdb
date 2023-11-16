@@ -522,6 +522,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlCompilerPoolMaxSegments() {
+        return delegate.getSqlCompilerPoolMaxSegments();
+    }
+
+    @Override
     public int getSqlCopyBufferSize() {
         return delegate.getSqlCopyBufferSize();
     }
