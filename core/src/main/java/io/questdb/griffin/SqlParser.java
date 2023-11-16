@@ -1104,6 +1104,8 @@ public class SqlParser {
                     }
                 } else if (SqlKeywords.isServerConfKeyword(tok)) {
                     showKind = QueryModel.SHOW_SERVER_CONF;
+                } else if (SqlKeywords.isServerVersionKeyword(tok)) {
+                    showKind = QueryModel.SHOW_SERVER_VERSION;
                 } else {
                     showKind = sqlParserCallback.parseShowSql(lexer, model, tok, expressionNodePool);
                 }

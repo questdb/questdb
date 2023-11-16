@@ -228,5 +228,6 @@ public class SqlKeywordsTest {
         specialCases.put("isEmptyAlias", "''");
         specialCases.put("isKeyword", "select");
         specialCases.put("isServerConfKeyword", "server_conf");
+        specialCases.put("isServerVersionKeyword", "server_version");
     }
 }
