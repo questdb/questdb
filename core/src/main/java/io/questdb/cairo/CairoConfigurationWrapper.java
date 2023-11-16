@@ -1005,7 +1005,7 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public @Nullable ObjObjHashMap<ConfigProperty, String> getAllPairs() {
+    public @Nullable ObjObjHashMap<ConfigPropertyKey, ConfigPropertyValue> getAllPairs() {
         return delegate.getAllPairs();
     }
 }

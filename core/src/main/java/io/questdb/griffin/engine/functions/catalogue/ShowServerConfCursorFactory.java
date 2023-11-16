@@ -1,6 +1,7 @@
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.ConfigProperty;
+import io.questdb.ConfigPropertyKey;
+import io.questdb.ConfigPropertyValue;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
@@ -38,7 +39,7 @@ public class ShowServerConfCursorFactory extends AbstractRecordCursorFactory {
         sink.type("show_server_conf");
     }
 
-    private static final class EmptyIterator implements Iterator<ObjObjHashMap.Entry<ConfigProperty, String>> {
+    private static final class EmptyIterator implements Iterator<ObjObjHashMap.Entry<ConfigPropertyKey, ConfigPropertyValue>> {
         private static final EmptyIterator INSTANCE = new EmptyIterator();
 
         @Override
@@ -47,14 +48,14 @@ public class ShowServerConfCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public ObjObjHashMap.Entry<ConfigProperty, String> next() {
+        public ObjObjHashMap.Entry<ConfigPropertyKey, ConfigPropertyValue> next() {
             return null;
         }
     }
 
     private static class ShowServerConfRecordCursor implements RecordCursor {
-        private ObjObjHashMap<ConfigProperty, String> allPairs;
-        private ObjObjHashMap.Entry<ConfigProperty, String> entry;
+        private ObjObjHashMap<ConfigPropertyKey, ConfigPropertyValue> allPairs;
+        private ObjObjHashMap.Entry<ConfigPropertyKey, ConfigPropertyValue> entry;
         private final Record record = new Record() {
             @Override
             public CharSequence getStr(int col) {
@@ -62,9 +63,35 @@ public class ShowServerConfCursorFactory extends AbstractRecordCursorFactory {
                     case 0:
                         return entry.key.getPropertyPath();
                     case 1:
-                        return entry.value;
+                        return entry.key.getEnvVarName();
+                    case 2:
+                        if (entry.key.isSensitive()) {
+                            return "****";
+                        }
+                        return entry.value.getValue();
+                    case 3:
+                        switch (entry.value.getValueSource()) {
+                            case ConfigPropertyValue.VALUE_SOURCE_DEFAULT:
+                                return "default";
+                            case ConfigPropertyValue.VALUE_SOURCE_CONF:
+                                return "conf";
+                            default:
+                                return "env";
+                        }
                     default:
                         return null;
+                }
+            }
+
+            @Override
+            public boolean getBool(int col) {
+                switch (col) {
+                    case 4:
+                        return entry.key.isSensitive();
+                    case 5:
+                        return entry.value.isDynamic();
+                    default:
+                        return false;
                 }
             }
 
@@ -79,7 +106,8 @@ public class ShowServerConfCursorFactory extends AbstractRecordCursorFactory {
                 return s != null ? s.length() : -1;
             }
         };
-        @NotNull private Iterator<ObjObjHashMap.Entry<ConfigProperty, String>> iterator = EmptyIterator.INSTANCE;
+        @NotNull
+        private Iterator<ObjObjHashMap.Entry<ConfigPropertyKey, ConfigPropertyValue>> iterator = EmptyIterator.INSTANCE;
 
         @Override
         public void close() {
@@ -122,7 +150,7 @@ public class ShowServerConfCursorFactory extends AbstractRecordCursorFactory {
             entry = null;
         }
 
-        private ShowServerConfRecordCursor of(ObjObjHashMap<ConfigProperty, String> allPairs) {
+        private ShowServerConfRecordCursor of(ObjObjHashMap<ConfigPropertyKey, ConfigPropertyValue> allPairs) {
             this.allPairs = allPairs;
             toTop();
             return this;
@@ -130,7 +158,11 @@ public class ShowServerConfCursorFactory extends AbstractRecordCursorFactory {
     }
 
     static {
-        METADATA.add(new TableColumnMetadata("name", ColumnType.STRING));
+        METADATA.add(new TableColumnMetadata("property_path", ColumnType.STRING));
+        METADATA.add(new TableColumnMetadata("env_var_name", ColumnType.STRING));
         METADATA.add(new TableColumnMetadata("value", ColumnType.STRING));
+        METADATA.add(new TableColumnMetadata("value_source", ColumnType.STRING));
+        METADATA.add(new TableColumnMetadata("sensitive", ColumnType.BOOLEAN));
+        METADATA.add(new TableColumnMetadata("dynamic", ColumnType.BOOLEAN));
     }
 }

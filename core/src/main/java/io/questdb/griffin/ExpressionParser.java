@@ -165,7 +165,12 @@ public class ExpressionParser {
         return argStackDepth - node.paramCount + 1;
     }
 
-    private int processLambdaQuery(GenericLexer lexer, ExpressionParserListener listener, int argStackDepth) throws SqlException {
+    private int processLambdaQuery(
+            GenericLexer lexer,
+            ExpressionParserListener listener,
+            int argStackDepth,
+            SqlParserCallback sqlParserCallback
+    ) throws SqlException {
         // It is highly likely this expression parser will be re-entered when
         // parsing sub-query. To prevent sub-query consuming operation stack we must add a
         // control node, which would prevent such consumption
@@ -187,7 +192,7 @@ public class ExpressionParser {
         // validate is Query is allowed
         onNode(listener, node, argStackDepth, false);
         // we can compile query if all is well
-        node.queryModel = sqlParser.parseAsSubQuery(lexer, null, true);
+        node.queryModel = sqlParser.parseAsSubQuery(lexer, null, true, sqlParserCallback);
         argStackDepth = onNode(listener, node, argStackDepth, false);
 
         // pop our control node if sub-query hasn't done it
@@ -203,7 +208,7 @@ public class ExpressionParser {
         return argStackDepth;
     }
 
-    void parseExpr(GenericLexer lexer, ExpressionParserListener listener) throws SqlException {
+    void parseExpr(GenericLexer lexer, ExpressionParserListener listener, SqlParserCallback sqlParserCallback) throws SqlException {
         try {
             int paramCount = 0;
             int braceCount = 0;
@@ -717,7 +722,7 @@ public class ExpressionParser {
                             if (betweenCount > 0) {
                                 throw SqlException.$(lastPos, "constant expected");
                             }
-                            argStackDepth = processLambdaQuery(lexer, listener, argStackDepth);
+                            argStackDepth = processLambdaQuery(lexer, listener, argStackDepth, sqlParserCallback);
                         } else {
                             processDefaultBranch = true;
                         }

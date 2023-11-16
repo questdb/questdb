@@ -32,6 +32,8 @@ import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
+import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.QueryModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -3110,16 +3112,20 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         ddl("create table tab ( timestamp timestamp, col string, id symbol index) timestamp(timestamp);");
         insert("insert into tab values (1, 'foo', 'A'), (2, 'bah', 'B'), (3, 'dee', 'C')");
 
-        assertSql("timestamp\tcol\tid\n" +
+        assertSql(
+                "timestamp\tcol\tid\n" +
                         "1970-01-01T00:00:00.000003Z\tdee\tC\n",
                 "SELECT * FROM tab\n" +
-                        "WHERE substring(col, 1, 3) NOT IN ('foo', 'bah')\n");
+                        "WHERE substring(col, 1, 3) NOT IN ('foo', 'bah')\n"
+        );
 
-        assertSql("timestamp\tcol\tid\n" +
+        assertSql(
+                "timestamp\tcol\tid\n" +
                         "1970-01-01T00:00:00.000003Z\tdee\tC\n",
                 "SELECT * FROM tab\n" +
                         "WHERE substring(col, 1, 3) NOT IN ('foo', 'bah')\n" +
-                        "LATEST ON timestamp PARTITION BY id");
+                        "LATEST ON timestamp PARTITION BY id"
+        );
     }
 
     @Test
@@ -5499,7 +5505,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 compiler.compile("show something", sqlExecutionContext);
                 Assert.fail();
             } catch (Exception e) {
-                Assert.assertTrue(compiler.unknownShowStatementCalled);
+                Assert.assertTrue(compiler.parseShowSqlCalled);
             }
 
             try {
@@ -5852,7 +5858,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         boolean unknownDropColumnSuffixCalled;
         boolean unknownDropStatementCalled;
         boolean unknownDropTableSuffixCalled;
-        boolean unknownShowStatementCalled;
+        boolean parseShowSqlCalled;
 
         SqlCompilerWrapper(CairoEngine engine) {
             super(engine);
@@ -5883,10 +5889,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         }
 
         @Override
-        protected RecordCursorFactory unknownShowStatement(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
-            unknownShowStatementCalled = true;
-            return super.unknownShowStatement(executionContext, tok);
+        public int parseShowSql(GenericLexer lexer, QueryModel model, CharSequence tok, ObjectPool<ExpressionNode> expressionNodePool) throws SqlException {
+            parseShowSqlCalled = true;
+            return super.parseShowSql(lexer, model, tok, expressionNodePool);
         }
     }
-
 }

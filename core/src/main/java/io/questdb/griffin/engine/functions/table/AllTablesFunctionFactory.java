@@ -29,7 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
-import io.questdb.griffin.engine.table.TableListRecordCursorFactory;
+import io.questdb.griffin.engine.table.ShowTablesRecordCursorFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -47,7 +47,7 @@ public class AllTablesFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new CursorFunction(new TableListRecordCursorFactory()) {
+        return new CursorFunction(new ShowTablesRecordCursorFactory()) {
             @Override
             public boolean isRuntimeConstant() {
                 return true;

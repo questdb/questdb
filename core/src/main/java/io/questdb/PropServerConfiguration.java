@@ -71,7 +71,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     public static final String SNAPSHOT_DIRECTORY = "snapshot";
     public static final String TMP_DIRECTORY = "tmp";
     private static final LowerCaseCharSequenceIntHashMap WRITE_FO_OPTS = new LowerCaseCharSequenceIntHashMap();
-    private final ObjObjHashMap<ConfigProperty, String> allPairs = new ObjObjHashMap<>();
+    private final ObjObjHashMap<ConfigPropertyKey, ConfigPropertyValue> allPairs = new ObjObjHashMap<>();
     private final DateFormat backupDirTimestampFormat;
     private final int backupMkdirMode;
     private final String backupRoot;
@@ -1261,7 +1261,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.factoryProvider = fpf.getInstance(this, engine, freeOnExit);
     }
 
-    private int[] getAffinity(Properties properties, @Nullable Map<String, String> env, ConfigProperty key, int workerCount) throws ServerConfigurationException {
+    private int[] getAffinity(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, int workerCount) throws ServerConfigurationException {
         final int[] result = new int[workerCount];
         String value = getString(properties, env, key, null);
         if (value == null) {
@@ -1282,7 +1282,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         return result;
     }
 
-    private int getCommitMode(Properties properties, @Nullable Map<String, String> env, ConfigProperty key) {
+    private int getCommitMode(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key) {
         final String commitMode = getString(properties, env, key, "nosync");
 
         // must not be null because we provided non-null default value
@@ -1303,7 +1303,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         return CommitMode.NOSYNC;
     }
 
-    private LineTimestampAdapter getLineTimestampAdaptor(Properties properties, Map<String, String> env, ConfigProperty propNm) {
+    private LineTimestampAdapter getLineTimestampAdaptor(Properties properties, Map<String, String> env, ConfigPropertyKey propNm) {
         final String lineUdpTimestampSwitch = getString(properties, env, propNm, "n");
         switch (lineUdpTimestampSwitch) {
             case "u":
@@ -1371,7 +1371,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    protected boolean getBoolean(Properties properties, @Nullable Map<String, String> env, ConfigProperty key, boolean defaultValue) {
+    protected boolean getBoolean(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, boolean defaultValue) {
         return Boolean.parseBoolean(getString(properties, env, key, Boolean.toString(defaultValue)));
     }
 
@@ -1383,7 +1383,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    protected double getDouble(Properties properties, @Nullable Map<String, String> env, ConfigProperty key, String defaultValue) throws ServerConfigurationException {
+    protected double getDouble(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, String defaultValue) throws ServerConfigurationException {
         final String value = getString(properties, env, key, defaultValue);
         try {
             return Numbers.parseDouble(value);
@@ -1393,7 +1393,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     @SuppressWarnings("SameParameterValue")
-    protected int getIPv4Address(Properties properties, Map<String, String> env, ConfigProperty key, String defaultValue) throws ServerConfigurationException {
+    protected int getIPv4Address(Properties properties, Map<String, String> env, ConfigPropertyKey key, String defaultValue) throws ServerConfigurationException {
         final String value = getString(properties, env, key, defaultValue);
         try {
             return Net.parseIPv4(value);
@@ -1402,7 +1402,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    protected int getInt(Properties properties, @Nullable Map<String, String> env, ConfigProperty key, int defaultValue) throws ServerConfigurationException {
+    protected int getInt(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, int defaultValue) throws ServerConfigurationException {
         final String value = getString(properties, env, key, Integer.toString(defaultValue));
         try {
             return Numbers.parseInt(value);
@@ -1411,7 +1411,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    protected int getIntSize(Properties properties, @Nullable Map<String, String> env, ConfigProperty key, int defaultValue) throws ServerConfigurationException {
+    protected int getIntSize(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, int defaultValue) throws ServerConfigurationException {
         final String value = getString(properties, env, key, Integer.toString(defaultValue));
         try {
             return Numbers.parseIntSize(value);
@@ -1420,7 +1420,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    protected long getLong(Properties properties, @Nullable Map<String, String> env, ConfigProperty key, long defaultValue) throws ServerConfigurationException {
+    protected long getLong(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, long defaultValue) throws ServerConfigurationException {
         final String value = getString(properties, env, key, Long.toString(defaultValue));
         try {
             return Numbers.parseLong(value);
@@ -1429,7 +1429,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    protected long getLongSize(Properties properties, @Nullable Map<String, String> env, ConfigProperty key, long defaultValue) throws ServerConfigurationException {
+    protected long getLongSize(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, long defaultValue) throws ServerConfigurationException {
         final String value = getString(properties, env, key, Long.toString(defaultValue));
         try {
             return Numbers.parseLongSize(value);
@@ -1438,7 +1438,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    protected int getQueueCapacity(Properties properties, @Nullable Map<String, String> env, ConfigProperty key, int defaultValue) throws ServerConfigurationException {
+    protected int getQueueCapacity(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, int defaultValue) throws ServerConfigurationException {
         final int value = getInt(properties, env, key, defaultValue);
         if (!Numbers.isPow2(value)) {
             throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), "Value must be power of 2, e.g. 1,2,4,8,16,32,64...");
@@ -1446,20 +1446,24 @@ public class PropServerConfiguration implements ServerConfiguration {
         return value;
     }
 
-    protected String getString(Properties properties, @Nullable Map<String, String> env, ConfigProperty key, String defaultValue) {
-        String envCandidate = key.getEnvVarEquivalent();
-        String envValue = env != null ? env.get(envCandidate) : null;
-        if (envValue != null) {
+    protected String getString(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, String defaultValue) {
+        String envCandidate = key.getEnvVarName();
+        String result = env != null ? env.get(envCandidate) : null;
+        final int valueSource;
+        if (result != null) {
             log.info().$("env config [key=").$(envCandidate).I$();
-            return envValue;
-        }
-        String result = properties.getProperty(key.getPropertyPath());
-        if (result == null) {
-            result = defaultValue;
+            valueSource = ConfigPropertyValue.VALUE_SOURCE_ENV;
+        } else {
+            result = properties.getProperty(key.getPropertyPath());
+            if (result == null) {
+                result = defaultValue;
+                valueSource = ConfigPropertyValue.VALUE_SOURCE_DEFAULT;
+            } else {
+                valueSource = ConfigPropertyValue.VALUE_SOURCE_CONF;
+            }
         }
 
-        allPairs.put(key, result);
-
+        allPairs.put(key, new ConfigPropertyValueImpl(result, valueSource, false));
         return result;
     }
 
@@ -1470,7 +1474,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     protected void parseBindTo(
             Properties properties,
             Map<String, String> env,
-            ConfigProperty key,
+            ConfigPropertyKey key,
             String defaultValue,
             BindToParser parser
     ) throws ServerConfigurationException {
@@ -1506,7 +1510,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     public static class PropertyValidator {
-        protected final Map<ConfigProperty, String> deprecatedSettings = new HashMap<>();
+        protected final Map<ConfigPropertyKey, String> deprecatedSettings = new HashMap<>();
         protected final Map<String, String> obsoleteSettings = new HashMap<>();
 
         public PropertyValidator() {
@@ -1663,7 +1667,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             Set<String> incorrect = new HashSet<>();
 
             for (String propName : properties.stringPropertyNames()) {
-                Optional<ConfigProperty> prop = lookupConfigProperty(propName);
+                Optional<ConfigPropertyKey> prop = lookupConfigProperty(propName);
                 if (prop.isPresent()) {
                     String deprecationMsg = deprecatedSettings.get(prop.get());
                     if (deprecationMsg != null) {
@@ -1726,7 +1730,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         private static <KeyT> void registerReplacements(
                 Map<KeyT, String> map,
                 KeyT old,
-                ConfigProperty... replacements
+                ConfigPropertyKey... replacements
         ) {
             if (replacements.length > 0) {
                 final StringBuilder sb = new StringBuilder("Replaced by ");
@@ -1745,15 +1749,15 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
         }
 
-        protected Optional<ConfigProperty> lookupConfigProperty(String propName) {
+        protected Optional<ConfigPropertyKey> lookupConfigProperty(String propName) {
             return PropertyKey.getByString(propName).map(prop -> prop);
         }
 
-        protected void registerDeprecated(ConfigProperty old, ConfigProperty... replacements) {
+        protected void registerDeprecated(ConfigPropertyKey old, ConfigPropertyKey... replacements) {
             registerReplacements(deprecatedSettings, old, replacements);
         }
 
-        protected void registerObsolete(String old, ConfigProperty... replacements) {
+        protected void registerObsolete(String old, ConfigPropertyKey... replacements) {
             registerReplacements(obsoleteSettings, old, replacements);
         }
     }
@@ -1790,7 +1794,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public @Nullable ObjObjHashMap<ConfigProperty, String> getAllPairs() {
+        public @Nullable ObjObjHashMap<ConfigPropertyKey, ConfigPropertyValue> getAllPairs() {
             return allPairs;
         }
 

@@ -62,7 +62,7 @@ public interface CairoConfiguration {
      *
      * @return key value pairs of the configuration
      */
-    default @Nullable ObjObjHashMap<ConfigProperty, String> getAllPairs() {
+    default @Nullable ObjObjHashMap<ConfigPropertyKey, ConfigPropertyValue> getAllPairs() {
         return null;
     }
 
