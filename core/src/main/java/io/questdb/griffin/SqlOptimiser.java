@@ -4264,6 +4264,10 @@ public class SqlOptimiser implements Mutable {
                 if (qc.getAst().type == ExpressionNode.FUNCTION) {
                     if (window) {
                         windowModel.addBottomUpColumn(qc);
+
+                        QueryColumn ref = nextColumn(qc.getAlias());
+                        outerVirtualModel.addBottomUpColumn(ref);
+                        distinctModel.addBottomUpColumn(ref);
                         // ensure literals referenced by window column are present in nested models
                         emitLiterals(qc.getAst(), translatingModel, innerVirtualModel, baseModel, true);
                         continue;

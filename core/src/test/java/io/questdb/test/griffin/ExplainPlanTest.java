@@ -746,18 +746,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
             ddl("create table test (event double )");
             insert("insert into test select x from long_sequence(3)");
 
-            String query = "select * from (" + "SELECT DISTINCT avg(event) OVER (PARTITION BY 1) FROM test" + ")";
-//            assertPlan(query,
-//                    "SelectedRecord\n" +
-//                            "    Distinct\n" +
-//                            "      keys: avg\n" +
-//                            "        CachedWindow\n" +
-//                            "          unorderedFunctions: [avg(event) over (partition by [1])]\n" +
-//                            "            DataFrame\n" +
-//                            "                Row forward scan\n" +
-//                            "                Frame forward scan on: test\n");
+            String query = "select * from ( SELECT DISTINCT avg(event) OVER (PARTITION BY 1) FROM test )";
+            assertPlan(query,
+                    "Distinct\n" +
+                            "  keys: avg\n" +
+                            "    CachedWindow\n" +
+                            "      unorderedFunctions: [avg(event) over (partition by [1])]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: test\n");
 
             assertSql("avg\n2.0\n", query);
+            assertSql("avg\n2.0\n", "selecT * from ( " + query + " )");
         });
     }
 
