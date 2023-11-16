@@ -1745,6 +1745,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                     model.cached(rdr.getSymbolMapReader(i).isCached());
                 }
                 model.setIndexFlags(rdrMetadata.isColumnIndexed(i), rdrMetadata.getIndexValueBlockCapacity(i));
+                if (rdrMetadata.isDedupKey(i)) {
+                    model.setDedupKeyFlag(i);
+                }
             }
             model.setPartitionBy(SqlUtil.nextLiteral(sqlNodePool, PartitionBy.toString(rdr.getPartitionedBy()), 0));
             if (rdrMetadata.getTimestampIndex() != -1) {
