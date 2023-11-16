@@ -1,17 +1,18 @@
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.PropServerConfiguration;
-import io.questdb.cairo.*;
+import io.questdb.ConfigProperty;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.ObjObjHashMap;
+import org.jetbrains.annotations.NotNull;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.nio.file.Paths;
 import java.util.Iterator;
-import java.util.Properties;
 
 public class ShowServerConfCursorFactory extends AbstractRecordCursorFactory {
 
@@ -24,7 +25,7 @@ public class ShowServerConfCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        return cursor.of(loadServerConf(executionContext.getCairoEngine().getConfiguration().getRoot()));
+        return cursor.of(executionContext.getCairoEngine().getConfiguration().getAllPairs());
     }
 
     @Override
@@ -37,32 +38,34 @@ public class ShowServerConfCursorFactory extends AbstractRecordCursorFactory {
         sink.type("show_server_conf");
     }
 
-    private static Properties loadServerConf(String root) {
-        java.nio.file.Path configFile = Paths.get(root, "..", PropServerConfiguration.CONFIG_DIRECTORY, "/server.conf");
-        Properties properties = new Properties();
-        try (InputStream is = java.nio.file.Files.newInputStream(configFile)) {
-            properties.load(is);
-        } catch (IOException err) {
-            throw CairoException.critical(-1).put("cannot find QuestDB's configuration: ").put(err.getMessage());
+    private static final class EmptyIterator implements Iterator<ObjObjHashMap.Entry<ConfigProperty, String>> {
+        private static final EmptyIterator INSTANCE = new EmptyIterator();
+
+        @Override
+        public boolean hasNext() {
+            return false;
         }
-        return properties;
+
+        @Override
+        public ObjObjHashMap.Entry<ConfigProperty, String> next() {
+            return null;
+        }
     }
 
     private static class ShowServerConfRecordCursor implements RecordCursor {
-        private Iterator<Object> keyIterator;
-        private String lastKey;
-        private Properties properties;
+        private ObjObjHashMap<ConfigProperty, String> allPairs;
+        private ObjObjHashMap.Entry<ConfigProperty, String> entry;
         private final Record record = new Record() {
             @Override
             public CharSequence getStr(int col) {
-                if (col == 0) { // name
-                    return lastKey;
+                switch (col) {
+                    case 0:
+                        return entry.key.getPropertyPath();
+                    case 1:
+                        return entry.value;
+                    default:
+                        return null;
                 }
-                if (col == 1) { // value
-                    return properties.getProperty(lastKey);
-
-                }
-                return null;
             }
 
             @Override
@@ -76,13 +79,12 @@ public class ShowServerConfCursorFactory extends AbstractRecordCursorFactory {
                 return s != null ? s.length() : -1;
             }
         };
+        @NotNull private Iterator<ObjObjHashMap.Entry<ConfigProperty, String>> iterator = EmptyIterator.INSTANCE;
 
         @Override
         public void close() {
-            keyIterator = null;
-            properties.clear();
-            properties = null;
-            lastKey = null;
+            iterator = EmptyIterator.INSTANCE;
+            allPairs = null;
         }
 
         @Override
@@ -97,11 +99,11 @@ public class ShowServerConfCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public boolean hasNext() {
-            boolean hasNext = keyIterator.hasNext();
-            if (hasNext) {
-                lastKey = (String) keyIterator.next();
+            if (iterator.hasNext()) {
+                entry = iterator.next();
+                return true;
             }
-            return hasNext;
+            return false;
         }
 
         @Override
@@ -116,12 +118,12 @@ public class ShowServerConfCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public void toTop() {
-            keyIterator = properties.keySet().iterator();
-            lastKey = null;
+            iterator = allPairs != null ? allPairs.iterator() : EmptyIterator.INSTANCE;
+            entry = null;
         }
 
-        private ShowServerConfRecordCursor of(Properties properties) {
-            this.properties = properties;
+        private ShowServerConfRecordCursor of(ObjObjHashMap<ConfigProperty, String> allPairs) {
+            this.allPairs = allPairs;
             toTop();
             return this;
         }

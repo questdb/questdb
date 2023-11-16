@@ -71,6 +71,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     public static final String SNAPSHOT_DIRECTORY = "snapshot";
     public static final String TMP_DIRECTORY = "tmp";
     private static final LowerCaseCharSequenceIntHashMap WRITE_FO_OPTS = new LowerCaseCharSequenceIntHashMap();
+    private final ObjObjHashMap<ConfigProperty, String> allPairs = new ObjObjHashMap<>();
     private final DateFormat backupDirTimestampFormat;
     private final int backupMkdirMode;
     private final String backupRoot;
@@ -101,6 +102,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final double columnPurgeRetryDelayMultiplier;
     private final int columnPurgeTaskPoolCapacity;
     private final int commitMode;
+    private final TimestampFormatCompiler compiler = new TimestampFormatCompiler();
     private final String confRoot;
     private final int connectionPoolInitialCapacity;
     private final int connectionStringPoolCapacity;
@@ -356,6 +358,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long writerDataIndexKeyAppendPageSize;
     private final long writerDataIndexValueAppendPageSize;
     private final long writerFileOpenOpts;
+    private final long writerMemoryLimit;
     private final long writerMiscAppendPageSize;
     private final boolean writerMixedIOEnabled;
     private final int writerTickRowsCountMod;
@@ -468,7 +471,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean stringToCharCastAllowed;
     private boolean symbolAsFieldSupported;
     private long symbolCacheWaitUsBeforeReload;
-    private final long writerMemoryLimit;
 
     public PropServerConfiguration(
             String root,
@@ -531,7 +533,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
         this.walWriterDataAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE, Numbers.SIZE_1MB));
         this.systemWalWriterDataAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_SYSTEM_WAL_WRITER_DATA_APPEND_PAGE_SIZE, 256 * 1024));
-        this.walSquashUncommittedRowsMultiplier = getDouble(properties, env, PropertyKey.CAIRO_WAL_SQUASH_UNCOMMITTED_ROWS_MULTIPLIER, 20.0);
+        this.walSquashUncommittedRowsMultiplier = getDouble(properties, env, PropertyKey.CAIRO_WAL_SQUASH_UNCOMMITTED_ROWS_MULTIPLIER, "20.0");
         this.walMaxLagTxnCount = getInt(properties, env, PropertyKey.CAIRO_WAL_MAX_LAG_TXN_COUNT, Math.max((int) Math.round(walSquashUncommittedRowsMultiplier), 1));
         this.walApplyTableTimeQuota = getLong(properties, env, PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 1000);
         this.walApplyLookAheadTransactionCount = getInt(properties, env, PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 20);
@@ -582,7 +584,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         final FilesFacade ff = cairoConfiguration.getFilesFacade();
         try (Path path = new Path()) {
-            volumeDefinitions.of(overrideWithEnv(properties, env, PropertyKey.CAIRO_VOLUMES), path, root);
+            volumeDefinitions.of(getString(properties, env, PropertyKey.CAIRO_VOLUMES, null), path, root);
             ff.mkdirs(path.of(this.root).slash$(), this.mkdirMode);
             path.of(this.root).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
             final int tableIndexFd = TableUtils.openFileRWOrFail(ff, path, CairoConfiguration.O_NONE);
@@ -708,8 +710,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.dateAdapterPoolCapacity = getInt(properties, env, PropertyKey.HTTP_TEXT_DATE_ADAPTER_POOL_CAPACITY, 16);
             this.jsonCacheLimit = getIntSize(properties, env, PropertyKey.HTTP_TEXT_JSON_CACHE_LIMIT, 16384);
             this.jsonCacheSize = getIntSize(properties, env, PropertyKey.HTTP_TEXT_JSON_CACHE_SIZE, 8192);
-            this.maxRequiredDelimiterStdDev = getDouble(properties, env, PropertyKey.HTTP_TEXT_MAX_REQUIRED_DELIMITER_STDDEV, 0.1222d);
-            this.maxRequiredLineLengthStdDev = getDouble(properties, env, PropertyKey.HTTP_TEXT_MAX_REQUIRED_LINE_LENGTH_STDDEV, 0.8);
+            this.maxRequiredDelimiterStdDev = getDouble(properties, env, PropertyKey.HTTP_TEXT_MAX_REQUIRED_DELIMITER_STDDEV, "0.1222");
+            this.maxRequiredLineLengthStdDev = getDouble(properties, env, PropertyKey.HTTP_TEXT_MAX_REQUIRED_LINE_LENGTH_STDDEV, "0.8");
             this.metadataStringPoolCapacity = getInt(properties, env, PropertyKey.HTTP_TEXT_METADATA_STRING_POOL_CAPACITY, 128);
 
             this.rollBufferLimit = getIntSize(properties, env, PropertyKey.HTTP_TEXT_ROLL_BUFFER_LIMIT, 1024 * 4096);
@@ -740,12 +742,12 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
 
             this.maxRerunWaitCapMs = getLong(properties, env, PropertyKey.HTTP_BUSY_RETRY_MAXIMUM_WAIT_BEFORE_RETRY, 1000);
-            this.rerunExponentialWaitMultiplier = getDouble(properties, env, PropertyKey.HTTP_BUSY_RETRY_EXPONENTIAL_WAIT_MULTIPLIER, 2.0);
+            this.rerunExponentialWaitMultiplier = getDouble(properties, env, PropertyKey.HTTP_BUSY_RETRY_EXPONENTIAL_WAIT_MULTIPLIER, "2.0");
             this.rerunInitialWaitQueueSize = getIntSize(properties, env, PropertyKey.HTTP_BUSY_RETRY_INITIAL_WAIT_QUEUE_SIZE, 64);
             this.rerunMaxProcessingQueueSize = getIntSize(properties, env, PropertyKey.HTTP_BUSY_RETRY_MAX_PROCESSING_QUEUE_SIZE, 4096);
 
             this.circuitBreakerThrottle = getInt(properties, env, PropertyKey.CIRCUIT_BREAKER_THROTTLE, 2_000_000);
-            this.queryTimeout = (long) (getDouble(properties, env, PropertyKey.QUERY_TIMEOUT_SEC, 60) * Timestamps.SECOND_MILLIS);
+            this.queryTimeout = (long) (getDouble(properties, env, PropertyKey.QUERY_TIMEOUT_SEC, "60") * Timestamps.SECOND_MILLIS);
             this.netTestConnectionBufferSize = getInt(properties, env, PropertyKey.CIRCUIT_BREAKER_BUFFER_SIZE, 64);
             this.netTestConnectionBufferSize = getInt(properties, env, PropertyKey.NET_TEST_CONNECTION_BUFFER_SIZE, netTestConnectionBufferSize);
 
@@ -851,9 +853,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlCharacterStoreCapacity = getInt(properties, env, PropertyKey.CAIRO_CHARACTER_STORE_CAPACITY, 1024);
             this.sqlCharacterStoreSequencePoolCapacity = getInt(properties, env, PropertyKey.CAIRO_CHARACTER_STORE_SEQUENCE_POOL_CAPACITY, 64);
             this.sqlColumnPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_COLUMN_POOL_CAPACITY, 4096);
-            this.sqlCompactMapLoadFactor = getDouble(properties, env, PropertyKey.CAIRO_COMPACT_MAP_LOAD_FACTOR, 0.7);
+            this.sqlCompactMapLoadFactor = getDouble(properties, env, PropertyKey.CAIRO_COMPACT_MAP_LOAD_FACTOR, "0.7");
             this.sqlExpressionPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_EXPRESSION_POOL_CAPACITY, 8192);
-            this.sqlFastMapLoadFactor = getDouble(properties, env, PropertyKey.CAIRO_FAST_MAP_LOAD_FACTOR, 0.7);
+            this.sqlFastMapLoadFactor = getDouble(properties, env, PropertyKey.CAIRO_FAST_MAP_LOAD_FACTOR, "0.7");
             this.sqlJoinContextPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_JOIN_CONTEXT_POOL_CAPACITY, 64);
             this.sqlLexerPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_LEXER_POOL_CAPACITY, 2048);
             this.sqlSmallMapKeyCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY, 1024);
@@ -891,7 +893,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.columnPurgeTaskPoolCapacity = getIntSize(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_TASK_POOL_CAPACITY, 256);
             this.columnPurgeRetryDelayLimit = getLong(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_LIMIT, 60_000_000L);
             this.columnPurgeRetryDelay = getLong(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 10_000);
-            this.columnPurgeRetryDelayMultiplier = getDouble(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_MULTIPLIER, 10.0);
+            this.columnPurgeRetryDelayMultiplier = getDouble(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_MULTIPLIER, "10.0");
             this.systemTableNamePrefix = getString(properties, env, PropertyKey.CAIRO_SQL_SYSTEM_TABLE_PREFIX, "sys.");
 
             this.cairoPageFrameReduceQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 64));
@@ -921,7 +923,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 throw ServerConfigurationException.forInvalidKey(PropertyKey.CAIRO_DATE_LOCALE.getPropertyPath(), dateLocale);
             }
             this.sqlDistinctTimestampKeyCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_DISTINCT_TIMESTAMP_KEY_CAPACITY, 512);
-            this.sqlDistinctTimestampLoadFactor = getDouble(properties, env, PropertyKey.CAIRO_SQL_DISTINCT_TIMESTAMP_LOAD_FACTOR, 0.5);
+            this.sqlDistinctTimestampLoadFactor = getDouble(properties, env, PropertyKey.CAIRO_SQL_DISTINCT_TIMESTAMP_LOAD_FACTOR, "0.5");
             this.sqlPageFrameMinRows = getInt(properties, env, PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 1_000);
             this.sqlPageFrameMaxRows = getInt(properties, env, PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1_000_000);
 
@@ -1113,7 +1115,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.lineTcpIOWorkerYieldThreshold = getLong(properties, env, PropertyKey.LINE_TCP_IO_WORKER_YIELD_THRESHOLD, 10);
                 this.lineTcpIOWorkerSleepThreshold = getLong(properties, env, PropertyKey.LINE_TCP_IO_WORKER_SLEEP_THRESHOLD, 10_000);
                 this.lineTcpMaintenanceInterval = getLong(properties, env, PropertyKey.LINE_TCP_MAINTENANCE_JOB_INTERVAL, 1000);
-                this.lineTcpCommitIntervalFraction = getDouble(properties, env, PropertyKey.LINE_TCP_COMMIT_INTERVAL_FRACTION, 0.5);
+                this.lineTcpCommitIntervalFraction = getDouble(properties, env, PropertyKey.LINE_TCP_COMMIT_INTERVAL_FRACTION, "0.5");
                 this.lineTcpCommitIntervalDefault = getLong(properties, env, PropertyKey.LINE_TCP_COMMIT_INTERVAL_DEFAULT, COMMIT_INTERVAL_DEFAULT);
                 if (this.lineTcpCommitIntervalDefault < 1L) {
                     log.info().$("invalid default commit interval ").$(lineTcpCommitIntervalDefault).$("), will use ").$(COMMIT_INTERVAL_DEFAULT).$();
@@ -1261,7 +1263,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     private int[] getAffinity(Properties properties, @Nullable Map<String, String> env, ConfigProperty key, int workerCount) throws ServerConfigurationException {
         final int[] result = new int[workerCount];
-        String value = overrideWithEnv(properties, env, key);
+        String value = getString(properties, env, key, null);
         if (value == null) {
             Arrays.fill(result, -1);
         } else {
@@ -1281,11 +1283,10 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private int getCommitMode(Properties properties, @Nullable Map<String, String> env, ConfigProperty key) {
-        final String commitMode = overrideWithEnv(properties, env, key);
+        final String commitMode = getString(properties, env, key, "nosync");
 
-        if (commitMode == null) {
-            return CommitMode.NOSYNC;
-        }
+        // must not be null because we provided non-null default value
+        assert commitMode != null;
 
         if (Chars.equalsLowerCaseAscii(commitMode, "nosync")) {
             return CommitMode.NOSYNC;
@@ -1321,11 +1322,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private int getSqlJitMode(Properties properties, @Nullable Map<String, String> env) {
-        final String jitMode = overrideWithEnv(properties, env, PropertyKey.CAIRO_SQL_JIT_MODE);
+        final String jitMode = getString(properties, env, PropertyKey.CAIRO_SQL_JIT_MODE, "on");
 
-        if (jitMode == null) {
-            return SqlJitMode.JIT_MODE_ENABLED;
-        }
+        assert jitMode != null;
 
         if (Chars.equalsLowerCaseAscii(jitMode, "on")) {
             return SqlJitMode.JIT_MODE_ENABLED;
@@ -1343,13 +1342,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private DateFormat getTimestampFormat(Properties properties, @Nullable Map<String, String> env) {
-        final String pattern = overrideWithEnv(properties, env, PropertyKey.CAIRO_SQL_BACKUP_DIR_DATETIME_FORMAT);
-        TimestampFormatCompiler compiler = new TimestampFormatCompiler();
-        //noinspection ReplaceNullCheck
-        if (null != pattern) {
-            return compiler.compile(pattern);
-        }
-        return compiler.compile("yyyy-MM-dd");
+        return compiler.compile(getString(properties, env, PropertyKey.CAIRO_SQL_BACKUP_DIR_DATETIME_FORMAT, "yyyy-MM-dd"));
     }
 
     private boolean pathEquals(String p1, String p2) {
@@ -1379,8 +1372,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     protected boolean getBoolean(Properties properties, @Nullable Map<String, String> env, ConfigProperty key, boolean defaultValue) {
-        final String value = overrideWithEnv(properties, env, key);
-        return value == null ? defaultValue : Boolean.parseBoolean(value);
+        return Boolean.parseBoolean(getString(properties, env, key, Boolean.toString(defaultValue)));
     }
 
     String getCanonicalPath(String path) throws ServerConfigurationException {
@@ -1391,10 +1383,10 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    protected double getDouble(Properties properties, @Nullable Map<String, String> env, ConfigProperty key, double defaultValue) throws ServerConfigurationException {
-        final String value = overrideWithEnv(properties, env, key);
+    protected double getDouble(Properties properties, @Nullable Map<String, String> env, ConfigProperty key, String defaultValue) throws ServerConfigurationException {
+        final String value = getString(properties, env, key, defaultValue);
         try {
-            return value != null ? Numbers.parseDouble(value) : defaultValue;
+            return Numbers.parseDouble(value);
         } catch (NumericException e) {
             throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), value);
         }
@@ -1411,36 +1403,36 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     protected int getInt(Properties properties, @Nullable Map<String, String> env, ConfigProperty key, int defaultValue) throws ServerConfigurationException {
-        final String value = overrideWithEnv(properties, env, key);
+        final String value = getString(properties, env, key, Integer.toString(defaultValue));
         try {
-            return value != null ? Numbers.parseInt(value) : defaultValue;
+            return Numbers.parseInt(value);
         } catch (NumericException e) {
             throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), value);
         }
     }
 
     protected int getIntSize(Properties properties, @Nullable Map<String, String> env, ConfigProperty key, int defaultValue) throws ServerConfigurationException {
-        final String value = overrideWithEnv(properties, env, key);
+        final String value = getString(properties, env, key, Integer.toString(defaultValue));
         try {
-            return value != null ? Numbers.parseIntSize(value) : defaultValue;
+            return Numbers.parseIntSize(value);
         } catch (NumericException e) {
             throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), value);
         }
     }
 
     protected long getLong(Properties properties, @Nullable Map<String, String> env, ConfigProperty key, long defaultValue) throws ServerConfigurationException {
-        final String value = overrideWithEnv(properties, env, key);
+        final String value = getString(properties, env, key, Long.toString(defaultValue));
         try {
-            return value != null ? Numbers.parseLong(value) : defaultValue;
+            return Numbers.parseLong(value);
         } catch (NumericException e) {
             throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), value);
         }
     }
 
     protected long getLongSize(Properties properties, @Nullable Map<String, String> env, ConfigProperty key, long defaultValue) throws ServerConfigurationException {
-        final String value = overrideWithEnv(properties, env, key);
+        final String value = getString(properties, env, key, Long.toString(defaultValue));
         try {
-            return value != null ? Numbers.parseLongSize(value) : defaultValue;
+            return Numbers.parseLongSize(value);
         } catch (NumericException e) {
             throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), value);
         }
@@ -1455,25 +1447,24 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     protected String getString(Properties properties, @Nullable Map<String, String> env, ConfigProperty key, String defaultValue) {
-        String value = overrideWithEnv(properties, env, key);
-        if (value == null) {
-            return defaultValue;
-        }
-        return value;
-    }
-
-    protected PropertyValidator newValidator() {
-        return new PropertyValidator();
-    }
-
-    protected String overrideWithEnv(Properties properties, @Nullable Map<String, String> env, ConfigProperty key) {
         String envCandidate = "QDB_" + key.getPropertyPath().replace('.', '_').toUpperCase();
         String envValue = env != null ? env.get(envCandidate) : null;
         if (envValue != null) {
             log.info().$("env config [key=").$(envCandidate).I$();
             return envValue;
         }
-        return properties.getProperty(key.getPropertyPath());
+        String result = properties.getProperty(key.getPropertyPath());
+        if (result == null) {
+            result = defaultValue;
+        }
+
+        allPairs.put(key, result);
+
+        return result;
+    }
+
+    protected PropertyValidator newValidator() {
+        return new PropertyValidator();
     }
 
     protected void parseBindTo(
@@ -1632,25 +1623,32 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             registerDeprecated(
                     PropertyKey.CAIRO_SQL_ANALYTIC_COLUMN_POOL_CAPACITY,
-                    PropertyKey.CAIRO_SQL_WINDOW_COLUMN_POOL_CAPACITY);
+                    PropertyKey.CAIRO_SQL_WINDOW_COLUMN_POOL_CAPACITY
+            );
             registerDeprecated(
                     PropertyKey.CAIRO_SQL_ANALYTIC_STORE_PAGE_SIZE,
-                    PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE);
+                    PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE
+            );
             registerDeprecated(
                     PropertyKey.CAIRO_SQL_ANALYTIC_STORE_MAX_PAGES,
-                    PropertyKey.CAIRO_SQL_WINDOW_STORE_MAX_PAGES);
+                    PropertyKey.CAIRO_SQL_WINDOW_STORE_MAX_PAGES
+            );
             registerDeprecated(
                     PropertyKey.CAIRO_SQL_ANALYTIC_ROWID_PAGE_SIZE,
-                    PropertyKey.CAIRO_SQL_WINDOW_ROWID_PAGE_SIZE);
+                    PropertyKey.CAIRO_SQL_WINDOW_ROWID_PAGE_SIZE
+            );
             registerDeprecated(
                     PropertyKey.CAIRO_SQL_ANALYTIC_ROWID_MAX_PAGES,
-                    PropertyKey.CAIRO_SQL_WINDOW_ROWID_MAX_PAGES);
+                    PropertyKey.CAIRO_SQL_WINDOW_ROWID_MAX_PAGES
+            );
             registerDeprecated(
                     PropertyKey.CAIRO_SQL_ANALYTIC_TREE_PAGE_SIZE,
-                    PropertyKey.CAIRO_SQL_WINDOW_TREE_PAGE_SIZE);
+                    PropertyKey.CAIRO_SQL_WINDOW_TREE_PAGE_SIZE
+            );
             registerDeprecated(
                     PropertyKey.CAIRO_SQL_ANALYTIC_TREE_MAX_PAGES,
-                    PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_PAGES);
+                    PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_PAGES
+            );
 
         }
 
@@ -1789,6 +1787,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean enableTestFactories() {
             return false;
+        }
+
+        @Override
+        public @Nullable ObjObjHashMap<ConfigProperty, String> getAllPairs() {
+            return allPairs;
         }
 
         @Override

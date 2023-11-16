@@ -2541,7 +2541,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                     factory = new ShowTimeZoneFactory();
                 }
             } else if (SqlKeywords.isServerConfKeyword(tok)) {
-                factory = ShowServerConfCursorFactory();
+                factory = new ShowServerConfCursorFactory();
             } else {
                 factory = unknownShowStatement(executionContext, tok);
             }
