@@ -43,7 +43,7 @@ import io.questdb.std.str.Utf8Sink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public final class CleartextPasswordPgWireAuthenticator implements Authenticator {
+public class CleartextPasswordPgWireAuthenticator implements Authenticator {
     public static final char STATUS_IDLE = 'I';
     private static final int INIT_CANCEL_REQUEST = 80877102;
     private static final int INIT_GSS_REQUEST = 80877104;
@@ -64,6 +64,7 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
     private final CircuitBreakerRegistry registry;
     private final String serverVersion;
     private final ResponseSink sink;
+    protected State state = State.EXPECT_INIT_MESSAGE;
     private UsernamePasswordMatcher matcher;
     private long recvBufEnd;
     private long recvBufReadPos;
@@ -74,7 +75,6 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
     private long sendBufStart;
     private long sendBufWritePos;
     private Socket socket;
-    private State state = State.EXPECT_INIT_MESSAGE;
     private CharSequence username;
 
     public CleartextPasswordPgWireAuthenticator(
@@ -488,7 +488,7 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
     }
 
 
-    private enum State {
+    protected enum State {
         EXPECT_INIT_MESSAGE,
         EXPECT_PASSWORD_MESSAGE,
         WRITE_AND_EXPECT_INIT_MESSAGE,
