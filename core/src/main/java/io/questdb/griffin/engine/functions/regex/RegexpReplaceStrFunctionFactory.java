@@ -180,11 +180,12 @@ public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
         }
     }
 
-    // TODO(puzpuzpuz):
-    //  Use StringBuilder instead of StringBuffer here once we drop support for Java 8 where j.u.r.Matcher
-    //  has no method overloads for StringBuilder.
     private static class StringBufferSink implements CharSequence {
-        private final StringBuffer buffer = new StringBuffer();
+//#if jdk.version==8
+//$        private final StringBuffer buffer = new StringBuffer();
+//#else
+        private final StringBuilder buffer = new StringBuilder();
+//#endif
 
         @Override
         public char charAt(int index) {
