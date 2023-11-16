@@ -58,7 +58,7 @@ public class CountDistinctSymbolGroupByFunction extends LongFunction implements 
     public void computeFirst(MapValue mapValue, Record record) {
         final CompactIntHashSet set;
         if (sets.size() <= setIndex) {
-            sets.extendAndSet(setIndex, set = new CompactIntHashSet());
+            sets.extendAndSet(setIndex, set = new CompactIntHashSet(64, 0.7, VALUE_IS_NULL));
         } else {
             set = sets.getQuick(setIndex);
         }
