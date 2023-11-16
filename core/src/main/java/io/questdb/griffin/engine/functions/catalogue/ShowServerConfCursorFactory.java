@@ -90,6 +90,8 @@ public class ShowServerConfCursorFactory extends AbstractRecordCursorFactory {
                         return entry.key.isSensitive();
                     case 5:
                         return entry.value.isDynamic();
+                    case 6:
+                        return entry.key.isLocal();
                     default:
                         return false;
                 }
@@ -164,5 +166,6 @@ public class ShowServerConfCursorFactory extends AbstractRecordCursorFactory {
         METADATA.add(new TableColumnMetadata("value_source", ColumnType.STRING));
         METADATA.add(new TableColumnMetadata("sensitive", ColumnType.BOOLEAN));
         METADATA.add(new TableColumnMetadata("dynamic", ColumnType.BOOLEAN));
+        METADATA.add(new TableColumnMetadata("local", ColumnType.BOOLEAN));
     }
 }

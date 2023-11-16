@@ -31,7 +31,7 @@ import java.util.stream.Collectors;
 
 public enum PropertyKey implements ConfigPropertyKey {
     BINARYDATA_ENCODING_MAXLENGTH("binarydata.encoding.maxlength"),
-    CAIRO_ROOT("cairo.root"),
+    CAIRO_ROOT("cairo.root", false, true),
     CAIRO_VOLUMES("cairo.volumes"),
     CAIRO_SNAPSHOT_INSTANCE_ID("cairo.snapshot.instance.id"),
     CAIRO_SNAPSHOT_RECOVERY_ENABLED("cairo.snapshot.recovery.enabled"),
@@ -133,15 +133,15 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_COPY_FORMATS_FILE("cairo.sql.copy.formats.file"),
     CAIRO_SQL_COPY_MODEL_POOL_CAPACITY("cairo.sql.copy.model.pool.capacity"),
     CAIRO_SQL_COPY_BUFFER_SIZE("cairo.sql.copy.buffer.size"),
-    CAIRO_SQL_COPY_ROOT("cairo.sql.copy.root"),
-    CAIRO_SQL_COPY_WORK_ROOT("cairo.sql.copy.work.root"),
+    CAIRO_SQL_COPY_ROOT("cairo.sql.copy.root", false, true),
+    CAIRO_SQL_COPY_WORK_ROOT("cairo.sql.copy.work.root", false, true),
     CAIRO_SQL_COPY_MAX_INDEX_CHUNK_SIZE("cairo.sql.copy.max.index.chunk.size"),
     CAIRO_SQL_COPY_QUEUE_CAPACITY("cairo.sql.copy.queue.capacity"),
     CAIRO_SQL_COPY_LOG_RETENTION_DAYS("cairo.sql.copy.log.retention.days"),
     CAIRO_SQL_COPY_ID_SUPPLIER("cairo.sql.copy.id.supplier"),
     CAIRO_SQL_EXPLAIN_MODEL_POOL_CAPACITY("cairo.sql.explain.model.pool.capacity"),
     CAIRO_O3_MIN_LAG("cairo.o3.min.lag"),
-    CAIRO_SQL_BACKUP_ROOT("cairo.sql.backup.root"),
+    CAIRO_SQL_BACKUP_ROOT("cairo.sql.backup.root", false, true),
     CAIRO_ATTACH_PARTITION_SUFFIX("cairo.attach.partition.suffix"),
     CAIRO_ATTACH_PARTITION_COPY("cairo.attach.partition.copy"),
     CAIRO_DETACHED_MKDIR_MODE("cairo.detached.mkdir.mode"),
@@ -338,9 +338,9 @@ public enum PropertyKey implements ConfigPropertyKey {
     PG_NET_RECV_BUF_SIZE("pg.net.recv.buf.size"),
     PG_NET_CONNECTION_RCVBUF("pg.net.connection.rcvbuf"),
     PG_NET_SEND_BUF_SIZE("pg.net.send.buf.size"),
-    PG_PASSWORD("pg.password", true),
+    PG_PASSWORD("pg.password", true, false),
     PG_USER("pg.user"),
-    PG_RO_PASSWORD("pg.readonly.password", true),
+    PG_RO_PASSWORD("pg.readonly.password", true, false),
     PG_RO_USER("pg.readonly.user"),
     PG_RO_USER_ENABLED("pg.readonly.user.enabled"),
     PG_SECURITY_READONLY("pg.security.readonly"),
@@ -435,15 +435,19 @@ public enum PropertyKey implements ConfigPropertyKey {
     private final String propertyPath;
     private final boolean sensitive;
 
+    private final boolean local;
+
     PropertyKey(String propertyPath) {
-        this(propertyPath, false);
+        this(propertyPath, false, false);
     }
 
-    PropertyKey(String propertyPath, boolean sensitive) {
+    PropertyKey(String propertyPath, boolean sensitive, boolean local) {
         this.propertyPath = propertyPath;
         this.envVarName = ServerMain.propertyPathToEnvVarName(propertyPath);
         this.sensitive = sensitive;
+        this.local = local;
     }
+
 
 
     public static Optional<PropertyKey> getByString(String name) {
@@ -463,6 +467,11 @@ public enum PropertyKey implements ConfigPropertyKey {
     @Override
     public boolean isSensitive() {
         return sensitive;
+    }
+
+    @Override
+    public boolean isLocal() {
+        return local;
     }
 
     @Override

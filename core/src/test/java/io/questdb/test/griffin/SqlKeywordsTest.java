@@ -227,5 +227,6 @@ public class SqlKeywordsTest {
         specialCases.put("isTransactionIsolation", "transaction_isolation");
         specialCases.put("isEmptyAlias", "''");
         specialCases.put("isKeyword", "select");
+        specialCases.put("isServerConfKeyword", "server_conf");
     }
 }
