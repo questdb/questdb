@@ -1447,7 +1447,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     protected String getString(Properties properties, @Nullable Map<String, String> env, ConfigProperty key, String defaultValue) {
-        String envCandidate = "QDB_" + key.getPropertyPath().replace('.', '_').toUpperCase();
+        String envCandidate = key.getEnvVarEquivalent();
         String envValue = env != null ? env.get(envCandidate) : null;
         if (envValue != null) {
             log.info().$("env config [key=").$(envCandidate).I$();

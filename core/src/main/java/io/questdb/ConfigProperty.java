@@ -25,5 +25,21 @@
 package io.questdb;
 
 public interface ConfigProperty {
+    /**
+     * Returns the environment variable name of the property.
+     */
+    default String getEnvVarEquivalent() {
+        return "QDB_" + getPropertyPath().replace('.', '_').toUpperCase();
+    }
+
+
+    /**
+     * Returns property path as in server.conf.
+     */
     String getPropertyPath();
+
+    /**
+     * Returns true if the property is security-sensitive, e.g. holds a password.
+     */
+    boolean isSensitive();
 }

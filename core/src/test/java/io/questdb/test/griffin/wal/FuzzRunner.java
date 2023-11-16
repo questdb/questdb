@@ -1,3 +1,27 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2023 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
 package io.questdb.test.griffin.wal;
 
 import io.questdb.cairo.*;
@@ -457,8 +481,11 @@ public class FuzzRunner {
             AtomicInteger nextOperation,
             ConcurrentLinkedQueue<Throwable> errors
     ) {
-        writers.add((WalWriter) engine.getTableWriterAPI(tableName, "apply trans test"));
-        final int writerIndex = writers.size() - 1;
+        final int writerIndex;
+        synchronized (writers) {
+            writers.add((WalWriter) engine.getTableWriterAPI(tableName, "apply trans test"));
+            writerIndex = writers.size() - 1;
+        }
 
         return new Thread(() -> {
             int opIndex;
@@ -479,7 +506,10 @@ public class FuzzRunner {
                         }
                     }
 
-                    WalWriter walWriter = writers.get(writerIndex);
+                    WalWriter walWriter;
+                    synchronized (writers) {
+                        walWriter = writers.get(writerIndex);
+                    }
 
                     if (!walWriter.goActive(transaction.structureVersion)) {
                         throw CairoException.critical(0).put("cannot apply structure change");
@@ -496,11 +526,13 @@ public class FuzzRunner {
                     }
 
                     if (transaction.reopenTable) {
-                        // Table is dropped, reload all writers
-                        for (int ii = 0; ii < writers.size(); ii++) {
-                            if (writers.get(ii).getTableToken().getTableName().equals(tableName)) {
-                                writers.get(ii).close();
-                                writers.setQuick(ii, (WalWriter) engine.getTableWriterAPI(tableName, "apply trans test"));
+                        synchronized (writers) {
+                            // Table is dropped, reload all writers
+                            for (int ii = 0; ii < writers.size(); ii++) {
+                                if (writers.get(ii).getTableToken().getTableName().equals(tableName)) {
+                                    writers.get(ii).close();
+                                    writers.setQuick(ii, (WalWriter) engine.getTableWriterAPI(tableName, "apply trans test"));
+                                }
                             }
                         }
                         forceReaderReload.incrementAndGet();
