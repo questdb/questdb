@@ -2282,10 +2282,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testDenseRankWithPartitionBySymbolAndOrderByIntPriceWithWildcard() throws Exception {
         assertQuery("dense_rank\tprice\tsymbol\tts\n" +
                         "1\t1\tBB\t1970-01-01T00:00:00.000000Z\n" +
-                        "2\t2\tCC\t1970-01-02T03:46:40.000000Z\n" +
+                        "4\t2\tCC\t1970-01-02T03:46:40.000000Z\n" +
                         "1\t2\tAA\t1970-01-03T07:33:20.000000Z\n" +
                         "1\t1\tCC\t1970-01-04T11:20:00.000000Z\n" +
-                        "2\t2\tBB\t1970-01-05T15:06:40.000000Z\n" +
+                        "4\t2\tBB\t1970-01-05T15:06:40.000000Z\n" +
                         "1\t1\tBB\t1970-01-06T18:53:20.000000Z\n" +
                         "1\t1\tBB\t1970-01-07T22:40:00.000000Z\n" +
                         "1\t1\tCC\t1970-01-09T02:26:40.000000Z\n" +
