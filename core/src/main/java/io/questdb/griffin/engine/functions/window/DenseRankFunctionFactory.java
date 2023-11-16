@@ -130,6 +130,7 @@ public class DenseRankFunctionFactory implements FunctionFactory {
             if (recordComparator == null) {
                 // order dismiss 
                 Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), rankIndex + 1);
+                rankIndex++;
             } else {
                 if (currentIndex == 0) {
                     currentIndex = 1;
@@ -140,12 +141,13 @@ public class DenseRankFunctionFactory implements FunctionFactory {
                     if (recordComparator.compare(spi.getRecordAt(offset)) != 0) {
                         currentIndex = rankIndex + 1;
                         offset = recordOffset;
+                        rankIndex++;
                     }
                 }
                 Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), currentIndex);
             }
-            rankIndex++;
         }
+        // rankIndex++;
 
         @Override
         public void reopen() {
