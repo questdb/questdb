@@ -64,7 +64,6 @@ public class CleartextPasswordPgWireAuthenticator implements Authenticator {
     private final CircuitBreakerRegistry registry;
     private final String serverVersion;
     private final ResponseSink sink;
-    protected State state = State.EXPECT_INIT_MESSAGE;
     private UsernamePasswordMatcher matcher;
     private long recvBufEnd;
     private long recvBufReadPos;
@@ -75,6 +74,7 @@ public class CleartextPasswordPgWireAuthenticator implements Authenticator {
     private long sendBufStart;
     private long sendBufWritePos;
     private Socket socket;
+    private State state = State.EXPECT_INIT_MESSAGE;
     private CharSequence username;
 
     public CleartextPasswordPgWireAuthenticator(
@@ -488,7 +488,7 @@ public class CleartextPasswordPgWireAuthenticator implements Authenticator {
     }
 
 
-    protected enum State {
+    private enum State {
         EXPECT_INIT_MESSAGE,
         EXPECT_PASSWORD_MESSAGE,
         WRITE_AND_EXPECT_INIT_MESSAGE,

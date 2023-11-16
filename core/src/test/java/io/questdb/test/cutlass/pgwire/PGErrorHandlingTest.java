@@ -1,9 +1,6 @@
 package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.*;
-import io.questdb.cutlass.http.client.Chunk;
-import io.questdb.cutlass.http.client.ChunkedResponse;
-import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.pgwire.CleartextPasswordPgWireAuthenticator;
 import io.questdb.cutlass.pgwire.CustomCloseActionPasswordMatcherDelegate;
 import io.questdb.cutlass.pgwire.PgWireAuthenticatorFactory;
@@ -11,8 +8,6 @@ import io.questdb.cutlass.pgwire.UsernamePasswordMatcher;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8s;
 import io.questdb.test.BootstrapTest;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -119,10 +114,11 @@ public class PGErrorHandlingTest extends BootstrapTest {
                                             ) {
                                                 @Override
                                                 public boolean isAuthenticated() {
-                                                    if (counter.incrementAndGet() > 6) {
+                                                    System.out.println("isAuthenticated() !!!!!!!!!! " + counter.get());
+                                                    if (counter.incrementAndGet() > 3) {
                                                         throw new RuntimeException("Test error");
                                                     }
-                                                    return super.state == State.AUTH_SUCCESS;
+                                                    return super.isAuthenticated();
                                                 }
                                             };
                                         };
@@ -154,30 +150,5 @@ public class PGErrorHandlingTest extends BootstrapTest {
         properties.setProperty("password", "quest");
         final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", PG_PORT);
         return DriverManager.getConnection(url, properties);
-    }
-
-    private void assertExecRequest(
-            HttpClient httpClient,
-            String sql,
-            int expectedHttpStatusCode,
-            String expectedHttpResponse
-    ) {
-        final HttpClient.Request request = httpClient.newRequest();
-        request.GET().url("/exec").query("query", sql);
-        HttpClient.ResponseHeaders response = request.send("localhost", HTTP_PORT);
-        response.await();
-
-        TestUtils.assertEquals(String.valueOf(expectedHttpStatusCode), response.getStatusCode());
-
-        final StringSink sink = new StringSink();
-
-        Chunk chunk;
-        final ChunkedResponse chunkedResponse = response.getChunkedResponse();
-        while ((chunk = chunkedResponse.recv()) != null) {
-            Utf8s.utf8ToUtf16(chunk.lo(), chunk.hi(), sink);
-        }
-
-        TestUtils.assertEquals(expectedHttpResponse, sink);
-        sink.clear();
     }
 }
