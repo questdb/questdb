@@ -741,6 +741,27 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDistinctOverWindowFunction() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table test (event double )");
+            insert("insert into test select x from long_sequence(3)");
+
+            String query = "select * from (" + "SELECT DISTINCT avg(event) OVER (PARTITION BY 1) FROM test" + ")";
+//            assertPlan(query,
+//                    "SelectedRecord\n" +
+//                            "    Distinct\n" +
+//                            "      keys: avg\n" +
+//                            "        CachedWindow\n" +
+//                            "          unorderedFunctions: [avg(event) over (partition by [1])]\n" +
+//                            "            DataFrame\n" +
+//                            "                Row forward scan\n" +
+//                            "                Frame forward scan on: test\n");
+
+            assertSql("avg\n2.0\n", query);
+        });
+    }
+
+    @Test
     public void testDistinctTsWithLimit1() throws Exception {
         assertPlan(
                 "create table di (x int, y long, ts timestamp) timestamp(ts)",

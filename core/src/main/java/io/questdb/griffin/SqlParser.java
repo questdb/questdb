@@ -1879,6 +1879,8 @@ public class SqlParser {
                                     // As a start point, CURRENT ROW specifies that the window begins at the current row.
                                     // In this case the end point cannot be value_expr PRECEDING.
                                     winCol.setRowsLoKind(WindowColumn.CURRENT, lexer.lastTokenPosition());
+                                } else if (SqlKeywords.isPrecedingKeyword(tok)) {
+                                    throw SqlException.$(lexer.lastTokenPosition(), "integer expression expected");
                                 } else {
                                     int pos = lexer.lastTokenPosition();
                                     lexer.unparseLast();
@@ -1921,6 +1923,8 @@ public class SqlParser {
                                         }
                                     } else if (isCurrentRow(lexer, tok)) {
                                         winCol.setRowsHiKind(WindowColumn.CURRENT, lexer.lastTokenPosition());
+                                    } else if (SqlKeywords.isPrecedingKeyword(tok) || SqlKeywords.isFollowingKeyword(tok)) {
+                                        throw SqlException.$(lexer.lastTokenPosition(), "integer expression expected");
                                     } else {
                                         int pos = lexer.lastTokenPosition();
                                         lexer.unparseLast();
@@ -1957,6 +1961,8 @@ public class SqlParser {
                                     winCol.setRowsLoKind(WindowColumn.PRECEDING, lexer.lastTokenPosition());
                                 } else if (isCurrentRow(lexer, tok)) {
                                     winCol.setRowsLoKind(WindowColumn.CURRENT, lexer.lastTokenPosition());
+                                } else if (SqlKeywords.isPrecedingKeyword(tok) || SqlKeywords.isFollowingKeyword(tok)) {
+                                    throw SqlException.$(pos, "integer expression expected");
                                 } else {
                                     lexer.unparseLast();
                                     winCol.setRowsLoExpr(expectExpr(lexer), pos);

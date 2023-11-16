@@ -1231,6 +1231,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
         node1.getConfigurationOverrides().setSqlJoinMetadataPageSize(sqlJoinMetadataPageSize);
     }
 
+    protected static void configOverrideSqlWindowMaxRecursion(int maxRecursion) {
+        node1.getConfigurationOverrides().setSqlWindowMaxRecursion(maxRecursion);
+    }
+
     protected static void configOverrideSqlWindowStoreMaxPages(int windowStoreMaxPages) {
         node1.getConfigurationOverrides().setSqlWindowStoreMaxPages(windowStoreMaxPages);
     }
