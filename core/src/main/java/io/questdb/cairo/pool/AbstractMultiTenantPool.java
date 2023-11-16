@@ -39,7 +39,7 @@ import io.questdb.std.Unsafe;
 import java.util.Arrays;
 import java.util.Map;
 
-public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends AbstractPool implements ResourcePool<T> {
+public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends AbstractPool implements ResourcePool<T> {
     public static final int ENTRY_SIZE = 32;
     public final static String NO_LOCK_REASON = "unknown";
     private static final long LOCK_OWNER = Unsafe.getFieldOffset(Entry.class, "lockOwner");
