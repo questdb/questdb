@@ -31,7 +31,6 @@ import java.util.Arrays;
  * and also has a slightly higher load factor.
  */
 public class CompactLongHashSet extends AbstractLongHashSet {
-
     private static final int MIN_INITIAL_CAPACITY = 16;
 
     public CompactLongHashSet() {
@@ -39,7 +38,7 @@ public class CompactLongHashSet extends AbstractLongHashSet {
     }
 
     public CompactLongHashSet(int initialCapacity) {
-        this(initialCapacity, 0.6, noEntryKey);
+        this(initialCapacity, 0.7, noEntryKey);
     }
 
     public CompactLongHashSet(int initialCapacity, double loadFactor, long noKeyValue) {
@@ -58,7 +57,6 @@ public class CompactLongHashSet extends AbstractLongHashSet {
         if (index < 0) {
             return false;
         }
-
         addAt(index, key);
         return true;
     }

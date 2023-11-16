@@ -62,16 +62,14 @@ public abstract class AbstractLongHashSet implements Mutable {
     }
 
     public int keyIndex(long key) {
-        int index = (int) (key & mask);
-
+        int hashCode = Long.hashCode(key);
+        int index = hashCode & mask;
         if (keys[index] == noEntryKeyValue) {
             return index;
         }
-
         if (key == keys[index]) {
             return -index - 1;
         }
-
         return probe(key, index);
     }
 
@@ -103,7 +101,8 @@ public abstract class AbstractLongHashSet implements Mutable {
                     key != noEntryKeyValue;
                     from = (from + 1) & mask, key = keys[from]
             ) {
-                int idealHit = (int) (key & mask);
+                int hashCode = Long.hashCode(key);
+                int idealHit = hashCode & mask;
                 if (idealHit != from) {
                     int to;
                     if (keys[idealHit] != noEntryKeyValue) {
