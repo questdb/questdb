@@ -2520,7 +2520,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
             // show time zone
             RecordCursorFactory factory = null;
             if (isTablesKeyword(tok)) {
-                factory = new TableListCursorFactory(configuration, AllTablesFunctionFactory.METADATA, AllTablesFunctionFactory.PLAN);
+                factory = new TableListCursorFactory(configuration, AllTablesFunctionFactory.METADATA, AllTablesFunctionFactory.SIGNATURE);
             } else if (isColumnsKeyword(tok)) {
                 factory = new ShowColumnsRecordCursorFactory(sqlShowFromTable(executionContext), lexer.lastTokenPosition());
             } else if (isPartitionsKeyword(tok)) {

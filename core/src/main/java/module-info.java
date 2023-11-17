@@ -675,6 +675,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.catalogue.PgRolesFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedPgRolesFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.InformationSchemaFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.InformationSchemaColumnsFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedPgTypeFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedPgDescriptionFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedPgNamespaceFunctionFactory,

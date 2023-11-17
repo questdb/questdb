@@ -121,9 +121,12 @@ public class TableListFunctionFactory implements FunctionFactory {
         @Override
         protected void _close() {
             cursor.close();
-            tableReaderMetadata.clear(); // release FD of last table on the list
-            tableReaderMetadata = Misc.free(tableReaderMetadata);
+            if (tableReaderMetadata != null) {
+                tableReaderMetadata.clear(); // release FD of last table on the list
+                tableReaderMetadata = Misc.free(tableReaderMetadata);
+            }
             path = Misc.free(path);
+            engine = null;
         }
 
         private class TableListRecordCursor implements NoRandomAccessRecordCursor {

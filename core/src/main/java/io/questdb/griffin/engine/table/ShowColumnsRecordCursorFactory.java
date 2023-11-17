@@ -24,16 +24,18 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Misc;
 
 public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final RecordMetadata METADATA;
-    private static final int N_NAME_COL = 0;
-    private static final int N_TYPE_COL = N_NAME_COL + 1;
+    public static final int N_NAME_COL = 0;
+    public static final int N_TYPE_COL = N_NAME_COL + 1;
     private static final int N_INDEXED_COL = N_TYPE_COL + 1;
     private static final int N_INDEX_BLOCK_CAPACITY_COL = N_INDEXED_COL + 1;
     private static final int N_SYMBOL_CACHED_COL = N_INDEX_BLOCK_CAPACITY_COL + 1;
@@ -52,7 +54,7 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        return cursor.of(executionContext);
+        return cursor.of(executionContext, tableToken, tokenPosition);
     }
 
     @Override
@@ -66,27 +68,20 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
         sink.meta("of").val(tableToken);
     }
 
-    private class ShowColumnsCursor implements RecordCursor {
+    public static class ShowColumnsCursor implements NoRandomAccessRecordCursor {
         private final ShowColumnsRecord record = new ShowColumnsRecord();
         private int columnIndex;
         private TableReader reader;
 
+
         @Override
         public void close() {
-            if (null != reader) {
-                reader.close();
-                reader = null;
-            }
+            reader = Misc.free(reader);
         }
 
         @Override
         public Record getRecord() {
             return record;
-        }
-
-        @Override
-        public Record getRecordB() {
-            throw new UnsupportedOperationException();
         }
 
         @Override
@@ -100,11 +95,6 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
         }
 
         @Override
-        public void recordAt(Record record, long atRowId) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
         public long size() {
             return -1;
         }
@@ -114,7 +104,7 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
             columnIndex = -1;
         }
 
-        private ShowColumnsCursor of(SqlExecutionContext executionContext) {
+        public ShowColumnsCursor of(SqlExecutionContext executionContext, TableToken tableToken,  int tokenPosition) {
             try {
                 reader = executionContext.getReader(tableToken);
             } catch (CairoException e) {
@@ -123,6 +113,10 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
             }
             toTop();
             return this;
+        }
+
+        public ShowColumnsCursor of(SqlExecutionContext executionContext, CharSequence tableName) {
+            return of(executionContext, executionContext.getTableTokenIfExists(tableName), -1);
         }
 
         public class ShowColumnsRecord implements Record {

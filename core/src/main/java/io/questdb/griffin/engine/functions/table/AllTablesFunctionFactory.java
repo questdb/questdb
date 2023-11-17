@@ -38,12 +38,12 @@ import static io.questdb.griffin.engine.functions.catalogue.TableListFunctionFac
 
 public class AllTablesFunctionFactory implements FunctionFactory {
 
-    public static final RecordMetadata METADATA = new GenericRecordMetadata();
-    public static final String PLAN = "all_tables()";
+    public static final RecordMetadata METADATA;
+    public static final String SIGNATURE = "all_tables()";
 
     @Override
     public String getSignature() {
-        return "all_tables()";
+        return SIGNATURE;
     }
 
     @Override
@@ -53,10 +53,12 @@ public class AllTablesFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new CursorFunction(new TableListCursorFactory(configuration, METADATA, PLAN));
+        return new CursorFunction(new TableListCursorFactory(configuration, METADATA, SIGNATURE));
     }
 
     static {
-        ((GenericRecordMetadata) METADATA).add(TableListCursorFactory.TABLE_NAME_COLUMN_META);
+        GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(TableListCursorFactory.TABLE_NAME_COLUMN_META);
+        METADATA = metadata;
     }
 }
