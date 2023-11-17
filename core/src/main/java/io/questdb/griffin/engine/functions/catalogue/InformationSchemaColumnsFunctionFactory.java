@@ -127,8 +127,8 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
                     Record rec = showColumnsCursor.getRecord();
                     CharSequence columnName = rec.getStr(ShowColumnsRecordCursorFactory.N_NAME_COL);
                     CharSequence dataType = rec.getStr(ShowColumnsRecordCursorFactory.N_TYPE_COL);
-                    record.of(tableName, columIdx, columnName, dataType);
                     columIdx++;
+                    record.of(tableName, columIdx, columnName, dataType);
                     return true;
                 }
                 columIdx = -1;

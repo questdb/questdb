@@ -37,15 +37,15 @@ public class InformationSchemaColumnsFunctionFactoryTest extends AbstractCairoTe
             ddl("create table C(col0 double, col1 char, col2 byte)");
             assertQuery(
                     "table_name\tordinal_position\tcolumn_name\tdata_type\n" +
-                            "C\t-1\tcol0\tDOUBLE\n" +
-                            "C\t0\tcol1\tCHAR\n" +
-                            "C\t1\tcol2\tBYTE\n" +
-                            "B\t-1\tcol0\tLONG\n" +
-                            "B\t0\tcol1\tSTRING\n" +
-                            "B\t1\tcol2\tFLOAT\n" +
-                            "A\t-1\tcol0\tINT\n" +
-                            "A\t0\tcol1\tSYMBOL\n" +
-                            "A\t1\tcol2\tDOUBLE\n",
+                            "C\t0\tcol0\tDOUBLE\n" +
+                            "C\t1\tcol1\tCHAR\n" +
+                            "C\t2\tcol2\tBYTE\n" +
+                            "B\t0\tcol0\tLONG\n" +
+                            "B\t1\tcol1\tSTRING\n" +
+                            "B\t2\tcol2\tFLOAT\n" +
+                            "A\t0\tcol0\tINT\n" +
+                            "A\t1\tcol1\tSYMBOL\n" +
+                            "A\t2\tcol2\tDOUBLE\n",
                     "SELECT * FROM information_schema.columns()",
                     null,
                     null,
