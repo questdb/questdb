@@ -25,9 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.cairo.sql.WindowSPI;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.std.*;
@@ -92,6 +90,17 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         mem.jumpTo(rowToDataOffset(recordOffset + varOffset));
         varAppendOffset = rowToDataOffset(recordOffset + varOffset + fixOffset);
         return recordOffset;
+    }
+
+    @Override
+    public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
+        long result = 0;
+        while (nextRecordOffset != -1) {
+            result++;
+            nextRecordOffset = mem.getLong(nextRecordOffset);
+        }
+
+        counter.add(result);
     }
 
     @Override

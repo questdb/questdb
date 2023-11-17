@@ -590,7 +590,12 @@ public class OrderByAscRowSkippingTest extends AbstractCairoTest {
                 RecordCursorFactory factory = prepareFactory(reader);
                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)
         ) {
-            Assert.assertTrue(cursor.skipTo(11) > 0);
+            RecordCursor.Counter counter = new RecordCursor.Counter();
+            counter.set(11);
+
+            cursor.skipRows(counter);
+
+            Assert.assertTrue(counter.get() > 0);
             Assert.assertFalse(cursor.hasNext());
         }
     }
@@ -614,7 +619,11 @@ public class OrderByAscRowSkippingTest extends AbstractCairoTest {
                         RecordCursorFactory factory = prepareFactory(reader);
                         RecordCursor cursor = factory.getCursor(sqlExecutionContext)
                 ) {
-                    Assert.assertEquals(cursor.skipTo(1), 0);
+                    RecordCursor.Counter counter = new RecordCursor.Counter();
+                    counter.set(1);
+                    cursor.skipRows(counter);
+
+                    Assert.assertEquals(1, counter.get());
                     Assert.assertFalse(cursor.hasNext());
                 }
 
@@ -633,7 +642,11 @@ public class OrderByAscRowSkippingTest extends AbstractCairoTest {
                 RecordCursorFactory factory = prepareFactory(reader);
                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)
         ) {
-            Assert.assertFalse(cursor.skipTo(1) > 0);
+            RecordCursor.Counter counter = new RecordCursor.Counter();
+            counter.set(1);
+            cursor.skipRows(counter);
+
+            Assert.assertEquals(1, counter.get());
             Assert.assertFalse(cursor.hasNext());
         }
     }
