@@ -340,7 +340,6 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                 "line.tcp.enabled\tQDB_LINE_TCP_ENABLED\ttrue\tconf\tfalse\tfalse\tfalse\n" +
                                 "line.tcp.io.halt.on.error\tQDB_LINE_TCP_IO_HALT_ON_ERROR\tfalse\tdefault\tfalse\tfalse\tfalse\n" +
                                 "line.tcp.io.worker.affinity\tQDB_LINE_TCP_IO_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\tfalse\n" +
-                                "line.tcp.io.worker.count\tQDB_LINE_TCP_IO_WORKER_COUNT\t1\tconf\tfalse\tfalse\tfalse\n" +
                                 "line.tcp.io.worker.sleep.threshold\tQDB_LINE_TCP_IO_WORKER_SLEEP_THRESHOLD\t10000\tdefault\tfalse\tfalse\tfalse\n" +
                                 "line.tcp.io.worker.yield.threshold\tQDB_LINE_TCP_IO_WORKER_YIELD_THRESHOLD\t10\tdefault\tfalse\tfalse\tfalse\n" +
                                 "line.tcp.maintenance.job.interval\tQDB_LINE_TCP_MAINTENANCE_JOB_INTERVAL\t1000\tdefault\tfalse\tfalse\tfalse\n" +
@@ -443,7 +442,6 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                 "telemetry.hide.tables\tQDB_TELEMETRY_HIDE_TABLES\ttrue\tdefault\tfalse\tfalse\tfalse\n" +
                                 "telemetry.queue.capacity\tQDB_TELEMETRY_QUEUE_CAPACITY\t512\tdefault\tfalse\tfalse\tfalse\n" +
                                 "wal.apply.worker.affinity\tQDB_WAL_APPLY_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\tfalse\n" +
-                                "wal.apply.worker.count\tQDB_WAL_APPLY_WORKER_COUNT\t4\tdefault\tfalse\tfalse\tfalse\n" +
                                 "wal.apply.worker.haltOnError\tQDB_WAL_APPLY_WORKER_HALTONERROR\tfalse\tdefault\tfalse\tfalse\tfalse\n" +
                                 "wal.apply.worker.sleep.threshold\tQDB_WAL_APPLY_WORKER_SLEEP_THRESHOLD\t10000\tdefault\tfalse\tfalse\tfalse\n" +
                                 "wal.apply.worker.sleep.timeout\tQDB_WAL_APPLY_WORKER_SLEEP_TIMEOUT\t10\tdefault\tfalse\tfalse\tfalse\n" +
