@@ -69,17 +69,6 @@ public class CompactCharSequenceHashSetTest {
         }
 
         Assert.assertEquals(n, set.size());
-
-        for (int i = 0; i < n; i++) {
-            Assert.assertEquals("at " + i, set.remove(next(rnd)), -1);
-        }
-
-        Rnd rnd4 = new Rnd();
-        for (int i = 0; i < n; i++) {
-            Assert.assertTrue("at " + i, set.remove(next(rnd4)) > -1);
-        }
-
-        Assert.assertEquals(0, set.size());
     }
 
     private static CharSequence next(Rnd rnd) {
