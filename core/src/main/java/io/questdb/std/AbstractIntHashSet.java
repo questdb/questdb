@@ -64,15 +64,12 @@ public abstract class AbstractIntHashSet implements Mutable {
 
     public int keyIndex(int key) {
         int index = key & mask;
-
         if (keys[index] == noEntryKeyValue) {
             return index;
         }
-
         if (key == keys[index]) {
             return -index - 1;
         }
-
         return probe(key, index);
     }
 

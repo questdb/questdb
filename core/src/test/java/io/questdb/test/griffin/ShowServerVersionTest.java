@@ -22,24 +22,27 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.test.griffin;
 
-public interface ConfigProperty {
-    /**
-     * Returns the environment variable name of the property.
-     */
-    default String getEnvVarEquivalent() {
-        return "QDB_" + getPropertyPath().replace('.', '_').toUpperCase();
+import io.questdb.griffin.SqlException;
+import io.questdb.test.AbstractCairoTest;
+import org.junit.Test;
+
+import static io.questdb.griffin.engine.functions.catalogue.ShowServerVersionCursorFactory.SERVER_VERSION;
+
+public class ShowServerVersionTest extends AbstractCairoTest {
+
+    @Test
+    public void testShowServerVersion() throws SqlException {
+        final String expected = "server_version\n" +
+                SERVER_VERSION + "\n";
+        assertQuery(
+                expected,
+                "show server_version",
+                null,
+                false,
+                true
+        );
     }
 
-
-    /**
-     * Returns property path as in server.conf.
-     */
-    String getPropertyPath();
-
-    /**
-     * Returns true if the property is security-sensitive, e.g. holds a password.
-     */
-    boolean isSensitive();
 }
