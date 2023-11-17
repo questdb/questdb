@@ -2903,8 +2903,8 @@ public class SqlOptimiser implements Mutable {
                 case QueryModel.SHOW_TIME_ZONE:
                     tableFactory = new ShowTimeZoneFactory();
                     break;
-                case QueryModel.SHOW_SERVER_CONF:
-                    tableFactory = new ShowServerConfCursorFactory();
+                case QueryModel.SHOW_PARAMETERS:
+                    tableFactory = new ShowParametersCursorFactory();
                     break;
                 case QueryModel.SHOW_SERVER_VERSION:
                     tableFactory = new ShowServerVersionCursorFactory();

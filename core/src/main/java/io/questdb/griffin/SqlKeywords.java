@@ -1980,23 +1980,22 @@ public class SqlKeywords {
         return Chars.equals(token, ';');
     }
 
-    public static boolean isServerConfKeyword(CharSequence tok) {
-        if (tok.length() != 11) {
+    public static boolean isParametersKeyword(CharSequence tok) {
+        if (tok.length() != 10) {
             return false;
         }
 
         int i = 0;
-        return (tok.charAt(i++) | 32) == 's'
+        return (tok.charAt(i++) | 32) == 'p'
+                && (tok.charAt(i++) | 32) == 'a'
+                && (tok.charAt(i++) | 32) == 'r'
+                && (tok.charAt(i++) | 32) == 'a'
+                && (tok.charAt(i++) | 32) == 'm'
+                && (tok.charAt(i++) | 32) == 'e'
+                && (tok.charAt(i++) | 32) == 't'
                 && (tok.charAt(i++) | 32) == 'e'
                 && (tok.charAt(i++) | 32) == 'r'
-                && (tok.charAt(i++) | 32) == 'v'
-                && (tok.charAt(i++) | 32) == 'e'
-                && (tok.charAt(i++) | 32) == 'r'
-                && tok.charAt(i++) == '_'
-                && (tok.charAt(i++) | 32) == 'c'
-                && (tok.charAt(i++) | 32) == 'o'
-                && (tok.charAt(i++) | 32) == 'n'
-                && (tok.charAt(i) | 32) == 'f';
+                && (tok.charAt(i++) | 32) == 's';
     }
 
     public static boolean isSetKeyword(CharSequence tok) {

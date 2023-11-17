@@ -156,15 +156,11 @@ public class SqlKeywordsTest {
     }
 
     @Test
-    public void testIsServerConfKeyword() {
-        Assert.assertTrue(SqlKeywords.isServerConfKeyword("SERVER_CONF"));
-        Assert.assertTrue(SqlKeywords.isServerConfKeyword("server_conf"));
-
-        Assert.assertFalse(SqlKeywords.isServerConfKeyword("SERVER CONF"));
-        Assert.assertFalse(SqlKeywords.isServerConfKeyword("server conf"));
-        Assert.assertFalse(SqlKeywords.isServerConfKeyword("server-conf"));
-        Assert.assertFalse(SqlKeywords.isServerConfKeyword("serverconf"));
-        Assert.assertFalse(SqlKeywords.isServerConfKeyword("server.conf"));
+    public void testIsParametersKeyword() {
+        Assert.assertTrue(SqlKeywords.isParametersKeyword("PARAMETERS"));
+        Assert.assertTrue(SqlKeywords.isParametersKeyword("parameters"));
+        Assert.assertTrue(SqlKeywords.isParametersKeyword("paraMEters"));
+        Assert.assertFalse(SqlKeywords.isParametersKeyword("param3ters"));
     }
 
     @Test
@@ -227,7 +223,6 @@ public class SqlKeywordsTest {
         specialCases.put("isTransactionIsolation", "transaction_isolation");
         specialCases.put("isEmptyAlias", "''");
         specialCases.put("isKeyword", "select");
-        specialCases.put("isServerConfKeyword", "server_conf");
         specialCases.put("isServerVersionKeyword", "server_version");
     }
 }

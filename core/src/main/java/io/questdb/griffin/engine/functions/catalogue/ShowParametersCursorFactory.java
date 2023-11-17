@@ -15,12 +15,12 @@ import org.jetbrains.annotations.NotNull;
 
 import java.util.Iterator;
 
-public class ShowServerConfCursorFactory extends AbstractRecordCursorFactory {
+public class ShowParametersCursorFactory extends AbstractRecordCursorFactory {
 
     private static final GenericRecordMetadata METADATA = new GenericRecordMetadata();
-    private final ShowServerConfRecordCursor cursor = new ShowServerConfRecordCursor();
+    private final ShowParametersRecordCursor cursor = new ShowParametersRecordCursor();
 
-    public ShowServerConfCursorFactory() {
+    public ShowParametersCursorFactory() {
         super(METADATA);
     }
 
@@ -36,7 +36,7 @@ public class ShowServerConfCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("show_server_conf");
+        sink.type("show parameters");
     }
 
     private static final class EmptyIterator implements Iterator<ObjObjHashMap.Entry<ConfigPropertyKey, ConfigPropertyValue>> {
@@ -53,7 +53,7 @@ public class ShowServerConfCursorFactory extends AbstractRecordCursorFactory {
         }
     }
 
-    private static class ShowServerConfRecordCursor implements RecordCursor {
+    private static class ShowParametersRecordCursor implements RecordCursor {
         private ObjObjHashMap<ConfigPropertyKey, ConfigPropertyValue> allPairs;
         private ObjObjHashMap.Entry<ConfigPropertyKey, ConfigPropertyValue> entry;
         private final Record record = new Record() {
@@ -150,7 +150,7 @@ public class ShowServerConfCursorFactory extends AbstractRecordCursorFactory {
             entry = null;
         }
 
-        private ShowServerConfRecordCursor of(ObjObjHashMap<ConfigPropertyKey, ConfigPropertyValue> allPairs) {
+        private ShowParametersRecordCursor of(ObjObjHashMap<ConfigPropertyKey, ConfigPropertyValue> allPairs) {
             this.allPairs = allPairs;
             toTop();
             return this;

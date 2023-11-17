@@ -1102,8 +1102,8 @@ public class SqlParser {
                     if (tok != null && SqlKeywords.isZoneKeyword(tok)) {
                         showKind = QueryModel.SHOW_TIME_ZONE;
                     }
-                } else if (SqlKeywords.isServerConfKeyword(tok)) {
-                    showKind = QueryModel.SHOW_SERVER_CONF;
+                } else if (SqlKeywords.isParametersKeyword(tok)) {
+                    showKind = QueryModel.SHOW_PARAMETERS;
                 } else if (SqlKeywords.isServerVersionKeyword(tok)) {
                     showKind = QueryModel.SHOW_SERVER_VERSION;
                 } else {
@@ -1116,6 +1116,7 @@ public class SqlParser {
                         .put("'TABLES', 'COLUMNS FROM <tab>', 'PARTITIONS FROM <tab>', ")
                         .put("'TRANSACTION ISOLATION LEVEL', 'transaction_isolation', ")
                         .put("'max_identifier_length', 'standard_conforming_strings', ")
+                        .put("'parameters', 'server_version', ")
                         .put("'search_path', 'datestyle', or 'time zone'");
             } else {
                 model.setShowKind(showKind);

@@ -53,7 +53,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testShowServerConf() throws Exception {
+    public void testShowParameters() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (
                     final ServerMain serverMain = new ServerMain(getServerMainArgs());
@@ -64,7 +64,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                 TestUtils.assertSql(
                         serverMain.getEngine(),
                         executionContext,
-                        "(SHOW SERVER_CONF) where property_path not in ('cairo.root', 'cairo.sql.backup.root', 'cairo.sql.copy.root', 'cairo.sql.copy.work.root', 'cairo.writer.misc.append.page.size', 'line.tcp.io.worker.count', 'wal.apply.worker.count') order by 1",
+                        "(show parameters) where property_path not in ('cairo.root', 'cairo.sql.backup.root', 'cairo.sql.copy.root', 'cairo.sql.copy.work.root', 'cairo.writer.misc.append.page.size', 'line.tcp.io.worker.count', 'wal.apply.worker.count') order by 1",
                         sink,
                         "property_path\tenv_var_name\tvalue\tvalue_source\tsensitive\tdynamic\n" +
                                 "binarydata.encoding.maxlength\tQDB_BINARYDATA_ENCODING_MAXLENGTH\t32768\tdefault\tfalse\tfalse\n" +
