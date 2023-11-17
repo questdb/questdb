@@ -53,13 +53,13 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new CursorFunction(new ComposedCursorFactory(configuration));
+        return new CursorFunction(new ColumnsCursorFactory(configuration));
     }
 
-    private static class ComposedCursorFactory extends AbstractRecordCursorFactory {
+    private static class ColumnsCursorFactory extends AbstractRecordCursorFactory {
         private final ColumnRecordCursor cursor;
 
-        private ComposedCursorFactory(CairoConfiguration configuration) {
+        private ColumnsCursorFactory(CairoConfiguration configuration) {
             super(METADATA);
             cursor = new ColumnRecordCursor(configuration);
         }
