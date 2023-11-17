@@ -141,6 +141,7 @@ public class TelemetryTest extends AbstractCairoTest {
 
                 HashSet<Short> expectedClasses = new HashSet<>();
                 expectedClasses.add(TelemetrySystemEvent.SYSTEM_OS_CLASS_BASE);
+                expectedClasses.add(TelemetrySystemEvent.SYSTEM_ENV_TYPE_BASE);
                 expectedClasses.add(TelemetrySystemEvent.SYSTEM_CPU_CLASS_BASE);
                 expectedClasses.add(TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE);
                 expectedClasses.add(TelemetrySystemEvent.SYSTEM_TABLE_COUNT_CLASS_BASE);
