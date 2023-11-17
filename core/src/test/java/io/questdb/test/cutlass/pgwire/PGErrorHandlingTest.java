@@ -114,8 +114,8 @@ public class PGErrorHandlingTest extends BootstrapTest {
                                             ) {
                                                 @Override
                                                 public boolean isAuthenticated() {
-                                                    System.out.println("isAuthenticated() !!!!! " + counter.get());
-                                                    if (counter.incrementAndGet() > 3) {
+                                                    System.out.println("isAuthenticated() !!!!!! " + counter.get());
+                                                    if (counter.incrementAndGet() > 5) {
                                                         throw new RuntimeException("Test error");
                                                     }
                                                     return super.isAuthenticated();
