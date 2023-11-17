@@ -157,6 +157,14 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
+        public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
+            if (!isDataMapBuilt) {
+                buildDataMap();
+            }
+            baseCursor.calculateSize(circuitBreaker, counter);
+        }
+
+        @Override
         public void close() {
             if (isOpen) {
                 isOpen = false;
@@ -169,20 +177,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         @Override
         public boolean hasNext() {
             if (!isDataMapBuilt) {
-                final Record baseRecord = managedCursor.getRecord();
-                while (managedCursor.hasNext()) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
-                    final MapKey key = dataMap.withKey();
-                    mapSink.copy(baseRecord, key);
-                    MapValue value = key.createValue();
-                    if (value.isNew()) {
-                        groupByFunctionsUpdater.updateNew(value, baseRecord);
-                    } else {
-                        groupByFunctionsUpdater.updateExisting(value, baseRecord);
-                    }
-                }
-                super.of(dataMap.getCursor());
-                isDataMapBuilt = true;
+                buildDataMap();
             }
             return super.hasNext();
         }
@@ -195,6 +190,23 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             this.circuitBreaker = circuitBreaker;
             this.managedCursor = managedCursor;
             isDataMapBuilt = false;
+        }
+
+        private void buildDataMap() {
+            final Record baseRecord = managedCursor.getRecord();
+            while (managedCursor.hasNext()) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
+                final MapKey key = dataMap.withKey();
+                mapSink.copy(baseRecord, key);
+                MapValue value = key.createValue();
+                if (value.isNew()) {
+                    groupByFunctionsUpdater.updateNew(value, baseRecord);
+                } else {
+                    groupByFunctionsUpdater.updateExisting(value, baseRecord);
+                }
+            }
+            super.of(dataMap.getCursor());
+            isDataMapBuilt = true;
         }
     }
 }

@@ -25,6 +25,7 @@
 package io.questdb.cutlass.http.processors;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
@@ -66,6 +67,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final IntList columnSkewList = new IntList();
     private final IntList columnTypesAndFlags = new IntList();
     private final StringSink columnsQueryParameter = new StringSink();
+    private final RecordCursor.Counter counter = new RecordCursor.Counter();
     private final int doubleScale;
     private final SCSequence eventSubSequence = new SCSequence();
     private final int floatScale;
@@ -159,6 +161,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         operationFuture = Misc.free(operationFuture);
         skip = 0;
         count = 0;
+        counter.clear();
         stop = 0;
         containsSecret = false;
     }
@@ -184,6 +187,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         this.skip = skip;
         this.stop = stop;
         count = 0L;
+        counter.clear();
         noMeta = Utf8s.equalsNcAscii("true", request.getUrlParam(URL_PARAM_NM));
         countRows = Utf8s.equalsNcAscii("true", request.getUrlParam(URL_PARAM_COUNT));
         timings = Utf8s.equalsNcAscii("true", request.getUrlParam(URL_PARAM_TIMINGS));
@@ -632,6 +636,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         socket.putAscii('[');
         columnIndex = 0;
         count++;
+        counter.inc();
     }
 
     private void doQueryRecordSuffix(HttpChunkedResponseSocket socket) {
@@ -671,6 +676,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             }
             socket.putAscii('}');
             count = -1;
+            counter.set(-1);
             socket.sendChunk(true);
             return;
         }
@@ -700,8 +706,15 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             // we don't need to read records, just round up record count
             final RecordCursor cursor = this.cursor;
             long size = cursor.size();
+            counter.clear();
             if (size < 0) {
-                this.count += cursor.calculateSize(circuitBreaker) + 1;
+                try {
+                    cursor.calculateSize(circuitBreaker, counter);
+                    this.count += counter.get() + 1;
+                } catch (DataUnavailableException e) {
+                    this.count += counter.get();
+                    throw e;
+                }
             } else {
                 this.count = size;
             }
@@ -807,6 +820,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 return;
             }
             count = skip;
+            counter.set(skip);
         } else {
             if (!cursor.hasNext()) {
                 cursorHasRows = false;
