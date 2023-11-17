@@ -56,7 +56,7 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
     public void computeFirst(MapValue mapValue, Record record) {
         final CompactLongHashSet set;
         if (sets.size() <= setIndex) {
-            sets.extendAndSet(setIndex, set = new CompactLongHashSet());
+            sets.extendAndSet(setIndex, set = new CompactLongHashSet(64, 0.7, Numbers.LONG_NaN));
         } else {
             set = sets.getQuick(setIndex);
         }
