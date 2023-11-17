@@ -31,12 +31,11 @@ import java.util.Arrays;
  */
 public class BitSet implements Mutable {
     private static final int BITS_PER_WORD = 64;
-    private static final int DEFAULT_NBITS = 64 * BITS_PER_WORD;
     private final int initialNBits;
     private long[] words;
 
     public BitSet() {
-        this(DEFAULT_NBITS);
+        this(16 * BITS_PER_WORD);
     }
 
     public BitSet(int nBits) {
