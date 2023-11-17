@@ -239,7 +239,6 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                 "cairo.writer.data.index.value.append.page.size\tQDB_CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE\t16777216\tdefault\tfalse\tfalse\tfalse\n" +
                                 "cairo.writer.fo_opts\tQDB_CAIRO_WRITER_FO_OPTS\to_none\tdefault\tfalse\tfalse\tfalse\n" +
                                 "cairo.writer.memory.limit\tQDB_CAIRO_WRITER_MEMORY_LIMIT\t0\tdefault\tfalse\tfalse\tfalse\n" +
-                                "cairo.writer.misc.append.page.size\tQDB_CAIRO_WRITER_MISC_APPEND_PAGE_SIZE\t65536\tdefault\tfalse\tfalse\tfalse\n" +
                                 "cairo.writer.tick.rows.count\tQDB_CAIRO_WRITER_TICK_ROWS_COUNT\t1024\tdefault\tfalse\tfalse\tfalse\n" +
                                 "circuit.breaker.buffer.size\tQDB_CIRCUIT_BREAKER_BUFFER_SIZE\t64\tdefault\tfalse\tfalse\tfalse\n" +
                                 "circuit.breaker.throttle\tQDB_CIRCUIT_BREAKER_THROTTLE\t2000000\tdefault\tfalse\tfalse\tfalse\n" +
