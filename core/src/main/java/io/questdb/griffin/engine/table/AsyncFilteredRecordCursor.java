@@ -67,27 +67,25 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     }
 
     @Override
-    public long calculateSize(SqlExecutionCircuitBreaker circuitBreaker) {
+    public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor.Counter counter) {
         if (frameIndex == -1) {
             fetchNextFrame();
             circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
         }
 
         if (rowsRemaining < 1) {
-            return 0;
+            return;
         }
-
-        long size = 0;
 
         // We have rows in the current frame we still need to dispatch
         if (frameRowIndex < frameRowCount) {
             long frameRowsLeft = Math.min(frameRowCount - frameRowIndex, rowsRemaining);
             rowsRemaining -= frameRowsLeft;
             frameRowIndex += frameRowsLeft;
-            size += frameRowsLeft;
+            counter.add(frameRowsLeft);
             if (rowsRemaining < 1) {
                 frameSequence.cancel();
-                return size;
+                return;
             }
         }
 
@@ -102,10 +100,10 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                 long frameRowsLeft = Math.min(frameRowCount - frameRowIndex, rowsRemaining);
                 rowsRemaining -= frameRowsLeft;
                 frameRowIndex += frameRowsLeft;
-                size += frameRowsLeft;
+                counter.add(frameRowsLeft);
                 if (rowsRemaining < 1) {
                     frameSequence.cancel();
-                    return size;
+                    return;
                 } else {
                     collectCursor(false);
                 }
@@ -117,8 +115,6 @@ class AsyncFilteredRecordCursor implements RecordCursor {
 
             circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
         }
-
-        return size;
     }
 
     @Override
@@ -224,13 +220,12 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     }
 
     @Override
-    public long skipTo(long rowCount) throws DataUnavailableException {
+    public void skipRows(Counter rowCount) throws DataUnavailableException {
         if (frameIndex == -1) {
             fetchNextFrame();
         }
 
-        long rowCountLeft = Math.min(rowsRemaining, rowCount);
-        long skipped = 0;
+        long rowCountLeft = Math.min(rowsRemaining, rowCount.get());
 
         // We have rows in the current frame we still need to dispatch
         if (frameRowIndex < frameRowCount) {
@@ -238,9 +233,9 @@ class AsyncFilteredRecordCursor implements RecordCursor {
             rowsRemaining -= frameRowsLeft;
             frameRowIndex += frameRowsLeft;
             rowCountLeft -= frameRowsLeft;
-            skipped += frameRowsLeft;
+            rowCount.dec(frameRowsLeft);
             if (rowCountLeft == 0) {
-                return skipped;
+                return;
             }
         }
 
@@ -256,9 +251,9 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                 rowsRemaining -= frameRowsLeft;
                 frameRowIndex += frameRowsLeft;
                 rowCountLeft -= frameRowsLeft;
-                skipped += frameRowsLeft;
+                rowCount.dec(frameRowsLeft);
                 if (rowCountLeft == 0) {
-                    return skipped;
+                    return;
                 }
             }
 
@@ -268,8 +263,6 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                 throwTimeoutException();
             }
         }
-
-        return skipped;
     }
 
     @Override

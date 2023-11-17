@@ -24,12 +24,33 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.engine.AbstractVirtualFunctionRecordCursor;
 import io.questdb.std.ObjList;
 
 public class VirtualFunctionDirectSymbolRecordCursor extends AbstractVirtualFunctionRecordCursor {
     public VirtualFunctionDirectSymbolRecordCursor(ObjList<Function> functions, boolean supportsRandomAccess) {
         super(functions, supportsRandomAccess);
+    }
+
+    @Override
+    public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor.Counter counter) {
+        if (baseCursor != null) {
+            baseCursor.calculateSize(circuitBreaker, counter);
+        } else {
+            RecordCursor.calculateSize(this, circuitBreaker, counter);
+        }
+    }
+
+    @Override
+    public void skipRows(Counter rowCount) throws DataUnavailableException {
+        if (baseCursor != null) {
+            baseCursor.skipRows(rowCount);
+        } else {
+            RecordCursor.skipRows(this, rowCount);
+        }
     }
 }
