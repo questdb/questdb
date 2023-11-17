@@ -4407,14 +4407,23 @@ public class JoinTest extends AbstractCairoTest {
     private void assertSkipToAndCalculateSize(String select, int size) throws SqlException {
         assertSql("count\n" + size + "\n", "select count(*) from " + select);
 
+        RecordCursor.Counter counter = new RecordCursor.Counter();
+
         try (RecordCursorFactory factory = select(select)) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                Assert.assertEquals(size, cursor.calculateSize(sqlExecutionContext.getCircuitBreaker()));
+                cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
+                Assert.assertEquals(size, counter.get());
 
                 for (int i = 0; i < size + 2; i++) {
                     cursor.toTop();
-                    cursor.skipTo(i);
-                    Assert.assertEquals(Math.max(size - i, 0), cursor.calculateSize(sqlExecutionContext.getCircuitBreaker()));
+                    counter.set(i);
+                    cursor.skipRows(counter);
+
+                    Assert.assertEquals(Math.max(i - size, 0), counter.get());
+
+                    counter.clear();
+                    cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
+                    Assert.assertEquals(Math.max(size - i, 0), counter.get());
 
                     cursor.toTop();
                     for (int j = 0; j < i; j++) {
@@ -4422,7 +4431,10 @@ public class JoinTest extends AbstractCairoTest {
                             break;
                         }
                     }
-                    Assert.assertEquals(Math.max(size - i, 0), cursor.calculateSize(sqlExecutionContext.getCircuitBreaker()));
+
+                    counter.clear();
+                    cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
+                    Assert.assertEquals(Math.max(size - i, 0), counter.get());
                 }
             }
         }
