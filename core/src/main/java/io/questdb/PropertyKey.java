@@ -31,7 +31,7 @@ import java.util.stream.Collectors;
 
 public enum PropertyKey implements ConfigPropertyKey {
     BINARYDATA_ENCODING_MAXLENGTH("binarydata.encoding.maxlength"),
-    CAIRO_ROOT("cairo.root", false, true),
+    CAIRO_ROOT("cairo.root"),
     CAIRO_VOLUMES("cairo.volumes"),
     CAIRO_SNAPSHOT_INSTANCE_ID("cairo.snapshot.instance.id"),
     CAIRO_SNAPSHOT_RECOVERY_ENABLED("cairo.snapshot.recovery.enabled"),
@@ -108,7 +108,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE("cairo.writer.data.index.value.append.page.size"),
     CAIRO_WRITER_DATA_APPEND_PAGE_SIZE("cairo.writer.data.append.page.size"),
     CAIRO_SYSTEM_WRITER_DATA_APPEND_PAGE_SIZE("cairo.system.writer.data.append.page.size"),
-    CAIRO_WRITER_MISC_APPEND_PAGE_SIZE("cairo.writer.misc.append.page.size", false, true),
+    CAIRO_WRITER_MISC_APPEND_PAGE_SIZE("cairo.writer.misc.append.page.size"),
     CAIRO_WRITER_COMMAND_QUEUE_SLOT_SIZE("cairo.writer.command.queue.slot.size"),
     CAIRO_SQL_SAMPLEBY_PAGE_SIZE("cairo.sql.sampleby.page.size"),
     CAIRO_SQL_DOUBLE_CAST_SCALE("cairo.sql.double.cast.scale"),
@@ -133,15 +133,15 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_COPY_FORMATS_FILE("cairo.sql.copy.formats.file"),
     CAIRO_SQL_COPY_MODEL_POOL_CAPACITY("cairo.sql.copy.model.pool.capacity"),
     CAIRO_SQL_COPY_BUFFER_SIZE("cairo.sql.copy.buffer.size"),
-    CAIRO_SQL_COPY_ROOT("cairo.sql.copy.root", false, true),
-    CAIRO_SQL_COPY_WORK_ROOT("cairo.sql.copy.work.root", false, true),
+    CAIRO_SQL_COPY_ROOT("cairo.sql.copy.root"),
+    CAIRO_SQL_COPY_WORK_ROOT("cairo.sql.copy.work.root"),
     CAIRO_SQL_COPY_MAX_INDEX_CHUNK_SIZE("cairo.sql.copy.max.index.chunk.size"),
     CAIRO_SQL_COPY_QUEUE_CAPACITY("cairo.sql.copy.queue.capacity"),
     CAIRO_SQL_COPY_LOG_RETENTION_DAYS("cairo.sql.copy.log.retention.days"),
     CAIRO_SQL_COPY_ID_SUPPLIER("cairo.sql.copy.id.supplier"),
     CAIRO_SQL_EXPLAIN_MODEL_POOL_CAPACITY("cairo.sql.explain.model.pool.capacity"),
     CAIRO_O3_MIN_LAG("cairo.o3.min.lag"),
-    CAIRO_SQL_BACKUP_ROOT("cairo.sql.backup.root", false, true),
+    CAIRO_SQL_BACKUP_ROOT("cairo.sql.backup.root"),
     CAIRO_ATTACH_PARTITION_SUFFIX("cairo.attach.partition.suffix"),
     CAIRO_ATTACH_PARTITION_COPY("cairo.attach.partition.copy"),
     CAIRO_DETACHED_MKDIR_MODE("cairo.detached.mkdir.mode"),
@@ -307,7 +307,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     LINE_TCP_WRITER_WORKER_YIELD_THRESHOLD("line.tcp.writer.worker.yield.threshold"),
     LINE_TCP_WRITER_WORKER_SLEEP_THRESHOLD("line.tcp.writer.worker.sleep.threshold"),
     LINE_TCP_SYMBOL_CACHE_WAIT_US_BEFORE_RELOAD("line.tcp.symbol.cache.wait.us.before.reload"),
-    LINE_TCP_IO_WORKER_COUNT("line.tcp.io.worker.count", false, true),
+    LINE_TCP_IO_WORKER_COUNT("line.tcp.io.worker.count"),
     LINE_TCP_IO_WORKER_AFFINITY("line.tcp.io.worker.affinity"),
     LINE_TCP_IO_HALT_ON_ERROR("line.tcp.io.halt.on.error"),
     LINE_TCP_IO_WORKER_YIELD_THRESHOLD("line.tcp.io.worker.yield.threshold"),
@@ -338,9 +338,9 @@ public enum PropertyKey implements ConfigPropertyKey {
     PG_NET_RECV_BUF_SIZE("pg.net.recv.buf.size"),
     PG_NET_CONNECTION_RCVBUF("pg.net.connection.rcvbuf"),
     PG_NET_SEND_BUF_SIZE("pg.net.send.buf.size"),
-    PG_PASSWORD("pg.password", true, false),
+    PG_PASSWORD("pg.password", true),
     PG_USER("pg.user"),
-    PG_RO_PASSWORD("pg.readonly.password", true, false),
+    PG_RO_PASSWORD("pg.readonly.password", true),
     PG_RO_USER("pg.readonly.user"),
     PG_RO_USER_ENABLED("pg.readonly.user.enabled"),
     PG_SECURITY_READONLY("pg.security.readonly"),
@@ -403,7 +403,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_WAL_SEGMENT_ROLLOVER_SIZE("cairo.wal.segment.rollover.size"),
     CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE("cairo.wal.writer.data.append.page.size"),
     CAIRO_SYSTEM_WAL_WRITER_DATA_APPEND_PAGE_SIZE("cairo.system.wal.writer.data.append.page.size"),
-    WAL_APPLY_WORKER_COUNT("wal.apply.worker.count", false, true),
+    WAL_APPLY_WORKER_COUNT("wal.apply.worker.count"),
     WAL_APPLY_WORKER_AFFINITY("wal.apply.worker.affinity"),
     WAL_APPLY_WORKER_HALT_ON_ERROR("wal.apply.worker.haltOnError"),
     WAL_APPLY_WORKER_SLEEP_THRESHOLD("wal.apply.worker.sleep.threshold"),
@@ -435,20 +435,15 @@ public enum PropertyKey implements ConfigPropertyKey {
     private final String propertyPath;
     private final boolean sensitive;
 
-    private final boolean local;
-
     PropertyKey(String propertyPath) {
-        this(propertyPath, false, false);
+        this(propertyPath, false);
     }
 
-    PropertyKey(String propertyPath, boolean sensitive, boolean local) {
+    PropertyKey(String propertyPath, boolean sensitive) {
         this.propertyPath = propertyPath;
         this.envVarName = ServerMain.propertyPathToEnvVarName(propertyPath);
         this.sensitive = sensitive;
-        this.local = local;
     }
-
-
 
     public static Optional<PropertyKey> getByString(String name) {
         return Optional.ofNullable(nameMapping.get(name));
@@ -467,11 +462,6 @@ public enum PropertyKey implements ConfigPropertyKey {
     @Override
     public boolean isSensitive() {
         return sensitive;
-    }
-
-    @Override
-    public boolean isLocal() {
-        return local;
     }
 
     @Override

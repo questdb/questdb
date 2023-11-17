@@ -39,6 +39,4 @@ public interface ConfigPropertyKey {
      * Returns true if the property is security-sensitive, e.g. holds a password.
      */
     boolean isSensitive();
-
-    boolean isLocal();
 }
