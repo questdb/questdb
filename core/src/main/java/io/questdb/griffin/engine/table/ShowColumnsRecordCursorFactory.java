@@ -73,7 +73,6 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
         private int columnIndex;
         private TableReader reader;
 
-
         @Override
         public void close() {
             reader = Misc.free(reader);

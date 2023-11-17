@@ -63,7 +63,13 @@ public class TableListFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
         return new CursorFunction(new TableListCursorFactory(configuration)) {
             @Override
             public boolean isRuntimeConstant() {
@@ -121,7 +127,7 @@ public class TableListFunctionFactory implements FunctionFactory {
         @Override
         protected void _close() {
             cursor.close();
-            if (tableReaderMetadata != null) {
+            if (getMetadata() == METADATA) {
                 tableReaderMetadata.clear(); // release FD of last table on the list
                 tableReaderMetadata = Misc.free(tableReaderMetadata);
             }
@@ -245,7 +251,7 @@ public class TableListFunctionFactory implements FunctionFactory {
                         return false;
                     }
 
-                    if (path != null) { // path is null when getMetadata() != METADATA
+                    if (getMetadata() == METADATA) {
                         int pathLen = path.size();
                         try {
                             path.concat(tableToken).$();
