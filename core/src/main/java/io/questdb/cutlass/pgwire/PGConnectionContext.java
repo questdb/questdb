@@ -463,6 +463,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 // Start listening for read.
                 throw PeerIsSlowToWriteException.INSTANCE;
             }
+            System.out.println("handleAuthentication() !!!!!");
             handleAuthentication();
 
             try {
