@@ -26,8 +26,8 @@ package io.questdb.griffin;
 
 import io.questdb.*;
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.WalUtils;
@@ -180,11 +180,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
     // public for testing
     public static void expectKeyword(GenericLexer lexer, CharSequence keyword) throws SqlException {
         CharSequence tok = SqlUtil.fetchNext(lexer);
-
         if (tok == null) {
             throw SqlException.position(lexer.getPosition()).put('\'').put(keyword).put("' expected");
         }
-
         if (!Chars.equalsLowerCaseAscii(tok, keyword)) {
             throw SqlException.position(lexer.lastTokenPosition()).put('\'').put(keyword).put("' expected");
         }
@@ -1747,6 +1745,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                     model.cached(rdr.getSymbolMapReader(i).isCached());
                 }
                 model.setIndexFlags(rdrMetadata.isColumnIndexed(i), rdrMetadata.getIndexValueBlockCapacity(i));
+                if (rdrMetadata.isDedupKey(i)) {
+                    model.setDedupKeyFlag(i);
+                }
             }
             model.setPartitionBy(SqlUtil.nextLiteral(sqlNodePool, PartitionBy.toString(rdr.getPartitionedBy()), 0));
             if (rdrMetadata.getTimestampIndex() != -1) {
@@ -2519,6 +2520,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
             // show search_path
             // show datestyle
             // show time zone
+            // show server_version
             RecordCursorFactory factory = null;
             if (isTablesKeyword(tok)) {
                 factory = new TableListRecordCursorFactory();
@@ -2538,7 +2540,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                 factory = new ShowSearchPathCursorFactory();
             } else if (isDateStyleKeyword(tok)) {
                 factory = new ShowDateStyleCursorFactory();
-            } else if (SqlKeywords.isTimeKeyword(tok)) {
+            } else if (isServerVersionKeyword(tok)) {
+                factory = new ShowServerVersionCursorFactory();
+            } else if (isTimeKeyword(tok)) {
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok != null && SqlKeywords.isZoneKeyword(tok)) {
                     factory = new ShowTimeZoneFactory();
@@ -3425,7 +3429,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
             TableToken tableToken;
             for (int i = 0, n = dropTablesList.size(); i < n; i++) {
                 tableToken = dropTablesList.get(i);
-                if (!isSystemTable(tableToken)) {
+                if (!tableToken.isSystem()) {
                     securityContext.authorizeTableDrop(tableToken);
                     try {
                         engine.drop(path, tableToken);
@@ -3522,11 +3526,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                 }
             }
             unknownDropStatement(executionContext, tok);
-        }
-
-        private boolean isSystemTable(TableToken tableToken) {
-            return Chars.startsWith(tableToken.getTableName(), configuration.getSystemTableNamePrefix()) ||
-                    Chars.equals(tableToken.getTableName(), TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME);
         }
 
         private SqlException parseErrorExpected(CharSequence expected) {

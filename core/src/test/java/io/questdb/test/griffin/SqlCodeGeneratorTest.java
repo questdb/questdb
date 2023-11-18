@@ -4944,7 +4944,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "        timestamp_sequence(0, 1000000000) ts" +
                 "    from long_sequence(10)" +
                 ") timestamp(ts) partition by DAY";
-        CharSequence expectedTail = "invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST BY";
+        CharSequence expectedTail = "invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON";
         ddl(createTableDDL);
         for (String[] nameType : new String[][]{
                 {"binary", "BINARY"}}) {
@@ -6540,6 +6540,53 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         ") timestamp(k) partition by NONE",
                 "k",
                 true
+        );
+    }
+
+    @Test
+    public void testSampleByOnTimestampOverriddenByOtherColumnAlias() throws Exception {
+        assertQuery(
+                "min\ttimestamp\n" +
+                        "1\tA\n" +
+                        "3\tB\n" +
+                        "16\tA\n" +
+                        "18\tB\n",
+                "select min(x), sym timestamp from test1 sample by 15s",
+                "create table test1 as (" +
+                        "select rnd_symbol('A', 'B') sym, x, timestamp_sequence('2023-07-20', 1000000) timestamp " +
+                        "from long_sequence(20)) " +
+                        "timestamp(timestamp)",
+                null,
+                false,
+                false
+        );
+
+        assertPlan("select min(x), sym timestamp  from test1 sample by 15s",
+                "SampleBy\n" +
+                        "  keys: [timestamp]\n" +
+                        "  values: [min(x)]\n" +
+                        "    SelectedRecord\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: test1\n");
+
+        assertQuery(
+                "min\ttimestamp\ttimestamp0\n" +
+                        "1\tB\tB\n" +
+                        "2\tA\tB\n" +
+                        "16\tA\tB\n" +
+                        "17\tB\tB\n",
+                "select min(x), sym1 timestamp, sym2 timestamp0 from test2 sample by 15s",
+                "create table test2 as (" +
+                        "select rnd_symbol('A', 'B') sym1, " +
+                        "       rnd_symbol('B') sym2, " +
+                        "       x, " +
+                        "       timestamp_sequence('2023-07-20', 1000000) timestamp " +
+                        "from long_sequence(20)) " +
+                        "timestamp(timestamp)",
+                null,
+                false,
+                false
         );
     }
 

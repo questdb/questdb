@@ -51,7 +51,7 @@ public interface HttpRequestHeader {
 
     long getStatementTimeout();
 
-    DirectUtf8Sequence getUrl();
+    Utf8Sequence getUrl();
 
     DirectUtf8Sequence getUrlParam(Utf8Sequence name);
 }

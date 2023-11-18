@@ -66,6 +66,7 @@ import org.junit.runner.Description;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.Map;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -472,6 +473,31 @@ public abstract class AbstractCairoTest extends AbstractTest {
                     Files.rmdir(path, true);
                 }
             }
+        }
+    }
+
+    private static void assertCalculateSize(RecordCursorFactory factory) throws SqlException {
+        long size;
+        SqlExecutionCircuitBreaker circuitBreaker = sqlExecutionContext.getCircuitBreaker();
+        RecordCursor.Counter counter = new RecordCursor.Counter();
+
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            cursor.calculateSize(circuitBreaker, counter);
+            size = counter.get();
+            cursor.toTop();
+            counter.clear();
+            cursor.calculateSize(circuitBreaker, counter);
+            long sizeAfterToTop = counter.get();
+
+            Assert.assertEquals(size, sizeAfterToTop);
+        }
+
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            counter.clear();
+            cursor.calculateSize(circuitBreaker, counter);
+            long sizeAfterReopen = counter.get();
+
+            Assert.assertEquals(size, sizeAfterReopen);
         }
     }
 
@@ -1141,6 +1167,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
         node1.getConfigurationOverrides().setDefaultTableWriteMode(defaultTableWriteMode);
     }
 
+    protected static void configOverrideEnv(Map<String, String> env) {
+        node1.getConfigurationOverrides().setEnv(env);
+    }
+
     @SuppressWarnings("SameParameterValue")
     protected static void configOverrideHideTelemetryTable(boolean hideTelemetryTable) {
         node1.getConfigurationOverrides().setHideTelemetryTable(hideTelemetryTable);
@@ -1458,6 +1488,9 @@ public abstract class AbstractCairoTest extends AbstractTest {
                     }
                 }
             }
+
+            // make sure calculateSize() produces consistent result
+            assertCalculateSize(factory);
         } finally {
             Misc.free(factory);
         }

@@ -50,6 +50,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sink;
 
 import java.io.Closeable;
@@ -82,6 +83,7 @@ public class ServerMain implements Closeable {
         // create cairo engine
         engine = freeOnExit.register(bootstrap.newCairoEngine());
         config.init(engine, freeOnExit);
+        Unsafe.setWriterMemLimit(config.getCairoConfiguration().getWriterMemoryLimit());
         freeOnExit.register(config.getFactoryProvider());
         engine.load();
     }
@@ -208,10 +210,25 @@ public class ServerMain implements Closeable {
                 addShutdownHook();
             }
             workerPoolManager.start(log);
-            Bootstrap.logWebConsoleUrls(config, log, banner);
+            Bootstrap.logWebConsoleUrls(config, log, banner, webConsoleSchema());
             System.gc(); // final GC
             log.advisoryW().$("enjoy").$();
         }
+    }
+
+    private void addShutdownHook() {
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            try {
+                System.err.println("QuestDB is shutting down...");
+                System.err.println("Pre-touch magic number: " + AsyncFilterAtom.PRE_TOUCH_BLACK_HOLE.sum());
+                close();
+                LogFactory.closeInstance();
+            } catch (Error ignore) {
+                // ignore
+            } finally {
+                System.err.println("QuestDB is shutdown.");
+            }
+        }));
     }
 
     private synchronized void initialize() {
@@ -294,7 +311,7 @@ public class ServerMain implements Closeable {
         }
 
         // http
-        freeOnExit.register(Services.createHttpServer(
+        freeOnExit.register(services().createHttpServer(
                 config.getHttpServerConfiguration(),
                 engine,
                 workerPoolManager,
@@ -302,7 +319,7 @@ public class ServerMain implements Closeable {
         ));
 
         // http min
-        freeOnExit.register(Services.createMinHttpServer(
+        freeOnExit.register(services().createMinHttpServer(
                 config.getHttpMinServerConfiguration(),
                 engine,
                 workerPoolManager,
@@ -310,16 +327,16 @@ public class ServerMain implements Closeable {
         ));
 
         // pg wire
-        freeOnExit.register(Services.createPGWireServer(
+        freeOnExit.register(services().createPGWireServer(
                 config.getPGWireConfiguration(),
                 engine,
                 workerPoolManager,
                 metrics
         ));
 
-        if (!isReadOnly && config.isIlpEnabled()) {
+        if (!isReadOnly && config.isLineTcpEnabled()) {
             // ilp/tcp
-            freeOnExit.register(Services.createLineTcpReceiver(
+            freeOnExit.register(services().createLineTcpReceiver(
                     config.getLineTcpReceiverConfiguration(),
                     engine,
                     workerPoolManager,
@@ -327,7 +344,7 @@ public class ServerMain implements Closeable {
             ));
 
             // ilp/udp
-            freeOnExit.register(Services.createLineUdpReceiver(
+            freeOnExit.register(services().createLineUdpReceiver(
                     config.getLineUdpReceiverConfiguration(),
                     engine,
                     workerPoolManager
@@ -338,19 +355,8 @@ public class ServerMain implements Closeable {
         log.advisoryW().$("server is ready to be started").$();
     }
 
-    private void addShutdownHook() {
-        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            try {
-                System.err.println("QuestDB is shutting down...");
-                System.err.println("Pre-touch magic number: " + AsyncFilterAtom.PRE_TOUCH_BLACK_HOLE.sum());
-                close();
-                LogFactory.closeInstance();
-            } catch (Error ignore) {
-                // ignore
-            } finally {
-                System.err.println("QuestDB is shutdown.");
-            }
-        }));
+    protected Services services() {
+        return Services.INSTANCE;
     }
 
     protected void setupWalApplyJob(
@@ -364,5 +370,9 @@ public class ServerMain implements Closeable {
             workerPool.assign(i, applyWal2TableJob);
             workerPool.freeOnExit(applyWal2TableJob);
         }
+    }
+
+    protected String webConsoleSchema() {
+        return "http://";
     }
 }

@@ -424,7 +424,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                         Assert.fail();
                     }
 
-                    TableToken tableToken = new TableToken("syms", "syms", 0, false, false);
+                    TableToken tableToken = new TableToken("syms", "syms", 0, false, false, false);
                     try (TableReader reader = new TableReader(engine.getConfiguration(), tableToken)) {
                         TableReaderMetadata meta = reader.getMetadata();
                         Assert.assertEquals(5, meta.getColumnCount());
@@ -728,7 +728,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                         Assert.fail();
                     }
 
-                    TableToken tableToken = new TableToken("syms", "syms", 0, false, false);
+                    TableToken tableToken = new TableToken("syms", "syms", 0, false, false, false);
                     try (TableReader reader = new TableReader(engine.getConfiguration(), tableToken)) {
                         TableReaderMetadata meta = reader.getMetadata();
                         Assert.assertEquals(5, meta.getColumnCount());

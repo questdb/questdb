@@ -37,6 +37,7 @@ import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import org.jetbrains.annotations.NotNull;
 
 import java.lang.ThreadLocal;
+import java.util.Map;
 import java.util.function.LongSupplier;
 
 public interface CairoConfiguration {
@@ -139,6 +140,10 @@ public interface CairoConfiguration {
     int getDetachedMkDirMode();
 
     int getDoubleToStrCastScale();
+
+    default Map<String, String> getEnv() {
+        return System.getenv();
+    }
 
     int getExplainPoolCapacity();
 
@@ -428,8 +433,14 @@ public interface CairoConfiguration {
 
     int getStrFunctionMaxBufferLength();
 
+    long getSystemDataAppendPageSize();
+
+    int getSystemO3ColumnMemorySize();
+
     @NotNull
     CharSequence getSystemTableNamePrefix();
+
+    long getSystemWalDataAppendPageSize();
 
     long getTableRegistryAutoReloadFrequency();
 
@@ -488,6 +499,8 @@ public interface CairoConfiguration {
 
     int getWalTxnNotificationQueueCapacity();
 
+    int getWalWriterPoolMaxSegments();
+
     int getWindowColumnPoolCapacity();
 
     int getWithClauseModelPoolCapacity();
@@ -503,6 +516,8 @@ public interface CairoConfiguration {
     long getWriterCommandQueueSlotSize();
 
     long getWriterFileOpenOpts();
+
+    long getWriterMemoryLimit();
 
     int getWriterTickRowsCountMod();
 

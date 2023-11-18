@@ -75,11 +75,31 @@ public class LogRecordSink implements Utf8Sink, DirectUtf8Sequence, Sinkable, Mu
     @Override
     public Utf8Sink put(@Nullable Utf8Sequence us) {
         if (us != null) {
-            long rem = lim - _wptr - EOL_LENGTH;
-            int size = us.size();
-            int n = Math.min((int) rem, size);
-            Utf8s.strCpy(us, n, _wptr);
-            _wptr += n;
+            final int rem = (int) (lim - _wptr - EOL_LENGTH);
+            final int size = us.size();
+            if (rem >= size) {
+                // Common case where the buffer fits the available space.
+                Utf8s.strCpy(us, size, _wptr);
+                _wptr += size;
+                return this;
+            }
+
+            // The line is being truncated:
+            // We determine a safe length to byte-copy.
+            // We skip copying the last 4 bytes, as they may be a multibyte UTF-8 codepoint.
+            // NOTE: The computed length may be negative.
+            int safeLen = rem - 4;
+            if (safeLen > 0) {
+                Utf8s.strCpy(us, safeLen, _wptr);
+                _wptr += safeLen;
+            }
+
+            safeLen = Math.max(0, safeLen);
+            for (int i = safeLen; i < rem; i++) {
+                // Copying the final few bytes one at a time ensures we don't write any partial codepoints.
+                put(us.byteAt(i));
+            }
+            return this;
         }
         return this;
     }

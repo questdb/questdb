@@ -24,7 +24,6 @@
 
 package io.questdb.test;
 
-import io.questdb.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.test.tools.TestUtils;
@@ -33,41 +32,12 @@ import org.junit.rules.TemporaryFolder;
 import org.junit.rules.TestName;
 
 public class AbstractTest {
-    protected static final Log LOG = LogFactory.getLog(AbstractTest.class);
     @ClassRule
     public static final TemporaryFolder temp = new TemporaryFolder();
+    protected static final Log LOG = LogFactory.getLog(AbstractTest.class);
     protected static String root;
     @Rule
     public final TestName testName = new TestName();
-
-    @SuppressWarnings("unused")
-    public static ServerMain newServer(
-            boolean enableHttp,
-            boolean enableLineTcp,
-            boolean enablePgWire,
-            int workerCountShared,
-            FactoryProvider factoryProvider
-    ) {
-        return new ServerMain(new Bootstrap(new DefaultBootstrapConfiguration() {
-
-            // although `root` is supplied to the server main, it is ultimately ignored in favour of that provided by the configuration
-            // We only supply it for server main to pass argument validation
-            @Override
-            public ServerConfiguration getServerConfiguration(Bootstrap bootstrap) {
-                return new TestServerConfiguration(
-                        root,
-                        enableHttp,
-                        enableLineTcp,
-                        enablePgWire,
-                        workerCountShared,
-                        0,
-                        0,
-                        0,
-                        factoryProvider
-                );
-            }
-        }, TestUtils.getServerMainArgs(root)));
-    }
 
     @BeforeClass
     public static void setUpStatic() throws Exception {

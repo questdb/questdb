@@ -465,6 +465,28 @@ public class CreateTableTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateTableLikeTableWithDedup() throws Exception {
+        ddl(
+                "CREATE TABLE foo (" +
+                    "ts TIMESTAMP," +
+                    "a INT,"+
+                    "b STRING"+
+                ") " +
+                "TIMESTAMP(ts) PARTITION BY DAY WAL " +
+                "DEDUP UPSERT KEYS(ts, a)"
+        );
+        ddl("create table foo_clone ( like foo)");
+        assertSql(
+                "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
+                        "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\ttrue\n" +
+                        "a\tINT\tfalse\t0\tfalse\t0\tfalse\ttrue\n" +
+                        "b\tSTRING\tfalse\t0\tfalse\t0\tfalse\tfalse\n"
+                ,
+                "SHOW COLUMNS FROM foo_clone"
+        );
+    }
+
+    @Test
     public void testCreateTableParallel() throws Throwable {
         assertMemoryLeak(() -> {
             int threadCount = 2;

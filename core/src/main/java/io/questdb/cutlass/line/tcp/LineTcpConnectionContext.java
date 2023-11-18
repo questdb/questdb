@@ -217,8 +217,12 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         if (authenticator.isAuthenticated() && securityContext == DenyAllSecurityContext.INSTANCE) {
             // when security context has not been set by anything else (subclass) we assume
             // this is an authenticated, anonymous user
-            securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(null, SecurityContextFactory.ILP);
-            securityContext.authorizeILP();
+            securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(
+                    null,
+                    SecurityContext.AUTH_TYPE_NONE,
+                    SecurityContextFactory.ILP
+            );
+            securityContext.authorizeLineTcp();
         }
         return this;
     }
@@ -258,9 +262,13 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                 case Authenticator.OK:
                     assert authenticator.isAuthenticated();
                     assert securityContext == DenyAllSecurityContext.INSTANCE;
-                    securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(authenticator.getPrincipal(), SecurityContextFactory.ILP);
+                    securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(
+                            authenticator.getPrincipal(),
+                            authenticator.getAuthType(),
+                            SecurityContextFactory.ILP
+                    );
                     try {
-                        securityContext.authorizeILP();
+                        securityContext.authorizeLineTcp();
                     } catch (CairoException e) {
                         LOG.error().$('[').$(getFd()).$("] ").$(e.getFlyweightMessage()).$();
                         return IOContextResult.NEEDS_DISCONNECT;
