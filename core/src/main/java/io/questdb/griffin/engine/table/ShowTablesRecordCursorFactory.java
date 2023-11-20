@@ -32,13 +32,13 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.ObjHashSet;
 import org.jetbrains.annotations.NotNull;
 
-public class TableListRecordCursorFactory extends AbstractRecordCursorFactory {
+public class ShowTablesRecordCursorFactory extends AbstractRecordCursorFactory {
 
     public static final String TABLE_NAME_COLUMN = "table_name";
     private static final RecordMetadata METADATA;
     private final TableListRecordCursor cursor;
 
-    public TableListRecordCursorFactory() {
+    public ShowTablesRecordCursorFactory() {
         super(METADATA);
         cursor = new TableListRecordCursor();
     }

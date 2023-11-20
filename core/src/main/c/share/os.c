@@ -131,7 +131,11 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Os_getEnvironmentType
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Os_getEnvironmentType
         (JNIEnv *e, jclass cl) {
+<<<<<<< HEAD
     return 0; // no-op
+=======
+    return 0;
+>>>>>>> upstream/master
 }
 
 #endif
