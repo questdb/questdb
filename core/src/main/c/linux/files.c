@@ -25,19 +25,21 @@
 #define _GNU_SOURCE
 
 #include "../share/files.h"
+#include "../share/sysutil.h"
 #include <sys/mman.h>
 #include <errno.h>
+#include <limits.h>
 #include <string.h>
 #include <stdio.h>
 #include <sys/sendfile.h>
 #include <unistd.h>
+#include <sys/fcntl.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
-#include <sys/fcntl.h>
+#include <sys/resource.h>
 #include <sys/time.h>
 #include <sys/vfs.h>
 #include <fcntl.h>
-#include "../share/sysutil.h"
 #include <stdint.h>
 
 static inline jlong _io_questdb_std_Files_mremap0
@@ -423,4 +425,33 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getLastModified
     struct stat st;
     int r = stat((const char *) pchar, &st);
     return r == 0 ? ((1000 * st.st_mtim.tv_sec) + (st.st_mtim.tv_nsec / 1000000)) : r;
+}
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileLimit
+        (JNIEnv *e, jclass cl) {
+    struct rlimit limit;
+    if (getrlimit(RLIMIT_NOFILE, &limit) == 0) {
+        if (limit.rlim_cur == RLIM_INFINITY) {
+            // Remap RLIM_INFINITY (~0UL, unsigned) to LONG_MAX (signed).
+            return LONG_MAX;
+        }
+        return (jlong) limit.rlim_cur;
+    }
+    return -1;
+}
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getMapCountLimit
+        (JNIEnv *e, jclass cl) {
+    FILE* fd = fopen("/proc/sys/vm/max_map_count", "r");
+    if (fd == NULL) {
+        return 0;
+    }
+    long limit = 0L;
+    int res = fscanf(fd, "%ld", &limit);
+    fclose(fd);
+
+    if (res == 1) {
+        return limit;
+    }
+    return 0;
 }

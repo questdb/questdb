@@ -43,7 +43,6 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
     protected final RecordCursorFactory base;
     private final GroupByNotKeyedRecordCursor cursor;
     private final ObjList<GroupByFunction> groupByFunctions;
-    // this sink is used to copy recordKeyMap keys to dataMap
     private final SimpleMapValue simpleMapValue;
     private final VirtualRecord virtualRecordA;
 
@@ -61,8 +60,18 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
         this.groupByFunctions = groupByFunctions;
         this.virtualRecordA = new VirtualRecordNoRowid(recordFunctions);
         this.virtualRecordA.of(simpleMapValue);
+
         final GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
-        this.cursor = new GroupByNotKeyedRecordCursor(updater);
+        boolean earlyExitSupported = true;
+        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+            earlyExitSupported &= groupByFunctions.getQuick(0).isEarlyExitSupported();
+        }
+
+        if (earlyExitSupported) {
+            this.cursor = new EarlyExitGroupByNotKeyedRecordCursor(updater);
+        } else {
+            this.cursor = new GroupByNotKeyedRecordCursor(updater);
+        }
     }
 
     @Override
@@ -105,6 +114,22 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
         Misc.free(base);
     }
 
+    private class EarlyExitGroupByNotKeyedRecordCursor extends GroupByNotKeyedRecordCursor {
+
+        public EarlyExitGroupByNotKeyedRecordCursor(GroupByFunctionsUpdater groupByFunctionsUpdater) {
+            super(groupByFunctionsUpdater);
+        }
+
+        @Override
+        public boolean earlyExit() {
+            boolean earlyExit = true;
+            for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+                earlyExit &= groupByFunctions.getQuick(i).earlyExit(simpleMapValue);
+            }
+            return earlyExit;
+        }
+    }
+
     private class GroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
 
         private static final int INIT_DONE = 2;
@@ -137,6 +162,10 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
             Misc.clearObjList(groupByFunctions);
         }
 
+        public boolean earlyExit() {
+            return false; // no early exit support here
+        }
+
         @Override
         public Record getRecord() {
             return virtualRecordA;
@@ -162,6 +191,9 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
                 while (baseCursor.hasNext()) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
                     groupByFunctionsUpdater.updateExisting(simpleMapValue, baseRecord);
+                    if (earlyExit()) {
+                        break;
+                    }
                 }
                 toTop();
                 initState = INIT_DONE;
@@ -174,6 +206,15 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
             return ((SymbolFunction) groupByFunctions.getQuick(columnIndex)).newSymbolTable();
         }
 
+        public RecordCursor of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
+            this.baseCursor = baseCursor;
+            circuitBreaker = executionContext.getCircuitBreaker();
+            initState = INIT_PENDING;
+            Function.init(groupByFunctions, baseCursor, executionContext);
+            toTop();
+            return this;
+        }
+
         @Override
         public long size() {
             return 1;
@@ -183,15 +224,6 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
         public void toTop() {
             recordsRemaining = 1;
             GroupByUtils.toTop(groupByFunctions);
-        }
-
-        RecordCursor of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
-            this.baseCursor = baseCursor;
-            circuitBreaker = executionContext.getCircuitBreaker();
-            initState = INIT_PENDING;
-            Function.init(groupByFunctions, baseCursor, executionContext);
-            toTop();
-            return this;
         }
     }
 }
