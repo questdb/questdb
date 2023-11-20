@@ -24,14 +24,11 @@
 
 package io.questdb;
 
-public interface ConfigProperty {
+public interface ConfigPropertyKey {
     /**
      * Returns the environment variable name of the property.
      */
-    default String getEnvVarEquivalent() {
-        return "QDB_" + getPropertyPath().replace('.', '_').toUpperCase();
-    }
-
+    String getEnvVarName();
 
     /**
      * Returns property path as in server.conf.

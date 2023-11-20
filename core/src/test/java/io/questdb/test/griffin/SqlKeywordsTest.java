@@ -156,6 +156,14 @@ public class SqlKeywordsTest {
     }
 
     @Test
+    public void testIsParametersKeyword() {
+        Assert.assertTrue(SqlKeywords.isParametersKeyword("PARAMETERS"));
+        Assert.assertTrue(SqlKeywords.isParametersKeyword("parameters"));
+        Assert.assertTrue(SqlKeywords.isParametersKeyword("paraMEters"));
+        Assert.assertFalse(SqlKeywords.isParametersKeyword("param3ters"));
+    }
+
+    @Test
     public void testLinear() {
         Assert.assertFalse(isLinearKeyword("12345"));
         Assert.assertFalse(isLinearKeyword("123456"));

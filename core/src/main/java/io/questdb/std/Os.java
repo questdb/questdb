@@ -114,6 +114,8 @@ public final class Os {
         }
     }
 
+    public static native int getEnvironmentType();
+
     public static native int getPid();
 
     /**
