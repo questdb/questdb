@@ -451,27 +451,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     private Function createConstant(int position, @NotNull CharSequence tok) throws SqlException {
         int len = tok.length();
         if (len > 1) {
-            int last = len - 1;
-            char close = tok.charAt(last);
-            if (Chars.isQuote(close)) {
-                char open = 'E'; // init value is optional E e.g. E"this is an error message"
-                for (int i = 0; i < last && open == 'E'; i++) {
-                    open = tok.charAt(i);
-                    if (open == close) {
-                        if (i < 1) { // we did not see E
-                            switch (len) {
-                                case 3: // this is 'x' - char
-                                    return CharConstant.newInstance(tok.charAt(1));
-                                case 2: // this is '' - char
-                                    return StrConstant.EMPTY;
-                                default:
-                                    return new StrConstant(tok);
-                            }
-                        }
-                        // string with prefix E
-                        return new StrConstant(Chars.toString(tok, 2, last));
-                    }
-                }
+            final Function quotedFunction = createQuotedConstant(tok);
+            if (quotedFunction != null) {
+                return quotedFunction;
             }
 
             // geohash literal
@@ -696,7 +678,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         }
                         sigArgTypeScore += overloadDistance;
                         // prefer window functions in window context, otherwise non-window functions
-                        sigArgTypeScore += isWindowFunction? isWindowContext ? -1 : 1 : 0;
+                        sigArgTypeScore += isWindowFunction ? isWindowContext ? -1 : 1 : 0;
                         // Overload with cast to higher precision
                         overloadPossible = overloadDistance != ColumnType.OVERLOAD_NONE || arg.isUndefined();
                         // Implicit cast from CHAR to STRING
@@ -879,6 +861,34 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             throw SqlException.position(position).put("undefined bind variable: ").put(name);
         }
         return new NamedParameterLinkFunction(Chars.toString(name), function.getType());
+    }
+
+    private Function createQuotedConstant(@NotNull CharSequence tok) {
+        final int len = tok.length();
+        final int last = len - 1;
+        final char close = tok.charAt(last);
+        if (!Chars.isQuote(close)) {
+            return null;
+        }
+        char open = 'E'; // init value is optional E e.g. E"this is an error message"
+        for (int i = 0; i < last && open == 'E'; i++) {
+            open = tok.charAt(i);
+            if (open == close) {
+                if (i < 1) { // we did not see E
+                    switch (len) {
+                        case 3: // this is 'x' - char
+                            return CharConstant.newInstance(tok.charAt(1));
+                        case 2: // this is '' - char
+                            return StrConstant.EMPTY;
+                        default:
+                            return new StrConstant(tok);
+                    }
+                }
+                // string with prefix E
+                return new StrConstant(Chars.toString(tok, 2, last));
+            }
+        }
+        return null;
     }
 
     private Function functionToConstant(Function function) {
