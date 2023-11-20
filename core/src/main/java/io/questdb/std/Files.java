@@ -36,6 +36,9 @@ import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public final class Files {
+    // The default varies across kernel versions and distros, so we use the same value as for vm.max_map_count.
+    public static final long DEFAULT_FILE_LIMIT = 65536;
+    public static final long DEFAULT_MAP_COUNT_LIMIT = 65536;
     public static final int DT_DIR = 4;
     public static final int DT_FILE = 8;
     public static final int DT_LNK = 10; // soft link
@@ -208,6 +211,11 @@ public final class Files {
     }
 
     /**
+     * Returns fs.file-max kernel limit on Linux or 0 on other OSes.
+     */
+    public native static long getFileLimit();
+
+    /**
      * Detects if filesystem is supported by QuestDB. The function returns both FS magic and name. Both
      * can be presented to user even if file system is not supported.
      *
@@ -229,6 +237,11 @@ public final class Files {
         return getLastModified(lpsz.ptr());
     }
 
+    /**
+     * Returns vm.max_map_count kernel limit on Linux or 0 on other OSes.
+     */
+    public native static long getMapCountLimit();
+
     public static String getOpenFdDebugInfo() {
         if (openFds != null) {
             return openFds.toString();
@@ -245,7 +258,7 @@ public final class Files {
         assert url != null;
         String file = url.getFile();
         assert file != null;
-        assert file.length() > 0;
+        assert !file.isEmpty();
         return file;
     }
 
@@ -603,7 +616,7 @@ public final class Files {
 
     private static native boolean exists0(long lpsz);
 
-    //caller must call findClose to free allocated struct
+    // caller must call findClose to free allocated struct
     private native static long findFirst(long lpszName);
 
     private static native long getDiskSize(long lpszPath);
