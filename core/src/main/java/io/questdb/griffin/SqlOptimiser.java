@@ -64,7 +64,6 @@ public class SqlOptimiser implements Mutable {
     private static final boolean[] joinsRequiringTimestamp = {false, false, false, false, true, true, true};
 
     private static final IntHashSet limitTypes = new IntHashSet();
-    private final static int maxRecursion = 128;
     private static final CharSequenceIntHashMap notOps = new CharSequenceIntHashMap();
     private final static CharSequenceHashSet nullConstants = new CharSequenceHashSet();
     protected final ObjList<CharSequence> literalCollectorANames = new ObjList<>();
@@ -93,6 +92,7 @@ public class SqlOptimiser implements Mutable {
     private final IntHashSet literalCollectorBIndexes = new IntHashSet();
     private final ObjList<CharSequence> literalCollectorBNames = new ObjList<>();
     private final LiteralRewritingVisitor literalRewritingVisitor = new LiteralRewritingVisitor();
+    private final int maxRecursion;
     private final ObjList<ExpressionNode> orderByAdvice = new ObjList<>();
     private final IntPriorityQueue orderingStack = new IntPriorityQueue();
     private final Path path;
@@ -131,6 +131,7 @@ public class SqlOptimiser implements Mutable {
         this.functionParser = functionParser;
         this.contextPool = new ObjectPool<>(JoinContext.FACTORY, configuration.getSqlJoinContextPoolCapacity());
         this.path = path;
+        this.maxRecursion = configuration.getSqlWindowMaxRecursion();
     }
 
     public void clear() {
@@ -1833,12 +1834,18 @@ public class SqlOptimiser implements Mutable {
                 Misc.free(loFunc);
                 throw SqlException.$(expr.position, "constant expression expected");
             }
-            final long value = loFunc.getLong(null);
-            Misc.free(loFunc);
-            if (value < 0) {
-                throw SqlException.$(expr.position, "non-negative expression expected");
+
+            try {
+                long value = loFunc.getLong(null);
+                if (value < 0) {
+                    throw SqlException.$(expr.position, "non-negative integer expression expected");
+                }
+                return value;
+            } catch (UnsupportedOperationException | ImplicitCastException e) {
+                throw SqlException.$(expr.position, "integer expression expected");
+            } finally {
+                Misc.free(loFunc);
             }
-            return value;
         }
         return defaultValue;
     }
@@ -4257,6 +4264,10 @@ public class SqlOptimiser implements Mutable {
                 if (qc.getAst().type == ExpressionNode.FUNCTION) {
                     if (window) {
                         windowModel.addBottomUpColumn(qc);
+
+                        QueryColumn ref = nextColumn(qc.getAlias());
+                        outerVirtualModel.addBottomUpColumn(ref);
+                        distinctModel.addBottomUpColumn(ref);
                         // ensure literals referenced by window column are present in nested models
                         emitLiterals(qc.getAst(), translatingModel, innerVirtualModel, baseModel, true);
                         continue;
@@ -4759,7 +4770,6 @@ public class SqlOptimiser implements Mutable {
     }
 
     private void validateWindowFunctions(QueryModel model, SqlExecutionContext sqlExecutionContext, int recursionLevel) throws SqlException {
-
         if (model == null) {
             return;
         }

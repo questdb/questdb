@@ -167,6 +167,7 @@ public enum PropertyKey implements ConfigProperty {
     CAIRO_REPLACE_BUFFER_MAX_SIZE("cairo.replace.buffer.max.size"),
     CAIRO_SQL_STR_FUNCTION_BUFFER_MAX_SIZE("cairo.sql.string.function.buffer.max.size"),
     CAIRO_SQL_ANALYTIC_STORE_PAGE_SIZE("cairo.sql.analytic.store.page.size"),
+    CAIRO_SQL_WINDOW_MAX_RECURSION("cairo.sql.window.max.recursion"),
     CAIRO_SQL_WINDOW_STORE_PAGE_SIZE("cairo.sql.window.store.page.size"),
     CAIRO_SQL_ANALYTIC_STORE_MAX_PAGES("cairo.sql.analytic.store.max.pages"),
     CAIRO_SQL_WINDOW_STORE_MAX_PAGES("cairo.sql.window.store.max.pages"),

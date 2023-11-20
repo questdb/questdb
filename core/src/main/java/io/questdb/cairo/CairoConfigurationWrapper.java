@@ -727,6 +727,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlWindowMaxRecursion() {
+        return delegate.getSqlWindowMaxRecursion();
+    }
+
+    @Override
     public int getSqlWindowRowIdMaxPages() {
         return delegate.getSqlWindowRowIdMaxPages();
     }

@@ -125,6 +125,8 @@ public interface ConfigurationOverrides {
 
     int getSqlJoinMetadataPageSize();
 
+    int getSqlWindowMaxRecursion();
+
     int getSqlWindowStoreMaxPages();
 
     int getSqlWindowStorePageSize();
@@ -272,6 +274,8 @@ public interface ConfigurationOverrides {
     void setSqlJoinMetadataMaxResizes(int sqlJoinMetadataMaxResizes);
 
     void setSqlJoinMetadataPageSize(int sqlJoinMetadataPageSize);
+
+    void setSqlWindowMaxRecursion(int maxRecursion);
 
     void setSqlWindowStoreMaxPages(int windowStoreMaxPages);
 

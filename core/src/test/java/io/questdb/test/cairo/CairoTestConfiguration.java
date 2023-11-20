@@ -110,6 +110,11 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
+    public Map<String, String> getEnv() {
+        return overrides.getEnv();
+    }
+
+    @Override
     public @NotNull FactoryProvider getFactoryProvider() {
         return overrides.getFactoryProvider() == null ? super.getFactoryProvider() : overrides.getFactoryProvider();
     }
@@ -202,16 +207,6 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
-    public boolean getSimulateCrashEnabled() {
-        return overrides.getSimulateCrashEnabled();
-    }
-
-    @Override
-    public Map<String, String> getEnv() {
-        return overrides.getEnv();
-    }
-
-    @Override
     public int getRepeatMigrationsFromVersion() {
         return overrides.getRepeatMigrationsFromVersion();
     }
@@ -234,6 +229,11 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     @Override
     public int getSampleByIndexSearchPageSize() {
         return overrides.getSampleByIndexSearchPageSize() > 0 ? overrides.getSampleByIndexSearchPageSize() : super.getSampleByIndexSearchPageSize();
+    }
+
+    @Override
+    public boolean getSimulateCrashEnabled() {
+        return overrides.getSimulateCrashEnabled();
     }
 
     @Override
@@ -284,6 +284,11 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     @Override
     public int getSqlPageFrameMaxRows() {
         return overrides.getPageFrameMaxRows() < 0 ? super.getSqlPageFrameMaxRows() : overrides.getPageFrameMaxRows();
+    }
+
+    @Override
+    public int getSqlWindowMaxRecursion() {
+        return overrides.getSqlWindowMaxRecursion() > 0 ? overrides.getSqlWindowMaxRecursion() : super.getSqlWindowMaxRecursion();
     }
 
     @Override

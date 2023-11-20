@@ -245,7 +245,7 @@ public class ExpressionParser {
                         break;
                     case '.':
                         // Check what is on stack. If we have 'a .b' we have to stop processing
-                        if (thisBranch == BRANCH_LITERAL || thisBranch == BRANCH_CONSTANT) {
+                        if (thisBranch == BRANCH_LITERAL || thisBranch == BRANCH_CONSTANT) {//here
                             char c = lexer.getContent().charAt(lastPos - 1);
                             if (GenericLexer.WHITESPACE_CH.contains(c)) {
                                 lexer.unparseLast();
@@ -268,7 +268,9 @@ public class ExpressionParser {
                         if (prevBranch == BRANCH_DOT || prevBranch == BRANCH_DOT_DEREFERENCE) {
                             throw SqlException.$(lastPos, "too many dots");
                         }
-
+                        if (thisBranch == BRANCH_CASE_CONTROL) {
+                            throw SqlException.$(lastPos, "unexpected dot");
+                        }
                         if (prevBranch == BRANCH_RIGHT_PARENTHESIS) {
                             thisBranch = BRANCH_DOT_DEREFERENCE;
                         } else {
