@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
@@ -81,7 +82,7 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
 
         private static class ColumnRecordCursor implements NoRandomAccessRecordCursor {
             private final TableListCursorFactory allTables;
-            private final ColumnRecord record = new ColumnRecord();
+            private final ColumnsRecord record = new ColumnsRecord();
             private final ShowColumnsCursor showColumnsCursor = new ShowColumnsCursor();
             private RecordCursor allTablesCursor;
             private int columIdx;
@@ -153,7 +154,7 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
                 return this;
             }
 
-            private static class ColumnRecord implements Record {
+            private static class ColumnsRecord implements Record {
                 private CharSequence columnName;
                 private CharSequence dataType;
                 private int ordinalPosition;
@@ -173,9 +174,8 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
                             return columnName;
                         case 3:
                             return dataType;
-                        default:
-                            return null;
                     }
+                    return null;
                 }
 
                 @Override
