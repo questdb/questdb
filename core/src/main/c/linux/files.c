@@ -50,11 +50,6 @@ static inline jlong _io_questdb_std_Files_mremap0
     return (jlong) newAddr;
 }
 
-JNIEXPORT jlong JNICALL JavaCritical_io_questdb_std_Files_mremap0
-        (jint fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {
-    return _io_questdb_std_Files_mremap0(fd, address, previousLen, newLen, offset, flags);
-}
-
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mremap0
         (JNIEnv *e, jclass cl, jint fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {
     return _io_questdb_std_Files_mremap0(fd, address, previousLen, newLen, offset, flags);
@@ -370,7 +365,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileSystemStatus
                 return sb.f_type;
             case 0x58465342:
                 strcpy((char *) lpszName, "XFS");
-                return sb.f_type;
+                return FLAG_FS_SUPPORTED * ((jlong) sb.f_type);
             case 0xEF53: // ext2, ext3, ext4
                 strcpy((char *) lpszName, "ext4");
                 return FLAG_FS_SUPPORTED * ((jlong) sb.f_type);

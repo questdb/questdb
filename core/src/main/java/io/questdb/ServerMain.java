@@ -50,7 +50,9 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sink;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 import java.io.File;
@@ -82,6 +84,7 @@ public class ServerMain implements Closeable {
         // create cairo engine
         engine = freeOnExit.register(bootstrap.newCairoEngine());
         config.init(engine, freeOnExit);
+        Unsafe.setWriterMemLimit(config.getCairoConfiguration().getWriterMemoryLimit());
         freeOnExit.register(config.getFactoryProvider());
         engine.load();
     }
@@ -158,6 +161,10 @@ public class ServerMain implements Closeable {
         } else {
             return NeverMatchUsernamePasswordMatcher.INSTANCE;
         }
+    }
+
+    public static @NotNull String propertyPathToEnvVarName(@NotNull String propertyPath) {
+        return "QDB_" + propertyPath.replace('.', '_').toUpperCase();
     }
 
     @Override
@@ -309,7 +316,7 @@ public class ServerMain implements Closeable {
         }
 
         // http
-        freeOnExit.register(Services.createHttpServer(
+        freeOnExit.register(services().createHttpServer(
                 config.getHttpServerConfiguration(),
                 engine,
                 workerPoolManager,
@@ -317,7 +324,7 @@ public class ServerMain implements Closeable {
         ));
 
         // http min
-        freeOnExit.register(Services.createMinHttpServer(
+        freeOnExit.register(services().createMinHttpServer(
                 config.getHttpMinServerConfiguration(),
                 engine,
                 workerPoolManager,
@@ -325,7 +332,7 @@ public class ServerMain implements Closeable {
         ));
 
         // pg wire
-        freeOnExit.register(Services.createPGWireServer(
+        freeOnExit.register(services().createPGWireServer(
                 config.getPGWireConfiguration(),
                 engine,
                 workerPoolManager,
@@ -334,7 +341,7 @@ public class ServerMain implements Closeable {
 
         if (!isReadOnly && config.isLineTcpEnabled()) {
             // ilp/tcp
-            freeOnExit.register(Services.createLineTcpReceiver(
+            freeOnExit.register(services().createLineTcpReceiver(
                     config.getLineTcpReceiverConfiguration(),
                     engine,
                     workerPoolManager,
@@ -342,7 +349,7 @@ public class ServerMain implements Closeable {
             ));
 
             // ilp/udp
-            freeOnExit.register(Services.createLineUdpReceiver(
+            freeOnExit.register(services().createLineUdpReceiver(
                     config.getLineUdpReceiverConfiguration(),
                     engine,
                     workerPoolManager
@@ -351,6 +358,10 @@ public class ServerMain implements Closeable {
 
         System.gc(); // GC 1
         log.advisoryW().$("server is ready to be started").$();
+    }
+
+    protected Services services() {
+        return Services.INSTANCE;
     }
 
     protected void setupWalApplyJob(

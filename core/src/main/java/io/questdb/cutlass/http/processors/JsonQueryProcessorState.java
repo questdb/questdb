@@ -25,6 +25,7 @@
 package io.questdb.cutlass.http.processors;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
@@ -66,6 +67,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final IntList columnSkewList = new IntList();
     private final IntList columnTypesAndFlags = new IntList();
     private final StringSink columnsQueryParameter = new StringSink();
+    private final RecordCursor.Counter counter = new RecordCursor.Counter();
     private final int doubleScale;
     private final SCSequence eventSubSequence = new SCSequence();
     private final int floatScale;
@@ -75,6 +77,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final StringSink query = new StringSink();
     private final ObjList<StateResumeAction> resumeActions = new ObjList<>();
     private final long statementTimeout;
+    private SqlExecutionCircuitBreaker circuitBreaker;
     private int columnCount;
     private int columnIndex;
     private long compilerNanos;
@@ -134,6 +137,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         columnNames.clear();
         queryTimestampIndex = -1;
         cursor = Misc.free(cursor);
+        circuitBreaker = null;
         record = null;
         if (recordCursorFactory != null) {
             if (queryCacheable) {
@@ -157,6 +161,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         operationFuture = Misc.free(operationFuture);
         skip = 0;
         count = 0;
+        counter.clear();
         stop = 0;
         containsSecret = false;
     }
@@ -165,6 +170,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     public void close() {
         cursor = Misc.free(cursor);
         recordCursorFactory = Misc.free(recordCursorFactory);
+        circuitBreaker = null;
         freeAsyncOperation();
     }
 
@@ -181,6 +187,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         this.skip = skip;
         this.stop = stop;
         count = 0L;
+        counter.clear();
         noMeta = Utf8s.equalsNcAscii("true", request.getUrlParam(URL_PARAM_NM));
         countRows = Utf8s.equalsNcAscii("true", request.getUrlParam(URL_PARAM_COUNT));
         timings = Utf8s.equalsNcAscii("true", request.getUrlParam(URL_PARAM_TIMINGS));
@@ -629,6 +636,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         socket.putAscii('[');
         columnIndex = 0;
         count++;
+        counter.inc();
     }
 
     private void doQueryRecordSuffix(HttpChunkedResponseSocket socket) {
@@ -645,6 +653,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         // closing cursor here guarantees that by the time http client finished reading response the table
         // is released
         cursor = Misc.free(cursor);
+        circuitBreaker = null;
         queryState = QUERY_SUFFIX;
         if (count > -1) {
             logTimings();
@@ -667,6 +676,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             }
             socket.putAscii('}');
             count = -1;
+            counter.set(-1);
             socket.sendChunk(true);
             return;
         }
@@ -695,14 +705,16 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             // this is the tail end of the cursor
             // we don't need to read records, just round up record count
             final RecordCursor cursor = this.cursor;
-            final long size = cursor.size();
+            long size = cursor.size();
+            counter.clear();
             if (size < 0) {
-                LOG.info().$("counting").$();
-                long count = 1;
-                while (cursor.hasNext()) {
-                    count++;
+                try {
+                    cursor.calculateSize(circuitBreaker, counter);
+                    this.count += counter.get() + 1;
+                } catch (DataUnavailableException e) {
+                    this.count += counter.get();
+                    throw e;
                 }
-                this.count += count;
             } else {
                 this.count = size;
             }
@@ -808,6 +820,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 return;
             }
             count = skip;
+            counter.set(skip);
         } else {
             if (!cursor.hasNext()) {
                 cursorHasRows = false;
@@ -867,6 +880,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         // we do a no-op loop over the cursor to calculate the total row count and pre-touch only slows things down.
         sqlExecutionContext.setColumnPreTouchEnabled(stop == Long.MAX_VALUE);
         this.cursor = factory.getCursor(sqlExecutionContext);
+        this.circuitBreaker = sqlExecutionContext.getCircuitBreaker();
         final RecordMetadata metadata = factory.getMetadata();
         this.queryTimestampIndex = metadata.getTimestampIndex();
         HttpRequestHeader header = httpConnectionContext.getRequestHeader();

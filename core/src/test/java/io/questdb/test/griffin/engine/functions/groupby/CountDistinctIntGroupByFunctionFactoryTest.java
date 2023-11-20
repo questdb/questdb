@@ -45,6 +45,19 @@ public class CountDistinctIntGroupByFunctionFactoryTest extends AbstractCairoTes
     }
 
     @Test
+    public void testConstantDefaultHashSetNoEntryValue() throws Exception {
+        assertQuery(
+                "count_distinct\n" +
+                        "1\n",
+                "select count_distinct(l) from x",
+                "create table x as (select -1::int as l from long_sequence(10))",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
     public void testExpression() throws Exception {
         final String expected = "a\tcount_distinct\n" +
                 "a\t5\n" +

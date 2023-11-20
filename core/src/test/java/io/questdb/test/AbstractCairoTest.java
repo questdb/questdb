@@ -476,6 +476,31 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
+    private static void assertCalculateSize(RecordCursorFactory factory) throws SqlException {
+        long size;
+        SqlExecutionCircuitBreaker circuitBreaker = sqlExecutionContext.getCircuitBreaker();
+        RecordCursor.Counter counter = new RecordCursor.Counter();
+
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            cursor.calculateSize(circuitBreaker, counter);
+            size = counter.get();
+            cursor.toTop();
+            counter.clear();
+            cursor.calculateSize(circuitBreaker, counter);
+            long sizeAfterToTop = counter.get();
+
+            Assert.assertEquals(size, sizeAfterToTop);
+        }
+
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            counter.clear();
+            cursor.calculateSize(circuitBreaker, counter);
+            long sizeAfterReopen = counter.get();
+
+            Assert.assertEquals(size, sizeAfterReopen);
+        }
+    }
+
     private static void assertException0(CharSequence sql, SqlExecutionContext sqlExecutionContext, boolean fullFatJoins) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             compiler.setFullFatJoins(fullFatJoins);
@@ -1142,6 +1167,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
         node1.getConfigurationOverrides().setDefaultTableWriteMode(defaultTableWriteMode);
     }
 
+    protected static void configOverrideEnv(Map<String, String> env) {
+        node1.getConfigurationOverrides().setEnv(env);
+    }
+
     @SuppressWarnings("SameParameterValue")
     protected static void configOverrideHideTelemetryTable(boolean hideTelemetryTable) {
         node1.getConfigurationOverrides().setHideTelemetryTable(hideTelemetryTable);
@@ -1158,10 +1187,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected static void configOverrideMaxUncommittedRows(int maxUncommittedRows) {
         node1.getConfigurationOverrides().setMaxUncommittedRows(maxUncommittedRows);
-    }
-
-    protected static void configOverrideEnv(Map<String, String> env) {
-        node1.getConfigurationOverrides().setEnv(env);
     }
 
     protected static void configOverrideO3ColumnMemorySize(int size) {
@@ -1210,6 +1235,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
     @SuppressWarnings("SameParameterValue")
     protected static void configOverrideSqlJoinMetadataPageSize(int sqlJoinMetadataPageSize) {
         node1.getConfigurationOverrides().setSqlJoinMetadataPageSize(sqlJoinMetadataPageSize);
+    }
+
+    protected static void configOverrideSqlWindowMaxRecursion(int maxRecursion) {
+        node1.getConfigurationOverrides().setSqlWindowMaxRecursion(maxRecursion);
     }
 
     protected static void configOverrideSqlWindowStoreMaxPages(int windowStoreMaxPages) {
@@ -1463,6 +1492,9 @@ public abstract class AbstractCairoTest extends AbstractTest {
                     }
                 }
             }
+
+            // make sure calculateSize() produces consistent result
+            assertCalculateSize(factory);
         } finally {
             Misc.free(factory);
         }

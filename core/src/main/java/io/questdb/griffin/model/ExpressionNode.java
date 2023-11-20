@@ -29,7 +29,6 @@ import io.questdb.std.*;
 import io.questdb.std.str.CharSinkBase;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 import java.util.Objects;
 
@@ -50,7 +49,7 @@ public class ExpressionNode implements Mutable, Sinkable {
     public final ObjList<ExpressionNode> args = new ObjList<>(4);
     public boolean innerPredicate = false;
     public int intrinsicValue = IntrinsicModel.UNDEFINED;
-    public @Nullable ExpressionNode lhs;
+    public ExpressionNode lhs;
     public int paramCount;
     public int position;
     public int precedence;

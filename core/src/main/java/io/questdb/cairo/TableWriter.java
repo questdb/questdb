@@ -116,6 +116,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final RingQueue<TableWriterTask> commandQueue;
     private final SCSequence commandSubSeq;
     private final CairoConfiguration configuration;
+    private final long dataAppendPageSize;
     private final DdlListener ddlListener;
     private final MemoryMAR ddlMem;
     private final ObjList<ColumnIndexer> denseIndexers = new ObjList<>();
@@ -220,6 +221,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private MemoryARW o3TimestampMemCpy;
     private long partitionTimestampHi;
     private boolean performRecovery;
+    private boolean processingQueue;
     private PurgingOperator purgingOperator;
     private boolean removeDirOnCancelRow = true;
     private int rowAction = ROW_ACTION_OPEN_PARTITION;
@@ -269,7 +271,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         this.fileOperationRetryCount = configuration.getFileOperationRetryCount();
         this.tableToken = tableToken;
         this.o3QuickSortEnabled = configuration.isO3QuickSortEnabled();
-        this.o3ColumnMemorySize = configuration.getO3ColumnMemorySize();
+        if (tableToken.isSystem()) {
+            this.o3ColumnMemorySize = configuration.getSystemO3ColumnMemorySize();
+            this.dataAppendPageSize = configuration.getSystemDataAppendPageSize();
+        } else {
+            this.o3ColumnMemorySize = configuration.getO3ColumnMemorySize();
+            this.dataAppendPageSize = configuration.getDataAppendPageSize();
+        }
         this.path = new Path().of(root).concat(tableToken);
         this.other = new Path().of(root).concat(tableToken);
         this.rootLen = path.size();
@@ -1320,6 +1328,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public long getColumnTop(long partitionTimestamp, int columnIndex, long defaultValue) {
         long colTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
         return colTop > -1L ? colTop : defaultValue;
+    }
+
+    public long getDataAppendPageSize() {
+        return dataAppendPageSize;
     }
 
     public DedupColumnCommitAddresses getDedupCommitAddresses() {
@@ -5515,7 +5527,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             mem1.of(
                     ff,
                     dFile(path.trimTo(pathTrimToLen), name, columnNameTxn),
-                    configuration.getDataAppendPageSize(),
+                    dataAppendPageSize,
                     -1,
                     MemoryTag.MMAP_TABLE_WRITER,
                     configuration.getWriterFileOpenOpts(),
@@ -5525,7 +5537,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 mem2.of(
                         ff,
                         iFile(path.trimTo(pathTrimToLen), name, columnNameTxn),
-                        configuration.getDataAppendPageSize(),
+                        dataAppendPageSize,
                         -1,
                         MemoryTag.MMAP_TABLE_WRITER,
                         configuration.getWriterFileOpenOpts(),
@@ -5742,10 +5754,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void processCommandQueue(boolean contextAllowsAnyStructureChanges) {
-        long cursor;
-        while ((cursor = commandSubSeq.next()) > -1) {
-            TableWriterTask cmd = commandQueue.get(cursor);
-            processCommandQueue(cmd, commandSubSeq, cursor, contextAllowsAnyStructureChanges);
+        // In case processing of a queue calls rollback() on the writer
+        // do not recursively start processing the queue again.
+        if (!processingQueue) {
+            try {
+                processingQueue = true;
+                long cursor;
+                while ((cursor = commandSubSeq.next()) > -1) {
+                    TableWriterTask cmd = commandQueue.get(cursor);
+                    processCommandQueue(cmd, commandSubSeq, cursor, contextAllowsAnyStructureChanges);
+                }
+            } finally {
+                processingQueue = false;
+            }
         }
     }
 

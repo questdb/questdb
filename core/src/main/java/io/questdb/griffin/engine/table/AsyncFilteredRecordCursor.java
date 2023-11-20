@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
@@ -63,6 +64,57 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         this.filter = filter;
         this.hasDescendingOrder = scanDirection == RecordCursorFactory.SCAN_DIRECTION_BACKWARD;
         record = new PageAddressCacheRecord();
+    }
+
+    @Override
+    public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor.Counter counter) {
+        if (frameIndex == -1) {
+            fetchNextFrame();
+            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+        }
+
+        if (rowsRemaining < 1) {
+            return;
+        }
+
+        // We have rows in the current frame we still need to dispatch
+        if (frameRowIndex < frameRowCount) {
+            long frameRowsLeft = Math.min(frameRowCount - frameRowIndex, rowsRemaining);
+            rowsRemaining -= frameRowsLeft;
+            frameRowIndex += frameRowsLeft;
+            counter.add(frameRowsLeft);
+            if (rowsRemaining < 1) {
+                frameSequence.cancel();
+                return;
+            }
+        }
+
+        // Release the previous queue item.
+        // There is no identity check here because this check
+        // had been done when 'cursor' was assigned.
+        collectCursor(false);
+
+        while (frameIndex < frameLimit) {
+            fetchNextFrame();
+            if (frameRowCount > 0 && frameRowIndex < frameRowCount) {
+                long frameRowsLeft = Math.min(frameRowCount - frameRowIndex, rowsRemaining);
+                rowsRemaining -= frameRowsLeft;
+                frameRowIndex += frameRowsLeft;
+                counter.add(frameRowsLeft);
+                if (rowsRemaining < 1) {
+                    frameSequence.cancel();
+                    return;
+                } else {
+                    collectCursor(false);
+                }
+            }
+
+            if (!allFramesActive) {
+                throwTimeoutException();
+            }
+
+            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+        }
     }
 
     @Override
@@ -165,6 +217,52 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     @Override
     public long size() {
         return -1;
+    }
+
+    @Override
+    public void skipRows(Counter rowCount) throws DataUnavailableException {
+        if (frameIndex == -1) {
+            fetchNextFrame();
+        }
+
+        long rowCountLeft = Math.min(rowsRemaining, rowCount.get());
+
+        // We have rows in the current frame we still need to dispatch
+        if (frameRowIndex < frameRowCount) {
+            long frameRowsLeft = Math.min(frameRowCount - frameRowIndex, rowCountLeft);
+            rowsRemaining -= frameRowsLeft;
+            frameRowIndex += frameRowsLeft;
+            rowCountLeft -= frameRowsLeft;
+            rowCount.dec(frameRowsLeft);
+            if (rowCountLeft == 0) {
+                return;
+            }
+        }
+
+        // Release the previous queue item.
+        // There is no identity check here because this check
+        // had been done when 'cursor' was assigned.
+        collectCursor(false);
+
+        while (frameIndex < frameLimit) {
+            fetchNextFrame();
+            if (frameRowCount > 0 && frameRowIndex < frameRowCount) {
+                long frameRowsLeft = Math.min(frameRowCount - frameRowIndex, rowCountLeft);
+                rowsRemaining -= frameRowsLeft;
+                frameRowIndex += frameRowsLeft;
+                rowCountLeft -= frameRowsLeft;
+                rowCount.dec(frameRowsLeft);
+                if (rowCountLeft == 0) {
+                    return;
+                }
+            }
+
+            collectCursor(false);
+
+            if (!allFramesActive) {
+                throwTimeoutException();
+            }
+        }
     }
 
     @Override

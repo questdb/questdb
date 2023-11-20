@@ -82,7 +82,7 @@ public class CountDistinctStringGroupByFunction extends LongFunction implements 
             if (index < 0) {
                 return;
             }
-            set.addAt(index, Chars.toString(val));
+            set.addAt(index, val);
             mapValue.addLong(valueIndex, 1);
         }
     }

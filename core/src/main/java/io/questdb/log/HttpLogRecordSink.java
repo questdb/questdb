@@ -192,7 +192,7 @@ public class HttpLogRecordSink extends LogRecordSink {
     }
 
     @Override
-    public String toString() {
+    public @NotNull String toString() {
         return Utf8s.stringFromUtf8Bytes(address, _wptr);
     }
 }

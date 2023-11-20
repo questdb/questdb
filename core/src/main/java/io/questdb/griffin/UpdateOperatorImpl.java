@@ -66,7 +66,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
         this.rootLen = rootLen;
         this.purgingOperator = purgingOperator;
         this.indexBuilder = new IndexBuilder(configuration);
-        this.dataAppendPageSize = configuration.getDataAppendPageSize();
+        this.dataAppendPageSize = tableWriter.getDataAppendPageSize();
         this.fileOpenOpts = configuration.getWriterFileOpenOpts();
         this.ff = configuration.getFilesFacade();
         this.path = path;
@@ -94,165 +94,175 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                 tableWriter.commit();
             }
 
-            final TableRecordMetadata tableMetadata = tableWriter.getMetadata();
-
-            // Check that table structure hasn't changed between planning and executing the UPDATE
-            if (tableMetadata.getTableId() != tableId || tableWriter.getMetadataVersion() != tableVersion) {
-                throw TableReferenceOutOfDateException.of(tableToken, tableId, tableMetadata.getTableId(),
-                        tableVersion, tableWriter.getMetadataVersion());
-            }
-
-            // Select the rows to be updated
-            final RecordMetadata updateMetadata = factory.getMetadata();
-            final int affectedColumnCount = updateMetadata.getColumnCount();
-
-            // Build index column map from table to update to values returned from the update statement row cursors
-            updateColumnIndexes.clear();
-            for (int i = 0; i < affectedColumnCount; i++) {
-                CharSequence columnName = updateMetadata.getColumnName(i);
-                int tableColumnIndex = tableMetadata.getColumnIndex(columnName);
-                assert tableColumnIndex >= 0;
-                updateColumnIndexes.add(tableColumnIndex);
-            }
-
-            // Create update memory list of all columns to be updated
-            configureColumns(tableMetadata, affectedColumnCount);
-
-            // Start execution frame by frame
             // Partition to update
             int partitionIndex = -1;
-            long rowsUpdated = 0;
+            try {
+                final TableRecordMetadata tableMetadata = tableWriter.getMetadata();
 
-            // Update may be queued and requester already disconnected, force check someone still waits for it
-            op.forceTestTimeout();
-            // Row by row updates for now
-            // This should happen parallel per file (partition and column)
-            try (RecordCursor recordCursor = factory.getCursor(sqlExecutionContext)) {
-                Record masterRecord = recordCursor.getRecord();
+                // Check that table structure hasn't changed between planning and executing the UPDATE
+                if (tableMetadata.getTableId() != tableId || tableWriter.getMetadataVersion() != tableVersion) {
+                    throw TableReferenceOutOfDateException.of(tableToken, tableId, tableMetadata.getTableId(),
+                            tableVersion, tableWriter.getMetadataVersion());
+                }
 
-                long prevRow = 0;
-                long minRow = -1L;
-                long lastRowId = Long.MIN_VALUE;
-                while (recordCursor.hasNext()) {
-                    long rowId = masterRecord.getUpdateRowId();
+                // Select the rows to be updated
+                final RecordMetadata updateMetadata = factory.getMetadata();
+                final int affectedColumnCount = updateMetadata.getColumnCount();
 
-                    // Some joins expand results set and returns same row multiple times
-                    if (rowId == lastRowId) {
-                        continue;
-                    }
-                    if (rowId < lastRowId) {
-                        // We're assuming, but not enforcing the fact that
-                        // factory produces rows in incrementing order.
-                        throw CairoException.critical(0).put("Update statement generated invalid query plan. Rows are not returned in order.");
-                    }
-                    lastRowId = rowId;
+                // Build index column map from table to update to values returned from the update statement row cursors
+                updateColumnIndexes.clear();
+                for (int i = 0; i < affectedColumnCount; i++) {
+                    CharSequence columnName = updateMetadata.getColumnName(i);
+                    int tableColumnIndex = tableMetadata.getColumnIndex(columnName);
+                    assert tableColumnIndex >= 0;
+                    updateColumnIndexes.add(tableColumnIndex);
+                }
 
-                    final int rowPartitionIndex = Rows.toPartitionIndex(rowId);
-                    final long currentRow = Rows.toLocalRowID(rowId);
+                // Create update memory list of all columns to be updated
+                configureColumns(tableMetadata, affectedColumnCount);
 
-                    if (rowPartitionIndex != partitionIndex) {
-                        if (tableWriter.isPartitionReadOnly(rowPartitionIndex)) {
-                            throw CairoException.critical(0)
-                                    .put("cannot update read-only partition [table=").put(tableToken.getTableName())
-                                    .put(", partitionTimestamp=").ts(tableWriter.getPartitionTimestamp(rowPartitionIndex))
-                                    .put(']');
+                // Start execution frame by frame
+                long rowsUpdated = 0;
+
+                // Update may be queued and requester already disconnected, force check someone still waits for it
+                op.forceTestTimeout();
+                // Row by row updates for now
+                // This should happen parallel per file (partition and column)
+                try (RecordCursor recordCursor = factory.getCursor(sqlExecutionContext)) {
+                    Record masterRecord = recordCursor.getRecord();
+
+                    long prevRow = 0;
+                    long minRow = -1L;
+                    long lastRowId = Long.MIN_VALUE;
+                    while (recordCursor.hasNext()) {
+                        long rowId = masterRecord.getUpdateRowId();
+
+                        // Some joins expand results set and returns same row multiple times
+                        if (rowId == lastRowId) {
+                            continue;
                         }
-                        if (partitionIndex > -1) {
-                            LOG.info()
-                                    .$("updating partition [partitionIndex=").$(partitionIndex)
-                                    .$(", rowPartitionIndex=").$(rowPartitionIndex)
-                                    .$(", rowPartitionTs=").$ts(tableWriter.getPartitionTimestamp(rowPartitionIndex))
-                                    .$(", affectedColumnCount=").$(affectedColumnCount)
-                                    .$(", prevRow=").$(prevRow)
-                                    .$(", minRow=").$(minRow)
-                                    .I$();
+                        if (rowId < lastRowId) {
+                            // We're assuming, but not enforcing the fact that
+                            // factory produces rows in incrementing order.
+                            throw CairoException.critical(0).put("Update statement generated invalid query plan. Rows are not returned in order.");
+                        }
+                        lastRowId = rowId;
 
-                            copyColumns(
-                                    partitionIndex,
-                                    affectedColumnCount,
-                                    prevRow,
-                                    minRow
-                            );
+                        final int rowPartitionIndex = Rows.toPartitionIndex(rowId);
+                        final long currentRow = Rows.toLocalRowID(rowId);
 
-                            updateEffectiveColumnTops(
-                                    tableWriter,
-                                    partitionIndex,
-                                    updateColumnIndexes,
-                                    affectedColumnCount,
-                                    minRow
-                            );
+                        if (rowPartitionIndex != partitionIndex) {
+                            if (tableWriter.isPartitionReadOnly(rowPartitionIndex)) {
+                                throw CairoException.critical(0)
+                                        .put("cannot update read-only partition [table=").put(tableToken.getTableName())
+                                        .put(", partitionTimestamp=").ts(tableWriter.getPartitionTimestamp(rowPartitionIndex))
+                                        .put(']');
+                            }
+                            if (partitionIndex > -1) {
+                                LOG.info()
+                                        .$("updating partition [partitionIndex=").$(partitionIndex)
+                                        .$(", rowPartitionIndex=").$(rowPartitionIndex)
+                                        .$(", rowPartitionTs=").$ts(tableWriter.getPartitionTimestamp(rowPartitionIndex))
+                                        .$(", affectedColumnCount=").$(affectedColumnCount)
+                                        .$(", prevRow=").$(prevRow)
+                                        .$(", minRow=").$(minRow)
+                                        .I$();
 
-                            rebuildIndexes(tableWriter.getPartitionTimestamp(partitionIndex), tableMetadata, tableWriter);
+                                copyColumns(
+                                        partitionIndex,
+                                        affectedColumnCount,
+                                        prevRow,
+                                        minRow
+                                );
+
+                                updateEffectiveColumnTops(
+                                        tableWriter,
+                                        partitionIndex,
+                                        updateColumnIndexes,
+                                        affectedColumnCount,
+                                        minRow
+                                );
+
+                                rebuildIndexes(tableWriter.getPartitionTimestamp(partitionIndex), tableMetadata, tableWriter);
+                            }
+
+                            openColumns(srcColumns, rowPartitionIndex, false);
+                            openColumns(dstColumns, rowPartitionIndex, true);
+
+                            partitionIndex = rowPartitionIndex;
+                            prevRow = 0;
+                            minRow = currentRow;
                         }
 
-                        openColumns(srcColumns, rowPartitionIndex, false);
-                        openColumns(dstColumns, rowPartitionIndex, true);
+                        appendRowUpdate(
+                                rowPartitionIndex,
+                                affectedColumnCount,
+                                prevRow,
+                                currentRow,
+                                masterRecord,
+                                minRow
+                        );
 
-                        partitionIndex = rowPartitionIndex;
-                        prevRow = 0;
-                        minRow = currentRow;
+                        prevRow = currentRow + 1;
+                        rowsUpdated++;
+
+                        op.testTimeout();
                     }
 
-                    appendRowUpdate(
-                            rowPartitionIndex,
-                            affectedColumnCount,
-                            prevRow,
-                            currentRow,
-                            masterRecord,
-                            minRow
-                    );
+                    if (partitionIndex > -1) {
+                        copyColumns(partitionIndex, affectedColumnCount, prevRow, minRow);
 
-                    prevRow = currentRow + 1;
-                    rowsUpdated++;
+                        updateEffectiveColumnTops(
+                                tableWriter,
+                                partitionIndex,
+                                updateColumnIndexes,
+                                affectedColumnCount,
+                                minRow
+                        );
 
-                    op.testTimeout();
+                        rebuildIndexes(tableWriter.getPartitionTimestamp(partitionIndex), tableMetadata, tableWriter);
+                    }
+                } finally {
+                    Misc.freeObjList(srcColumns);
+                    Misc.freeObjList(dstColumns);
+                    // todo: we are opening columns incrementally, e.g. if we don't have enough objects
+                    //   but here we're always clearing columns, making incremental "open" pointless
+                    //   perhaps we should keep N column object max to kick around ?
+                    srcColumns.clear();
+                    dstColumns.clear();
                 }
 
                 if (partitionIndex > -1) {
-                    copyColumns(partitionIndex, affectedColumnCount, prevRow, minRow);
-
-                    updateEffectiveColumnTops(
-                            tableWriter,
-                            partitionIndex,
-                            updateColumnIndexes,
-                            affectedColumnCount,
-                            minRow
+                    op.forceTestTimeout();
+                    tableWriter.commit();
+                    tableWriter.openLastPartition();
+                    purgingOperator.purge(
+                            path.trimTo(rootLen),
+                            tableWriter.getTableToken(),
+                            tableWriter.getPartitionBy(),
+                            tableWriter.checkScoreboardHasReadersBeforeLastCommittedTxn(),
+                            tableWriter.getMetadata(),
+                            tableWriter.getTruncateVersion(),
+                            tableWriter.getTxn()
                     );
-
-                    rebuildIndexes(tableWriter.getPartitionTimestamp(partitionIndex), tableMetadata, tableWriter);
                 }
+
+                LOG.info().$("update finished [table=").$(tableToken)
+                        .$(", instance=").$(op.getCorrelationId())
+                        .$(", updated=").$(rowsUpdated)
+                        .$(", txn=").$(tableWriter.getTxn())
+                        .I$();
+
+                return rowsUpdated;
             } finally {
-                Misc.freeObjList(srcColumns);
-                Misc.freeObjList(dstColumns);
-                // todo: we are opening columns incrementally, e.g. if we don't have enough objects
-                //   but here we're always clearing columns, making incremental "open" pointless
-                //   perhaps we should keep N column object max to kick around ?
-                srcColumns.clear();
-                dstColumns.clear();
+                if (partitionIndex > -1) {
+                    // Rollback here.
+                    // Some exceptions can be proceeded without rollback
+                    // but update has to be rolled back in case of the caller does not
+                    // return the writer to the pool after the error.
+                    tableWriter.rollback();
+                }
             }
-
-            if (partitionIndex > -1) {
-                op.forceTestTimeout();
-                tableWriter.commit();
-                tableWriter.openLastPartition();
-                purgingOperator.purge(
-                        path.trimTo(rootLen),
-                        tableWriter.getTableToken(),
-                        tableWriter.getPartitionBy(),
-                        tableWriter.checkScoreboardHasReadersBeforeLastCommittedTxn(),
-                        tableWriter.getMetadata(),
-                        tableWriter.getTruncateVersion(),
-                        tableWriter.getTxn()
-                );
-            }
-
-            LOG.info().$("update finished [table=").$(tableToken)
-                    .$(", instance=").$(op.getCorrelationId())
-                    .$(", updated=").$(rowsUpdated)
-                    .$(", txn=").$(tableWriter.getTxn())
-                    .I$();
-
-            return rowsUpdated;
         } catch (TableReferenceOutOfDateException e) {
             throw e;
         } catch (SqlException e) {

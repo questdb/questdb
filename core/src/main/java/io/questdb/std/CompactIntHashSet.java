@@ -31,7 +31,6 @@ import java.util.Arrays;
  * and also has a slightly higher load factor.
  */
 public class CompactIntHashSet extends AbstractIntHashSet {
-
     private static final int MIN_INITIAL_CAPACITY = 16;
 
     public CompactIntHashSet() {
@@ -39,7 +38,7 @@ public class CompactIntHashSet extends AbstractIntHashSet {
     }
 
     public CompactIntHashSet(int initialCapacity) {
-        this(initialCapacity, 0.6, noEntryKey);
+        this(initialCapacity, 0.7, noEntryKey);
     }
 
     public CompactIntHashSet(int initialCapacity, double loadFactor, int noKeyValue) {
