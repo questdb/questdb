@@ -36,6 +36,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     private final CairoConfiguration configuration;
     private final FilesFacade ff;
     private final LowerCaseCharSequenceIntHashMap tmpValidationMap = new LowerCaseCharSequenceIntHashMap();
+    private boolean isSoftLink;
     private int maxUncommittedRows;
     private MemoryMR metaMem;
     private int metadataVersion;
@@ -52,8 +53,9 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         this.configuration = configuration;
         this.ff = configuration.getFilesFacade();
         this.tableToken = tableToken;
-        this.path = new Path().of(configuration.getRoot()).concat(tableToken.getDirName());
+        this.path = new Path().of(configuration.getRoot()).concat(tableToken.getDirName()).$();
         this.plen = path.size();
+        this.isSoftLink = Files.isSoftLink(path);
         this.metaMem = Vm.getMRInstance();
     }
 
@@ -220,6 +222,10 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     @Override
     public TableToken getTableToken() {
         return tableToken;
+    }
+
+    public boolean isSoftLink() {
+        return isSoftLink;
     }
 
     @Override

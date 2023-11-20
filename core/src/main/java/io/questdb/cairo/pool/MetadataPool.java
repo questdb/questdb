@@ -119,6 +119,12 @@ public class MetadataPool extends AbstractMultiTenantPool<MetadataPool.MetadataT
             return readerMetadataTenant.getPartitionBy();
         }
 
+        @Override
+        public boolean isSoftLink() {
+            lazilyRefreshReaderMetadata();
+            return readerMetadataTenant.isSoftLink();
+        }
+
         public void goodbye() {
             entry = null;
             pool = null;

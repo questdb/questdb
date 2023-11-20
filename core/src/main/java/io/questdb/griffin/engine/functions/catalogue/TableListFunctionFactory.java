@@ -35,10 +35,7 @@ import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
-import io.questdb.std.str.Path;
 import io.questdb.tasks.TelemetryTask;
-
-import static io.questdb.cairo.TableUtils.META_FILE_NAME;
 
 public class TableListFunctionFactory implements FunctionFactory {
     private static final int DEDUP_NAME_COLUMN;
@@ -83,9 +80,7 @@ public class TableListFunctionFactory implements FunctionFactory {
         public static final TableColumnMetadata TABLE_NAME_COLUMN_META = new TableColumnMetadata(TABLE_NAME_COLUMN_NAME, ColumnType.STRING);
         private final TableListRecordCursor cursor = new TableListRecordCursor();
         private final boolean hideTelemetryTables;
-        private Path path;
         private final CharSequence sysTablePrefix;
-        private TableReaderMetadata tableReaderMetadata;
         private final CharSequence tempPendingRenameTablePrefix;
         private final String toPlan;
         private CairoEngine engine;
@@ -93,10 +88,6 @@ public class TableListFunctionFactory implements FunctionFactory {
 
         public TableListCursorFactory(CairoConfiguration configuration, RecordMetadata metadata, String toPlan) {
             super(metadata);
-            if (metadata == METADATA) {
-                path = new Path().of(configuration.getRoot()).$();
-                tableReaderMetadata = new TableReaderMetadata(configuration);
-            }
             tempPendingRenameTablePrefix = configuration.getTempRenamePendingTablePrefix();
             sysTablePrefix = configuration.getSystemTableNamePrefix();
             hideTelemetryTables = configuration.getTelemetryConfiguration().hideTables();
@@ -127,11 +118,6 @@ public class TableListFunctionFactory implements FunctionFactory {
         @Override
         protected void _close() {
             cursor.close();
-            if (getMetadata() == METADATA) {
-                tableReaderMetadata.clear(); // release FD of last table on the list
-                tableReaderMetadata = Misc.free(tableReaderMetadata);
-            }
-            path = Misc.free(path);
             engine = null;
         }
 
@@ -178,20 +164,20 @@ public class TableListFunctionFactory implements FunctionFactory {
             }
 
             private class TableListRecord implements Record {
+                private boolean isDedup;
                 private boolean isSoftLink;
                 private int maxUncommittedRows;
                 private long o3MaxLag;
                 private int partitionBy;
-                private int tableId;
+                private CharSequence timestampColumnName;
 
                 @Override
                 public boolean getBool(int col) {
                     if (col == WAL_ENABLED_COLUMN) {
-                        return tableReaderMetadata.isWalEnabled();
+                        return tableToken.isWal();
                     }
                     if (col == DEDUP_NAME_COLUMN) {
-                        int timestampIndex = tableReaderMetadata.getTimestampIndex();
-                        return timestampIndex >= 0 && tableReaderMetadata.isWalEnabled() && tableReaderMetadata.isDedupKey(timestampIndex);
+                        return isDedup;
                     }
                     return false;
                 }
@@ -199,7 +185,7 @@ public class TableListFunctionFactory implements FunctionFactory {
                 @Override
                 public int getInt(int col) {
                     if (col == ID_COLUMN) {
-                        return tableId;
+                        return tableToken.getTableId();
                     }
                     assert col == MAX_UNCOMMITTED_ROWS_COLUMN;
                     return maxUncommittedRows;
@@ -220,9 +206,7 @@ public class TableListFunctionFactory implements FunctionFactory {
                         return PartitionBy.toString(partitionBy);
                     }
                     if (col == DESIGNATED_TIMESTAMP_COLUMN) {
-                        if (tableReaderMetadata.getTimestampIndex() > -1) {
-                            return tableReaderMetadata.getColumnName(tableReaderMetadata.getTimestampIndex());
-                        }
+                        return timestampColumnName;
                     }
                     if (col == DIRECTORY_NAME_COLUMN) {
                         if (isSoftLink) {
@@ -252,29 +236,22 @@ public class TableListFunctionFactory implements FunctionFactory {
                     }
 
                     if (getMetadata() == METADATA) {
-                        int pathLen = path.size();
-                        try {
-                            path.concat(tableToken).$();
-                            isSoftLink = Files.isSoftLink(path);
-                            path.concat(META_FILE_NAME).$();
-                            tableReaderMetadata.load(path);
-
-                            // Pre-read as much as possible to skip record instead of failing on column fetch
-                            tableId = tableReaderMetadata.getTableId();
-                            maxUncommittedRows = tableReaderMetadata.getMaxUncommittedRows();
-                            o3MaxLag = tableReaderMetadata.getO3MaxLag();
-                            partitionBy = tableReaderMetadata.getPartitionBy();
+                        try (TableMetadata tableMetadata = engine.getMetadata(tableToken)) {
+                            isSoftLink = tableMetadata.isSoftLink();
+                            maxUncommittedRows = tableMetadata.getMaxUncommittedRows();
+                            o3MaxLag = tableMetadata.getO3MaxLag();
+                            partitionBy = tableMetadata.getPartitionBy();
+                            int timestampIndex = tableMetadata.getTimestampIndex();
+                            timestampColumnName = timestampIndex > -1 ? tableMetadata.getColumnName(timestampIndex) : null;
+                            isDedup = timestampIndex >= 0 && tableToken.isWal() && tableMetadata.isDedupKey(timestampIndex);
                         } catch (CairoException e) {
-                            // perhaps this folder is not a table
-                            // remove it from the result set
+                            // perhaps this folder is not a table remove it from the result set
                             LOG.info()
                                     .$("cannot query table metadata [table=").$(tableToken)
                                     .$(", error=").$(e.getFlyweightMessage())
                                     .$(", errno=").$(e.getErrno())
                                     .I$();
                             return false;
-                        } finally {
-                            path.trimTo(pathLen).$();
                         }
                     }
                     return true;
