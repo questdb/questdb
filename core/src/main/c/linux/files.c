@@ -427,7 +427,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getLastModified
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileLimit
-        (JNIEnv *, jclass) {
+        (JNIEnv *e, jclass cl) {
     struct rlimit limit;
     if (getrlimit(RLIMIT_NOFILE, &limit) == 0) {
         return (jlong)limit.rlim_cur;
@@ -436,7 +436,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileLimit
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getMapCountLimit
-        (JNIEnv *, jclass) {
+        (JNIEnv *e, jclass cl) {
     FILE* fd = fopen("/proc/sys/vm/max_map_count", "r");
     if (fd == NULL) {
         return 0;

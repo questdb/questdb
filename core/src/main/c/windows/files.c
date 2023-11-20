@@ -923,11 +923,11 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getDiskSize(JNIEnv *e, jclass 
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileLimit
-        (JNIEnv *, jclass) {
+        (JNIEnv *e, jclass cl) {
     return 0; // no-op
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getMapCountLimit
-        (JNIEnv *, jclass) {
+        (JNIEnv *e, jclass cl) {
     return 0; // no-op
 }
