@@ -58,11 +58,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Os_errno
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Os_getEnvironmentType
         (JNIEnv *e, jclass cl) {
-<<<<<<< HEAD
     return 0; // no-op
-=======
-    return 0;
->>>>>>> upstream/master
 }
 
 typedef struct {
