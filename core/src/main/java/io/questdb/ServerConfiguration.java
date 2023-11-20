@@ -33,6 +33,8 @@ import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.std.ObjObjHashMap;
+import org.jetbrains.annotations.Nullable;
 
 public interface ServerConfiguration {
 

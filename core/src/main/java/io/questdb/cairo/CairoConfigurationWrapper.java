@@ -24,18 +24,17 @@
 
 package io.questdb.cairo;
 
-import io.questdb.BuildInformation;
-import io.questdb.FactoryProvider;
-import io.questdb.TelemetryConfiguration;
-import io.questdb.VolumeDefinitions;
+import io.questdb.*;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.function.LongSupplier;
 
@@ -1008,5 +1007,10 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean mangleTableDirNames() {
         return delegate.mangleTableDirNames();
+    }
+
+    @Override
+    public @Nullable ObjObjHashMap<ConfigPropertyKey, ConfigPropertyValue> getAllPairs() {
+        return delegate.getAllPairs();
     }
 }

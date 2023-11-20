@@ -32,11 +32,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriterMetadata;
-import io.questdb.griffin.engine.functions.catalogue.*;
 import io.questdb.griffin.engine.ops.*;
-import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
-import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
-import io.questdb.griffin.engine.table.TableListRecordCursorFactory;
 import io.questdb.griffin.model.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -59,7 +55,7 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import static io.questdb.cairo.wal.WalUtils.WAL_FORMAT_VERSION;
 import static io.questdb.griffin.SqlKeywords.*;
 
-public class SqlCompilerImpl implements SqlCompiler, Closeable {
+public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallback {
     static final ObjList<String> sqlControlSymbols = new ObjList<>(8);
     //null object used to skip null checks in batch method
     private static final BatchCallback EMPTY_CALLBACK = new BatchCallback() {
@@ -349,7 +345,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
     public ExpressionNode testParseExpression(CharSequence expression, QueryModel model) throws SqlException {
         clear();
         lexer.of(expression);
-        return parser.expr(lexer, model);
+        return parser.expr(lexer, model, this);
     }
 
     // test only
@@ -358,7 +354,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
     public void testParseExpression(CharSequence expression, ExpressionParserListener listener) throws SqlException {
         clear();
         lexer.of(expression);
-        parser.expr(lexer, listener);
+        parser.expr(lexer, listener, this);
     }
 
     private static void configureLexer(GenericLexer lexer) {
@@ -1035,7 +1031,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                 }
 
                 final int functionPosition = lexer.getPosition();
-                ExpressionNode expr = parser.expr(lexer, (QueryModel) null);
+                ExpressionNode expr = parser.expr(lexer, (QueryModel) null, this);
                 String designatedTimestampColumnName = null;
                 int tsIndex = tableMetadata.getTimestampIndex();
                 if (tsIndex >= 0) {
@@ -1339,7 +1335,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
     }
 
     private ExecutionModel compileExecutionModel(SqlExecutionContext executionContext) throws SqlException {
-        ExecutionModel model = parser.parse(lexer, executionContext);
+        ExecutionModel model = parser.parse(lexer, executionContext, this);
 
         if (ExecutionModel.EXPLAIN != model.getModelType()) {
             return compileExecutionModel0(executionContext, model);
@@ -1353,7 +1349,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
     private ExecutionModel compileExecutionModel0(SqlExecutionContext executionContext, ExecutionModel model) throws SqlException {
         switch (model.getModelType()) {
             case ExecutionModel.QUERY:
-                return optimiser.optimise((QueryModel) model, executionContext);
+                return optimiser.optimise((QueryModel) model, executionContext, this);
             case ExecutionModel.INSERT: {
                 InsertModel insertModel = (InsertModel) model;
                 if (insertModel.getQueryModel() != null) {
@@ -1369,7 +1365,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                 final QueryModel queryModel = (QueryModel) model;
                 TableToken tableToken = executionContext.getTableToken(queryModel.getTableName());
                 try (TableRecordMetadata metadata = executionContext.getMetadata(tableToken)) {
-                    optimiser.optimiseUpdate(queryModel, executionContext, metadata);
+                    optimiser.optimiseUpdate(queryModel, executionContext, metadata, this);
                     return model;
                 }
             default:
@@ -2507,93 +2503,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
         }
     }
 
-    private void sqlShow(SqlExecutionContext executionContext) throws SqlException {
-        CharSequence tok = SqlUtil.fetchNext(lexer);
-        if (tok != null) {
-            // show tables
-            // show columns from tab
-            // show partitions from tab
-            // show transaction isolation level
-            // show transaction_isolation
-            // show max_identifier_length
-            // show standard_conforming_strings
-            // show search_path
-            // show datestyle
-            // show time zone
-            // show server_version
-            RecordCursorFactory factory = null;
-            if (isTablesKeyword(tok)) {
-                factory = new TableListRecordCursorFactory();
-            } else if (isColumnsKeyword(tok)) {
-                factory = new ShowColumnsRecordCursorFactory(sqlShowFromTable(executionContext), lexer.lastTokenPosition());
-            } else if (isPartitionsKeyword(tok)) {
-                factory = new ShowPartitionsRecordCursorFactory(sqlShowFromTable(executionContext));
-            } else if (isTransactionKeyword(tok)) {
-                factory = sqlShowTransaction();
-            } else if (isTransactionIsolation(tok)) {
-                factory = new ShowTransactionIsolationLevelCursorFactory();
-            } else if (isMaxIdentifierLength(tok)) {
-                factory = new ShowMaxIdentifierLengthCursorFactory();
-            } else if (isStandardConformingStrings(tok)) {
-                factory = new ShowStandardConformingStringsCursorFactory();
-            } else if (isSearchPath(tok)) {
-                factory = new ShowSearchPathCursorFactory();
-            } else if (isDateStyleKeyword(tok)) {
-                factory = new ShowDateStyleCursorFactory();
-            } else if (isServerVersionKeyword(tok)) {
-                factory = new ShowServerVersionCursorFactory();
-            } else if (isTimeKeyword(tok)) {
-                tok = SqlUtil.fetchNext(lexer);
-                if (tok != null && SqlKeywords.isZoneKeyword(tok)) {
-                    factory = new ShowTimeZoneFactory();
-                }
-            } else {
-                factory = unknownShowStatement(executionContext, tok);
-            }
-            if (factory != null) {
-                tok = SqlUtil.fetchNext(lexer);
-                if (tok == null || Chars.equals(tok, ';')) {
-                    compiledQuery.of(factory);
-                    return;
-                } else {
-                    Misc.free(factory);
-                    throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
-                }
-            }
-        }
-        throw SqlException.position(lexer.getPosition()).put("expected ")
-                .put("'TABLES', 'COLUMNS FROM <tab>', 'PARTITIONS FROM <tab>', ")
-                .put("'TRANSACTION ISOLATION LEVEL', 'transaction_isolation', ")
-                .put("'max_identifier_length', 'standard_conforming_strings', ")
-                .put("'search_path', 'datestyle', or 'time zone'");
-    }
-
-    private TableToken sqlShowFromTable(SqlExecutionContext executionContext) throws SqlException {
-        CharSequence tok;
-        tok = SqlUtil.fetchNext(lexer);
-        if (tok == null || !isFromKeyword(tok)) {
-            throw SqlException.position(lexer.lastTokenPosition()).put("expected 'from'");
-        }
-        tok = SqlUtil.fetchNext(lexer);
-        if (tok == null) {
-            throw SqlException.position(lexer.getPosition()).put("expected a table name");
-        }
-        final CharSequence tableName = GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tok), lexer.lastTokenPosition());
-        return tableExistsOrFail(lexer.lastTokenPosition(), tableName, executionContext);
-    }
-
-    private RecordCursorFactory sqlShowTransaction() throws SqlException {
-        CharSequence tok = SqlUtil.fetchNext(lexer);
-        if (tok != null && isIsolationKeyword(tok)) {
-            tok = SqlUtil.fetchNext(lexer);
-            if (tok != null && isLevelKeyword(tok)) {
-                return new ShowTransactionIsolationLevelCursorFactory();
-            }
-            throw SqlException.position(tok != null ? lexer.lastTokenPosition() : lexer.getPosition()).put("expected 'level'");
-        }
-        throw SqlException.position(tok != null ? lexer.lastTokenPosition() : lexer.getPosition()).put("expected 'isolation'");
-    }
-
     private TableToken tableExistsOrFail(int position, CharSequence tableName, SqlExecutionContext executionContext) throws SqlException {
         TableToken tableToken = executionContext.getTableTokenIfExists(tableName);
         if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS) {
@@ -2746,7 +2655,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
     }
 
     private void validateAndOptimiseInsertAsSelect(SqlExecutionContext executionContext, InsertModel model) throws SqlException {
-        final QueryModel queryModel = optimiser.optimise(model.getQueryModel(), executionContext);
+        final QueryModel queryModel = optimiser.optimise(model.getQueryModel(), executionContext, this);
         int columnNameListSize = model.getColumnNameList().size();
         if (columnNameListSize > 0 && queryModel.getBottomUpColumns().size() != columnNameListSize) {
             throw SqlException.$(model.getTableNameExpr().position, "column count mismatch");
@@ -2893,7 +2802,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
         final KeywordBasedExecutor reindexTable = this::reindexTable;
         final KeywordBasedExecutor dropStatement = dropStmtCompiler::executorSelector;
         final KeywordBasedExecutor sqlBackup = backupAgent::sqlBackup;
-        final KeywordBasedExecutor sqlShow = this::sqlShow;
         final KeywordBasedExecutor vacuumTable = this::vacuum;
         final KeywordBasedExecutor snapshotDatabase = this::snapshotDatabase;
         final KeywordBasedExecutor compileDeallocate = this::compileDeallocate;
@@ -2911,7 +2819,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
         keywordBasedExecutors.put("reset", compileSet);  //no-op
         keywordBasedExecutors.put("drop", dropStatement);
         keywordBasedExecutors.put("backup", sqlBackup);
-        keywordBasedExecutors.put("show", sqlShow);
         keywordBasedExecutors.put("vacuum", vacuumTable);
         keywordBasedExecutors.put("snapshot", snapshotDatabase);
         keywordBasedExecutors.put("deallocate", compileDeallocate);
@@ -2952,11 +2859,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
             boolean hasIfExists
     ) throws SqlException {
         throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
-    }
-
-    @SuppressWarnings({"unused", "RedundantThrows"})
-    protected RecordCursorFactory unknownShowStatement(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
-        return null; // no-op
     }
 
     @FunctionalInterface

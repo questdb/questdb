@@ -1980,6 +1980,24 @@ public class SqlKeywords {
         return Chars.equals(token, ';');
     }
 
+    public static boolean isParametersKeyword(CharSequence tok) {
+        if (tok.length() != 10) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'p'
+                && (tok.charAt(i++) | 32) == 'a'
+                && (tok.charAt(i++) | 32) == 'r'
+                && (tok.charAt(i++) | 32) == 'a'
+                && (tok.charAt(i++) | 32) == 'm'
+                && (tok.charAt(i++) | 32) == 'e'
+                && (tok.charAt(i++) | 32) == 't'
+                && (tok.charAt(i++) | 32) == 'e'
+                && (tok.charAt(i++) | 32) == 'r'
+                && (tok.charAt(i++) | 32) == 's';
+    }
+
     public static boolean isSetKeyword(CharSequence tok) {
         if (tok.length() != 3) {
             return false;
@@ -1989,6 +2007,18 @@ public class SqlKeywords {
         return (tok.charAt(i++) | 32) == 's'
                 && (tok.charAt(i++) | 32) == 'e'
                 && (tok.charAt(i) | 32) == 't';
+    }
+
+    public static boolean isShowKeyword(CharSequence tok) {
+        if (tok.length() != 4) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 's'
+                && (tok.charAt(i++) | 32) == 'h'
+                && (tok.charAt(i++) | 32) == 'o'
+                && (tok.charAt(i) | 32) == 'w';
     }
 
     public static boolean isSquashKeyword(CharSequence tok) {
