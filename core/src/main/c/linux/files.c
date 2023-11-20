@@ -25,8 +25,10 @@
 #define _GNU_SOURCE
 
 #include "../share/files.h"
+#include "../share/sysutil.h"
 #include <sys/mman.h>
 #include <errno.h>
+#include <limits.h>
 #include <string.h>
 #include <stdio.h>
 #include <sys/sendfile.h>
@@ -38,7 +40,6 @@
 #include <sys/time.h>
 #include <sys/vfs.h>
 #include <fcntl.h>
-#include "../share/sysutil.h"
 #include <stdint.h>
 
 static inline jlong _io_questdb_std_Files_mremap0
@@ -430,7 +431,11 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileLimit
         (JNIEnv *e, jclass cl) {
     struct rlimit limit;
     if (getrlimit(RLIMIT_NOFILE, &limit) == 0) {
-        return (jlong)limit.rlim_cur;
+        if (limit.rlim_cur == RLIM_INFINITY) {
+            // Remap RLIM_INFINITY (~0UL, unsigned) to LONG_MAX (signed).
+            return LONG_MAX;
+        }
+        return (jlong) limit.rlim_cur;
     }
     return -1;
 }
