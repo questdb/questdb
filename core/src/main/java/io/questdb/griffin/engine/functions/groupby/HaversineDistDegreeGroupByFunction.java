@@ -53,11 +53,11 @@ public class HaversineDistDegreeGroupByFunction extends DoubleFunction implement
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        //first item
+        // first item
         saveFirstItem(mapValue, this.latDegree.getDouble(record), this.lonDegree.getDouble(record), this.timestamp.getTimestamp(record));
-        //last item
+        // last item
         saveLastItem(mapValue, this.latDegree.getDouble(record), this.lonDegree.getDouble(record), this.timestamp.getTimestamp(record));
-        //result
+        // result
         saveDistance(mapValue, 0);
     }
 

@@ -59,8 +59,8 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
             sets.extendAndSet(setIndex, set = new CompactLongHashSet(64, 0.7, Numbers.LONG_NaN));
         } else {
             set = sets.getQuick(setIndex);
+            set.clear();
         }
-        set.clear();
 
         final long val = arg.getLong(record);
         if (val != Numbers.LONG_NaN) {
