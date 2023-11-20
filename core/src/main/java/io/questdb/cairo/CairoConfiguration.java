@@ -419,6 +419,8 @@ public interface CairoConfiguration {
 
     int getSqlWindowInitialRangeBufferSize();
 
+    int getSqlWindowMaxRecursion();
+
     int getSqlWindowRowIdMaxPages();
 
     int getSqlWindowRowIdPageSize();

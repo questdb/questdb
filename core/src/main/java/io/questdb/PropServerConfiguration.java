@@ -298,6 +298,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlTxnScoreboardEntryCount;
     private final int sqlWindowColumnPoolCapacity;
     private final int sqlWindowInitialRangeBufferSize;
+    private final int sqlWindowMaxRecursion;
     private final int sqlWindowRowIdMaxPages;
     private final int sqlWindowRowIdPageSize;
     private final int sqlWindowStoreMaxPages;
@@ -356,6 +357,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long writerDataIndexKeyAppendPageSize;
     private final long writerDataIndexValueAppendPageSize;
     private final long writerFileOpenOpts;
+    private final long writerMemoryLimit;
     private final long writerMiscAppendPageSize;
     private final boolean writerMixedIOEnabled;
     private final int writerTickRowsCountMod;
@@ -468,7 +470,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean stringToCharCastAllowed;
     private boolean symbolAsFieldSupported;
     private long symbolCacheWaitUsBeforeReload;
-    private final long writerMemoryLimit;
 
     public PropServerConfiguration(
             String root,
@@ -1010,6 +1011,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.rndFunctionMemoryPageSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_RND_MEMORY_PAGE_SIZE, 8192));
             this.rndFunctionMemoryMaxPages = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_RND_MEMORY_MAX_PAGES, 128));
             this.sqlStrFunctionBufferMaxSize = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_STR_FUNCTION_BUFFER_MAX_SIZE, Numbers.SIZE_1MB));
+            this.sqlWindowMaxRecursion = getInt(properties, env, PropertyKey.CAIRO_SQL_WINDOW_MAX_RECURSION, 128);
             int sqlWindowStorePageSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_STORE_PAGE_SIZE, Numbers.SIZE_1MB));
             this.sqlWindowStorePageSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, sqlWindowStorePageSize));
             int sqlWindowStoreMaxPages = getInt(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_STORE_MAX_PAGES, Integer.MAX_VALUE);
@@ -2458,6 +2460,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlWindowInitialRangeBufferSize() {
             return sqlWindowInitialRangeBufferSize;
+        }
+
+        @Override
+        public int getSqlWindowMaxRecursion() {
+            return sqlWindowMaxRecursion;
         }
 
         @Override

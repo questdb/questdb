@@ -63,6 +63,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     public static void setUpStatic() throws Exception {
         path = new Path();
         AbstractCairoTest.setUpStatic();
+        configOverrideSqlWindowMaxRecursion(512);
     }
 
     @AfterClass
@@ -154,6 +155,90 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "select * from a " +
                         "join b on a.ts = b.ts and a.i - b.i and b.i - a.i"
         );
+    }
+
+    @Test
+    public void testACBadOffsetParsing() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table trips (a double, b int, ts timestamp ) timestamp(ts)");
+
+            String prefix = "select avg(a) over(partition by b order by ts ";
+
+            for (String frameType : Arrays.asList("rows ", "range")) {
+                String queryPrefix = prefix + frameType;
+
+                assertFailure(60,
+                        "integer expression expected",
+                        queryPrefix + " between preceding and current row)  from trips"
+
+                );
+
+                assertFailure(77,
+                        "integer expression expected",
+                        queryPrefix + " between 10 preceding and preceding)  from trips"
+                );
+
+                assertFailure(77,
+                        "integer expression expected",
+                        queryPrefix + " between 10 preceding and following)  from trips"
+                );
+
+                assertFailure(52,
+                        "integer expression expected",
+                        queryPrefix + " preceding)  from trips"
+                );
+
+                assertFailure(52,
+                        "integer expression expected",
+                        queryPrefix + " following)  from trips"
+                );
+
+                assertFailure(59,
+                        "Expression expected",
+                        queryPrefix + " between)  from trips"
+                );
+
+                assertFailure(60,
+                        "integer expression expected",
+                        queryPrefix + " between '' preceding and current row)  from trips"
+                );
+
+                assertFailure(60,
+                        "integer expression expected",
+                        queryPrefix + " between null preceding and current row)  from trips"
+                );
+
+                assertFailure(60,
+                        "integer expression expected",
+                        queryPrefix + " between #012 preceding and current row)  from trips"
+                );
+
+                assertFailure(60,
+                        "integer expression expected",
+                        queryPrefix + " between 30d preceding and current row)  from trips"
+                );
+
+                assertFailure(77,
+                        "integer expression expected",
+                        queryPrefix + " between 30 preceding and 10f preceding)  from trips"
+                );
+
+                assertFailure(77,
+                        "integer expression expected",
+                        queryPrefix + " between 30 preceding and 10.1f preceding)  from trips"
+                );
+
+                assertFailure(77,
+                        "invalid constant",
+                        queryPrefix + " between 30 preceding and 10g preceding)  from trips"
+                );
+
+                assertFailure(52,
+                        "integer expression expected",
+                        queryPrefix + " 10.2f preceding)  from trips"
+                );
+            }
+        });
     }
 
     @Test
@@ -4472,6 +4557,19 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
         assertSql("TS\tts1\tx\tts2\n" +
                 "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\n", "select t2.ts as \"TS\", t1.*, t2.ts ts1 from t1 asof join (select * from t2) t2;");
+    }
+
+    @Test
+    public void testLargeQueryDoesntHitIncreasedMaxRecursionLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table trades (symbol symbol, timestamp timestamp) timestamp(timestamp)");
+
+            assertSql("symbol\ttimestamp\tsymbol1\ttimestamp1\tsymbol11\ttimestamp11\tsymbol111\ttimestamp111\tsymbol1111\ttimestamp1111\tsymbol11111\ttimestamp11111\tsymbol111111\ttimestamp111111\tsymbol1111111\ttimestamp1111111\tsymbol11111111\ttimestamp11111111\tsymbol111111111\ttimestamp111111111\tsymbol1111111111\ttimestamp1111111111\tsymbol11111111111\ttimestamp11111111111\tsymbol111111111111\ttimestamp111111111111\tsymbol1111111111111\ttimestamp1111111111111\tsymbol11111111111111\ttimestamp11111111111111\tsymbol111111111111111\ttimestamp111111111111111\tsymbol1111111111111111\ttimestamp1111111111111111\tsymbol11111111111111111\ttimestamp11111111111111111\tsymbol111111111111111111\ttimestamp111111111111111111\tsymbol1111111111111111111\ttimestamp1111111111111111111\tsymbol11111111111111111111\ttimestamp11111111111111111111\tsymbol111111111111111111111\ttimestamp111111111111111111111\tsymbol1111111111111111111111\ttimestamp1111111111111111111111\tsymbol11111111111111111111111\ttimestamp11111111111111111111111\tsymbol111111111111111111111111\ttimestamp111111111111111111111111\tsymbol1111111111111111111111111\ttimestamp1111111111111111111111111\tsymbol11111111111111111111111111\ttimestamp11111111111111111111111111\tsymbol111111111111111111111111111\ttimestamp111111111111111111111111111\tsymbol1111111111111111111111111111\ttimestamp1111111111111111111111111111\tsymbol11111111111111111111111111111\ttimestamp11111111111111111111111111111\tsymbol111111111111111111111111111111\ttimestamp111111111111111111111111111111\tsymbol1111111111111111111111111111111\ttimestamp1111111111111111111111111111111\tsymbol11111111111111111111111111111111\ttimestamp11111111111111111111111111111111\tsymbol111111111111111111111111111111111\ttimestamp111111111111111111111111111111111\tsymbol1111111111111111111111111111111111\ttimestamp1111111111111111111111111111111111\tsymbol11111111111111111111111111111111111\ttimestamp11111111111111111111111111111111111\tsymbol111111111111111111111111111111111111\ttimestamp111111111111111111111111111111111111\tsymbol1111111111111111111111111111111111111\ttimestamp1111111111111111111111111111111111111\tsymbol11111111111111111111111111111111111111\ttimestamp11111111111111111111111111111111111111\tsymbol111111111111111111111111111111111111111\ttimestamp111111111111111111111111111111111111111\tsymbol1111111111111111111111111111111111111111\ttimestamp1111111111111111111111111111111111111111\tsymbol11111111111111111111111111111111111111111\ttimestamp11111111111111111111111111111111111111111\tsymbol111111111111111111111111111111111111111111\ttimestamp111111111111111111111111111111111111111111\n",
+                    "WITH Y AS (SELECT * FROM trades WHERE symbol='BTC-USD')," +
+                            "X AS (SELECT * FROM ((Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol))  " +
+                            "WHERE date_trunc('day', timestamp) = date_trunc('day', timestamp111111111111111111111111111111111111111111))\n" +
+                            "SELECT * FROM X");
+        });
     }
 
     @Test
