@@ -56,6 +56,11 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Os_errno
     return (jint) (intptr_t) TlsGetValue(dwTlsIndexLastError);
 }
 
+JNIEXPORT jint JNICALL Java_io_questdb_std_Os_getEnvironmentType
+        (JNIEnv *e, jclass cl) {
+    return 0;
+}
+
 typedef struct {
     SECURITY_STATUS status;
     long cbToken;
@@ -143,7 +148,6 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Os_setCurrentThreadAffinity0
     }
     return 0;
 }
-
 
 #define exp7           10000000LL     //1E+7     //C-file part
 #define exp9         1000000000LL     //1E+9

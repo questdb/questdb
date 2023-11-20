@@ -737,6 +737,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlWindowMaxRecursion() {
+        return 128;
+    }
+
+    @Override
     public int getSqlWindowRowIdMaxPages() {
         return Integer.MAX_VALUE;
     }
