@@ -77,7 +77,6 @@ public class PGErrorHandlingTest extends BootstrapTest {
 
     @Test
     public void testUnexpectedErrorOutsideSQLExecutionResultsInDisconnect() throws Exception {
-        final AtomicInteger counter = new AtomicInteger(0);
         final Bootstrap bootstrap = new Bootstrap(
                 new PropBootstrapConfiguration() {
                     @Override
@@ -114,10 +113,7 @@ public class PGErrorHandlingTest extends BootstrapTest {
                                             ) {
                                                 @Override
                                                 public boolean isAuthenticated() {
-                                                    if (counter.incrementAndGet() > 5) {
-                                                        throw new RuntimeException("Test error");
-                                                    }
-                                                    return super.isAuthenticated();
+                                                    throw new RuntimeException("Test error");
                                                 }
                                             };
                                         };
@@ -132,12 +128,10 @@ public class PGErrorHandlingTest extends BootstrapTest {
         TestUtils.assertMemoryLeak(() -> {
             try (ServerMain serverMain = new ServerMain(bootstrap)) {
                 serverMain.start();
-
-                try (Connection conn = getConnection()) {
-                    conn.createStatement().execute("create table x(y long)");
+                try (Connection ignored = getConnection()) {
                     Assert.fail("Expected exception is missing");
                 } catch (PSQLException e) {
-                    TestUtils.assertContains(e.getMessage(), "An I/O error occurred while sending to the backend");
+                    TestUtils.assertContains(e.getMessage(), "The connection attempt failed.");
                 }
             }
         });
