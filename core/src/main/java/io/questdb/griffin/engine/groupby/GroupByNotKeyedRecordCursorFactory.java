@@ -70,7 +70,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
         if (earlyExitSupported) {
             this.cursor = new EarlyExitGroupByNotKeyedRecordCursor(updater);
         } else {
-            this.cursor = new GroupByNotKeyedRecordCursorImpl(updater);
+            this.cursor = new GroupByNotKeyedRecordCursor(updater);
         }
     }
 
@@ -114,109 +114,23 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
         Misc.free(base);
     }
 
-    private interface GroupByNotKeyedRecordCursor extends NoRandomAccessRecordCursor {
-        RecordCursor of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException;
-    }
-
-    private class EarlyExitGroupByNotKeyedRecordCursor implements GroupByNotKeyedRecordCursor {
-
-        private static final int INIT_DONE = 2;
-        private static final int INIT_FIRST_RECORD_DONE = 1;
-        private static final int INIT_PENDING = 0;
-
-        private final GroupByFunctionsUpdater groupByFunctionsUpdater;
-        // hold on to reference of base cursor here
-        // because we use it as symbol table source for the functions
-        private RecordCursor baseCursor;
-        private SqlExecutionCircuitBreaker circuitBreaker;
-        private int initState;
-        private int recordsRemaining = 1;
+    private class EarlyExitGroupByNotKeyedRecordCursor extends GroupByNotKeyedRecordCursor {
 
         public EarlyExitGroupByNotKeyedRecordCursor(GroupByFunctionsUpdater groupByFunctionsUpdater) {
-            this.groupByFunctionsUpdater = groupByFunctionsUpdater;
+            super(groupByFunctionsUpdater);
         }
 
         @Override
-        public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
-            if (recordsRemaining > 0) {
-                counter.add(recordsRemaining);
-                recordsRemaining = 0;
+        public boolean earlyExit() {
+            boolean earlyExit = true;
+            for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+                earlyExit &= groupByFunctions.getQuick(i).earlyExit(simpleMapValue);
             }
-        }
-
-        @Override
-        public void close() {
-            baseCursor = Misc.free(baseCursor);
-            Misc.clearObjList(groupByFunctions);
-        }
-
-        @Override
-        public Record getRecord() {
-            return virtualRecordA;
-        }
-
-        @Override
-        public SymbolTable getSymbolTable(int columnIndex) {
-            return (SymbolTable) groupByFunctions.getQuick(columnIndex);
-        }
-
-        @Override
-        public boolean hasNext() {
-            if (initState != INIT_DONE) {
-                final Record baseRecord = baseCursor.getRecord();
-                if (initState != INIT_FIRST_RECORD_DONE) {
-                    if (baseCursor.hasNext()) {
-                        groupByFunctionsUpdater.updateNew(simpleMapValue, baseRecord);
-                    } else {
-                        groupByFunctionsUpdater.updateEmpty(simpleMapValue);
-                    }
-                    initState = INIT_FIRST_RECORD_DONE;
-                }
-                while (baseCursor.hasNext()) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
-                    groupByFunctionsUpdater.updateExisting(simpleMapValue, baseRecord);
-                    boolean earlyExit = true;
-                    for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
-                        earlyExit &= groupByFunctions.getQuick(i).earlyExit(simpleMapValue);
-                    }
-                    if (earlyExit) {
-                        break; // Early exit: no need to iterate further.
-                    }
-                }
-                toTop();
-                initState = INIT_DONE;
-            }
-            return recordsRemaining-- > 0;
-        }
-
-        @Override
-        public SymbolTable newSymbolTable(int columnIndex) {
-            return ((SymbolFunction) groupByFunctions.getQuick(columnIndex)).newSymbolTable();
-        }
-
-        @Override
-        public RecordCursor of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
-            this.baseCursor = baseCursor;
-            circuitBreaker = executionContext.getCircuitBreaker();
-            initState = INIT_PENDING;
-            Function.init(groupByFunctions, baseCursor, executionContext);
-            toTop();
-            return this;
-        }
-
-        @Override
-        public long size() {
-            return 1;
-        }
-
-        @Override
-        public void toTop() {
-            recordsRemaining = 1;
-            GroupByUtils.toTop(groupByFunctions);
+            return earlyExit;
         }
     }
 
-    private class GroupByNotKeyedRecordCursorImpl implements GroupByNotKeyedRecordCursor {
+    private class GroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
 
         private static final int INIT_DONE = 2;
         private static final int INIT_FIRST_RECORD_DONE = 1;
@@ -230,7 +144,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
         private int initState;
         private int recordsRemaining = 1;
 
-        public GroupByNotKeyedRecordCursorImpl(GroupByFunctionsUpdater groupByFunctionsUpdater) {
+        public GroupByNotKeyedRecordCursor(GroupByFunctionsUpdater groupByFunctionsUpdater) {
             this.groupByFunctionsUpdater = groupByFunctionsUpdater;
         }
 
@@ -246,6 +160,10 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
         public void close() {
             baseCursor = Misc.free(baseCursor);
             Misc.clearObjList(groupByFunctions);
+        }
+
+        public boolean earlyExit() {
+            return false; // no early exit support here
         }
 
         @Override
@@ -273,6 +191,9 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
                 while (baseCursor.hasNext()) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
                     groupByFunctionsUpdater.updateExisting(simpleMapValue, baseRecord);
+                    if (earlyExit()) {
+                        break;
+                    }
                 }
                 toTop();
                 initState = INIT_DONE;
@@ -285,7 +206,6 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
             return ((SymbolFunction) groupByFunctions.getQuick(columnIndex)).newSymbolTable();
         }
 
-        @Override
         public RecordCursor of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
             this.baseCursor = baseCursor;
             circuitBreaker = executionContext.getCircuitBreaker();

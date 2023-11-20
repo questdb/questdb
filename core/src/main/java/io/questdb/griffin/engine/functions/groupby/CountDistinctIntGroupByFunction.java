@@ -59,8 +59,8 @@ public class CountDistinctIntGroupByFunction extends LongFunction implements Una
             sets.extendAndSet(setIndex, set = new CompactIntHashSet(64, 0.7, Numbers.INT_NaN));
         } else {
             set = sets.getQuick(setIndex);
+            set.clear();
         }
-        set.clear();
 
         final int val = arg.getInt(record);
         if (val != Numbers.INT_NaN) {

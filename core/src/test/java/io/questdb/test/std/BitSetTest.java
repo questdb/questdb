@@ -38,9 +38,12 @@ public class BitSetTest {
         BitSet set = new BitSet();
         Rnd rnd = new Rnd();
 
+        Assert.assertTrue(set.capacity() > 0);
+
         for (int i = 0; i < N; i++) {
             Assert.assertFalse(set.get(rnd.nextInt(max)));
         }
+        Assert.assertTrue(set.capacity() >= N);
 
         rnd.reset();
 

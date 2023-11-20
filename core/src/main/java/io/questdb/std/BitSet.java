@@ -31,7 +31,6 @@ import java.util.Arrays;
  */
 public class BitSet implements Mutable {
     private static final int BITS_PER_WORD = 64;
-    private final int initialNBits;
     private long[] words;
 
     public BitSet() {
@@ -39,13 +38,16 @@ public class BitSet implements Mutable {
     }
 
     public BitSet(int nBits) {
-        initWords(nBits);
-        initialNBits = nBits;
+        this.words = new long[wordIndex(nBits - 1) + 1];
+    }
+
+    public int capacity() {
+        return words.length * BITS_PER_WORD;
     }
 
     @Override
     public void clear() {
-        initWords(initialNBits);
+        Arrays.fill(words, 0);
     }
 
     public boolean get(int bitIndex) {
@@ -72,9 +74,5 @@ public class BitSet implements Mutable {
             int newLen = Math.max(2 * words.length, wordsRequired);
             words = Arrays.copyOf(words, newLen);
         }
-    }
-
-    private void initWords(int nbits) {
-        this.words = new long[wordIndex(nbits - 1) + 1];
     }
 }

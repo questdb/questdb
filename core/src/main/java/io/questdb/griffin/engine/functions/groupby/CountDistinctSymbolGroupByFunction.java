@@ -70,8 +70,8 @@ public class CountDistinctSymbolGroupByFunction extends LongFunction implements 
             sets.extendAndSet(setIndex, set = new BitSet(INITIAL_BITSET_CAPACITY));
         } else {
             set = sets.getQuick(setIndex);
+            set.clear();
         }
-        set.clear();
 
         final int val = arg.getInt(record);
         if (val != VALUE_IS_NULL) {
