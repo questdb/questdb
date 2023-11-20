@@ -48,8 +48,8 @@ class SelectedRecordCursor implements RecordCursor {
     }
 
     @Override
-    public long calculateSize(SqlExecutionCircuitBreaker circuitBreaker) {
-        return baseCursor.calculateSize(circuitBreaker);
+    public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor.Counter counter) {
+        baseCursor.calculateSize(circuitBreaker, counter);
     }
 
     @Override
@@ -96,8 +96,8 @@ class SelectedRecordCursor implements RecordCursor {
     }
 
     @Override
-    public long skipTo(long rowCount) throws DataUnavailableException {
-        return baseCursor.skipTo(rowCount);
+    public void skipRows(Counter rowCount) throws DataUnavailableException {
+        baseCursor.skipRows(rowCount);
     }
 
     @Override

@@ -124,6 +124,14 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
+        public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
+            if (recordsRemaining > 0) {
+                counter.add(recordsRemaining);
+                recordsRemaining = 0;
+            }
+        }
+
+        @Override
         public void close() {
             baseCursor = Misc.free(baseCursor);
             Misc.clearObjList(groupByFunctions);
@@ -182,6 +190,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
             circuitBreaker = executionContext.getCircuitBreaker();
             initState = INIT_PENDING;
             Function.init(groupByFunctions, baseCursor, executionContext);
+            toTop();
             return this;
         }
     }

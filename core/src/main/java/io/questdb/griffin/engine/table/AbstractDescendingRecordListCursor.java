@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlException;
@@ -45,6 +46,20 @@ abstract class AbstractDescendingRecordListCursor extends AbstractDataFrameRecor
         super(columnIndexes);
         this.rows = rows;
         this.isOpen = true;
+    }
+
+    @Override
+    public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
+        if (!isTreeMapBuilt) {
+            buildTreeMap();
+            index = rows.size() - 1;
+            isTreeMapBuilt = true;
+        }
+
+        if (index > -1) {
+            counter.add(index + 1);
+            index = -1;
+        }
     }
 
     @Override
@@ -86,6 +101,23 @@ abstract class AbstractDescendingRecordListCursor extends AbstractDataFrameRecor
     @Override
     public long size() {
         return isTreeMapBuilt ? rows.size() : -1;
+    }
+
+    @Override
+    public void skipRows(Counter rowCount) throws DataUnavailableException {
+        if (!isTreeMapBuilt) {
+            buildTreeMap();
+            index = rows.size() - 1;
+            isTreeMapBuilt = true;
+        }
+
+        if (index > -1) {
+            long rowsLeft = index + 1;
+            long rowsToSkip = Math.min(rowsLeft, rowCount.get());
+
+            rowCount.dec(rowsToSkip);
+            index -= rowsToSkip;
+        }
     }
 
     @Override
