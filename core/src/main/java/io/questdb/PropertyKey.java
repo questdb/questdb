@@ -29,7 +29,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
-public enum PropertyKey implements ConfigProperty {
+public enum PropertyKey implements ConfigPropertyKey {
     BINARYDATA_ENCODING_MAXLENGTH("binarydata.encoding.maxlength"),
     CAIRO_ROOT("cairo.root"),
     CAIRO_VOLUMES("cairo.volumes"),
@@ -432,6 +432,7 @@ public enum PropertyKey implements ConfigProperty {
     WRITER_MEMORY_LIMIT("cairo.writer.memory.limit");
 
     private static final Map<String, PropertyKey> nameMapping;
+    private final String envVarName;
     private final String propertyPath;
     private final boolean sensitive;
 
@@ -441,11 +442,17 @@ public enum PropertyKey implements ConfigProperty {
 
     PropertyKey(String propertyPath, boolean sensitive) {
         this.propertyPath = propertyPath;
+        this.envVarName = ServerMain.propertyPathToEnvVarName(propertyPath);
         this.sensitive = sensitive;
     }
 
     public static Optional<PropertyKey> getByString(String name) {
         return Optional.ofNullable(nameMapping.get(name));
+    }
+
+    @Override
+    public String getEnvVarName() {
+        return envVarName;
     }
 
     @Override
