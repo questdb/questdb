@@ -22,7 +22,7 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
     private final Rnd rnd = new Rnd();
 
     public SqlCompilerPool(CairoEngine engine) {
-        super(engine.getConfiguration(), engine.getConfiguration().getSqlCompilerPoolMaxSegments(), 0L);
+        super(engine.getConfiguration(), (engine.getConfiguration().getSqlCompilerPoolCapacity() / ENTRY_SIZE) + 1, 0L);
         this.engine = engine;
     }
 

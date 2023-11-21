@@ -61,7 +61,7 @@ public class PropServerConfigurationTest {
     protected static final Rnd rnd = new Rnd();
     protected static final StringSink sink = new StringSink();
     protected static String root;
-    
+
     @AfterClass
     public static void afterClass() {
         TestUtils.removeTestPath(root);
@@ -178,7 +178,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(100000, configuration.getCairoConfiguration().getParallelIndexThreshold());
         Assert.assertEquals(10, configuration.getCairoConfiguration().getReaderPoolMaxSegments());
         Assert.assertEquals(1_000, configuration.getCairoConfiguration().getSpinLockTimeout());
-        Assert.assertEquals(10, configuration.getCairoConfiguration().getSqlCompilerPoolMaxSegments());
+        Assert.assertEquals(18, configuration.getCairoConfiguration().getSqlCompilerPoolCapacity());
         Assert.assertEquals(1024, configuration.getCairoConfiguration().getSqlCharacterStoreCapacity());
         Assert.assertEquals(64, configuration.getCairoConfiguration().getSqlCharacterStoreSequencePoolCapacity());
         Assert.assertEquals(4096, configuration.getCairoConfiguration().getSqlColumnPoolCapacity());
@@ -1008,7 +1008,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(1000000, configuration.getCairoConfiguration().getParallelIndexThreshold());
             Assert.assertEquals(42, configuration.getCairoConfiguration().getReaderPoolMaxSegments());
             Assert.assertEquals(5_000_000, configuration.getCairoConfiguration().getSpinLockTimeout());
-            Assert.assertEquals(18, configuration.getCairoConfiguration().getSqlCompilerPoolMaxSegments());
+            Assert.assertEquals(22, configuration.getCairoConfiguration().getSqlCompilerPoolCapacity());
             Assert.assertEquals(2048, configuration.getCairoConfiguration().getSqlCharacterStoreCapacity());
             Assert.assertEquals(128, configuration.getCairoConfiguration().getSqlCharacterStoreSequencePoolCapacity());
             Assert.assertEquals(2048, configuration.getCairoConfiguration().getSqlColumnPoolCapacity());

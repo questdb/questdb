@@ -532,8 +532,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlCompilerPoolMaxSegments() {
-        return 5;
+    public int getSqlCompilerPoolCapacity() {
+        return 10;
     }
 
     @Override

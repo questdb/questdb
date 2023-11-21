@@ -305,7 +305,6 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                 "cairo.sql.column.purge.retry.delay.limit\tQDB_CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_LIMIT\t60000000\tdefault\tfalse\tfalse\n" +
                                 "cairo.sql.column.purge.retry.delay.multiplier\tQDB_CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_MULTIPLIER\t10.0\tdefault\tfalse\tfalse\n" +
                                 "cairo.sql.column.purge.task.pool.capacity\tQDB_CAIRO_SQL_COLUMN_PURGE_TASK_POOL_CAPACITY\t256\tdefault\tfalse\tfalse\n" +
-                                "cairo.sql.compiler.pool.max.segments\tQDB_CAIRO_SQL_COMPILER_POOL_MAX_SEGMENTS\t10\tdefault\tfalse\tfalse\n" +
                                 "cairo.sql.copy.buffer.size\tQDB_CAIRO_SQL_COPY_BUFFER_SIZE\t2097152\tdefault\tfalse\tfalse\n" +
                                 "cairo.sql.copy.formats.file\tQDB_CAIRO_SQL_COPY_FORMATS_FILE\t/text_loader.json\tdefault\tfalse\tfalse\n" +
                                 "cairo.sql.copy.id.supplier\tQDB_CAIRO_SQL_COPY_ID_SUPPLIER\trandom\tdefault\tfalse\tfalse\n" +
