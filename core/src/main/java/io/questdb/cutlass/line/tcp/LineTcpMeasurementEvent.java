@@ -333,7 +333,7 @@ class LineTcpMeasurementEvent implements Closeable {
                 }
 
                 offset = buffer.addColumnIndex(offset, columnWriterIndex);
-                colType = localDetails.getColumnType(columnWriterIndex);
+                colType = (int)localDetails.getColumnType(columnWriterIndex);
             } else if (columnWriterIndex == COLUMN_NOT_FOUND) {
                 // send column by name
                 final String colNameUtf16 = localDetails.getColNameUtf16();

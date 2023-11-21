@@ -96,9 +96,10 @@ public final class ColumnType {
     private static final int OVERLOAD_MAX = -1; // akin to no distance
     private static final short[][] OVERLOAD_PRIORITY;
     private static final int TAG_SIZE = Short.SIZE;
+    private static final int GEOBITS_SIZE = Byte.SIZE;
     private static final IntObjHashMap<String> TYPE2NAME = new IntObjHashMap<>();
-    private static final int TYPE_FLAG_DESIGNATED_TIMESTAMP = (1 << 17);
-    private static final int TYPE_FLAG_GEOHASH = (1 << 16);
+    private static final int TYPE_FLAG_DESIGNATED_TIMESTAMP = (1 << (1 + TAG_SIZE + GEOBITS_SIZE));
+    private static final int TYPE_FLAG_GEOHASH = (1 << (TAG_SIZE + GEOBITS_SIZE));
 
     private ColumnType() {
     }

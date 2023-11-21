@@ -372,7 +372,7 @@ public class TableUpdateDetails implements Closeable {
         private final Utf8StringIntHashMap columnTypeByNameUtf8 = new Utf8StringIntHashMap();
         // indexed by colIdx + 1, first value accounts for spurious, new cols (index -1)
         private final IntList columnTypeMeta = new IntList();
-        private final IntList columnTypes = new IntList();
+        private final LongList columnTypes = new LongList();
         private final LineTcpReceiverConfiguration configuration;
         private final Path path = new Path();
         // tracking of processed columns by their index, duplicates will be ignored
@@ -534,7 +534,7 @@ public class TableUpdateDetails implements Closeable {
         }
 
         void addColumnType(int columnWriterIndex, int colType) {
-            columnTypes.add(Numbers.encodeLowHighShorts((short) colType, (short) columnWriterIndex));
+            columnTypes.add(Numbers.encodeLowHighInts(colType, columnWriterIndex));
         }
 
         void clear() {
@@ -577,7 +577,7 @@ public class TableUpdateDetails implements Closeable {
             return colNameUtf8;
         }
 
-        int getColumnType(int colIndex) {
+        long getColumnType(int colIndex) {
             return columnTypes.getQuick(colIndex);
         }
 

@@ -428,9 +428,9 @@ public class LineTcpMeasurementScheduler implements Closeable {
         TableWriter.Row r = writer.newRow(timestamp);
         try {
             for (int i = 0; i < entCount; i++) {
-                int colTypeAndIndex = ld.getColumnType(i);
-                int colType = Numbers.decodeLowShort(colTypeAndIndex);
-                int columnIndex = Numbers.decodeHighShort(colTypeAndIndex);
+                long colTypeAndIndex = ld.getColumnType(i);
+                int colType = Numbers.decodeLowInt(colTypeAndIndex);
+                int columnIndex = Numbers.decodeHighInt(colTypeAndIndex);
 
                 if (columnIndex < 0) {
                     continue;
