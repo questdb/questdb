@@ -106,11 +106,11 @@ public class PackedDoubleHistogram extends DoubleHistogram {
     }
 
     /**
-     * Construct a new ConcurrentDoubleHistogram by decoding it from a ByteBuffer.
+     * Construct a new PackedDoubleHistogram by decoding it from a ByteBuffer.
      *
      * @param buffer                             The buffer to decode from
      * @param minBarForHighestToLowestValueRatio Force highestTrackableValue to be set at least this high
-     * @return The newly constructed ConcurrentDoubleHistogram
+     * @return The newly constructed PackedDoubleHistogram
      */
     public static PackedDoubleHistogram decodeFromByteBuffer(
             final ByteBuffer buffer,
@@ -130,11 +130,11 @@ public class PackedDoubleHistogram extends DoubleHistogram {
     }
 
     /**
-     * Construct a new ConcurrentDoubleHistogram by decoding it from a compressed form in a ByteBuffer.
+     * Construct a new PackedDoubleHistogram by decoding it from a compressed form in a ByteBuffer.
      *
      * @param buffer                             The buffer to decode from
      * @param minBarForHighestToLowestValueRatio Force highestTrackableValue to be set at least this high
-     * @return The newly constructed ConcurrentDoubleHistogram
+     * @return The newly constructed PackedDoubleHistogram
      * @throws DataFormatException on error parsing/decompressing the buffer
      */
     public static PackedDoubleHistogram decodeFromCompressedByteBuffer(

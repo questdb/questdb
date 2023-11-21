@@ -100,8 +100,6 @@
  * <b><code>short</code></b> fields respectively, are provided for use cases where smaller count ranges are practical
  * and smaller overall storage is beneficial (e.g. systems where tens of thousands of in-memory histogram are
  * being tracked).</li>
- *  <li>{@link io.questdb.std.histogram.org.HdrHistogram.AtomicHistogram}, {@link io.questdb.std.histogram.org.HdrHistogram.ConcurrentHistogram}
- *  and {@link io.questdb.std.histogram.org.HdrHistogram.SynchronizedHistogram}</li>
  * </ul>
  * <p>
  * Internally, data in HdrHistogram variants is maintained using a concept somewhat similar to that of floating
@@ -253,17 +251,14 @@
  * The above discussion relates to integer value histograms (the various subclasses of
  * {@link io.questdb.std.histogram.org.HdrHistogram.AbstractHistogram} and their related supporting classes). HdrHistogram supports floating
  * point value recording and reporting with a similar set of classes, including the
- * {@link io.questdb.std.histogram.org.HdrHistogram.DoubleHistogram}, {@link io.questdb.std.histogram.org.HdrHistogram.ConcurrentDoubleHistogram} and
- * {@link io.questdb.std.histogram.org.HdrHistogram.SynchronizedDoubleHistogram} histogram classes. Support for floating point value
+ * {@link io.questdb.std.histogram.org.HdrHistogram.DoubleHistogram} histogram classes. Support for floating point value
  * iteration is provided with {@link io.questdb.std.histogram.org.HdrHistogram.DoubleHistogramIterationValue} and related iterator classes (
  * {@link io.questdb.std.histogram.org.HdrHistogram.DoubleLinearIterator}, {@link io.questdb.std.histogram.org.HdrHistogram.DoubleLogarithmicIterator},
  * {@link io.questdb.std.histogram.org.HdrHistogram.DoublePercentileIterator}, {@link io.questdb.std.histogram.org.HdrHistogram.DoubleRecordedValuesIterator},
- * {@link io.questdb.std.histogram.org.HdrHistogram.DoubleAllValuesIterator}). Support for interval recording is provided with
- * {@link io.questdb.std.histogram.org.HdrHistogram.DoubleRecorder} and
- * {@link io.questdb.std.histogram.org.HdrHistogram.SingleWriterDoubleRecorder}.
+ * {@link io.questdb.std.histogram.org.HdrHistogram.DoubleAllValuesIterator}).
  * <h4>Auto-ranging in floating point histograms</h4>
  * Unlike integer value based histograms, the specific value range tracked by a {@link
- * org.HdrHistogram.DoubleHistogram} (and variants) is not specified upfront. Only the dynamic range of values
+ * io.questdb.std.histogram.org.HdrHistogram.DoubleHistogram} (and variants) is not specified upfront. Only the dynamic range of values
  * that the histogram can cover is (optionally) specified. E.g. When a {@link io.questdb.std.histogram.org.HdrHistogram.DoubleHistogram}
  * is created to track a dynamic range of 3600000000000 (enough to track values from a nanosecond to an hour),
  * values could be recorded into into it in any consistent unit of time as long as the ratio between the highest
