@@ -60,9 +60,9 @@ public final class CountDistinctUuidGroupByFunction extends LongFunction impleme
             sets.extendAndSet(setIndex, set = new LongLongHashSet(64, 0.6, Numbers.LONG_NaN, LongLongHashSet.UUID_STRATEGY));
         } else {
             set = sets.getQuick(setIndex);
+            set.clear();
         }
 
-        set.clear();
         long lo = arg.getLong128Lo(record);
         long hi = arg.getLong128Hi(record);
         if (!Uuid.isNull(lo, hi)) {

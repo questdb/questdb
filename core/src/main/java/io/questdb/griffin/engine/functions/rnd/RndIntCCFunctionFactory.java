@@ -46,8 +46,13 @@ public class RndIntCCFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         int lo = args.getQuick(0).getInt(null);
         int hi = args.getQuick(1).getInt(null);
         int nanRate = args.getQuick(2).getInt(null);

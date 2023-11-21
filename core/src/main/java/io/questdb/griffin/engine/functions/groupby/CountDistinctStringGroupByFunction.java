@@ -60,8 +60,8 @@ public class CountDistinctStringGroupByFunction extends LongFunction implements 
             sets.extendAndSet(setIndex, set = new CompactCharSequenceHashSet());
         } else {
             set = sets.getQuick(setIndex);
+            set.clear();
         }
-        set.clear();
 
         final CharSequence val = arg.getStr(record);
         if (val != null) {

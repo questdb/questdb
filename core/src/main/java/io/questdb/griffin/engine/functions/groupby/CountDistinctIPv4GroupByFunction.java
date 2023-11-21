@@ -59,8 +59,8 @@ public class CountDistinctIPv4GroupByFunction extends LongFunction implements Un
             sets.extendAndSet(setIndex, set = new CompactIntHashSet(64, 0.7, Numbers.IPv4_NULL));
         } else {
             set = sets.getQuick(setIndex);
+            set.clear();
         }
-        set.clear();
 
         final int val = arg.getIPv4(record);
         if (val != Numbers.IPv4_NULL) {
