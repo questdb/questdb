@@ -49,6 +49,7 @@ import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sink;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 import java.io.File;
@@ -142,6 +143,10 @@ public class ServerMain implements Closeable {
         } else {
             return NeverMatchUsernamePasswordMatcher.INSTANCE;
         }
+    }
+
+    public static @NotNull String propertyPathToEnvVarName(@NotNull String propertyPath) {
+        return "QDB_" + propertyPath.replace('.', '_').toUpperCase();
     }
 
     @Override

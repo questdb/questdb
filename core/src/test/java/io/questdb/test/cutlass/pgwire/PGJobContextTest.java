@@ -2347,7 +2347,7 @@ if __name__ == "__main__":
                 "insert into dest select count(*)::timestamp, 0, 0.0 from tab t1 join tab t2 on t1.x = t2.x where t1.x > 0",
                 "update dest \n" +
                         "set l = t1.x \n" +
-                        "from tab t1 \n" +
+                        "from (tab where d > 0  limit 1, -1 ) t1 \n" +
                         "where \n" +
                         "'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' || t1.x = \n" +
                         "'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' || dest.l || '00000'; "

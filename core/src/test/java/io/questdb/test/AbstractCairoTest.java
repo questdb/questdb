@@ -479,17 +479,23 @@ public abstract class AbstractCairoTest extends AbstractTest {
     private static void assertCalculateSize(RecordCursorFactory factory) throws SqlException {
         long size;
         SqlExecutionCircuitBreaker circuitBreaker = sqlExecutionContext.getCircuitBreaker();
+        RecordCursor.Counter counter = new RecordCursor.Counter();
 
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            size = cursor.calculateSize(circuitBreaker);
+            cursor.calculateSize(circuitBreaker, counter);
+            size = counter.get();
             cursor.toTop();
-            long sizeAfterToTop = cursor.calculateSize(circuitBreaker);
+            counter.clear();
+            cursor.calculateSize(circuitBreaker, counter);
+            long sizeAfterToTop = counter.get();
 
             Assert.assertEquals(size, sizeAfterToTop);
         }
 
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            long sizeAfterReopen = cursor.calculateSize(circuitBreaker);
+            counter.clear();
+            cursor.calculateSize(circuitBreaker, counter);
+            long sizeAfterReopen = counter.get();
 
             Assert.assertEquals(size, sizeAfterReopen);
         }
@@ -1229,6 +1235,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
     @SuppressWarnings("SameParameterValue")
     protected static void configOverrideSqlJoinMetadataPageSize(int sqlJoinMetadataPageSize) {
         node1.getConfigurationOverrides().setSqlJoinMetadataPageSize(sqlJoinMetadataPageSize);
+    }
+
+    protected static void configOverrideSqlWindowMaxRecursion(int maxRecursion) {
+        node1.getConfigurationOverrides().setSqlWindowMaxRecursion(maxRecursion);
     }
 
     protected static void configOverrideSqlWindowStoreMaxPages(int windowStoreMaxPages) {

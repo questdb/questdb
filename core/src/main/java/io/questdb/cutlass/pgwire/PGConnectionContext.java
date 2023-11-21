@@ -464,75 +464,81 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 throw PeerIsSlowToWriteException.INSTANCE;
             }
             handleAuthentication();
+        } catch (PeerDisconnectedException | PeerIsSlowToReadException | PeerIsSlowToWriteException e) {
+            // BAU, not error metric
+            throw e;
+        } catch (Throwable th) {
+            metrics.pgWire().getErrorCounter().inc();
+            throw th;
+        }
 
-            try {
-                if (isPausedQuery) {
-                    isPausedQuery = false;
-                    if (resumeProcessor != null) {
-                        resumeProcessor.resume(true);
-                    }
-                } else if (bufferRemainingSize > 0) {
-                    doSend(bufferRemainingOffset, bufferRemainingSize);
-                    if (resumeProcessor != null) {
-                        resumeProcessor.resume(false);
-                    }
-                    if (replyAndContinue) {
-                        replyAndContinue();
-                    }
+        try {
+            if (isPausedQuery) {
+                isPausedQuery = false;
+                if (resumeProcessor != null) {
+                    resumeProcessor.resume(true);
                 }
-
-                long readOffsetBeforeParse = -1;
-                // exit from this loop is via exception when either need wait to read / write from socket
-                // or disconnection is detected / requested
-                //noinspection InfiniteLoopStatement
-                while (true) {
-
-                    // Read more from socket or throw when
-                    if (
-                        // - parsing stalls, e.g. readOffsetBeforeParse == recvBufferReadOffset
-                            readOffsetBeforeParse == recvBufferReadOffset
-                                    // - recv buffer is empty
-                                    || recvBufferReadOffset == recvBufferWriteOffset
-                                    // - socket is signalled ready to read at the first iteration of this loop
-                                    || (operation == IOOperation.READ && readOffsetBeforeParse == -1)
-                    ) {
-                        // free up recv buffer
-                        if (!freezeRecvBuffer) {
-                            if (recvBufferReadOffset == recvBufferWriteOffset) {
-                                clearRecvBuffer();
-                            } else if (recvBufferReadOffset > 0) {
-                                // nothing changed?
-                                // shift to start
-                                shiftReceiveBuffer(recvBufferReadOffset);
-                            }
-                        }
-
-                        recv();
-                    }
-
-                    // Parse will update the value of recvBufferOffset upon completion of
-                    // logical block. We cannot count on return value because 'parse' may try to
-                    // respond to client and fail with exception. When it does fail we would have
-                    // to retry 'send' but not parse the same input again
-                    readOffsetBeforeParse = recvBufferReadOffset;
-                    totalReceived += (recvBufferWriteOffset - recvBufferReadOffset);
-                    parse(
-                            recvBuffer + recvBufferReadOffset,
-                            (int) (recvBufferWriteOffset - recvBufferReadOffset)
-                    );
+            } else if (bufferRemainingSize > 0) {
+                doSend(bufferRemainingOffset, bufferRemainingSize);
+                if (resumeProcessor != null) {
+                    resumeProcessor.resume(false);
                 }
-            } catch (SqlException e) {
-                handleException(e.getPosition(), e.getFlyweightMessage(), false, -1, true);
-            } catch (ImplicitCastException e) {
-                handleException(-1, e.getFlyweightMessage(), false, -1, true);
-            } catch (CairoException e) {
-                handleException(e.getPosition(), e.getFlyweightMessage(), e.isCritical(), e.getErrno(), e.isInterruption());
-                if (e.isEntityDisabled()) {
-                    throw PeerDisconnectedException.INSTANCE;
+                if (replyAndContinue) {
+                    replyAndContinue();
                 }
             }
-        } catch (PeerIsSlowToReadException | PeerIsSlowToWriteException e) {
-            // BAU, not error metric
+
+            long readOffsetBeforeParse = -1;
+            // exit from this loop is via exception when either need wait to read / write from socket
+            // or disconnection is detected / requested
+            //noinspection InfiniteLoopStatement
+            while (true) {
+
+                // Read more from socket or throw when
+                if (
+                    // - parsing stalls, e.g. readOffsetBeforeParse == recvBufferReadOffset
+                        readOffsetBeforeParse == recvBufferReadOffset
+                                // - recv buffer is empty
+                                || recvBufferReadOffset == recvBufferWriteOffset
+                                // - socket is signalled ready to read at the first iteration of this loop
+                                || (operation == IOOperation.READ && readOffsetBeforeParse == -1)
+                ) {
+                    // free up recv buffer
+                    if (!freezeRecvBuffer) {
+                        if (recvBufferReadOffset == recvBufferWriteOffset) {
+                            clearRecvBuffer();
+                        } else if (recvBufferReadOffset > 0) {
+                            // nothing changed?
+                            // shift to start
+                            shiftReceiveBuffer(recvBufferReadOffset);
+                        }
+                    }
+
+                    recv();
+                }
+
+                // Parse will update the value of recvBufferOffset upon completion of
+                // logical block. We cannot count on return value because 'parse' may try to
+                // respond to client and fail with exception. When it does fail we would have
+                // to retry 'send' but not parse the same input again
+                readOffsetBeforeParse = recvBufferReadOffset;
+                totalReceived += (recvBufferWriteOffset - recvBufferReadOffset);
+                parse(
+                        recvBuffer + recvBufferReadOffset,
+                        (int) (recvBufferWriteOffset - recvBufferReadOffset)
+                );
+            }
+        } catch (SqlException e) {
+            handleException(e.getPosition(), e.getFlyweightMessage(), false, -1, true);
+        } catch (ImplicitCastException e) {
+            handleException(-1, e.getFlyweightMessage(), false, -1, true);
+        } catch (CairoException e) {
+            handleException(e.getPosition(), e.getFlyweightMessage(), e.isCritical(), e.getErrno(), e.isInterruption());
+            if (e.isEntityDisabled()) {
+                throw PeerDisconnectedException.INSTANCE;
+            }
+        } catch (PeerIsSlowToReadException | PeerIsSlowToWriteException |
+                 QueryPausedException | BadProtocolException e) {
             throw e;
         } catch (PeerDisconnectedException e) {
             // clear security context on disconnect
@@ -541,8 +547,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             // BAU, not error metric
             throw e;
         } catch (Throwable th) {
-            metrics.pgWire().getErrorCounter().inc();
-            throw th;
+            handleException(-1, th.getMessage(), true, -1, true);
         }
     }
 

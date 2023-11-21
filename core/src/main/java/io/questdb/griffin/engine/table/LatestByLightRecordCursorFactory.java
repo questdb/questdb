@@ -193,7 +193,9 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
 
         @Override
         public void toTop() {
-            mapCursor.toTop();
+            if (mapCursor != null) {
+                mapCursor.toTop();
+            }
         }
 
         private void buildMap() {

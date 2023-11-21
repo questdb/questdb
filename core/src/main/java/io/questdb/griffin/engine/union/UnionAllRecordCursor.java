@@ -46,9 +46,9 @@ class UnionAllRecordCursor extends AbstractSetRecordCursor implements NoRandomAc
     }
 
     @Override
-    public long calculateSize(SqlExecutionCircuitBreaker circuitBreaker) {
-        return cursorA.calculateSize(circuitBreaker) +
-                cursorB.calculateSize(circuitBreaker);
+    public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor.Counter counter) {
+        cursorA.calculateSize(circuitBreaker, counter);
+        cursorB.calculateSize(circuitBreaker, counter);
     }
 
     @Override
@@ -72,16 +72,13 @@ class UnionAllRecordCursor extends AbstractSetRecordCursor implements NoRandomAc
     }
 
     @Override
-    public long skipTo(long rowCount) throws DataUnavailableException {
-        long skipped = cursorA.skipTo(rowCount);
-        rowCount -= skipped;
-        if (rowCount > 0) {
-            skipped += cursorB.skipTo(rowCount);
+    public void skipRows(Counter rowCount) throws DataUnavailableException {
+        cursorA.skipRows(rowCount);
+        if (rowCount.get() > 0) {
+            cursorB.skipRows(rowCount);
             record.setAb(false);
             nextMethod = nextB;
         }
-
-        return skipped;
     }
 
     @Override

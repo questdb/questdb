@@ -36,6 +36,7 @@ import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.lang.ThreadLocal;
 import java.util.Map;
@@ -59,6 +60,15 @@ public interface CairoConfiguration {
 
     default SecurityContext getAllowAllSecurityContext() {
         return AllowAllSecurityContext.INSTANCE;
+    }
+
+    /**
+     * All effective configuration values are seen by the server instance.
+     *
+     * @return key value pairs of the configuration
+     */
+    default @Nullable ObjObjHashMap<ConfigPropertyKey, ConfigPropertyValue> getAllPairs() {
+        return null;
     }
 
     boolean getAllowTableRegistrySharedWrite();
@@ -423,6 +433,8 @@ public interface CairoConfiguration {
     int getSqlSortValuePageSize();
 
     int getSqlWindowInitialRangeBufferSize();
+
+    int getSqlWindowMaxRecursion();
 
     int getSqlWindowRowIdMaxPages();
 

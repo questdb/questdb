@@ -38,8 +38,7 @@ import java.io.Closeable;
  */
 public interface DataFrameCursor extends Closeable, SymbolTableSource {
 
-    default long calculateSize() {
-        return 0L;
+    default void calculateSize(RecordCursor.Counter counter) {
     }
 
     /**
@@ -78,12 +77,11 @@ public interface DataFrameCursor extends Closeable, SymbolTableSource {
     /**
      * Positions data frame at the given row number.
      *
-     * @param rowsToSkip         number of rows to skip in table. Rows are numbered 0...row_count-1
-     * @param rowsAlreadySkipped - array containing single element - the number of rows already skipped
+     * @param rowsToSkip number of rows to skip in table. Rows are numbered 0...row_count-1
      * @return data frame and position (lo) of given rowsToSkip (according to cursor order).
      * @throws io.questdb.cairo.DataUnavailableException when the queried partition is in cold storage
      */
-    default @Nullable DataFrame skipTo(long rowsToSkip, long[] rowsAlreadySkipped) {
+    default @Nullable DataFrame skipTo(RecordCursor.Counter rowsToSkip) {
         throw new UnsupportedOperationException();
     }
 

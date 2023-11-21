@@ -51,8 +51,10 @@ import java.sql.ResultSet;
 public class PGQuerySuspendTest extends BasePGTest {
 
     private static final Log LOG = LogFactory.getLog(PGQuerySuspendTest.class);
+    private static final StringSink countSink = new StringSink();
     private static final StringSink sinkB = new StringSink();
     private final static TestCases testCases = new TestCases();
+
     @Test
     public void testAllCases() throws Exception {
         assertMemoryLeak(() -> {
@@ -88,6 +90,19 @@ public class PGQuerySuspendTest extends BasePGTest {
                             }
                         }
 
+                        String countQuery = "select count(*) from (" + tc.getQuery() + ")";
+                        try (PreparedStatement statement = connection.prepareStatement(countQuery)) {
+                            countSink.clear();
+                            if (tc.getBindVariableValues() != null) {
+                                for (int j = 0; j < tc.getBindVariableValues().length; j++) {
+                                    statement.setString(j + 1, tc.getBindVariableValues()[j]);
+                                }
+                            }
+                            try (ResultSet rs = statement.executeQuery()) {
+                                printToSink(countSink, rs, null);
+                            }
+                        }
+
                         engine.releaseAllReaders();
 
                         // Yes, this write is racy, but it's not an issue in the test scenario.
@@ -105,6 +120,20 @@ public class PGQuerySuspendTest extends BasePGTest {
                         }
 
                         TestUtils.assertEquals(tc.getQuery(), sink, sinkB);
+
+                        try (PreparedStatement statement = connection.prepareStatement(countQuery)) {
+                            sinkB.clear();
+                            if (tc.getBindVariableValues() != null) {
+                                for (int j = 0; j < tc.getBindVariableValues().length; j++) {
+                                    statement.setString(j + 1, tc.getBindVariableValues()[j]);
+                                }
+                            }
+                            try (ResultSet rs = statement.executeQuery()) {
+                                printToSink(sinkB, rs, null);
+                            }
+                        }
+
+                        TestUtils.assertEquals(countQuery, countSink, sinkB);
                     }
                 }
             }
