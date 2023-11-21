@@ -63,6 +63,14 @@ public class ApproxPercentileDoubleGroupByFunctionFactory implements FunctionFac
             throw SqlException.$(argPositions.getQuick(2), "precision must be a constant");
         }
 
-        return new ApproxPercentileDoubleGroupByFunction(exprFunc, percentileFunc, precisionFunc.getInt(null), position);
+        final int precision = precisionFunc.getInt(null);
+        if (precision < 0 || precision > 5) {
+            throw SqlException.$(position, "precision must be between 0 and 5");
+        }
+
+        if (precision > 2) {
+            return new ApproxPercentileDoublePackedGroupByFunction(exprFunc, percentileFunc, precision, position);
+        }
+        return new ApproxPercentileDoubleGroupByFunction(exprFunc, percentileFunc, precision, position);
     }
 }

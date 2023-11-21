@@ -29,7 +29,7 @@ import java.util.concurrent.locks.ReentrantLock;
  * "readers", and "readers" are only blocked by "writers" whose critical section
  * was entered before the reader's
  * {@link WriterReaderPhaser#flipPhase()} attempt.
- * <h3>Assumptions and Guarantees</h3>
+ * <h2>Assumptions and Guarantees</h2>
  * <p>
  * When used to protect an actively recording data structure, the assumptions on
  * how readers and writers act are:
@@ -78,7 +78,7 @@ import java.util.concurrent.locks.ReentrantLock;
  * readers that are holding the readerLock.</li>
  * </ol>
  *
- * <h3>Example use</h3>
+ * <h2>Example use</h2>
  * Imagine a simple use case where a histogram (which is basically a large set of
  * rapidly updated counters) is being modified by writers, and a reader needs to gain
  * access to stable interval samples of the histogram for reporting or other analysis

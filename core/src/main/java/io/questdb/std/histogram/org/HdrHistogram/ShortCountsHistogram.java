@@ -14,7 +14,7 @@ import java.util.Arrays;
 import java.util.zip.DataFormatException;
 
 /**
- * <h3>A High Dynamic Range (HDR) Histogram using a <b><code>short</code></b> count type </h3>
+ * <h2>A High Dynamic Range (HDR) Histogram using a <b><code>short</code></b> count type </h2>
  * <p>
  * See package description for {@link io.questdb.std.histogram.org.HdrHistogram} for details.
  */

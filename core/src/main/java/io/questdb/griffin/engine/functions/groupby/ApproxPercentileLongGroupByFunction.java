@@ -50,6 +50,7 @@ public class ApproxPercentileLongGroupByFunction extends DoubleFunction implemen
     private int valueIndex;
 
     public ApproxPercentileLongGroupByFunction(Function exprFunc, Function percentileFunc, int precision, int funcPosition) {
+        assert precision >= 0 && precision <= 5;
         this.exprFunc = exprFunc;
         this.percentileFunc = percentileFunc;
         this.precision = precision;
@@ -134,9 +135,6 @@ public class ApproxPercentileLongGroupByFunction extends DoubleFunction implemen
         final double percentile = percentileFunc.getDouble(null);
         if (Double.isNaN(percentile) || percentile < 0 || percentile > 1) {
             throw SqlException.$(funcPosition, "percentile must be between 0.0 and 1.0");
-        }
-        if (precision < 0 || precision > 5) {
-            throw SqlException.$(funcPosition, "precision must be between 0 and 5");
         }
     }
 

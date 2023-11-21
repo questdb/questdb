@@ -63,6 +63,14 @@ public class ApproxPercentileLongGroupByFunctionFactory implements FunctionFacto
             throw SqlException.$(argPositions.getQuick(2), "precision must be a constant");
         }
 
-        return new ApproxPercentileLongGroupByFunction(exprFunc, percentileFunc, precisionFunc.getInt(null), position);
+        final int precision = precisionFunc.getInt(null);
+        if (precision < 0 || precision > 5) {
+            throw SqlException.$(position, "precision must be between 0 and 5");
+        }
+
+        if (precision > 2) {
+            return new ApproxPercentileLongPackedGroupByFunction(exprFunc, percentileFunc, precision, position);
+        }
+        return new ApproxPercentileLongGroupByFunction(exprFunc, percentileFunc, precision, position);
     }
 }

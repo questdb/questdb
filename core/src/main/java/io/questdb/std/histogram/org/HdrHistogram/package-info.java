@@ -10,7 +10,7 @@
 // * Ported the tests to JUnit 4
 
 /**
- * <h3>A High Dynamic Range (HDR) Histogram Package</h3>
+ * <h2>A High Dynamic Range (HDR) Histogram Package</h2>
  * <p>
  * An HdrHistogram histogram supports the recording and analyzing sampled data value counts across a configurable
  * integer value range with configurable value precision within the range. Value precision is expressed as the number
@@ -90,7 +90,7 @@
  * while maintaining a value resolution 1 microsecond (or better) up to 1 millisecond, a resolution of 1 millisecond
  * (or better) up to one second, and a resolution of 1 second (or better) up to 1,000 seconds. At it's maximum tracked
  * value (1 hour), it would still maintain a resolution of 3.6 seconds (or better).
- * <h3>Histogram variants and internal representation</h3>
+ * <h2>Histogram variants and internal representation</h2>
  * The HdrHistogram package includes multiple implementations of the {@link io.questdb.std.histogram.org.HdrHistogram.AbstractHistogram} class:
  * <ul>
  *  <li> {@link io.questdb.std.histogram.org.HdrHistogram.Histogram}, which is the commonly used Histogram form and tracks value counts
@@ -115,28 +115,7 @@
  * controlling dynamic range, and <b><code>numberOfSignificantValueDigits</code></b> controlling
  * resolution.
  * </p>
- * <h3>Synchronization and concurrent access</h3>
- * In the interest of keeping value recording cost to a minimum, the commonly used {@link io.questdb.std.histogram.org.HdrHistogram.Histogram}
- * class and it's {@link io.questdb.std.histogram.org.HdrHistogram.IntCountsHistogram} and {@link io.questdb.std.histogram.org.HdrHistogram.ShortCountsHistogram}
- * variants are NOT internally synchronized, and do NOT use atomic variables. Callers wishing to make potentially
- * concurrent, multi-threaded updates or queries against Histogram objects should either take care to externally
- * synchronize and/or order their access, or use the {@link io.questdb.std.histogram.org.HdrHistogram.ConcurrentHistogram},
- * {@link io.questdb.std.histogram.org.HdrHistogram.AtomicHistogram}, or {@link io.questdb.std.histogram.org.HdrHistogram.SynchronizedHistogram} variants.
- * <p>
- * A common pattern seen in histogram value recording involves recording values in a critical path (multi-threaded
- * or not), coupled with a non-critical path reading the recorded data for summary/reporting purposes. When such
- * continuous non-blocking recording operation (concurrent or not) is desired even when sampling, analyzing, or
- * reporting operations are needed, consider using the {@link io.questdb.std.histogram.org.HdrHistogram.Recorder} and
- * {@link io.questdb.std.histogram.org.HdrHistogram.SingleWriterRecorder} variants that were specifically designed for that purpose.
- * Recorders provide a recording API similar to Histogram, and internally maintain and coordinate active/inactive
- * histograms such that recording remains wait-free in the presense of accurate and stable interval sampling.
- * </p>
- * <p>
- * It is worth mentioning that since Histogram objects are additive, it is common practice to use per-thread
- * non-synchronized histograms or {@link io.questdb.std.histogram.org.HdrHistogram.SingleWriterRecorder}s, and using a summary/reporting
- * thread perform histogram aggregation math across time and/or threads.
- * </p>
- * <h3>Iteration</h3>
+ * <h2>Iteration</h2>
  * Histograms supports multiple convenient forms of iterating through the histogram data set, including linear,
  * logarithmic, and percentile iteration mechanisms, as well as means for iterating through each recorded value or
  * each possible value level. The iteration mechanisms all provide {@link io.questdb.std.histogram.org.HdrHistogram.HistogramIterationValue}

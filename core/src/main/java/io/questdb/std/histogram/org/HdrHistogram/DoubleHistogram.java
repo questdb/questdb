@@ -16,7 +16,7 @@ import java.util.zip.DataFormatException;
 import java.util.zip.Deflater;
 
 /**
- * <h3>A floating point values High Dynamic Range (HDR) Histogram</h3>
+ * <h2>A floating point values High Dynamic Range (HDR) Histogram</h2>
  * <p>
  * It is important to note that {@link DoubleHistogram} is not thread-safe, and does not support safe concurrent
  * recording by multiple threads.
@@ -51,12 +51,10 @@ import java.util.zip.Deflater;
 public class DoubleHistogram extends EncodableHistogram implements DoubleValueRecorder, Serializable {
     private static final int DHIST_compressedEncodingCookie = 0x0c72124f;
     private static final int DHIST_encodingCookie = 0x0c72124e;
-    private static final Class[] constructorArgTypes = {long.class, int.class, Class.class, AbstractHistogram.class};
+    private static final Class<?>[] constructorArgTypes = {long.class, int.class, Class.class, AbstractHistogram.class};
     private static final double highestAllowedValueEver; // A value that will keep us from multiplying into infinity.
     private static final long serialVersionUID = 42L;
 
-    //    volatile double doubleToIntegerValueConversionRatio;
-//    volatile double integerToDoubleValueConversionRatio;
     AbstractHistogram integerValuesHistogram;
     private boolean autoResize = false;
     private long configuredHighestToLowestValueRatio;

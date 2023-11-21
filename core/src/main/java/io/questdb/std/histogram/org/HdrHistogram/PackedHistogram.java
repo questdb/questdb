@@ -15,7 +15,7 @@ import java.nio.ByteBuffer;
 import java.util.zip.DataFormatException;
 
 /**
- * <h3>A High Dynamic Range (HDR) Histogram that uses a packed internal representation</h3>
+ * <h2>A High Dynamic Range (HDR) Histogram that uses a packed internal representation</h2>
  * <p>
  * {@link PackedHistogram} supports the recording and analyzing sampled data value counts across a configurable
  * integer value range with configurable value precision within the range. Value precision is expressed as the

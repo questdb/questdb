@@ -11,12 +11,10 @@ import java.nio.ByteBuffer;
 import java.util.zip.DataFormatException;
 
 /**
- * <h3>A floating point values High Dynamic Range (HDR) Histogram that uses a packed internal representation</h3>
+ * <h2>A floating point values High Dynamic Range (HDR) Histogram that uses a packed internal representation</h2>
  * <p>
  * It is important to note that {@link PackedDoubleHistogram} is not thread-safe, and does not support safe concurrent
- * recording by multiple threads. If concurrent operation is required, consider usings
- * {@link PackedConcurrentDoubleHistogram}, or (recommended) {@link DoubleRecorder} or
- * {@link SingleWriterDoubleRecorder} which are intended for this purpose.
+ * recording by multiple threads.
  * <p>
  * {@link PackedDoubleHistogram} tracks value counts in a packed internal representation optimized
  * for typical histogram recoded values are sparse in the value range and tend to be incremented in small unit counts.
