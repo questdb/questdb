@@ -483,7 +483,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             }
 
             // type constant for 'CAST' operation
-            byte columnTypeTag = ColumnType.tagOf(tok);
+            short columnTypeTag = ColumnType.tagOf(tok);
             if (columnTypeTag > ColumnType.UNDEFINED) {
                 TypeConstant typeConstant = Constants.getTypeConstant(columnTypeTag);
                 if (typeConstant != null) {
@@ -638,8 +638,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     }
 
                     final int argType = arg.getType();
-                    final byte argTypeTag = ColumnType.tagOf(argType);
-                    final byte sigArgTypeTag = FunctionFactoryDescriptor.toTypeTag(sigArgTypeMask);
+                    final short argTypeTag = ColumnType.tagOf(argType);
+                    final short sigArgTypeTag = FunctionFactoryDescriptor.toTypeTag(sigArgTypeMask);
 
                     if (argTypeTag == sigArgTypeTag ||
                             (argTypeTag == ColumnType.CHAR &&              // 'a' could also be a string literal, so it should count as proper match
@@ -772,8 +772,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
         for (int k = 0; k < candidateSigArgCount; k++) {
             final Function arg = args.getQuick(k);
-            final byte sigArgTypeTag = FunctionFactoryDescriptor.toTypeTag(candidateDescriptor.getArgTypeMask(k));
-            final byte argTypeTag = ColumnType.tagOf(arg.getType());
+            final short sigArgTypeTag = FunctionFactoryDescriptor.toTypeTag(candidateDescriptor.getArgTypeMask(k));
+            final short argTypeTag = ColumnType.tagOf(arg.getType());
 
             if (argTypeTag == ColumnType.DOUBLE && arg.isConstant() && Double.isNaN(arg.getDouble(null))) {
                 // substitute NaNs with appropriate types

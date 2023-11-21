@@ -1467,7 +1467,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
         if (timestampIndex != NO_INDEX) {
             final TypeAdapter timestampAdapter = types.getQuick(timestampIndex);
-            final byte typeTag = ColumnType.tagOf(timestampAdapter.getType());
+            final short typeTag = ColumnType.tagOf(timestampAdapter.getType());
             if ((typeTag != ColumnType.LONG && typeTag != ColumnType.TIMESTAMP) || timestampAdapter == BadTimestampAdapter.INSTANCE) {
                 throw TextException.$("column is not a timestamp [no=").put(timestampIndex)
                         .put(", name='").put(timestampColumn).put("']");

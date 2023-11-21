@@ -196,7 +196,7 @@ public final class WhereClauseParser implements Mutable {
     }
 
     private static boolean canCastToTimestamp(int type) {
-        final int typeTag = ColumnType.tagOf(type);
+        final short typeTag = ColumnType.tagOf(type);
         return typeTag == ColumnType.TIMESTAMP
                 || typeTag == ColumnType.DATE
                 || typeTag == ColumnType.STRING

@@ -539,7 +539,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             return;
         }
 
-        final byte columnTypeTag = ColumnType.tagOf(columnType);
+        final short columnTypeTag = ColumnType.tagOf(columnType);
         int typeCode = bindVariableTypeCode(columnTypeTag);
         if (typeCode == UNDEFINED_CODE) {
             throw SqlException.position(node.position)
@@ -565,7 +565,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         final int columnType = metadata.getColumnType(index);
-        final byte columnTypeTag = ColumnType.tagOf(columnType);
+        final short columnTypeTag = ColumnType.tagOf(columnType);
         int typeCode = columnTypeCode(columnTypeTag);
         if (typeCode == UNDEFINED_CODE) {
             throw SqlException.position(position)
@@ -1134,7 +1134,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             Function varFunction = getBindVariableFunction(node.position, node.token);
             // We treat bind variables as columns here for the sake of simplicity
             final int columnType = varFunction.getType();
-            byte columnTypeTag = ColumnType.tagOf(columnType);
+            short columnTypeTag = ColumnType.tagOf(columnType);
             // Treat string bind variable to be of symbol type
             if (columnTypeTag == ColumnType.STRING) {
                 columnTypeTag = ColumnType.SYMBOL;
@@ -1153,7 +1153,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 throw SqlException.invalidColumn(node.position, node.token);
             }
             final int columnType = metadata.getColumnType(columnIndex);
-            final byte columnTypeTag = ColumnType.tagOf(columnType);
+            final short columnTypeTag = ColumnType.tagOf(columnType);
             if (columnTypeTag == ColumnType.SYMBOL) {
                 symbolTable = (StaticSymbolTable) pageFrameCursor.getSymbolTable(columnIndex);
                 symbolColumnIndex = columnIndex;

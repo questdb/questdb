@@ -63,7 +63,7 @@ public class TypeOfFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testTypeOfAllTypes() throws SqlException {
-        Set<Byte> exclude = new HashSet<>();
+        Set<Short> exclude = new HashSet<>();
         exclude.add(ColumnType.GEOHASH);
         exclude.add(ColumnType.GEOBYTE);
         exclude.add(ColumnType.GEOSHORT);

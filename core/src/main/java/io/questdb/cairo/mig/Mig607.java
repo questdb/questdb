@@ -60,7 +60,7 @@ final class Mig607 {
             long mem = migrationContext.getTempMemory();
             long currentColumnNameOffset = columnNameOffset;
             for (int i = 0; i < columnCount; i++) {
-                final byte columnType = ColumnType.tagOf(
+                final short columnType = ColumnType.tagOf(
                         metaMem.getInt(
                                 MigrationActions.prefixedBlockOffset(MigrationActions.META_OFFSET_COLUMN_TYPES_606, i, MigrationActions.META_COLUMN_DATA_SIZE_606)
                         )

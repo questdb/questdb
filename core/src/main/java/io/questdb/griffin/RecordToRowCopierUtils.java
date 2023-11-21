@@ -182,7 +182,7 @@ public class RecordToRowCopierUtils {
 
             final int toColumnType = to.getColumnType(toColumnIndex);
             final int fromColumnType = from.getColumnType(i);
-            final int toColumnTypeTag = ColumnType.tagOf(toColumnType);
+            final short toColumnTypeTag = ColumnType.tagOf(toColumnType);
             final int toColumnWriterIndex = to.getWriterIndex(toColumnIndex);
 
             asm.aload(2);
@@ -208,7 +208,7 @@ public class RecordToRowCopierUtils {
             // GEOHASH: GEOBYTE, GEOSHORT, GEOINT, GEOLONG
             // NUMERIC: BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE (excludes CHAR)
 
-            int fromColumnTypeTag = ColumnType.tagOf(fromColumnType);
+            short fromColumnTypeTag = ColumnType.tagOf(fromColumnType);
             if (fromColumnTypeTag == ColumnType.NULL) {
                 fromColumnTypeTag = toColumnTypeTag;
             }

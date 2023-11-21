@@ -55,7 +55,7 @@ public final class Constants {
     }
 
     public static ConstantFunction getNullConstant(int columnType) {
-        byte typeTag = ColumnType.tagOf(columnType);
+        short typeTag = ColumnType.tagOf(columnType);
         if (typeTag >= ColumnType.GEOBYTE && typeTag <= ColumnType.GEOLONG) {
             int bits = ColumnType.getGeoHashBits(columnType);
             if (bits != 0) {

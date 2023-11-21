@@ -544,7 +544,7 @@ public class ExpressionParser {
                                 if (thisWasCast) {
                                     if (prevBranch != BRANCH_GEOHASH) {
                                         // validate type
-                                        final byte columnTypeTag = ColumnType.tagOf(node.token);
+                                        final short columnTypeTag = ColumnType.tagOf(node.token);
                                         if (((columnTypeTag < ColumnType.BOOLEAN || (columnTypeTag > ColumnType.LONG256 && columnTypeTag != ColumnType.UUID && columnTypeTag != ColumnType.IPv4)) && !asPoppedNull) ||
                                                 (columnTypeTag == ColumnType.GEOHASH && node.type == ExpressionNode.LITERAL)) {
                                             throw SqlException.$(node.position, "unsupported cast");
@@ -831,7 +831,7 @@ public class ExpressionParser {
                                     // timestamp with time zone '2005-04-02 12:00:00-07'
 
                                     // validate type
-                                    final byte columnType = ColumnType.tagOf(prevNode.token);
+                                    final short columnType = ColumnType.tagOf(prevNode.token);
                                     if ((columnType < ColumnType.BOOLEAN || (columnType > ColumnType.LONG256 && columnType != ColumnType.UUID)) && (columnType != ColumnType.IPv4)) {
                                         throw SqlException.$(prevNode.position, "impossible type cast, invalid type");
                                     } else {

@@ -340,7 +340,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                 SqlExecutionContext executionContext
         ) throws SqlException {
             final int columnType = function.getType();
-            final int columnTypeTag = ColumnType.tagOf(columnType);
+            final short columnTypeTag = ColumnType.tagOf(columnType);
             switch (columnTypeTag) {
                 case ColumnType.BOOLEAN:
                     bindVarMemory.putLong(function.getBool(null) ? 1 : 0);

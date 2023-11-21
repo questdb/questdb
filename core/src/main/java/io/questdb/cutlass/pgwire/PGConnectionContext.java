@@ -900,7 +900,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         for (int i = 0; i < columnCount; i++) {
             final int type = activeSelectColumnTypes.getQuick(2 * i);
             final short columnBinaryFlag = getColumnBinaryFlag(type);
-            final byte typeTag = ColumnType.tagOf(type);
+            final short typeTag = ColumnType.tagOf(type);
 
             final int tagWithFlag = toColumnBinaryType(columnBinaryFlag, typeTag);
             switch (tagWithFlag) {

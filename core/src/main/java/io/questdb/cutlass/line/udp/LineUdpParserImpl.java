@@ -373,8 +373,8 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
             boolean valid;
             int geoHashBits = 0;
             if (valueType != ColumnType.NULL) {
-                final byte valueTypeTag = ColumnType.tagOf(valueType);
-                final byte columnTypeTag = ColumnType.tagOf(columnType);
+                final short valueTypeTag = ColumnType.tagOf(valueType);
+                final short columnTypeTag = ColumnType.tagOf(columnType);
                 switch (valueTypeTag) {
                     case ColumnType.LONG:
                         valid = columnTypeTag == ColumnType.LONG
