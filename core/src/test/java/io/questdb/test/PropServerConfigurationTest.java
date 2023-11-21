@@ -61,7 +61,7 @@ public class PropServerConfigurationTest {
     protected static final Rnd rnd = new Rnd();
     protected static final StringSink sink = new StringSink();
     protected static String root;
-
+    
     @AfterClass
     public static void afterClass() {
         TestUtils.removeTestPath(root);
@@ -209,6 +209,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(16 * 1024, configuration.getCairoConfiguration().getSqlJoinMetadataPageSize());
         Assert.assertEquals(Integer.MAX_VALUE, configuration.getCairoConfiguration().getSqlJoinMetadataMaxResizes());
         Assert.assertEquals(64, configuration.getCairoConfiguration().getWindowColumnPoolCapacity());
+        Assert.assertEquals(128, configuration.getCairoConfiguration().getSqlWindowMaxRecursion());
         Assert.assertEquals(512 * 1024, configuration.getCairoConfiguration().getSqlWindowTreeKeyPageSize());
         Assert.assertEquals(Integer.MAX_VALUE, configuration.getCairoConfiguration().getSqlWindowTreeKeyMaxPages());
         Assert.assertEquals(1024 * 1024, configuration.getCairoConfiguration().getSqlWindowStorePageSize());
@@ -1040,6 +1041,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(16, configuration.getCairoConfiguration().getBindVariablePoolSize());
 
             Assert.assertEquals(256, configuration.getCairoConfiguration().getWindowColumnPoolCapacity());
+            Assert.assertEquals(256, configuration.getCairoConfiguration().getSqlWindowMaxRecursion());
             Assert.assertEquals(512 * 1024, configuration.getCairoConfiguration().getSqlWindowTreeKeyPageSize());
             Assert.assertEquals(1031, configuration.getCairoConfiguration().getSqlWindowTreeKeyMaxPages());
             Assert.assertEquals(1024 * 1024, configuration.getCairoConfiguration().getSqlWindowStorePageSize());

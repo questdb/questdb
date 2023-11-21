@@ -29,7 +29,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
-public enum PropertyKey implements ConfigProperty {
+public enum PropertyKey implements ConfigPropertyKey {
     BINARYDATA_ENCODING_MAXLENGTH("binarydata.encoding.maxlength"),
     CAIRO_ROOT("cairo.root"),
     CAIRO_VOLUMES("cairo.volumes"),
@@ -168,6 +168,7 @@ public enum PropertyKey implements ConfigProperty {
     CAIRO_REPLACE_BUFFER_MAX_SIZE("cairo.replace.buffer.max.size"),
     CAIRO_SQL_STR_FUNCTION_BUFFER_MAX_SIZE("cairo.sql.string.function.buffer.max.size"),
     CAIRO_SQL_ANALYTIC_STORE_PAGE_SIZE("cairo.sql.analytic.store.page.size"),
+    CAIRO_SQL_WINDOW_MAX_RECURSION("cairo.sql.window.max.recursion"),
     CAIRO_SQL_WINDOW_STORE_PAGE_SIZE("cairo.sql.window.store.page.size"),
     CAIRO_SQL_ANALYTIC_STORE_MAX_PAGES("cairo.sql.analytic.store.max.pages"),
     CAIRO_SQL_WINDOW_STORE_MAX_PAGES("cairo.sql.window.store.max.pages"),
@@ -432,6 +433,7 @@ public enum PropertyKey implements ConfigProperty {
     WRITER_MEMORY_LIMIT("cairo.writer.memory.limit");
 
     private static final Map<String, PropertyKey> nameMapping;
+    private final String envVarName;
     private final String propertyPath;
     private final boolean sensitive;
 
@@ -441,11 +443,17 @@ public enum PropertyKey implements ConfigProperty {
 
     PropertyKey(String propertyPath, boolean sensitive) {
         this.propertyPath = propertyPath;
+        this.envVarName = ServerMain.propertyPathToEnvVarName(propertyPath);
         this.sensitive = sensitive;
     }
 
     public static Optional<PropertyKey> getByString(String name) {
         return Optional.ofNullable(nameMapping.get(name));
+    }
+
+    @Override
+    public String getEnvVarName() {
+        return envVarName;
     }
 
     @Override
