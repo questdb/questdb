@@ -16,34 +16,16 @@ import java.util.Iterator;
  * includes values up to and including the next bucket boundary value.
  */
 public class LogarithmicIterator extends AbstractHistogramIterator implements Iterator<HistogramIterationValue> {
-    long valueUnitsInFirstBucket;
-    double logBase;
-    double nextValueReportingLevel;
     long currentStepHighestValueReportingLevel;
     long currentStepLowestValueReportingLevel;
+    double logBase;
+    double nextValueReportingLevel;
+    long valueUnitsInFirstBucket;
 
     /**
-     * Reset iterator for re-use in a fresh iteration over the same histogram data set.
+     * @param histogram               The histogram this iterator will operate on
      * @param valueUnitsInFirstBucket the size (in value units) of the first value bucket step
-     * @param logBase the multiplier by which the bucket size is expanded in each iteration step.
-     */
-    public void reset(final long valueUnitsInFirstBucket, final double logBase) {
-        reset(histogram, valueUnitsInFirstBucket, logBase);
-    }
-
-    private void reset(final AbstractHistogram histogram, final long valueUnitsInFirstBucket, final double logBase) {
-        super.resetIterator(histogram);
-        this.logBase = logBase;
-        this.valueUnitsInFirstBucket = valueUnitsInFirstBucket;
-        nextValueReportingLevel = valueUnitsInFirstBucket;
-        this.currentStepHighestValueReportingLevel = ((long) nextValueReportingLevel) - 1;
-        this.currentStepLowestValueReportingLevel = histogram.lowestEquivalentValue(currentStepHighestValueReportingLevel);
-    }
-
-    /**
-     * @param histogram The histogram this iterator will operate on
-     * @param valueUnitsInFirstBucket the size (in value units) of the first value bucket step
-     * @param logBase the multiplier by which the bucket size is expanded in each iteration step.
+     * @param logBase                 the multiplier by which the bucket size is expanded in each iteration step.
      */
     public LogarithmicIterator(final AbstractHistogram histogram, final long valueUnitsInFirstBucket, final double logBase) {
         reset(histogram, valueUnitsInFirstBucket, logBase);
@@ -61,11 +43,23 @@ public class LogarithmicIterator extends AbstractHistogramIterator implements It
         return (histogram.lowestEquivalentValue((long) nextValueReportingLevel) < nextValueAtIndex);
     }
 
-    @Override
-    void incrementIterationLevel() {
-        nextValueReportingLevel *= logBase;
-        this.currentStepHighestValueReportingLevel = ((long)nextValueReportingLevel) - 1;
-        currentStepLowestValueReportingLevel = histogram.lowestEquivalentValue(currentStepHighestValueReportingLevel);
+    /**
+     * Reset iterator for re-use in a fresh iteration over the same histogram data set.
+     *
+     * @param valueUnitsInFirstBucket the size (in value units) of the first value bucket step
+     * @param logBase                 the multiplier by which the bucket size is expanded in each iteration step.
+     */
+    public void reset(final long valueUnitsInFirstBucket, final double logBase) {
+        reset(histogram, valueUnitsInFirstBucket, logBase);
+    }
+
+    private void reset(final AbstractHistogram histogram, final long valueUnitsInFirstBucket, final double logBase) {
+        super.resetIterator(histogram);
+        this.logBase = logBase;
+        this.valueUnitsInFirstBucket = valueUnitsInFirstBucket;
+        nextValueReportingLevel = valueUnitsInFirstBucket;
+        this.currentStepHighestValueReportingLevel = ((long) nextValueReportingLevel) - 1;
+        this.currentStepLowestValueReportingLevel = histogram.lowestEquivalentValue(currentStepHighestValueReportingLevel);
     }
 
     @Override
@@ -74,8 +68,15 @@ public class LogarithmicIterator extends AbstractHistogramIterator implements It
     }
 
     @Override
+    void incrementIterationLevel() {
+        nextValueReportingLevel *= logBase;
+        this.currentStepHighestValueReportingLevel = ((long) nextValueReportingLevel) - 1;
+        currentStepLowestValueReportingLevel = histogram.lowestEquivalentValue(currentStepHighestValueReportingLevel);
+    }
+
+    @Override
     boolean reachedIterationLevel() {
         return ((currentValueAtIndex >= currentStepLowestValueReportingLevel) ||
-                (currentIndex >= histogram.countsArrayLength - 1)) ;
+                (currentIndex >= histogram.countsArrayLength - 1));
     }
 }

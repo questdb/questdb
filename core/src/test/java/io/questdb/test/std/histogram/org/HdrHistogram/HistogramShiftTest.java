@@ -8,45 +8,38 @@
 
 package io.questdb.test.std.histogram.org.HdrHistogram;
 
-import io.questdb.std.histogram.org.HdrHistogram.AbstractHistogram;
-import io.questdb.std.histogram.org.HdrHistogram.Histogram;
+import io.questdb.std.histogram.org.HdrHistogram.*;
 import org.junit.Assert;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 import org.junit.Test;
-
-
-import java.util.Arrays;
-import java.util.Collection;
 
 import static io.questdb.test.std.histogram.org.HdrHistogram.HistogramTestUtils.constructHistogram;
 
 /**
- * JUnit test for Histogram
+ * JUnit test for {@link io.questdb.std.histogram.org.HdrHistogram.Histogram}
  */
-@RunWith(Parameterized.class)
 public class HistogramShiftTest {
     static final long highestTrackableValue = 3600L * 1000 * 1000; // e.g. for 1 hr in usec units
 
-    enum HistogramType {Histogram, Concurrent, Atomic}
-    @Parameterized.Parameters(name = "{0}")
-    public static Collection<Object[]> data() {
-        return Arrays.asList(new Object[][] {{HistogramType.Histogram, Histogram.class}});
-    }
-
-    private final HistogramType type;
-    private final Class<?> histoClass;
-
-    public HistogramShiftTest(HistogramType type, Class<?> histoClass) {
-        this.type = type;
-        this.histoClass = histoClass;
-    }
+    static final Class[] histogramClassesNoAtomic = {
+            Histogram.class,
+            PackedHistogram.class
+    };
 
     @Test
-    public void testHistogramShift() {
-        AbstractHistogram histogram = constructHistogram(histoClass, highestTrackableValue, 3);
-        testShiftLowestBucket(histogram);
-        testShiftNonLowestBucket(histogram);
+    public void testHistogramShift() throws Exception {
+        Class<?>[] testClasses = new Class[]{
+                Histogram.class,
+                PackedHistogram.class,
+                IntCountsHistogram.class,
+                ShortCountsHistogram.class
+        };
+
+        for (Class<?> histoClass : testClasses) {
+            // Histogram h = new Histogram(1L, 1L << 32, 3);
+            AbstractHistogram histogram = constructHistogram(histoClass, highestTrackableValue, 3);
+            testShiftLowestBucket(histogram);
+            testShiftNonLowestBucket(histogram);
+        }
     }
 
     void testShiftLowestBucket(AbstractHistogram histogram) {
@@ -102,7 +95,7 @@ public class HistogramShiftTest {
 
             histogram2.reset();
             histogram2.recordValueWithCount(0, 500);
-            histogram2.recordValue((2 << 10)  << shiftAmount);
+            histogram2.recordValue((2 << 10) << shiftAmount);
             histogram2.recordValue((4 << 10) << shiftAmount);
             histogram2.recordValue((5 << 10) << shiftAmount);
             histogram2.recordValue((511 << 10) << shiftAmount);

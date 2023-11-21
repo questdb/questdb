@@ -21,16 +21,7 @@ public class DoublePercentileIterator implements Iterator<DoubleHistogramIterati
     DoubleHistogram histogram;
 
     /**
-     * Reset iterator for re-use in a fresh iteration over the same histogram data set.
-     *
-     * @param percentileTicksPerHalfDistance The number of iteration steps per half-distance to 100%.
-     */
-    public void reset(final int percentileTicksPerHalfDistance) {
-        integerPercentileIterator.reset(percentileTicksPerHalfDistance);
-    }
-
-    /**
-     * @param histogram The histogram this iterator will operate on
+     * @param histogram                      The histogram this iterator will operate on
      * @param percentileTicksPerHalfDistance The number of iteration steps per half-distance to 100%.
      */
     public DoublePercentileIterator(final DoubleHistogram histogram, final int percentileTicksPerHalfDistance) {
@@ -56,5 +47,14 @@ public class DoublePercentileIterator implements Iterator<DoubleHistogramIterati
     @Override
     public void remove() {
         integerPercentileIterator.remove();
+    }
+
+    /**
+     * Reset iterator for re-use in a fresh iteration over the same histogram data set.
+     *
+     * @param percentileTicksPerHalfDistance The number of iteration steps per half-distance to 100%.
+     */
+    public void reset(final int percentileTicksPerHalfDistance) {
+        integerPercentileIterator.reset(percentileTicksPerHalfDistance);
     }
 }

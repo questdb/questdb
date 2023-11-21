@@ -23,7 +23,7 @@ import java.util.zip.DataFormatException;
  * HdrHistogram of the measured reaction time behavior for any arbitrary
  * time range within the log, by adding [only] the relevant interval
  * histograms.
- * Histogram log format:
+ * <h3>Histogram log format:</h3>
  * A histogram log file consists of text lines. Lines beginning with
  * the "#" character are optional and treated as comments. Lines
  * containing the legend (starting with "Timestamp") are also optional
@@ -54,32 +54,47 @@ import java.util.zip.DataFormatException;
 public class HistogramLogReader implements Closeable {
 
     private final HistogramLogScanner scanner;
+    // scanner handling state
+    private boolean absolute;
+    private double baseTimeSec = 0.0;
+    private EncodableHistogram nextHistogram;
+    private boolean observedBaseTime = false;
+    private boolean observedStartTime = false;
+    private double rangeEndTimeSec;
+    private double rangeStartTimeSec;
+    private double startTimeSec = 0.0;
     private final HistogramLogScanner.EventHandler handler = new HistogramLogScanner.EventHandler() {
         @Override
-        public boolean onComment(String comment)
-        {
-            return false;
-        }
-
-        @Override
-        public boolean onBaseTime(double secondsSinceEpoch)
-        {
+        public boolean onBaseTime(double secondsSinceEpoch) {
             baseTimeSec = secondsSinceEpoch; // base time represented as seconds since epoch
             observedBaseTime = true;
             return false;
         }
 
         @Override
-        public boolean onStartTime(double secondsSinceEpoch)
-        {
-            startTimeSec = secondsSinceEpoch; // start time represented as seconds since epoch
-            observedStartTime = true;
+        public boolean onComment(String comment) {
             return false;
         }
 
         @Override
+        public boolean onException(Throwable t) {
+
+            // We ignore NoSuchElementException, but stop processing.
+            // Next call to nextIntervalHistogram may return null.
+            if (t instanceof java.util.NoSuchElementException) {
+                return true;
+            }
+            // rethrow
+            if (t instanceof RuntimeException) {
+                throw (RuntimeException) t;
+            } else {
+                throw new RuntimeException(t);
+            }
+        }
+
+        @Override
         public boolean onHistogram(String tag, double timestamp, double length,
-            HistogramLogScanner.EncodableHistogramSupplier lazyReader) {
+                                   HistogramLogScanner.EncodableHistogramSupplier lazyReader) {
             final double logTimeStampInSec = timestamp; // Timestamp is expected to be in seconds
 
             if (!observedStartTime) {
@@ -133,35 +148,16 @@ public class HistogramLogReader implements Closeable {
         }
 
         @Override
-        public boolean onException(Throwable t) {
-            
-            // We ignore NoSuchElementException, but stop processing.
-            // Next call to nextIntervalHistogram may return null.
-            if (t instanceof java.util.NoSuchElementException){
-                return true;
-            }
-            // rethrow
-            if (t instanceof RuntimeException) {
-                throw (RuntimeException) t;
-            } else {
-                throw new RuntimeException(t);
-            }
+        public boolean onStartTime(double secondsSinceEpoch) {
+            startTimeSec = secondsSinceEpoch; // start time represented as seconds since epoch
+            observedStartTime = true;
+            return false;
         }
     };
-    
-    private double startTimeSec = 0.0;
-    private boolean observedStartTime = false;
-    private double baseTimeSec = 0.0;
-    private boolean observedBaseTime = false;
-    
-    // scanner handling state
-    private boolean absolute;
-    private double rangeStartTimeSec;
-    private double rangeEndTimeSec;
-    private EncodableHistogram nextHistogram;
 
     /**
      * Constructs a new HistogramLogReader that produces intervals read from the specified file name.
+     *
      * @param inputFileName The name of the file to read from
      * @throws java.io.FileNotFoundException when unable to find inputFileName
      */
@@ -171,6 +167,7 @@ public class HistogramLogReader implements Closeable {
 
     /**
      * Constructs a new HistogramLogReader that produces intervals read from the specified InputStream.
+     *
      * @param inputStream The InputStream to read from
      */
     public HistogramLogReader(final InputStream inputStream) {
@@ -179,6 +176,7 @@ public class HistogramLogReader implements Closeable {
 
     /**
      * Constructs a new HistogramLogReader that produces intervals read from the specified file.
+     *
      * @param inputFile The File to read from
      * @throws java.io.FileNotFoundException when unable to find inputFile
      */
@@ -186,12 +184,18 @@ public class HistogramLogReader implements Closeable {
         scanner = new HistogramLogScanner(inputFile);
     }
 
+    @Override
+    public void close() {
+        scanner.close();
+    }
+
     /**
      * get the latest start time found in the file so far (or 0.0),
      * per the log file format explained above. Assuming the "#[StartTime:" comment
      * line precedes the actual intervals recorded in the file, getStartTimeSec() can
-     * be safely used after each interval is read to determine the offset of that
+     * be safely used after each interval is read to determine's the offset of that
      * interval's timestamp from the epoch.
+     *
      * @return latest Start Time found in the file (or 0.0 if non found)
      */
     public double getStartTimeSec() {
@@ -199,36 +203,12 @@ public class HistogramLogReader implements Closeable {
     }
 
     /**
-     * Read the next interval histogram from the log, if interval falls within a time range.
-     * <p>
-     * Returns a histogram object if an interval line was found with an
-     * associated start timestamp value that falls between startTimeSec and
-     * endTimeSec, or null if no such interval line is found. Note that
-     * the range is assumed to be in seconds relative to the actual
-     * timestamp value found in each interval line in the log, and not
-     * in absolute time.
-     *  <p>
-     * Timestamps are assumed to appear in order in the log file, and as such
-     * this method will return a null upon encountering a timestamp larger than
-     * rangeEndTimeSec.
-     * <p>
-     * The histogram returned will have it's timestamp set to the absolute
-     * timestamp calculated from adding the interval's indicated timestamp
-     * value to the latest [optional] start time found in the log.
-     * <p>
-     * Upon encountering any unexpected format errors in reading the next
-     * interval from the file, this method will return a null. Use {@link #hasNext} to determine
-     * whether or not additional intervals may be available for reading in the log input.
+     * Indicates whether or not additional intervals may exist in the log
      *
-     * @param startTimeSec The (non-absolute time) start of the expected
-     *                     time range, in seconds.
-     * @param endTimeSec The (non-absolute time) end of the expected time
-     *                   range, in seconds.
-     * @return a histogram, or a null if no appropriate interval found
+     * @return true if additional intervals may exist in the log
      */
-    public EncodableHistogram nextIntervalHistogram(final double startTimeSec,
-                                  final double endTimeSec) {
-        return nextIntervalHistogram(startTimeSec, endTimeSec, false);
+    public boolean hasNext() {
+        return scanner.hasNextLine();
     }
 
     /**
@@ -258,15 +238,47 @@ public class HistogramLogReader implements Closeable {
      *
      * @param absoluteStartTimeSec The (absolute time) start of the expected
      *                             time range, in seconds.
-     * @param absoluteEndTimeSec The (absolute time) end of the expected
-     *                           time range, in seconds.
+     * @param absoluteEndTimeSec   The (absolute time) end of the expected
+     *                             time range, in seconds.
      * @return A histogram, or a null if no appropriate interval found
      */
     public EncodableHistogram nextAbsoluteIntervalHistogram(final double absoluteStartTimeSec,
-                                                     final double absoluteEndTimeSec) {
+                                                            final double absoluteEndTimeSec) {
         return nextIntervalHistogram(absoluteStartTimeSec, absoluteEndTimeSec, true);
     }
 
+    /**
+     * Read the next interval histogram from the log, if interval falls within a time range.
+     * <p>
+     * Returns a histogram object if an interval line was found with an
+     * associated start timestamp value that falls between startTimeSec and
+     * endTimeSec, or null if no such interval line is found. Note that
+     * the range is assumed to be in seconds relative to the actual
+     * timestamp value found in each interval line in the log, and not
+     * in absolute time.
+     * <p>
+     * Timestamps are assumed to appear in order in the log file, and as such
+     * this method will return a null upon encountering a timestamp larger than
+     * rangeEndTimeSec.
+     * <p>
+     * The histogram returned will have it's timestamp set to the absolute
+     * timestamp calculated from adding the interval's indicated timestamp
+     * value to the latest [optional] start time found in the log.
+     * <p>
+     * Upon encountering any unexpected format errors in reading the next
+     * interval from the file, this method will return a null. Use {@link #hasNext} to determine
+     * whether or not additional intervals may be available for reading in the log input.
+     *
+     * @param startTimeSec The (non-absolute time) start of the expected
+     *                     time range, in seconds.
+     * @param endTimeSec   The (non-absolute time) end of the expected time
+     *                     range, in seconds.
+     * @return a histogram, or a null if no appropriate interval found
+     */
+    public EncodableHistogram nextIntervalHistogram(final double startTimeSec,
+                                                    final double endTimeSec) {
+        return nextIntervalHistogram(startTimeSec, endTimeSec, false);
+    }
 
     /**
      * Read the next interval histogram from the log. Returns a Histogram object if
@@ -274,6 +286,7 @@ public class HistogramLogReader implements Closeable {
      * <p>Upon encountering any unexpected format errors in reading the next interval
      * from the input, this method will return a null. Use {@link #hasNext} to determine
      * whether or not additional intervals may be available for reading in the log input.
+     *
      * @return a DecodedInterval, or a null if no appropriately formatted interval was found
      */
     public EncodableHistogram nextIntervalHistogram() {
@@ -281,7 +294,7 @@ public class HistogramLogReader implements Closeable {
     }
 
     private EncodableHistogram nextIntervalHistogram(final double rangeStartTimeSec,
-                                            final double rangeEndTimeSec, boolean absolute) {
+                                                     final double rangeEndTimeSec, boolean absolute) {
         this.rangeStartTimeSec = rangeStartTimeSec;
         this.rangeEndTimeSec = rangeEndTimeSec;
         this.absolute = absolute;
@@ -289,19 +302,5 @@ public class HistogramLogReader implements Closeable {
         EncodableHistogram histogram = this.nextHistogram;
         nextHistogram = null;
         return histogram;
-    }
-
-    /**
-     * Indicates whether or not additional intervals may exist in the log
-     * @return true if additional intervals may exist in the log
-     */
-    public boolean hasNext() {
-        return scanner.hasNextLine();
-    }
-
-    @Override
-    public void close()
-    {
-        scanner.close();
     }
 }
