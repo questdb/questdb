@@ -32,7 +32,7 @@ import io.questdb.std.str.StringSink;
 //                   Extra type
 // | PGWire format | information  | Tag               |
 // +---------------+--------------+-------------------+
-// |    1 bit      |    23 bits   |      16 bits      |
+// |    1 bit      |    15 bits   |      16 bits      |
 // +---------------+--------------+-------------------+
 // |              0|             1 <-- 16th isGeoHash
 // |              0|            1  <-- 17th isDesignatedTimestamp
@@ -95,7 +95,7 @@ public final class ColumnType {
     private static final LowerCaseCharSequenceIntHashMap NAME2TYPE = new LowerCaseCharSequenceIntHashMap();
     private static final int OVERLOAD_MAX = -1; // akin to no distance
     private static final short[][] OVERLOAD_PRIORITY;
-    private static final int TAG_SIZE = Byte.SIZE;
+    private static final int TAG_SIZE = Short.SIZE;
     private static final IntObjHashMap<String> TYPE2NAME = new IntObjHashMap<>();
     private static final int TYPE_FLAG_DESIGNATED_TIMESTAMP = (1 << 17);
     private static final int TYPE_FLAG_GEOHASH = (1 << 16);
