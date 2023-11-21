@@ -107,6 +107,7 @@ open module io.questdb {
     exports io.questdb.cutlass.line.tcp.auth;
     exports io.questdb.cairo.frm;
     exports io.questdb.cairo.frm.file;
+    exports io.questdb.std.histogram.org.HdrHistogram;
     exports io.questdb.client;
     exports io.questdb.std.bytes;
 
@@ -639,6 +640,9 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.groupby.CountDistinctUuidGroupByFunctionFactory,
             //      'haversine_dist_degree' group by function
             io.questdb.griffin.engine.functions.groupby.HaversineDistDegreeGroupByFunctionFactory,
+            //      'approx_percentile' group by function
+            io.questdb.griffin.engine.functions.groupby.ApproxPercentileDoubleGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.ApproxPercentileDoubleGroupByDefaultFunctionFactory,
 //                  'isOrdered'
             io.questdb.griffin.engine.functions.groupby.IsIPv4OrderedGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.IsLongOrderedGroupByFunctionFactory,

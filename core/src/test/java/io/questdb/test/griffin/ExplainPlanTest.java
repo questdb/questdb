@@ -1781,7 +1781,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         constFuncs.put(ColumnType.DATE, list(new DateConstant(0)));
         constFuncs.put(ColumnType.TIMESTAMP, list(new TimestampConstant(86400000000L)));
         constFuncs.put(ColumnType.FLOAT, list(new FloatConstant(5f)));
-        constFuncs.put(ColumnType.DOUBLE, list(new DoubleConstant(6)));
+        constFuncs.put(ColumnType.DOUBLE, list(new DoubleConstant(1))); // has to be [0.0, 1.0] for approx_percentile
         constFuncs.put(ColumnType.STRING, list(new StrConstant("bbb"), new StrConstant("1"), new StrConstant("1.1.1.1"), new StrConstant("1.1.1.1/24")));
         constFuncs.put(ColumnType.SYMBOL, list(new SymbolConstant("symbol", 0)));
         constFuncs.put(ColumnType.LONG256, list(new Long256Constant(0, 1, 2, 3)));
