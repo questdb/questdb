@@ -75,7 +75,7 @@ public class TypeOfFunctionFactoryTest extends AbstractCairoTest {
         exclude.add(ColumnType.REGCLASS);
         exclude.add(ColumnType.ARRAY_STRING);
         exclude.add(ColumnType.REGPROCEDURE);
-        for (byte type = ColumnType.BOOLEAN; type < ColumnType.NULL; type++) {
+        for (short type = ColumnType.BOOLEAN; type < ColumnType.NULL; type++) {
             if (exclude.contains(type)) {
                 continue;
             }

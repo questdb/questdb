@@ -451,7 +451,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     private Function createConstant(int position, @NotNull CharSequence tok) throws SqlException {
         int len = tok.length();
         if (len > 1) {
-            final Function quotedFunction = createQuotedConstant(tok);
+            final Function quotedFunction = createQuotedConstant(tok, len);
             if (quotedFunction != null) {
                 return quotedFunction;
             }
@@ -763,7 +763,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         for (int i = 0, n = undefinedVariables.size(); i < n; i++) {
             final int pos = undefinedVariables.getQuick(i);
             if (pos < candidateSigArgCount) {
-                byte sigArgTypeTag = FunctionFactoryDescriptor.toTypeTag(candidateDescriptor.getArgTypeMask(pos));
+                short sigArgTypeTag = FunctionFactoryDescriptor.toTypeTag(candidateDescriptor.getArgTypeMask(pos));
                 args.getQuick(pos).assignType(sigArgTypeTag, sqlExecutionContext.getBindVariableService());
             } else {
                 args.getQuick(pos).assignType(ColumnType.VAR_ARG, sqlExecutionContext.getBindVariableService());
@@ -863,17 +863,22 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         return new NamedParameterLinkFunction(Chars.toString(name), function.getType());
     }
 
-    private Function createQuotedConstant(@NotNull CharSequence tok) {
-        final int len = tok.length();
+    @Nullable
+    private Function createQuotedConstant(@NotNull CharSequence tok, int len) {
         final int last = len - 1;
-        final char close = tok.charAt(last);
-        if (!Chars.isQuote(close)) {
+        final char closingQuote = tok.charAt(last);
+        if (!Chars.isQuote(closingQuote)) {
             return null;
         }
-        char open = 'E'; // init value is optional E e.g. E"this is an error message"
-        for (int i = 0; i < last && open == 'E'; i++) {
-            open = tok.charAt(i);
-            if (open == close) {
+        // we support these types of quoted constant:
+        // - E'some error information' -> String
+        // - 'some text' -> String
+        // - '' -> String (empty)
+        // - 'a' -> Char
+        char openingChar = 'E'; // init value is optional E e.g. E"this is an error message"
+        for (int i = 0; i < last && openingChar == 'E'; i++) {
+            openingChar = tok.charAt(i);
+            if (openingChar == closingQuote) {
                 if (i < 1) { // we did not see E
                     switch (len) {
                         case 3: // this is 'x' - char
@@ -881,7 +886,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         case 2: // this is '' - char
                             return StrConstant.EMPTY;
                         default:
-                            return new StrConstant(tok);
+                            return new StrConstant(Chars.toString(tok, 1, last));
+
                     }
                 }
                 // string with prefix E

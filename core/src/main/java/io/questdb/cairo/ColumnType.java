@@ -29,11 +29,11 @@ import io.questdb.std.str.StringSink;
 
 // ColumnType is always a 32bit int with layout:
 //
-//                   Extra type
-// | PGWire format | information  | Tag               |
-// +---------------+--------------+-------------------+
-// |    1 bit      |    15 bits   |      16 bits      |
-// +---------------+--------------+-------------------+
+// | PGWire format |  Extra type information | Tag               |
+// +---------------+-------------------------+-------------------+
+// |    1 bit      |         23 bits         |   8 bits          |
+// +---------------+-------------------------+-------------------+
+// |              0|                 9th-15th GeoHash size (number of bits)
 // |              0|             1 <-- 16th isGeoHash
 // |              0|            1  <-- 17th isDesignatedTimestamp
 public final class ColumnType {
@@ -50,10 +50,13 @@ public final class ColumnType {
     public static final int MIGRATION_VERSION = 427;
     public static final int NOT_STORED_TYPE_SIZE = -1; // visible for test only
     public static final int OVERLOAD_NONE = 10000; // akin to infinite distance
+
     // Column type discriminants (tags) are numeric byte values, ordered:
     // - from UNDEFINED: index 0, lack of type, an internal parsing concept.
     //          functions cannot accept UNDEFINED (signature not supported).
     // - to NULL: index must be last, codebase relies on this.
+
+    // WE DEFINE these tags as SHORT (16 bits) to future proof, TAGS are 8 bits
     public static final short UNDEFINED = 0;                    // 0
     public static final short BOOLEAN = UNDEFINED + 1;          // 1 not numeric
     public static final short BYTE = BOOLEAN + 1;               // 2 numeric

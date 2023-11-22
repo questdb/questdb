@@ -92,7 +92,7 @@ public class FunctionFactoryDescriptor {
         sigArgCount = typeCount;
     }
 
-    public static byte getArgType(char c) {
+    public static short getArgType(char c) {
         switch (c | 32) {
             case 't':
                 return ColumnType.BOOLEAN;
@@ -182,8 +182,8 @@ public class FunctionFactoryDescriptor {
         return signatureBuilder.toString();
     }
 
-    public static byte toTypeTag(int mask) {
-        return (byte) (mask & TYPE_MASK);
+    public static short toTypeTag(int mask) {
+        return (short) (mask & TYPE_MASK);
     }
 
     public static StringSink translateSignature(CharSequence funcName, String signature, StringSink sink) {
@@ -279,6 +279,7 @@ public class FunctionFactoryDescriptor {
     }
 
     static {
+        // sorted by QuestDB type order
         TYPE2NAME.put('t', "boolean");
         TYPE2NAME.put('b', "byte");
         TYPE2NAME.put('e', "short");
