@@ -886,8 +886,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         case 2: // this is '' - char
                             return StrConstant.EMPTY;
                         default:
-                            return new StrConstant(Chars.toString(tok, 1, last));
-
+                            return new StrConstant(tok);
                     }
                 }
                 // string with prefix E
