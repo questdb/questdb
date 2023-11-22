@@ -90,6 +90,7 @@ public class Overrides implements ConfigurationOverrides {
     private int sqlCopyBufferSize = 1024 * 1024;
     private int sqlJoinMetadataMaxResizes = -1;
     private int sqlJoinMetadataPageSize = -1;
+    private int sqlWindowMaxRecursion;
     private int sqlWindowStoreMaxPages;
     private int sqlWindowStorePageSize;
     private int tableRegistryCompactionThreshold;
@@ -328,6 +329,10 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public int getSqlJoinMetadataPageSize() {
         return sqlJoinMetadataPageSize;
+    }
+
+    public int getSqlWindowMaxRecursion() {
+        return sqlWindowMaxRecursion;
     }
 
     public int getSqlWindowStoreMaxPages() {
@@ -742,6 +747,11 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public void setSqlJoinMetadataPageSize(int sqlJoinMetadataPageSize) {
         this.sqlJoinMetadataPageSize = sqlJoinMetadataPageSize;
+    }
+
+    @Override
+    public void setSqlWindowMaxRecursion(int maxRecursion) {
+        this.sqlWindowMaxRecursion = maxRecursion;
     }
 
     @Override

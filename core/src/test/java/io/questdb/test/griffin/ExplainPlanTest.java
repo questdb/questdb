@@ -741,6 +741,27 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDistinctOverWindowFunction() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table test (event double )");
+            insert("insert into test select x from long_sequence(3)");
+
+            String query = "select * from ( SELECT DISTINCT avg(event) OVER (PARTITION BY 1) FROM test )";
+            assertPlan(query,
+                    "Distinct\n" +
+                            "  keys: avg\n" +
+                            "    CachedWindow\n" +
+                            "      unorderedFunctions: [avg(event) over (partition by [1])]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: test\n");
+
+            assertSql("avg\n2.0\n", query);
+            assertSql("avg\n2.0\n", "selecT * from ( " + query + " )");
+        });
+    }
+
+    @Test
     public void testDistinctTsWithLimit1() throws Exception {
         assertPlan(
                 "create table di (x int, y long, ts timestamp) timestamp(ts)",
@@ -1760,7 +1781,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         constFuncs.put(ColumnType.DATE, list(new DateConstant(0)));
         constFuncs.put(ColumnType.TIMESTAMP, list(new TimestampConstant(86400000000L)));
         constFuncs.put(ColumnType.FLOAT, list(new FloatConstant(5f)));
-        constFuncs.put(ColumnType.DOUBLE, list(new DoubleConstant(6)));
+        constFuncs.put(ColumnType.DOUBLE, list(new DoubleConstant(1))); // has to be [0.0, 1.0] for approx_percentile
         constFuncs.put(ColumnType.STRING, list(new StrConstant("bbb"), new StrConstant("1"), new StrConstant("1.1.1.1"), new StrConstant("1.1.1.1/24")));
         constFuncs.put(ColumnType.SYMBOL, list(new SymbolConstant("symbol", 0)));
         constFuncs.put(ColumnType.LONG256, list(new Long256Constant(0, 1, 2, 3)));
@@ -8584,14 +8605,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             ") order by ts asc",
                     expectedForwardPlan);
 
-            String expectedForwardLimitPlan = "Sort\n" +
-                    "  keys: [ts]\n" +
-                    "    Limit lo: 9223372036854775807L\n" +
-                    "        Window\n" +
-                    "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
-                    "            DataFrame\n" +
-                    "                Row forward scan\n" +
-                    "                Frame forward scan on: cpu_ts\n";
+            String expectedForwardLimitPlan =
+                    "Limit lo: 9223372036854775807L\n" +
+                            "    Window\n" +
+                            "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: cpu_ts\n";
 
             assertPlan("select * from " +
                             "( " +
@@ -8648,14 +8668,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             ") order by ts desc",
                     expectedBackwardPlan);
 
-            String expectedBackwardLimitPlan = "Sort\n" +
-                    "  keys: [ts desc]\n" +
-                    "    Limit lo: 9223372036854775807L\n" +
-                    "        Window\n" +
-                    "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
-                    "            DataFrame\n" +
-                    "                Row backward scan\n" +
-                    "                Frame backward scan on: cpu_ts\n";
+            String expectedBackwardLimitPlan = "Limit lo: 9223372036854775807L\n" +
+                    "    Window\n" +
+                    "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                    "        DataFrame\n" +
+                    "            Row backward scan\n" +
+                    "            Frame backward scan on: cpu_ts\n";
 
             assertPlan("select * from " +
                             "( " +

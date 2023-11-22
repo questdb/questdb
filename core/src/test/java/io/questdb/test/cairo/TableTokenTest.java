@@ -35,7 +35,7 @@ public class TableTokenTest {
 
     @Test
     public void testBasics() {
-        final TableToken t1 = new TableToken("table1", "dir1", 1, true, false);
+        final TableToken t1 = new TableToken("table1", "dir1", 1, true, false, false);
         Assert.assertEquals("table1", t1.getTableName());
         Assert.assertEquals("dir1", t1.getDirName());
         final boolean dirNameIdentity = t1.getDirName() == t1.getDirNameUtf8().toString();
@@ -45,7 +45,7 @@ public class TableTokenTest {
         Assert.assertEquals(t1.getTableId(), t1.hashCode());
 
         final String descr = t1.toString();
-        Assert.assertEquals("TableToken{tableName=table1, dirName=dir1, tableId=1, isWal=true}", descr);
+        Assert.assertEquals("TableToken{tableName=table1, dirName=dir1, tableId=1, isWal=true, isSystem=false}", descr);
 
         final TableToken t2 = t1.renamed("table2");
         Assert.assertEquals("table2", t2.getTableName());
@@ -54,9 +54,21 @@ public class TableTokenTest {
         Assert.assertTrue(t2.isWal());
 
         Assert.assertNotEquals(t1, t2);
-        final TableToken t1b = new TableToken("table1", "dir1", 1, true, false);
+        final TableToken t1b = new TableToken("table1", "dir1", 1, true, false, false);
 
         Assert.assertEquals(t1, t1b);
+
+        final TableToken t3 = new TableToken("table3", "dir3", 3, false, true, true);
+        Assert.assertEquals("table3", t3.getTableName());
+        Assert.assertEquals("dir3", t3.getDirName());
+        Assert.assertEquals(3, t3.getTableId());
+        Assert.assertFalse(t3.isWal());
+        Assert.assertTrue(t3.isSystem());
+        Assert.assertTrue(t3.isProtected());
+        Assert.assertEquals(t3.getTableId(), t3.hashCode());
+
+        final String descr3 = t3.toString();
+        Assert.assertEquals("TableToken{tableName=table3, dirName=dir3, tableId=3, isWal=false, isSystem=true}", descr3);
     }
 
     @Test
@@ -70,7 +82,7 @@ public class TableTokenTest {
         };
 
         for (String str : strings) {
-            final TableToken tt1 = new TableToken(str, "dir1", 1, false, false);
+            final TableToken tt1 = new TableToken(str, "dir1", 1, false, false, false);
             LOG.xinfo().$("Testing logging a fancy pants table token: >>>").$(tt1).$("<<<").$();
         }
     }

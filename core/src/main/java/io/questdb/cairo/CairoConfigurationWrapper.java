@@ -24,18 +24,17 @@
 
 package io.questdb.cairo;
 
-import io.questdb.BuildInformation;
-import io.questdb.FactoryProvider;
-import io.questdb.TelemetryConfiguration;
-import io.questdb.VolumeDefinitions;
+import io.questdb.*;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.function.LongSupplier;
 
@@ -727,6 +726,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlWindowMaxRecursion() {
+        return delegate.getSqlWindowMaxRecursion();
+    }
+
+    @Override
     public int getSqlWindowRowIdMaxPages() {
         return delegate.getSqlWindowRowIdMaxPages();
     }
@@ -762,8 +766,23 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getSystemDataAppendPageSize() {
+        return delegate.getSystemDataAppendPageSize();
+    }
+
+    @Override
+    public int getSystemO3ColumnMemorySize() {
+        return delegate.getSystemO3ColumnMemorySize();
+    }
+
+    @Override
     public @NotNull CharSequence getSystemTableNamePrefix() {
         return delegate.getSystemTableNamePrefix();
+    }
+
+    @Override
+    public long getSystemWalDataAppendPageSize() {
+        return delegate.getSystemWalDataAppendPageSize();
     }
 
     @Override
@@ -867,6 +886,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getWalWriterPoolMaxSegments() {
+        return delegate.getWalWriterPoolMaxSegments();
+    }
+
+    @Override
     public int getWindowColumnPoolCapacity() {
         return delegate.getWindowColumnPoolCapacity();
     }
@@ -904,6 +928,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public long getWriterFileOpenOpts() {
         return delegate.getWriterFileOpenOpts();
+    }
+
+    @Override
+    public long getWriterMemoryLimit() {
+        return 0;
     }
 
     @Override
@@ -978,5 +1007,10 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean mangleTableDirNames() {
         return delegate.mangleTableDirNames();
+    }
+
+    @Override
+    public @Nullable ObjObjHashMap<ConfigPropertyKey, ConfigPropertyValue> getAllPairs() {
+        return delegate.getAllPairs();
     }
 }

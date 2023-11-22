@@ -56,11 +56,11 @@ public class CountDistinctIntGroupByFunction extends LongFunction implements Una
     public void computeFirst(MapValue mapValue, Record record) {
         final CompactIntHashSet set;
         if (sets.size() <= setIndex) {
-            sets.extendAndSet(setIndex, set = new CompactIntHashSet());
+            sets.extendAndSet(setIndex, set = new CompactIntHashSet(64, 0.7, Numbers.INT_NaN));
         } else {
             set = sets.getQuick(setIndex);
+            set.clear();
         }
-        set.clear();
 
         final int val = arg.getInt(record);
         if (val != Numbers.INT_NaN) {

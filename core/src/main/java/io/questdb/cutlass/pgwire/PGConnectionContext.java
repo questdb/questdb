@@ -464,79 +464,84 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 throw PeerIsSlowToWriteException.INSTANCE;
             }
             handleAuthentication();
-
-            try {
-                if (isPausedQuery) {
-                    isPausedQuery = false;
-                    if (resumeProcessor != null) {
-                        resumeProcessor.resume(true);
-                    }
-                } else if (bufferRemainingSize > 0) {
-                    doSend(bufferRemainingOffset, bufferRemainingSize);
-                    if (resumeProcessor != null) {
-                        resumeProcessor.resume(false);
-                    }
-                    if (replyAndContinue) {
-                        replyAndContinue();
-                    }
-                }
-
-                long readOffsetBeforeParse = -1;
-                // exit from this loop is via exception when either need wait to read / write from socket
-                // or disconnection is detected / requested
-                //noinspection InfiniteLoopStatement
-                while (true) {
-
-                    // Read more from socket or throw when
-                    if (
-                        // - parsing stalls, e.g. readOffsetBeforeParse == recvBufferReadOffset
-                            readOffsetBeforeParse == recvBufferReadOffset
-                                    // - recv buffer is empty
-                                    || recvBufferReadOffset == recvBufferWriteOffset
-                                    // - socket is signalled ready to read at the first iteration of this loop
-                                    || (operation == IOOperation.READ && readOffsetBeforeParse == -1)
-                    ) {
-                        // free up recv buffer
-                        if (!freezeRecvBuffer) {
-                            if (recvBufferReadOffset == recvBufferWriteOffset) {
-                                clearRecvBuffer();
-                            } else if (recvBufferReadOffset > 0) {
-                                // nothing changed?
-                                // shift to start
-                                shiftReceiveBuffer(recvBufferReadOffset);
-                            }
-                        }
-
-                        recv();
-                    }
-
-                    // Parse will update the value of recvBufferOffset upon completion of
-                    // logical block. We cannot count on return value because 'parse' may try to
-                    // respond to client and fail with exception. When it does fail we would have
-                    // to retry 'send' but not parse the same input again
-                    readOffsetBeforeParse = recvBufferReadOffset;
-                    totalReceived += (recvBufferWriteOffset - recvBufferReadOffset);
-                    parse(
-                            recvBuffer + recvBufferReadOffset,
-                            (int) (recvBufferWriteOffset - recvBufferReadOffset)
-                    );
-                }
-            } catch (SqlException e) {
-                handleException(e.getPosition(), e.getFlyweightMessage(), false, -1, true);
-            } catch (ImplicitCastException e) {
-                handleException(-1, e.getFlyweightMessage(), false, -1, true);
-            } catch (CairoException e) {
-                handleException(e.getPosition(), e.getFlyweightMessage(), e.isCritical(), e.getErrno(), e.isInterruption());
-                if (e.isEntityDisabled()) {
-                    throw PeerDisconnectedException.INSTANCE;
-                }
-            }
         } catch (PeerDisconnectedException | PeerIsSlowToReadException | PeerIsSlowToWriteException e) {
             // BAU, not error metric
             throw e;
         } catch (Throwable th) {
             metrics.pgWire().getErrorCounter().inc();
             throw th;
+        }
+
+        try {
+            if (isPausedQuery) {
+                isPausedQuery = false;
+                if (resumeProcessor != null) {
+                    resumeProcessor.resume(true);
+                }
+            } else if (bufferRemainingSize > 0) {
+                doSend(bufferRemainingOffset, bufferRemainingSize);
+                if (resumeProcessor != null) {
+                    resumeProcessor.resume(false);
+                }
+                if (replyAndContinue) {
+                    replyAndContinue();
+                }
+            }
+
+            long readOffsetBeforeParse = -1;
+            // exit from this loop is via exception when either need wait to read / write from socket
+            // or disconnection is detected / requested
+            //noinspection InfiniteLoopStatement
+            while (true) {
+
+                // Read more from socket or throw when
+                if (
+                    // - parsing stalls, e.g. readOffsetBeforeParse == recvBufferReadOffset
+                        readOffsetBeforeParse == recvBufferReadOffset
+                                // - recv buffer is empty
+                                || recvBufferReadOffset == recvBufferWriteOffset
+                                // - socket is signalled ready to read at the first iteration of this loop
+                                || (operation == IOOperation.READ && readOffsetBeforeParse == -1)
+                ) {
+                    // free up recv buffer
+                    if (!freezeRecvBuffer) {
+                        if (recvBufferReadOffset == recvBufferWriteOffset) {
+                            clearRecvBuffer();
+                        } else if (recvBufferReadOffset > 0) {
+                            // nothing changed?
+                            // shift to start
+                            shiftReceiveBuffer(recvBufferReadOffset);
+                        }
+                    }
+
+                    recv();
+                }
+
+                // Parse will update the value of recvBufferOffset upon completion of
+                // logical block. We cannot count on return value because 'parse' may try to
+                // respond to client and fail with exception. When it does fail we would have
+                // to retry 'send' but not parse the same input again
+                readOffsetBeforeParse = recvBufferReadOffset;
+                totalReceived += (recvBufferWriteOffset - recvBufferReadOffset);
+                parse(
+                        recvBuffer + recvBufferReadOffset,
+                        (int) (recvBufferWriteOffset - recvBufferReadOffset)
+                );
+            }
+        } catch (SqlException e) {
+            handleException(e.getPosition(), e.getFlyweightMessage(), false, -1, true);
+        } catch (ImplicitCastException e) {
+            handleException(-1, e.getFlyweightMessage(), false, -1, true);
+        } catch (CairoException e) {
+            handleException(e.getPosition(), e.getFlyweightMessage(), e.isCritical(), e.getErrno(), e.isInterruption());
+            if (e.isEntityDisabled()) {
+                throw PeerDisconnectedException.INSTANCE;
+            }
+        } catch (PeerDisconnectedException | PeerIsSlowToReadException | PeerIsSlowToWriteException |
+                 QueryPausedException | BadProtocolException e) {
+            throw e;
+        } catch (Throwable th) {
+            handleException(-1, th.getMessage(), true, -1, true);
         }
     }
 
@@ -1704,8 +1709,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         try {
             r = authenticator.handleIO();
             if (r == Authenticator.OK) {
-                CharSequence principal = authenticator.getPrincipal();
-                SecurityContext securityContext = securityContextFactory.getInstance(principal, SecurityContextFactory.PGWIRE);
+                SecurityContext securityContext = securityContextFactory.getInstance(
+                        authenticator.getPrincipal(),
+                        authenticator.getAuthType(),
+                        SecurityContextFactory.PGWIRE
+                );
                 try {
                     securityContext.authorizePGWire();
                     sqlExecutionContext.with(securityContext, bindVariableService, rnd, getFd(), circuitBreaker);

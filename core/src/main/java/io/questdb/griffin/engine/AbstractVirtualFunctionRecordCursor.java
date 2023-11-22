@@ -89,6 +89,7 @@ public abstract class AbstractVirtualFunctionRecordCursor implements RecordCurso
         if (recordB != null) {
             recordB.of(baseCursor.getRecordB());
         }
+        cursor.toTop();
     }
 
     @Override

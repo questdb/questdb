@@ -40,8 +40,8 @@ import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Sequence;
 import io.questdb.mp.Worker;
 import io.questdb.std.*;
-import io.questdb.std.str.CharSinkBase;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
 import io.questdb.tasks.VectorAggregateTask;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -245,6 +245,19 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             record = new RostiRecord();
             this.symbolTableSkewIndex = symbolTableSkewIndex;
             this.columnSkewIndex = columnSkewIndex;
+        }
+
+        @Override
+        public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
+            if (!isRostiBuilt) {
+                buildRosti();
+                isRostiBuilt = true;
+            }
+
+            if (count < size) {
+                counter.add(size - count);
+                count = size;
+            }
         }
 
         @Override

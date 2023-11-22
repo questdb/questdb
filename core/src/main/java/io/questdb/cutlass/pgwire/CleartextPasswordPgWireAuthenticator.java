@@ -26,6 +26,7 @@ package io.questdb.cutlass.pgwire;
 
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cutlass.auth.Authenticator;
 import io.questdb.cutlass.auth.AuthenticatorException;
@@ -42,7 +43,7 @@ import io.questdb.std.str.Utf8Sink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public final class CleartextPasswordPgWireAuthenticator implements Authenticator {
+public class CleartextPasswordPgWireAuthenticator implements Authenticator {
     public static final char STATUS_IDLE = 'I';
     private static final int INIT_CANCEL_REQUEST = 80877102;
     private static final int INIT_GSS_REQUEST = 80877104;
@@ -119,6 +120,11 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
         prepareWrongUsernamePasswordResponse("Access denied");
         state = State.WRITE_AND_AUTH_FAILURE;
         return handleIO();
+    }
+
+    @Override
+    public byte getAuthType() {
+        return SecurityContext.AUTH_TYPE_CREDENTIALS;
     }
 
     public CharSequence getPrincipal() {

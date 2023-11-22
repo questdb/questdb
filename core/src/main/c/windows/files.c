@@ -693,11 +693,6 @@ static inline jlong internal_mremap0
     return newAddress;
 }
 
-JNIEXPORT jlong JNICALL JavaCritical_io_questdb_std_Files_mremap0
-        (jint fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {
-    return internal_mremap0(fd, address, previousLen, newLen, offset, flags);
-}
-
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mremap0
         (JNIEnv *e, jclass cl, jint fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {
     return internal_mremap0(fd, address, previousLen, newLen, offset, flags);
@@ -925,4 +920,14 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getDiskSize(JNIEnv *e, jclass 
     }
     SaveLastError();
     return -1;
+}
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileLimit
+        (JNIEnv *e, jclass cl) {
+    return 0; // no-op
+}
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getMapCountLimit
+        (JNIEnv *e, jclass cl) {
+    return 0; // no-op
 }

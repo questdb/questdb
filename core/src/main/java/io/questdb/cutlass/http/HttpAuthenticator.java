@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.http;
 
+import io.questdb.cairo.SecurityContext;
 import io.questdb.std.QuietCloseable;
 
 public interface HttpAuthenticator extends QuietCloseable {
@@ -41,6 +42,10 @@ public interface HttpAuthenticator extends QuietCloseable {
 
     @Override
     default void close() {
+    }
+
+    default byte getAuthType() {
+        return SecurityContext.AUTH_TYPE_NONE;
     }
 
     CharSequence getPrincipal();

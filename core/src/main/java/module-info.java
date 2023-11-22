@@ -107,6 +107,7 @@ open module io.questdb {
     exports io.questdb.cutlass.line.tcp.auth;
     exports io.questdb.cairo.frm;
     exports io.questdb.cairo.frm.file;
+    exports io.questdb.std.histogram.org.HdrHistogram;
     exports io.questdb.client;
     exports io.questdb.std.bytes;
 
@@ -560,7 +561,9 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.groupby.LastNotNullDateGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.LastNotNullDoubleGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.LastNotNullFloatGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.LastNotNullGeoHashGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.LastNotNullIntGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.LastNotNullIPv4GroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.LastNotNullLongGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.LastNotNullStrGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.LastNotNullSymbolGroupByFunctionFactory,
@@ -587,7 +590,9 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.groupby.FirstNotNullDateGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.FirstNotNullDoubleGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.FirstNotNullFloatGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.FirstNotNullGeoHashGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.FirstNotNullIntGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.FirstNotNullIPv4GroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.FirstNotNullLongGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.FirstNotNullStrGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.FirstNotNullSymbolGroupByFunctionFactory,
@@ -635,6 +640,9 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.groupby.CountDistinctUuidGroupByFunctionFactory,
             //      'haversine_dist_degree' group by function
             io.questdb.griffin.engine.functions.groupby.HaversineDistDegreeGroupByFunctionFactory,
+            //      'approx_percentile' group by function
+            io.questdb.griffin.engine.functions.groupby.ApproxPercentileDoubleGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.ApproxPercentileDoubleGroupByDefaultFunctionFactory,
 //                  'isOrdered'
             io.questdb.griffin.engine.functions.groupby.IsIPv4OrderedGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.IsLongOrderedGroupByFunctionFactory,

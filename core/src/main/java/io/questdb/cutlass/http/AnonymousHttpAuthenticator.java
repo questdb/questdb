@@ -25,7 +25,6 @@
 package io.questdb.cutlass.http;
 
 public class AnonymousHttpAuthenticator implements HttpAuthenticator {
-
     public static final AnonymousHttpAuthenticator INSTANCE = new AnonymousHttpAuthenticator();
 
     @Override

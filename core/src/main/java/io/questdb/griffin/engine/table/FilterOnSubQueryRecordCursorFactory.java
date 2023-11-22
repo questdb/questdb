@@ -77,13 +77,13 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
     }
 
     @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return true;
+    public RecordCursorFactory getBaseFactory() {
+        return recordCursorFactory;
     }
 
     @Override
-    public RecordCursorFactory getBaseFactory() {
-        return recordCursorFactory;
+    public boolean recordCursorSupportsRandomAccess() {
+        return true;
     }
 
     @Override
@@ -122,6 +122,16 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
         private DataFrameRecordCursorWrapper(DataFrameRecordCursor delegate) {
             this.delegate = delegate;
             this.factories = factoriesA;
+        }
+
+        @Override
+        public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
+            if (baseCursor != null) {
+                buildFactories();
+                baseCursor = Misc.free(baseCursor);
+            }
+
+            delegate.calculateSize(circuitBreaker, counter);
         }
 
         @Override
@@ -193,8 +203,13 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
         }
 
         @Override
-        public boolean skipTo(long rowCount) {
-            return delegate.skipTo(rowCount);
+        public void skipRows(Counter rowCount) {
+            if (baseCursor != null) {
+                buildFactories();
+                baseCursor = Misc.free(baseCursor);
+            }
+
+            delegate.skipRows(rowCount);
         }
 
         @Override
