@@ -7,6 +7,8 @@
 
 package io.questdb.std.histogram.org.HdrHistogram;
 
+import io.questdb.cairo.CairoException;
+
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -203,7 +205,7 @@ public class SingleWriterDoubleRecorder implements DoubleValueRecorder {
      * Record a value
      *
      * @param value the value to record
-     * @throws ArrayIndexOutOfBoundsException (may throw) if value is exceeds highestTrackableValue
+     * @throws CairoException (may throw) if value exceeds highestTrackableValue
      */
     public void recordValue(final double value) {
         long criticalValueAtEnter = recordingPhaser.writerCriticalSectionEnter();
@@ -219,9 +221,9 @@ public class SingleWriterDoubleRecorder implements DoubleValueRecorder {
      *
      * @param value The value to be recorded
      * @param count The number of occurrences of this value to record
-     * @throws ArrayIndexOutOfBoundsException (may throw) if value is exceeds highestTrackableValue
+     * @throws CairoException (may throw) if value exceeds highestTrackableValue
      */
-    public void recordValueWithCount(final double value, final long count) throws ArrayIndexOutOfBoundsException {
+    public void recordValueWithCount(final double value, final long count) throws CairoException {
         long criticalValueAtEnter = recordingPhaser.writerCriticalSectionEnter();
         try {
             activeHistogram.recordValueWithCount(value, count);
@@ -245,10 +247,10 @@ public class SingleWriterDoubleRecorder implements DoubleValueRecorder {
      * @param expectedIntervalBetweenValueSamples If expectedIntervalBetweenValueSamples is larger than 0, add
      *                                            auto-generated value records as appropriate if value is larger
      *                                            than expectedIntervalBetweenValueSamples
-     * @throws ArrayIndexOutOfBoundsException (may throw) if value is exceeds highestTrackableValue
+     * @throws CairoException (may throw) if value exceeds highestTrackableValue
      */
     public void recordValueWithExpectedInterval(final double value, final double expectedIntervalBetweenValueSamples)
-            throws ArrayIndexOutOfBoundsException {
+            throws CairoException {
         long criticalValueAtEnter = recordingPhaser.writerCriticalSectionEnter();
         try {
             activeHistogram.recordValueWithExpectedInterval(value, expectedIntervalBetweenValueSamples);

@@ -8,6 +8,7 @@
 
 package io.questdb.test.std.histogram.org.HdrHistogram;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.std.histogram.org.HdrHistogram.*;
 import org.junit.Assert;
 import org.junit.Test;
@@ -262,8 +263,8 @@ public class DoubleHistogramTest {
         try {
             // This should throw:
             histogram.add(biggerOther);
-        } catch (ArrayIndexOutOfBoundsException e) {
-            fail("Should not thow with out of bounds error");
+        } catch (CairoException e) {
+            fail("Should not throw with out of bounds error");
         }
 
         // But trying to add smaller values to a larger histogram that actually uses it's range should throw an AIOOB:
@@ -274,8 +275,8 @@ public class DoubleHistogramTest {
         try {
             // This should throw:
             biggerOther.add(histogram);
-            fail("Should have thown with out of bounds error");
-        } catch (ArrayIndexOutOfBoundsException e) {
+            fail("Should have thrown with out of bounds error");
+        } catch (CairoException ignore) {
         }
     }
 
@@ -427,7 +428,7 @@ public class DoubleHistogramTest {
                 histogram.recordValue(topValue);
                 topValue *= 2.0;
             }
-        } catch (ArrayIndexOutOfBoundsException ex) {
+        } catch (CairoException ignore) {
         }
         assertEquals(1L << 33, topValue, 0.00001);
         assertEquals(1L, histogram.getCountAtValue(0.0));
@@ -441,7 +442,7 @@ public class DoubleHistogramTest {
                 histogram.recordValue(bottomValue);
                 bottomValue /= 2.0;
             }
-        } catch (ArrayIndexOutOfBoundsException ex) {
+        } catch (CairoException ex) {
             System.out.println("Bottom value at exception point = " + bottomValue);
         }
         assertEquals(1.0, bottomValue, 0.00001);
@@ -549,7 +550,7 @@ public class DoubleHistogramTest {
     }
 
     private void testRecordValue_Overflow_ShouldThrowException(final Class<?> histoClass) throws Exception {
-        Assert.assertThrows(ArrayIndexOutOfBoundsException.class,
+        Assert.assertThrows(CairoException.class,
                 () -> {
                     DoubleHistogram histogram =
                             constructDoubleHistogram(histoClass, trackableValueRangeSize, numberOfSignificantValueDigits);

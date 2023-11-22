@@ -7,6 +7,7 @@
 
 package io.questdb.std.histogram.org.HdrHistogram.packedarray;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.std.histogram.org.HdrHistogram.WriterReaderPhaser;
 
 import java.util.concurrent.atomic.AtomicLong;
@@ -80,9 +81,9 @@ public class PackedArraySingleWriterRecorder {
      *
      * @param index      The index of value to add to
      * @param valueToAdd The amount to add to the value at the given index
-     * @throws ArrayIndexOutOfBoundsException (may throw) if value is exceeds length()
+     * @throws CairoException (may throw) if value exceeds length()
      */
-    public void add(final int index, final long valueToAdd) throws ArrayIndexOutOfBoundsException {
+    public void add(final int index, final long valueToAdd) throws CairoException {
         long criticalValueAtEnter = recordingPhaser.writerCriticalSectionEnter();
         try {
             activeArray.add(index, valueToAdd);
@@ -181,9 +182,9 @@ public class PackedArraySingleWriterRecorder {
      * Increment a value at a given index in the array
      *
      * @param index the index of trhe value to be incremented
-     * @throws ArrayIndexOutOfBoundsException (may throw) if value is exceeds length()
+     * @throws CairoException (may throw) if value exceeds length()
      */
-    public void increment(final int index) throws ArrayIndexOutOfBoundsException {
+    public void increment(final int index) throws CairoException {
         long criticalValueAtEnter = recordingPhaser.writerCriticalSectionEnter();
         try {
             activeArray.increment(index);

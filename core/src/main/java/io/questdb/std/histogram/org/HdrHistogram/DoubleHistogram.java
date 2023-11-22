@@ -7,6 +7,8 @@
 
 package io.questdb.std.histogram.org.HdrHistogram;
 
+import io.questdb.cairo.CairoException;
+
 import java.io.*;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
@@ -42,7 +44,7 @@ import java.util.zip.Deflater;
  * longer to execute, as resizing incurs allocation and copying of internal data structures.
  * <p>
  * Attempts to record non-zero values that range outside of the specified dynamic range (or exceed the limits of
- * of dynamic range when auto-resizing) may results in {@link ArrayIndexOutOfBoundsException} exceptions, either
+ * of dynamic range when auto-resizing) may results in {@link CairoException} exceptions, either
  * due to overflow or underflow conditions. These exceptions will only be thrown if recording the value would have
  * resulted in discarding or losing the required value precision of values already recorded in the histogram.
  * <p>
@@ -339,10 +341,10 @@ public class DoubleHistogram extends EncodableHistogram implements DoubleValueRe
      * Add the contents of another histogram to this one.
      *
      * @param fromHistogram The other histogram.
-     * @throws ArrayIndexOutOfBoundsException (may throw) if values in fromHistogram's cannot be
-     *                                        covered by this histogram's range
+     * @throws CairoException (may throw) if values in fromHistogram's cannot be
+     *                        covered by this histogram's range
      */
-    public void add(final DoubleHistogram fromHistogram) throws ArrayIndexOutOfBoundsException {
+    public void add(final DoubleHistogram fromHistogram) throws CairoException {
         int arrayLength = fromHistogram.integerValuesHistogram.countsArrayLength;
         AbstractHistogram fromIntegerHistogram = fromHistogram.integerValuesHistogram;
         for (int i = 0; i < arrayLength; i++) {
@@ -377,7 +379,7 @@ public class DoubleHistogram extends EncodableHistogram implements DoubleValueRe
      * @param expectedIntervalBetweenValueSamples If expectedIntervalBetweenValueSamples is larger than 0, add
      *                                            auto-generated value records as appropriate if value is larger
      *                                            than expectedIntervalBetweenValueSamples
-     * @throws ArrayIndexOutOfBoundsException (may throw) if values exceed highestTrackableValue
+     * @throws CairoException (may throw) if values exceed highestTrackableValue
      */
     public void addWhileCorrectingForCoordinatedOmission(final DoubleHistogram fromHistogram,
                                                          final double expectedIntervalBetweenValueSamples) {
@@ -494,8 +496,8 @@ public class DoubleHistogram extends EncodableHistogram implements DoubleValueRe
         int relevantLength = integerValuesHistogram.getLengthForNumberOfBuckets(
                 integerValuesHistogram.getBucketsNeededToCoverValue(maxValue));
         if (buffer.capacity() < getNeededByteBufferCapacity(relevantLength)) {
-            throw new ArrayIndexOutOfBoundsException("buffer does not have capacity for " +
-                    getNeededByteBufferCapacity(relevantLength) + " bytes");
+            throw CairoException.nonCritical().put("buffer does not have capacity for ")
+                    .put(getNeededByteBufferCapacity(relevantLength)).put(" bytes");
         }
         buffer.putInt(DHIST_encodingCookie);
         buffer.putInt(getNumberOfSignificantValueDigits());
@@ -570,7 +572,7 @@ public class DoubleHistogram extends EncodableHistogram implements DoubleValueRe
      * @return The total count of values recorded in the histogram within the value range that is
      * {@literal >=} lowestEquivalentValue(<i>value</i>) and {@literal <=} highestEquivalentValue(<i>value</i>)
      */
-    public long getCountAtValue(final double value) throws ArrayIndexOutOfBoundsException {
+    public long getCountAtValue(final double value) throws CairoException {
         return integerValuesHistogram.getCountAtValue((long) (value * getDoubleToIntegerValueConversionRatio()));
     }
 
@@ -585,8 +587,7 @@ public class DoubleHistogram extends EncodableHistogram implements DoubleValueRe
      * @return the total count of values recorded in the histogram within the value range that is
      * {@literal >=} lowestEquivalentValue(<i>lowValue</i>) and {@literal <=} highestEquivalentValue(<i>highValue</i>)
      */
-    public double getCountBetweenValues(final double lowValue, final double highValue)
-            throws ArrayIndexOutOfBoundsException {
+    public double getCountBetweenValues(final double lowValue, final double highValue) throws CairoException {
         return integerValuesHistogram.getCountBetweenValues(
                 (long) (lowValue * getDoubleToIntegerValueConversionRatio()),
                 (long) (highValue * getDoubleToIntegerValueConversionRatio())
@@ -1017,10 +1018,10 @@ public class DoubleHistogram extends EncodableHistogram implements DoubleValueRe
      * Record a value in the histogram
      *
      * @param value The value to be recorded
-     * @throws ArrayIndexOutOfBoundsException (may throw) if value cannot be covered by the histogram's range
+     * @throws CairoException (may throw) if value cannot be covered by the histogram's range
      */
     @Override
-    public void recordValue(final double value) throws ArrayIndexOutOfBoundsException {
+    public void recordValue(final double value) throws CairoException {
         recordSingleValue(value);
     }
 
@@ -1029,10 +1030,10 @@ public class DoubleHistogram extends EncodableHistogram implements DoubleValueRe
      *
      * @param value The value to be recorded
      * @param count The number of occurrences of this value to record
-     * @throws ArrayIndexOutOfBoundsException (may throw) if value cannot be covered by the histogram's range
+     * @throws CairoException (may throw) if value cannot be covered by the histogram's range
      */
     @Override
-    public void recordValueWithCount(final double value, final long count) throws ArrayIndexOutOfBoundsException {
+    public void recordValueWithCount(final double value, final long count) throws CairoException {
         recordCountAtValue(count, value);
     }
 
@@ -1055,11 +1056,11 @@ public class DoubleHistogram extends EncodableHistogram implements DoubleValueRe
      * @param expectedIntervalBetweenValueSamples If expectedIntervalBetweenValueSamples is larger than 0, add
      *                                            auto-generated value records as appropriate if value is larger
      *                                            than expectedIntervalBetweenValueSamples
-     * @throws ArrayIndexOutOfBoundsException (may throw) if value cannot be covered by the histogram's range
+     * @throws CairoException (may throw) if value cannot be covered by the histogram's range
      */
     @Override
     public void recordValueWithExpectedInterval(final double value, final double expectedIntervalBetweenValueSamples)
-            throws ArrayIndexOutOfBoundsException {
+            throws CairoException {
         recordValueWithCountAndExpectedInterval(value, 1, expectedIntervalBetweenValueSamples);
     }
 
@@ -1145,8 +1146,8 @@ public class DoubleHistogram extends EncodableHistogram implements DoubleValueRe
      * Subtract the contents of another histogram from this one.
      *
      * @param otherHistogram The other histogram.
-     * @throws ArrayIndexOutOfBoundsException (may throw) if values in fromHistogram's cannot be
-     *                                        covered by this histogram's range
+     * @throws CairoException (may throw) if values in fromHistogram's cannot be
+     *                        covered by this histogram's range
      */
     public void subtract(final DoubleHistogram otherHistogram) {
         int arrayLength = otherHistogram.integerValuesHistogram.countsArrayLength;
@@ -1216,7 +1217,7 @@ public class DoubleHistogram extends EncodableHistogram implements DoubleValueRe
         try {
             if (value < currentLowestValueInAutoRange) {
                 if (value < 0.0) {
-                    throw new ArrayIndexOutOfBoundsException("Negative values cannot be recorded");
+                    throw CairoException.nonCritical().put("Negative values cannot be recorded");
                 }
                 do {
                     int shiftAmount =
@@ -1227,8 +1228,7 @@ public class DoubleHistogram extends EncodableHistogram implements DoubleValueRe
                 while (value < currentLowestValueInAutoRange);
             } else if (value >= currentHighestValueLimitInAutoRange) {
                 if (value > highestAllowedValueEver) {
-                    throw new ArrayIndexOutOfBoundsException(
-                            "Values above " + highestAllowedValueEver + " cannot be recorded");
+                    throw CairoException.nonCritical().put("Values above ").put(highestAllowedValueEver).put(" cannot be recorded");
                 }
                 do {
                     // If value is an exact whole multiple of currentHighestValueLimitInAutoRange, it "belongs" with
@@ -1242,12 +1242,11 @@ public class DoubleHistogram extends EncodableHistogram implements DoubleValueRe
                 }
                 while (value >= currentHighestValueLimitInAutoRange);
             }
-        } catch (ArrayIndexOutOfBoundsException ex) {
-            throw new ArrayIndexOutOfBoundsException("The value " + value +
-                    " is out of bounds for histogram, current covered range [" +
-                    currentLowestValueInAutoRange + ", " + currentHighestValueLimitInAutoRange +
-                    ") cannot be extended any further.\n" +
-                    "Caused by: " + ex);
+        } catch (CairoException ex) {
+            throw CairoException.nonCritical().put("The value ").put(value)
+                    .put(" is out of bounds for histogram, current covered range [")
+                    .put(currentLowestValueInAutoRange).put(", ").put(currentHighestValueLimitInAutoRange)
+                    .put(") cannot be extended any further.\nCaused by: ").put(ex.getMessage());
         }
     }
 
@@ -1305,17 +1304,16 @@ public class DoubleHistogram extends EncodableHistogram implements DoubleValueRe
 
     private void handleShiftValuesException(final int numberOfBinaryOrdersOfMagnitude, Exception ex) {
         if (!autoResize) {
-            throw new ArrayIndexOutOfBoundsException("Value outside of histogram covered range.\nCaused by: " + ex);
+            throw CairoException.nonCritical().put("Value outside of histogram covered range.\nCaused by: ").put(ex.getMessage());
         }
 
         long highestTrackableValue = integerValuesHistogram.getHighestTrackableValue();
         int currentContainingOrderOfMagnitude = findContainingBinaryOrderOfMagnitude(highestTrackableValue);
         int newContainingOrderOfMagnitude = numberOfBinaryOrdersOfMagnitude + currentContainingOrderOfMagnitude;
         if (newContainingOrderOfMagnitude > 63) {
-            throw new ArrayIndexOutOfBoundsException(
-                    "Cannot resize histogram covered range beyond (1L << 63) / (1L << " +
-                            (integerValuesHistogram.subBucketHalfCountMagnitude) + ") - 1.\n" +
-                            "Caused by: " + ex);
+            throw CairoException.nonCritical().put("Cannot resize histogram covered range beyond (1L << 63) / (1L << ")
+                    .put(integerValuesHistogram.subBucketHalfCountMagnitude)
+                    .put(") - 1.\nCaused by: ").put(ex.getMessage());
         }
         long newHighestTrackableValue = (1L << newContainingOrderOfMagnitude) - 1;
         integerValuesHistogram.resize(newHighestTrackableValue);
@@ -1340,7 +1338,7 @@ public class DoubleHistogram extends EncodableHistogram implements DoubleValueRe
         init(configuredHighestToLowestValueRatio, lowestValueInAutoRange, integerValuesHistogram);
     }
 
-    private void recordCountAtValue(final long count, final double value) throws ArrayIndexOutOfBoundsException {
+    private void recordCountAtValue(final long count, final double value) throws CairoException {
         int throwCount = 0;
         while (true) {
             if ((value < currentLowestValueInAutoRange) || (value >= currentHighestValueLimitInAutoRange)) {
@@ -1351,7 +1349,7 @@ public class DoubleHistogram extends EncodableHistogram implements DoubleValueRe
             try {
                 integerValuesHistogram.recordConvertedDoubleValueWithCount(value, count);
                 return;
-            } catch (ArrayIndexOutOfBoundsException ex) {
+            } catch (CairoException ex) {
                 // A race that would pass the auto-range check above and would still take an AIOOB
                 // can only occur due to a value that would have been valid becoming invalid due
                 // to a concurrent adjustment operation. Such adjustment operations can happen no
@@ -1360,14 +1358,14 @@ public class DoubleHistogram extends EncodableHistogram implements DoubleValueRe
                 if (++throwCount > 64) {
                     // For the retry check to not detect an out of range attempt after 64 retries
                     // should be  theoretically impossible, and would indicate a bug.
-                    throw new ArrayIndexOutOfBoundsException(
-                            "BUG: Unexpected non-transient AIOOB Exception caused by:\n" + ex);
+                    throw CairoException.nonCritical().put("BUG: Unexpected non-transient AIOOB Exception caused by:\n")
+                            .put(ex.getMessage());
                 }
             }
         }
     }
 
-    private void recordSingleValue(final double value) throws ArrayIndexOutOfBoundsException {
+    private void recordSingleValue(final double value) throws CairoException {
         int throwCount = 0;
         while (true) {
             if ((value < currentLowestValueInAutoRange) || (value >= currentHighestValueLimitInAutoRange)) {
@@ -1378,7 +1376,7 @@ public class DoubleHistogram extends EncodableHistogram implements DoubleValueRe
             try {
                 integerValuesHistogram.recordConvertedDoubleValue(value);
                 return;
-            } catch (ArrayIndexOutOfBoundsException ex) {
+            } catch (CairoException ex) {
                 // A race that would pass the auto-range check above and would still take an AIOOB
                 // can only occur due to a value that would have been valid becoming invalid due
                 // to a concurrent adjustment operation. Such adjustment operations can happen no
@@ -1387,16 +1385,18 @@ public class DoubleHistogram extends EncodableHistogram implements DoubleValueRe
                 if (++throwCount > 64) {
                     // For the retry check to not detect an out of range attempt after 64 retries
                     // should be  theoretically impossible, and would indicate a bug.
-                    throw new ArrayIndexOutOfBoundsException(
-                            "BUG: Unexpected non-transient AIOOB Exception caused by:\n" + ex);
+                    throw CairoException.nonCritical().put("BUG: Unexpected non-transient AIOOB Exception caused by:\n")
+                            .put(ex.getMessage());
                 }
             }
         }
     }
 
-    private void recordValueWithCountAndExpectedInterval(final double value, final long count,
-                                                         final double expectedIntervalBetweenValueSamples)
-            throws ArrayIndexOutOfBoundsException {
+    private void recordValueWithCountAndExpectedInterval(
+            final double value,
+            final long count,
+            final double expectedIntervalBetweenValueSamples
+    ) throws CairoException {
         recordCountAtValue(count, value);
         if (expectedIntervalBetweenValueSamples <= 0)
             return;
@@ -1454,7 +1454,7 @@ public class DoubleHistogram extends EncodableHistogram implements DoubleValueRe
                     // Shift was successful. Adjust new range to reflect:
                     newLowestValueInAutoRange *= shiftMultiplier;
                     newHighestValueLimitInAutoRange *= shiftMultiplier;
-                } catch (ArrayIndexOutOfBoundsException ex) {
+                } catch (CairoException ex) {
                     // Failed to shift, try to expand size instead:
                     handleShiftValuesException(numberOfBinaryOrdersOfMagnitude, ex);
                     // Successfully expanded histogram range by numberOfBinaryOrdersOfMagnitude, but not
@@ -1515,7 +1515,7 @@ public class DoubleHistogram extends EncodableHistogram implements DoubleValueRe
                 try {
                     integerValuesHistogram.shiftValuesLeft(numberOfBinaryOrdersOfMagnitude,
                             newIntegerToDoubleValueConversionRatio);
-                } catch (ArrayIndexOutOfBoundsException ex) {
+                } catch (CairoException ex) {
                     // Failed to shift, try to expand size instead:
                     handleShiftValuesException(numberOfBinaryOrdersOfMagnitude, ex);
                     // First expand the highest limit to reflect successful size expansion:

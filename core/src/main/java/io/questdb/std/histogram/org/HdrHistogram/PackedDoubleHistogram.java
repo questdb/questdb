@@ -7,6 +7,8 @@
 
 package io.questdb.std.histogram.org.HdrHistogram;
 
+import io.questdb.cairo.CairoException;
+
 import java.nio.ByteBuffer;
 import java.util.zip.DataFormatException;
 
@@ -43,7 +45,7 @@ import java.util.zip.DataFormatException;
  * longer to execute, as resizing incurs allocation and copying of internal data structures.
  * <p>
  * Attempts to record non-zero values that range outside of the specified dynamic range (or exceed the limits of
- * of dynamic range when auto-resizing) may results in {@link ArrayIndexOutOfBoundsException} exceptions, either
+ * of dynamic range when auto-resizing) may results in {@link CairoException} exceptions, either
  * due to overflow or underflow conditions. These exceptions will only be thrown if recording the value would have
  * resulted in discarding or losing the required value precision of values already recorded in the histogram.
  * <p>

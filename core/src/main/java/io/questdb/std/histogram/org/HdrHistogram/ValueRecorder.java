@@ -1,23 +1,25 @@
 package io.questdb.std.histogram.org.HdrHistogram;
 
+import io.questdb.cairo.CairoException;
+
 public interface ValueRecorder {
 
     /**
      * Record a value
      *
      * @param value The value to be recorded
-     * @throws ArrayIndexOutOfBoundsException (may throw) if value cannot be covered by the histogram's range
+     * @throws CairoException (may throw) if value cannot be covered by the histogram's range
      */
-    void recordValue(long value) throws ArrayIndexOutOfBoundsException;
+    void recordValue(long value) throws CairoException;
 
     /**
      * Record a value (adding to the value's current count)
      *
      * @param value The value to be recorded
      * @param count The number of occurrences of this value to record
-     * @throws ArrayIndexOutOfBoundsException (may throw) if value cannot be covered by the histogram's range
+     * @throws CairoException (may throw) if value cannot be covered by the histogram's range
      */
-    void recordValueWithCount(long value, long count) throws ArrayIndexOutOfBoundsException;
+    void recordValueWithCount(long value, long count) throws CairoException;
 
     /**
      * Record a value.
@@ -35,10 +37,10 @@ public interface ValueRecorder {
      * @param expectedIntervalBetweenValueSamples If expectedIntervalBetweenValueSamples is larger than 0, add
      *                                            auto-generated value records as appropriate if value is larger
      *                                            than expectedIntervalBetweenValueSamples
-     * @throws ArrayIndexOutOfBoundsException (may throw) if value cannot be covered by the histogram's range
+     * @throws CairoException (may throw) if value cannot be covered by the histogram's range
      */
     void recordValueWithExpectedInterval(long value, long expectedIntervalBetweenValueSamples)
-            throws ArrayIndexOutOfBoundsException;
+            throws CairoException;
 
     /**
      * Reset the contents and collected stats

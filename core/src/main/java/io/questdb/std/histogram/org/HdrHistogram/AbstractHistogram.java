@@ -7,6 +7,8 @@
 
 package io.questdb.std.histogram.org.HdrHistogram;
 
+import io.questdb.cairo.CairoException;
+
 import java.io.*;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
@@ -171,14 +173,14 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
      * extended to include the start/end timestamp range of the other histogram.
      *
      * @param otherHistogram The other histogram.
-     * @throws ArrayIndexOutOfBoundsException (may throw) if values in fromHistogram's are
-     *                                        higher than highestTrackableValue.
+     * @throws CairoException (may throw) if values in fromHistogram's are
+     *                        higher than highestTrackableValue.
      */
-    public void add(final AbstractHistogram otherHistogram) throws ArrayIndexOutOfBoundsException {
+    public void add(final AbstractHistogram otherHistogram) throws CairoException {
         long highestRecordableValue = highestEquivalentValue(valueFromIndex(countsArrayLength - 1));
         if (highestRecordableValue < otherHistogram.getMaxValue()) {
             if (!isAutoResize()) {
-                throw new ArrayIndexOutOfBoundsException(
+                throw CairoException.nonCritical().put(
                         "The other histogram includes values that do not fit in this histogram's range.");
             }
             resize(otherHistogram.getMaxValue());
@@ -242,7 +244,7 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
      * @param expectedIntervalBetweenValueSamples If expectedIntervalBetweenValueSamples is larger than 0, add
      *                                            auto-generated value records as appropriate if value is larger
      *                                            than expectedIntervalBetweenValueSamples
-     * @throws ArrayIndexOutOfBoundsException (may throw) if values exceed highestTrackableValue
+     * @throws CairoException (may throw) if values exceed highestTrackableValue
      */
     public void addWhileCorrectingForCoordinatedOmission(final AbstractHistogram otherHistogram,
                                                          final long expectedIntervalBetweenValueSamples) {
@@ -341,7 +343,7 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
 
     public int countsArrayIndex(final long value) {
         if (value < 0) {
-            throw new ArrayIndexOutOfBoundsException("Histogram recorded value cannot be negative.");
+            throw CairoException.nonCritical().put("Histogram recorded value cannot be negative.");
         }
         final int bucketIndex = getBucketIndex(value);
         final int subBucketIndex = getSubBucketIndex(value, bucketIndex);
@@ -358,7 +360,7 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
         final long maxValue = getMaxValue();
         final int relevantLength = countsArrayIndex(maxValue) + 1;
         if (buffer.capacity() < getNeededByteBufferCapacity(relevantLength)) {
-            throw new ArrayIndexOutOfBoundsException("buffer does not have capacity for " +
+            throw CairoException.nonCritical().put("buffer does not have capacity for " +
                     getNeededByteBufferCapacity(relevantLength) + " bytes");
         }
         int initialPosition = buffer.position();
@@ -534,7 +536,7 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
      * @return The total count of values recorded in the histogram within the value range that is
      * {@literal >=} lowestEquivalentValue(<i>value</i>) and {@literal <=} highestEquivalentValue(<i>value</i>)
      */
-    public long getCountAtValue(final long value) throws ArrayIndexOutOfBoundsException {
+    public long getCountAtValue(final long value) throws CairoException {
         final int index = Math.min(Math.max(0, countsArrayIndex(value)), (countsArrayLength - 1));
         return getCountAtIndex(index);
     }
@@ -569,7 +571,7 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
      * @return the total count of values recorded in the histogram within the value range that is
      * {@literal >=} lowestEquivalentValue(<i>lowValue</i>) and {@literal <=} highestEquivalentValue(<i>highValue</i>)
      */
-    public long getCountBetweenValues(final long lowValue, final long highValue) throws ArrayIndexOutOfBoundsException {
+    public long getCountBetweenValues(final long lowValue, final long highValue) throws CairoException {
         final int lowIndex = Math.max(0, countsArrayIndex(lowValue));
         final int highIndex = Math.min(countsArrayIndex(highValue), (countsArrayLength - 1));
         long count = 0;
@@ -1127,7 +1129,7 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
         return new Percentiles(this, percentileTicksPerHalfDistance);
     }
 
-    public void recordConvertedDoubleValueWithCount(final double value, final long count) throws ArrayIndexOutOfBoundsException {
+    public void recordConvertedDoubleValueWithCount(final double value, final long count) throws CairoException {
         long integerValue = (long) (value * doubleToIntegerValueConversionRatio);
         recordCountAtValue(count, integerValue);
     }
@@ -1136,10 +1138,10 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
      * Record a value in the histogram
      *
      * @param value The value to be recorded
-     * @throws ArrayIndexOutOfBoundsException (may throw) if value is exceeds highestTrackableValue
+     * @throws CairoException (may throw) if value exceeds highestTrackableValue
      */
     @Override
-    public void recordValue(final long value) throws ArrayIndexOutOfBoundsException {
+    public void recordValue(final long value) throws CairoException {
         recordSingleValue(value);
     }
 
@@ -1148,12 +1150,11 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
      * @param expectedIntervalBetweenValueSamples If expectedIntervalBetweenValueSamples is larger than 0, add
      *                                            auto-generated value records as appropriate if value is larger
      *                                            than expectedIntervalBetweenValueSamples
-     * @throws ArrayIndexOutOfBoundsException (may throw) if value is exceeds highestTrackableValue
+     * @throws CairoException (may throw) if value exceeds highestTrackableValue
      * @deprecated Record a value in the histogram. This deprecated method has identical behavior to
      * <b><code>recordValueWithExpectedInterval()</code></b>. It was renamed to avoid ambiguity.
      */
-    public void recordValue(final long value, final long expectedIntervalBetweenValueSamples)
-            throws ArrayIndexOutOfBoundsException {
+    public void recordValue(final long value, final long expectedIntervalBetweenValueSamples) throws CairoException {
         recordValueWithExpectedInterval(value, expectedIntervalBetweenValueSamples);
     }
 
@@ -1162,10 +1163,10 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
      *
      * @param value The value to be recorded
      * @param count The number of occurrences of this value to record
-     * @throws ArrayIndexOutOfBoundsException (may throw) if value is exceeds highestTrackableValue
+     * @throws CairoException (may throw) if value exceeds highestTrackableValue
      */
     @Override
-    public void recordValueWithCount(final long value, final long count) throws ArrayIndexOutOfBoundsException {
+    public void recordValueWithCount(final long value, final long count) throws CairoException {
         recordCountAtValue(count, value);
     }
 
@@ -1188,11 +1189,11 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
      * @param expectedIntervalBetweenValueSamples If expectedIntervalBetweenValueSamples is larger than 0, add
      *                                            auto-generated value records as appropriate if value is larger
      *                                            than expectedIntervalBetweenValueSamples
-     * @throws ArrayIndexOutOfBoundsException (may throw) if value is exceeds highestTrackableValue
+     * @throws CairoException (may throw) if value exceeds highestTrackableValue
      */
     @Override
     public void recordValueWithExpectedInterval(final long value, final long expectedIntervalBetweenValueSamples)
-            throws ArrayIndexOutOfBoundsException {
+            throws CairoException {
         recordSingleValueWithExpectedInterval(value, expectedIntervalBetweenValueSamples);
     }
 
@@ -1285,7 +1286,7 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
      * Shift recorded values to the left (the equivalent of a &lt;&lt; shift operation on all recorded values). The
      * configured integer value range limits and value precision setting will remain unchanged.
      * <p>
-     * An {@link ArrayIndexOutOfBoundsException} will be thrown if any recorded values may be lost
+     * An {@link CairoException} will be thrown if any recorded values may be lost
      * as a result of the attempted operation, reflecting an "overflow" conditions. Expect such an overflow
      * exception if the operation would cause the current maxValue to be scaled to a value that is outside
      * of the covered value range.
@@ -1301,7 +1302,7 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
      * configured integer value range limits and value precision setting will remain unchanged.
      * <p>
      * Shift right operations that do not underflow are reversible with a shift left operation with no loss of
-     * information. An {@link ArrayIndexOutOfBoundsException} reflecting an "underflow" conditions will be thrown
+     * information. An {@link CairoException} reflecting an "underflow" conditions will be thrown
      * if any recorded values may lose representation accuracy as a result of the attempted shift operation.
      * <p>
      * For a shift of a single order of magnitude, expect such an underflow exception if any recorded non-zero
@@ -1345,10 +1346,10 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
      * The start/end timestamps of this histogram will remain unchanged.
      *
      * @param otherHistogram The other histogram.
-     * @throws ArrayIndexOutOfBoundsException (may throw) if values in otherHistogram's are higher than highestTrackableValue.
+     * @throws CairoException (may throw) if values in otherHistogram's are higher than highestTrackableValue.
      */
     public void subtract(final AbstractHistogram otherHistogram)
-            throws ArrayIndexOutOfBoundsException, IllegalArgumentException {
+            throws CairoException, IllegalArgumentException {
         if (highestEquivalentValue(otherHistogram.getMaxValue()) >
                 highestEquivalentValue(valueFromIndex(this.countsArrayLength - 1))) {
             throw new IllegalArgumentException(
@@ -1611,7 +1612,8 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
 
     private void handleRecordException(final long count, final long value, Exception ex) {
         if (!autoResize) {
-            throw new ArrayIndexOutOfBoundsException("value " + value + " outside of histogram covered range. Caused by: " + ex);
+            throw CairoException.nonCritical().put("value ").put(value)
+                    .put(" outside of histogram covered range. Caused by: ").put(ex.getMessage());
         }
         resize(value);
         int countsIndex = countsArrayIndex(value);
@@ -1714,12 +1716,11 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
 
     // Recorded value iterator support:
 
-    private void recordCountAtValue(final long count, final long value)
-            throws ArrayIndexOutOfBoundsException {
+    private void recordCountAtValue(final long count, final long value) throws CairoException {
         int countsIndex = countsArrayIndex(value);
         try {
             addToCountAtIndex(countsIndex, count);
-        } catch (IndexOutOfBoundsException ex) {
+        } catch (CairoException ex) {
             handleRecordException(count, value, ex);
         }
         updateMinAndMax(value);
@@ -1728,11 +1729,11 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
 
     // AllValues iterator support:
 
-    private void recordSingleValue(final long value) throws ArrayIndexOutOfBoundsException {
+    private void recordSingleValue(final long value) throws CairoException {
         int countsIndex = countsArrayIndex(value);
         try {
             incrementCountAtIndex(countsIndex);
-        } catch (IndexOutOfBoundsException ex) {
+        } catch (CairoException | ArrayIndexOutOfBoundsException ex) {
             handleRecordException(1, value, ex);
         }
         updateMinAndMax(value);
@@ -1758,9 +1759,8 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
     // Textual percentile output support:
     //
 
-    private void recordSingleValueWithExpectedInterval(final long value,
-                                                       final long expectedIntervalBetweenValueSamples)
-            throws ArrayIndexOutOfBoundsException {
+    private void recordSingleValueWithExpectedInterval(final long value, final long expectedIntervalBetweenValueSamples)
+            throws CairoException {
         recordSingleValue(value);
         if (expectedIntervalBetweenValueSamples <= 0)
             return;
@@ -1771,9 +1771,11 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
         }
     }
 
-    private void recordValueWithCountAndExpectedInterval(final long value, final long count,
-                                                         final long expectedIntervalBetweenValueSamples)
-            throws ArrayIndexOutOfBoundsException {
+    private void recordValueWithCountAndExpectedInterval(
+            final long value,
+            final long count,
+            final long expectedIntervalBetweenValueSamples
+    ) throws CairoException {
         recordCountAtValue(count, value);
         if (expectedIntervalBetweenValueSamples <= 0)
             return;
@@ -2122,7 +2124,7 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
                 // Shifts with lowest half bucket populated can only be to the left.
                 // Any right shift logic calling this should have already verified that
                 // the lowest half bucket is not populated.
-                throw new ArrayIndexOutOfBoundsException(
+                throw CairoException.nonCritical().put(
                         "Attempt to right-shift with already-recorded value counts that would underflow and lose precision");
             }
             shiftLowestHalfBucketContentsLeft(shiftAmount, preShiftZeroIndex);
@@ -2142,7 +2144,7 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
             return index;
         }
         if ((index > arrayLength) || (index < 0)) {
-            throw new ArrayIndexOutOfBoundsException("index out of covered value range");
+            throw CairoException.nonCritical().put("index out of covered value range");
         }
         int normalizedIndex = index - normalizingIndexOffset;
         // The following is the same as an unsigned remainder operation, as long as no double wrapping happens
@@ -2211,7 +2213,7 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
         int maxValueIndex = countsArrayIndex(getMaxValue());
         // indicate overflow if maxValue is in the range being wrapped:
         if (maxValueIndex >= (countsArrayLength - shiftAmount)) {
-            throw new ArrayIndexOutOfBoundsException(
+            throw CairoException.nonCritical().put(
                     "Operation would overflow, would discard recorded value counts");
         }
 
@@ -2220,7 +2222,7 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
         long minNonZeroValueBeforeShift = minNonZeroValue;
         minNonZeroValue = Long.MAX_VALUE;
 
-        boolean lowestHalfBucketPopulated = (minNonZeroValueBeforeShift < (subBucketHalfCount << unitMagnitude));
+        boolean lowestHalfBucketPopulated = (minNonZeroValueBeforeShift < ((long) subBucketHalfCount << unitMagnitude));
 
         // Perform the shift:
         shiftNormalizingIndexByOffset(shiftAmount, lowestHalfBucketPopulated, newIntegerToDoubleValueConversionRatio);
@@ -2274,7 +2276,7 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
         // </DetailedExplanation:>
 
         if (minNonZeroValueIndex < shiftAmount + subBucketHalfCount) {
-            throw new ArrayIndexOutOfBoundsException(
+            throw CairoException.nonCritical().put(
                     "Operation would underflow and lose precision of already recorded value counts");
         }
 

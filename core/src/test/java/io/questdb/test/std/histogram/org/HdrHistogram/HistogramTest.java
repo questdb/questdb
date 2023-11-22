@@ -8,10 +8,10 @@
 
 package io.questdb.test.std.histogram.org.HdrHistogram;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.std.histogram.org.HdrHistogram.*;
 import org.junit.Assert;
 import org.junit.Test;
-import org.junit.function.ThrowingRunnable;
 
 import java.io.*;
 import java.util.zip.Deflater;
@@ -68,7 +68,7 @@ public class HistogramTest {
             try {
                 // This should throw:
                 histogram.add(biggerOther);
-            } catch (ArrayIndexOutOfBoundsException e) {
+            } catch (CairoException e) {
                 thrown = true;
             }
             Assert.assertTrue(thrown);
@@ -404,7 +404,7 @@ public class HistogramTest {
                     long packedHistValue;
                     try {
                         packedHistValue = packedHistogram.getCountAtIndex(i);
-                    } catch (ArrayIndexOutOfBoundsException ex) {
+                    } catch (CairoException ex) {
                         System.out.println("AIOOB at i = " + i + " : " + ex);
                         throw ex;
                     }
@@ -480,14 +480,11 @@ public class HistogramTest {
         };
 
         for (Class<?> histoClass : testClasses) {
-            Assert.assertThrows(ArrayIndexOutOfBoundsException.class,
-                    new ThrowingRunnable() {
-                        @Override
-                        public void run() throws Throwable {
-                            // Histogram histogram = new Histogram(highestTrackableValue, numberOfSignificantValueDigits);
-                            AbstractHistogram histogram = constructHistogram(histoClass, highestTrackableValue, numberOfSignificantValueDigits);
-                            histogram.recordValue(highestTrackableValue * 3);
-                        }
+            Assert.assertThrows(CairoException.class,
+                    () -> {
+                        // Histogram histogram = new Histogram(highestTrackableValue, numberOfSignificantValueDigits);
+                        AbstractHistogram histogram = constructHistogram(histoClass, highestTrackableValue, numberOfSignificantValueDigits);
+                        histogram.recordValue(highestTrackableValue * 3);
                     });
         }
     }

@@ -8,6 +8,7 @@
 
 package io.questdb.test.std.histogram.org.HdrHistogram;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.std.histogram.org.HdrHistogram.AbstractHistogram;
 import io.questdb.std.histogram.org.HdrHistogram.Histogram;
 import io.questdb.std.histogram.org.HdrHistogram.HistogramIterationValue;
@@ -39,7 +40,7 @@ public class HistogramDataAccessTest {
             for (int value = 1; value < 1000; value++) {
                 try {
                     recordOneValueAndDisplayLinearBuckets(value, step);
-                } catch (ArrayIndexOutOfBoundsException e) {
+                } catch (CairoException e) {
                     broken.add(new int[]{value, step});
                 }
             }

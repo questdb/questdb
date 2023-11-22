@@ -1,5 +1,7 @@
 package io.questdb.std.histogram.org.HdrHistogram.packedarray;
 
+import io.questdb.cairo.CairoException;
+
 import java.io.Serializable;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
@@ -777,9 +779,8 @@ abstract class AbstractPackedArrayContext implements Serializable {
             try {
                 assert (setNumber >= 0 && setNumber < NUMBER_OF_SETS);
                 if (virtualIndex >= getVirtualLength()) {
-                    throw new ArrayIndexOutOfBoundsException(
-                            String.format("Attempting access at index %d, beyond virtualLength %d",
-                                    virtualIndex, getVirtualLength()));
+                    throw CairoException.nonCritical().put("Attempting access at index ").put(virtualIndex)
+                            .put(", beyond virtualLength ").put(getVirtualLength());
                 }
                 int entryPointerIndex = SET_0_START_INDEX + setNumber;
                 int entryIndex = getRootEntry(setNumber, insertAsNeeded);

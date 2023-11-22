@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
@@ -78,11 +77,7 @@ public class ApproxPercentileLongGroupByFunction extends DoubleFunction implemen
 
         final long val = exprFunc.getLong(record);
         if (val != Numbers.LONG_NaN) {
-            try {
-                histogram.recordValue(val);
-            } catch (ArrayIndexOutOfBoundsException e) {
-                throw CairoException.nonCritical().put(e.getMessage());
-            }
+            histogram.recordValue(val);
         }
         mapValue.putLong(valueIndex, histogramIndex++);
     }
@@ -92,11 +87,7 @@ public class ApproxPercentileLongGroupByFunction extends DoubleFunction implemen
         final Histogram histogram = histograms.getQuick(mapValue.getInt(valueIndex));
         final long val = exprFunc.getLong(record);
         if (val != Numbers.LONG_NaN) {
-            try {
-                histogram.recordValue(val);
-            } catch (ArrayIndexOutOfBoundsException e) {
-                throw CairoException.nonCritical().put(e.getMessage());
-            }
+            histogram.recordValue(val);
         }
     }
 

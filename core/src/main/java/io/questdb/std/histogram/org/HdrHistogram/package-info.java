@@ -7,6 +7,7 @@
 // Version HdrHistogram-2.1.12, 2b35e19cb387625f2cbf420c9f12829b44e4fe94
 // We have a few QuestDB-specific modifications, e.g.:
 // * Removed all thread-safe histogram and removed atomic operations from AbstractHistogram
+// * Replaced ArrayIndexOutOfBoundsException allocations with reusable CairoException where possible
 // * Ported the tests to JUnit 4
 
 /**
