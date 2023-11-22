@@ -103,7 +103,7 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val(SIGNATURE);
+            sink.val("wal_transactions of: ").val(tableToken.getTableName());
         }
 
 

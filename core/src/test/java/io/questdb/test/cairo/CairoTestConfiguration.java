@@ -317,6 +317,11 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
+    public int getWalApplyLookAheadTransactionCount() {
+        return overrides.getWalApplyLookAheadTransactionCount() >= 0 ? overrides.getWalApplyLookAheadTransactionCount() : super.getWalApplyLookAheadTransactionCount();
+    }
+
+    @Override
     public long getWalApplyTableTimeQuota() {
         return overrides.getWalApplyTableTimeQuota() >= 0 ? overrides.getWalApplyTableTimeQuota() : super.getWalApplyTableTimeQuota();
     }

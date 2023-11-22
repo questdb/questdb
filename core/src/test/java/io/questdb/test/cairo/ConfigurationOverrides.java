@@ -135,6 +135,8 @@ public interface ConfigurationOverrides {
 
     MicrosecondClock getTestMicrosClock();
 
+    int getWalApplyLookAheadTransactionCount();
+
     long getWalApplyTableTimeQuota();
 
     int getWalMaxLagTxnCount();
@@ -284,6 +286,8 @@ public interface ConfigurationOverrides {
     void setTestMicrosClock(MicrosecondClock testMicrosClock);
 
     void setWalApplyTableTimeQuota(long walApplyTableTimeQuota);
+
+    void setWalLookAheadTransactionCount(int walApplyTableTimeQuota);
 
     void setWalMaxLagTxnCount(int walMaxLagTxnCount);
 

@@ -95,6 +95,7 @@ public class Overrides implements ConfigurationOverrides {
     private int sqlWindowStorePageSize;
     private int tableRegistryCompactionThreshold;
     private long walApplyTableTimeQuota = -1;
+    private int walLookAheadTransactionCount = -1;
     private int walMaxLagTxnCount = -1;
     private long walPurgeInterval = -1;
     private long walSegmentRolloverRowCount = -1;
@@ -359,6 +360,11 @@ public class Overrides implements ConfigurationOverrides {
     }
 
     @Override
+    public int getWalApplyLookAheadTransactionCount() {
+        return walLookAheadTransactionCount;
+    }
+
+    @Override
     public int getWalMaxLagTxnCount() {
         return walMaxLagTxnCount;
     }
@@ -483,6 +489,7 @@ public class Overrides implements ConfigurationOverrides {
         tableRegistryCompactionThreshold = -1;
         maxOpenPartitions = -1;
         walApplyTableTimeQuota = -1;
+        walLookAheadTransactionCount = -1;
         walMaxLagTxnCount = -1;
         repeatMigrationsFromVersion = -1;
         factoryProvider = null;
@@ -773,6 +780,12 @@ public class Overrides implements ConfigurationOverrides {
     public void setWalApplyTableTimeQuota(long walApplyTableTimeQuota) {
         this.walApplyTableTimeQuota = walApplyTableTimeQuota;
     }
+
+    @Override
+    public void setWalLookAheadTransactionCount(int walLookAheadTransactionCount) {
+        this.walLookAheadTransactionCount = walLookAheadTransactionCount;
+    }
+
 
     public void setWalMaxLagTxnCount(int walMaxLagTxnCount) {
         this.walMaxLagTxnCount = walMaxLagTxnCount;
