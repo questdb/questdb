@@ -525,6 +525,12 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     .$(", errno=").$(ex.getErrno())
                     .I$();
             return WAL_APPLY_FAILED;
+        } catch (Throwable ex) {
+            telemetryFacade.store(TelemetrySystemEvent.WAL_APPLY_SUSPEND, TelemetryOrigin.WAL_APPLY);
+            LOG.critical().$("job failed, table suspended [table=").utf8(tableToken.getDirName())
+                    .$(", error=").$(ex)
+                    .I$();
+            return WAL_APPLY_FAILED;
         }
         return lastWriterTxn;
     }

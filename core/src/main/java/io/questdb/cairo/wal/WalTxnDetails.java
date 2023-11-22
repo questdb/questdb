@@ -41,10 +41,12 @@ public class WalTxnDetails {
     private static final int MIN_TIMESTAMP_OFFSET = 1;
     private final LongList transactionMeta = new LongList();
     private final WalEventReader walEventReader;
+    private final int maxLookahead;
     private long startSeqTxn = 0;
 
-    public WalTxnDetails(FilesFacade ff) {
+    public WalTxnDetails(FilesFacade ff, int maxLookahead) {
         walEventReader = new WalEventReader(ff);
+        this.maxLookahead = maxLookahead;
     }
 
     public long getCommitToTimestamp(long seqTxn) {
@@ -97,7 +99,8 @@ public class WalTxnDetails {
             WalEventCursor walEventCursor = null;
 
             long runningMaxTimestamp = maxCommittedTimestamp;
-            while (transactionLogCursor.hasNext()) {
+            int i = 0;
+            while (i++ < maxLookahead && transactionLogCursor.hasNext()) {
 
                 final int walId = transactionLogCursor.getWalId();
                 final int segmentId = transactionLogCursor.getSegmentId();

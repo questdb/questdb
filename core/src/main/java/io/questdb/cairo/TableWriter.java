@@ -1913,7 +1913,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public void readWalTxnDetails(TransactionLogCursor transactionLogCursor) {
         if (walTxnDetails == null) {
             // Lazy creation
-            walTxnDetails = new WalTxnDetails(ff);
+            walTxnDetails = new WalTxnDetails(ff, configuration.getWalApplyLookAheadTransactionCount() * 10);
         }
 
         long appliedSeqTxn = txWriter.getSeqTxn();
