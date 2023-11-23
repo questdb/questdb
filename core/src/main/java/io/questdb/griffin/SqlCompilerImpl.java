@@ -2741,6 +2741,27 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return tok;
     }
 
+    // returns true if it dropped the table, false otherwise (or throws exception)
+    protected boolean dropTable(
+            SqlExecutionContext executionContext,
+            CharSequence tableName,
+            int tableNamePosition,
+            boolean hasIfExists
+    ) throws SqlException {
+        final TableToken tableToken = executionContext.getTableTokenIfExists(tableName);
+        if (tableToken == null) {
+            if (hasIfExists) {
+                compiledQuery.ofDrop();
+                return false;
+            }
+            throw SqlException.tableDoesNotExist(tableNamePosition, tableName);
+        }
+        executionContext.getSecurityContext().authorizeTableDrop(tableToken);
+        engine.drop(path, tableToken);
+        compiledQuery.ofDrop();
+        return true;
+    }
+
     RecordCursorFactory generate(
             @Transient QueryModel queryModel,
             @Transient SqlExecutionContext executionContext
@@ -3356,26 +3377,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw ex.put(']');
             }
             compiledQuery.ofDrop();
-        }
-
-        private void dropTable(
-                SqlExecutionContext executionContext,
-                CharSequence tableName,
-                int tableNamePosition,
-                boolean hasIfExists
-        ) throws SqlException {
-            if (executionContext.getTableStatus(path, tableName) != TableUtils.TABLE_EXISTS) {
-                if (hasIfExists) {
-                    compiledQuery.ofDrop();
-                } else {
-                    throw SqlException.tableDoesNotExist(tableNamePosition, tableName);
-                }
-            } else {
-                TableToken tableToken = executionContext.getTableTokenIfExists(tableName);
-                executionContext.getSecurityContext().authorizeTableDrop(tableToken);
-                engine.drop(path, tableToken);
-                compiledQuery.ofDrop();
-            }
         }
 
         private void executorSelector(SqlExecutionContext executionContext) throws SqlException {
