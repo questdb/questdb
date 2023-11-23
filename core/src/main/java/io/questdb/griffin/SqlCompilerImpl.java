@@ -3409,9 +3409,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     tok = SqlUtil.fetchNext(lexer);
                     if (tok == null || Chars.equals(tok, ';')) {
                         dropTable(executionContext, tableName, tableNamePosition, hasIfExists);
-                        return;
+                    } else {
+                        unknownDropTableSuffix(executionContext, tok, tableName, tableNamePosition, hasIfExists);
                     }
-                    unknownDropTableSuffix(executionContext, tok, tableName, tableNamePosition, hasIfExists);
+                    return;
                 } else if (SqlKeywords.isAllKeyword(tok)) {
                     // DROP ALL TABLES [;]
                     tok = SqlUtil.fetchNext(lexer);
