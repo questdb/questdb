@@ -26,10 +26,11 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.ex.EntryLockedException;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.TableRecordMetadata;
-import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cairo.sql.*;
+import io.questdb.griffin.engine.functions.catalogue.*;
+import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
+import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
+import io.questdb.griffin.engine.table.ShowTablesRecordCursorFactory;
 import io.questdb.griffin.model.*;
 import io.questdb.std.*;
 import io.questdb.std.str.FlyweightCharSequence;
@@ -64,7 +65,6 @@ public class SqlOptimiser implements Mutable {
     private static final boolean[] joinsRequiringTimestamp = {false, false, false, false, true, true, true};
 
     private static final IntHashSet limitTypes = new IntHashSet();
-    private final static int maxRecursion = 128;
     private static final CharSequenceIntHashMap notOps = new CharSequenceIntHashMap();
     private final static CharSequenceHashSet nullConstants = new CharSequenceHashSet();
     protected final ObjList<CharSequence> literalCollectorANames = new ObjList<>();
@@ -78,7 +78,6 @@ public class SqlOptimiser implements Mutable {
     private final IntHashSet deletedContexts = new IntHashSet();
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final FunctionParser functionParser;
-    private final ObjList<Function> functionsInFlight = new ObjList<>();
     //list of group-by-model-level expressions with prefixes
     //we've to use it because group by is likely to contain rewritten/aliased expressions that make matching input expressions by pure AST unreliable
     private final ObjList<CharSequence> groupByAliases = new ObjList<>();
@@ -93,6 +92,7 @@ public class SqlOptimiser implements Mutable {
     private final IntHashSet literalCollectorBIndexes = new IntHashSet();
     private final ObjList<CharSequence> literalCollectorBNames = new ObjList<>();
     private final LiteralRewritingVisitor literalRewritingVisitor = new LiteralRewritingVisitor();
+    private final int maxRecursion;
     private final ObjList<ExpressionNode> orderByAdvice = new ObjList<>();
     private final IntPriorityQueue orderingStack = new IntPriorityQueue();
     private final Path path;
@@ -101,6 +101,7 @@ public class SqlOptimiser implements Mutable {
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
+    private final ObjList<RecordCursorFactory> tableFactoriesInFlight = new ObjList<>();
     private final FlyweightCharSequence tableLookupSequence = new FlyweightCharSequence();
     private final IntHashSet tablesSoFar = new IntHashSet();
     private final IntList tempCrossIndexes = new IntList();
@@ -131,6 +132,7 @@ public class SqlOptimiser implements Mutable {
         this.functionParser = functionParser;
         this.contextPool = new ObjectPool<>(JoinContext.FACTORY, configuration.getSqlJoinContextPoolCapacity());
         this.path = path;
+        this.maxRecursion = configuration.getSqlWindowMaxRecursion();
     }
 
     public void clear() {
@@ -149,7 +151,7 @@ public class SqlOptimiser implements Mutable {
         tablesSoFar.clear();
         clausesToSteal.clear();
         tmpCursorAliases.clear();
-        functionsInFlight.clear();
+        tableFactoriesInFlight.clear();
         groupByAliases.clear();
         groupByNodes.clear();
         groupByUsed.clear();
@@ -238,7 +240,8 @@ public class SqlOptimiser implements Mutable {
             @Nullable QueryModel innerVirtualModel,
             QueryModel translatingModel,
             QueryModel baseModel,
-            SqlExecutionContext sqlExecutionContext
+            SqlExecutionContext sqlExecutionContext,
+            SqlParserCallback sqlParserCallback
     ) throws SqlException {
         QueryColumn qc = cursorModel.findBottomUpColumnByAst(node);
         if (qc == null) {
@@ -264,7 +267,7 @@ public class SqlOptimiser implements Mutable {
 
             final QueryModel crossInner = queryModelPool.next();
             crossInner.setTableNameExpr(node);
-            parseFunctionAndEnumerateColumns(crossInner, sqlExecutionContext);
+            parseFunctionAndEnumerateColumns(crossInner, sqlExecutionContext, sqlParserCallback);
             cross.setNestedModel(crossInner);
 
             cross.addBottomUpColumn(crossColumn);
@@ -1595,7 +1598,8 @@ public class SqlOptimiser implements Mutable {
             @Nullable QueryModel innerVirtualModel,
             QueryModel translatingModel,
             QueryModel baseModel,
-            SqlExecutionContext sqlExecutionContext
+            SqlExecutionContext sqlExecutionContext,
+            SqlParserCallback sqlParserCallback
     ) throws SqlException {
         boolean replaced = false;
         sqlNodeStack.clear();
@@ -1613,7 +1617,8 @@ public class SqlOptimiser implements Mutable {
                             innerVirtualModel,
                             translatingModel,
                             baseModel,
-                            sqlExecutionContext
+                            sqlExecutionContext,
+                            sqlParserCallback
                     );
                     if (node.rhs == n) {
                         sqlNodeStack.push(node.rhs);
@@ -1629,7 +1634,8 @@ public class SqlOptimiser implements Mutable {
                         innerVirtualModel,
                         translatingModel,
                         baseModel,
-                        sqlExecutionContext
+                        sqlExecutionContext,
+                        sqlParserCallback
                 );
                 if (n == node.lhs) {
                     node = node.lhs;
@@ -1763,33 +1769,33 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    private void enumerateTableColumns(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+    private void enumerateTableColumns(QueryModel model, SqlExecutionContext executionContext, SqlParserCallback sqlParserCallback) throws SqlException {
         final ObjList<QueryModel> jm = model.getJoinModels();
 
         // we have plain tables and possibly joins
         // deal with _this_ model first, it will always be the first element in join model list
         final ExpressionNode tableNameExpr = model.getTableNameExpr();
-        if (tableNameExpr != null) {
-            if (tableNameExpr.type == ExpressionNode.FUNCTION) {
-                parseFunctionAndEnumerateColumns(model, executionContext);
+        if (tableNameExpr != null || model.getSelectModelType() == QueryModel.SELECT_MODEL_SHOW) {
+            if (model.getSelectModelType() == QueryModel.SELECT_MODEL_SHOW || (tableNameExpr != null && tableNameExpr.type == ExpressionNode.FUNCTION)) {
+                parseFunctionAndEnumerateColumns(model, executionContext, sqlParserCallback);
             } else {
-                openReaderAndEnumerateColumns(executionContext, model);
+                openReaderAndEnumerateColumns(executionContext, model, sqlParserCallback);
             }
         } else {
             final QueryModel nested = model.getNestedModel();
             if (nested != null) {
-                enumerateTableColumns(nested, executionContext);
+                enumerateTableColumns(nested, executionContext, sqlParserCallback);
                 if (model.isUpdate()) {
                     model.copyUpdateTableMetadata(nested);
                 }
             }
         }
         for (int i = 1, n = jm.size(); i < n; i++) {
-            enumerateTableColumns(jm.getQuick(i), executionContext);
+            enumerateTableColumns(jm.getQuick(i), executionContext, sqlParserCallback);
         }
 
         if (model.getUnionModel() != null) {
-            enumerateTableColumns(model.getUnionModel(), executionContext);
+            enumerateTableColumns(model.getUnionModel(), executionContext, sqlParserCallback);
         }
     }
 
@@ -1826,21 +1832,27 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    private long evalNonNegativeLongConstantOrDie(ExpressionNode expr, SqlExecutionContext sqlExecutionContext, long defaultValue) throws SqlException {
+    private long evalNonNegativeLongConstantOrDie(ExpressionNode expr, SqlExecutionContext sqlExecutionContext) throws SqlException {
         if (expr != null) {
             final Function loFunc = functionParser.parseFunction(expr, EmptyRecordMetadata.INSTANCE, sqlExecutionContext);
             if (!loFunc.isConstant()) {
                 Misc.free(loFunc);
                 throw SqlException.$(expr.position, "constant expression expected");
             }
-            final long value = loFunc.getLong(null);
-            Misc.free(loFunc);
-            if (value < 0) {
-                throw SqlException.$(expr.position, "non-negative expression expected");
+
+            try {
+                long value = loFunc.getLong(null);
+                if (value < 0) {
+                    throw SqlException.$(expr.position, "non-negative integer expression expected");
+                }
+                return value;
+            } catch (UnsupportedOperationException | ImplicitCastException e) {
+                throw SqlException.$(expr.position, "integer expression expected");
+            } finally {
+                Misc.free(loFunc);
             }
-            return value;
         }
-        return defaultValue;
+        return Long.MAX_VALUE;
     }
 
     private CharSequence findQueryColumnByAst(ObjList<QueryColumn> bottomUpColumns, ExpressionNode node) {
@@ -2498,7 +2510,11 @@ public class SqlOptimiser implements Mutable {
         return nextLiteral(token, 0);
     }
 
-    private void openReaderAndEnumerateColumns(SqlExecutionContext executionContext, QueryModel model) throws SqlException {
+    private void openReaderAndEnumerateColumns(
+            SqlExecutionContext executionContext,
+            QueryModel model,
+            SqlParserCallback sqlParserCallback
+    ) throws SqlException {
         final ExpressionNode tableNameExpr = model.getTableNameExpr();
 
         // table name must not contain quotes by now
@@ -2521,7 +2537,7 @@ public class SqlOptimiser implements Mutable {
         if (status == TableUtils.TABLE_DOES_NOT_EXIST) {
             try {
                 model.getTableNameExpr().type = ExpressionNode.FUNCTION;
-                parseFunctionAndEnumerateColumns(model, executionContext);
+                parseFunctionAndEnumerateColumns(model, executionContext, sqlParserCallback);
                 return;
             } catch (SqlException e) {
                 throw SqlException.tableDoesNotExist(tableNamePosition, tableName);
@@ -2647,7 +2663,11 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    private void optimiseExpressionModels(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+    private void optimiseExpressionModels(
+            QueryModel model,
+            SqlExecutionContext executionContext,
+            SqlParserCallback sqlParserCallback
+    ) throws SqlException {
         ObjList<ExpressionNode> expressionModels = model.getExpressionModels();
         final int n = expressionModels.size();
         if (n > 0) {
@@ -2656,7 +2676,7 @@ public class SqlOptimiser implements Mutable {
                 // for expression models that have been converted to
                 // the joins, the query model will be set to null.
                 if (node.queryModel != null) {
-                    QueryModel optimised = optimise(node.queryModel, executionContext);
+                    QueryModel optimised = optimise(node.queryModel, executionContext, sqlParserCallback);
                     if (optimised != node.queryModel) {
                         node.queryModel = optimised;
                     }
@@ -2665,7 +2685,7 @@ public class SqlOptimiser implements Mutable {
         }
 
         if (model.getNestedModel() != null) {
-            optimiseExpressionModels(model.getNestedModel(), executionContext);
+            optimiseExpressionModels(model.getNestedModel(), executionContext, sqlParserCallback);
         }
 
         final ObjList<QueryModel> joinModels = model.getJoinModels();
@@ -2673,13 +2693,13 @@ public class SqlOptimiser implements Mutable {
         // as usual, we already optimised self (index=0), now optimised others
         if (m > 1) {
             for (int i = 1; i < m; i++) {
-                optimiseExpressionModels(joinModels.getQuick(i), executionContext);
+                optimiseExpressionModels(joinModels.getQuick(i), executionContext, sqlParserCallback);
             }
         }
 
         // call out to union models
         if (model.getUnionModel() != null) {
-            optimiseExpressionModels(model.getUnionModel(), executionContext);
+            optimiseExpressionModels(model.getUnionModel(), executionContext, sqlParserCallback);
         }
     }
 
@@ -2845,12 +2865,69 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    private void parseFunctionAndEnumerateColumns(@NotNull QueryModel model, @NotNull SqlExecutionContext executionContext) throws SqlException {
-        assert model.getTableNameFunction() == null;
-        final Function function = TableUtils.createCursorFunction(functionParser, model, executionContext);
-        model.setTableNameFunction(function);
-        functionsInFlight.add(function);
-        copyColumnsFromMetadata(model, function.getRecordCursorFactory().getMetadata(), true);
+    private void parseFunctionAndEnumerateColumns(
+            @NotNull QueryModel model,
+            @NotNull SqlExecutionContext executionContext,
+            SqlParserCallback sqlParserCallback
+    ) throws SqlException {
+        final RecordCursorFactory tableFactory;
+        TableToken tableToken;
+        if (model.getSelectModelType() == QueryModel.SELECT_MODEL_SHOW) {
+            switch (model.getShowKind()) {
+                case QueryModel.SHOW_TABLES:
+                    tableFactory = new ShowTablesRecordCursorFactory();
+                    break;
+                case QueryModel.SHOW_COLUMNS:
+                    tableToken = executionContext.getTableTokenIfExists(model.getTableNameExpr().token);
+                    if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS) {
+                        throw SqlException.tableDoesNotExist(model.getTableNameExpr().position, model.getTableNameExpr().token);
+                    }
+                    tableFactory = new ShowColumnsRecordCursorFactory(tableToken, model.getTableNameExpr().position);
+                    break;
+                case QueryModel.SHOW_PARTITIONS:
+                    tableToken = executionContext.getTableTokenIfExists(model.getTableNameExpr().token);
+                    if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS) {
+                        throw SqlException.tableDoesNotExist(model.getTableNameExpr().position, model.getTableNameExpr().token);
+                    }
+                    tableFactory = new ShowPartitionsRecordCursorFactory(tableToken);
+                    break;
+                case QueryModel.SHOW_TRANSACTION:
+                case QueryModel.SHOW_TRANSACTION_ISOLATION_LEVEL:
+                    tableFactory = new ShowTransactionIsolationLevelCursorFactory();
+                    break;
+                case QueryModel.SHOW_MAX_IDENTIFIER_LENGTH:
+                    tableFactory = new ShowMaxIdentifierLengthCursorFactory();
+                    break;
+                case QueryModel.SHOW_STANDARD_CONFORMING_STRINGS:
+                    tableFactory = new ShowStandardConformingStringsCursorFactory();
+                    break;
+                case QueryModel.SHOW_SEARCH_PATH:
+                    tableFactory = new ShowSearchPathCursorFactory();
+                    break;
+                case QueryModel.SHOW_DATE_STYLE:
+                    tableFactory = new ShowDateStyleCursorFactory();
+                    break;
+                case QueryModel.SHOW_TIME_ZONE:
+                    tableFactory = new ShowTimeZoneFactory();
+                    break;
+                case QueryModel.SHOW_PARAMETERS:
+                    tableFactory = new ShowParametersCursorFactory();
+                    break;
+                case QueryModel.SHOW_SERVER_VERSION:
+                    tableFactory = new ShowServerVersionCursorFactory();
+                    break;
+                default:
+                    tableFactory = sqlParserCallback.generateShowSqlFactory(model);
+                    break;
+            }
+            model.setTableFactory(tableFactory);
+        } else {
+            assert model.getTableNameFunction() == null;
+            tableFactory = TableUtils.createCursorFunction(functionParser, model, executionContext).getRecordCursorFactory();
+            model.setTableFactory(tableFactory);
+            tableFactoriesInFlight.add(tableFactory);
+        }
+        copyColumnsFromMetadata(model, tableFactory.getMetadata(), true);
     }
 
     private void processEmittedJoinClauses(QueryModel model) {
@@ -3212,7 +3289,8 @@ public class SqlOptimiser implements Mutable {
             @Nullable QueryModel innerVirtualModel,
             QueryModel translatingModel,
             QueryModel baseModel,
-            SqlExecutionContext sqlExecutionContext
+            SqlExecutionContext sqlExecutionContext,
+            SqlParserCallback sqlParserCallback
     ) throws SqlException {
         if (node != null && functionParser.getFunctionFactoryCache().isCursor(node.token)) {
             return nextLiteral(
@@ -3223,7 +3301,8 @@ public class SqlOptimiser implements Mutable {
                             innerVirtualModel,
                             translatingModel,
                             baseModel,
-                            sqlExecutionContext
+                            sqlExecutionContext,
+                            sqlParserCallback
                     ).getAlias()
             );
         }
@@ -3917,10 +3996,20 @@ public class SqlOptimiser implements Mutable {
     }
 
     // flatParent = true means that parent model does not have selected columns
-    private QueryModel rewriteSelectClause(QueryModel model, boolean flatParent, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private QueryModel rewriteSelectClause(
+            QueryModel model,
+            boolean flatParent,
+            SqlExecutionContext sqlExecutionContext,
+            SqlParserCallback sqlParserCallback
+    ) throws SqlException {
 
         if (model.getUnionModel() != null) {
-            QueryModel rewrittenUnionModel = rewriteSelectClause(model.getUnionModel(), true, sqlExecutionContext);
+            QueryModel rewrittenUnionModel = rewriteSelectClause(
+                    model.getUnionModel(),
+                    true,
+                    sqlExecutionContext,
+                    sqlParserCallback
+            );
             if (rewrittenUnionModel != model.getUnionModel()) {
                 model.setUnionModel(rewrittenUnionModel);
             }
@@ -3932,7 +4021,7 @@ public class SqlOptimiser implements Mutable {
             final boolean flatModel = m.getBottomUpColumns().size() == 0;
             final QueryModel nestedModel = m.getNestedModel();
             if (nestedModel != null) {
-                QueryModel rewritten = rewriteSelectClause(nestedModel, flatModel, sqlExecutionContext);
+                QueryModel rewritten = rewriteSelectClause(nestedModel, flatModel, sqlExecutionContext, sqlParserCallback);
                 if (rewritten != nestedModel) {
                     m.setNestedModel(rewritten);
                     // since we have rewritten nested model we also have to update column hash
@@ -3945,7 +4034,7 @@ public class SqlOptimiser implements Mutable {
                     throw SqlException.$(m.getSampleBy().position, "'sample by' must be used with 'select' clause, which contains aggregate expression(s)");
                 }
             } else {
-                model.replaceJoinModel(i, rewriteSelectClause0(m, sqlExecutionContext));
+                model.replaceJoinModel(i, rewriteSelectClause0(m, sqlExecutionContext, sqlParserCallback));
             }
         }
 
@@ -3954,7 +4043,11 @@ public class SqlOptimiser implements Mutable {
     }
 
     @NotNull
-    private QueryModel rewriteSelectClause0(final QueryModel model, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private QueryModel rewriteSelectClause0(
+            final QueryModel model,
+            SqlExecutionContext sqlExecutionContext,
+            SqlParserCallback sqlParserCallback
+    ) throws SqlException {
         assert model.getNestedModel() != null;
 
         groupByAliases.clear();
@@ -4257,6 +4350,10 @@ public class SqlOptimiser implements Mutable {
                 if (qc.getAst().type == ExpressionNode.FUNCTION) {
                     if (window) {
                         windowModel.addBottomUpColumn(qc);
+
+                        QueryColumn ref = nextColumn(qc.getAlias());
+                        outerVirtualModel.addBottomUpColumn(ref);
+                        distinctModel.addBottomUpColumn(ref);
                         // ensure literals referenced by window column are present in nested models
                         emitLiterals(qc.getAst(), translatingModel, innerVirtualModel, baseModel, true);
                         continue;
@@ -4294,7 +4391,8 @@ public class SqlOptimiser implements Mutable {
                                 innerVirtualModel,
                                 translatingModel,
                                 baseModel,
-                                sqlExecutionContext
+                                sqlExecutionContext,
+                                sqlParserCallback
                         );
                         continue;
                     }
@@ -4329,7 +4427,7 @@ public class SqlOptimiser implements Mutable {
                         qc.of(qc.getAlias(), en, qc.isIncludeIntoWildcard(), qc.getColumnType());
                     }
 
-                    emitCursors(qc.getAst(), cursorModel, innerVirtualModel, translatingModel, baseModel, sqlExecutionContext);
+                    emitCursors(qc.getAst(), cursorModel, innerVirtualModel, translatingModel, baseModel, sqlExecutionContext, sqlParserCallback);
                     qc = ensureAliasUniqueness(outerVirtualModel, qc);
                     outerVirtualModel.addBottomUpColumn(qc);
                     distinctModel.addBottomUpColumn(nextColumn(qc.getAlias()));
@@ -4346,7 +4444,7 @@ public class SqlOptimiser implements Mutable {
                 if (checkForAggregates(qc.getAst())) {
                     //push aggregates and literals outside aggregate functions
                     emitAggregatesAndLiterals(qc.getAst(), groupByModel, translatingModel, innerVirtualModel, baseModel, groupByNodes, groupByAliases);
-                    emitCursors(qc.getAst(), cursorModel, innerVirtualModel, translatingModel, baseModel, sqlExecutionContext);
+                    emitCursors(qc.getAst(), cursorModel, innerVirtualModel, translatingModel, baseModel, sqlExecutionContext, sqlParserCallback);
                     qc = ensureAliasUniqueness(outerVirtualModel, qc);
                     outerVirtualModel.addBottomUpColumn(qc);
                     distinctModel.addBottomUpColumn(nextColumn(qc.getAlias()));
@@ -4354,7 +4452,7 @@ public class SqlOptimiser implements Mutable {
                         emitLiterals(groupByModel.getBottomUpColumns().getQuick(j).getAst(), translatingModel, innerVirtualModel, baseModel, false);
                     }
                 } else {
-                    if (emitCursors(qc.getAst(), cursorModel, null, translatingModel, baseModel, sqlExecutionContext)) {
+                    if (emitCursors(qc.getAst(), cursorModel, null, translatingModel, baseModel, sqlExecutionContext, sqlParserCallback)) {
                         qc = ensureAliasUniqueness(innerVirtualModel, qc);
                     }
                     if (useGroupByModel) {
@@ -4759,7 +4857,6 @@ public class SqlOptimiser implements Mutable {
     }
 
     private void validateWindowFunctions(QueryModel model, SqlExecutionContext sqlExecutionContext, int recursionLevel) throws SqlException {
-
         if (model == null) {
             return;
         }
@@ -4775,8 +4872,8 @@ public class SqlOptimiser implements Mutable {
                 if (qc.isWindowColumn()) {
                     final WindowColumn ac = (WindowColumn) qc;
                     // preceding and following accept non-negative values only
-                    long rowsLo = evalNonNegativeLongConstantOrDie(ac.getRowsLoExpr(), sqlExecutionContext, Long.MAX_VALUE);
-                    long rowsHi = evalNonNegativeLongConstantOrDie(ac.getRowsHiExpr(), sqlExecutionContext, Long.MAX_VALUE);
+                    long rowsLo = evalNonNegativeLongConstantOrDie(ac.getRowsLoExpr(), sqlExecutionContext);
+                    long rowsHi = evalNonNegativeLongConstantOrDie(ac.getRowsHiExpr(), sqlExecutionContext);
 
                     switch (ac.getRowsLoKind()) {
                         case WindowColumn.PRECEDING:
@@ -4830,18 +4927,22 @@ public class SqlOptimiser implements Mutable {
     protected void authorizeUpdate(QueryModel updateQueryModel, TableToken token) {
     }
 
-    QueryModel optimise(@Transient final QueryModel model, @Transient SqlExecutionContext sqlExecutionContext) throws SqlException {
+    QueryModel optimise(
+            @Transient final QueryModel model,
+            @Transient SqlExecutionContext sqlExecutionContext,
+            SqlParserCallback sqlParserCallback
+    ) throws SqlException {
         QueryModel rewrittenModel = model;
         try {
             rewrittenModel = bubbleUpOrderByAndLimitFromUnion(rewrittenModel);
             //extractCorrelatedQueriesAsJoins(rewrittenModel);
-            optimiseExpressionModels(rewrittenModel, sqlExecutionContext);
-            enumerateTableColumns(rewrittenModel, sqlExecutionContext);
+            optimiseExpressionModels(rewrittenModel, sqlExecutionContext, sqlParserCallback);
+            enumerateTableColumns(rewrittenModel, sqlExecutionContext, sqlParserCallback);
             rewriteTopLevelLiteralsToFunctions(rewrittenModel);
             rewrittenModel = moveOrderByFunctionsIntoOuterSelect(rewrittenModel);
             resolveJoinColumns(rewrittenModel);
             optimiseBooleanNot(rewrittenModel);
-            rewrittenModel = rewriteSelectClause(rewrittenModel, true, sqlExecutionContext);
+            rewrittenModel = rewriteSelectClause(rewrittenModel, true, sqlExecutionContext, sqlParserCallback);
             optimiseJoins(rewrittenModel);
             rewriteNegativeLimit(rewrittenModel, sqlExecutionContext);
             rewriteOrderByPosition(rewrittenModel);
@@ -4858,15 +4959,20 @@ public class SqlOptimiser implements Mutable {
             return rewrittenModel;
         } catch (Throwable e) {
             // at this point models may have functions than need to be freed
-            Misc.freeObjListAndClear(functionsInFlight);
+            Misc.freeObjListAndClear(tableFactoriesInFlight);
             throw e;
         }
     }
 
-    void optimiseUpdate(QueryModel updateQueryModel, SqlExecutionContext sqlExecutionContext, TableRecordMetadata metadata) throws SqlException {
+    void optimiseUpdate(
+            QueryModel updateQueryModel,
+            SqlExecutionContext sqlExecutionContext,
+            TableRecordMetadata metadata,
+            SqlParserCallback sqlParserCallback
+    ) throws SqlException {
         final QueryModel selectQueryModel = updateQueryModel.getNestedModel();
         selectQueryModel.setIsUpdate(true);
-        QueryModel optimisedNested = optimise(selectQueryModel, sqlExecutionContext);
+        QueryModel optimisedNested = optimise(selectQueryModel, sqlExecutionContext, sqlParserCallback);
         assert optimisedNested.isUpdate();
         updateQueryModel.setNestedModel(optimisedNested);
 

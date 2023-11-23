@@ -114,6 +114,7 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
 
         if (telemetryType.shouldLogClasses()) {
             telemetryType.logStatus(writer, getOSClass(), clock.getTicks());
+            telemetryType.logStatus(writer, getEnvTypeClass(), clock.getTicks());
             telemetryType.logStatus(writer, getCpuClass(), clock.getTicks());
             telemetryType.logStatus(writer, getDBSizeClass(engine.getConfiguration()), clock.getTicks());
             telemetryType.logStatus(writer, getTableCountClass(engine), clock.getTicks());
@@ -182,6 +183,11 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
         }
         // 7 - >10TB
         return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE - 7;
+    }
+
+    private static short getEnvTypeClass() {
+        final int type = Os.getEnvironmentType();
+        return (short) (TelemetrySystemEvent.SYSTEM_ENV_TYPE_BASE - type);
     }
 
     private static short getOSClass() {

@@ -146,6 +146,8 @@ public class Bootstrap {
             log.critical().$(archName).$(sb).I$();
         }
 
+        verifyFileLimits();
+
         try {
             if (bootstrapConfiguration.useSite()) {
                 // site
@@ -517,6 +519,41 @@ public class Bootstrap {
                     log.errorW().$(" - Unknown SQL JIT compiler mode: ").$(jitMode).$();
                     break;
             }
+        }
+    }
+
+    private void verifyFileLimits() {
+        boolean insufficientLimits = false;
+
+        final long fileLimit = Files.getFileLimit();
+        if (fileLimit < 0) {
+            log.error().$("could not read fs.file-max [errno=").$(Os.errno()).I$();
+        }
+        if (fileLimit > 0) {
+            if (fileLimit <= Files.DEFAULT_FILE_LIMIT) {
+                insufficientLimits = true;
+                log.advisoryW().$("fs.file-max limit is too low [limit=").$(fileLimit).$("] (SYSTEM COULD BE UNSTABLE)").$();
+            } else {
+                log.advisoryW().$("fs.file-max checked [limit=").$(fileLimit).I$();
+            }
+        }
+
+        final long mapCountLimit = Files.getMapCountLimit();
+        if (mapCountLimit < 0) {
+            log.error().$("could not read vm.max_map_count [errno=").$(Os.errno()).I$();
+        }
+        if (mapCountLimit > 0) {
+            if (mapCountLimit <= Files.DEFAULT_MAP_COUNT_LIMIT) {
+                insufficientLimits = true;
+                log.advisoryW().$("vm.max_map_count limit is too low [limit=").$(mapCountLimit).$("] (SYSTEM COULD BE UNSTABLE)").$();
+            } else {
+                log.advisoryW().$("vm.max_map_count checked [limit=").$(mapCountLimit).I$();
+            }
+        }
+
+        if (insufficientLimits) {
+            log.advisoryW().$("make sure to increase fs.file-max and vm.max_map_count limits:\n" +
+                    "https://questdb.io/docs/deployment/capacity-planning/#os-configuration").$();
         }
     }
 

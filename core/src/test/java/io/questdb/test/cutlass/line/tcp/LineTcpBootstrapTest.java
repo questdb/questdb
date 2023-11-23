@@ -81,7 +81,7 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
         TestUtils.assertMemoryLeak(() -> {
 
             try (final ServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.QUERY_TIMEOUT_SEC.getEnvVarEquivalent(), "0.015"
+                    PropertyKey.QUERY_TIMEOUT_SEC.getEnvVarName(), "0.015"
             )) {
                 serverMain.start();
                 CairoEngine engine = serverMain.getEngine();

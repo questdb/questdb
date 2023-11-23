@@ -57,9 +57,9 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
             sets.extendAndSet(setIndex, set = new Long256HashSet());
         } else {
             set = sets.getQuick(setIndex);
+            set.clear();
         }
 
-        set.clear();
         Long256 val = arg.getLong256A(record);
         if (isNotNull(val)) {
             set.add(val.getLong0(), val.getLong1(), val.getLong2(), val.getLong3());

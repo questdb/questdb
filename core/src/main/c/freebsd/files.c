@@ -521,3 +521,13 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileSystemStatus
 }
 
 #endif
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileLimit
+        (JNIEnv *e, jclass cl) {
+    return 0; // no-op
+}
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getMapCountLimit
+        (JNIEnv *e, jclass cl) {
+    return 0; // no-op
+}

@@ -33,6 +33,7 @@ import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriterMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.ShowTablesRecordCursorFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SimpleWaitingLock;
@@ -176,11 +177,11 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent {
 
                     path.trimTo(snapshotDbLen).$();
                     try (
-                            TableListCursorFactory factory = new TableListCursorFactory(configuration);
+                            ShowTablesRecordCursorFactory factory = new ShowTablesRecordCursorFactory();
                             RecordCursor cursor = factory.getCursor(executionContext);
                             MemoryCMARW mem = Vm.getCMARWInstance()
                     ) {
-                        final int tableNameIndex = factory.getMetadata().getColumnIndex(TableListCursorFactory.TABLE_NAME_COLUMN_NAME);
+                        final int tableNameIndex = factory.getMetadata().getColumnIndex(ShowTablesRecordCursorFactory.TABLE_NAME_COLUMN);
                         final Record record = cursor.getRecord();
 
                         // Copy metadata files for all tables.
