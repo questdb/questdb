@@ -32,6 +32,11 @@ import io.questdb.std.str.LPSZ;
  * Mapped memory with Offset
  */
 public interface MemoryOM extends MemoryM {
+    /**
+     * Extracts File Descriptor to reuse and unmaps the memory.
+     */
+    int detachFdClose();
+
     long getOffset();
 
     default void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
@@ -46,6 +51,7 @@ public interface MemoryOM extends MemoryM {
      * Maps file to memory
      *
      * @param ff        the files facade - an abstraction used to simulate failures
+     * @param fd        read-only file descriptor to reuse
      * @param name      the name of the file
      *                  should use this parameter as the increment size
      * @param lo        mapped memory low limit (inclusive)
@@ -53,5 +59,20 @@ public interface MemoryOM extends MemoryM {
      * @param memoryTag memory tag for diagnostics
      * @param opts      file options
      */
-    void ofOffset(FilesFacade ff, LPSZ name, long lo, long hi, int memoryTag, long opts);
+    void ofOffset(FilesFacade ff, int fd, LPSZ name, long lo, long hi, int memoryTag, long opts);
+
+    /**
+     * Maps file to memory
+     *
+     * @param ff        the files facade - an abstraction used to simulate failures
+     * @param name      the name of the file
+     *                  should use this parameter as the increment size
+     * @param lo        mapped memory low limit (inclusive)
+     * @param hi        mapped memory high limit (exclusive)
+     * @param memoryTag memory tag for diagnostics
+     * @param opts      file options
+     */
+    default void ofOffset(FilesFacade ff, LPSZ name, long lo, long hi, int memoryTag, long opts) {
+        ofOffset(ff, -1, name, lo, hi, memoryTag, opts);
+    }
 }
