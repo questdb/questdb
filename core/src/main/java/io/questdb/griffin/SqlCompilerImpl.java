@@ -26,17 +26,13 @@ package io.questdb.griffin;
 
 import io.questdb.*;
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriterMetadata;
-import io.questdb.griffin.engine.functions.catalogue.*;
-import io.questdb.griffin.engine.functions.table.AllTablesFunctionFactory;
 import io.questdb.griffin.engine.ops.*;
-import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
-import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
 import io.questdb.griffin.model.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -58,7 +54,6 @@ import java.io.Closeable;
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import static io.questdb.cairo.wal.WalUtils.WAL_FORMAT_VERSION;
 import static io.questdb.griffin.SqlKeywords.*;
-import static io.questdb.griffin.engine.functions.catalogue.TableListFunctionFactory.TableListCursorFactory;
 
 public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallback {
     static final ObjList<String> sqlControlSymbols = new ObjList<>(8);

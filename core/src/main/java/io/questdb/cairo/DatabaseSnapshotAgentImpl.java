@@ -33,7 +33,7 @@ import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriterMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.table.ShowTablesRecordCursorFactory;
+import io.questdb.griffin.engine.functions.table.AllTablesFunctionFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SimpleWaitingLock;
@@ -51,7 +51,7 @@ import java.util.concurrent.locks.ReentrantLock;
 import static io.questdb.cairo.TableUtils.openSmallFile;
 import static io.questdb.cairo.wal.WalUtils.*;
 import static io.questdb.cairo.wal.seq.TableTransactionLog.MAX_TXN_OFFSET;
-import static io.questdb.griffin.engine.functions.catalogue.TableListFunctionFactory.TableListCursorFactory;
+import static io.questdb.griffin.engine.functions.catalogue.ShowTablesFunctionFactory.ShowTablesCursorFactory;
 
 public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent {
 
@@ -177,11 +177,11 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent {
 
                     path.trimTo(snapshotDbLen).$();
                     try (
-                            ShowTablesRecordCursorFactory factory = new ShowTablesRecordCursorFactory();
+                            ShowTablesCursorFactory factory = new ShowTablesCursorFactory(configuration, AllTablesFunctionFactory.METADATA, AllTablesFunctionFactory.SIGNATURE);
                             RecordCursor cursor = factory.getCursor(executionContext);
                             MemoryCMARW mem = Vm.getCMARWInstance()
                     ) {
-                        final int tableNameIndex = factory.getMetadata().getColumnIndex(ShowTablesRecordCursorFactory.TABLE_NAME_COLUMN);
+                        final int tableNameIndex = factory.getMetadata().getColumnIndex(ShowTablesCursorFactory.TABLE_NAME_COLUMN_NAME);
                         final Record record = cursor.getRecord();
 
                         // Copy metadata files for all tables.

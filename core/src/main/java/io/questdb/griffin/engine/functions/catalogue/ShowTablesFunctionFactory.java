@@ -34,15 +34,18 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjHashSet;
+import io.questdb.std.ObjList;
 import io.questdb.tasks.TelemetryTask;
 
-public class TableListFunctionFactory implements FunctionFactory {
+public class ShowTablesFunctionFactory implements FunctionFactory {
     private static final int DEDUP_NAME_COLUMN;
     private static final int DESIGNATED_TIMESTAMP_COLUMN;
     private static final int DIRECTORY_NAME_COLUMN;
     private static final int ID_COLUMN;
-    private static final Log LOG = LogFactory.getLog(TableListFunctionFactory.class);
+    private static final Log LOG = LogFactory.getLog(ShowTablesFunctionFactory.class);
     private static final int MAX_UNCOMMITTED_ROWS_COLUMN;
     private static final RecordMetadata METADATA;
     private static final int O3_MAX_LAG_COLUMN;
@@ -67,7 +70,7 @@ public class TableListFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new CursorFunction(new TableListCursorFactory(configuration)) {
+        return new CursorFunction(new ShowTablesCursorFactory(configuration)) {
             @Override
             public boolean isRuntimeConstant() {
                 return true;
@@ -75,7 +78,7 @@ public class TableListFunctionFactory implements FunctionFactory {
         };
     }
 
-    public static class TableListCursorFactory extends AbstractRecordCursorFactory {
+    public static class ShowTablesCursorFactory extends AbstractRecordCursorFactory {
         public static final String TABLE_NAME_COLUMN_NAME = "table_name";
         public static final TableColumnMetadata TABLE_NAME_COLUMN_META = new TableColumnMetadata(TABLE_NAME_COLUMN_NAME, ColumnType.STRING);
         private final TableListRecordCursor cursor = new TableListRecordCursor();
@@ -86,7 +89,7 @@ public class TableListFunctionFactory implements FunctionFactory {
         private CairoEngine engine;
         private TableToken tableToken;
 
-        public TableListCursorFactory(CairoConfiguration configuration, RecordMetadata metadata, String toPlan) {
+        public ShowTablesCursorFactory(CairoConfiguration configuration, RecordMetadata metadata, String toPlan) {
             super(metadata);
             tempPendingRenameTablePrefix = configuration.getTempRenamePendingTablePrefix();
             sysTablePrefix = configuration.getSystemTableNamePrefix();
@@ -94,7 +97,7 @@ public class TableListFunctionFactory implements FunctionFactory {
             this.toPlan = toPlan;
         }
 
-        public TableListCursorFactory(CairoConfiguration configuration) {
+        public ShowTablesCursorFactory(CairoConfiguration configuration) {
             this(configuration, METADATA, "tables()");
         }
 
@@ -199,7 +202,7 @@ public class TableListFunctionFactory implements FunctionFactory {
 
                 @Override
                 public CharSequence getStr(int col) {
-                    if (Chars.equals(TableListCursorFactory.TABLE_NAME_COLUMN_NAME, getMetadata().getColumnName(col))) {
+                    if (Chars.equals(ShowTablesCursorFactory.TABLE_NAME_COLUMN_NAME, getMetadata().getColumnName(col))) {
                         return tableToken.getTableName();
                     }
                     if (col == PARTITION_BY_COLUMN) {
@@ -271,7 +274,7 @@ public class TableListFunctionFactory implements FunctionFactory {
         DEDUP_NAME_COLUMN = 8;
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("id", ColumnType.INT));
-        metadata.add(TableListCursorFactory.TABLE_NAME_COLUMN_META);
+        metadata.add(ShowTablesCursorFactory.TABLE_NAME_COLUMN_META);
         metadata.add(new TableColumnMetadata("designatedTimestamp", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("partitionBy", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("maxUncommittedRows", ColumnType.INT));

@@ -131,6 +131,12 @@ public class MetadataPool extends AbstractMultiTenantPool<MetadataPool.MetadataT
         }
 
         @Override
+        public boolean isDedupKey(int columnIndex) {
+            lazilyRefreshReaderMetadata();
+            return readerMetadataTenant.isDedupKey(columnIndex);
+        }
+
+        @Override
         public void refresh() {
             tableSequencerAPI.reloadMetadataConditionally(tableToken, getMetadataVersion(), this);
             tableReaderMetadataRefreshPending = true;

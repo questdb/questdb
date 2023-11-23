@@ -36,7 +36,7 @@ import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
 import io.questdb.std.*;
 
 import static io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory.ShowColumnsCursor;
-import static io.questdb.griffin.engine.functions.catalogue.TableListFunctionFactory.TableListCursorFactory;
+import static io.questdb.griffin.engine.functions.catalogue.ShowTablesFunctionFactory.ShowTablesCursorFactory;
 
 public class InformationSchemaColumnsFunctionFactory implements FunctionFactory {
     public static final RecordMetadata METADATA;
@@ -81,7 +81,7 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
         }
 
         private static class ColumnRecordCursor implements NoRandomAccessRecordCursor {
-            private final TableListCursorFactory allTables;
+            private final ShowTablesCursorFactory allTables;
             private final ColumnsRecord record = new ColumnsRecord();
             private final ShowColumnsCursor showColumnsCursor = new ShowColumnsCursor();
             private RecordCursor allTablesCursor;
@@ -90,7 +90,7 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
             private CharSequence tableName;
 
             private ColumnRecordCursor(CairoConfiguration configuration) {
-                allTables = new TableListCursorFactory(configuration, AllTablesFunctionFactory.METADATA, AllTablesFunctionFactory.SIGNATURE);
+                allTables = new ShowTablesCursorFactory(configuration, AllTablesFunctionFactory.METADATA, AllTablesFunctionFactory.SIGNATURE);
             }
 
             @Override
@@ -202,7 +202,7 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(TableListCursorFactory.TABLE_NAME_COLUMN_META);
+        metadata.add(ShowTablesCursorFactory.TABLE_NAME_COLUMN_META);
         metadata.add(new TableColumnMetadata("ordinal_position", ColumnType.INT));
         metadata.add(new TableColumnMetadata("column_name", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("data_type", ColumnType.STRING));

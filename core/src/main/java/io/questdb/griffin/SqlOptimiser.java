@@ -28,9 +28,9 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.catalogue.*;
+import io.questdb.griffin.engine.functions.table.AllTablesFunctionFactory;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
-import io.questdb.griffin.engine.table.ShowTablesRecordCursorFactory;
 import io.questdb.griffin.model.*;
 import io.questdb.std.*;
 import io.questdb.std.str.FlyweightCharSequence;
@@ -71,6 +71,7 @@ public class SqlOptimiser implements Mutable {
     private final CharacterStore characterStore;
     private final IntList clausesToSteal = new IntList();
     private final ColumnPrefixEraser columnPrefixEraser = new ColumnPrefixEraser();
+    private final CairoConfiguration configuration;
     private final CharSequenceIntHashMap constNameToIndex = new CharSequenceIntHashMap();
     private final CharSequenceObjHashMap<ExpressionNode> constNameToNode = new CharSequenceObjHashMap<>();
     private final CharSequenceObjHashMap<CharSequence> constNameToToken = new CharSequenceObjHashMap<>();
@@ -124,6 +125,7 @@ public class SqlOptimiser implements Mutable {
             FunctionParser functionParser,
             Path path
     ) {
+        this.configuration = configuration;
         this.expressionNodePool = expressionNodePool;
         this.characterStore = characterStore;
         this.traversalAlgo = traversalAlgo;
@@ -2875,7 +2877,7 @@ public class SqlOptimiser implements Mutable {
         if (model.getSelectModelType() == QueryModel.SELECT_MODEL_SHOW) {
             switch (model.getShowKind()) {
                 case QueryModel.SHOW_TABLES:
-                    tableFactory = new ShowTablesRecordCursorFactory();
+                    tableFactory = new ShowTablesFunctionFactory.ShowTablesCursorFactory(configuration, AllTablesFunctionFactory.METADATA, AllTablesFunctionFactory.SIGNATURE);
                     break;
                 case QueryModel.SHOW_COLUMNS:
                     tableToken = executionContext.getTableTokenIfExists(model.getTableNameExpr().token);
