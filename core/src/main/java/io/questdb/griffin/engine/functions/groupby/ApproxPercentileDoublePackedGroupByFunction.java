@@ -37,18 +37,18 @@ import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.histogram.org.HdrHistogram.DoubleHistogram;
+import io.questdb.std.histogram.org.HdrHistogram.PackedDoubleHistogram;
 
-public class ApproxPercentileDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, BinaryFunction {
+public class ApproxPercentileDoublePackedGroupByFunction extends DoubleFunction implements GroupByFunction, BinaryFunction {
     private final Function exprFunc;
     private final int funcPosition;
-    private final ObjList<DoubleHistogram> histograms = new ObjList<>();
+    private final ObjList<PackedDoubleHistogram> histograms = new ObjList<>();
     private final Function percentileFunc;
     private final int precision;
     private int histogramIndex;
     private int valueIndex;
 
-    public ApproxPercentileDoubleGroupByFunction(Function exprFunc, Function percentileFunc, int precision, int funcPosition) {
+    public ApproxPercentileDoublePackedGroupByFunction(Function exprFunc, Function percentileFunc, int precision, int funcPosition) {
         assert precision >= 0 && precision <= 5;
         this.exprFunc = exprFunc;
         this.percentileFunc = percentileFunc;
@@ -64,11 +64,11 @@ public class ApproxPercentileDoubleGroupByFunction extends DoubleFunction implem
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        final DoubleHistogram histogram;
+        final PackedDoubleHistogram histogram;
         if (histograms.size() <= histogramIndex) {
             // We pre-size the histogram for 1000x ratio to avoid resizes in some basic use cases
             // like CPU load percentile or latency in millis.
-            histograms.extendAndSet(histogramIndex, histogram = new DoubleHistogram(1000, precision));
+            histograms.extendAndSet(histogramIndex, histogram = new PackedDoubleHistogram(1000, precision));
             histogram.setAutoResize(true);
         } else {
             histogram = histograms.getQuick(histogramIndex);
@@ -84,7 +84,7 @@ public class ApproxPercentileDoubleGroupByFunction extends DoubleFunction implem
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        final DoubleHistogram histogram = histograms.getQuick(mapValue.getInt(valueIndex));
+        final PackedDoubleHistogram histogram = histograms.getQuick(mapValue.getInt(valueIndex));
         final double val = exprFunc.getDouble(record);
         if (Numbers.isFinite(val)) {
             histogram.recordValue(val);
@@ -97,7 +97,7 @@ public class ApproxPercentileDoubleGroupByFunction extends DoubleFunction implem
             return Double.NaN;
         }
 
-        final DoubleHistogram histogram = histograms.getQuick(rec.getInt(valueIndex));
+        final PackedDoubleHistogram histogram = histograms.getQuick(rec.getInt(valueIndex));
         if (histogram.getTotalCount() == 0) {
             return Double.NaN;
         }

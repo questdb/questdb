@@ -32,12 +32,12 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class ApproxPercentileDoubleGroupByDefaultFunctionFactory implements FunctionFactory {
+public class ApproxPercentileLongGroupByDefaultFunctionFactory implements FunctionFactory {
     private static final int DEFAULT_PRECISION = 1;
 
     @Override
     public String getSignature() {
-        return "approx_percentile(DD)";
+        return "approx_percentile(LD)";
     }
 
     @Override
@@ -60,6 +60,6 @@ public class ApproxPercentileDoubleGroupByDefaultFunctionFactory implements Func
             throw SqlException.$(argPositions.getQuick(1), "percentile must be a constant");
         }
 
-        return new ApproxPercentileDoubleGroupByFunction(exprFunc, percentileFunc, DEFAULT_PRECISION, position);
+        return new ApproxPercentileLongGroupByFunction(exprFunc, percentileFunc, DEFAULT_PRECISION, position);
     }
 }

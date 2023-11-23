@@ -32,12 +32,11 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class ApproxPercentileDoubleGroupByDefaultFunctionFactory implements FunctionFactory {
-    private static final int DEFAULT_PRECISION = 1;
+public class ApproxPercentileLongGroupByFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "approx_percentile(DD)";
+        return "approx_percentile(LDi)";
     }
 
     @Override
@@ -55,11 +54,23 @@ public class ApproxPercentileDoubleGroupByDefaultFunctionFactory implements Func
     ) throws SqlException {
         final Function exprFunc = args.getQuick(0);
         final Function percentileFunc = args.getQuick(1);
+        final Function precisionFunc = args.getQuick(2);
 
         if (!percentileFunc.isConstant() && !percentileFunc.isRuntimeConstant()) {
             throw SqlException.$(argPositions.getQuick(1), "percentile must be a constant");
         }
+        if (!precisionFunc.isConstant()) {
+            throw SqlException.$(argPositions.getQuick(2), "precision must be a constant");
+        }
 
-        return new ApproxPercentileDoubleGroupByFunction(exprFunc, percentileFunc, DEFAULT_PRECISION, position);
+        final int precision = precisionFunc.getInt(null);
+        if (precision < 0 || precision > 5) {
+            throw SqlException.$(position, "precision must be between 0 and 5");
+        }
+
+        if (precision > 2) {
+            return new ApproxPercentileLongPackedGroupByFunction(exprFunc, percentileFunc, precision, position);
+        }
+        return new ApproxPercentileLongGroupByFunction(exprFunc, percentileFunc, precision, position);
     }
 }

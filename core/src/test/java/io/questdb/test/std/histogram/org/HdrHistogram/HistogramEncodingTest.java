@@ -10,107 +10,104 @@ package io.questdb.test.std.histogram.org.HdrHistogram;
 
 import io.questdb.std.histogram.org.HdrHistogram.*;
 import org.junit.Assert;
-import org.junit.Assume;
+import org.junit.Test;
 import org.junit.experimental.theories.DataPoints;
 import org.junit.experimental.theories.Theories;
 import org.junit.experimental.theories.Theory;
-
 import org.junit.runner.RunWith;
-import org.junit.Test;
-import org.junit.runners.Parameterized;
 
 import java.nio.ByteBuffer;
-import java.util.Arrays;
-import java.util.Collection;
 
 import static io.questdb.test.std.histogram.org.HdrHistogram.HistogramTestUtils.*;
-import static io.questdb.test.std.histogram.org.HdrHistogram.HistogramTestUtils.decodeFromCompressedByteBuffer;
 
 /**
- * JUnit test for org.HdrHistogram.Histogram
+ * JUnit test for {@link io.questdb.std.histogram.org.HdrHistogram.Histogram}
  */
 @RunWith(Theories.class)
 public class HistogramEncodingTest {
     static final long highestTrackableValue = 3600L * 1000 * 1000; // e.g. for 1 hr in usec units
-
-    @Test
-    public void testHistogramEncoding_ByteBufferHasCorrectPositionSetAfterEncoding() {
-        Histogram histogram = new Histogram(highestTrackableValue, 3);
-        int size = histogram.getNeededByteBufferCapacity();
-        ByteBuffer buffer = ByteBuffer.allocate(size);
-
-        int bytesWritten = histogram.encodeIntoCompressedByteBuffer(buffer);
-        Assert.assertEquals(bytesWritten, buffer.position());
-        buffer.rewind();
-
-        bytesWritten = histogram.encodeIntoByteBuffer(buffer);
-        Assert.assertEquals(bytesWritten, buffer.position());
-    }
-
-    public enum BufferAllocator {
-        DIRECT {
-            @Override
-            public ByteBuffer allocate(final int size) {
-                return ByteBuffer.allocateDirect(size);
-            }
-        },
-        HEAP {
-            @Override
-            public ByteBuffer allocate(final int size) {
-                return ByteBuffer.allocate(size);
-            }
-        };
-
-        public abstract ByteBuffer allocate(int size);
-    }
-
     @DataPoints
-    public static BufferAllocator[] ALLOCATORS = new BufferAllocator[] { BufferAllocator.DIRECT, BufferAllocator.HEAP };
+    public static BufferAllocator[] ALLOCATORS = new BufferAllocator[]{BufferAllocator.DIRECT, BufferAllocator.HEAP};
 
     @Theory
     public void testHistogramEncoding(BufferAllocator allocator) throws Exception {
-
+        ShortCountsHistogram shortCountsHistogram = new ShortCountsHistogram(highestTrackableValue, 3);
+        IntCountsHistogram intCountsHistogram = new IntCountsHistogram(highestTrackableValue, 3);
         Histogram histogram = new Histogram(highestTrackableValue, 3);
-        AtomicHistogram atomicHistogram = new AtomicHistogram(highestTrackableValue, 3);
+        PackedHistogram packedHistogram = new PackedHistogram(highestTrackableValue, 3);
         DoubleHistogram doubleHistogram = new DoubleHistogram(highestTrackableValue * 1000, 3);
+        PackedDoubleHistogram packedDoubleHistogram = new PackedDoubleHistogram(highestTrackableValue * 1000, 3);
 
         for (int i = 0; i < 10000; i++) {
+            shortCountsHistogram.recordValue(1000 * i);
+            intCountsHistogram.recordValue(2000 * i);
             histogram.recordValue(3000 * i);
-            atomicHistogram.recordValue(4000 * i);
+            packedHistogram.recordValue(3000 * i);
             doubleHistogram.recordValue(5000 * i);
             doubleHistogram.recordValue(0.001); // Makes some internal shifts happen.
+            packedDoubleHistogram.recordValue(5000 * i);
+            packedDoubleHistogram.recordValue(0.001); // Makes some internal shifts happen.
         }
 
+        System.out.println("Testing encoding of a ShortHistogram:");
+        ByteBuffer targetBuffer = allocator.allocate(shortCountsHistogram.getNeededByteBufferCapacity());
+        shortCountsHistogram.encodeIntoByteBuffer(targetBuffer);
+        targetBuffer.rewind();
+
+        ShortCountsHistogram shortCountsHistogram2 = ShortCountsHistogram.decodeFromByteBuffer(targetBuffer, 0);
+        Assert.assertEquals(shortCountsHistogram, shortCountsHistogram2);
+
+        ByteBuffer targetCompressedBuffer = allocator.allocate(shortCountsHistogram.getNeededByteBufferCapacity());
+        shortCountsHistogram.encodeIntoCompressedByteBuffer(targetCompressedBuffer);
+        targetCompressedBuffer.rewind();
+
+        ShortCountsHistogram shortCountsHistogram3 = ShortCountsHistogram.decodeFromCompressedByteBuffer(targetCompressedBuffer, 0);
+        Assert.assertEquals(shortCountsHistogram, shortCountsHistogram3);
+
+        System.out.println("Testing encoding of a IntHistogram:");
+        targetBuffer = allocator.allocate(intCountsHistogram.getNeededByteBufferCapacity());
+        intCountsHistogram.encodeIntoByteBuffer(targetBuffer);
+        targetBuffer.rewind();
+
+        IntCountsHistogram intCountsHistogram2 = IntCountsHistogram.decodeFromByteBuffer(targetBuffer, 0);
+        Assert.assertEquals(intCountsHistogram, intCountsHistogram2);
+
+        targetCompressedBuffer = allocator.allocate(intCountsHistogram.getNeededByteBufferCapacity());
+        intCountsHistogram.encodeIntoCompressedByteBuffer(targetCompressedBuffer);
+        targetCompressedBuffer.rewind();
+
+        IntCountsHistogram intCountsHistogram3 = IntCountsHistogram.decodeFromCompressedByteBuffer(targetCompressedBuffer, 0);
+        Assert.assertEquals(intCountsHistogram, intCountsHistogram3);
 
         System.out.println("Testing encoding of a Histogram:");
-        ByteBuffer targetBuffer = allocator.allocate(histogram.getNeededByteBufferCapacity());
+        targetBuffer = allocator.allocate(histogram.getNeededByteBufferCapacity());
         histogram.encodeIntoByteBuffer(targetBuffer);
         targetBuffer.rewind();
 
         Histogram histogram2 = Histogram.decodeFromByteBuffer(targetBuffer, 0);
         Assert.assertEquals(histogram, histogram2);
 
-        ByteBuffer targetCompressedBuffer = allocator.allocate(histogram.getNeededByteBufferCapacity());
+        targetCompressedBuffer = allocator.allocate(histogram.getNeededByteBufferCapacity());
         histogram.encodeIntoCompressedByteBuffer(targetCompressedBuffer);
         targetCompressedBuffer.rewind();
 
         Histogram histogram3 = Histogram.decodeFromCompressedByteBuffer(targetCompressedBuffer, 0);
         Assert.assertEquals(histogram, histogram3);
 
-        System.out.println("Testing encoding of a AtomicHistogram:");
-        targetBuffer = allocator.allocate(atomicHistogram.getNeededByteBufferCapacity());
-        atomicHistogram.encodeIntoByteBuffer(targetBuffer);
+        System.out.println("Testing encoding of a PackedHistogram:");
+        targetBuffer = allocator.allocate(packedHistogram.getNeededByteBufferCapacity());
+        packedHistogram.encodeIntoByteBuffer(targetBuffer);
         targetBuffer.rewind();
 
-        AtomicHistogram atomicHistogram2 = AtomicHistogram.decodeFromByteBuffer(targetBuffer, 0);
-        Assert.assertEquals(atomicHistogram, atomicHistogram2);
+        PackedHistogram packedHistogram2 = PackedHistogram.decodeFromByteBuffer(targetBuffer, 0);
+        Assert.assertEquals(packedHistogram, packedHistogram2);
 
-        targetCompressedBuffer = allocator.allocate(atomicHistogram.getNeededByteBufferCapacity());
-        atomicHistogram.encodeIntoCompressedByteBuffer(targetCompressedBuffer);
+        targetCompressedBuffer = allocator.allocate(packedHistogram.getNeededByteBufferCapacity());
+        packedHistogram.encodeIntoCompressedByteBuffer(targetCompressedBuffer);
         targetCompressedBuffer.rewind();
 
-        AtomicHistogram atomicHistogram3 = AtomicHistogram.decodeFromCompressedByteBuffer(targetCompressedBuffer, 0);
-        Assert.assertEquals(atomicHistogram, atomicHistogram3);
+        PackedHistogram packedHistogram3 = PackedHistogram.decodeFromCompressedByteBuffer(targetCompressedBuffer, 0);
+        Assert.assertEquals(packedHistogram, packedHistogram3);
 
         System.out.println("Testing encoding of a DoubleHistogram:");
         targetBuffer = allocator.allocate(doubleHistogram.getNeededByteBufferCapacity());
@@ -126,27 +123,98 @@ public class HistogramEncodingTest {
 
         DoubleHistogram doubleHistogram3 = DoubleHistogram.decodeFromCompressedByteBuffer(targetCompressedBuffer, 0);
         Assert.assertEquals(doubleHistogram, doubleHistogram3);
+
+        System.out.println("Testing encoding of a PackedDoubleHistogram:");
+        targetBuffer = allocator.allocate(packedDoubleHistogram.getNeededByteBufferCapacity());
+        packedDoubleHistogram.encodeIntoByteBuffer(targetBuffer);
+        targetBuffer.rewind();
+
+        PackedDoubleHistogram packedDoubleHistogram2 = PackedDoubleHistogram.decodeFromByteBuffer(targetBuffer, 0);
+        Assert.assertEquals(packedDoubleHistogram, packedDoubleHistogram2);
+
+        targetCompressedBuffer = allocator.allocate(packedDoubleHistogram.getNeededByteBufferCapacity());
+        packedDoubleHistogram.encodeIntoCompressedByteBuffer(targetCompressedBuffer);
+        targetCompressedBuffer.rewind();
+
+        PackedDoubleHistogram packedDoubleHistogram3 = PackedDoubleHistogram.decodeFromCompressedByteBuffer(targetCompressedBuffer, 0);
+        Assert.assertEquals(packedDoubleHistogram, packedDoubleHistogram3);
     }
 
-    @RunWith(Parameterized.class)
-    public static class ParameterizedHistogramEncodingTest {
-        enum HistogramType {Histogram, Atomic}
-        @Parameterized.Parameters(name = "{0}")
-        public static Collection<Object[]> data() {
-            return Arrays.asList(new Object[][] {{HistogramType.Histogram, Histogram.class},
-                    {HistogramType.Atomic, AtomicHistogram.class}});
+    @Test
+    public void testHistogramEncoding_ByteBufferHasCorrectPositionSetAfterEncoding() throws Exception {
+        Histogram histogram = new Histogram(highestTrackableValue, 3);
+        int size = histogram.getNeededByteBufferCapacity();
+        ByteBuffer buffer = ByteBuffer.allocate(size);
+
+        int bytesWritten = histogram.encodeIntoCompressedByteBuffer(buffer);
+        Assert.assertEquals(bytesWritten, buffer.position());
+        buffer.rewind();
+
+        bytesWritten = histogram.encodeIntoByteBuffer(buffer);
+        Assert.assertEquals(bytesWritten, buffer.position());
+    }
+
+    @Test
+    public void testResizingHistogramBetweenCompressedEncodings() throws Exception {
+        Class<?>[] testClasses = new Class[]{
+                Histogram.class,
+                PackedHistogram.class,
+                IntCountsHistogram.class,
+                ShortCountsHistogram.class
+        };
+
+        for (Class<?> histoClass : testClasses) {
+            AbstractHistogram histogram = constructHistogram(histoClass, 3);
+
+            histogram.recordValue(1);
+
+            ByteBuffer targetCompressedBuffer = ByteBuffer.allocate(histogram.getNeededByteBufferCapacity());
+            histogram.encodeIntoCompressedByteBuffer(targetCompressedBuffer);
+
+            histogram.recordValue(10000);
+
+            targetCompressedBuffer = ByteBuffer.allocate(histogram.getNeededByteBufferCapacity());
+            histogram.encodeIntoCompressedByteBuffer(targetCompressedBuffer);
+            targetCompressedBuffer.rewind();
+
+            AbstractHistogram histogram2 = decodeFromCompressedByteBuffer(histoClass, targetCompressedBuffer, 0);
+            Assert.assertEquals(histogram, histogram2);
         }
+    }
 
-        private final HistogramType type;
-        private final Class<?> histoClass;
+    @Test
+    public void testSimpleDoubleHistogramEncoding() throws Exception {
+        Class<?>[] testClasses = new Class[]{
+                DoubleHistogram.class,
+                PackedDoubleHistogram.class
+        };
 
-        public ParameterizedHistogramEncodingTest(HistogramType type, Class<?> histoClass) {
-            this.type = type;
-            this.histoClass = histoClass;
+        for (Class<?> histoClass : testClasses) {
+            DoubleHistogram histogram = constructDoubleHistogram(histoClass, 100000000L, 3);
+            histogram.recordValue(6.0);
+            histogram.recordValue(1.0);
+            histogram.recordValue(0.0);
+
+            ByteBuffer targetBuffer = ByteBuffer.allocate(histogram.getNeededByteBufferCapacity());
+            histogram.encodeIntoCompressedByteBuffer(targetBuffer);
+            targetBuffer.rewind();
+
+            DoubleHistogram decodedHistogram = decodeDoubleHistogramFromCompressedByteBuffer(histoClass, targetBuffer, 0);
+
+            Assert.assertEquals(histogram, decodedHistogram);
         }
+    }
 
-        @Test
-        public void testSimpleIntegerHistogramEncoding() {
+    @Test
+    public void testSimpleIntegerHistogramEncoding() throws Exception {
+        Class<?>[] testClasses = new Class[]{
+                Histogram.class,
+                PackedHistogram.class,
+                IntCountsHistogram.class,
+                ShortCountsHistogram.class
+        };
+
+        for (Class<?> histoClass : testClasses) {
             AbstractHistogram histogram = constructHistogram(histoClass, 274877906943L, 3);
             histogram.recordValue(6147);
             histogram.recordValue(1024);
@@ -167,6 +235,9 @@ public class HistogramEncodingTest {
             decodedHistogram = decodeFromCompressedByteBuffer(histoClass, targetBuffer, 0);
             Assert.assertEquals(histogram, decodedHistogram);
 
+            if (histoClass.equals(ShortCountsHistogram.class)) {
+                return; // Going farther will overflow short counts histogram
+            }
             histogram.recordValueWithCount(200, 1L << 16); // Make total count > 2^16
 
             targetBuffer.clear();
@@ -183,6 +254,9 @@ public class HistogramEncodingTest {
             decodedHistogram = decodeFromCompressedByteBuffer(histoClass, targetBuffer, 0);
             Assert.assertEquals(histogram, decodedHistogram);
 
+            if (histoClass.equals(IntCountsHistogram.class)) {
+                return; // Going farther will overflow int counts histogram
+            }
             histogram.recordValueWithCount(400, 1L << 32); // Make total count > 2^32
 
             targetBuffer.clear();
@@ -199,44 +273,22 @@ public class HistogramEncodingTest {
             decodedHistogram = decodeFromCompressedByteBuffer(histoClass, targetBuffer, 0);
             Assert.assertEquals(histogram, decodedHistogram);
         }
-
-        @Test
-        public void testSimpleDoubleHistogramEncoding() {
-            DoubleHistogram histogram = constructDoubleHistogram(DoubleHistogram.class, 100000000L, 3);
-            histogram.recordValue(6.0);
-            histogram.recordValue(1.0);
-            histogram.recordValue(0.0);
-
-            ByteBuffer targetBuffer = ByteBuffer.allocate(histogram.getNeededByteBufferCapacity());
-            histogram.encodeIntoCompressedByteBuffer(targetBuffer);
-            targetBuffer.rewind();
-
-            DoubleHistogram decodedHistogram = decodeDoubleHistogramFromCompressedByteBuffer(DoubleHistogram.class, targetBuffer, 0);
-
-            Assert.assertEquals(histogram, decodedHistogram);
-        }
-
-        @Test
-        public void testResizingHistogramBetweenCompressedEncodings() {
-            Assume.assumeTrue(type != HistogramType.Atomic);
-
-            AbstractHistogram histogram = constructHistogram(histoClass, 3);
-
-            histogram.recordValue(1);
-
-            ByteBuffer targetCompressedBuffer = ByteBuffer.allocate(histogram.getNeededByteBufferCapacity());
-            histogram.encodeIntoCompressedByteBuffer(targetCompressedBuffer);
-
-            histogram.recordValue(10000);
-
-            targetCompressedBuffer = ByteBuffer.allocate(histogram.getNeededByteBufferCapacity());
-            histogram.encodeIntoCompressedByteBuffer(targetCompressedBuffer);
-            targetCompressedBuffer.rewind();
-
-            AbstractHistogram histogram2 = decodeFromCompressedByteBuffer(histoClass, targetCompressedBuffer, 0);
-            Assert.assertEquals(histogram, histogram2);
-        }
     }
 
+    public enum BufferAllocator {
+        DIRECT {
+            @Override
+            public ByteBuffer allocate(final int size) {
+                return ByteBuffer.allocateDirect(size);
+            }
+        },
+        HEAP {
+            @Override
+            public ByteBuffer allocate(final int size) {
+                return ByteBuffer.allocate(size);
+            }
+        };
 
+        public abstract ByteBuffer allocate(int size);
+    }
 }
