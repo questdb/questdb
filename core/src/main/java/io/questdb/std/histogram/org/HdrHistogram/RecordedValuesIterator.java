@@ -19,6 +19,13 @@ public class RecordedValuesIterator extends AbstractHistogramIterator implements
     int visitedIndex;
 
     /**
+     * @param histogram The histogram this iterator will operate on
+     */
+    public RecordedValuesIterator(final AbstractHistogram histogram) {
+        reset(histogram);
+    }
+
+    /**
      * Reset iterator for re-use in a fresh iteration over the same histogram data set.
      */
     public void reset() {
@@ -28,13 +35,6 @@ public class RecordedValuesIterator extends AbstractHistogramIterator implements
     private void reset(final AbstractHistogram histogram) {
         super.resetIterator(histogram);
         visitedIndex = -1;
-    }
-
-    /**
-     * @param histogram The histogram this iterator will operate on
-     */
-    public RecordedValuesIterator(final AbstractHistogram histogram) {
-        reset(histogram);
     }
 
     @Override

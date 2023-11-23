@@ -35,6 +35,7 @@ import io.questdb.std.Files;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -187,7 +188,20 @@ public class CairoEngineTest extends AbstractCairoTest {
 
             MyListener listener = new MyListener();
 
-            try (CairoEngine engine = new CairoEngine(configuration)) {
+            try (CairoEngine engine = new CairoEngine(
+                    new DefaultCairoConfiguration(configuration.getRoot()) {
+                        @Override
+                        public boolean getAllowTableRegistrySharedWrite() {
+                            return true;
+                        }
+
+                        @Override
+                        public long getIdleCheckInterval() {
+                            // Make it big to prevent second run even on slow machines
+                            return Timestamps.DAY_MICROS;
+                        }
+                    })
+            ) {
                 TableToken x = createX(engine);
 
                 engine.setPoolListener(listener);

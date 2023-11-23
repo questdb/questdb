@@ -14,38 +14,37 @@ import java.util.zip.DataFormatException;
  * A base class for all encodable (and decodable) histogram classes. Log readers and writers
  * will generally use this base class to provide common log processing across the integer value
  * based AbstractHistogram subclasses and the double value based DoubleHistogram class.
- *
  */
 public abstract class EncodableHistogram {
 
-    public abstract int getNeededByteBufferCapacity();
-
     public abstract int encodeIntoCompressedByteBuffer(final ByteBuffer targetBuffer, int compressionLevel);
-
-    public abstract long getStartTimeStamp();
-
-    public abstract void setStartTimeStamp(long startTimeStamp);
 
     public abstract long getEndTimeStamp();
 
-    public abstract void setEndTimeStamp(long endTimestamp);
+    public abstract double getMaxValueAsDouble();
+
+    public abstract int getNeededByteBufferCapacity();
+
+    public abstract long getStartTimeStamp();
 
     public abstract String getTag();
 
-    public abstract void setTag(String tag);
+    public abstract void setEndTimeStamp(long endTimestamp);
 
-    public abstract double getMaxValueAsDouble();
+    public abstract void setStartTimeStamp(long startTimeStamp);
+
+    public abstract void setTag(String tag);
 
     /**
      * Decode a {@link EncodableHistogram} from a compressed byte buffer. Will return either a
-     * { org.HdrHistogram.Histogram} or { org.HdrHistogram.DoubleHistogram} depending
+     * {@link io.questdb.std.histogram.org.HdrHistogram.Histogram} or {@link io.questdb.std.histogram.org.HdrHistogram.DoubleHistogram} depending
      * on the format found in the supplied buffer.
      *
-     * @param buffer The input buffer to decode from.
+     * @param buffer                         The input buffer to decode from.
      * @param minBarForHighestTrackableValue A lower bound either on the highestTrackableValue of
      *                                       the created Histogram, or on the HighestToLowestValueRatio
      *                                       of the created DoubleHistogram.
-     * @return The decoded { org.HdrHistogram.Histogram} or { org.HdrHistogram.DoubleHistogram}
+     * @return The decoded {@link io.questdb.std.histogram.org.HdrHistogram.Histogram} or {@link io.questdb.std.histogram.org.HdrHistogram.DoubleHistogram}
      * @throws DataFormatException on errors in decoding the buffer compression.
      */
     static EncodableHistogram decodeFromCompressedByteBuffer(

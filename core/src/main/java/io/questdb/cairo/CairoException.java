@@ -203,6 +203,11 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return this;
     }
 
+    public CairoException put(double value) {
+        message.put(value);
+        return this;
+    }
+
     public CairoException put(@Nullable CharSequence cs) {
         message.put(cs);
         return this;
