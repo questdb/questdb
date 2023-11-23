@@ -16,7 +16,7 @@ import java.util.concurrent.locks.ReentrantLock;
  * that were active at the beginning of the flip are still active after the
  * flip is done.  Multiple writers and multiple readers are supported.
  * <p>
- * Using a {@link WriterReaderPhaser} for coordination, writers can continuously
+ * Using a {@link WriterReaderPhaser} for coordination, writers can continously
  * perform wait-free/lock-free updates to common data structures, while readers
  * can get hold of atomic and inactive snapshots without stalling writers.
  * <p>
@@ -29,7 +29,7 @@ import java.util.concurrent.locks.ReentrantLock;
  * "readers", and "readers" are only blocked by "writers" whose critical section
  * was entered before the reader's
  * {@link WriterReaderPhaser#flipPhase()} attempt.
- * Assumptions and Guarantees
+ * <h2>Assumptions and Guarantees</h2>
  * <p>
  * When used to protect an actively recording data structure, the assumptions on
  * how readers and writers act are:
@@ -78,7 +78,7 @@ import java.util.concurrent.locks.ReentrantLock;
  * readers that are holding the readerLock.</li>
  * </ol>
  *
- * Example use
+ * <h2>Example use</h2>
  * Imagine a simple use case where a histogram (which is basically a large set of
  * rapidly updated counters) is being modified by writers, and a reader needs to gain
  * access to stable interval samples of the histogram for reporting or other analysis
@@ -127,80 +127,23 @@ import java.util.concurrent.locks.ReentrantLock;
  * High level design: There are even and odd epochs; the epoch flips for each
  * reader.  Any number of writers can be in the same epoch (odd or even), but
  * after a completed phase flip no writers will be still in the old epoch
- * (and therefore are known to not be updating or observing the old, inactive
+ * (and therefor are known to not be updating or observing the old, inactive
  * data structure). Writers can always proceed at full speed in what they
- * perceive to be the current (odd or even) epoch. The epoch flip is fast (a
+ * percieve to be the current (odd or even) epoch. The epoch flip is fast (a
  * single atomic op).
  */
 
 public class WriterReaderPhaser {
-    private volatile long startEpoch = 0;
-    private volatile long evenEndEpoch = 0;
-    private volatile long oddEndEpoch = Long.MIN_VALUE;
-
-    private final ReentrantLock readerLock = new ReentrantLock();
-
-    private static final AtomicLongFieldUpdater<WriterReaderPhaser> startEpochUpdater =
-            AtomicLongFieldUpdater.newUpdater(WriterReaderPhaser.class, "startEpoch");
     private static final AtomicLongFieldUpdater<WriterReaderPhaser> evenEndEpochUpdater =
             AtomicLongFieldUpdater.newUpdater(WriterReaderPhaser.class, "evenEndEpoch");
     private static final AtomicLongFieldUpdater<WriterReaderPhaser> oddEndEpochUpdater =
             AtomicLongFieldUpdater.newUpdater(WriterReaderPhaser.class, "oddEndEpoch");
-
-    /**
-     * Indicate entry to a critical section containing a write operation.
-     * <p>
-     * This call is wait-free on architectures that support wait free atomic increment operations,
-     * and is lock-free on architectures that do not.
-     * <p>
-     * {@code writerCriticalSectionEnter()} must be matched with a subsequent
-     * {@link WriterReaderPhaser#writerCriticalSectionExit(long)} in order for CriticalSectionPhaser
-     * synchronization to function properly.
-     *
-     * @return an (opaque) value associated with the critical section entry, which MUST be provided
-     * to the matching {@link WriterReaderPhaser#writerCriticalSectionExit} call.
-     */
-    public long writerCriticalSectionEnter() {
-        return startEpochUpdater.getAndIncrement(this);
-    }
-
-    /**
-     * Indicate exit from a critical section containing a write operation.
-     * <p>
-     * This call is wait-free on architectures that support wait free atomic increment operations,
-     * and is lock-free on architectures that do not.
-     * <p>
-     * {@code writerCriticalSectionExit(long)} must be matched with a preceding
-     * {@link WriterReaderPhaser#writerCriticalSectionEnter()} call, and must be provided with the
-     * matching {@link WriterReaderPhaser#writerCriticalSectionEnter()} call's return value, in
-     * order for CriticalSectionPhaser synchronization to function properly.
-     *
-     * @param criticalValueAtEnter the (opaque) value returned from the matching
-     * {@link WriterReaderPhaser#writerCriticalSectionEnter()} call.
-     */
-    public void writerCriticalSectionExit(long criticalValueAtEnter) {
-        (criticalValueAtEnter < 0 ? oddEndEpochUpdater : evenEndEpochUpdater).getAndIncrement(this);
-    }
-
-    /**
-     * Enter to a critical section containing a read operation (reentrant, mutually excludes against
-     * {@link WriterReaderPhaser#readerLock} calls by other threads).
-     * <p>
-     * {@link WriterReaderPhaser#readerLock} DOES NOT provide synchronization
-     * against {@link WriterReaderPhaser#writerCriticalSectionEnter()} calls. Use {@link WriterReaderPhaser#flipPhase()}
-     * to synchronize reads against writers.
-     */
-    public void readerLock() {
-        readerLock.lock();
-    }
-
-    /**
-     * Exit from a critical section containing a read operation (relinquishes mutual exclusion against other
-     * {@link WriterReaderPhaser#readerLock} calls).
-     */
-    public void readerUnlock() {
-        readerLock.unlock();
-    }
+    private static final AtomicLongFieldUpdater<WriterReaderPhaser> startEpochUpdater =
+            AtomicLongFieldUpdater.newUpdater(WriterReaderPhaser.class, "startEpoch");
+    private final ReentrantLock readerLock = new ReentrantLock();
+    private volatile long evenEndEpoch = 0;
+    private volatile long oddEndEpoch = Long.MIN_VALUE;
+    private volatile long startEpoch = 0;
 
     /**
      * Flip a phase in the {@link WriterReaderPhaser} instance, {@link WriterReaderPhaser#flipPhase()}
@@ -236,7 +179,7 @@ public class WriterReaderPhaser {
         long startValueAtFlip = startEpochUpdater.getAndSet(this, initialStartValue);
 
         // Now, spin until previous phase end value catches up with start value at flip:
-        while((nextPhaseIsEven ? oddEndEpoch : evenEndEpoch) != startValueAtFlip)  {
+        while ((nextPhaseIsEven ? oddEndEpoch : evenEndEpoch) != startValueAtFlip) {
             if (yieldTimeNsec == 0) {
                 Thread.yield();
             } else {
@@ -267,5 +210,60 @@ public class WriterReaderPhaser {
      */
     public void flipPhase() {
         flipPhase(0);
+    }
+
+    /**
+     * Enter to a critical section containing a read operation (reentrant, mutually excludes against
+     * {@link WriterReaderPhaser#readerLock} calls by other threads).
+     * <p>
+     * {@link WriterReaderPhaser#readerLock} DOES NOT provide synchronization
+     * against {@link WriterReaderPhaser#writerCriticalSectionEnter()} calls. Use {@link WriterReaderPhaser#flipPhase()}
+     * to synchronize reads against writers.
+     */
+    public void readerLock() {
+        readerLock.lock();
+    }
+
+    /**
+     * Exit from a critical section containing a read operation (relinquishes mutual exclusion against other
+     * {@link WriterReaderPhaser#readerLock} calls).
+     */
+    public void readerUnlock() {
+        readerLock.unlock();
+    }
+
+    /**
+     * Indicate entry to a critical section containing a write operation.
+     * <p>
+     * This call is wait-free on architectures that support wait free atomic increment operations,
+     * and is lock-free on architectures that do not.
+     * <p>
+     * {@code writerCriticalSectionEnter()} must be matched with a subsequent
+     * {@link WriterReaderPhaser#writerCriticalSectionExit(long)} in order for CriticalSectionPhaser
+     * synchronization to function properly.
+     *
+     * @return an (opaque) value associated with the critical section entry, which MUST be provided
+     * to the matching {@link WriterReaderPhaser#writerCriticalSectionExit} call.
+     */
+    public long writerCriticalSectionEnter() {
+        return startEpochUpdater.getAndIncrement(this);
+    }
+
+    /**
+     * Indicate exit from a critical section containing a write operation.
+     * <p>
+     * This call is wait-free on architectures that support wait free atomic increment operations,
+     * and is lock-free on architectures that do not.
+     * <p>
+     * {@code writerCriticalSectionExit(long)} must be matched with a preceding
+     * {@link WriterReaderPhaser#writerCriticalSectionEnter()} call, and must be provided with the
+     * matching {@link WriterReaderPhaser#writerCriticalSectionEnter()} call's return value, in
+     * order for CriticalSectionPhaser synchronization to function properly.
+     *
+     * @param criticalValueAtEnter the (opaque) value returned from the matching
+     *                             {@link WriterReaderPhaser#writerCriticalSectionEnter()} call.
+     */
+    public void writerCriticalSectionExit(long criticalValueAtEnter) {
+        (criticalValueAtEnter < 0 ? oddEndEpochUpdater : evenEndEpochUpdater).getAndIncrement(this);
     }
 }

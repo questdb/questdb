@@ -26,16 +26,14 @@ package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class ApproxPercentileDoubleGroupByDefaultFunctionFactory implements FunctionFactory {
-    final int defaultPrecision = 3;
+    private static final int DEFAULT_PRECISION = 1;
 
     @Override
     public String getSignature() {
@@ -48,7 +46,13 @@ public class ApproxPercentileDoubleGroupByDefaultFunctionFactory implements Func
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         final Function exprFunc = args.getQuick(0);
         final Function percentileFunc = args.getQuick(1);
 
@@ -56,6 +60,6 @@ public class ApproxPercentileDoubleGroupByDefaultFunctionFactory implements Func
             throw SqlException.$(argPositions.getQuick(1), "percentile must be a constant");
         }
 
-        return new ApproxPercentileDoubleGroupByFunction(exprFunc, percentileFunc, defaultPrecision, position);
+        return new ApproxPercentileDoubleGroupByFunction(exprFunc, percentileFunc, DEFAULT_PRECISION, position);
     }
 }

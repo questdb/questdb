@@ -15,42 +15,19 @@ import java.util.NoSuchElementException;
  * Used for iterating through histogram values.
  */
 abstract class AbstractHistogramIterator implements Iterator<HistogramIterationValue> {
-    AbstractHistogram histogram;
+    final HistogramIterationValue currentIterationValue = new HistogramIterationValue();
     long arrayTotalCount;
-
+    long countAtThisValue;
     int currentIndex;
     long currentValueAtIndex;
-
+    AbstractHistogram histogram;
     long nextValueAtIndex;
-
     long prevValueIteratedTo;
-    long totalCountToPrevIndex;
-
     long totalCountToCurrentIndex;
+    long totalCountToPrevIndex;
     long totalValueToCurrentIndex;
-
-    long countAtThisValue;
-
     private boolean freshSubBucket;
-    final HistogramIterationValue currentIterationValue = new HistogramIterationValue();
-
     private double integerToDoubleValueConversionRatio;
-
-    void resetIterator(final AbstractHistogram histogram) {
-        this.histogram = histogram;
-        this.arrayTotalCount = histogram.getTotalCount();
-        this.integerToDoubleValueConversionRatio = histogram.getIntegerToDoubleValueConversionRatio();
-        this.currentIndex = 0;
-        this.currentValueAtIndex = 0;
-        this.nextValueAtIndex = 1L << histogram.unitMagnitude;
-        this.prevValueIteratedTo = 0;
-        this.totalCountToPrevIndex = 0;
-        this.totalCountToCurrentIndex = 0;
-        this.totalValueToCurrentIndex = 0;
-        this.countAtThisValue = 0;
-        this.freshSubBucket = true;
-        currentIterationValue.reset();
-    }
 
     /**
      * Returns true if the iteration has more elements. (In other words, returns true if next would return an
@@ -101,7 +78,7 @@ abstract class AbstractHistogramIterator implements Iterator<HistogramIterationV
         // Should not reach here. But possible for concurrent modification or overflowed histograms
         // under certain conditions
         if ((histogram.getTotalCount() != arrayTotalCount) ||
-            (totalCountToCurrentIndex > arrayTotalCount)) {
+                (totalCountToCurrentIndex > arrayTotalCount)) {
             throw new ConcurrentModificationException();
         }
         throw new NoSuchElementException();
@@ -115,28 +92,23 @@ abstract class AbstractHistogramIterator implements Iterator<HistogramIterationV
         throw new UnsupportedOperationException();
     }
 
-    abstract void incrementIterationLevel();
-
-    /**
-     * @return true if the current position's data should be emitted by the iterator
-     */
-    abstract boolean reachedIterationLevel();
-
-    double getPercentileIteratedTo() {
-        return (100.0 * (double) totalCountToCurrentIndex) / arrayTotalCount;
+    private boolean exhaustedSubBuckets() {
+        return (currentIndex >= histogram.countsArrayLength);
     }
 
     double getPercentileIteratedFrom() {
         return (100.0 * (double) totalCountToPrevIndex) / arrayTotalCount;
     }
 
+    double getPercentileIteratedTo() {
+        return (100.0 * (double) totalCountToCurrentIndex) / arrayTotalCount;
+    }
+
     long getValueIteratedTo() {
         return histogram.highestEquivalentValue(currentValueAtIndex);
     }
 
-    private boolean exhaustedSubBuckets() {
-        return (currentIndex >= histogram.countsArrayLength);
-    }
+    abstract void incrementIterationLevel();
 
     void incrementSubBucket() {
         freshSubBucket = true;
@@ -145,5 +117,26 @@ abstract class AbstractHistogramIterator implements Iterator<HistogramIterationV
         currentValueAtIndex = histogram.valueFromIndex(currentIndex);
         // Figure out the value at the next index (used by some iterators):
         nextValueAtIndex = histogram.valueFromIndex(currentIndex + 1);
+    }
+
+    /**
+     * @return true if the current position's data should be emitted by the iterator
+     */
+    abstract boolean reachedIterationLevel();
+
+    void resetIterator(final AbstractHistogram histogram) {
+        this.histogram = histogram;
+        this.arrayTotalCount = histogram.getTotalCount();
+        this.integerToDoubleValueConversionRatio = histogram.getIntegerToDoubleValueConversionRatio();
+        this.currentIndex = 0;
+        this.currentValueAtIndex = 0;
+        this.nextValueAtIndex = 1 << histogram.unitMagnitude;
+        this.prevValueIteratedTo = 0;
+        this.totalCountToPrevIndex = 0;
+        this.totalCountToCurrentIndex = 0;
+        this.totalValueToCurrentIndex = 0;
+        this.countAtThisValue = 0;
+        this.freshSubBucket = true;
+        currentIterationValue.reset();
     }
 }

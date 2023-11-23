@@ -33,6 +33,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class ApproxPercentileDoubleGroupByFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "approx_percentile(DDi)";
@@ -44,7 +45,13 @@ public class ApproxPercentileDoubleGroupByFunctionFactory implements FunctionFac
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         final Function exprFunc = args.getQuick(0);
         final Function percentileFunc = args.getQuick(1);
         final Function precisionFunc = args.getQuick(2);
@@ -56,6 +63,14 @@ public class ApproxPercentileDoubleGroupByFunctionFactory implements FunctionFac
             throw SqlException.$(argPositions.getQuick(2), "precision must be a constant");
         }
 
-        return new ApproxPercentileDoubleGroupByFunction(exprFunc, percentileFunc, precisionFunc.getInt(null), position);
+        final int precision = precisionFunc.getInt(null);
+        if (precision < 0 || precision > 5) {
+            throw SqlException.$(position, "precision must be between 0 and 5");
+        }
+
+        if (precision > 2) {
+            return new ApproxPercentileDoublePackedGroupByFunction(exprFunc, percentileFunc, precision, position);
+        }
+        return new ApproxPercentileDoubleGroupByFunction(exprFunc, percentileFunc, precision, position);
     }
 }
