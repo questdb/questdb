@@ -110,6 +110,7 @@ open module io.questdb {
     exports io.questdb.std.histogram.org.HdrHistogram;
     exports io.questdb.client;
     exports io.questdb.std.bytes;
+    exports io.questdb.std.histogram.org.HdrHistogram.packedarray;
 
     provides FunctionFactory with
             // test functions
@@ -643,6 +644,8 @@ open module io.questdb {
             //      'approx_percentile' group by function
             io.questdb.griffin.engine.functions.groupby.ApproxPercentileDoubleGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.ApproxPercentileDoubleGroupByDefaultFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.ApproxPercentileLongGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.ApproxPercentileLongGroupByDefaultFunctionFactory,
 //                  'isOrdered'
             io.questdb.griffin.engine.functions.groupby.IsIPv4OrderedGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.IsLongOrderedGroupByFunctionFactory,

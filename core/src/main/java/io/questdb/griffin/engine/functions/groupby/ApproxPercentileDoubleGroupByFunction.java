@@ -30,43 +30,30 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.*;
+import io.questdb.griffin.engine.functions.BinaryFunction;
+import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.histogram.org.HdrHistogram.DoubleHistogram;
 
 public class ApproxPercentileDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, BinaryFunction {
     private final Function exprFunc;
-    private final Function percentileFunc;
-    // specifies the precision for the recorded values (between 0 and 5, defaults to 3).
-    // trade-off between memory usage and accuracy.
-    private final int precision;
     private final int funcPosition;
     private final ObjList<DoubleHistogram> histograms = new ObjList<>();
+    private final Function percentileFunc;
+    private final int precision;
     private int histogramIndex;
     private int valueIndex;
 
     public ApproxPercentileDoubleGroupByFunction(Function exprFunc, Function percentileFunc, int precision, int funcPosition) {
+        assert precision >= 0 && precision <= 5;
         this.exprFunc = exprFunc;
         this.percentileFunc = percentileFunc;
         this.precision = precision;
         this.funcPosition = funcPosition;
-    }
-
-    @Override
-    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        BinaryFunction.super.init(symbolTableSource, executionContext);
-
-        final double percentile = percentileFunc.getDouble(null);
-        if (Double.isNaN(percentile) || percentile < 0 || percentile > 1) {
-            throw SqlException.$(funcPosition, "percentile must be between 0 and 1");
-        }
-        if (precision < 0 || precision > 5) {
-            throw SqlException.$(funcPosition, "precision must be between 0 and 5");
-        }
     }
 
     @Override
@@ -79,11 +66,14 @@ public class ApproxPercentileDoubleGroupByFunction extends DoubleFunction implem
     public void computeFirst(MapValue mapValue, Record record) {
         final DoubleHistogram histogram;
         if (histograms.size() <= histogramIndex) {
-            histograms.extendAndSet(histogramIndex, histogram = new DoubleHistogram(precision));
+            // We pre-size the histogram for 1000x ratio to avoid resizes in some basic use cases
+            // like CPU load percentile or latency in millis.
+            histograms.extendAndSet(histogramIndex, histogram = new DoubleHistogram(1000, precision));
+            histogram.setAutoResize(true);
         } else {
             histogram = histograms.getQuick(histogramIndex);
+            histogram.reset();
         }
-        histogram.reset();
 
         final double val = exprFunc.getDouble(record);
         if (Numbers.isFinite(val)) {
@@ -102,8 +92,16 @@ public class ApproxPercentileDoubleGroupByFunction extends DoubleFunction implem
     }
 
     @Override
-    public String getName() {
-        return "approx_percentile";
+    public double getDouble(Record rec) {
+        if (histograms.size() == 0) {
+            return Double.NaN;
+        }
+
+        final DoubleHistogram histogram = histograms.getQuick(rec.getInt(valueIndex));
+        if (histogram.getTotalCount() == 0) {
+            return Double.NaN;
+        }
+        return histogram.getValueAtPercentile(percentileFunc.getDouble(null) * 100);
     }
 
     @Override
@@ -112,21 +110,23 @@ public class ApproxPercentileDoubleGroupByFunction extends DoubleFunction implem
     }
 
     @Override
+    public String getName() {
+        return "approx_percentile";
+    }
+
+    @Override
     public Function getRight() {
         return percentileFunc;
     }
 
     @Override
-    public double getDouble(Record rec) {
-        if (histograms.size() == 0) {
-            return Double.NaN;
-        }
+    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        BinaryFunction.super.init(symbolTableSource, executionContext);
 
-        final DoubleHistogram histogram = histograms.getQuick(rec.getInt(valueIndex));
-        if (histogram.empty()) {
-            return Double.NaN;
+        final double percentile = percentileFunc.getDouble(null);
+        if (Double.isNaN(percentile) || percentile < 0 || percentile > 1) {
+            throw SqlException.$(funcPosition, "percentile must be between 0.0 and 1.0");
         }
-        return histogram.getValueAtPercentile(percentileFunc.getDouble(null) * 100);
     }
 
     @Override

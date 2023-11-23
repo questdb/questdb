@@ -16,27 +16,12 @@ import java.util.Iterator;
  * the next bucket boundary value.
  */
 public class LinearIterator extends AbstractHistogramIterator implements Iterator<HistogramIterationValue> {
-    private long valueUnitsPerBucket;
     private long currentStepHighestValueReportingLevel;
     private long currentStepLowestValueReportingLevel;
+    private long valueUnitsPerBucket;
 
     /**
-     * Reset iterator for re-use in a fresh iteration over the same histogram data set.
-     * @param valueUnitsPerBucket The size (in value units) of each bucket iteration.
-     */
-    public void reset(final long valueUnitsPerBucket) {
-        reset(histogram, valueUnitsPerBucket);
-    }
-
-    private void reset(final AbstractHistogram histogram, final long valueUnitsPerBucket) {
-        super.resetIterator(histogram);
-        this.valueUnitsPerBucket = valueUnitsPerBucket;
-        this.currentStepHighestValueReportingLevel = valueUnitsPerBucket - 1;
-        this.currentStepLowestValueReportingLevel = histogram.lowestEquivalentValue(currentStepHighestValueReportingLevel);
-    }
-
-    /**
-     * @param histogram The histogram this iterator will operate on
+     * @param histogram           The histogram this iterator will operate on
      * @param valueUnitsPerBucket The size (in value units) of each bucket iteration.
      */
     public LinearIterator(final AbstractHistogram histogram, final long valueUnitsPerBucket) {
@@ -58,10 +43,20 @@ public class LinearIterator extends AbstractHistogramIterator implements Iterato
         return (currentStepHighestValueReportingLevel < nextValueAtIndex);
     }
 
-    @Override
-    void incrementIterationLevel() {
-        currentStepHighestValueReportingLevel += valueUnitsPerBucket;
-        currentStepLowestValueReportingLevel = histogram.lowestEquivalentValue(currentStepHighestValueReportingLevel);
+    /**
+     * Reset iterator for re-use in a fresh iteration over the same histogram data set.
+     *
+     * @param valueUnitsPerBucket The size (in value units) of each bucket iteration.
+     */
+    public void reset(final long valueUnitsPerBucket) {
+        reset(histogram, valueUnitsPerBucket);
+    }
+
+    private void reset(final AbstractHistogram histogram, final long valueUnitsPerBucket) {
+        super.resetIterator(histogram);
+        this.valueUnitsPerBucket = valueUnitsPerBucket;
+        this.currentStepHighestValueReportingLevel = valueUnitsPerBucket - 1;
+        this.currentStepLowestValueReportingLevel = histogram.lowestEquivalentValue(currentStepHighestValueReportingLevel);
     }
 
     @Override
@@ -70,8 +65,14 @@ public class LinearIterator extends AbstractHistogramIterator implements Iterato
     }
 
     @Override
+    void incrementIterationLevel() {
+        currentStepHighestValueReportingLevel += valueUnitsPerBucket;
+        currentStepLowestValueReportingLevel = histogram.lowestEquivalentValue(currentStepHighestValueReportingLevel);
+    }
+
+    @Override
     boolean reachedIterationLevel() {
         return ((currentValueAtIndex >= currentStepLowestValueReportingLevel) ||
-                (currentIndex >= histogram.countsArrayLength - 1)) ;
+                (currentIndex >= histogram.countsArrayLength - 1));
     }
 }
