@@ -22,6 +22,9 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
     private final Rnd rnd = new Rnd();
 
     public SqlCompilerPool(CairoEngine engine) {
+        // Passing zero as TTL, because SqlCompiler instances are expected to be returned to the pool immediately
+        // after usage. The `releaseInactive()` method is also overridden to return with hardcoded 'false' for the
+        // same reason. It is not meant to be called.
         super(engine.getConfiguration(), (engine.getConfiguration().getSqlCompilerPoolCapacity() / ENTRY_SIZE) + 1, 0L);
         this.engine = engine;
     }
