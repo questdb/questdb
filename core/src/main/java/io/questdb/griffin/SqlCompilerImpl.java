@@ -26,8 +26,8 @@ package io.questdb.griffin;
 
 import io.questdb.*;
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.WalUtils;
@@ -1776,13 +1776,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             SqlException {
         final CreateTableModel createTableModel = (CreateTableModel) model;
         final ExpressionNode name = createTableModel.getName();
-        TableToken tableToken = executionContext.getTableTokenIfExists(name.token);
 
         // Fast path for CREATE TABLE IF NOT EXISTS in scenario when the table already exists
-        int status = executionContext.getTableStatus(path, tableToken);
-        if (createTableModel.isIgnoreIfExists() && status != TableUtils.TABLE_DOES_NOT_EXIST) {
-            compiledQuery.ofCreateTable(tableToken);
-        } else if (status != TableUtils.TABLE_DOES_NOT_EXIST) {
+        final int status = executionContext.getTableStatus(path, name.token);
+        if (createTableModel.isIgnoreIfExists() && status == TableUtils.TABLE_EXISTS) {
+            compiledQuery.ofCreateTable(executionContext.getTableTokenIfExists(name.token));
+        } else if (status == TableUtils.TABLE_EXISTS) {
             throw SqlException.$(name.position, "table already exists");
         } else {
 
@@ -1799,6 +1798,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
             }
 
+            final TableToken tableToken;
             this.insertCount = -1;
             if (createTableModel.getQueryModel() == null) {
                 try {
@@ -2504,11 +2504,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private TableToken tableExistsOrFail(int position, CharSequence tableName, SqlExecutionContext executionContext) throws SqlException {
-        TableToken tableToken = executionContext.getTableTokenIfExists(tableName);
-        if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS) {
+        if (executionContext.getTableStatus(path, tableName) != TableUtils.TABLE_EXISTS) {
             throw SqlException.tableDoesNotExist(position, tableName);
         }
-        return tableToken;
+        return executionContext.getTableTokenIfExists(tableName);
     }
 
     private void truncateTables(SqlExecutionContext executionContext) throws SqlException {
@@ -3365,14 +3364,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 int tableNamePosition,
                 boolean hasIfExists
         ) throws SqlException {
-            TableToken tableToken = executionContext.getTableTokenIfExists(tableName);
-            if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS) {
+            if (executionContext.getTableStatus(path, tableName) != TableUtils.TABLE_EXISTS) {
                 if (hasIfExists) {
                     compiledQuery.ofDrop();
                 } else {
                     throw SqlException.tableDoesNotExist(tableNamePosition, tableName);
                 }
             } else {
+                TableToken tableToken = executionContext.getTableTokenIfExists(tableName);
                 executionContext.getSecurityContext().authorizeTableDrop(tableToken);
                 engine.drop(path, tableToken);
                 compiledQuery.ofDrop();
