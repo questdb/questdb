@@ -378,7 +378,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                 "cairo.wal.apply.table.time.quota\tQDB_CAIRO_WAL_APPLY_TABLE_TIME_QUOTA\t1000\tdefault\tfalse\tfalse\n" +
                                 "cairo.wal.enabled.default\tQDB_CAIRO_WAL_ENABLED_DEFAULT\tfalse\tconf\tfalse\tfalse\n" +
                                 "cairo.wal.inactive.writer.ttl\tQDB_CAIRO_WAL_INACTIVE_WRITER_TTL\t120000\tdefault\tfalse\tfalse\n" +
-                                "cairo.wal.max.file.descriptors.cache\tQDB_CAIRO_WAL_MAX_FILE_DESCRIPTORS_CACHE\t100\tdefault\tfalse\tfalse\n" +
+                                "cairo.wal.max.file.descriptors.cache\tQDB_CAIRO_WAL_MAX_FILE_DESCRIPTORS_CACHE\t1000\tdefault\tfalse\tfalse\n" +
                                 "cairo.wal.max.lag.size\tQDB_CAIRO_WAL_MAX_LAG_SIZE\t52428800\tdefault\tfalse\tfalse\n" +
                                 "cairo.wal.max.lag.txn.count\tQDB_CAIRO_WAL_MAX_LAG_TXN_COUNT\t-1\tdefault\tfalse\tfalse\n" +
                                 "cairo.wal.purge.interval\tQDB_CAIRO_WAL_PURGE_INTERVAL\t30000\tdefault\tfalse\tfalse\n" +
