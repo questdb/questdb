@@ -51,8 +51,8 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
     }
 
     @Override
-    protected R newTenant(TableToken tableName, Entry<R> entry, int index) {
-        return new R(this, entry, index, tableName, messageBus, readerListener);
+    protected R newTenant(TableToken tableToken, Entry<R> entry, int index) {
+        return new R(this, entry, index, tableToken, messageBus, readerListener);
     }
 
     @TestOnly

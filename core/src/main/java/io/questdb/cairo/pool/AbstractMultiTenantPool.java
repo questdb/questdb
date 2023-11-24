@@ -258,13 +258,13 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
         }
     }
 
-    private Entry<T> getEntry(TableToken name) {
+    private Entry<T> getEntry(TableToken token) {
         checkClosed();
 
-        Entry<T> e = entries.get(name.getDirName());
+        Entry<T> e = entries.get(token.getDirName());
         if (e == null) {
             e = new Entry<>(0, clock.getTicks());
-            Entry<T> other = entries.putIfAbsent(name.getDirName(), e);
+            Entry<T> other = entries.putIfAbsent(token.getDirName(), e);
             if (other != null) {
                 e = other;
             }
@@ -272,10 +272,10 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
         return e;
     }
 
-    private void notifyListener(long thread, TableToken name, short event, int segment, int position) {
+    private void notifyListener(long thread, TableToken token, short event, int segment, int position) {
         PoolListener listener = getPoolListener();
         if (listener != null) {
-            listener.onEvent(getListenerSrc(), thread, name, event, (short) segment, (short) position);
+            listener.onEvent(getListenerSrc(), thread, token, event, (short) segment, (short) position);
         }
     }
 
@@ -306,7 +306,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
 
     protected abstract byte getListenerSrc();
 
-    protected abstract T newTenant(TableToken tableName, Entry<T> entry, int index);
+    protected abstract T newTenant(TableToken tableToken, Entry<T> entry, int index);
 
     @Override
     protected boolean releaseAll(long deadline) {
