@@ -42,11 +42,11 @@ public class CompactCharSequenceHashSet implements Mutable {
         this(MIN_INITIAL_CAPACITY);
     }
 
-    private CompactCharSequenceHashSet(int initialCapacity) {
+    public CompactCharSequenceHashSet(int initialCapacity) {
         this(initialCapacity, 0.6);
     }
 
-    private CompactCharSequenceHashSet(int initialCapacity, double loadFactor) {
+    public CompactCharSequenceHashSet(int initialCapacity, double loadFactor) {
         if (loadFactor <= 0d || loadFactor >= 1d) {
             throw new IllegalArgumentException("0 < loadFactor < 1");
         }

@@ -125,6 +125,10 @@ public interface CairoConfiguration {
 
     int getCopyPoolCapacity();
 
+    int getCountDistinctCapacity();
+
+    double getCountDistinctLoadFactor();
+
     int getCreateAsSelectRetryCount();
 
     int getCreateTableModelPoolCapacity();
