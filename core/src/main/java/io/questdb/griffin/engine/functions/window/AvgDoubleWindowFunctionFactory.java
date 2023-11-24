@@ -1499,7 +1499,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val(NAME);
+            sink.val(getName());
             sink.val('(').val(arg).val(')');
             sink.val(" over (");
             sink.val("partition by ");

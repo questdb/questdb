@@ -1429,12 +1429,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
             assertPlan(
                     "select row_number() over (partition by i order by ts asc), " +
                             "   avg(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                            "   sum(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
                             "   rank() over (partition by i order by j asc) " +
                             "from tab " +
                             "order by ts asc",
                     "SelectedRecord\n" +
                             "    CachedWindow\n" +
-                            "      orderedFunctions: [[j] => [rank() over (partition by [i])],[ts desc] => [avg(j) over (partition by [i] rows between unbounded preceding and current row )]]\n" +
+                            "      orderedFunctions: [[j] => [rank() over (partition by [i])],[ts desc] => [avg(j) over (partition by [i] rows between unbounded preceding and current row ),sum(j) over (partition by [i] rows between unbounded preceding and current row )]]\n" +
                             "      unorderedFunctions: [row_number() over (partition by [i])]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -1443,32 +1444,34 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             //avg(), row_number() and rank()
             assertSql(
-                    "row_number\tavg\trank\n" +
-                            "1\t2.0\t1\n" +
-                            "2\t2.5\t2\n" +
-                            "3\t3.0\t3\n" +
-                            "1\t1.75\t4\n" +
-                            "2\t1.0\t1\n" +
-                            "3\t1.5\t2\n" +
-                            "4\t2.0\t3\n",
+                    "row_number\tavg\tsum\trank\n" +
+                            "1\t2.0\t6.0\t1\n" +
+                            "2\t2.5\t5.0\t2\n" +
+                            "3\t3.0\t3.0\t3\n" +
+                            "1\t1.75\t7.0\t4\n" +
+                            "2\t1.0\t3.0\t1\n" +
+                            "3\t1.5\t3.0\t2\n" +
+                            "4\t2.0\t2.0\t3\n",
                     "select row_number() over (partition by i order by ts asc), " +
                             "   avg(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                            "   sum(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
                             "   rank() over (partition by i order by j asc) " +
                             "from tab " +
                             "order by ts asc"
             );
 
             assertSql(
-                    "row_number\tavg\trank\n" +
-                            "4\t2.0\t3\n" +
-                            "3\t1.5\t2\n" +
-                            "2\t1.0\t1\n" +
-                            "1\t1.75\t4\n" +
-                            "3\t3.0\t3\n" +
-                            "2\t2.5\t2\n" +
-                            "1\t2.0\t1\n",
+                    "row_number\tavg\tsum\trank\n" +
+                            "4\t2.0\t2.0\t3\n" +
+                            "3\t1.5\t3.0\t2\n" +
+                            "2\t1.0\t3.0\t1\n" +
+                            "1\t1.75\t7.0\t4\n" +
+                            "3\t3.0\t3.0\t3\n" +
+                            "2\t2.5\t5.0\t2\n" +
+                            "1\t2.0\t6.0\t1\n",
                     "select row_number() over (partition by i order by ts asc), " +
                             "   avg(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                            "   sum(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
                             "   rank() over (partition by i order by j asc) " +
                             "from tab " +
                             "order by ts desc"
@@ -2154,6 +2157,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 assertException("select avg(j) over (partition by i rows between 100001 preceding and current row) from tab",
                         0, "Maximum number of pages (10) breached in VirtualMemory"
                 );
+
+                assertException("select sum(j) over (partition by i rows between 100001 preceding and current row) from tab",
+                        0, "Maximum number of pages (10) breached in VirtualMemory"
+                );
             });
         } finally {
             //disable
@@ -2201,129 +2208,164 @@ public class WindowFunctionTest extends AbstractCairoTest {
             ddl("create table tab (ts timestamp, i long, j long, sym symbol index) timestamp(ts)");
 
             // table scans
-            assertQueryAndPlan("select ts, i, j, avg(j) over (), row_number() over (), rank() over () from tab",
+            assertQueryAndPlan("select ts, i, j, " +
+                            "avg(j) over (), " +
+                            "sum(j) over (), " +
+                            "row_number() over (), " +
+                            "rank() over () " +
+                            "from tab",
                     "CachedWindow\n" +
-                            "  unorderedFunctions: [avg(j) over (),row_number(),rank()]\n" +
+                            "  unorderedFunctions: [avg(j) over (),sum(j) over (),row_number(),rank()]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n",
-                    "ts\ti\tj\tavg\trow_number\trank\n",
+                    "ts\ti\tj\tavg\tsum\trow_number\trank\n",
                     "ts",
                     true,
                     false
             );
 
-            assertQueryAndPlan("select ts, i, j, avg(j) over () from tab order by ts desc",
+            assertQueryAndPlan("select ts, i, j, avg(j) over (), sum(j) over () from tab order by ts desc",
                     "CachedWindow\n" +
-                            "  unorderedFunctions: [avg(j) over ()]\n" +
+                            "  unorderedFunctions: [avg(j) over (),sum(j) over ()]\n" +
                             "    DataFrame\n" +
                             "        Row backward scan\n" +
                             "        Frame backward scan on: tab\n",
-                    "ts\ti\tj\tavg\n",
+                    "ts\ti\tj\tavg\tsum\n",
                     "ts",
                     true,
                     false
             );
 
-            assertQueryAndPlan("select ts, i, j, avg(j) over (order by ts) from tab",
+            assertQueryAndPlan("select ts, i, j, " +
+                            "avg(j) over (order by ts), " +
+                            "sum(j) over (order by ts) " +
+                            "from tab",
                     "Window\n" +
-                            "  functions: [avg(j) over (rows between unbounded preceding and current row)]\n" +
+                            "  functions: [avg(j) over (rows between unbounded preceding and current row),sum(j) over (rows between unbounded preceding and current row)]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n",
-                    "ts\ti\tj\tavg\n",
+                    "ts\ti\tj\tavg\tsum\n",
                     "ts",
                     false,
                     true
             );
 
-            assertQueryAndPlan("select ts, i, j, avg(j) over (order by ts desc) from tab order by ts desc",
+            assertQueryAndPlan("select ts, i, j, " +
+                            "avg(j) over (order by ts desc), " +
+                            "sum(j) over (order by ts desc) " +
+                            "from tab order by ts desc",
                     "Window\n" +
-                            "  functions: [avg(j) over (rows between unbounded preceding and current row)]\n" +
+                            "  functions: [avg(j) over (rows between unbounded preceding and current row),sum(j) over (rows between unbounded preceding and current row)]\n" +
                             "    DataFrame\n" +
                             "        Row backward scan\n" +
                             "        Frame backward scan on: tab\n",
-                    "ts\ti\tj\tavg\n",
+                    "ts\ti\tj\tavg\tsum\n",
                     "ts",
                     false,
                     true
             );
 
-            assertQueryAndPlan("select ts, i, j, avg(j) over (partition by i) from tab",
+            assertQueryAndPlan("select ts, i, j, " +
+                            "avg(j) over (partition by i), " +
+                            "sum(j) over (partition by i) " +
+                            "from tab",
                     "CachedWindow\n" +
-                            "  unorderedFunctions: [avg(j) over (partition by [i])]\n" +
+                            "  unorderedFunctions: [avg(j) over (partition by [i]),sum(j) over (partition by [i])]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n",
-                    "ts\ti\tj\tavg\n",
+                    "ts\ti\tj\tavg\tsum\n",
                     "ts",
                     true,
                     false);
 
-            assertQueryAndPlan("select ts, i, j, avg(j) over (partition by i) from tab order by ts desc",
+            assertQueryAndPlan("select ts, i, j, " +
+                            "avg(j) over (partition by i), " +
+                            "sum(j) over (partition by i) " +
+                            "from tab order by ts desc",
                     "CachedWindow\n" +
-                            "  unorderedFunctions: [avg(j) over (partition by [i])]\n" +
+                            "  unorderedFunctions: [avg(j) over (partition by [i]),sum(j) over (partition by [i])]\n" +
                             "    DataFrame\n" +
                             "        Row backward scan\n" +
                             "        Frame backward scan on: tab\n",
-                    "ts\ti\tj\tavg\n",
+                    "ts\ti\tj\tavg\tsum\n",
                     "ts",
                     true,
                     false);
 
-            assertQueryAndPlan("select ts, i, j, avg(j) over (partition by i order by ts) from tab",
+            assertQueryAndPlan("select ts, i, j, " +
+                            "avg(j) over (partition by i order by ts), " +
+                            "sum(j) over (partition by i order by ts) " +
+                            "from tab",
                     "Window\n" +
-                            "  functions: [avg(j) over (partition by [i] rows between unbounded preceding and current row )]\n" +
+                            "  functions: [avg(j) over (partition by [i] rows between unbounded preceding and current row ),sum(j) over (partition by [i] rows between unbounded preceding and current row )]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n",
-                    "ts\ti\tj\tavg\n",
+                    "ts\ti\tj\tavg\tsum\n",
                     "ts",
                     false,
                     true);
 
-            assertQueryAndPlan("select ts, i, j, avg(j) over (partition by i order by ts desc) from tab order by ts desc",
+            assertQueryAndPlan("select ts, i, j, " +
+                            "avg(j) over (partition by i order by ts desc), " +
+                            "sum(j) over (partition by i order by ts desc) " +
+                            "from tab " +
+                            "order by ts desc",
                     "Window\n" +
-                            "  functions: [avg(j) over (partition by [i] rows between unbounded preceding and current row )]\n" +
+                            "  functions: [avg(j) over (partition by [i] rows between unbounded preceding and current row ),sum(j) over (partition by [i] rows between unbounded preceding and current row )]\n" +
                             "    DataFrame\n" +
                             "        Row backward scan\n" +
                             "        Frame backward scan on: tab\n",
-                    "ts\ti\tj\tavg\n",
+                    "ts\ti\tj\tavg\tsum\n",
                     "ts",
                     false,
                     true);
 
-            assertQueryAndPlan("select i, j, avg(j) over (partition by i order by ts) from tab order by ts",
+            assertQueryAndPlan("select i, j, " +
+                            "avg(j) over (partition by i order by ts), " +
+                            "sum(j) over (partition by i order by ts) " +
+                            "from tab " +
+                            "order by ts",
                     "SelectedRecord\n" +
                             "    Window\n" +
-                            "      functions: [avg(j) over (partition by [i] rows between unbounded preceding and current row )]\n" +
+                            "      functions: [avg(j) over (partition by [i] rows between unbounded preceding and current row ),sum(j) over (partition by [i] rows between unbounded preceding and current row )]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: tab\n",
-                    "i\tj\tavg\n",
+                    "i\tj\tavg\tsum\n",
                     null,
                     false,
                     true);
 
-            assertQueryAndPlan("select i, j, avg(j) over (partition by i order by ts desc) from tab order by ts desc",
+            assertQueryAndPlan("select i, j, " +
+                            "avg(j) over (partition by i order by ts desc), " +
+                            "sum(j) over (partition by i order by ts desc) " +
+                            "from tab " +
+                            "order by ts desc",
                     "SelectedRecord\n" +
                             "    Window\n" +
-                            "      functions: [avg(j) over (partition by [i] rows between unbounded preceding and current row )]\n" +
+                            "      functions: [avg(j) over (partition by [i] rows between unbounded preceding and current row ),sum(j) over (partition by [i] rows between unbounded preceding and current row )]\n" +
                             "        DataFrame\n" +
                             "            Row backward scan\n" +
                             "            Frame backward scan on: tab\n",
-                    "i\tj\tavg\n",
+                    "i\tj\tavg\tsum\n",
                     null,
                     false,
                     true);
 
-            assertQueryAndPlan("select i, j, avg(j) over (partition by i order by ts range between 10 seconds preceding and current row), ts from tab",
+            assertQueryAndPlan("select i, j, " +
+                            "avg(j) over (partition by i order by ts range between 10 seconds preceding and current row), " +
+                            "sum(j) over (partition by i order by ts range between 10 seconds preceding and current row), " +
+                            "ts from tab",
                     "Window\n" +
-                            "  functions: [avg(j) over (partition by [i] range between 10000000 preceding and current row)]\n" +
+                            "  functions: [avg(j) over (partition by [i] range between 10000000 preceding and current row),sum(j) over (partition by [i] range between 10000000 preceding and current row)]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n",
-                    "i\tj\tavg\tts\n",
+                    "i\tj\tavg\tsum\tts\n",
                     "ts",
                     false,
                     true);

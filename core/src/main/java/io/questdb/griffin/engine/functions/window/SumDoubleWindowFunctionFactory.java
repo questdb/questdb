@@ -424,6 +424,11 @@ public class SumDoubleWindowFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public String getName() {
+            return NAME;
+        }
+
+        @Override
         public void preparePass2() {
             RecordCursor cursor = map.getCursor();
             MapRecord record = map.getRecord();
