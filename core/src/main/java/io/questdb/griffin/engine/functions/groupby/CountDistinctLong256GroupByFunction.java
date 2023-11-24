@@ -54,7 +54,7 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
     public void computeFirst(MapValue mapValue, Record record) {
         final Long256HashSet set;
         if (sets.size() <= setIndex) {
-            sets.extendAndSet(setIndex, set = new Long256HashSet());
+            sets.extendAndSet(setIndex, set = new Long256HashSet(16, 0.7));
         } else {
             set = sets.getQuick(setIndex);
             set.clear();

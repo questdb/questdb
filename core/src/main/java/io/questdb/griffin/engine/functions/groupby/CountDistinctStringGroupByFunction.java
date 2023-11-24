@@ -57,7 +57,7 @@ public class CountDistinctStringGroupByFunction extends LongFunction implements 
     public void computeFirst(MapValue mapValue, Record record) {
         final CompactCharSequenceHashSet set;
         if (sets.size() <= setIndex) {
-            sets.extendAndSet(setIndex, set = new CompactCharSequenceHashSet());
+            sets.extendAndSet(setIndex, set = new CompactCharSequenceHashSet(16, 0.7));
         } else {
             set = sets.getQuick(setIndex);
             set.clear();
