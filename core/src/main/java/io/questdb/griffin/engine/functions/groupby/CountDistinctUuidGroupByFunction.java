@@ -39,12 +39,16 @@ import io.questdb.std.Uuid;
 
 public final class CountDistinctUuidGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
     private final Function arg;
+    private final int setInitialCapacity;
+    private final double setLoadFactor;
     private final ObjList<LongLongHashSet> sets = new ObjList<>();
     private int setIndex;
     private int valueIndex;
 
-    public CountDistinctUuidGroupByFunction(Function arg) {
+    public CountDistinctUuidGroupByFunction(Function arg, int setInitialCapacity, double setLoadFactor) {
         this.arg = arg;
+        this.setInitialCapacity = setInitialCapacity;
+        this.setLoadFactor = setLoadFactor;
     }
 
     @Override
@@ -57,7 +61,7 @@ public final class CountDistinctUuidGroupByFunction extends LongFunction impleme
     public void computeFirst(MapValue mapValue, Record record) {
         LongLongHashSet set;
         if (sets.size() <= setIndex) {
-            sets.extendAndSet(setIndex, set = new LongLongHashSet(16, 0.7, Numbers.LONG_NaN, LongLongHashSet.UUID_STRATEGY));
+            sets.extendAndSet(setIndex, set = new LongLongHashSet(setInitialCapacity, setLoadFactor, Numbers.LONG_NaN, LongLongHashSet.UUID_STRATEGY));
         } else {
             set = sets.getQuick(setIndex);
             set.clear();

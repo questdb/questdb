@@ -43,7 +43,13 @@ public class CountDistinctSymbolGroupByFunctionFactory implements FunctionFactor
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new CountDistinctSymbolGroupByFunction(args.getQuick(0));
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        return new CountDistinctSymbolGroupByFunction(args.getQuick(0), configuration.getCountDistinctCapacity());
     }
 }

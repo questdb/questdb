@@ -44,16 +44,16 @@ import io.questdb.std.ObjList;
 import static io.questdb.cairo.sql.SymbolTable.VALUE_IS_NULL;
 
 public class CountDistinctSymbolGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
-    // Default symbol table capacity is 256, so we take 4x of that for the bit set.
-    private static final int INITIAL_BITSET_CAPACITY = 1024;
     private final Function arg;
+    private final int setInitialCapacity;
     private final ObjList<BitSet> sets = new ObjList<>();
     private int knownSymbolCount = -1;
     private int setIndex;
     private int valueIndex;
 
-    public CountDistinctSymbolGroupByFunction(Function arg) {
+    public CountDistinctSymbolGroupByFunction(Function arg, int setInitialCapacity) {
         this.arg = arg;
+        this.setInitialCapacity = setInitialCapacity * BitSet.BITS_PER_WORD;
     }
 
     @Override
@@ -67,7 +67,7 @@ public class CountDistinctSymbolGroupByFunction extends LongFunction implements 
     public void computeFirst(MapValue mapValue, Record record) {
         final BitSet set;
         if (sets.size() <= setIndex) {
-            sets.extendAndSet(setIndex, set = new BitSet(INITIAL_BITSET_CAPACITY));
+            sets.extendAndSet(setIndex, set = new BitSet(setInitialCapacity));
         } else {
             set = sets.getQuick(setIndex);
             set.clear();
