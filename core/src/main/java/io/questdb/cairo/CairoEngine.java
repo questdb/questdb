@@ -712,7 +712,7 @@ public class CairoEngine implements Closeable, WriterSource {
         // busy metadata is same as busy reader from user perspective
         String lockedReason;
         if (tableReaderMetadataPool.lock(tableToken)) {
-            if (!tableToken.isWal() || sequencerMetadataPool.lock(tableToken)) {
+            if (sequencerMetadataPool.lock(tableToken)) {
                 lockedReason = writerPool.lock(tableToken, lockReason);
                 if (lockedReason == null) {
                     // not locked
@@ -724,9 +724,6 @@ public class CairoEngine implements Closeable, WriterSource {
                     }
                     writerPool.unlock(tableToken);
                     lockedReason = REASON_BUSY_READER;
-                }
-                if (tableToken.isWal()) {
-                    sequencerMetadataPool.unlock(tableToken);
                 }
             } else {
                 lockedReason = REASON_BUSY_SEQUENCER_METADATA_POOL;
