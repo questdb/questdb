@@ -174,6 +174,8 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(509, configuration.getCairoConfiguration().getMkDirMode());
         Assert.assertEquals(509, configuration.getCairoConfiguration().getDetachedMkDirMode());
         Assert.assertEquals(8, configuration.getCairoConfiguration().getBindVariablePoolSize());
+        Assert.assertEquals(16, configuration.getCairoConfiguration().getCountDistinctCapacity());
+        Assert.assertEquals(0.7, configuration.getCairoConfiguration().getCountDistinctLoadFactor(), 0.000001);
 
         Assert.assertEquals(100000, configuration.getCairoConfiguration().getParallelIndexThreshold());
         Assert.assertEquals(10, configuration.getCairoConfiguration().getReaderPoolMaxSegments());
@@ -1041,6 +1043,8 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(8 * 1024, configuration.getCairoConfiguration().getSqlJoinMetadataPageSize());
             Assert.assertEquals(10_000, configuration.getCairoConfiguration().getSqlJoinMetadataMaxResizes());
             Assert.assertEquals(16, configuration.getCairoConfiguration().getBindVariablePoolSize());
+            Assert.assertEquals(128, configuration.getCairoConfiguration().getCountDistinctCapacity());
+            Assert.assertEquals(0.3, configuration.getCairoConfiguration().getCountDistinctLoadFactor(), 0.000001);
 
             Assert.assertEquals(256, configuration.getCairoConfiguration().getWindowColumnPoolCapacity());
             Assert.assertEquals(256, configuration.getCairoConfiguration().getSqlWindowMaxRecursion());

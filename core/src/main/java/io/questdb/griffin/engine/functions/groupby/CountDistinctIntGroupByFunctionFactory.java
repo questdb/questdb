@@ -43,7 +43,17 @@ public class CountDistinctIntGroupByFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new CountDistinctIntGroupByFunction(args.getQuick(0));
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        return new CountDistinctIntGroupByFunction(
+                args.getQuick(0),
+                configuration.getCountDistinctCapacity(),
+                configuration.getCountDistinctLoadFactor()
+        );
     }
 }

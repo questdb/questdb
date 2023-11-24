@@ -166,6 +166,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getCountDistinctCapacity() {
+        return delegate.getCountDistinctCapacity();
+    }
+
+    @Override
+    public double getCountDistinctLoadFactor() {
+        return delegate.getCountDistinctLoadFactor();
+    }
+
+    @Override
     public int getCreateAsSelectRetryCount() {
         return delegate.getCreateAsSelectRetryCount();
     }

@@ -251,6 +251,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlCompilerPoolCapacity;
     private final int sqlCopyBufferSize;
     private final int sqlCopyModelPoolCapacity;
+    private final int sqlCountDistinctCapacity;
+    private final double sqlCountDistinctLoadFactor;
     private final int sqlCreateTableModelPoolCapacity;
     private final int sqlDistinctTimestampKeyCapacity;
     private final double sqlDistinctTimestampLoadFactor;
@@ -918,6 +920,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlGroupByPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_GROUPBY_POOL_CAPACITY, 1024);
             this.sqlMaxSymbolNotEqualsCount = getInt(properties, env, PropertyKey.CAIRO_SQL_MAX_SYMBOL_NOT_EQUALS_COUNT, 100);
             this.sqlBindVariablePoolSize = getInt(properties, env, PropertyKey.CAIRO_SQL_BIND_VARIABLE_POOL_SIZE, 8);
+            this.sqlCountDistinctCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_COUNT_DISTINCT_CAPACITY, 16);
+            this.sqlCountDistinctLoadFactor = getDouble(properties, env, PropertyKey.CAIRO_SQL_COUNT_DISTINCT_LOAD_FACTOR, "0.7");
             final String sqlCopyFormatsFile = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_FORMATS_FILE, "/text_loader.json");
             final String dateLocale = getString(properties, env, PropertyKey.CAIRO_DATE_LOCALE, "en");
             this.locale = DateLocaleFactory.INSTANCE.getLocale(dateLocale);
@@ -1902,13 +1906,22 @@ public class PropServerConfiguration implements ServerConfiguration {
             if (cairoSQLCopyIdSupplier == 0) {
                 return randomIDSupplier;
             }
-
             return sequentialIDSupplier;
         }
 
         @Override
         public int getCopyPoolCapacity() {
             return sqlCopyModelPoolCapacity;
+        }
+
+        @Override
+        public int getCountDistinctCapacity() {
+            return sqlCountDistinctCapacity;
+        }
+
+        @Override
+        public double getCountDistinctLoadFactor() {
+            return sqlCountDistinctLoadFactor;
         }
 
         @Override
