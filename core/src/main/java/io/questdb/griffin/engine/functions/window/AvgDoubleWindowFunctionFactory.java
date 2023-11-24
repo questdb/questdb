@@ -309,7 +309,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
     // (rows between current row and current row) processes 1-element-big set, so simply it returns expression value
     static class AvgOverCurrentRowFunction extends BaseAvgFunction {
 
-        private double avg;
+        private double value;
 
         AvgOverCurrentRowFunction(Function arg) {
             super(arg);
@@ -317,12 +317,12 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
 
         @Override
         public void computeNext(Record record) {
-            avg = arg.getDouble(record);
+            value = arg.getDouble(record);
         }
 
         @Override
         public double getDouble(Record rec) {
-            return avg;
+            return value;
         }
 
         @Override
@@ -333,7 +333,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), avg);
+            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), value);
         }
     }
 
@@ -418,6 +418,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         private final MemoryARW memory;
         private final long minDiff;
         private final int timestampIndex;
+        protected double sum;
         private double avg;
 
         public AvgOverPartitionRangeFrameFunction(
@@ -493,16 +494,19 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
                     if (frameIncludesCurrentValue) {
                         sum = d;
                         avg = d;
+                        this.sum = d;
                         frameSize = 1;
                     } else {
                         sum = 0.0;
                         avg = Double.NaN;
+                        this.sum = Double.NaN;
                         frameSize = 0;
                     }
                 } else {
                     size = 0;
                     sum = 0.0;
                     avg = Double.NaN;
+                    this.sum = Double.NaN;
                     frameSize = 0;
                 }
             } else {
@@ -611,7 +615,14 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
                     firstIdx = newFirstIdx;
                 }
 
-                avg = (frameSize != 0 ? sum / frameSize : Double.NaN);
+                if (frameSize != 0) {
+                    avg = sum / frameSize;
+                    this.sum = sum;
+                } else {
+                    avg = Double.NaN;
+                    this.sum = Double.NaN;
+                }
+
             }
 
             mapValue.putDouble(0, sum);
@@ -642,6 +653,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
             super.reopen();
             // memory will allocate on first use
             avg = Double.NaN;
+            sum = Double.NaN;
         }
 
         @Override
@@ -653,7 +665,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val(NAME);
+            sink.val(getName());
             sink.val('(').val(arg).val(')');
             sink.val(" over (");
             sink.val("partition by ");
@@ -694,6 +706,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         private final int frameSize;
         // holds fixed-size ring buffers of double values
         private final MemoryARW memory;
+        protected double sum;
         private double avg;
 
         public AvgOverPartitionRowsFrameFunction(
@@ -748,9 +761,11 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
                     sum = d;
                     count = 1;
                     avg = d;
+                    this.sum = d;
                 } else {
                     sum = 0.0;
                     avg = Double.NaN;
+                    this.sum = Double.NaN;
                     count = 0;
                 }
 
@@ -771,7 +786,14 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
                 }
 
                 //here sum is correct for current row
-                avg = count != 0 ? sum / count : Double.NaN;
+                if (count != 0) {
+                    avg = sum / count;
+                    this.sum = sum;
+                } else {
+                    avg = Double.NaN;
+                    this.sum = Double.NaN;
+                }
+
 
                 if (frameLoBounded) {
                     //remove the oldest element
@@ -820,7 +842,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val(NAME);
+            sink.val(getName());
             sink.val('(').val(arg).val(')');
             sink.val(" over (");
             sink.val("partition by ");
@@ -862,6 +884,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         private final MemoryARW memory;
         private final long minDiff;
         private final int timestampIndex;
+        protected double externalSum;
         private double avg;
         private long capacity;
         private long firstIdx;
@@ -981,8 +1004,14 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
                 }
                 firstIdx = newFirstIdx;
             }
+            if (frameSize != 0) {
+                avg = sum / frameSize;
+                externalSum = sum;
 
-            avg = frameSize != 0 ? sum / frameSize : Double.NaN;
+            } else {
+                avg = Double.NaN;
+                externalSum = Double.NaN;
+            }
         }
 
         @Override
@@ -1003,6 +1032,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         @Override
         public void reopen() {
             avg = Double.NaN;
+            externalSum = Double.NaN;
             capacity = initialCapacity;
             startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
             firstIdx = 0;
@@ -1019,7 +1049,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val(NAME);
+            sink.val(getName());
             sink.val('(').val(arg).val(')');
             sink.val(" over (");
             sink.val("range between ");
@@ -1041,6 +1071,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         public void toTop() {
             super.toTop();
             avg = Double.NaN;
+            externalSum = Double.NaN;
             capacity = initialCapacity;
             memory.truncate();
             startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
@@ -1059,6 +1090,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         private final int frameSize;
+        protected double externalSum = 0;
         private double avg = 0;
         private long count = 0;
         private int loIdx = 0;
@@ -1098,8 +1130,14 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
                 sum += hiValue;
                 count++;
             }
+            if (count != 0) {
+                avg = sum / count;
+                externalSum = sum;
+            } else {
+                avg = Double.NaN;
+                externalSum = Double.NaN;
+            }
 
-            avg = count != 0 ? sum / count : Double.NaN;
 
             if (frameLoBounded) {
                 //remove the oldest element with newest
@@ -1152,7 +1190,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val(NAME);
+            sink.val(getName());
             sink.val('(').val(arg).val(')');
             sink.val(" over (");
             sink.val(" rows between ");
@@ -1393,6 +1431,11 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public String getName() {
+            return NAME;
+        }
+
+        @Override
         public void initRecordComparator(RecordComparatorCompiler recordComparatorCompiler, ArrayColumnTypes chainTypes, IntList order) {
         }
 
@@ -1408,7 +1451,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val(NAME);
+            sink.val(getName());
             sink.val('(').val(arg).val(')');
             sink.val(" over ()");
         }

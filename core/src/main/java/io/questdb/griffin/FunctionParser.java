@@ -713,7 +713,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
                 if (factory.isWindow()) {
                     // prefer window functions in window context, otherwise non-window functions
-                    sigArgTypeScore += isWindowContext ? -1 : 1;
+                    sigArgTypeScore += isWindowContext ? -10 : 10;
                 }
 
                 if (match == MATCH_EXACT_MATCH || match >= bestMatch) {
