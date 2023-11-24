@@ -21,15 +21,7 @@ public class DoubleLinearIterator implements Iterator<DoubleHistogramIterationVa
     DoubleHistogram histogram;
 
     /**
-     * Reset iterator for re-use in a fresh iteration over the same histogram data set.
-     * @param valueUnitsPerBucket The size (in value units) of each bucket iteration.
-     */
-    public void reset(final double valueUnitsPerBucket) {
-        integerLinearIterator.reset((long) (valueUnitsPerBucket * histogram.getDoubleToIntegerValueConversionRatio()));
-    }
-
-    /**
-     * @param histogram The histogram this iterator will operate on
+     * @param histogram           The histogram this iterator will operate on
      * @param valueUnitsPerBucket The size (in value units) of each bucket iteration.
      */
     public DoubleLinearIterator(final DoubleHistogram histogram, final double valueUnitsPerBucket) {
@@ -55,5 +47,14 @@ public class DoubleLinearIterator implements Iterator<DoubleHistogramIterationVa
     @Override
     public void remove() {
         integerLinearIterator.remove();
+    }
+
+    /**
+     * Reset iterator for re-use in a fresh iteration over the same histogram data set.
+     *
+     * @param valueUnitsPerBucket The size (in value units) of each bucket iteration.
+     */
+    public void reset(final double valueUnitsPerBucket) {
+        integerLinearIterator.reset((long) (valueUnitsPerBucket * histogram.getDoubleToIntegerValueConversionRatio()));
     }
 }

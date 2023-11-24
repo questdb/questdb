@@ -34,15 +34,84 @@ package io.questdb.std.histogram.org.HdrHistogram;
  */
 
 public class HistogramIterationValue {
-    private long valueIteratedTo;
-    private long valueIteratedFrom;
-    private long countAtValueIteratedTo;
     private long countAddedInThisIterationStep;
-    private long totalCountToThisValue;
-    private long totalValueToThisValue;
+    private long countAtValueIteratedTo;
+    private double integerToDoubleValueConversionRatio;
     private double percentile;
     private double percentileLevelIteratedTo;
-    private double integerToDoubleValueConversionRatio;
+    private long totalCountToThisValue;
+    private long totalValueToThisValue;
+    private long valueIteratedFrom;
+    private long valueIteratedTo;
+
+    HistogramIterationValue() {
+    }
+
+    public long getCountAddedInThisIterationStep() {
+        return countAddedInThisIterationStep;
+    }
+
+    public long getCountAtValueIteratedTo() {
+        return countAtValueIteratedTo;
+    }
+
+    public double getDoubleValueIteratedFrom() {
+        return valueIteratedFrom * integerToDoubleValueConversionRatio;
+    }
+
+    public double getDoubleValueIteratedTo() {
+        return valueIteratedTo * integerToDoubleValueConversionRatio;
+    }
+
+    public double getIntegerToDoubleValueConversionRatio() {
+        return integerToDoubleValueConversionRatio;
+    }
+
+    public double getPercentile() {
+        return percentile;
+    }
+
+    public double getPercentileLevelIteratedTo() {
+        return percentileLevelIteratedTo;
+    }
+
+    public long getTotalCountToThisValue() {
+        return totalCountToThisValue;
+    }
+
+    public long getTotalValueToThisValue() {
+        return totalValueToThisValue;
+    }
+
+    public long getValueIteratedFrom() {
+        return valueIteratedFrom;
+    }
+
+    public long getValueIteratedTo() {
+        return valueIteratedTo;
+    }
+
+    public String toString() {
+        return "valueIteratedTo:" + valueIteratedTo +
+                ", prevValueIteratedTo:" + valueIteratedFrom +
+                ", countAtValueIteratedTo:" + countAtValueIteratedTo +
+                ", countAddedInThisIterationStep:" + countAddedInThisIterationStep +
+                ", totalCountToThisValue:" + totalCountToThisValue +
+                ", totalValueToThisValue:" + totalValueToThisValue +
+                ", percentile:" + percentile +
+                ", percentileLevelIteratedTo:" + percentileLevelIteratedTo;
+    }
+
+    void reset() {
+        this.valueIteratedTo = 0;
+        this.valueIteratedFrom = 0;
+        this.countAtValueIteratedTo = 0;
+        this.countAddedInThisIterationStep = 0;
+        this.totalCountToThisValue = 0;
+        this.totalValueToThisValue = 0;
+        this.percentile = 0.0;
+        this.percentileLevelIteratedTo = 0.0;
+    }
 
     // Set is all-or-nothing to avoid the potential for accidental omission of some values...
     void set(final long valueIteratedTo, final long valueIteratedFrom, final long countAtValueIteratedTo,
@@ -58,71 +127,4 @@ public class HistogramIterationValue {
         this.percentileLevelIteratedTo = percentileLevelIteratedTo;
         this.integerToDoubleValueConversionRatio = integerToDoubleValueConversionRatio;
     }
-
-    void reset() {
-        this.valueIteratedTo = 0;
-        this.valueIteratedFrom = 0;
-        this.countAtValueIteratedTo = 0;
-        this.countAddedInThisIterationStep = 0;
-        this.totalCountToThisValue = 0;
-        this.totalValueToThisValue = 0;
-        this.percentile = 0.0;
-        this.percentileLevelIteratedTo = 0.0;
-    }
-
-    HistogramIterationValue() {
-    }
-
-    public String toString() {
-        return  "valueIteratedTo:" + valueIteratedTo +
-                ", prevValueIteratedTo:" + valueIteratedFrom +
-                ", countAtValueIteratedTo:" + countAtValueIteratedTo +
-                ", countAddedInThisIterationStep:" + countAddedInThisIterationStep +
-                ", totalCountToThisValue:" + totalCountToThisValue +
-                ", totalValueToThisValue:" + totalValueToThisValue +
-                ", percentile:" + percentile +
-                ", percentileLevelIteratedTo:" + percentileLevelIteratedTo;
-    }
-
-    public long getValueIteratedTo() {
-        return valueIteratedTo;
-    }
-
-    public double getDoubleValueIteratedTo() {
-        return valueIteratedTo * integerToDoubleValueConversionRatio;
-    }
-
-    public long getValueIteratedFrom() {
-        return valueIteratedFrom;
-    }
-
-    public double getDoubleValueIteratedFrom() {
-        return valueIteratedFrom * integerToDoubleValueConversionRatio;
-    }
-
-    public long getCountAtValueIteratedTo() {
-        return countAtValueIteratedTo;
-    }
-
-    public long getCountAddedInThisIterationStep() {
-        return countAddedInThisIterationStep;
-    }
-
-    public long getTotalCountToThisValue() {
-        return totalCountToThisValue;
-    }
-
-    public long getTotalValueToThisValue() {
-        return totalValueToThisValue;
-    }
-
-    public double getPercentile() {
-        return percentile;
-    }
-
-    public double getPercentileLevelIteratedTo() {
-        return percentileLevelIteratedTo;
-    }
-
-    public double getIntegerToDoubleValueConversionRatio() { return integerToDoubleValueConversionRatio; }
 }

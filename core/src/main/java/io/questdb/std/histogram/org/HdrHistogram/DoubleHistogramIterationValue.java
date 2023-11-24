@@ -36,41 +36,28 @@ package io.questdb.std.histogram.org.HdrHistogram;
 public class DoubleHistogramIterationValue {
     private final HistogramIterationValue integerHistogramIterationValue;
 
-    void reset() {
-        integerHistogramIterationValue.reset();
-    }
-
     DoubleHistogramIterationValue(HistogramIterationValue integerHistogramIterationValue) {
         this.integerHistogramIterationValue = integerHistogramIterationValue;
     }
 
-    public String toString() {
-        return  "valueIteratedTo:" + getValueIteratedTo() +
-                ", prevValueIteratedTo:" + getValueIteratedFrom() +
-                ", countAtValueIteratedTo:" + getCountAtValueIteratedTo() +
-                ", countAddedInThisIterationStep:" + getCountAddedInThisIterationStep() +
-                ", totalCountToThisValue:" + getTotalCountToThisValue() +
-                ", totalValueToThisValue:" + getTotalValueToThisValue() +
-                ", percentile:" + getPercentile() +
-                ", percentileLevelIteratedTo:" + getPercentileLevelIteratedTo();
-    }
-
-    public double getValueIteratedTo() {
-        return integerHistogramIterationValue.getValueIteratedTo() *
-                integerHistogramIterationValue.getIntegerToDoubleValueConversionRatio();
-    }
-
-    public double getValueIteratedFrom() {
-        return integerHistogramIterationValue.getValueIteratedFrom() *
-                integerHistogramIterationValue.getIntegerToDoubleValueConversionRatio();
+    public long getCountAddedInThisIterationStep() {
+        return integerHistogramIterationValue.getCountAddedInThisIterationStep();
     }
 
     public long getCountAtValueIteratedTo() {
         return integerHistogramIterationValue.getCountAtValueIteratedTo();
     }
 
-    public long getCountAddedInThisIterationStep() {
-        return integerHistogramIterationValue.getCountAddedInThisIterationStep();
+    public HistogramIterationValue getIntegerHistogramIterationValue() {
+        return integerHistogramIterationValue;
+    }
+
+    public double getPercentile() {
+        return integerHistogramIterationValue.getPercentile();
+    }
+
+    public double getPercentileLevelIteratedTo() {
+        return integerHistogramIterationValue.getPercentileLevelIteratedTo();
     }
 
     public long getTotalCountToThisValue() {
@@ -82,15 +69,28 @@ public class DoubleHistogramIterationValue {
                 integerHistogramIterationValue.getIntegerToDoubleValueConversionRatio();
     }
 
-    public double getPercentile() {
-        return integerHistogramIterationValue.getPercentile();
+    public double getValueIteratedFrom() {
+        return integerHistogramIterationValue.getValueIteratedFrom() *
+                integerHistogramIterationValue.getIntegerToDoubleValueConversionRatio();
     }
 
-    public double getPercentileLevelIteratedTo() {
-        return integerHistogramIterationValue.getPercentileLevelIteratedTo();
+    public double getValueIteratedTo() {
+        return integerHistogramIterationValue.getValueIteratedTo() *
+                integerHistogramIterationValue.getIntegerToDoubleValueConversionRatio();
     }
 
-    public HistogramIterationValue getIntegerHistogramIterationValue() {
-        return integerHistogramIterationValue;
+    public String toString() {
+        return "valueIteratedTo:" + getValueIteratedTo() +
+                ", prevValueIteratedTo:" + getValueIteratedFrom() +
+                ", countAtValueIteratedTo:" + getCountAtValueIteratedTo() +
+                ", countAddedInThisIterationStep:" + getCountAddedInThisIterationStep() +
+                ", totalCountToThisValue:" + getTotalCountToThisValue() +
+                ", totalValueToThisValue:" + getTotalValueToThisValue() +
+                ", percentile:" + getPercentile() +
+                ", percentileLevelIteratedTo:" + getPercentileLevelIteratedTo();
+    }
+
+    void reset() {
+        integerHistogramIterationValue.reset();
     }
 }

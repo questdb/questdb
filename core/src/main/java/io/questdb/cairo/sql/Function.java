@@ -32,8 +32,8 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSinkBase;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
 
 import java.io.Closeable;
 
@@ -167,7 +167,7 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
         return false;
     }
 
-    //used in generic toSink implementations
+    // used in generic toSink implementations
     default boolean isOperator() {
         return false;
     }

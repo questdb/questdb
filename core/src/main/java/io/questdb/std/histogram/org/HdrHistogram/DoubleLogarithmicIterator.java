@@ -21,21 +21,9 @@ public class DoubleLogarithmicIterator implements Iterator<DoubleHistogramIterat
     DoubleHistogram histogram;
 
     /**
-     * Reset iterator for re-use in a fresh iteration over the same histogram data set.
+     * @param histogram               The histogram this iterator will operate on
      * @param valueUnitsInFirstBucket the size (in value units) of the first value bucket step
-     * @param logBase the multiplier by which the bucket size is expanded in each iteration step.
-     */
-    public void reset(final double valueUnitsInFirstBucket, final double logBase) {
-        integerLogarithmicIterator.reset(
-                (long) (valueUnitsInFirstBucket * histogram.getDoubleToIntegerValueConversionRatio()),
-                logBase
-        );
-    }
-
-    /**
-     * @param histogram The histogram this iterator will operate on
-     * @param valueUnitsInFirstBucket the size (in value units) of the first value bucket step
-     * @param logBase the multiplier by which the bucket size is expanded in each iteration step.
+     * @param logBase                 the multiplier by which the bucket size is expanded in each iteration step.
      */
     public DoubleLogarithmicIterator(final DoubleHistogram histogram, final double valueUnitsInFirstBucket,
                                      final double logBase) {
@@ -62,5 +50,18 @@ public class DoubleLogarithmicIterator implements Iterator<DoubleHistogramIterat
     @Override
     public void remove() {
         integerLogarithmicIterator.remove();
+    }
+
+    /**
+     * Reset iterator for re-use in a fresh iteration over the same histogram data set.
+     *
+     * @param valueUnitsInFirstBucket the size (in value units) of the first value bucket step
+     * @param logBase                 the multiplier by which the bucket size is expanded in each iteration step.
+     */
+    public void reset(final double valueUnitsInFirstBucket, final double logBase) {
+        integerLogarithmicIterator.reset(
+                (long) (valueUnitsInFirstBucket * histogram.getDoubleToIntegerValueConversionRatio()),
+                logBase
+        );
     }
 }

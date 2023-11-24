@@ -24,9 +24,7 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class StringAggGroupByFunctionFactoryTest extends AbstractCairoTest {
@@ -58,23 +56,91 @@ public class StringAggGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testGroupKeyedUnsupported() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl("create table x as (" +
-                    "select * from (" +
-                    "   select " +
-                    "       rnd_symbol('a','b','c','d','e','f') a," +
-                    "       rnd_str('abc', 'aaa', 'bbb', 'ccc') s, " +
-                    "       timestamp_sequence(0, 100000) ts " +
-                    "   from long_sequence(5)" +
-                    ") timestamp(ts))"
-            );
-            try {
-                assertException("select a, string_agg(s, ',') from x");
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "value type is not supported: STRING");
-            }
-        });
+    public void testGroupKeyed() throws Exception {
+        assertQuery(
+                "a\tstring_agg\n" +
+                        "a\tbbb,abc,aaa\n" +
+                        "b\tccc,abc\n" +
+                        "f\tccc\n" +
+                        "c\tccc\n" +
+                        "e\tabc,ccc\n" +
+                        "d\tbbb\n",
+                "select a, string_agg(s, ',') from x",
+                "create table x as (" +
+                        "select * from (" +
+                        "   select " +
+                        "       rnd_symbol('a','b','c','d','e','f') a," +
+                        "       rnd_str('abc', 'aaa', 'bbb', 'ccc') s, " +
+                        "       timestamp_sequence(0, 100000) ts " +
+                        "   from long_sequence(10)" +
+                        ") timestamp(ts))",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testGroupKeyedAllNulls() throws Exception {
+        assertQuery(
+                "a\tstring_agg\n" +
+                        "a\t\n" +
+                        "b\t\n" +
+                        "c\t\n",
+                "select a, string_agg(s, ',') from x",
+                "create table x as (" +
+                        "select * from (" +
+                        "   select " +
+                        "       rnd_symbol('a','b','c') a," +
+                        "       null::string s, " +
+                        "       timestamp_sequence(0, 100000) ts " +
+                        "   from long_sequence(5)" +
+                        ") timestamp(ts))",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testGroupKeyedManyRows() throws Exception {
+        assertQuery(
+                "max\n" +
+                        "47\n",
+                "select max(length(agg)) from (select a, string_agg(s, ',') agg from x)",
+                "create table x as (" +
+                        "select * from (" +
+                        "   select " +
+                        "       rnd_symbol(200,10,10,0) a," +
+                        "       rnd_str('abc', 'aaa', 'bbb', 'ccc') s, " +
+                        "       timestamp_sequence(0, 100000) ts " +
+                        "   from long_sequence(1000)" +
+                        ") timestamp(ts))",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testGroupKeyedSomeNulls() throws Exception {
+        assertQuery(
+                "a\tstring_agg\n" +
+                        "\taaa,aaa,aaa,aaa,aaa,aaa\n" +
+                        "a\taaa,aaa,aaa,aaa\n",
+                "select a, string_agg(s, ',') from x",
+                "create table x as (" +
+                        "select * from (" +
+                        "   select " +
+                        "       rnd_symbol(null, 'a') a," +
+                        "       rnd_str(null, 'aaa') s, " +
+                        "       timestamp_sequence(0, 100000) ts " +
+                        "   from long_sequence(20)" +
+                        ") timestamp(ts))",
+                null,
+                true,
+                true
+        );
     }
 
     @Test
@@ -92,8 +158,18 @@ public class StringAggGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testSkipNull() throws Exception {
-        assertQuery("string_agg\n" +
-                        "\n", "select string_agg(s, ',') from x", "create table x as (select * from (select cast(null as string) s from long_sequence(5)))", null, "insert into x select 'abc' from long_sequence(1)", "string_agg\n" +
-                        "abc\n", false, true, false);
+        assertQuery(
+                "string_agg\n" +
+                        "\n",
+                "select string_agg(s, ',') from x",
+                "create table x as (select * from (select cast(null as string) s from long_sequence(5)))",
+                null,
+                "insert into x select 'abc' from long_sequence(1)",
+                "string_agg\n" +
+                        "abc\n",
+                false,
+                true,
+                false
+        );
     }
 }
