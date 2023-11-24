@@ -965,7 +965,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         if (commitToTimestamp != WalTxnDetails.FORCE_FULL_COMMIT) {
             final int maxLagTxnCount = configuration.getWalMaxLagTxnCount();
-            if (txWriter.getLagTxnCount() >= maxLagTxnCount) {
+            if (maxLagTxnCount > 0 && txWriter.getLagTxnCount() >= maxLagTxnCount) {
                 // Too many txns are in the lag, so force a full commit.
                 commitToTimestamp = WalTxnDetails.FORCE_FULL_COMMIT;
             } else {
@@ -1681,7 +1681,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         boolean sucess = true;
         try {
-            final long maxLagRows = getMaxWalSquashRows();
+            final long maxLagRows = getWalMaxLagRows();
             final long walLagMaxTimestampBefore = txWriter.getLagMaxTimestamp();
             mmapWalColumns(walPath, walSegmentId, timestampIndex, rowLo, rowHi);
             final long newMinLagTs = Math.min(o3TimestampMin, txWriter.getLagMinTimestamp());
@@ -1697,7 +1697,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 long totalUncommitted = walLagRowCount + commitRowCount;
                 boolean copyToLagOnly = commitToTimestamp < newMinLagTs
-                        || (commitToTimestamp != WalTxnDetails.FORCE_FULL_COMMIT && totalUncommitted < walLagRowCount);
+                        || (commitToTimestamp != WalTxnDetails.FORCE_FULL_COMMIT && totalUncommitted < maxLagRows);
 
                 if (copyToLagOnly && totalUncommitted <= maxLagRows) {
                     // Don't commit anything, move everything to memory instead.
@@ -1817,7 +1817,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     );
 
                     final boolean lagTrimmedToMax = o3Hi - lagThresholdRow > maxLagRows;
-                    long trimmedLagSize = Math.min(maxLagRows / 2, metadata.getMaxUncommittedRows());
+                    long trimmedLagSize = maxLagRows / 3;
                     walLagRowCount = lagTrimmedToMax ? trimmedLagSize : o3Hi - lagThresholdRow;
                     assert walLagRowCount > 0 && walLagRowCount <= o3Hi - o3Lo;
 
@@ -3875,10 +3875,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private long getMaxWalSquashRows() {
-        return Math.max(0L, (long) configuration.getWalSquashUncommittedRowsMultiplier() * metadata.getMaxUncommittedRows());
-    }
-
     private long getO3RowCount0() {
         return (masterRef - o3MasterRef + 1) / 2;
     }
@@ -3908,6 +3904,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private MemoryMA getSecondaryColumn(int column) {
         assert column < columnCount : "Column index is out of bounds: " + column + " >= " + columnCount;
         return columns.getQuick(getSecondaryColumnIndex(column));
+    }
+
+    private long getWalMaxLagRows() {
+        return Math.min(
+                Math.max(0L, (long) configuration.getWalSquashUncommittedRowsMultiplier() * metadata.getMaxUncommittedRows()),
+                getWalMaxLagSize()
+        );
+    }
+
+    private long getWalMaxLagSize() {
+        long splitMinSizeBytes = configuration.getWalMaxLagSize();
+        return (long) (splitMinSizeBytes * 1.5 /
+                (avgRecordSize != 0 ? avgRecordSize : (avgRecordSize = TableUtils.estimateAvgRecordSize(metadata))));
     }
 
     private void handleWorkStealingException(

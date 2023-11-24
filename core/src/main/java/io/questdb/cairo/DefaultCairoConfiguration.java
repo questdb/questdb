@@ -857,6 +857,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getWalMaxLagSize() {
+        return 50 * Numbers.SIZE_1MB;
+    }
+
+    @Override
     public int getWalMaxLagTxnCount() {
         return 20;
     }

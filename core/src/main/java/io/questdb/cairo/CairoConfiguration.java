@@ -481,6 +481,8 @@ public interface CairoConfiguration {
 
     boolean getWalEnabledDefault();
 
+    long getWalMaxLagSize();
+
     int getWalMaxLagTxnCount();
 
     long getWalPurgeInterval();
