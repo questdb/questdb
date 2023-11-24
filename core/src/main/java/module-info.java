@@ -111,6 +111,7 @@ open module io.questdb {
     exports io.questdb.client;
     exports io.questdb.std.bytes;
     exports io.questdb.std.histogram.org.HdrHistogram.packedarray;
+    exports io.questdb.duckdb;
 
     provides FunctionFactory with
             // test functions

@@ -209,10 +209,26 @@ if (UNIX AND NOT APPLE AND CMAKE_SYSTEM_NAME MATCHES "Linux")
     target_link_libraries(liburing INTERFACE ${SOURCE_DIR}/src/liburing.a)
 endif ()
 
-# ZLIB_SRCS is defined in Zlib Cmake config
-add_library(questdb SHARED ${SOURCE_FILES} ${ZLIB_SRCS} ${ASMJIT_SRC})
+MESSAGE("Downloading DuckDB")
+FetchContent_Populate(
+        duckdb
+        URL https://github.com/duckdb/duckdb/releases/download/v0.9.2/libduckdb-src.zip
+        SOURCE_DIR duckdb-src
+)
+message("DuckDB source dir: ${duckdb_SOURCE_DIR}")
+set(
+        DUCKDB_SRCS
+        ${duckdb_SOURCE_DIR}/duckdb.h
+        ${duckdb_SOURCE_DIR}/duckdb.hpp
+        ${duckdb_SOURCE_DIR}/duckdb.cpp
+        src/main/c/share/duckdb_jni.cpp src/main/c/share/duckdb_jni.h)
+include_directories(${duckdb_SOURCE_DIR} SYSTEM)
 
-set(COMMON_OPTIONS "-Wno-gnu-anonymous-struct;-Wno-nested-anon-types;-Wno-unused-parameter;-fPIC;-fno-rtti;-fno-exceptions")
+# ZLIB_SRCS is defined in Zlib Cmake config
+add_library(questdb SHARED ${SOURCE_FILES} ${ZLIB_SRCS} ${ASMJIT_SRC} ${DUCKDB_SRCS})
+
+#set(COMMON_OPTIONS "-Wno-gnu-anonymous-struct;-Wno-nested-anon-types;-Wno-unused-parameter;-fPIC;-fno-rtti;-fno-exceptions")
+set(COMMON_OPTIONS "-Wno-gnu-anonymous-struct;-Wno-nested-anon-types;-Wno-unused-parameter;-fPIC")
 
 set(DEBUG_OPTIONS "-Wall;-pedantic;-Wextra;-g;-O0")
 set(RELEASE_OPTIONS "-O3")
