@@ -48,6 +48,7 @@ import org.junit.*;
 
 import java.io.File;
 import java.util.Arrays;
+import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
@@ -169,73 +170,87 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             for (String frameType : Arrays.asList("rows ", "range")) {
                 String queryPrefix = prefix + frameType;
 
-                assertFailure(60,
+                assertFailure(
+                        60,
                         "integer expression expected",
                         queryPrefix + " between preceding and current row)  from trips"
 
                 );
 
-                assertFailure(77,
+                assertFailure(
+                        77,
                         "integer expression expected",
                         queryPrefix + " between 10 preceding and preceding)  from trips"
                 );
 
-                assertFailure(77,
+                assertFailure(
+                        77,
                         "integer expression expected",
                         queryPrefix + " between 10 preceding and following)  from trips"
                 );
 
-                assertFailure(52,
+                assertFailure(
+                        52,
                         "integer expression expected",
                         queryPrefix + " preceding)  from trips"
                 );
 
-                assertFailure(52,
+                assertFailure(
+                        52,
                         "integer expression expected",
                         queryPrefix + " following)  from trips"
                 );
 
-                assertFailure(59,
+                assertFailure(
+                        59,
                         "Expression expected",
                         queryPrefix + " between)  from trips"
                 );
 
-                assertFailure(60,
+                assertFailure(
+                        60,
                         "integer expression expected",
                         queryPrefix + " between '' preceding and current row)  from trips"
                 );
 
-                assertFailure(60,
+                assertFailure(
+                        60,
                         "integer expression expected",
                         queryPrefix + " between null preceding and current row)  from trips"
                 );
 
-                assertFailure(60,
+                assertFailure(
+                        60,
                         "integer expression expected",
                         queryPrefix + " between #012 preceding and current row)  from trips"
                 );
 
-                assertFailure(60,
+                assertFailure(
+                        60,
                         "integer expression expected",
                         queryPrefix + " between 30d preceding and current row)  from trips"
                 );
 
-                assertFailure(77,
+                assertFailure(
+                        77,
                         "integer expression expected",
                         queryPrefix + " between 30 preceding and 10f preceding)  from trips"
                 );
 
-                assertFailure(77,
+                assertFailure(
+                        77,
                         "integer expression expected",
                         queryPrefix + " between 30 preceding and 10.1f preceding)  from trips"
                 );
 
-                assertFailure(77,
+                assertFailure(
+                        77,
                         "invalid constant",
                         queryPrefix + " between 30 preceding and 10g preceding)  from trips"
                 );
 
-                assertFailure(52,
+                assertFailure(
+                        52,
                         "integer expression expected",
                         queryPrefix + " 10.2f preceding)  from trips"
                 );
@@ -4570,11 +4585,13 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table trades (symbol symbol, timestamp timestamp) timestamp(timestamp)");
 
-            assertSql("symbol\ttimestamp\tsymbol1\ttimestamp1\tsymbol11\ttimestamp11\tsymbol111\ttimestamp111\tsymbol1111\ttimestamp1111\tsymbol11111\ttimestamp11111\tsymbol111111\ttimestamp111111\tsymbol1111111\ttimestamp1111111\tsymbol11111111\ttimestamp11111111\tsymbol111111111\ttimestamp111111111\tsymbol1111111111\ttimestamp1111111111\tsymbol11111111111\ttimestamp11111111111\tsymbol111111111111\ttimestamp111111111111\tsymbol1111111111111\ttimestamp1111111111111\tsymbol11111111111111\ttimestamp11111111111111\tsymbol111111111111111\ttimestamp111111111111111\tsymbol1111111111111111\ttimestamp1111111111111111\tsymbol11111111111111111\ttimestamp11111111111111111\tsymbol111111111111111111\ttimestamp111111111111111111\tsymbol1111111111111111111\ttimestamp1111111111111111111\tsymbol11111111111111111111\ttimestamp11111111111111111111\tsymbol111111111111111111111\ttimestamp111111111111111111111\tsymbol1111111111111111111111\ttimestamp1111111111111111111111\tsymbol11111111111111111111111\ttimestamp11111111111111111111111\tsymbol111111111111111111111111\ttimestamp111111111111111111111111\tsymbol1111111111111111111111111\ttimestamp1111111111111111111111111\tsymbol11111111111111111111111111\ttimestamp11111111111111111111111111\tsymbol111111111111111111111111111\ttimestamp111111111111111111111111111\tsymbol1111111111111111111111111111\ttimestamp1111111111111111111111111111\tsymbol11111111111111111111111111111\ttimestamp11111111111111111111111111111\tsymbol111111111111111111111111111111\ttimestamp111111111111111111111111111111\tsymbol1111111111111111111111111111111\ttimestamp1111111111111111111111111111111\tsymbol11111111111111111111111111111111\ttimestamp11111111111111111111111111111111\tsymbol111111111111111111111111111111111\ttimestamp111111111111111111111111111111111\tsymbol1111111111111111111111111111111111\ttimestamp1111111111111111111111111111111111\tsymbol11111111111111111111111111111111111\ttimestamp11111111111111111111111111111111111\tsymbol111111111111111111111111111111111111\ttimestamp111111111111111111111111111111111111\tsymbol1111111111111111111111111111111111111\ttimestamp1111111111111111111111111111111111111\tsymbol11111111111111111111111111111111111111\ttimestamp11111111111111111111111111111111111111\tsymbol111111111111111111111111111111111111111\ttimestamp111111111111111111111111111111111111111\tsymbol1111111111111111111111111111111111111111\ttimestamp1111111111111111111111111111111111111111\tsymbol11111111111111111111111111111111111111111\ttimestamp11111111111111111111111111111111111111111\tsymbol111111111111111111111111111111111111111111\ttimestamp111111111111111111111111111111111111111111\n",
+            assertSql(
+                    "symbol\ttimestamp\tsymbol1\ttimestamp1\tsymbol11\ttimestamp11\tsymbol111\ttimestamp111\tsymbol1111\ttimestamp1111\tsymbol11111\ttimestamp11111\tsymbol111111\ttimestamp111111\tsymbol1111111\ttimestamp1111111\tsymbol11111111\ttimestamp11111111\tsymbol111111111\ttimestamp111111111\tsymbol1111111111\ttimestamp1111111111\tsymbol11111111111\ttimestamp11111111111\tsymbol111111111111\ttimestamp111111111111\tsymbol1111111111111\ttimestamp1111111111111\tsymbol11111111111111\ttimestamp11111111111111\tsymbol111111111111111\ttimestamp111111111111111\tsymbol1111111111111111\ttimestamp1111111111111111\tsymbol11111111111111111\ttimestamp11111111111111111\tsymbol111111111111111111\ttimestamp111111111111111111\tsymbol1111111111111111111\ttimestamp1111111111111111111\tsymbol11111111111111111111\ttimestamp11111111111111111111\tsymbol111111111111111111111\ttimestamp111111111111111111111\tsymbol1111111111111111111111\ttimestamp1111111111111111111111\tsymbol11111111111111111111111\ttimestamp11111111111111111111111\tsymbol111111111111111111111111\ttimestamp111111111111111111111111\tsymbol1111111111111111111111111\ttimestamp1111111111111111111111111\tsymbol11111111111111111111111111\ttimestamp11111111111111111111111111\tsymbol111111111111111111111111111\ttimestamp111111111111111111111111111\tsymbol1111111111111111111111111111\ttimestamp1111111111111111111111111111\tsymbol11111111111111111111111111111\ttimestamp11111111111111111111111111111\tsymbol111111111111111111111111111111\ttimestamp111111111111111111111111111111\tsymbol1111111111111111111111111111111\ttimestamp1111111111111111111111111111111\tsymbol11111111111111111111111111111111\ttimestamp11111111111111111111111111111111\tsymbol111111111111111111111111111111111\ttimestamp111111111111111111111111111111111\tsymbol1111111111111111111111111111111111\ttimestamp1111111111111111111111111111111111\tsymbol11111111111111111111111111111111111\ttimestamp11111111111111111111111111111111111\tsymbol111111111111111111111111111111111111\ttimestamp111111111111111111111111111111111111\tsymbol1111111111111111111111111111111111111\ttimestamp1111111111111111111111111111111111111\tsymbol11111111111111111111111111111111111111\ttimestamp11111111111111111111111111111111111111\tsymbol111111111111111111111111111111111111111\ttimestamp111111111111111111111111111111111111111\tsymbol1111111111111111111111111111111111111111\ttimestamp1111111111111111111111111111111111111111\tsymbol11111111111111111111111111111111111111111\ttimestamp11111111111111111111111111111111111111111\tsymbol111111111111111111111111111111111111111111\ttimestamp111111111111111111111111111111111111111111\n",
                     "WITH Y AS (SELECT * FROM trades WHERE symbol='BTC-USD')," +
                             "X AS (SELECT * FROM ((Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol))  " +
                             "WHERE date_trunc('day', timestamp) = date_trunc('day', timestamp111111111111111111111111111111111111111111))\n" +
-                            "SELECT * FROM X");
+                            "SELECT * FROM X"
+            );
         });
     }
 
@@ -5206,6 +5223,40 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "create table xCHAR as (select '1'::char c union all select null::char )",
                 null, true, false
         );
+    }
+
+    @Test
+    public void testSelectConcurrentDDL() throws Exception {
+        engine.ddl("create table x (a int, b int, c int)", sqlExecutionContext);
+
+        CyclicBarrier barrier = new CyclicBarrier(2);
+        new Thread(() -> {
+            try {
+                while (barrier.getNumberWaiting() == 0) {
+                    ddl("alter table x add column d int", sqlExecutionContext);
+                    ddl("alter table x drop column d", sqlExecutionContext);
+                }
+            } catch (SqlException e) {
+                e.printStackTrace();
+            } finally {
+                try {
+                    barrier.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    e.printStackTrace();
+                } catch (BrokenBarrierException e) {
+                    e.printStackTrace();
+                }
+            }
+        }).start();
+
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            for (int i = 0; i < 20_000; i++) {
+                Misc.freeIfCloseable(compiler.compile("select * from x", sqlExecutionContext).getRecordCursorFactory());
+            }
+        } finally {
+            barrier.await();
+        }
     }
 
     @Test
@@ -5952,14 +6003,20 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     static class SqlCompilerWrapper extends SqlCompilerImpl {
+        boolean parseShowSqlCalled;
         boolean unknownAlterStatementCalled;
         boolean unknownDropColumnSuffixCalled;
         boolean unknownDropStatementCalled;
         boolean unknownDropTableSuffixCalled;
-        boolean parseShowSqlCalled;
 
         SqlCompilerWrapper(CairoEngine engine) {
             super(engine);
+        }
+
+        @Override
+        public int parseShowSql(GenericLexer lexer, QueryModel model, CharSequence tok, ObjectPool<ExpressionNode> expressionNodePool) throws SqlException {
+            parseShowSqlCalled = true;
+            return super.parseShowSql(lexer, model, tok, expressionNodePool);
         }
 
         @Override
@@ -5984,12 +6041,6 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         protected void unknownDropTableSuffix(SqlExecutionContext executionContext, CharSequence tok, CharSequence tableName, int tableNamePosition, boolean hasIfExists) throws SqlException {
             unknownDropTableSuffixCalled = true;
             super.unknownDropTableSuffix(executionContext, tok, tableName, tableNamePosition, hasIfExists);
-        }
-
-        @Override
-        public int parseShowSql(GenericLexer lexer, QueryModel model, CharSequence tok, ObjectPool<ExpressionNode> expressionNodePool) throws SqlException {
-            parseShowSqlCalled = true;
-            return super.parseShowSql(lexer, model, tok, expressionNodePool);
         }
     }
 }
