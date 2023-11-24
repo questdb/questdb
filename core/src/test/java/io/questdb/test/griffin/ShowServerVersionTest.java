@@ -44,5 +44,4 @@ public class ShowServerVersionTest extends AbstractCairoTest {
                 true
         );
     }
-
 }

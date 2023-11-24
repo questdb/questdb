@@ -43,7 +43,17 @@ public final class CountDistinctUuidGroupByFunctionFactory implements FunctionFa
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new CountDistinctUuidGroupByFunction(args.getQuick(0));
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        return new CountDistinctUuidGroupByFunction(
+                args.getQuick(0),
+                configuration.getCountDistinctCapacity(),
+                configuration.getCountDistinctLoadFactor()
+        );
     }
 }

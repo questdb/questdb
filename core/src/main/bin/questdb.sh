@@ -57,7 +57,11 @@ export QDB_OS=`uname`
 case `uname` in
    Darwin|FreeBSD)
        export PS_CMD="ps aux"
-       export QDB_DEFAULT_ROOT="/usr/local/var/questdb"
+       if [ -d "/usr/local/var/questdb" ] || [ "$(id -u)" = "0" ]; then
+           export QDB_DEFAULT_ROOT="/usr/local/var/questdb"
+       else
+           export QDB_DEFAULT_ROOT="$HOME/.questdb"
+       fi
        ;;
    *)
        export PS_CMD="ps -ef"
