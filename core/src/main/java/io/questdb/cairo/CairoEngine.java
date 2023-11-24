@@ -304,70 +304,6 @@ public class CairoEngine implements Closeable, WriterSource {
         return createTableUnsecure(securityContext, mem, path, ifNotExists, struct, keepLock, true);
     }
 
-    private @NotNull TableToken createTableUnsecure(
-            SecurityContext securityContext,
-            MemoryMARW mem,
-            Path path,
-            boolean ifNotExists,
-            TableStructure struct,
-            boolean keepLock,
-            boolean inVolume
-    ) {
-        assert !struct.isWalEnabled() || PartitionBy.isPartitioned(struct.getPartitionBy()) : "WAL is only supported for partitioned tables";
-        final CharSequence tableName = struct.getTableName();
-        validNameOrThrow(tableName);
-
-        int tableId = (int) tableIdGenerator.getNextId();
-        TableToken tableToken = lockTableName(tableName, tableId, struct.isWalEnabled());
-        if (tableToken == null) {
-            if (ifNotExists) {
-                return getTableTokenIfExists(tableName);
-            }
-            throw EntryUnavailableException.instance("table exists");
-        }
-
-        try {
-            String lockedReason = lockAll(tableToken, "createTable", true);
-            if (lockedReason == null) {
-                boolean tableCreated = false;
-                try {
-                    if (inVolume) {
-                        createTableInVolumeUnsafe(mem, path, struct, tableToken);
-                    } else {
-                        createTableUnsafe(mem, path, struct, tableToken);
-                    }
-
-                    if (struct.isWalEnabled()) {
-                        tableSequencerAPI.registerTable(tableToken.getTableId(), struct, tableToken);
-                    }
-                    tableCreated = true;
-                } finally {
-                    if (!keepLock) {
-                        unlockTableUnsafe(tableToken, null, tableCreated);
-                        LOG.info().$("unlocked [table=`").$(tableToken).$("`]").$();
-                    }
-                }
-                tableNameRegistry.registerName(tableToken);
-            } else {
-                if (!ifNotExists) {
-                    throw EntryUnavailableException.instance(lockedReason);
-                }
-            }
-        } catch (Throwable th) {
-            if (struct.isWalEnabled()) {
-                // tableToken.getLoggingName() === tableName, table cannot be renamed while creation hasn't finished
-                tableSequencerAPI.dropTable(tableToken, true);
-            }
-            throw th;
-        } finally {
-            tableNameRegistry.unlockTableName(tableToken);
-        }
-
-        getDdlListener(tableToken).onTableCreated(securityContext, tableToken);
-
-        return tableToken;
-    }
-
     public void ddl(CharSequence ddl, SqlExecutionContext executionContext) throws SqlException {
         ddl(ddl, executionContext, null);
     }
@@ -617,12 +553,17 @@ public class CairoEngine implements Closeable, WriterSource {
         return TableUtils.exists(configuration.getFilesFacade(), path, configuration.getRoot(), tableToken.getDirName());
     }
 
-    public int getTableStatus(CharSequence tableName) {
-        TableToken tableToken = getTableTokenIfExists(tableName);
+    public int getTableStatus(Path path, CharSequence tableName) {
+        final TableToken tableToken = tableNameRegistry.getTableToken(tableName);
         if (tableToken == null) {
             return TableUtils.TABLE_DOES_NOT_EXIST;
         }
-        return getTableStatus(Path.getThreadLocal(configuration.getRoot()), tableToken);
+        return getTableStatus(path, tableToken);
+    }
+
+    @TestOnly
+    public int getTableStatus(CharSequence tableName) {
+        return getTableStatus(Path.getThreadLocal(configuration.getRoot()), tableName);
     }
 
     public TableToken getTableTokenByDirName(String dirName) {
@@ -634,13 +575,17 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public TableToken getTableTokenIfExists(CharSequence tableName) {
-        return tableNameRegistry.getTableToken(tableName);
+        final TableToken token = tableNameRegistry.getTableToken(tableName);
+        if (token == TableNameRegistry.LOCKED_TOKEN) {
+            return null;
+        }
+        return token;
     }
 
     public TableToken getTableTokenIfExists(CharSequence tableName, int lo, int hi) {
-        StringSink sink = Misc.getThreadLocalSink();
+        final StringSink sink = Misc.getThreadLocalSink();
         sink.put(tableName, lo, hi);
-        return tableNameRegistry.getTableToken(sink);
+        return getTableTokenIfExists(sink);
     }
 
     public void getTableTokens(ObjHashSet<TableToken> bucket, boolean includeDropped) {
@@ -1139,6 +1084,77 @@ public class CairoEngine implements Closeable, WriterSource {
         );
     }
 
+    private @NotNull TableToken createTableUnsecure(
+            SecurityContext securityContext,
+            MemoryMARW mem,
+            Path path,
+            boolean ifNotExists,
+            TableStructure struct,
+            boolean keepLock,
+            boolean inVolume
+    ) {
+        assert !struct.isWalEnabled() || PartitionBy.isPartitioned(struct.getPartitionBy()) : "WAL is only supported for partitioned tables";
+        final CharSequence tableName = struct.getTableName();
+        validNameOrThrow(tableName);
+
+        final int tableId = (int) tableIdGenerator.getNextId();
+
+        while (true) {
+            TableToken tableToken = lockTableName(tableName, tableId, struct.isWalEnabled());
+            if (tableToken == null) {
+                if (ifNotExists) {
+                    tableToken = getTableTokenIfExists(tableName);
+                    if (tableToken != null) {
+                        return tableToken;
+                    }
+                    continue;
+                }
+                throw EntryUnavailableException.instance("table exists");
+            }
+
+            try {
+                String lockedReason = lockAll(tableToken, "createTable", true);
+                if (lockedReason == null) {
+                    boolean tableCreated = false;
+                    try {
+                        if (inVolume) {
+                            createTableInVolumeUnsafe(mem, path, struct, tableToken);
+                        } else {
+                            createTableUnsafe(mem, path, struct, tableToken);
+                        }
+
+                        if (struct.isWalEnabled()) {
+                            tableSequencerAPI.registerTable(tableToken.getTableId(), struct, tableToken);
+                        }
+                        tableCreated = true;
+                    } finally {
+                        if (!keepLock) {
+                            unlockTableUnsafe(tableToken, null, tableCreated);
+                            LOG.info().$("unlocked [table=`").$(tableToken).$("`]").$();
+                        }
+                    }
+                    tableNameRegistry.registerName(tableToken);
+                } else {
+                    if (!ifNotExists) {
+                        throw EntryUnavailableException.instance(lockedReason);
+                    }
+                }
+            } catch (Throwable th) {
+                if (struct.isWalEnabled()) {
+                    // tableToken.getLoggingName() === tableName, table cannot be renamed while creation hasn't finished
+                    tableSequencerAPI.dropTable(tableToken, true);
+                }
+                throw th;
+            } finally {
+                tableNameRegistry.unlockTableName(tableToken);
+            }
+
+            getDdlListener(tableToken).onTableCreated(securityContext, tableToken);
+
+            return tableToken;
+        }
+    }
+
     private TableToken rename0(Path fromPath, TableToken fromTableToken, Path toPath, CharSequence toTableName) {
 
         // !!! we do not care what is inside the path1 & path2, we will reset them anyway
@@ -1220,7 +1236,7 @@ public class CairoEngine implements Closeable, WriterSource {
     @NotNull
     private TableToken verifyTableNameForRead(CharSequence tableName) {
         TableToken token = getTableTokenIfExists(tableName);
-        if (token == null || token == TableNameRegistry.LOCKED_TOKEN) {
+        if (token == null) {
             throw CairoException.tableDoesNotExist(tableName);
         }
         return token;
