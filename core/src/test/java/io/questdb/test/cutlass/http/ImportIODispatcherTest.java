@@ -598,8 +598,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                     engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                         if (event == PoolListener.EV_LOCK_SUCCESS && Chars.equalsNc(name.getTableName(), tableName)) {
                             try (Path path = new Path()) {
-                                TableToken tt = engine.getTableTokenIfExists(tableName);
-                                if (engine.getTableStatus(path, tt) == TableUtils.TABLE_RESERVED) {
+                                if (engine.getTableStatus(path, tableName) == TableUtils.TABLE_RESERVED) {
                                     locked.set(true);
                                 }
                             }
