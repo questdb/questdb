@@ -431,11 +431,6 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public TableMetadata getSequencerMetadata(TableToken tableToken) {
         verifyTableToken(tableToken);
-        try {
-            return sequencerMetadataPool.get(tableToken);
-        } catch (CairoException e) {
-            tryRepairTable(tableToken, e);
-        }
         return sequencerMetadataPool.get(tableToken);
     }
 
@@ -469,28 +464,6 @@ public class CairoEngine implements Closeable, WriterSource {
             tryRepairTable(tableToken, e);
         }
         return sequencerMetadataPool.get(tableToken);
-    }
-
-    public TableRecordMetadata getTableReaderMetadata(TableToken tableToken, long metadataVersion) {
-        verifyTableToken(tableToken);
-        try {
-            final TableRecordMetadata metadata = tableReaderMetadataPool.get(tableToken);
-            if (metadataVersion != TableUtils.ANY_TABLE_VERSION && metadata.getMetadataVersion() != metadataVersion) {
-                final TableReferenceOutOfDateException ex = TableReferenceOutOfDateException.of(
-                        tableToken,
-                        metadata.getTableId(),
-                        metadata.getTableId(),
-                        metadataVersion,
-                        metadata.getMetadataVersion()
-                );
-                metadata.close();
-                throw ex;
-            }
-            return metadata;
-        } catch (CairoException e) {
-            tryRepairTable(tableToken, e);
-        }
-        return tableReaderMetadataPool.get(tableToken);
     }
 
     public Metrics getMetrics() {
@@ -738,9 +711,8 @@ public class CairoEngine implements Closeable, WriterSource {
         }
         // busy metadata is same as busy reader from user perspective
         String lockedReason;
-
         if (tableReaderMetadataPool.lock(tableToken)) {
-            if (sequencerMetadataPool.lock(tableToken)) {
+            if (!tableToken.isWal() || sequencerMetadataPool.lock(tableToken)) {
                 lockedReason = writerPool.lock(tableToken, lockReason);
                 if (lockedReason == null) {
                     // not locked
@@ -753,7 +725,9 @@ public class CairoEngine implements Closeable, WriterSource {
                     writerPool.unlock(tableToken);
                     lockedReason = REASON_BUSY_READER;
                 }
-                sequencerMetadataPool.unlock(tableToken);
+                if (tableToken.isWal()) {
+                    sequencerMetadataPool.unlock(tableToken);
+                }
             } else {
                 lockedReason = REASON_BUSY_SEQUENCER_METADATA_POOL;
             }

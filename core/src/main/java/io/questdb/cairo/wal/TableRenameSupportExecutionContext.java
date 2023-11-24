@@ -40,7 +40,7 @@ class TableRenameSupportExecutionContext extends SqlExecutionContextImpl {
 
     public TableRecordMetadata getSequencerMetadata(TableToken tableToken) {
         final CairoEngine engine = getCairoEngine();
-        return engine.getSequencerMetadata(this.tableToken);
+        return engine.getTableReaderMetadata(this.tableToken);
     }
 
     @Override
