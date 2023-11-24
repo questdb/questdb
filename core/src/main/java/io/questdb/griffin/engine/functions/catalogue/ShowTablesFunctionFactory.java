@@ -239,7 +239,7 @@ public class ShowTablesFunctionFactory implements FunctionFactory {
                     }
 
                     if (getMetadata() == METADATA) {
-                        try (TableMetadata tableMetadata = engine.getMetadata(tableToken)) {
+                        try (TableMetadata tableMetadata = engine.getTableReaderMetadata(tableToken)) {
                             isSoftLink = tableMetadata.isSoftLink();
                             maxUncommittedRows = tableMetadata.getMaxUncommittedRows();
                             o3MaxLag = tableMetadata.getO3MaxLag();

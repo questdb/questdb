@@ -2552,8 +2552,10 @@ public class SqlOptimiser implements Mutable {
 
         if (model.isUpdate() && !executionContext.isWalApplication()) {
             assert lo == 0;
-            try (TableRecordMetadata metadata = executionContext.getMetadata(tableToken)) {
-                enumerateColumns(model, metadata);
+            try {
+                try (TableRecordMetadata metadata = executionContext.getCairoEngine().getSequencerMetadata(tableToken)) {
+                    enumerateColumns(model, metadata);
+                }
             } catch (CairoException e) {
                 throw SqlException.position(tableNamePosition).put(e);
             }

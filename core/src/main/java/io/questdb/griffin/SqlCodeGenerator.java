@@ -4051,7 +4051,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         final TableToken tableToken = executionContext.getTableToken(tab);
         if (model.isUpdate() && !executionContext.isWalApplication() && executionContext.getCairoEngine().isWalTable(tableToken)) {
-            try (TableRecordMetadata metadata = engine.getMetadata(tableToken, model.getMetadataVersion())) {
+            try (TableRecordMetadata metadata = engine.getTableReaderMetadata(tableToken, model.getMetadataVersion())) {
                 return generateTableQuery0(model, executionContext, latestBy, supportsRandomAccess, null, metadata);
             }
         } else {
