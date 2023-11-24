@@ -174,7 +174,6 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         60,
                         "integer expression expected",
                         queryPrefix + " between preceding and current row)  from trips"
-
                 );
 
                 assertFailure(
@@ -5672,6 +5671,21 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             }
 
             try {
+                compiler.compile("drop table hopp", sqlExecutionContext);
+                Assert.fail();
+            } catch (Exception e) {
+                Assert.assertTrue(compiler.dropTableCalled);
+            }
+
+            compiler.dropTableCalled = false;
+            try {
+                compiler.compile("drop table if exists hopp", sqlExecutionContext);
+            } catch (Exception e) {
+                Assert.fail();
+            }
+            Assert.assertTrue(compiler.dropTableCalled);
+
+            try {
                 compiler.compile("create table tab ( i int)", sqlExecutionContext);
                 compiler.compile("alter table tab drop column i boom zoom", sqlExecutionContext);
                 Assert.fail();
@@ -6003,6 +6017,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     static class SqlCompilerWrapper extends SqlCompilerImpl {
+        boolean dropTableCalled;
         boolean parseShowSqlCalled;
         boolean unknownAlterStatementCalled;
         boolean unknownDropColumnSuffixCalled;
@@ -6017,6 +6032,12 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         public int parseShowSql(GenericLexer lexer, QueryModel model, CharSequence tok, ObjectPool<ExpressionNode> expressionNodePool) throws SqlException {
             parseShowSqlCalled = true;
             return super.parseShowSql(lexer, model, tok, expressionNodePool);
+        }
+
+        @Override
+        protected boolean dropTable(SqlExecutionContext executionContext, CharSequence tableName, int tableNamePosition, boolean hasIfExists) throws SqlException {
+            dropTableCalled = true;
+            return super.dropTable(executionContext, tableName, tableNamePosition, hasIfExists);
         }
 
         @Override

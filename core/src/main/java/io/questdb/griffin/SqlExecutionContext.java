@@ -126,8 +126,12 @@ public interface SqlExecutionContext extends Closeable {
         return getWorkerCount();
     }
 
-    default int getTableStatus(Path path, TableToken tableName) {
+    default int getTableStatus(Path path, CharSequence tableName) {
         return getCairoEngine().getTableStatus(path, tableName);
+    }
+
+    default int getTableStatus(Path path, TableToken tableToken) {
+        return getCairoEngine().getTableStatus(path, tableToken);
     }
 
     default TableToken getTableToken(CharSequence tableName) {

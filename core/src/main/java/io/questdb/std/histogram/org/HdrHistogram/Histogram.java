@@ -7,6 +7,8 @@
 
 package io.questdb.std.histogram.org.HdrHistogram;
 
+import org.jetbrains.annotations.TestOnly;
+
 import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.nio.ByteBuffer;
@@ -14,7 +16,7 @@ import java.util.Arrays;
 import java.util.zip.DataFormatException;
 
 /**
- * A High Dynamic Range (HDR) Histogram
+ * <h2>A High Dynamic Range (HDR) Histogram</h2>
  * <p>
  * {@link Histogram} supports the recording and analyzing sampled data value counts across a configurable integer value
  * range with configurable value precision within the range. Value precision is expressed as the number of significant
@@ -30,7 +32,7 @@ import java.util.zip.DataFormatException;
  * maximum tracked value (1 hour), it would still maintain a resolution of 3.6 seconds (or better).
  * <p>
  * Histogram tracks value counts in <b><code>long</code></b> fields. Smaller field types are available in the
- * IntCountsHistogram and ShortCountsHistogram implementations of
+ * {@link IntCountsHistogram} and {@link ShortCountsHistogram} implementations of
  * {@link io.questdb.std.histogram.org.HdrHistogram.AbstractHistogram}.
  * <p>
  * Auto-resizing: When constructed with no specified value range range (or when auto-resize is turned on with {@link
@@ -152,7 +154,7 @@ public class Histogram extends AbstractHistogram {
      * compressed histogram representation.
      *
      * @param base64CompressedHistogramString A string containing a base64 encoding of a compressed histogram
-     * @return A Histogram decoded from the string
+     * @return A Histogream decoded from the string
      * @throws DataFormatException on error parsing/decompressing the input
      */
     public static Histogram fromString(final String base64CompressedHistogramString)
@@ -164,7 +166,7 @@ public class Histogram extends AbstractHistogram {
 
     @Override
     public Histogram copy() {
-        Histogram copy = new Histogram(this); //System.arraycopy? - will this be more efficient?
+        Histogram copy = new Histogram(this);
         copy.add(this);
         return copy;
     }
@@ -176,8 +178,9 @@ public class Histogram extends AbstractHistogram {
         return copy;
     }
 
-    public boolean empty() {
-        return totalCount == 0;
+    @TestOnly
+    public long[] counts() {
+        return counts;
     }
 
     @Override
@@ -191,33 +194,8 @@ public class Histogram extends AbstractHistogram {
     }
 
     @Override
-    public long getValueAtPercentile(final double percentile) {
-        // Truncate to 0..100%, and remove 1 ulp to avoid roundoff overruns into next bucket when we
-        // subsequently round up to the nearest integer:
-        double requestedPercentile =
-                Math.min(Math.max(Math.nextAfter(percentile, Double.NEGATIVE_INFINITY), 0.0D), 100.0D);
-        // derive the count at the requested percentile. We round up to nearest integer to ensure that the
-        // largest value that the requested percentile of overall recorded values is <= is actually included.
-        double fpCountAtPercentile = (requestedPercentile * getTotalCount()) / 100.0D;
-        long countAtPercentile = (long) (Math.ceil(fpCountAtPercentile)); // round up
-
-        countAtPercentile = Math.max(countAtPercentile, 1); // Make sure we at least reach the first recorded entry
-        long totalToCurrentIndex = 0;
-        for (int i = 0; i < countsArrayLength; i++) {
-            totalToCurrentIndex += getCountAtIndex(i);
-            if (totalToCurrentIndex >= countAtPercentile) {
-                long valueAtIndex = valueFromIndex(i);
-                return (percentile == 0.0) ?
-                        lowestEquivalentValue(valueAtIndex) :
-                        highestEquivalentValue(valueAtIndex);
-            }
-        }
-        return 0;
-    }
-
-    @Override
-    public void setCountAtIndex(int index, long value) {
-        counts[normalizeIndex(index, normalizingIndexOffset, countsArrayLength)] = value;
+    public void setIntegerToDoubleValueConversionRatio(double integerToDoubleValueConversionRatio) {
+        nonConcurrentSetIntegerToDoubleValueConversionRatio(integerToDoubleValueConversionRatio);
     }
 
     private void readObject(final ObjectInputStream o)
@@ -242,7 +220,7 @@ public class Histogram extends AbstractHistogram {
 
     @Override
     void clearCounts() {
-        java.util.Arrays.fill(counts, 0); //change to a qdb arr?
+        java.util.Arrays.fill(counts, 0);
         totalCount = 0;
     }
 
@@ -286,13 +264,13 @@ public class Histogram extends AbstractHistogram {
     }
 
     @Override
-    void setCountAtNormalizedIndex(int index, long value) {
-        counts[index] = value;
+    void setCountAtIndex(int index, long value) {
+        counts[normalizeIndex(index, normalizingIndexOffset, countsArrayLength)] = value;
     }
 
     @Override
-    void setIntegerToDoubleValueConversionRatio(double integerToDoubleValueConversionRatio) {
-        nonConcurrentSetIntegerToDoubleValueConversionRatio(integerToDoubleValueConversionRatio);
+    void setCountAtNormalizedIndex(int index, long value) {
+        counts[index] = value;
     }
 
     @Override

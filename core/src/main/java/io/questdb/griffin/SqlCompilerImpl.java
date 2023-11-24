@@ -1776,13 +1776,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             SqlException {
         final CreateTableModel createTableModel = (CreateTableModel) model;
         final ExpressionNode name = createTableModel.getName();
-        TableToken tableToken = executionContext.getTableTokenIfExists(name.token);
 
         // Fast path for CREATE TABLE IF NOT EXISTS in scenario when the table already exists
-        int status = executionContext.getTableStatus(path, tableToken);
-        if (createTableModel.isIgnoreIfExists() && status != TableUtils.TABLE_DOES_NOT_EXIST) {
-            compiledQuery.ofCreateTable(tableToken);
-        } else if (status != TableUtils.TABLE_DOES_NOT_EXIST) {
+        final int status = executionContext.getTableStatus(path, name.token);
+        if (createTableModel.isIgnoreIfExists() && status == TableUtils.TABLE_EXISTS) {
+            compiledQuery.ofCreateTable(executionContext.getTableTokenIfExists(name.token));
+        } else if (status == TableUtils.TABLE_EXISTS) {
             throw SqlException.$(name.position, "table already exists");
         } else {
 
@@ -1799,6 +1798,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
             }
 
+            final TableToken tableToken;
             this.insertCount = -1;
             if (createTableModel.getQueryModel() == null) {
                 try {
@@ -2504,11 +2504,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private TableToken tableExistsOrFail(int position, CharSequence tableName, SqlExecutionContext executionContext) throws SqlException {
-        TableToken tableToken = executionContext.getTableTokenIfExists(tableName);
-        if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS) {
+        if (executionContext.getTableStatus(path, tableName) != TableUtils.TABLE_EXISTS) {
             throw SqlException.tableDoesNotExist(position, tableName);
         }
-        return tableToken;
+        return executionContext.getTableTokenIfExists(tableName);
     }
 
     private void truncateTables(SqlExecutionContext executionContext) throws SqlException {
@@ -2740,6 +2739,27 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
 
         return tok;
+    }
+
+    // returns true if it dropped the table, false otherwise (or throws exception)
+    protected boolean dropTable(
+            SqlExecutionContext executionContext,
+            CharSequence tableName,
+            int tableNamePosition,
+            boolean hasIfExists
+    ) throws SqlException {
+        final TableToken tableToken = executionContext.getTableTokenIfExists(tableName);
+        if (tableToken == null) {
+            if (hasIfExists) {
+                compiledQuery.ofDrop();
+                return false;
+            }
+            throw SqlException.tableDoesNotExist(tableNamePosition, tableName);
+        }
+        executionContext.getSecurityContext().authorizeTableDrop(tableToken);
+        engine.drop(path, tableToken);
+        compiledQuery.ofDrop();
+        return true;
     }
 
     RecordCursorFactory generate(
@@ -3380,26 +3400,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             compiledQuery.ofDrop();
         }
 
-        private void dropTable(
-                SqlExecutionContext executionContext,
-                CharSequence tableName,
-                int tableNamePosition,
-                boolean hasIfExists
-        ) throws SqlException {
-            TableToken tableToken = executionContext.getTableTokenIfExists(tableName);
-            if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS) {
-                if (hasIfExists) {
-                    compiledQuery.ofDrop();
-                } else {
-                    throw SqlException.tableDoesNotExist(tableNamePosition, tableName);
-                }
-            } else {
-                executionContext.getSecurityContext().authorizeTableDrop(tableToken);
-                engine.drop(path, tableToken);
-                compiledQuery.ofDrop();
-            }
-        }
-
         private void executorSelector(SqlExecutionContext executionContext) throws SqlException {
             // the selected method depends on the second token, we have already seen DROP
             CharSequence tok = SqlUtil.fetchNext(lexer);
@@ -3430,9 +3430,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     tok = SqlUtil.fetchNext(lexer);
                     if (tok == null || Chars.equals(tok, ';')) {
                         dropTable(executionContext, tableName, tableNamePosition, hasIfExists);
-                        return;
+                    } else {
+                        unknownDropTableSuffix(executionContext, tok, tableName, tableNamePosition, hasIfExists);
                     }
-                    unknownDropTableSuffix(executionContext, tok, tableName, tableNamePosition, hasIfExists);
+                    return;
                 } else if (SqlKeywords.isAllKeyword(tok)) {
                     // DROP ALL TABLES [;]
                     tok = SqlUtil.fetchNext(lexer);

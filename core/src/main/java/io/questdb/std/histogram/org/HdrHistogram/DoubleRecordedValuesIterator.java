@@ -21,13 +21,6 @@ public class DoubleRecordedValuesIterator implements Iterator<DoubleHistogramIte
     DoubleHistogram histogram;
 
     /**
-     * Reset iterator for re-use in a fresh iteration over the same histogram data set.
-     */
-    public void reset() {
-        integerRecordedValuesIterator.reset();
-    }
-
-    /**
      * @param histogram The histogram this iterator will operate on
      */
     public DoubleRecordedValuesIterator(final DoubleHistogram histogram) {
@@ -50,5 +43,12 @@ public class DoubleRecordedValuesIterator implements Iterator<DoubleHistogramIte
     @Override
     public void remove() {
         integerRecordedValuesIterator.remove();
+    }
+
+    /**
+     * Reset iterator for re-use in a fresh iteration over the same histogram data set.
+     */
+    public void reset() {
+        integerRecordedValuesIterator.reset();
     }
 }
