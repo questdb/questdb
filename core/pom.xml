@@ -39,7 +39,7 @@
         <web.console.version>0.3.2</web.console.version>
     </properties>
 
-    <version>7.3.5-SNAPSHOT</version>
+    <version>7.3.5</version>
     <groupId>org.questdb</groupId>
     <artifactId>questdb</artifactId>
     <packaging>jar</packaging>
@@ -63,7 +63,7 @@
     <scm>
         <url>scm:git:https://github.com/questdb/questdb.git</url>
         <connection>scm:git:https://github.com/questdb/questdb.git</connection>
-        <tag>HEAD</tag>
+        <tag>7.3.5</tag>
     </scm>
 
     <distributionManagement>
