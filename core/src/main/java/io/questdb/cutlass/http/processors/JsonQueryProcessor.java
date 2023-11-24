@@ -449,7 +449,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                 }
                 recompileStale = false;
             } catch (TableReferenceOutOfDateException e) {
-                if (retries == TableReferenceOutOfDateException.MAX_RETRY_ATTEMPS) {
+                if (retries == TableReferenceOutOfDateException.MAX_RETRY_ATTEMPTS) {
                     throw e;
                 }
                 LOG.info().$(e.getFlyweightMessage()).$();

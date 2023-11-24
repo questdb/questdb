@@ -1493,7 +1493,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 prepareCommandComplete(true);
                 return;
             } catch (TableReferenceOutOfDateException | WriterOutOfDateException ex) {
-                if (!recompileStale || retries == TableReferenceOutOfDateException.MAX_RETRY_ATTEMPS) {
+                if (!recompileStale || retries == TableReferenceOutOfDateException.MAX_RETRY_ATTEMPTS) {
                     if (transactionState == IN_TRANSACTION) {
                         transactionState = ERROR_TRANSACTION;
                     }
@@ -1555,7 +1555,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 }
                 prepareCommandComplete(true);
             } catch (TableReferenceOutOfDateException e) {
-                if (retries == TableReferenceOutOfDateException.MAX_RETRY_ATTEMPS) {
+                if (retries == TableReferenceOutOfDateException.MAX_RETRY_ATTEMPTS) {
                     if (transactionState == IN_TRANSACTION) {
                         transactionState = ERROR_TRANSACTION;
                     }
@@ -2795,7 +2795,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     // cache random if it was replaced
                     rnd = sqlExecutionContext.getRandom();
                 } catch (TableReferenceOutOfDateException e) {
-                    if (retries == TableReferenceOutOfDateException.MAX_RETRY_ATTEMPS) {
+                    if (retries == TableReferenceOutOfDateException.MAX_RETRY_ATTEMPTS) {
                         throw e;
                     }
                     LOG.info().$(e.getFlyweightMessage()).$();
