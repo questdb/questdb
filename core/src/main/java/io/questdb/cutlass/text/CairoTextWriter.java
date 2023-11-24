@@ -348,10 +348,9 @@ public class CairoTextWriter implements Closeable, Mutable {
             throw CairoException.nonCritical().put("cannot determine text structure");
         }
 
-        TableToken tableToken = engine.getTableTokenIfExists(tableName);
-
+        TableToken tableToken;
         boolean tableReCreated = false;
-        switch (engine.getTableStatus(path, tableToken)) {
+        switch (engine.getTableStatus(path, tableName)) {
             case TableUtils.TABLE_DOES_NOT_EXIST:
                 tableToken = createTable(names, detectedTypes, securityContext, path);
                 tableReCreated = true;
@@ -361,6 +360,7 @@ public class CairoTextWriter implements Closeable, Mutable {
                 designatedTimestampIndex = writer.getMetadata().getTimestampIndex();
                 break;
             case TableUtils.TABLE_EXISTS:
+                tableToken = engine.getTableTokenIfExists(tableName);
                 if (overwrite) {
                     securityContext.authorizeTableDrop(tableToken);
                     engine.drop(path, tableToken);
