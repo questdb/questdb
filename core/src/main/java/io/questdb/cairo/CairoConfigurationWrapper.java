@@ -331,6 +331,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getWalMaxFileDescriptorsCache() {
+        return delegate.getWalMaxFileDescriptorsCache();
+    }
+
+    @Override
     public int getMetadataPoolCapacity() {
         return delegate.getMetadataPoolCapacity();
     }

@@ -360,16 +360,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             commandSubSeq = new SCSequence();
             commandPubSeq = new MPSequence(commandQueue.getCycle());
             commandPubSeq.then(commandSubSeq).then(commandPubSeq);
-            walColumnMemoryPool = new WeakClosableObjectPool<>(GET_MEMORY_CMOR, columnCount);
             o3LastTimestampSpreads = new long[configuration.getO3LagCalculationWindowsSize()];
             Arrays.fill(o3LastTimestampSpreads, 0);
-            walFdCloseCachedFdAction = (key, value) -> {
-                for (int i = 0, n = value.size(); i < n; i++) {
-                    ff.close(value.getQuick(i));
-                }
-                value.clear();
-                walFdCacheListPool.push(value);
-            };
+
+            // Some wal specific initialization
+            if (metadata.isWalEnabled()) {
+                walColumnMemoryPool = new WeakClosableObjectPool<>(GET_MEMORY_CMOR, configuration.getWalMaxFileDescriptorsCache(), true);
+                walFdCloseCachedFdAction = (key, value) -> {
+                    for (int i = 0, n = value.size(); i < n; i++) {
+                        ff.close(value.getQuick(i));
+                    }
+                    value.clear();
+                    walFdCacheListPool.push(value);
+                };
+            } else {
+                walColumnMemoryPool = null;
+                walFdCloseCachedFdAction = null;
+            }
         } catch (Throwable e) {
             doClose(false);
             throw e;
@@ -3094,8 +3101,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void closeWalColumns(boolean isLastSegmentUsage, long walSegmentId) {
         int key = walFdCache.keyIndex(walSegmentId);
-        int MAX_CACHED_OPEN_FILES = 1000;
-        if (isLastSegmentUsage || columnCount > MAX_CACHED_OPEN_FILES) {
+        if (isLastSegmentUsage || columnCount > configuration.getWalMaxFileDescriptorsCache()) {
             if (key < 0) {
                 IntList fds = walFdCache.valueAt(key);
                 walFdCache.removeAt(key);
@@ -3132,7 +3138,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
 
-        if (walFdCacheSize > MAX_CACHED_OPEN_FILES) {
+        if (walFdCacheSize > configuration.getWalMaxFileDescriptorsCache()) {
             // Close all cached FDs
             closeWalFiles();
         }

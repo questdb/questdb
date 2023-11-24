@@ -50,7 +50,7 @@ public class WalTxnDetails {
 
     public WalTxnDetails(FilesFacade ff, int maxLookahead) {
         walEventReader = new WalEventReader(ff);
-        this.maxLookahead = maxLookahead * 100;
+        this.maxLookahead = maxLookahead * 10;
     }
 
     public long getCommitToTimestamp(long seqTxn) {

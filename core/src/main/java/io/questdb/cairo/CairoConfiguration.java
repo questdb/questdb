@@ -202,6 +202,8 @@ public interface CairoConfiguration {
 
     int getMaxUncommittedRows();
 
+    int getWalMaxFileDescriptorsCache();
+
     int getMetadataPoolCapacity();
 
     @NotNull

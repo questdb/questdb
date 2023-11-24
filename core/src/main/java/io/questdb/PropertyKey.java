@@ -419,6 +419,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_WAL_SQUASH_UNCOMMITTED_ROWS_MULTIPLIER("cairo.wal.squash.uncommitted.rows.multiplier"),
     CAIRO_WAL_MAX_LAG_TXN_COUNT("cairo.wal.max.lag.txn.count"),
     CAIRO_WAL_MAX_LAG_SIZE("cairo.wal.max.lag.size"),
+    CAIRO_WAL_MAX_FILE_DESCRIPTORS_CACHE("cairo.wal.max.file.descriptors.cache"),
     CAIRO_WAL_APPLY_TABLE_TIME_QUOTA("cairo.wal.apply.table.time.quota"),
     CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT("cairo.wal.apply.look.ahead.txn.count"),
     CAIRO_WAL_TEMP_PENDING_RENAME_TABLE_PREFIX("cairo.wal.temp.pending.rename.table.prefix"),
