@@ -717,8 +717,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                 // we should not have "shared" WAL tables
                 tud = tableUpdateDetailsUtf16.valueAt(tudKeyIndex);
             } else {
-                TableToken tableToken = engine.getTableTokenIfExists(tableNameUtf16);
-                int status = engine.getTableStatus(path, tableToken);
+                final int status = engine.getTableStatus(path, tableNameUtf16);
                 if (status != TableUtils.TABLE_EXISTS) {
                     if (!autoCreateNewTables) {
                         throw CairoException.nonCritical()
@@ -737,7 +736,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                             throw CairoException.nonCritical().put("unknown column type [columnName=").put(tsa.getColumnName(i)).put(']');
                         }
                     }
-                    tableToken = engine.createTable(securityContext, ddlMem, path, true, tsa, false);
+                    engine.createTable(securityContext, ddlMem, path, true, tsa, false);
                 }
 
                 // by the time we get here, definitely exists on disk
@@ -761,6 +760,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                     TelemetryTask.store(telemetry, TelemetryOrigin.ILP_TCP, TelemetrySystemEvent.ILP_RESERVE_WRITER);
                     // check if table on disk is WAL
                     path.of(engine.getConfiguration().getRoot());
+                    TableToken tableToken = engine.getTableTokenIfExists(tableNameUtf16);
                     if (engine.isWalTable(tableToken)) {
                         // create WAL-oriented TUD and DON'T add it to the global cache
                         tud = new TableUpdateDetails(
