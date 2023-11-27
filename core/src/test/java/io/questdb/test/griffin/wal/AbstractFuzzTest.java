@@ -207,7 +207,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         node1.getConfigurationOverrides().setPartitionO3SplitThreshold(splitPartitionThreshold);
         node1.getConfigurationOverrides().setO3PartitionSplitMaxCount(o3PartitionSplitMaxCount);
         node1.getConfigurationOverrides().setWalMaxLagSize(walMaxLagSize);
-        node1.getConfigurationOverrides().setWalMaxFileDescriptorsCache(maxWalFdCache);
+        node1.getConfigurationOverrides().setWalMaxSegmentFileDescriptorsCache(maxWalFdCache);
     }
 
     protected void setRandomAppendPageSize(Rnd rnd) {

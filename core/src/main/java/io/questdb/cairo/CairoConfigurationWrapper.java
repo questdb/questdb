@@ -346,8 +346,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getWalMaxFileDescriptorsCache() {
-        return delegate.getWalMaxFileDescriptorsCache();
+    public int getWalMaxSegmentFileDescriptorsCache() {
+        return delegate.getWalMaxSegmentFileDescriptorsCache();
     }
 
     @Override

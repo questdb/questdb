@@ -146,8 +146,8 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
-    public int getWalMaxFileDescriptorsCache() {
-        return overrides.getWalMaxFileDescriptorsCache() >= 0 ? overrides.getWalMaxFileDescriptorsCache() : super.getWalMaxFileDescriptorsCache();
+    public int getWalMaxSegmentFileDescriptorsCache() {
+        return overrides.getWalMaxSegmentFileDescriptorsCache() >= 0 ? overrides.getWalMaxSegmentFileDescriptorsCache() : super.getWalMaxSegmentFileDescriptorsCache();
     }
 
     @Override

@@ -96,7 +96,7 @@ public class Overrides implements ConfigurationOverrides {
     private int tableRegistryCompactionThreshold;
     private long walApplyTableTimeQuota = -1;
     private int walLookAheadTransactionCount = -1;
-    private int walMaxFileDescriptorsCache = -1;
+    private int walMaxSegmentFileDescriptorsCache = -1;
     private long walMaxLagSize = -1;
     private int walMaxLagTxnCount = -1;
     private long walPurgeInterval = -1;
@@ -367,8 +367,8 @@ public class Overrides implements ConfigurationOverrides {
     }
 
     @Override
-    public int getWalMaxFileDescriptorsCache() {
-        return walMaxFileDescriptorsCache;
+    public int getWalMaxSegmentFileDescriptorsCache() {
+        return walMaxSegmentFileDescriptorsCache;
     }
 
     @Override
@@ -800,8 +800,8 @@ public class Overrides implements ConfigurationOverrides {
     }
 
     @Override
-    public void setWalMaxFileDescriptorsCache(int value) {
-        walMaxFileDescriptorsCache = value;
+    public void setWalMaxSegmentFileDescriptorsCache(int value) {
+        walMaxSegmentFileDescriptorsCache = value;
     }
 
     @Override

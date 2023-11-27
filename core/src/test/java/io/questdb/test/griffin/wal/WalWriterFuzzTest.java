@@ -135,8 +135,8 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     @Test
     public void testWalSmallWalFdReuse() throws Exception {
         Rnd rnd = generateRandom(LOG);
-        setFuzzCounts(false, 100_000, 50, 20, 10, 20, 0, 5);
-        setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL), getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd), getMaxWalSize(rnd), 15);
+        fuzzer.setFuzzCounts(false, 100_000, 50, 20, 10, 20, 0, 5, 2);
+        setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL), getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd), getMaxWalSize(rnd), 1);
         runFuzz(rnd);
     }
 

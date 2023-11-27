@@ -365,7 +365,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             // Some wal specific initialization
             if (metadata.isWalEnabled()) {
-                walColumnMemoryPool = new WeakClosableObjectPool<>(GET_MEMORY_CMOR, configuration.getWalMaxFileDescriptorsCache(), true);
+                walColumnMemoryPool = new WeakClosableObjectPool<>(GET_MEMORY_CMOR, configuration.getWalMaxSegmentFileDescriptorsCache(), true);
                 walFdCloseCachedFdAction = (key, fdList) -> {
                     for (int i = 0, n = fdList.size(); i < n; i++) {
                         ff.close(fdList.getQuick(i));
@@ -3101,11 +3101,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void closeWalColumns(boolean isLastSegmentUsage, long walSegmentId) {
         int key = walFdCache.keyIndex(walSegmentId);
-        if (isLastSegmentUsage || columnCount > configuration.getWalMaxFileDescriptorsCache()) {
+        boolean cacheIsFull = !isLastSegmentUsage && key > -1 && walFdCacheSize == configuration.getWalMaxSegmentFileDescriptorsCache();
+        if (isLastSegmentUsage || cacheIsFull) {
             if (key < 0) {
                 IntList fds = walFdCache.valueAt(key);
                 walFdCache.removeAt(key);
-                walFdCacheSize -= fds.size();
+                walFdCacheSize--;
                 fds.clear();
                 walFdCacheListPool.push(fds);
             }
@@ -3123,6 +3124,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // Add FDs to a new FD cache list
                 fds = walFdCacheListPool.pop();
                 walFdCache.putAt(key, walSegmentId, fds);
+                walFdCacheSize++;
             }
 
             for (int col = 0, n = walMappedColumns.size(); col < n; col++) {
@@ -3131,15 +3133,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     int fd = mappedColumnMem.detachFdClose();
                     if (fds != null) {
                         fds.add(fd);
-                        walFdCacheSize++;
                     }
                     walColumnMemoryPool.push(mappedColumnMem);
                 }
             }
         }
 
-        if (walFdCacheSize > configuration.getWalMaxFileDescriptorsCache()) {
-            // Close all cached FDs
+        if (cacheIsFull) {
+            // Close all cached FDs.
+            // It is possible to use more complicated algo and evict only those which
+            // will not be used in the near future, but it's non-trivial
+            // and can ruin the benefit of caching any FDs.
+            // This supposed to happen rarely.
             closeWalFiles();
         }
     }

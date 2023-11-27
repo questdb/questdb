@@ -341,7 +341,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long walApplyWorkerSleepThreshold;
     private final long walApplyWorkerYieldThreshold;
     private final boolean walEnabledDefault;
-    private final int walMaxFileDescriptorsCache;
+    private final int walMaxSegmentFileDescriptorsCache;
     private final long walMaxLagSize;
     private final int walMaxLagTxnCount;
     private final long walPurgeInterval;
@@ -541,7 +541,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.walSquashUncommittedRowsMultiplier = getDouble(properties, env, PropertyKey.CAIRO_WAL_SQUASH_UNCOMMITTED_ROWS_MULTIPLIER, "20.0");
         this.walMaxLagTxnCount = getInt(properties, env, PropertyKey.CAIRO_WAL_MAX_LAG_TXN_COUNT, -1);
         this.walMaxLagSize = getLongSize(properties, env, PropertyKey.CAIRO_WAL_MAX_LAG_SIZE, 75 * Numbers.SIZE_1MB);
-        this.walMaxFileDescriptorsCache = getInt(properties, env, PropertyKey.CAIRO_WAL_MAX_FILE_DESCRIPTORS_CACHE, 1000);
+        this.walMaxSegmentFileDescriptorsCache = getInt(properties, env, PropertyKey.CAIRO_WAL_MAX_SEGMENT_FILE_DESCRIPTORS_CACHE, 30);
         this.walApplyTableTimeQuota = getLong(properties, env, PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 1000);
         this.walApplyLookAheadTransactionCount = getInt(properties, env, PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 20);
         this.tableTypeConversionEnabled = getBoolean(properties, env, PropertyKey.TABLE_TYPE_CONVERSION_ENABLED, true);
@@ -2606,8 +2606,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getWalMaxFileDescriptorsCache() {
-            return walMaxFileDescriptorsCache;
+        public int getWalMaxSegmentFileDescriptorsCache() {
+            return walMaxSegmentFileDescriptorsCache;
         }
 
         @Override

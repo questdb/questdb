@@ -867,7 +867,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getWalMaxFileDescriptorsCache() {
+    public int getWalMaxSegmentFileDescriptorsCache() {
         return 1000;
     }
 

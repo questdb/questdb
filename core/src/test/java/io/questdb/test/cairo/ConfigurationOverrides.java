@@ -139,7 +139,7 @@ public interface ConfigurationOverrides {
 
     long getWalApplyTableTimeQuota();
 
-    int getWalMaxFileDescriptorsCache();
+    int getWalMaxSegmentFileDescriptorsCache();
 
     long getWalMaxLagSize();
 
@@ -293,7 +293,7 @@ public interface ConfigurationOverrides {
 
     void setWalLookAheadTransactionCount(int walApplyTableTimeQuota);
 
-    void setWalMaxFileDescriptorsCache(int value);
+    void setWalMaxSegmentFileDescriptorsCache(int value);
 
     void setWalMaxLagSize(long value);
 
