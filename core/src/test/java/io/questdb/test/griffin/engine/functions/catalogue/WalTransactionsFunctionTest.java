@@ -74,4 +74,19 @@ public class WalTransactionsFunctionTest extends AbstractCairoTest {
                         "3\t2023-11-22T19:00:53.950468Z\t-1\t-1\t-1\t1\n",
                 "select * from wal_transactions('x')");
     }
+
+    @Test
+    public void testWalTransactionsLastLine() throws Exception {
+        currentMicros = IntervalUtils.parseFloorPartialTimestamp("2023-11-22T19:00:53.950468Z");
+        ddl("create table x (ts timestamp, x int, y int) timestamp(ts) partition by DAY WAL");
+        insert("insert into x values ('2020-01-01T00:00:00.000000Z', 1, 2)");
+        insert("insert into x values ('2020-01-01T00:00:00.000000Z', 2, 3)");
+        ddl("alter table x add column z int");
+
+        drainWalQueue();
+
+        assertSql("sequencerTxn\ttimestamp\twalId\tsegmentId\tsegmentTxn\tstructureVersion\n" +
+                        "3\t2023-11-22T19:00:53.950468Z\t-1\t-1\t-1\t1\n",
+                "select * from wal_transactions('x') limit -1");
+    }
 }

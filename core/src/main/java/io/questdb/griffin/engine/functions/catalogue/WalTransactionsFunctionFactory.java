@@ -91,7 +91,7 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
-            cursor.toTop();
+            cursor.close();
             cursor.logCursor = executionContext.getCairoEngine().getTableSequencerAPI().getCursor(tableToken, 0);
             return cursor;
         }
@@ -143,7 +143,7 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
 
             @Override
             public void toTop() {
-                close();
+                logCursor.toTop();
             }
 
             public class TransactionRecord implements Record {
