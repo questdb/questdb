@@ -3921,7 +3921,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private long getWalMaxLagSize() {
         long maxLagSize = configuration.getWalMaxLagSize();
-        return (long) (maxLagSize * 1.5 /
+        return (maxLagSize /
                 (avgRecordSize != 0 ? avgRecordSize : (avgRecordSize = TableUtils.estimateAvgRecordSize(metadata))));
     }
 

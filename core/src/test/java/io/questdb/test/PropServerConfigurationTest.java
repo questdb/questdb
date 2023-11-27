@@ -1222,6 +1222,9 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(1, configuration.getCairoConfiguration().getO3LastPartitionMaxSplits());
             final long TB = (long) Numbers.SIZE_1MB * Numbers.SIZE_1MB;
             Assert.assertEquals(TB, configuration.getCairoConfiguration().getPartitionO3SplitMinSize());
+
+            Assert.assertEquals(10 * Numbers.SIZE_1MB, configuration.getCairoConfiguration().getWalMaxLagSize());
+            Assert.assertEquals(50, configuration.getCairoConfiguration().getWalMaxFileDescriptorsCache());
         }
     }
 
