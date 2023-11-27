@@ -1814,7 +1814,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     copiedToMemory = false;
                 }
 
-                if (commitToTimestamp < txWriter.getLagMaxTimestamp() && maxLagRows > 0) {
+                //  If lag size is limited to 75M and the limit is reached, 50M will be committed
+                //  and 25M will be kept in the lag.
+                final long trimmedLagSize = maxLagRows / 3;
+                if (commitToTimestamp < txWriter.getLagMaxTimestamp() && trimmedLagSize > 0) {
                     final long lagThresholdRow = 1 + Vect.boundedBinarySearchIndexT(
                             timestampAddr,
                             commitToTimestamp,
@@ -1824,9 +1827,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     );
 
                     final boolean lagTrimmedToMax = o3Hi - lagThresholdRow > maxLagRows;
-                    //  If lag size is limited to 75M and the limit is reached, 50M will be committed
-                    //  and 25M will be kept in the lag.
-                    long trimmedLagSize = maxLagRows / 3;
                     walLagRowCount = lagTrimmedToMax ? trimmedLagSize : o3Hi - lagThresholdRow;
                     assert walLagRowCount > 0 && walLagRowCount <= o3Hi - o3Lo;
 
