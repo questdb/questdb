@@ -25,6 +25,8 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
+import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
+import io.questdb.cutlass.http.processors.LineHttpProcessorState;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
 
@@ -32,6 +34,8 @@ public interface HttpServerConfiguration extends WorkerPoolConfiguration, HttpMi
     String DEFAULT_PROCESSOR_URL = "*";
 
     JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration();
+
+    LineHttpProcessorConfiguration getLineHttpProcessorConfiguration();
 
     int getQueryCacheBlockCount();
 

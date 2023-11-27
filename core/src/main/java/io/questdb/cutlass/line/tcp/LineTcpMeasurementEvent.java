@@ -92,16 +92,16 @@ class LineTcpMeasurementEvent implements Closeable {
                 .put(']');
     }
 
-    public static CairoException invalidColNameError(TableUpdateDetails tud, CharSequence colName) {
+    public static CairoException invalidColNameError(CharSequence colName, String tableNameUtf16) {
         return CairoException.nonCritical()
-                .put("invalid column name [table=").put(tud.getTableNameUtf16())
+                .put("invalid column name [table=").put(tableNameUtf16)
                 .put(", columnName=").put(colName)
                 .put(']');
     }
 
-    public static CairoException newColumnsNotAllowed(TableUpdateDetails tud, String colName) {
+    public static CairoException newColumnsNotAllowed(String colName, String tableNameUtf16) {
         return CairoException.nonCritical()
-                .put("column does not exist, creating new columns is disabled [table=").put(tud.getTableNameUtf16())
+                .put("column does not exist, creating new columns is disabled [table=").put(tableNameUtf16)
                 .put(", columnName=").put(colName)
                 .put(']');
     }
@@ -342,9 +342,9 @@ class LineTcpMeasurementEvent implements Closeable {
                     offset = buffer.addColumnName(offset, colNameUtf16, securityContext.getPrincipal());
                     colType = localDetails.getColumnType(localDetails.getColNameUtf8(), entityType);
                 } else if (!autoCreateNewColumns) {
-                    throw newColumnsNotAllowed(tableUpdateDetails, colNameUtf16);
+                    throw newColumnsNotAllowed(colNameUtf16, tableUpdateDetails.getTableNameUtf16());
                 } else {
-                    throw invalidColNameError(tableUpdateDetails, colNameUtf16);
+                    throw invalidColNameError(colNameUtf16, tableUpdateDetails.getTableNameUtf16());
                 }
             } else {
                 // duplicate column, skip

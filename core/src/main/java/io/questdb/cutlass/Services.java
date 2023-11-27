@@ -30,6 +30,7 @@ import io.questdb.WorkerPoolManager.Requester;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.http.processors.HealthCheckProcessor;
+import io.questdb.cutlass.http.processors.LineHttpProcessor;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
 import io.questdb.cutlass.http.processors.PrometheusMetricsProcessor;
 import io.questdb.cutlass.line.tcp.LineTcpReceiver;
@@ -99,13 +100,20 @@ public class Services {
                 sharedWorkerCount
         );
 
+        HttpServer.HttpRequestProcessorBuilder ilpWriteProcessorBuilder = () -> new LineHttpProcessor(
+                cairoEngine,
+                configuration.getHttpContextConfiguration().getRecvBufferSize(),
+                configuration.getLineHttpProcessorConfiguration()
+        );
+
         HttpServer.addDefaultEndpoints(
                 server,
                 configuration,
                 cairoEngine,
                 workerPool,
                 sharedWorkerCount,
-                jsonQueryProcessorBuilder
+                jsonQueryProcessorBuilder,
+                ilpWriteProcessorBuilder
         );
         return server;
     }

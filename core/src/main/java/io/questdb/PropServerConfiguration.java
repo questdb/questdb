@@ -28,6 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
+import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
@@ -356,6 +357,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long writerDataIndexKeyAppendPageSize;
     private final long writerDataIndexValueAppendPageSize;
     private final long writerFileOpenOpts;
+    private final long writerMemoryLimit;
     private final long writerMiscAppendPageSize;
     private final boolean writerMixedIOEnabled;
     private final int writerTickRowsCountMod;
@@ -390,6 +392,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int jsonQueryConnectionCheckFrequency;
     private int jsonQueryDoubleScale;
     private int jsonQueryFloatScale;
+    private LineHttpProcessorConfiguration lineHttpProcessorConfiguration = new PropLineHttpProcessorConfiguration();
     private long lineTcpCommitIntervalDefault;
     private double lineTcpCommitIntervalFraction;
     private int lineTcpConnectionPoolInitialCapacity;
@@ -468,7 +471,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean stringToCharCastAllowed;
     private boolean symbolAsFieldSupported;
     private long symbolCacheWaitUsBeforeReload;
-    private final long writerMemoryLimit;
 
     public PropServerConfiguration(
             String root,
@@ -3082,6 +3084,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public LineHttpProcessorConfiguration getLineHttpProcessorConfiguration() {
+            return lineHttpProcessorConfiguration;
+        }
+
+        @Override
         public String getPoolName() {
             return "http";
         }
@@ -3197,6 +3204,63 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getMaxQueryResponseRowLimit() {
             return maxHttpQueryResponseRowLimit;
+        }
+    }
+
+    private class PropLineHttpProcessorConfiguration implements LineHttpProcessorConfiguration {
+        @Override
+        public boolean autoCreateNewColumns() {
+            return ilpAutoCreateNewColumns;
+        }
+
+        @Override
+        public boolean autoCreateNewTables() {
+            return ilpAutoCreateNewTables;
+        }
+
+        @Override
+        public short getDefaultColumnTypeForFloat() {
+            return floatDefaultColumnType;
+        }
+
+        @Override
+        public short getDefaultColumnTypeForInteger() {
+            return integerDefaultColumnType;
+        }
+
+        @Override
+        public int getDefaultPartitionBy() {
+            return lineTcpDefaultPartitionBy;
+        }
+
+        @Override
+        public MicrosecondClock getMicrosecondClock() {
+            return microsecondClock;
+        }
+
+        @Override
+        public long getSymbolCacheWaitUsBeforeReload() {
+            return symbolCacheWaitUsBeforeReload;
+        }
+
+        @Override
+        public LineTcpTimestampAdapter getTimestampAdapter() {
+            return lineTcpTimestampAdapter;
+        }
+
+        @Override
+        public boolean isStringAsTagSupported() {
+            return stringAsTagSupported;
+        }
+
+        @Override
+        public boolean isStringToCharCastAllowed() {
+            return stringToCharCastAllowed;
+        }
+
+        @Override
+        public boolean isSymbolAsFieldSupported() {
+            return symbolAsFieldSupported;
         }
     }
 

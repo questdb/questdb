@@ -24,20 +24,31 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.mp.Job;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.TableWriterAPI;
 import io.questdb.std.Pool;
-import io.questdb.std.QuietCloseable;
-import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8String;
+import org.jetbrains.annotations.Nullable;
 
-public interface NetworkIOJob extends Job, QuietCloseable {
-    void addTableUpdateDetails(Utf8String tableNameUtf8, TableUpdateDetails tableUpdateDetails);
+public class WalTableUpdateDetails extends TableUpdateDetails {
+    public WalTableUpdateDetails(
+            CairoEngine engine,
+            @Nullable SecurityContext securityContext,
+            TableWriterAPI writer,
+            DefaultColumnTypes defaultColumnTypes,
+            Utf8String tableNameUtf8,
+            Pool<SymbolCache> symbolCachePool
+    ) {
+        super(engine, securityContext, writer, -1, defaultColumnTypes, tableNameUtf8, symbolCachePool, -1);
+    }
 
-    TableUpdateDetails getLocalTableDetails(DirectUtf8Sequence tableNameUtf8);
+    @Override
+    public ThreadLocalDetails getThreadLocalDetails(int workerId) {
+        return super.getThreadLocalDetails(0);
+    }
 
-    Pool<SymbolCache> getSymbolCachePool();
-
-    int getWorkerId();
-
-    void releaseWalTableDetails();
+    public void rollback() {
+        writerAPI.rollback();
+    }
 }

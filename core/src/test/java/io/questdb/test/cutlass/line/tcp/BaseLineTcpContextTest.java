@@ -69,7 +69,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     protected LineTcpReceiverConfiguration lineTcpConfiguration;
     protected long microSecondTicks;
     protected int nWriterThreads;
-    protected NoNetworkIOJob noNetworkIOJob = new NoNetworkIOJob();
+    protected NoNetworkIOJob noNetworkIOJob;
     protected String recvBuffer;
     protected LineTcpMeasurementScheduler scheduler;
     protected boolean stringAsTagSupported;
@@ -92,6 +92,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         autoCreateNewColumns = true;
         autoCreateNewTables = true;
         lineTcpConfiguration = createNoAuthReceiverConfiguration(provideLineTcpNetworkFacade());
+        noNetworkIOJob = new NoNetworkIOJob(lineTcpConfiguration);
     }
 
     private static WorkerPool createWorkerPool(final int workerCount, final boolean haltOnError) {
@@ -384,8 +385,12 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
 
     static class NoNetworkIOJob implements NetworkIOJob {
         private final Utf8StringObjHashMap<TableUpdateDetails> localTableUpdateDetailsByTableName = new Utf8StringObjHashMap<>();
-        private final ObjList<SymbolCache> unusedSymbolCaches = new ObjList<>();
+        private final WeakClosableObjectPool<SymbolCache> unusedSymbolCaches;
         private LineTcpMeasurementScheduler scheduler;
+
+        NoNetworkIOJob(LineTcpReceiverConfiguration config) {
+            unusedSymbolCaches = new WeakClosableObjectPool<SymbolCache>(() -> new SymbolCache(config), 10, true);
+        }
 
         @Override
         public void addTableUpdateDetails(Utf8String tableNameUtf8, TableUpdateDetails tableUpdateDetails) {
@@ -402,7 +407,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         }
 
         @Override
-        public ObjList<SymbolCache> getUnusedSymbolCaches() {
+        public Pool<SymbolCache> getSymbolCachePool() {
             return unusedSymbolCaches;
         }
 
@@ -414,17 +419,6 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         @Override
         public void releaseWalTableDetails() {
             scheduler.releaseWalTableDetails(localTableUpdateDetailsByTableName);
-        }
-
-        @Override
-        public TableUpdateDetails removeTableUpdateDetails(DirectUtf8Sequence tableNameUtf8) {
-            final int keyIndex = localTableUpdateDetailsByTableName.keyIndex(tableNameUtf8);
-            if (keyIndex < 0) {
-                TableUpdateDetails tud = localTableUpdateDetailsByTableName.valueAtQuick(keyIndex);
-                localTableUpdateDetailsByTableName.removeAt(keyIndex);
-                return tud;
-            }
-            return null;
         }
 
         @Override

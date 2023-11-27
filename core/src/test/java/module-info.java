@@ -30,6 +30,8 @@ open module io.questdb.test {
     requires static java.sql;
     requires static org.postgresql.jdbc;
     requires static java.management;
+    requires influxdb.java;
+    requires okhttp3;
 
     uses io.questdb.griffin.FunctionFactory;
 

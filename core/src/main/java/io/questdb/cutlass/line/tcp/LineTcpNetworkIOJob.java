@@ -29,9 +29,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.IOOperation;
 import io.questdb.network.IORequestProcessor;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
-import io.questdb.std.Utf8StringObjHashMap;
+import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8String;
@@ -47,7 +45,7 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
     private final MillisecondClock millisecondClock;
     private final LineTcpMeasurementScheduler scheduler;
     private final Utf8StringObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf8 = new Utf8StringObjHashMap<>();
-    private final ObjList<SymbolCache> unusedSymbolCaches = new ObjList<>();
+    private final WeakClosableObjectPool<SymbolCache> unusedSymbolCaches;
     private final int workerId;
     // Context blocked on LineTcpMeasurementScheduler queue
     private LineTcpConnectionContext busyContext = null;
@@ -66,6 +64,7 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
         this.maintenanceJobDeadline = millisecondClock.getTicks() + maintenanceInterval;
         this.dispatcher = dispatcher;
         this.workerId = workerId;
+        this.unusedSymbolCaches = new WeakClosableObjectPool<>(() -> new SymbolCache(configuration), 10, true);
     }
 
     @Override
@@ -80,7 +79,7 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
             busyContext.getDispatcher().disconnect(busyContext, DISCONNECT_REASON_RETRY_FAILED);
             busyContext = null;
         }
-        Misc.freeObjList(unusedSymbolCaches);
+        Misc.free(unusedSymbolCaches);
     }
 
     @Override
@@ -89,7 +88,7 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
     }
 
     @Override
-    public ObjList<SymbolCache> getUnusedSymbolCaches() {
+    public Pool<SymbolCache> getSymbolCachePool() {
         return unusedSymbolCaches;
     }
 
@@ -101,17 +100,6 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
     @Override
     public void releaseWalTableDetails() {
         scheduler.releaseWalTableDetails(tableUpdateDetailsUtf8);
-    }
-
-    @Override
-    public TableUpdateDetails removeTableUpdateDetails(DirectUtf8Sequence tableNameUtf8) {
-        final int keyIndex = tableUpdateDetailsUtf8.keyIndex(tableNameUtf8);
-        if (keyIndex < 0) {
-            TableUpdateDetails tud = tableUpdateDetailsUtf8.valueAtQuick(keyIndex);
-            tableUpdateDetailsUtf8.removeAt(keyIndex);
-            return tud;
-        }
-        return null;
     }
 
     @Override

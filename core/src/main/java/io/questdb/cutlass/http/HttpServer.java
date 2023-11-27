@@ -103,8 +103,21 @@ public class HttpServer implements Closeable {
             CairoEngine cairoEngine,
             WorkerPool workerPool,
             int sharedWorkerCount,
-            HttpRequestProcessorBuilder jsonQueryProcessorBuilder
+            HttpRequestProcessorBuilder jsonQueryProcessorBuilder,
+            HttpRequestProcessorBuilder ilpWriteProcessorBuilder
     ) {
+        server.bind(new HttpRequestProcessorFactory() {
+            @Override
+            public String getUrl() {
+                return "/write";
+            }
+
+            @Override
+            public HttpRequestProcessor newInstance() {
+                return ilpWriteProcessorBuilder.newInstance();
+            }
+        });
+
         server.bind(new HttpRequestProcessorFactory() {
             @Override
             public String getUrl() {

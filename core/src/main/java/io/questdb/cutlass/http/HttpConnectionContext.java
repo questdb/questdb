@@ -76,6 +76,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private SecurityContext securityContext;
     private SuspendEvent suspendEvent;
     private long totalBytesSent;
+    private long totalReceived;
 
     @TestOnly
     public HttpConnectionContext(HttpMinServerConfiguration configuration, Metrics metrics, SocketFactory socketFactory) {
@@ -430,6 +431,39 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return true;
     }
 
+    private boolean consumeContent(
+            int contentLength,
+            Socket socket,
+            HttpRequestProcessor processor,
+            long headerEnd,
+            int read,
+            boolean newRequest,
+            RescheduleContext rescheduleContext
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
+        if (newRequest) {
+            processor.onHeadersReady(this);
+        } else {
+            read = socket.recv(recvBuffer, recvBufferSize);
+        }
+        processor.resumeRecv(this);
+
+        HttpMultipartContentListener contentProcessor = (HttpMultipartContentListener) processor;
+        long lo = newRequest ? recvBuffer + read : recvBuffer;
+        contentProcessor.onChunk(lo, recvBuffer + read);
+        totalReceived += read;
+
+        if (totalReceived == contentLength) {
+            processor.onRequestComplete(this);
+            if (configuration.getServerKeepAlive()) {
+                return true;
+            } else {
+                dispatcher.disconnect(this, DISCONNECT_REASON_KEEPALIVE_OFF_RECV);
+                return false;
+            }
+        }
+        return true;
+    }
+
     private boolean consumeMultipart(
             Socket socket,
             HttpRequestProcessor processor,
@@ -661,6 +695,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             }
             HttpRequestProcessor processor = getHttpRequestProcessor(selector);
 
+            int contentLength = headerParser.getContentLength();
             final boolean multipartRequest = Utf8s.equalsNcAscii("multipart/form-data", headerParser.getContentType());
             final boolean multipartProcessor = processor instanceof HttpMultipartContentListener;
 
@@ -673,7 +708,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     return rejectUnauthenticatedRequest();
                 }
 
-                if (configuration.areCookiesEnabled()) {
+                if (newRequest && configuration.areCookiesEnabled()) {
                     if (!processor.processCookies(this, securityContext)) {
                         return false;
                     }
@@ -682,6 +717,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 if (multipartRequest && !multipartProcessor) {
                     // bad request - multipart request for processor that doesn't expect multipart
                     busyRecv = rejectRequest("Bad request. Non-multipart GET expected.");
+                } else if (contentLength > 0 && multipartProcessor) {
+                    busyRecv = consumeContent(contentLength, socket, processor, headerEnd, read, newRequest, rescheduleContext);
                 } else if (!multipartRequest && multipartProcessor) {
                     // bad request - regular request for processor that expects multipart
                     busyRecv = rejectRequest("Bad request. Multipart POST expected.");
@@ -693,6 +730,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     // they abuse protocol. In addition, we will not call processor
                     // if client has disconnected before we had a chance to reply.
                     read = socket.recv(recvBuffer, 1);
+
                     if (read != 0) {
                         dumpBuffer(recvBuffer, read);
                         LOG.info().$("disconnect after request [fd=").$(getFd()).$(", read=").$(read).I$();
