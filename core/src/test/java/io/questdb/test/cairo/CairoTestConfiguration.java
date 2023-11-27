@@ -146,6 +146,16 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
+    public int getWalMaxFileDescriptorsCache() {
+        return overrides.getWalMaxFileDescriptorsCache() >= 0 ? overrides.getWalMaxFileDescriptorsCache() : super.getWalMaxFileDescriptorsCache();
+    }
+
+    @Override
+    public long getWalMaxLagSize() {
+        return overrides.getWalMaxLagSize() >= 0 ? overrides.getWalMaxLagSize() : super.getWalMaxLagSize();
+    }
+
+    @Override
     public int getMetadataPoolCapacity() {
         return 1;
     }

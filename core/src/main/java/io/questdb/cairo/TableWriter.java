@@ -366,12 +366,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // Some wal specific initialization
             if (metadata.isWalEnabled()) {
                 walColumnMemoryPool = new WeakClosableObjectPool<>(GET_MEMORY_CMOR, configuration.getWalMaxFileDescriptorsCache(), true);
-                walFdCloseCachedFdAction = (key, value) -> {
-                    for (int i = 0, n = value.size(); i < n; i++) {
-                        ff.close(value.getQuick(i));
+                walFdCloseCachedFdAction = (key, fdList) -> {
+                    for (int i = 0, n = fdList.size(); i < n; i++) {
+                        ff.close(fdList.getQuick(i));
                     }
-                    value.clear();
-                    walFdCacheListPool.push(value);
+                    fdList.clear();
+                    walFdCacheListPool.push(fdList);
                 };
             } else {
                 walColumnMemoryPool = null;
@@ -1686,7 +1686,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         lastPartitionTimestamp = txWriter.getPartitionTimestampByTimestamp(partitionTimestampHi);
 
-        boolean sucess = true;
+        boolean success = true;
         try {
             final long maxLagRows = getWalMaxLagRows();
             final long walLagMaxTimestampBefore = txWriter.getLagMaxTimestamp();
@@ -1914,11 +1914,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             return commitMaxTimestamp;
         } catch (Throwable th) {
-            sucess = false;
+            success = false;
             throw th;
         } finally {
             walPath.trimTo(walRootPathLen);
-            closeWalColumns(isLastSegmentUsage || !sucess, walSegmentId);
+            closeWalColumns(isLastSegmentUsage || !success, walSegmentId);
         }
     }
 
@@ -3920,8 +3920,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private long getWalMaxLagSize() {
-        long splitMinSizeBytes = configuration.getWalMaxLagSize();
-        return (long) (splitMinSizeBytes * 1.5 /
+        long maxLagSize = configuration.getWalMaxLagSize();
+        return (long) (maxLagSize * 1.5 /
                 (avgRecordSize != 0 ? avgRecordSize : (avgRecordSize = TableUtils.estimateAvgRecordSize(metadata))));
     }
 

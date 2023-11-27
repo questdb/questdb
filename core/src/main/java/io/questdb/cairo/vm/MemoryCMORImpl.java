@@ -94,8 +94,8 @@ public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
     @Override
     public void ofOffset(FilesFacade ff, int fd, LPSZ name, long lo, long hi, int memoryTag, long opts) {
         this.memoryTag = memoryTag;
-        close();
         if (fd > -1) {
+            close();
             this.ff = ff;
             this.fd = fd;
         } else {

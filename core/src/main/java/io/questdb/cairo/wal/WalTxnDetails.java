@@ -172,7 +172,7 @@ public class WalTxnDetails {
             long currentMinTimestamp = transactionMeta.getQuick(i + MIN_TIMESTAMP_OFFSET);
 
             // Find out if the wal/segment is not used anymore for future transactions.
-            // Since we're moving backwards, if this is the first time this comination occurs
+            // Since we're moving backwards, if this is the first time this combination occurs
             // it means that it's the last transaction from this wal/segment.
             long currentWalSegment = transactionMeta.getQuick(i + WAL_ID_SEG_ID_OFFSET);
             boolean isLastSegmentUsage = futureWalSegments.add(currentWalSegment);

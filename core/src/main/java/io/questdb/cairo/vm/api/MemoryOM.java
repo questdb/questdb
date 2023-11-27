@@ -51,7 +51,7 @@ public interface MemoryOM extends MemoryM {
      * Maps file to memory
      *
      * @param ff        the files facade - an abstraction used to simulate failures
-     * @param fd        read-only file descriptor to reuse
+     * @param fd        read-only file descriptor to reuse or -1 when file should be opened
      * @param name      the name of the file
      *                  should use this parameter as the increment size
      * @param lo        mapped memory low limit (inclusive)

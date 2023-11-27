@@ -96,6 +96,8 @@ public class Overrides implements ConfigurationOverrides {
     private int tableRegistryCompactionThreshold;
     private long walApplyTableTimeQuota = -1;
     private int walLookAheadTransactionCount = -1;
+    private int walMaxFileDescriptorsCache = -1;
+    private long walMaxLagSize = -1;
     private int walMaxLagTxnCount = -1;
     private long walPurgeInterval = -1;
     private long walSegmentRolloverRowCount = -1;
@@ -355,13 +357,23 @@ public class Overrides implements ConfigurationOverrides {
     }
 
     @Override
+    public int getWalApplyLookAheadTransactionCount() {
+        return walLookAheadTransactionCount;
+    }
+
+    @Override
     public long getWalApplyTableTimeQuota() {
         return walApplyTableTimeQuota;
     }
 
     @Override
-    public int getWalApplyLookAheadTransactionCount() {
-        return walLookAheadTransactionCount;
+    public int getWalMaxFileDescriptorsCache() {
+        return walMaxFileDescriptorsCache;
+    }
+
+    @Override
+    public long getWalMaxLagSize() {
+        return walMaxLagSize;
     }
 
     @Override
@@ -495,6 +507,7 @@ public class Overrides implements ConfigurationOverrides {
         factoryProvider = null;
         simulateCrashEnabled = false;
         env = null;
+        walMaxLagSize = -1;
     }
 
     @Override
@@ -784,6 +797,16 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public void setWalLookAheadTransactionCount(int walLookAheadTransactionCount) {
         this.walLookAheadTransactionCount = walLookAheadTransactionCount;
+    }
+
+    @Override
+    public void setWalMaxFileDescriptorsCache(int value) {
+        walMaxFileDescriptorsCache = value;
+    }
+
+    @Override
+    public void setWalMaxLagSize(long value) {
+        walMaxLagSize = value;
     }
 
 
