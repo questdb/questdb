@@ -49,7 +49,7 @@ public class MetadataPool extends AbstractMultiTenantPool<MetadataPool.MetadataT
         return new TableReaderMetadataTenant(this, entry, index, tableToken, false);
     }
 
-    public interface MetadataTenant extends TableMetadata, PoolTenant {
+    public interface MetadataTenant extends TableMetadata, PoolTenant<MetadataTenant> {
     }
 
     private static class SequencerMetadataTenant extends GenericTableRecordMetadata implements MetadataTenant {
@@ -90,7 +90,6 @@ public class MetadataPool extends AbstractMultiTenantPool<MetadataPool.MetadataT
             readerMetadataTenant.close();
         }
 
-        @SuppressWarnings("unchecked")
         @Override
         public AbstractMultiTenantPool.Entry<MetadataTenant> getEntry() {
             return entry;
@@ -167,7 +166,6 @@ public class MetadataPool extends AbstractMultiTenantPool<MetadataPool.MetadataT
             super.close();
         }
 
-        @SuppressWarnings("unchecked")
         @Override
         public AbstractMultiTenantPool.Entry<MetadataTenant> getEntry() {
             return entry;
