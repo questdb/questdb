@@ -227,6 +227,9 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(CairoConfiguration.O_NONE, configuration.getCairoConfiguration().getWriterFileOpenOpts());
         Assert.assertTrue(configuration.getCairoConfiguration().isIOURingEnabled());
 
+        // cannot assert for exact number as it is platform dependant
+        Assert.assertTrue(configuration.getCairoConfiguration().getSqlCompilerPoolCapacity() > 0);
+
         Assert.assertEquals(0, configuration.getLineUdpReceiverConfiguration().getBindIPv4Address());
         Assert.assertEquals(9009, configuration.getLineUdpReceiverConfiguration().getPort());
         Assert.assertEquals(-402587133, configuration.getLineUdpReceiverConfiguration().getGroupIPv4Address());
@@ -1009,6 +1012,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(1000000, configuration.getCairoConfiguration().getParallelIndexThreshold());
             Assert.assertEquals(42, configuration.getCairoConfiguration().getReaderPoolMaxSegments());
             Assert.assertEquals(5_000_000, configuration.getCairoConfiguration().getSpinLockTimeout());
+            Assert.assertEquals(22, configuration.getCairoConfiguration().getSqlCompilerPoolCapacity());
             Assert.assertEquals(2048, configuration.getCairoConfiguration().getSqlCharacterStoreCapacity());
             Assert.assertEquals(128, configuration.getCairoConfiguration().getSqlCharacterStoreSequencePoolCapacity());
             Assert.assertEquals(2048, configuration.getCairoConfiguration().getSqlColumnPoolCapacity());

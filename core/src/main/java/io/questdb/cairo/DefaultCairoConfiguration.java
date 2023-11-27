@@ -542,6 +542,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlCompilerPoolCapacity() {
+        return 10;
+    }
+
+    @Override
     public int getSqlCopyBufferSize() {
         return 1024 * 1024;
     }

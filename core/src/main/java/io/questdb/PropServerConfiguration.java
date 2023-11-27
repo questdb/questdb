@@ -248,6 +248,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlColumnCastModelPoolCapacity;
     private final int sqlColumnPoolCapacity;
     private final double sqlCompactMapLoadFactor;
+    private final int sqlCompilerPoolCapacity;
     private final int sqlCopyBufferSize;
     private final int sqlCopyModelPoolCapacity;
     private final int sqlCountDistinctCapacity;
@@ -1176,6 +1177,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sharedWorkerSleepThreshold = getLong(properties, env, PropertyKey.SHARED_WORKER_SLEEP_THRESHOLD, 10_000);
             this.sharedWorkerSleepTimeout = getLong(properties, env, PropertyKey.SHARED_WORKER_SLEEP_TIMEOUT, 10);
 
+            this.sqlCompilerPoolCapacity = 2 * (httpWorkerCount + pgWorkerCount + sharedWorkerCount + walApplyWorkerCount);
+
             this.metricsEnabled = getBoolean(properties, env, PropertyKey.METRICS_ENABLED, false);
             this.writerAsyncCommandBusyWaitTimeout = getLong(properties, env, PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 500);
             this.writerAsyncCommandMaxWaitTimeout = getLong(properties, env, PropertyKey.CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT, 30_000);
@@ -1663,7 +1666,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                     PropertyKey.CAIRO_SQL_ANALYTIC_TREE_MAX_PAGES,
                     PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_PAGES
             );
-
         }
 
         public ValidationResult validate(Properties properties) {
@@ -2279,6 +2281,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public double getSqlCompactMapLoadFactor() {
             return sqlCompactMapLoadFactor;
+        }
+
+        @Override
+        public int getSqlCompilerPoolCapacity() {
+            return sqlCompilerPoolCapacity;
         }
 
         @Override
