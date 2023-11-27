@@ -536,6 +536,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlCompilerPoolCapacity() {
+        return delegate.getSqlCompilerPoolCapacity();
+    }
+
+    @Override
     public int getSqlCopyBufferSize() {
         return delegate.getSqlCopyBufferSize();
     }
