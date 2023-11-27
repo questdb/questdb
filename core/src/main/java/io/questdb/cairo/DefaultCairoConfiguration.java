@@ -179,6 +179,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getCountDistinctCapacity() {
+        return 16;
+    }
+
+    @Override
+    public double getCountDistinctLoadFactor() {
+        return 0.7;
+    }
+
+    @Override
     public int getCreateAsSelectRetryCount() {
         return 5;
     }
