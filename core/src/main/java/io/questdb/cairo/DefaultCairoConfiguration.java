@@ -179,6 +179,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getCountDistinctCapacity() {
+        return 16;
+    }
+
+    @Override
+    public double getCountDistinctLoadFactor() {
+        return 0.7;
+    }
+
+    @Override
     public int getCreateAsSelectRetryCount() {
         return 5;
     }
@@ -529,6 +539,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public double getSqlCompactMapLoadFactor() {
         return 0.8;
+    }
+
+    @Override
+    public int getSqlCompilerPoolCapacity() {
+        return 10;
     }
 
     @Override

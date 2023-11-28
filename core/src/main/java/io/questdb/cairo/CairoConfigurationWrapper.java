@@ -56,6 +56,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public @Nullable ObjObjHashMap<ConfigPropertyKey, ConfigPropertyValue> getAllPairs() {
+        return delegate.getAllPairs();
+    }
+
+    @Override
     public boolean getAllowTableRegistrySharedWrite() {
         return delegate.getAllowTableRegistrySharedWrite();
     }
@@ -158,6 +163,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getCopyPoolCapacity() {
         return delegate.getCopyPoolCapacity();
+    }
+
+    @Override
+    public int getCountDistinctCapacity() {
+        return delegate.getCountDistinctCapacity();
+    }
+
+    @Override
+    public double getCountDistinctLoadFactor() {
+        return delegate.getCountDistinctLoadFactor();
     }
 
     @Override
@@ -518,6 +533,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public double getSqlCompactMapLoadFactor() {
         return delegate.getSqlCompactMapLoadFactor();
+    }
+
+    @Override
+    public int getSqlCompilerPoolCapacity() {
+        return delegate.getSqlCompilerPoolCapacity();
     }
 
     @Override
@@ -1007,10 +1027,5 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean mangleTableDirNames() {
         return delegate.mangleTableDirNames();
-    }
-
-    @Override
-    public @Nullable ObjObjHashMap<ConfigPropertyKey, ConfigPropertyValue> getAllPairs() {
-        return delegate.getAllPairs();
     }
 }

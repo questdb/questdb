@@ -9,13 +9,11 @@ import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.Rnd;
 
 public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPool.C> {
-    private static final long INACTIVE_COMPILER_TTL_MILLIS = 5 * 60 * 1000L; // 5 minutes
-    // todo: consider making the constants configurable
-    private static final int MAX_POOL_SEGMENTS = 64;
-    // todo: are you sure there are no side effects here? for example the dirName? at very least it's being logged
-    // by the pool and that's confusing
-    // note: we should not use too many colours otherwise the pool might create more compiler instances
-    // then with no pooling at all. This is because we have to have a separate compiler for each colour.
+    // The table tokens below are fake, only needed to satisfy the contract of the base class.
+    // These tokens do not represent real tables, so they should never be used in that context.
+    // Should be used only as a key for pool entries, and should stay internal to the pool.
+    // It also should be kept in mind that some details of these fake tokens can make it into
+    // logs, such as the directory names, and they do not (and really should not) exist on disk.
     private static final TableToken[] TOKENS = {
             new TableToken("blue", "/compilers/blue/", 0, false, false, false),
             new TableToken("red", "/compilers/red/", 0, false, false, false),
@@ -25,12 +23,21 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
     private final Rnd rnd = new Rnd();
 
     public SqlCompilerPool(CairoEngine engine) {
-        super(engine.getConfiguration(), MAX_POOL_SEGMENTS, INACTIVE_COMPILER_TTL_MILLIS);
+        // Passing zero as TTL, because SqlCompiler instances are expected to be returned to the pool immediately
+        // after usage. The `releaseInactive()` method is also overridden to return with hardcoded 'false' for the
+        // same reason. It is not meant to be called.
+        super(engine.getConfiguration(), (engine.getConfiguration().getSqlCompilerPoolCapacity() / ENTRY_SIZE) + 1, 0L);
         this.engine = engine;
     }
 
     public C get() {
         return super.get(getRandToken());
+    }
+
+    @Override
+    public boolean releaseInactive() {
+        // noop, should not be used
+        return false;
     }
 
     private TableToken getRandToken() {
@@ -39,22 +46,21 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
 
     @Override
     protected byte getListenerSrc() {
-        // todo: what is this?
-        return 0;
+        return PoolListener.SRC_SQL_COMPILER;
     }
 
     @Override
-    protected C newTenant(TableToken tableName, Entry<C> entry, int index) {
+    protected C newTenant(TableToken tableToken, Entry<C> entry, int index) {
         return new C(
                 engine.getSqlCompilerFactory().getInstance(engine),
                 this,
-                tableName,
+                tableToken,
                 entry,
                 index
         );
     }
 
-    static class C implements SqlCompiler, PoolTenant {
+    public static class C implements SqlCompiler, PoolTenant<C> {
         private final SqlCompiler delegate;
         private final int index;
         private Entry<C> entry;
@@ -103,7 +109,6 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
             delegate.compileBatch(queryText, sqlExecutionContext, batchCallback);
         }
 
-        @SuppressWarnings("unchecked")
         @Override
         public Entry<C> getEntry() {
             return entry;
@@ -132,9 +137,7 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
 
         @Override
         public void refresh() {
-            // todo: is this correct? should we be doing this?
-            // and if so then perhaps we should do this while returning the compiler to the pool?
-            this.clear();
+            clear();
         }
 
         @Override

@@ -61,7 +61,7 @@ public class PropServerConfigurationTest {
     protected static final Rnd rnd = new Rnd();
     protected static final StringSink sink = new StringSink();
     protected static String root;
-    
+
     @AfterClass
     public static void afterClass() {
         TestUtils.removeTestPath(root);
@@ -174,6 +174,8 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(509, configuration.getCairoConfiguration().getMkDirMode());
         Assert.assertEquals(509, configuration.getCairoConfiguration().getDetachedMkDirMode());
         Assert.assertEquals(8, configuration.getCairoConfiguration().getBindVariablePoolSize());
+        Assert.assertEquals(16, configuration.getCairoConfiguration().getCountDistinctCapacity());
+        Assert.assertEquals(0.7, configuration.getCairoConfiguration().getCountDistinctLoadFactor(), 0.000001);
 
         Assert.assertEquals(100000, configuration.getCairoConfiguration().getParallelIndexThreshold());
         Assert.assertEquals(10, configuration.getCairoConfiguration().getReaderPoolMaxSegments());
@@ -224,6 +226,9 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(ff.allowMixedIO(root), configuration.getCairoConfiguration().isWriterMixedIOEnabled());
         Assert.assertEquals(CairoConfiguration.O_NONE, configuration.getCairoConfiguration().getWriterFileOpenOpts());
         Assert.assertTrue(configuration.getCairoConfiguration().isIOURingEnabled());
+
+        // cannot assert for exact number as it is platform dependant
+        Assert.assertTrue(configuration.getCairoConfiguration().getSqlCompilerPoolCapacity() > 0);
 
         Assert.assertEquals(0, configuration.getLineUdpReceiverConfiguration().getBindIPv4Address());
         Assert.assertEquals(9009, configuration.getLineUdpReceiverConfiguration().getPort());
@@ -1007,6 +1012,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(1000000, configuration.getCairoConfiguration().getParallelIndexThreshold());
             Assert.assertEquals(42, configuration.getCairoConfiguration().getReaderPoolMaxSegments());
             Assert.assertEquals(5_000_000, configuration.getCairoConfiguration().getSpinLockTimeout());
+            Assert.assertEquals(22, configuration.getCairoConfiguration().getSqlCompilerPoolCapacity());
             Assert.assertEquals(2048, configuration.getCairoConfiguration().getSqlCharacterStoreCapacity());
             Assert.assertEquals(128, configuration.getCairoConfiguration().getSqlCharacterStoreSequencePoolCapacity());
             Assert.assertEquals(2048, configuration.getCairoConfiguration().getSqlColumnPoolCapacity());
@@ -1037,6 +1043,8 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(8 * 1024, configuration.getCairoConfiguration().getSqlJoinMetadataPageSize());
             Assert.assertEquals(10_000, configuration.getCairoConfiguration().getSqlJoinMetadataMaxResizes());
             Assert.assertEquals(16, configuration.getCairoConfiguration().getBindVariablePoolSize());
+            Assert.assertEquals(128, configuration.getCairoConfiguration().getCountDistinctCapacity());
+            Assert.assertEquals(0.3, configuration.getCairoConfiguration().getCountDistinctLoadFactor(), 0.000001);
 
             Assert.assertEquals(256, configuration.getCairoConfiguration().getWindowColumnPoolCapacity());
             Assert.assertEquals(256, configuration.getCairoConfiguration().getSqlWindowMaxRecursion());

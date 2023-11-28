@@ -248,8 +248,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlColumnCastModelPoolCapacity;
     private final int sqlColumnPoolCapacity;
     private final double sqlCompactMapLoadFactor;
+    private final int sqlCompilerPoolCapacity;
     private final int sqlCopyBufferSize;
     private final int sqlCopyModelPoolCapacity;
+    private final int sqlCountDistinctCapacity;
+    private final double sqlCountDistinctLoadFactor;
     private final int sqlCreateTableModelPoolCapacity;
     private final int sqlDistinctTimestampKeyCapacity;
     private final double sqlDistinctTimestampLoadFactor;
@@ -917,6 +920,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlGroupByPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_GROUPBY_POOL_CAPACITY, 1024);
             this.sqlMaxSymbolNotEqualsCount = getInt(properties, env, PropertyKey.CAIRO_SQL_MAX_SYMBOL_NOT_EQUALS_COUNT, 100);
             this.sqlBindVariablePoolSize = getInt(properties, env, PropertyKey.CAIRO_SQL_BIND_VARIABLE_POOL_SIZE, 8);
+            this.sqlCountDistinctCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_COUNT_DISTINCT_CAPACITY, 16);
+            this.sqlCountDistinctLoadFactor = getDouble(properties, env, PropertyKey.CAIRO_SQL_COUNT_DISTINCT_LOAD_FACTOR, "0.7");
             final String sqlCopyFormatsFile = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_FORMATS_FILE, "/text_loader.json");
             final String dateLocale = getString(properties, env, PropertyKey.CAIRO_DATE_LOCALE, "en");
             this.locale = DateLocaleFactory.INSTANCE.getLocale(dateLocale);
@@ -1167,6 +1172,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sharedWorkerYieldThreshold = getLong(properties, env, PropertyKey.SHARED_WORKER_YIELD_THRESHOLD, 10);
             this.sharedWorkerSleepThreshold = getLong(properties, env, PropertyKey.SHARED_WORKER_SLEEP_THRESHOLD, 10_000);
             this.sharedWorkerSleepTimeout = getLong(properties, env, PropertyKey.SHARED_WORKER_SLEEP_TIMEOUT, 10);
+
+            this.sqlCompilerPoolCapacity = 2 * (httpWorkerCount + pgWorkerCount + sharedWorkerCount + walApplyWorkerCount);
 
             this.metricsEnabled = getBoolean(properties, env, PropertyKey.METRICS_ENABLED, false);
             this.writerAsyncCommandBusyWaitTimeout = getLong(properties, env, PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 500);
@@ -1655,7 +1662,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                     PropertyKey.CAIRO_SQL_ANALYTIC_TREE_MAX_PAGES,
                     PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_PAGES
             );
-
         }
 
         public ValidationResult validate(Properties properties) {
@@ -1900,13 +1906,22 @@ public class PropServerConfiguration implements ServerConfiguration {
             if (cairoSQLCopyIdSupplier == 0) {
                 return randomIDSupplier;
             }
-
             return sequentialIDSupplier;
         }
 
         @Override
         public int getCopyPoolCapacity() {
             return sqlCopyModelPoolCapacity;
+        }
+
+        @Override
+        public int getCountDistinctCapacity() {
+            return sqlCountDistinctCapacity;
+        }
+
+        @Override
+        public double getCountDistinctLoadFactor() {
+            return sqlCountDistinctLoadFactor;
         }
 
         @Override
@@ -2262,6 +2277,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public double getSqlCompactMapLoadFactor() {
             return sqlCompactMapLoadFactor;
+        }
+
+        @Override
+        public int getSqlCompilerPoolCapacity() {
+            return sqlCompilerPoolCapacity;
         }
 
         @Override

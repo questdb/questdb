@@ -30,7 +30,7 @@ import java.util.Arrays;
  * Simplified variant of {@link java.util.BitSet}.
  */
 public class BitSet implements Mutable {
-    private static final int BITS_PER_WORD = 64;
+    public static final int BITS_PER_WORD = 64;
     private long[] words;
 
     public BitSet() {
