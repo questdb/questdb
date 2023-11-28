@@ -181,11 +181,11 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                 } catch (TableReferenceOutOfDateException e) {
                     LOG.info().$(e.getFlyweightMessage()).$();
                     Misc.free(factory);
-                    compileQuery(state);
+                    compileAndExecuteQuery(state);
                 }
             } else {
                 // new query
-                compileQuery(state);
+                compileAndExecuteQuery(state);
             }
         } catch (SqlException | ImplicitCastException e) {
             sqlError(context.getChunkedResponseSocket(), state, e, configuration.getKeepAliveHeader());
@@ -425,28 +425,39 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         );
     }
 
-    private void compileQuery(
+    private void compileAndExecuteQuery(
             JsonQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
-        try {
-            final long nanos = nanosecondClock.getTicks();
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                final CompiledQuery cc = compiler.compile(state.getQuery(), sqlExecutionContext);
-                sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP_JSON);
-                state.setCompilerNanos(nanosecondClock.getTicks() - nanos);
-                state.setQueryType(cc.getType());
-                // todo: reconsider whether we need to keep the SqlCompiler instance open while executing the query
-                // the problem is the each instance of the compiler has just a single instance of the CompilerQuery object.
-                // the CompilerQuery is used as a flyweight(?) and we cannot return the SqlCompiler instance to the pool
-                // until we extract the result from the CompilerQuery.
-                queryExecutors.getQuick(cc.getType()).execute(
-                        state,
-                        cc,
-                        configuration.getKeepAliveHeader()
-                );
+        boolean recompileStale = true;
+        for (int retries = 0; recompileStale; retries++) {
+            try {
+                final long nanos = nanosecondClock.getTicks();
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                    final CompiledQuery cc = compiler.compile(state.getQuery(), sqlExecutionContext);
+                    sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP_JSON);
+                    state.setCompilerNanos(nanosecondClock.getTicks() - nanos);
+                    state.setQueryType(cc.getType());
+                    // todo: reconsider whether we need to keep the SqlCompiler instance open while executing the query
+                    // the problem is the each instance of the compiler has just a single instance of the CompilerQuery object.
+                    // the CompilerQuery is used as a flyweight(?) and we cannot return the SqlCompiler instance to the pool
+                    // until we extract the result from the CompilerQuery.
+                    queryExecutors.getQuick(cc.getType()).execute(
+                            state,
+                            cc,
+                            configuration.getKeepAliveHeader()
+                    );
+                }
+                recompileStale = false;
+            } catch (TableReferenceOutOfDateException e) {
+                // TableReferenceOutOfDateException be thrown during query execution
+                if (retries == TableReferenceOutOfDateException.MAX_RETRY_ATTEMPTS) {
+                    throw e;
+                }
+                LOG.info().$(e.getFlyweightMessage()).$();
+                // will recompile
+            } finally {
+                state.setContainsSecret(sqlExecutionContext.containsSecret());
             }
-        } finally {
-            state.setContainsSecret(sqlExecutionContext.containsSecret());
         }
     }
 
@@ -689,7 +700,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             waitResult = fut.await(0);
         } catch (TableReferenceOutOfDateException e) {
             state.freeAsyncOperation();
-            compileQuery(state);
+            compileAndExecuteQuery(state);
             return;
         }
 
