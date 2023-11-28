@@ -46,7 +46,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             //trigger removal of rows below lo boundary AND resize of buffer
             insert("insert into tab select (100000+x)::timestamp, x/4, x from long_sequence(90000)");
 
-            assertSql(
+            assertQuery(
                     "ts\ti\tj\tavg\tsum\n" +
                             "1970-01-01T00:00:00.189996Z\t22499\t89996\t49996.0\t3.999729996E9\n" +
                             "1970-01-01T00:00:00.189997Z\t22499\t89997\t49997.0\t3.999809997E9\n" +
@@ -57,7 +57,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "select ts, i, j, " +
                             "avg(j) over (order by ts range between 80000 preceding and current row), " +
                             "sum(j) over (order by ts range between 80000 preceding and current row) from tab) " +
-                            " limit -5"
+                            " limit -5",
+                    null,
+                    "ts",
+                    false
             );
 
             ddl("truncate table tab");

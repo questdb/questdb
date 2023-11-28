@@ -2855,7 +2855,7 @@ if __name__ == "__main__":
     public void testDisconnectDuringAuth() throws Exception {
         skipOnWalRun(); // we are not touching tables at all, no reason to run the same test twice.
         for (int i = 0; i < 3; i++) {
-            testDisconnectDuringAuth0(i, 10);
+            testDisconnectDuringAuth0(i);
         }
     }
 
@@ -2943,40 +2943,40 @@ if __name__ == "__main__":
             }
 
             //max rows bigger than result set sie (empty result set)
-            assertResultNTimes(connection,
+            assertResultTenTimes(connection,
                     "select * from tab",
-                    "a[INTEGER],b[BIGINT],ts[TIMESTAMP]\n", 5, 10
+                    "a[INTEGER],b[BIGINT],ts[TIMESTAMP]\n", 5
             );
 
             //max rows bigger than result set sie (non-empty result set)
-            assertResultNTimes(connection,
+            assertResultTenTimes(connection,
                     "select 1 as x",
                     "x[INTEGER]\n" +
-                            "1\n", 5, 10
+                            "1\n", 5
             );
 
             //max rows smaller than result set size
-            assertResultNTimes(connection,
+            assertResultTenTimes(connection,
                     "select x from long_sequence(5)",
                     "x[BIGINT]\n" +
-                            "1\n2\n3\n", 3, 10
+                            "1\n2\n3\n", 3
             );
 
             // max rows smaller than cursor size, cursor does not return size
-            assertResultNTimes(connection,
+            assertResultTenTimes(connection,
                     "show columns from tab",
                     "column[VARCHAR],type[VARCHAR],indexed[BIT],indexBlockCapacity[INTEGER],symbolCached[BIT],symbolCapacity[INTEGER],designated[BIT],upsertKey[BIT]\n" +
                             "a,INT,false,0,false,0,false,false\n" +
-                            "b,LONG,false,0,false,0,false,false\n", 2, 10
+                            "b,LONG,false,0,false,0,false,false\n", 2
             );
 
             // max rows bigger than cursor size, cursor does not return size
-            assertResultNTimes(connection,
+            assertResultTenTimes(connection,
                     "show columns from tab",
                     "column[VARCHAR],type[VARCHAR],indexed[BIT],indexBlockCapacity[INTEGER],symbolCached[BIT],symbolCapacity[INTEGER],designated[BIT],upsertKey[BIT]\n" +
                             "a,INT,false,0,false,0,false,false\n" +
                             "b,LONG,false,0,false,0,false,false\n" +
-                            "ts,TIMESTAMP,false,0,false,0,false,false\n", 6, 10
+                            "ts,TIMESTAMP,false,0,false,0,false,false\n", 6
             );
         });
     }
@@ -9724,11 +9724,11 @@ create table tab as (
         }
     }
 
-    private void assertResultNTimes(Connection connection, String sql, String expected, int maxRows, int times) throws SQLException, IOException {
+    private void assertResultTenTimes(Connection connection, String sql, String expected, int maxRows) throws SQLException, IOException {
         try (PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setMaxRows(maxRows);
 
-            for (int i = 0; i < times; i++) {
+            for (int i = 0; i < 10; i++) {
                 sink.clear();
                 try (ResultSet rs = statement.executeQuery()) {
                     assertResultSet(expected, sink, rs);
@@ -10545,7 +10545,7 @@ create table tab as (
         });
     }
 
-    private void testDisconnectDuringAuth0(int allowedSendCount, int clientCount) throws Exception {
+    private void testDisconnectDuringAuth0(int allowedSendCount) throws Exception {
         DisconnectOnSendNetworkFacade nf = new DisconnectOnSendNetworkFacade(allowedSendCount);
         assertMemoryLeak(() -> {
             PGWireConfiguration configuration = new Port0PGWireConfiguration() {
@@ -10569,7 +10569,7 @@ create table tab as (
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
-                for (int i = 0; i < clientCount; i++) {
+                for (int i = 0; i < 10; i++) {
                     try (Connection ignored1 = getConnectionWitSslInitRequest(Mode.EXTENDED, server.getPort(), false, -2)) {
                         assertException("Connection should not be established when server disconnects during authentication");
                     } catch (PSQLException ignored) {
