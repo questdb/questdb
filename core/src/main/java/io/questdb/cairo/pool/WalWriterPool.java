@@ -61,7 +61,7 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
         );
     }
 
-    public static class WalWriterTenant extends WalWriter implements PoolTenant {
+    public static class WalWriterTenant extends WalWriter implements PoolTenant<WalWriterTenant> {
         private final int index;
         private Entry<WalWriterTenant> entry;
         private AbstractMultiTenantPool<WalWriterTenant> pool;
@@ -104,7 +104,6 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
             }
         }
 
-        @SuppressWarnings("unchecked")
         @Override
         public Entry<WalWriterTenant> getEntry() {
             return entry;

@@ -57,6 +57,7 @@ public class SequencerMetadataPool extends AbstractMultiTenantPool<MetadataPoolT
         private final TableToken tableToken;
         private AbstractMultiTenantPool.Entry<MetadataPoolTenant> entry;
         private AbstractMultiTenantPool<MetadataPoolTenant> pool;
+
         public SequencerMetadataTenantImpl(
                 AbstractMultiTenantPool<MetadataPoolTenant> pool,
                 Entry<MetadataPoolTenant> entry,
@@ -82,7 +83,6 @@ public class SequencerMetadataPool extends AbstractMultiTenantPool<MetadataPoolT
             super.close();
         }
 
-        @SuppressWarnings("unchecked")
         @Override
         public AbstractMultiTenantPool.Entry<MetadataPoolTenant> getEntry() {
             return entry;
@@ -108,11 +108,6 @@ public class SequencerMetadataPool extends AbstractMultiTenantPool<MetadataPoolT
             throw new UnsupportedOperationException();
         }
 
-        @Override
-        public boolean isSoftLink() {
-            throw new UnsupportedOperationException();
-        }
-
         public void goodbye() {
             entry = null;
             pool = null;
@@ -120,6 +115,11 @@ public class SequencerMetadataPool extends AbstractMultiTenantPool<MetadataPoolT
 
         @Override
         public boolean isDedupKey(int columnIndex) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean isSoftLink() {
             throw new UnsupportedOperationException();
         }
 

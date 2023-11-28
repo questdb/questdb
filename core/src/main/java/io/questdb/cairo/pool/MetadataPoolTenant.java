@@ -26,5 +26,5 @@ package io.questdb.cairo.pool;
 
 import io.questdb.cairo.sql.TableMetadata;
 
-public interface MetadataPoolTenant extends TableMetadata, PoolTenant {
+public interface MetadataPoolTenant extends TableMetadata, PoolTenant<MetadataPoolTenant> {
 }

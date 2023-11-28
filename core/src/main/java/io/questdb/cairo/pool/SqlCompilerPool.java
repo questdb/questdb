@@ -54,7 +54,7 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         );
     }
 
-    static class C implements SqlCompiler, PoolTenant {
+    static class C implements SqlCompiler, PoolTenant<C> {
         private final SqlCompiler delegate;
         private final int index;
         private Entry<C> entry;
@@ -103,7 +103,6 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
             delegate.compileBatch(queryText, sqlExecutionContext, batchCallback);
         }
 
-        @SuppressWarnings("unchecked")
         @Override
         public Entry<C> getEntry() {
             return entry;

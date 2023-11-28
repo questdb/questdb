@@ -55,7 +55,6 @@ class TableReaderMetadataTenantImpl extends DynamicTableReaderMetadata implement
         super.close();
     }
 
-    @SuppressWarnings("unchecked")
     @Override
     public AbstractMultiTenantPool.Entry<MetadataPoolTenant> getEntry() {
         return entry;
