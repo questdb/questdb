@@ -321,6 +321,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.receivedBytes = 0;
         this.securityContext = DenyAllSecurityContext.INSTANCE;
         this.authenticator.clear();
+        this.totalReceived = 0;
         clearSuspendEvent();
     }
 
@@ -442,26 +443,45 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
         if (newRequest) {
             processor.onHeadersReady(this);
+            totalReceived -= headerEnd - recvBuffer;
         } else {
             read = socket.recv(recvBuffer, recvBufferSize);
         }
+
+//        LOG.info().$("content recv [len=").$(read)
+//                .$(", totalReceived=").$(totalReceived + read)
+//                .$(", contentLength=").$(contentLength)
+//                .I$();
         processor.resumeRecv(this);
+        if (read > 0) {
+            HttpMultipartContentListener contentProcessor = (HttpMultipartContentListener) processor;
+            long lo = newRequest ? headerEnd : recvBuffer;
+            contentProcessor.onChunk(lo, recvBuffer + read);
+            totalReceived += read;
 
-        HttpMultipartContentListener contentProcessor = (HttpMultipartContentListener) processor;
-        long lo = newRequest ? recvBuffer + read : recvBuffer;
-        contentProcessor.onChunk(lo, recvBuffer + read);
-        totalReceived += read;
-
-        if (totalReceived == contentLength) {
-            processor.onRequestComplete(this);
-            if (configuration.getServerKeepAlive()) {
-                return true;
-            } else {
-                dispatcher.disconnect(this, DISCONNECT_REASON_KEEPALIVE_OFF_RECV);
-                return false;
+            if (totalReceived == contentLength) {
+                try {
+                    processor.onRequestComplete(this);
+                    if (configuration.getServerKeepAlive()) {
+                        return true;
+                    } else {
+                        dispatcher.disconnect(this, DISCONNECT_REASON_KEEPALIVE_OFF_RECV);
+                        return false;
+                    }
+                } finally {
+                    reset();
+                }
             }
+            return true;
+        } else if (read == 0) {
+            dispatcher.registerChannel(this, IOOperation.READ);
+            return false;
+        } else {
+            // client disconnected
+            processor.failRequest(this, null);
+            dispatcher.disconnect(this, DISCONNECT_REASON_KICKED_OUT_AT_RECV);
+            return false;
         }
-        return true;
     }
 
     private boolean consumeMultipart(

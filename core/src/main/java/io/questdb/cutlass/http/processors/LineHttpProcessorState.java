@@ -40,7 +40,7 @@ public class LineHttpProcessorState implements QuietCloseable {
     int line = 0;
     private long buffer;
     private Status currentStatus = Status.OK;
-    private StringSink error;
+    private StringSink error = new StringSink();
     private int fd = -1;
     private IlpTudCache ilpTudCache;
     private long recvBufEnd;
@@ -98,20 +98,31 @@ public class LineHttpProcessorState implements QuietCloseable {
         return currentStatus;
     }
 
+    public void of(int fd) {
+        this.fd = fd;
+    }
+
     public Status parse(long lo, long hi) {
         if (currentStatus == Status.ERROR) {
             return currentStatus;
         }
 
-        long pos = lo;
-        while (pos < hi) {
-            pos = copyToLocalBuffer(pos, hi);
-            currentStatus = processLocalBuffer();
-            if (currentStatus == Status.ERROR) {
-                return currentStatus;
+        try {
+            long pos = lo;
+            while (pos < hi) {
+                pos = copyToLocalBuffer(pos, hi);
+                currentStatus = processLocalBuffer();
+                if (currentStatus == Status.ERROR) {
+                    return currentStatus;
+                }
             }
+            return currentStatus;
+        } catch (Throwable th) {
+            LOG.error().$("could not parse HTTP request [fd=").$(fd).$(", ex=").$(th).$(']').$();
+            error.put(th.getMessage());
+            currentStatus = Status.ERROR;
+            return currentStatus;
         }
-        return currentStatus;
     }
 
     public void reset() {
@@ -121,13 +132,13 @@ public class LineHttpProcessorState implements QuietCloseable {
     }
 
     private void appendMeasurement() {
-        LOG.info().$("parsed measurement [table=").$(parser.getMeasurementName()).$(']').$();
+//        LOG.info().$("parsed measurement [table=").$(parser.getMeasurementName()).$(", fd=").$(fd).I$();
         WalTableUpdateDetails tud = this.ilpTudCache.getTableUpdateDetails(AllowAllSecurityContext.INSTANCE, parser, symbolCachePool);
 
         try {
             appender.appendToWal(AllowAllSecurityContext.INSTANCE, parser, tud);
         } catch (Throwable e) {
-            LOG.info().$("problem appending to WAL [table=").$(parser.getMeasurementName()).$(", ex=").$(e).$();
+            LOG.info().$("problem appending to WAL [table=").$(parser.getMeasurementName()).$(", ex=").$(e).I$();
         }
     }
 
@@ -136,9 +147,19 @@ public class LineHttpProcessorState implements QuietCloseable {
             long shl = recvBufStartOfMeasurement - buffer;
             Vect.memmove(buffer, buffer + shl, recvBufPos - recvBufStartOfMeasurement);
             parser.shl(shl);
+            recvBufPos -= shl;
+            this.recvBufStartOfMeasurement -= shl;
+
+//            LOG.info().$("compacting buffer [fd=").$(fd)
+//                    .$(", shl=").$(shl)
+//                    .$(", recvBufPos=").$(recvBufPos)
+//                    .$(", buffer=").$(buffer)
+//                    .$(", fd=").$(fd).$(']')
+//                    .I$();
+
             return true;
         }
-        return false;
+        return recvBufPos < recvBufEnd;
     }
 
     private long copyToLocalBuffer(long lo, long hi) {
@@ -170,6 +191,7 @@ public class LineHttpProcessorState implements QuietCloseable {
 
                     case BUFFER_UNDERFLOW: {
                         if (!compactBuffer(recvBufStartOfMeasurement)) {
+                            error.put("buffer underflow [table=").put(parser.getMeasurementName()).put(", line=").put(line + 1).put("]");
                             return Status.ERROR;
                         }
                         return Status.NEEDS_REED;
@@ -189,6 +211,7 @@ public class LineHttpProcessorState implements QuietCloseable {
 
     private void saveParseError() {
         error.put("parse error [table=").put(parser.getMeasurementName()).put(", line=").put(line + 1).put("]");
+        LOG.info().$("parse error [table=").$(parser.getMeasurementName()).$(", line=").$(line + 1).$(']').$();
     }
 
     private void saveParseError(Throwable ex) {
@@ -202,6 +225,8 @@ public class LineHttpProcessorState implements QuietCloseable {
         if (recvBufStartOfMeasurement == recvBufPos) {
             recvBufPos = buffer;
             recvBufStartOfMeasurement = buffer;
+            parser.of(buffer);
+//            LOG.info().$("start of line at the end of the buffer, resetting the buffer [fd=").$(fd).I$();
         }
     }
 

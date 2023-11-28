@@ -48,6 +48,12 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
     }
 
     @Override
+    public void failRequest(HttpConnectionContext context, HttpException exception) {
+        LOG.info().$("rolling back, client disconnected [fd=").$(context.getFd()).I$();
+        this.state.clear();
+    }
+
+    @Override
     public void onChunk(long lo, long hi) {
         this.state.parse(lo, hi);
     }
@@ -111,6 +117,7 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
     @Override
     public void resumeRecv(HttpConnectionContext context) {
         state = LV.get(context);
+        state.of(context.getFd());
     }
 
     private void sendError(HttpConnectionContext context, CharSequence errorText) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -119,6 +126,5 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
         r.sendHeader();
         r.putAscii(errorText);
         r.sendChunk(true);
-        return;
     }
 }
