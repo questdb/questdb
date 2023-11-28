@@ -146,6 +146,16 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
+    public int getWalMaxSegmentFileDescriptorsCache() {
+        return overrides.getWalMaxSegmentFileDescriptorsCache() >= 0 ? overrides.getWalMaxSegmentFileDescriptorsCache() : super.getWalMaxSegmentFileDescriptorsCache();
+    }
+
+    @Override
+    public long getWalMaxLagSize() {
+        return overrides.getWalMaxLagSize() >= 0 ? overrides.getWalMaxLagSize() : super.getWalMaxLagSize();
+    }
+
+    @Override
     public int getMetadataPoolCapacity() {
         return 1;
     }
@@ -314,6 +324,11 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     @Override
     public @NotNull VolumeDefinitions getVolumeDefinitions() {
         return volumeDefinitions;
+    }
+
+    @Override
+    public int getWalApplyLookAheadTransactionCount() {
+        return overrides.getWalApplyLookAheadTransactionCount() >= 0 ? overrides.getWalApplyLookAheadTransactionCount() : super.getWalApplyLookAheadTransactionCount();
     }
 
     @Override

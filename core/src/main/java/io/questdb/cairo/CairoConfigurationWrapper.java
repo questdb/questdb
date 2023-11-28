@@ -346,6 +346,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getWalMaxSegmentFileDescriptorsCache() {
+        return delegate.getWalMaxSegmentFileDescriptorsCache();
+    }
+
+    @Override
     public int getMetadataPoolCapacity() {
         return delegate.getMetadataPoolCapacity();
     }
@@ -863,6 +868,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean getWalEnabledDefault() {
         return delegate.getWalEnabledDefault();
+    }
+
+    @Override
+    public long getWalMaxLagSize() {
+        return delegate.getWalMaxLagSize();
     }
 
     @Override
