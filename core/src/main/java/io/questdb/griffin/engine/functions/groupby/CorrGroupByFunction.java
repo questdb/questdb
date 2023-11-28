@@ -38,7 +38,7 @@ import org.jetbrains.annotations.NotNull;
 /**
  * We use an algorithm similar to B. P. Welford's which works by first aggregating sum of squares of 
  * independent and dependent variables Sxx = sum[(X - meanX) ^ 2], Syy = sum[(Y - meanY) ^ 2], Sxy = sum[(X - meanX) * (Y - meanY)].
- * Computation of correlation is then simple, e.g. covariance = Sxy / (n - 1)
+ * Computation of correlation is then simple, e.g. correlation = Sxy / sqrt(Sxx * Syy)
  *
  * @see <a href="https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Online">Welford's algorithm</a>
  */
