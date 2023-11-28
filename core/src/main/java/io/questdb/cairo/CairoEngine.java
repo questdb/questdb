@@ -73,15 +73,15 @@ public class CairoEngine implements Closeable, WriterSource {
     private final EngineMaintenanceJob engineMaintenanceJob;
     private final FunctionFactoryCache ffCache;
     private final MessageBusImpl messageBus;
-    private final SequencerMetadataPool sequencerMetadataPool;
-    private final TableReaderMetadataPool tableReaderMetadataPool;
     private final Metrics metrics;
     private final Predicate<CharSequence> protectedTableResolver;
     private final ReaderPool readerPool;
+    private final SequencerMetadataPool sequencerMetadataPool;
     private final DatabaseSnapshotAgentImpl snapshotAgent;
     private final SqlCompilerPool sqlCompilerPool;
     private final IDGenerator tableIdGenerator;
     private final TableNameRegistry tableNameRegistry;
+    private final TableReaderMetadataPool tableReaderMetadataPool;
     private final TableSequencerAPI tableSequencerAPI;
     private final Telemetry<TelemetryTask> telemetry;
     private final Telemetry<TelemetryWalTask> telemetryWal;
@@ -429,43 +429,6 @@ public class CairoEngine implements Closeable, WriterSource {
         return messageBus;
     }
 
-    public TableMetadata getSequencerMetadata(TableToken tableToken) {
-        verifyTableToken(tableToken);
-        return sequencerMetadataPool.get(tableToken);
-    }
-
-    public TableMetadata getTableReaderMetadata(TableToken tableToken) {
-        verifyTableToken(tableToken);
-        try {
-            return tableReaderMetadataPool.get(tableToken);
-        } catch (CairoException e) {
-            tryRepairTable(tableToken, e);
-        }
-        return tableReaderMetadataPool.get(tableToken);
-    }
-
-    public TableRecordMetadata getSequencerMetadata(TableToken tableToken, long metadataVersion) {
-        verifyTableToken(tableToken);
-        try {
-            final TableRecordMetadata metadata = sequencerMetadataPool.get(tableToken);
-            if (metadataVersion != TableUtils.ANY_TABLE_VERSION && metadata.getMetadataVersion() != metadataVersion) {
-                final TableReferenceOutOfDateException ex = TableReferenceOutOfDateException.of(
-                        tableToken,
-                        metadata.getTableId(),
-                        metadata.getTableId(),
-                        metadataVersion,
-                        metadata.getMetadataVersion()
-                );
-                metadata.close();
-                throw ex;
-            }
-            return metadata;
-        } catch (CairoException e) {
-            tryRepairTable(tableToken, e);
-        }
-        return sequencerMetadataPool.get(tableToken);
-    }
-
     public Metrics getMetrics() {
         return metrics;
     }
@@ -534,6 +497,36 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    public TableMetadata getSequencerMetadata(TableToken tableToken) {
+        if (!tableToken.isWal()) {
+            return getTableReaderMetadata(tableToken);
+        }
+        verifyTableToken(tableToken);
+        return sequencerMetadataPool.get(tableToken);
+    }
+
+    public TableRecordMetadata getSequencerMetadata(TableToken tableToken, long metadataVersion) {
+        verifyTableToken(tableToken);
+        try {
+            final TableRecordMetadata metadata = sequencerMetadataPool.get(tableToken);
+            if (metadataVersion != TableUtils.ANY_TABLE_VERSION && metadata.getMetadataVersion() != metadataVersion) {
+                final TableReferenceOutOfDateException ex = TableReferenceOutOfDateException.of(
+                        tableToken,
+                        metadata.getTableId(),
+                        metadata.getTableId(),
+                        metadataVersion,
+                        metadata.getMetadataVersion()
+                );
+                metadata.close();
+                throw ex;
+            }
+            return metadata;
+        } catch (CairoException e) {
+            tryRepairTable(tableToken, e);
+        }
+        return sequencerMetadataPool.get(tableToken);
+    }
+
     public DatabaseSnapshotAgent getSnapshotAgent() {
         return snapshotAgent;
     }
@@ -548,6 +541,18 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public IDGenerator getTableIdGenerator() {
         return tableIdGenerator;
+    }
+
+    public TableMetadata getTableReaderMetadata(TableToken tableToken) {
+        verifyTableToken(tableToken);
+        try {
+            return tableReaderMetadataPool.get(tableToken);
+        } catch (CairoException e) {
+            if (!tableToken.isWal()) {
+                tryRepairTable(tableToken, e);
+            }
+        }
+        return tableReaderMetadataPool.get(tableToken);
     }
 
     public TableSequencerAPI getTableSequencerAPI() {
@@ -725,6 +730,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     writerPool.unlock(tableToken);
                     lockedReason = REASON_BUSY_READER;
                 }
+                sequencerMetadataPool.unlock(tableToken);
             } else {
                 lockedReason = REASON_BUSY_SEQUENCER_METADATA_POOL;
             }

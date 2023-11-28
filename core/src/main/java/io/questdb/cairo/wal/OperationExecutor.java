@@ -42,7 +42,7 @@ import java.io.Closeable;
 class OperationExecutor implements Closeable {
     private final BindVariableService bindVariableService;
     private final CairoEngine engine;
-    private final TableRenameSupportExecutionContext renameSupportExecutionContext;
+    private final WalApplySqlExecutionContext renameSupportExecutionContext;
     private final Rnd rnd;
 
     OperationExecutor(
@@ -52,7 +52,7 @@ class OperationExecutor implements Closeable {
     ) {
         rnd = new Rnd();
         bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
-        renameSupportExecutionContext = new TableRenameSupportExecutionContext(
+        renameSupportExecutionContext = new WalApplySqlExecutionContext(
                 engine,
                 workerCount,
                 sharedWorkerCount
