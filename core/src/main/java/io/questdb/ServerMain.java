@@ -83,10 +83,15 @@ public class ServerMain implements Closeable {
 
         // create cairo engine
         engine = freeOnExit.register(bootstrap.newCairoEngine());
-        config.init(engine, freeOnExit);
-        Unsafe.setWriterMemLimit(config.getCairoConfiguration().getWriterMemoryLimit());
-        freeOnExit.register(config.getFactoryProvider());
-        engine.load();
+        try {
+            config.init(engine, freeOnExit);
+            Unsafe.setWriterMemLimit(config.getCairoConfiguration().getWriterMemoryLimit());
+            freeOnExit.register(config.getFactoryProvider());
+            engine.load();
+        } catch (Throwable th) {
+            freeOnExit.close();
+            throw th;
+        }
     }
 
     public static LineAuthenticatorFactory getLineAuthenticatorFactory(ServerConfiguration configuration) {
