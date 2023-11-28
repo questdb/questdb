@@ -44,38 +44,32 @@ import org.jetbrains.annotations.NotNull;
  * @see <a href="https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Online">Welford's algorithm</a>
  */
 
-public abstract class AbstractRegressionGroupByFunction extends DoubleFunction implements GroupByFunction, BinaryFunction {
+public abstract class AbstractCovarGroupByFunction extends DoubleFunction implements GroupByFunction, BinaryFunction {
     protected final Function xFunction;
     protected final Function yFunction;
     protected int valueIndex;
 
-    protected AbstractRegressionGroupByFunction(@NotNull Function arg0, @NotNull Function arg1) {
+    protected AbstractCovarGroupByFunction(@NotNull Function arg0, @NotNull Function arg1) {
         this.xFunction = arg0;
         this.yFunction = arg1;
     }
 
     protected void aggregate(MapValue mapValue, double x, double y) {
         double meanX = mapValue.getDouble(valueIndex);
-        double sumX = mapValue.getDouble(valueIndex + 1);
-        double meanY = mapValue.getDouble(valueIndex + 2);
-        double sumY = mapValue.getDouble(valueIndex + 3);
-        double sumXY = mapValue.getDouble(valueIndex + 4);
-        long count = mapValue.getLong(valueIndex + 5) + 1;
+        double meanY = mapValue.getDouble(valueIndex + 1);
+        double sumXY = mapValue.getDouble(valueIndex + 2);
+        long count = mapValue.getLong(valueIndex + 3) + 1;
 
         double oldMeanX = meanX;
         meanX += (x - meanX) / count;
-        sumX += (x - meanX) * (x - oldMeanX);
         double oldMeanY = meanY;
         meanY += (y - meanY) / count;
-        sumY += (y - meanY) * (y - oldMeanY);
         sumXY += (x - oldMeanX) * (y - meanY);
 
         mapValue.putDouble(valueIndex, meanX);
-        mapValue.putDouble(valueIndex + 1, sumX);
-        mapValue.putDouble(valueIndex + 2, meanY);
-        mapValue.putDouble(valueIndex + 3, sumY);
-        mapValue.putDouble(valueIndex + 4, sumXY);
-        mapValue.addLong(valueIndex + 5, 1L);
+        mapValue.putDouble(valueIndex + 1, meanY);
+        mapValue.putDouble(valueIndex + 2, sumXY);
+        mapValue.addLong(valueIndex + 3, 1L);
     }
 
     @Override
@@ -85,9 +79,7 @@ public abstract class AbstractRegressionGroupByFunction extends DoubleFunction i
         mapValue.putDouble(valueIndex, 0);
         mapValue.putDouble(valueIndex + 1, 0);
         mapValue.putDouble(valueIndex + 2, 0);
-        mapValue.putDouble(valueIndex + 3, 0);
-        mapValue.putDouble(valueIndex + 4, 0);
-        mapValue.putLong(valueIndex + 5, 0);
+        mapValue.putLong(valueIndex + 3, 0);
 
         if (Numbers.isFinite(x) && Numbers.isFinite(y)) {
             aggregate(mapValue, x, y);
@@ -124,15 +116,13 @@ public abstract class AbstractRegressionGroupByFunction extends DoubleFunction i
         columnTypes.add(ColumnType.DOUBLE);
         columnTypes.add(ColumnType.DOUBLE);
         columnTypes.add(ColumnType.DOUBLE);
-        columnTypes.add(ColumnType.DOUBLE);
-        columnTypes.add(ColumnType.DOUBLE);
         columnTypes.add(ColumnType.LONG);
     }
 
     @Override
     public void setDouble(MapValue mapValue, double value) {
-        mapValue.putDouble(valueIndex + 4, value);
-        mapValue.putLong(valueIndex + 5, 1L);
+        mapValue.putDouble(valueIndex + 2, value);
+        mapValue.putLong(valueIndex + 3, 1L);
     }
 
     @Override
@@ -140,9 +130,7 @@ public abstract class AbstractRegressionGroupByFunction extends DoubleFunction i
         mapValue.putDouble(valueIndex, Double.NaN);
         mapValue.putDouble(valueIndex + 1, Double.NaN);
         mapValue.putDouble(valueIndex + 2, Double.NaN);
-        mapValue.putDouble(valueIndex + 3, Double.NaN);
-        mapValue.putDouble(valueIndex + 4, Double.NaN);
-        mapValue.putLong(valueIndex + 5, 0);
+        mapValue.putLong(valueIndex + 3, 0);
     }
 }
 

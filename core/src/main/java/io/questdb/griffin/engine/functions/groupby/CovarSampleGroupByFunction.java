@@ -24,18 +24,11 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.ArrayColumnTypes;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.DoubleFunction;
-import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.BinaryFunction;
-import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
-public class CovarSampleGroupByFunction extends AbstractRegressionGroupByFunction {
+public class CovarSampleGroupByFunction extends AbstractCovarGroupByFunction {
 
     protected CovarSampleGroupByFunction(@NotNull Function arg0, @NotNull Function arg1) {
         super(arg0, arg1);
@@ -43,9 +36,9 @@ public class CovarSampleGroupByFunction extends AbstractRegressionGroupByFunctio
 
     @Override
     public double getDouble(Record rec) {
-        long count = rec.getLong(valueIndex + 5);
+        long count = rec.getLong(valueIndex + 3);
         if (count - 1 > 0) {
-            double sumXY = rec.getDouble(valueIndex + 4);
+            double sumXY = rec.getDouble(valueIndex + 2);
             return sumXY / (count - 1);
         }
         return Double.NaN;
