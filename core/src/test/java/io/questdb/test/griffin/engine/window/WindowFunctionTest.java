@@ -29,7 +29,9 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.window.*;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -3104,7 +3106,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
         for (int i = 0, n = values.size(); i < n; i++) {
             String function = values.get(i);
             if (function.length() < maxLength) {
-                function = function + " ".repeat(maxLength - function.length());
+                StringSink sink = Misc.getThreadLocalSink();
+                sink.put(function);
+                for (int j = 0, k = maxLength - function.length(); j < k; j++) {
+                    sink.put(' ');
+                }
+                function = sink.toString();
             }
             values.set(i, function);
         }
