@@ -275,20 +275,20 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
             boolean recompileStale = true;
             for (int retries = 0; recompileStale; retries++) {
-                try {
-                    batchCallback.preCompile(this);
-                    clear(); // we don't use normal compile here because we can't reset existing lexer
+                batchCallback.preCompile(this);
+                clear(); // we don't use normal compile here because we can't reset existing lexer
 
-                    final CharSequence currentQuery;
-                    try {
-                        compileInner(executionContext, query, false);
-                    } finally {
-                        currentQuery = query.subSequence(position, goToQueryEnd());
-                        // try to log query even if exception is thrown
-                        logQuery(currentQuery, executionContext);
-                    }
-                    // We've to move lexer because some query handlers don't consume all tokens (e.g. SET )
-                    // some code in postCompile might need full text of current query
+                final CharSequence currentQuery;
+                try {
+                    compileInner(executionContext, query, false);
+                } finally {
+                    currentQuery = query.subSequence(position, goToQueryEnd());
+                    // try to log query even if exception is thrown
+                    logQuery(currentQuery, executionContext);
+                }
+                // We've to move lexer because some query handlers don't consume all tokens (e.g. SET )
+                // some code in postCompile might need full text of current query
+                try {
                     batchCallback.postCompile(this, compiledQuery, currentQuery);
                     recompileStale = false;
                 } catch (TableReferenceOutOfDateException e) {

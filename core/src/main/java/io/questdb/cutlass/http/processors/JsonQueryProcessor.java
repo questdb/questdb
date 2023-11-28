@@ -441,20 +441,21 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                     // the problem is the each instance of the compiler has just a single instance of the CompilerQuery object.
                     // the CompilerQuery is used as a flyweight(?) and we cannot return the SqlCompiler instance to the pool
                     // until we extract the result from the CompilerQuery.
-                    queryExecutors.getQuick(cc.getType()).execute(
-                            state,
-                            cc,
-                            configuration.getKeepAliveHeader()
-                    );
+                    try {
+                        queryExecutors.getQuick(cc.getType()).execute(
+                                state,
+                                cc,
+                                configuration.getKeepAliveHeader()
+                        );
+                        recompileStale = false;
+                    } catch (TableReferenceOutOfDateException e) {
+                        if (retries == TableReferenceOutOfDateException.MAX_RETRY_ATTEMPTS) {
+                            throw e;
+                        }
+                        LOG.info().$(e.getFlyweightMessage()).$();
+                        // will recompile
+                    }
                 }
-                recompileStale = false;
-            } catch (TableReferenceOutOfDateException e) {
-                // TableReferenceOutOfDateException be thrown during query execution
-                if (retries == TableReferenceOutOfDateException.MAX_RETRY_ATTEMPTS) {
-                    throw e;
-                }
-                LOG.info().$(e.getFlyweightMessage()).$();
-                // will recompile
             } finally {
                 state.setContainsSecret(sqlExecutionContext.containsSecret());
             }
