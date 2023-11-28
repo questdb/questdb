@@ -206,6 +206,8 @@ public interface CairoConfiguration {
 
     int getMaxUncommittedRows();
 
+    int getWalMaxSegmentFileDescriptorsCache();
+
     int getMetadataPoolCapacity();
 
     @NotNull
@@ -486,6 +488,8 @@ public interface CairoConfiguration {
     long getWalDataAppendPageSize();
 
     boolean getWalEnabledDefault();
+
+    long getWalMaxLagSize();
 
     int getWalMaxLagTxnCount();
 

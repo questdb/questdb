@@ -30,7 +30,11 @@ public interface TransactionLogCursor extends Closeable {
     @Override
     void close();
 
+    boolean extend();
+
     long getCommitTimestamp();
+
+    long getMaxTxn();
 
     int getSegmentId();
 
@@ -43,8 +47,6 @@ public interface TransactionLogCursor extends Closeable {
     int getWalId();
 
     boolean hasNext();
-
-    boolean setPosition();
 
     void setPosition(long txn);
 

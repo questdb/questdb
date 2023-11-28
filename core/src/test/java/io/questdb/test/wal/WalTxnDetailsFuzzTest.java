@@ -24,7 +24,9 @@
 
 package io.questdb.test.wal;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.wal.WalTxnDetails;
 import io.questdb.cairo.wal.WalWriter;
@@ -139,6 +141,7 @@ public class WalTxnDetailsFuzzTest extends AbstractCairoTest {
 
         double ddlProb = rnd.nextDouble() * .3;
         int txnCount = rnd.nextInt(1000);
+        node1.getConfigurationOverrides().setWalLookAheadTransactionCount(txnCount);
         long startTx = parseFloorPartialTimestamp("2022-02-24T02:00");
         long maxDuration = rnd.nextLong(Timestamps.DAY_MICROS);
 
