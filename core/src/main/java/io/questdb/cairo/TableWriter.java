@@ -175,6 +175,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final Uuid uuid = new Uuid();
     private final LowerCaseCharSequenceIntHashMap validationMap = new LowerCaseCharSequenceIntHashMap();
     private final WeakClosableObjectPool<MemoryCMOR> walColumnMemoryPool;
+    private final LongObjHashMap<IntList> walFdCache = new LongObjHashMap<>();
+    private final WeakClosableObjectPool<IntList> walFdCacheListPool = new WeakClosableObjectPool<>(IntList::new, 5, true);
+    private final LongObjHashMap.LongObjConsumer<IntList> walFdCloseCachedFdAction;
     private final ObjList<MemoryCMOR> walMappedColumns = new ObjList<>();
     private ObjList<? extends MemoryA> activeColumns;
     private ObjList<Runnable> activeNullSetters;
@@ -240,6 +243,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final FragileCode RECOVER_FROM_SWAP_RENAME_FAILURE = this::recoverFromSwapRenameFailure;
     private final FragileCode RECOVER_FROM_COLUMN_OPEN_FAILURE = this::recoverOpenColumnFailure;
     private UpdateOperatorImpl updateOperatorImpl;
+    private int walFdCacheSize;
     private WalTxnDetails walTxnDetails;
 
     public TableWriter(
@@ -356,9 +360,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             commandSubSeq = new SCSequence();
             commandPubSeq = new MPSequence(commandQueue.getCycle());
             commandPubSeq.then(commandSubSeq).then(commandPubSeq);
-            walColumnMemoryPool = new WeakClosableObjectPool<>(GET_MEMORY_CMOR, columnCount);
             o3LastTimestampSpreads = new long[configuration.getO3LagCalculationWindowsSize()];
             Arrays.fill(o3LastTimestampSpreads, 0);
+
+            // Some wal specific initialization
+            if (metadata.isWalEnabled()) {
+                walColumnMemoryPool = new WeakClosableObjectPool<>(GET_MEMORY_CMOR, configuration.getWalMaxSegmentFileDescriptorsCache(), true);
+                walFdCloseCachedFdAction = (key, fdList) -> {
+                    for (int i = 0, n = fdList.size(); i < n; i++) {
+                        ff.close(fdList.getQuick(i));
+                    }
+                    fdList.clear();
+                    walFdCacheListPool.push(fdList);
+                };
+            } else {
+                walColumnMemoryPool = null;
+                walFdCloseCachedFdAction = null;
+            }
         } catch (Throwable e) {
             doClose(false);
             throw e;
@@ -954,7 +972,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         if (commitToTimestamp != WalTxnDetails.FORCE_FULL_COMMIT) {
             final int maxLagTxnCount = configuration.getWalMaxLagTxnCount();
-            if (txWriter.getLagTxnCount() >= maxLagTxnCount) {
+            if (maxLagTxnCount > 0 && txWriter.getLagTxnCount() >= maxLagTxnCount) {
                 // Too many txns are in the lag, so force a full commit.
                 commitToTimestamp = WalTxnDetails.FORCE_FULL_COMMIT;
             } else {
@@ -975,7 +993,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 .I$();
 
         final long committedRowCount = txWriter.getRowCount();
-        long maxCommittedTimestamp = processWalBlock(walPath, metadata.getTimestampIndex(), inOrder, rowLo, rowHi, o3TimestampMin, o3TimestampMax, mapDiffCursor, commitToTimestamp);
+        final long walSegmentId = walTxnDetails.getWalSegmentId(seqTxn);
+        boolean isLastSegmentUsage = walTxnDetails.isLastSegmentUsage(seqTxn);
+        long maxCommittedTimestamp = processWalBlock(walPath, metadata.getTimestampIndex(), inOrder, rowLo, rowHi, o3TimestampMin, o3TimestampMax, mapDiffCursor, commitToTimestamp, walSegmentId, isLastSegmentUsage);
 
         if (maxCommittedTimestamp != Long.MIN_VALUE) {
             // Useful for debugging
@@ -1640,7 +1660,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final long o3TimestampMin,
             final long o3TimestampMax,
             SymbolMapDiffCursor mapDiffCursor,
-            long commitToTimestamp
+            long commitToTimestamp,
+            long walSegmentId,
+            boolean isLastSegmentUsage
     ) {
         int walRootPathLen = walPath.size();
         long maxTimestamp = txWriter.getMaxTimestamp();
@@ -1664,10 +1686,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         lastPartitionTimestamp = txWriter.getPartitionTimestampByTimestamp(partitionTimestampHi);
 
+        boolean success = true;
         try {
-            final long maxLagRows = getMaxWalSquashRows();
+            final long maxLagRows = getWalMaxLagRows();
             final long walLagMaxTimestampBefore = txWriter.getLagMaxTimestamp();
-            mmapWalColumns(walPath, timestampIndex, rowLo, rowHi);
+            mmapWalColumns(walPath, walSegmentId, timestampIndex, rowLo, rowHi);
             final long newMinLagTs = Math.min(o3TimestampMin, txWriter.getLagMinTimestamp());
             long initialPartitionTimestampHi = partitionTimestampHi;
             long commitMaxTimestamp, commitMinTimestamp;
@@ -1681,7 +1704,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 long totalUncommitted = walLagRowCount + commitRowCount;
                 boolean copyToLagOnly = commitToTimestamp < newMinLagTs
-                        || (commitToTimestamp != WalTxnDetails.FORCE_FULL_COMMIT && totalUncommitted < metadata.getMaxUncommittedRows());
+                        || (commitToTimestamp != WalTxnDetails.FORCE_FULL_COMMIT && totalUncommitted < maxLagRows);
 
                 if (copyToLagOnly && totalUncommitted <= maxLagRows) {
                     // Don't commit anything, move everything to memory instead.
@@ -1791,7 +1814,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     copiedToMemory = false;
                 }
 
-                if (commitToTimestamp < txWriter.getLagMaxTimestamp() && maxLagRows > 0) {
+                //  If lag size is limited to 75M and the limit is reached, 50M will be committed
+                //  and 25M will be kept in the lag.
+                final long trimmedLagSize = maxLagRows / 3;
+                if (commitToTimestamp < txWriter.getLagMaxTimestamp() && trimmedLagSize > 0) {
                     final long lagThresholdRow = 1 + Vect.boundedBinarySearchIndexT(
                             timestampAddr,
                             commitToTimestamp,
@@ -1801,7 +1827,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     );
 
                     final boolean lagTrimmedToMax = o3Hi - lagThresholdRow > maxLagRows;
-                    walLagRowCount = lagTrimmedToMax ? maxLagRows : o3Hi - lagThresholdRow;
+                    walLagRowCount = lagTrimmedToMax ? trimmedLagSize : o3Hi - lagThresholdRow;
                     assert walLagRowCount > 0 && walLagRowCount <= o3Hi - o3Lo;
 
                     o3Hi -= walLagRowCount;
@@ -1889,9 +1915,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             return commitMaxTimestamp;
+        } catch (Throwable th) {
+            success = false;
+            throw th;
         } finally {
             walPath.trimTo(walRootPathLen);
-            closeWalColumns();
+            closeWalColumns(isLastSegmentUsage || !success, walSegmentId);
         }
     }
 
@@ -1913,7 +1942,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public void readWalTxnDetails(TransactionLogCursor transactionLogCursor) {
         if (walTxnDetails == null) {
             // Lazy creation
-            walTxnDetails = new WalTxnDetails(ff);
+            walTxnDetails = new WalTxnDetails(ff, configuration.getWalApplyLookAheadTransactionCount() * 10);
         }
 
         long appliedSeqTxn = txWriter.getSeqTxn();
@@ -3072,14 +3101,60 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void closeWalColumns() {
-        for (int col = 0, n = walMappedColumns.size(); col < n; col++) {
-            MemoryCMOR mappedColumnMem = walMappedColumns.getQuick(col);
-            if (mappedColumnMem != null) {
-                Misc.free(mappedColumnMem);
-                walColumnMemoryPool.push(mappedColumnMem);
+    private void closeWalColumns(boolean isLastSegmentUsage, long walSegmentId) {
+        int key = walFdCache.keyIndex(walSegmentId);
+        boolean cacheIsFull = !isLastSegmentUsage && key > -1 && walFdCacheSize == configuration.getWalMaxSegmentFileDescriptorsCache();
+        if (isLastSegmentUsage || cacheIsFull) {
+            if (key < 0) {
+                IntList fds = walFdCache.valueAt(key);
+                walFdCache.removeAt(key);
+                walFdCacheSize--;
+                fds.clear();
+                walFdCacheListPool.push(fds);
+            }
+
+            for (int col = 0, n = walMappedColumns.size(); col < n; col++) {
+                MemoryCMOR mappedColumnMem = walMappedColumns.getQuick(col);
+                if (mappedColumnMem != null) {
+                    Misc.free(mappedColumnMem);
+                    walColumnMemoryPool.push(mappedColumnMem);
+                }
+            }
+        } else {
+            IntList fds = null;
+            if (key > -1) {
+                // Add FDs to a new FD cache list
+                fds = walFdCacheListPool.pop();
+                walFdCache.putAt(key, walSegmentId, fds);
+                walFdCacheSize++;
+            }
+
+            for (int col = 0, n = walMappedColumns.size(); col < n; col++) {
+                MemoryCMOR mappedColumnMem = walMappedColumns.getQuick(col);
+                if (mappedColumnMem != null) {
+                    int fd = mappedColumnMem.detachFdClose();
+                    if (fds != null) {
+                        fds.add(fd);
+                    }
+                    walColumnMemoryPool.push(mappedColumnMem);
+                }
             }
         }
+
+        if (cacheIsFull) {
+            // Close all cached FDs.
+            // It is possible to use more complicated algo and evict only those which
+            // will not be used in the near future, but it's non-trivial
+            // and can ruin the benefit of caching any FDs.
+            // This supposed to happen rarely.
+            closeWalFiles();
+        }
+    }
+
+    private void closeWalFiles() {
+        walFdCache.forEach(walFdCloseCachedFdAction);
+        walFdCache.clear();
+        walFdCacheSize = 0;
     }
 
     /**
@@ -3543,6 +3618,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         Misc.free(slaveTxReader);
         Misc.free(commandQueue);
         Misc.free(dedupColumnCommitAddresses);
+        closeWalFiles();
         updateOperatorImpl = Misc.free(updateOperatorImpl);
         dropIndexOperator = null;
         noOpRowCount = 0L;
@@ -3750,7 +3826,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // ensure we can trigger this situation in tests. We should perhaps align our data such that setAppendPosition()
         // will attempt to mmap new page and fail... Then we can remove the 'true' parameter
         try {
-            setAppendPosition(txWriter.getTransientRowCount(), true);
+            setAppendPosition(txWriter.getTransientRowCount(), !metadata.isWalEnabled());
         } catch (Throwable e) {
             LOG.critical().$("data is committed but writer failed to update its state `").$(e).$('`').$();
             distressed = true;
@@ -3812,10 +3888,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private long getMaxWalSquashRows() {
-        return Math.max(0L, (long) configuration.getWalSquashUncommittedRowsMultiplier() * metadata.getMaxUncommittedRows());
-    }
-
     private long getO3RowCount0() {
         return (masterRef - o3MasterRef + 1) / 2;
     }
@@ -3845,6 +3917,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private MemoryMA getSecondaryColumn(int column) {
         assert column < columnCount : "Column index is out of bounds: " + column + " >= " + columnCount;
         return columns.getQuick(getSecondaryColumnIndex(column));
+    }
+
+    private long getWalMaxLagRows() {
+        return Math.min(
+                Math.max(0L, (long) configuration.getWalSquashUncommittedRowsMultiplier() * metadata.getMaxUncommittedRows()),
+                getWalMaxLagSize()
+        );
+    }
+
+    private long getWalMaxLagSize() {
+        long maxLagSize = configuration.getWalMaxLagSize();
+        return (maxLagSize /
+                (avgRecordSize != 0 ? avgRecordSize : (avgRecordSize = TableUtils.estimateAvgRecordSize(metadata))));
     }
 
     private void handleWorkStealingException(
@@ -4046,12 +4131,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void mmapWalColumns(@Transient Path walPath, int timestampIndex, long rowLo, long rowHi) {
+    private void mmapWalColumns(@Transient Path walPath, long walSegmentId, int timestampIndex, long rowLo, long rowHi) {
         walMappedColumns.clear();
         int walPathLen = walPath.size();
         final int columnCount = metadata.getColumnCount();
+        int key = walFdCache.keyIndex(walSegmentId);
+        IntList fds = null;
+        if (key < 0) {
+            fds = walFdCache.valueAt(key);
+        }
 
         try {
+            int file = 0;
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 int type = metadata.getColumnType(columnIndex);
                 o3RowCount = rowHi - rowLo;
@@ -4067,8 +4158,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         walMappedColumns.add(null);
 
                         dFile(walPath, metadata.getColumnName(columnIndex), -1L);
+                        int fd = fds != null ? fds.get(file++) : -1;
+                        LOG.debug().$("reusing file descriptor for WAL files [fd=").$(fd).$(", path=").$(walPath).$(", walSegment=").$(walSegmentId).I$();
                         primary.ofOffset(
                                 configuration.getFilesFacade(),
+                                fd,
                                 walPath,
                                 rowLo << sizeBitsPow2,
                                 rowHi << sizeBitsPow2,
@@ -4085,8 +4179,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         walMappedColumns.add(fixed);
 
                         iFile(walPath, metadata.getColumnName(columnIndex), -1L);
+                        int fdVar = fds != null ? fds.get(file++) : -1;
+                        int fdFixed = fds != null ? fds.get(file++) : -1;
+                        LOG.debug().$("reusing file descriptor for WAL files [fd=").$(fdFixed).$(", path=").$(walPath).$(", walSegment=").$(walSegmentId).I$();
                         fixed.ofOffset(
                                 configuration.getFilesFacade(),
+                                fdFixed,
                                 walPath,
                                 rowLo << sizeBitsPow2,
                                 (rowHi + 1) << sizeBitsPow2,
@@ -4098,8 +4196,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         long varOffset = fixed.getLong(rowLo << sizeBitsPow2);
                         long varLen = fixed.getLong(rowHi << sizeBitsPow2) - varOffset;
                         dFile(walPath, metadata.getColumnName(columnIndex), -1L);
+                        LOG.debug().$("reusing file descriptor for WAL files [fd=").$(fdVar).$(", path=").$(walPath).$(", walSegment=").$(walSegmentId).I$();
                         var.ofOffset(
                                 configuration.getFilesFacade(),
+                                fdVar,
                                 walPath,
                                 varOffset,
                                 varOffset + varLen,
@@ -4115,7 +4215,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             o3Columns = walMappedColumns;
         } catch (Throwable th) {
-            closeWalColumns();
+            closeWalColumns(true, walSegmentId);
             throw th;
         }
     }

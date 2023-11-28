@@ -135,7 +135,13 @@ public interface ConfigurationOverrides {
 
     MicrosecondClock getTestMicrosClock();
 
+    int getWalApplyLookAheadTransactionCount();
+
     long getWalApplyTableTimeQuota();
+
+    int getWalMaxSegmentFileDescriptorsCache();
+
+    long getWalMaxLagSize();
 
     int getWalMaxLagTxnCount();
 
@@ -284,6 +290,12 @@ public interface ConfigurationOverrides {
     void setTestMicrosClock(MicrosecondClock testMicrosClock);
 
     void setWalApplyTableTimeQuota(long walApplyTableTimeQuota);
+
+    void setWalLookAheadTransactionCount(int walApplyTableTimeQuota);
+
+    void setWalMaxSegmentFileDescriptorsCache(int value);
+
+    void setWalMaxLagSize(long value);
 
     void setWalMaxLagTxnCount(int walMaxLagTxnCount);
 
