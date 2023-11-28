@@ -100,6 +100,7 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
+        // window functions normally depends on other rows in the window/frame, so we can't just jump to an arbitrary position
         return false;
     }
 

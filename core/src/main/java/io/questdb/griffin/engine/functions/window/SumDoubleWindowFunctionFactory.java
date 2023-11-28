@@ -34,8 +34,6 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.DoubleFunction;
-import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.WindowColumn;
@@ -223,7 +221,7 @@ public class SumDoubleWindowFunctionFactory implements FunctionFactory {
                     ArrayColumnTypes columnTypes = new ArrayColumnTypes();
                     columnTypes.add(ColumnType.DOUBLE);// sum
                     columnTypes.add(ColumnType.LONG);// current frame size
-                    columnTypes.add(ColumnType.INT);// position of current oldest element
+                    columnTypes.add(ColumnType.LONG);// position of current oldest element
                     columnTypes.add(ColumnType.LONG);// start offset of native array
 
                     Map map = MapFactory.createMap(
@@ -303,104 +301,6 @@ public class SumDoubleWindowFunctionFactory implements FunctionFactory {
         }
 
         throw SqlException.$(position, "function not implemented for given window parameters");
-    }
-
-    private static abstract class BasePartitionedSumFunction extends BaseSumFunction implements Reopenable {
-        protected final Map map;
-        protected final VirtualRecord partitionByRecord;
-        protected final RecordSink partitionBySink;
-
-        public BasePartitionedSumFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
-            super(arg);
-            this.map = map;
-            this.partitionByRecord = partitionByRecord;
-            this.partitionBySink = partitionBySink;
-        }
-
-        @Override
-        public void close() {
-            super.close();
-            map.close();
-            Misc.freeObjList(partitionByRecord.getFunctions());
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            super.init(symbolTableSource, executionContext);
-            Function.init(partitionByRecord.getFunctions(), symbolTableSource, executionContext);
-        }
-
-        @Override
-        public void reopen() {
-            map.reopen();
-        }
-
-        @Override
-        public void reset() {
-            map.close();
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(NAME);
-            sink.val('(').val(arg).val(')');
-            sink.val(" over (");
-            sink.val("partition by ");
-            sink.val(partitionByRecord.getFunctions());
-            sink.val(')');
-        }
-
-        @Override
-        public void toTop() {
-            super.toTop();
-            map.clear();
-        }
-    }
-
-    private static abstract class BaseSumFunction extends DoubleFunction implements WindowFunction, ScalarFunction {
-        protected final Function arg;
-        protected int columnIndex;
-
-        public BaseSumFunction(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public void close() {
-            arg.close();
-        }
-
-        @Override
-        public double getDouble(Record rec) {
-            //unused
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void initRecordComparator(RecordComparatorCompiler recordComparatorCompiler, ArrayColumnTypes chainTypes, IntList order) {
-        }
-
-        @Override
-        public void reset() {
-
-        }
-
-        @Override
-        public void setColumnIndex(int columnIndex) {
-            this.columnIndex = columnIndex;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(NAME);
-            sink.val('(').val(arg).val(')');
-            sink.val(" over ()");
-        }
-
-        @Override
-        public void toTop() {
-            arg.toTop();
-        }
     }
 
     // (rows between current row and current row) processes 1-element-big set, so simply it returns expression value
@@ -565,10 +465,9 @@ public class SumDoubleWindowFunctionFactory implements FunctionFactory {
 
     // Handles:
     // - sum(a) over (partition by x rows between unbounded preceding and current row)
-    // - sum(a) over (partition by x order by ts groups between unbounded preceding and current row)
     // - sum(a) over (partition by x order by ts range between unbounded preceding and current row)
     // Doesn't require value buffering.
-    static class SumOverUnboundedPartitionRowsFrameFunction extends BasePartitionedSumFunction {
+    static class SumOverUnboundedPartitionRowsFrameFunction extends BasePartitionedDoubleWindowFunction {
 
         private double sum;
 
@@ -612,6 +511,11 @@ public class SumDoubleWindowFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public String getName() {
+            return NAME;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
         }
@@ -633,8 +537,8 @@ public class SumDoubleWindowFunctionFactory implements FunctionFactory {
         }
     }
 
-    // Handles sum() over (rows between unbounded preceding and current row); there's no partititon by.
-    static class SumOverUnboundedRowsFrameFunction extends BaseSumFunction {
+    // Handles sum() over (rows between unbounded preceding and current row); there's no partition by.
+    static class SumOverUnboundedRowsFrameFunction extends BaseDoubleWindowFunction {
 
         private long count = 0;
         private double externalSum;
@@ -658,6 +562,11 @@ public class SumDoubleWindowFunctionFactory implements FunctionFactory {
         @Override
         public double getDouble(Record rec) {
             return externalSum;
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
         }
 
         @Override
@@ -698,13 +607,18 @@ public class SumDoubleWindowFunctionFactory implements FunctionFactory {
     }
 
     // sum() over () - empty clause, no partition by no order by, no frame == default frame
-    static class SumOverWholeResultSetFunction extends BaseSumFunction {
+    static class SumOverWholeResultSetFunction extends BaseDoubleWindowFunction {
         private long count;
         private double externalSum;
         private double sum;
 
         public SumOverWholeResultSetFunction(Function arg) {
             super(arg);
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
         }
 
         @Override

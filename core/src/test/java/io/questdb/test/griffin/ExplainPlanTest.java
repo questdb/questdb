@@ -498,22 +498,23 @@ public class ExplainPlanTest extends AbstractCairoTest {
             String sql = "select i, " +
                     "row_number() over (partition by sym), " +
                     "avg(i) over (), " +
-                    "sum(i) over () " +
+                    "sum(i) over (), " +
+                    "first_value(i) over (), " +
                     "from x limit 3";
             assertPlan(
                     sql,
                     "Limit lo: 3\n" +
                             "    CachedWindow\n" +
-                            "      unorderedFunctions: [row_number() over (partition by [sym]),avg(i) over (),sum(i) over ()]\n" +
+                            "      unorderedFunctions: [row_number() over (partition by [sym]),avg(i) over (),sum(i) over (),first_value(i) over ()]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: x\n"
             );
 
-            assertSql("i\trow_number\tavg\tsum\n" +
-                    "1\t1\t50.5\t5050.0\n" +
-                    "2\t2\t50.5\t5050.0\n" +
-                    "3\t1\t50.5\t5050.0\n", sql);
+            assertSql("i\trow_number\tavg\tsum\tfirst_value\n" +
+                    "1\t1\t50.5\t5050.0\t1.0\n" +
+                    "2\t2\t50.5\t5050.0\t1.0\n" +
+                    "3\t1\t50.5\t5050.0\t1.0\n", sql);
         });
     }
 
@@ -761,7 +762,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "            Frame forward scan on: test\n");
 
             assertSql("avg\n2.0\n", query);
-            assertSql("avg\n2.0\n", "selecT * from ( " + query + " )");
+            assertSql("avg\n2.0\n", "select * from ( " + query + " )");
         });
     }
 
@@ -8288,32 +8289,40 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlan("select ts, i, j, " +
                             "avg(j) over (order by i, j rows unbounded preceding), " +
-                            "sum(j) over (order by i, j rows unbounded preceding) " +
+                            "sum(j) over (order by i, j rows unbounded preceding), " +
+                            "first_value(j) over (order by i, j rows unbounded preceding), " +
                             "from tab",
                     "CachedWindow\n" +
-                            "  orderedFunctions: [[i, j] => [avg(j) over (rows between unbounded preceding and current row),sum(j) over (rows between unbounded preceding and current row)]]\n" +
+                            "  orderedFunctions: [[i, j] => [avg(j) over (rows between unbounded preceding and current row)," +
+                            "sum(j) over (rows between unbounded preceding and current row),first_value(j) over ()]]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n");
 
             assertPlan("select ts, i, j, " +
                             "avg(j) over (partition by i order by ts rows between 1 preceding and current row), " +
-                            "sum(j) over (partition by i order by ts rows between 1 preceding and current row) " +
+                            "sum(j) over (partition by i order by ts rows between 1 preceding and current row), " +
+                            "first_value(j) over (partition by i order by ts rows between 1 preceding and current row) " +
                             "from tab",
                     "Window\n" +
-                            "  functions: [avg(j) over (partition by [i] rows between 1 preceding and current row),sum(j) over (partition by [i] rows between 1 preceding and current row)]\n" +
+                            "  functions: [avg(j) over (partition by [i] rows between 1 preceding and current row)," +
+                            "sum(j) over (partition by [i] rows between 1 preceding and current row),first_value(j) over (partition by [i] rows between 1 preceding and current row)]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n");
 
             assertPlan("select row_number() over (partition by i order by i desc, j asc), " +
                             "avg(j) over (partition by i order by j, i desc rows unbounded preceding), " +
-                            "sum(j) over (partition by i order by j, i desc rows unbounded preceding) " +
+                            "sum(j) over (partition by i order by j, i desc rows unbounded preceding), " +
+                            "first_value(j) over (partition by i order by j, i desc rows unbounded preceding) " +
                             "from tab " +
                             "order by ts desc",
                     "SelectedRecord\n" +
                             "    CachedWindow\n" +
-                            "      orderedFunctions: [[i desc, j] => [row_number() over (partition by [i])],[j, i desc] => [avg(j) over (partition by [i] rows between unbounded preceding and current row ),sum(j) over (partition by [i] rows between unbounded preceding and current row )]]\n" +
+                            "      orderedFunctions: [[i desc, j] => [row_number() over (partition by [i])]," +
+                            "[j, i desc] => [avg(j) over (partition by [i] rows between unbounded preceding and current row )," +
+                            "sum(j) over (partition by [i] rows between unbounded preceding and current row )," +
+                            "first_value(j) over (partition by [i] rows between unbounded preceding and current row )]]\n" +
                             "        DataFrame\n" +
                             "            Row backward scan\n" +
                             "            Frame backward scan on: tab\n");
@@ -8321,11 +8330,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan("select row_number() over (partition by i order by i desc, j asc), " +
                             "        avg(j) over (partition by i, j order by i desc, j asc rows unbounded preceding), " +
                             "        sum(j) over (partition by i, j order by i desc, j asc rows unbounded preceding), " +
+                            "        first_value(j) over (partition by i, j order by i desc, j asc rows unbounded preceding), " +
                             "        rank() over (partition by j, i) " +
                             "from tab order by ts desc",
                     "SelectedRecord\n" +
                             "    CachedWindow\n" +
-                            "      orderedFunctions: [[i desc, j] => [row_number() over (partition by [i]),avg(j) over (partition by [i,j] rows between unbounded preceding and current row ),sum(j) over (partition by [i,j] rows between unbounded preceding and current row )]]\n" +
+                            "      orderedFunctions: [[i desc, j] => [row_number() over (partition by [i]),avg(j) over (partition by [i,j] rows between unbounded preceding and current row )," +
+                            "sum(j) over (partition by [i,j] rows between unbounded preceding and current row )," +
+                            "first_value(j) over (partition by [i,j] rows between unbounded preceding and current row )]]\n" +
                             "      unorderedFunctions: [rank() over (partition by [j,i])]\n" +
                             "        DataFrame\n" +
                             "            Row backward scan\n" +
@@ -8338,48 +8350,58 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table  cpu_ts ( hostname symbol, usage_system double, ts timestamp ) timestamp(ts);");
 
-            assertPlan("select sum(avg), sum(sum) from (\n" +
+            assertPlan("select sum(avg), sum(sum), sum(first_value) from (\n" +
                             "select ts, hostname, usage_system, " +
                             "avg(usage_system) over (partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over (partition by hostname order by ts desc rows between 100 preceding and current row) sum " +
+                            "sum(usage_system) over (partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over (partition by hostname order by ts desc rows between 100 preceding and current row) first_value " +
                             "from cpu_ts " +
                             "order by ts desc\n" +
                             ") ",
                     "GroupBy vectorized: false\n" +
-                            "  values: [sum(avg),sum(sum)]\n" +
+                            "  values: [sum(avg),sum(sum),sum(first_value)]\n" +
                             "    Window\n" +
-                            "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
                             "        DataFrame\n" +
                             "            Row backward scan\n" +
                             "            Frame backward scan on: cpu_ts\n");
 
-            assertPlan("select sum(avg), sum(sum) from (\n" +
+            assertPlan("select sum(avg), sum(sum), sum(first_value) from (\n" +
                             "select ts, hostname, usage_system, " +
                             "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum " +
+                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
                             "from cpu_ts " +
                             ") ",
                     "GroupBy vectorized: false\n" +
-                            "  values: [sum(avg),sum(sum)]\n" +
+                            "  values: [sum(avg),sum(sum),sum(first_value)]\n" +
                             "    Window\n" +
-                            "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: cpu_ts\n");
 
-            assertPlan("select sum(avg), sum(sum) sm from (\n" +
+            assertPlan("select sum(avg), sum(sum) sm, sum(first_value) fst from (\n" +
                             "select ts, hostname, usage_system, " +
                             "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum " +
+                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
                             "from cpu_ts " +
                             "order by ts asc\n" +
                             ") order by sm ",
                     "Sort\n" +
                             "  keys: [sm]\n" +
                             "    GroupBy vectorized: false\n" +
-                            "      values: [sum(avg),sum(sum)]\n" +
+                            "      values: [sum(avg),sum(sum),sum(first_value)]\n" +
                             "        Window\n" +
-                            "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)" +
+                            "]\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: cpu_ts\n");
@@ -8391,33 +8413,39 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table  cpu_ts ( hostname symbol, usage_system double, ts timestamp ) timestamp(ts);");
 
-            assertPlan("select sum(avg), sum(sum) from ( " +
+            assertPlan("select sum(avg), sum(sum), first(first_value) from ( " +
                             "select ts, hostname, usage_system, " +
                             "avg(usage_system) over (partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over (partition by hostname order by ts desc rows between 100 preceding and current row) sum " +
+                            "sum(usage_system) over (partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over (partition by hostname order by ts desc rows between 100 preceding and current row) first_value " +
                             "from cpu_ts " +
                             "order by ts desc" +
                             ") ",
                     "GroupBy vectorized: false\n" +
-                            "  values: [sum(avg),sum(sum)]\n" +
+                            "  values: [sum(avg),sum(sum),first(first_value)]\n" +
                             "    Window\n" +
-                            "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
                             "        DataFrame\n" +
                             "            Row backward scan\n" +
                             "            Frame backward scan on: cpu_ts\n");
 
-            assertPlan("select sum(avg), sum(sum) from ( " +
+            assertPlan("select sum(avg), sum(sum), first(first_value) from ( " +
                             "select ts, hostname, usage_system, " +
                             "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum " +
+                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " +
                             "from (select * from cpu_ts order by ts desc) " +
                             ") order by 1 desc",
                     "Sort\n" +
                             "  keys: [sum desc]\n" +
                             "    GroupBy vectorized: false\n" +
-                            "      values: [sum(avg),sum(sum)]\n" +
+                            "      values: [sum(avg),sum(sum),first(first_value)]\n" +
                             "        CachedWindow\n" +
-                            "          orderedFunctions: [[ts desc] => [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]]\n" +
+                            "          orderedFunctions: [[ts desc] => [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]]\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: cpu_ts\n");
@@ -8434,7 +8462,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "( " +
                             "select ts, hostname, usage_system, " +
                             "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum " +
+                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value, " +
                             "from cpu_ts " +
                             "order by ts desc " +
                             ") order by ts asc",
@@ -8442,7 +8471,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  keys: [ts]\n" +
                             "    Limit lo: 9223372036854775807L\n" +
                             "        Window\n" +
-                            "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
                             "            DataFrame\n" +
                             "                Row backward scan\n" +
                             "                Frame backward scan on: cpu_ts\n");
@@ -8451,7 +8482,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "( " +
                             "select ts, hostname, usage_system, " +
                             "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum " +
+                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
                             "from cpu_ts " +
                             "order by ts asc " +
                             ") order by ts desc",
@@ -8459,7 +8491,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  keys: [ts desc]\n" +
                             "    Limit lo: 9223372036854775807L\n" +
                             "        Window\n" +
-                            "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: cpu_ts\n");
@@ -8468,7 +8502,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "( " +
                             "select ts, hostname, usage_system, " +
                             "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum " +
+                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
                             "from cpu_ts " +
                             "order by ts asc " +
                             ") order by hostname",
@@ -8476,7 +8511,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  keys: [hostname]\n" +
                             "    Limit lo: 9223372036854775807L\n" +
                             "        Window\n" +
-                            "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: cpu_ts\n");
@@ -8485,11 +8522,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "( " +
                             "select ts, hostname, usage_system, " +
                             "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum " +
+                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " +
                             "from (select * from cpu_ts order by ts desc) " +
                             ") order by ts asc ",
                     "CachedWindow\n" +
-                            "  orderedFunctions: [[ts desc] => [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]]\n" +
+                            "  orderedFunctions: [[ts desc] => [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: cpu_ts\n");
@@ -8498,11 +8538,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "( " +
                             "select ts, hostname, usage_system, " +
                             "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum " +
+                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
                             "from (select * from cpu_ts order by ts asc) " +
                             ") order by ts desc ",
                     "CachedWindow\n" +
-                            "  orderedFunctions: [[ts] => [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]]\n" +
+                            "  orderedFunctions: [[ts] => [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]]\n" +
                             "    DataFrame\n" +
                             "        Row backward scan\n" +
                             "        Frame backward scan on: cpu_ts\n");
@@ -8511,13 +8554,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "( " +
                             "select ts, hostname, usage_system, " +
                             "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum " +
+                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
                             "from (select * from cpu_ts order by ts asc) " +
                             ") order by hostname ",
                     "Sort\n" +
                             "  keys: [hostname]\n" +
                             "    Window\n" +
-                            "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: cpu_ts\n");
@@ -8526,13 +8572,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "( " +
                             "select ts, hostname, usage_system, " +
                             "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum " +
+                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
                             "from (select * from cpu_ts order by ts desc) " +
                             ") order by hostname ",
                     "Sort\n" +
                             "  keys: [hostname]\n" +
                             "    Window\n" +
-                            "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: cpu_ts\n");
@@ -8541,7 +8590,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "( " +
                             "select ts, hostname, usage_system, " +
                             "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum " +
+                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " +
                             "from (select * from cpu_ts order by ts asc) " +
                             "order by ts desc " +
                             ") order by ts asc ",
@@ -8549,7 +8599,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  keys: [ts]\n" +
                             "    Limit lo: 9223372036854775807L\n" +
                             "        Window\n" +
-                            "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
                             "            DataFrame\n" +
                             "                Row backward scan\n" +
                             "                Frame backward scan on: cpu_ts\n");
@@ -8558,7 +8610,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "( " +
                             "select ts, hostname, usage_system, " +
                             "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum " +
+                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
                             "from (select * from cpu_ts order by ts desc) " +
                             "order by ts asc " +
                             ") order by ts desc ",
@@ -8566,7 +8619,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  keys: [ts desc]\n" +
                             "    Limit lo: 9223372036854775807L\n" +
                             "        Window\n" +
-                            "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: cpu_ts\n");
@@ -8575,7 +8630,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "( " +
                             "select ts, hostname, usage_system, " +
                             "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum " +
+                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
                             "from (select * from cpu_ts order by ts desc ) " +
                             "order by ts asc " +
                             ") order by hostname ",
@@ -8583,7 +8639,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  keys: [hostname]\n" +
                             "    Limit lo: 9223372036854775807L\n" +
                             "        Window\n" +
-                            "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: cpu_ts\n");
@@ -8598,7 +8656,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             ddl("create table  cpu_ts ( hostname symbol, usage_system double, ts timestamp ) timestamp(ts);");
 
             String expectedForwardPlan = "Window\n" +
-                    "  functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                    "  functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                    "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                    "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
                     "    DataFrame\n" +
                     "        Row forward scan\n" +
                     "        Frame forward scan on: cpu_ts\n";
@@ -8607,7 +8667,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "( " +
                             "select ts, hostname, usage_system, " +
                             "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum " +
+                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
                             "from cpu_ts " +
                             ") order by ts asc",
                     expectedForwardPlan);
@@ -8616,7 +8677,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "( " +
                             "select ts, hostname, usage_system, " +
                             "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum " +
+                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value, " +
                             "from (select * from cpu_ts order by ts asc) " +
                             ") order by ts asc",
                     expectedForwardPlan);
@@ -8625,7 +8687,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "( " +
                             "select ts, hostname, usage_system, " +
                             "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum " +
+                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
                             "from (select * from cpu_ts order by ts desc) " +
                             ") order by ts asc",
                     expectedForwardPlan);
@@ -8634,7 +8697,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "( " +
                             "select ts, hostname, usage_system, " +
                             "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum " +
+                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
                             "from (select * from cpu_ts order by hostname) " +
                             ") order by ts asc",
                     expectedForwardPlan);
@@ -8642,7 +8706,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             String expectedForwardLimitPlan =
                     "Limit lo: 9223372036854775807L\n" +
                             "    Window\n" +
-                            "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: cpu_ts\n";
@@ -8651,7 +8717,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "( " +
                             "select ts, hostname, usage_system, " +
                             "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum " +
+                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
                             "from cpu_ts " +
                             "order by ts asc  " +
                             ") order by ts asc",
@@ -8661,14 +8728,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "( " +
                             "select ts, hostname, usage_system, " +
                             "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum " +
+                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
                             "from (select * from cpu_ts order by ts asc) " +
                             "order by ts asc  " +
                             ") order by ts asc",
                     expectedForwardLimitPlan);
 
             String expectedBackwardPlan = "Window\n" +
-                    "  functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                    "  functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                    "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                    "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
                     "    DataFrame\n" +
                     "        Row backward scan\n" +
                     "        Frame backward scan on: cpu_ts\n";
@@ -8676,7 +8746,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "( " +
                             "select ts, hostname, usage_system, " +
                             "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum " +
+                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " +
                             "from cpu_ts " +
                             ") order by ts desc",
                     expectedBackwardPlan);
@@ -8685,7 +8756,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "( " +
                             "select ts, hostname, usage_system, " +
                             "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum " +
+                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " +
                             "from (select * from cpu_ts order by ts desc) " +
                             ") order by ts desc",
                     expectedBackwardPlan);
@@ -8694,7 +8766,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "( " +
                             "select ts, hostname, usage_system, " +
                             "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum " +
+                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " +
                             "from (select * from cpu_ts order by ts asc) " +
                             ") order by ts desc",
                     expectedBackwardPlan);
@@ -8703,14 +8776,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "( " +
                             "select ts, hostname, usage_system, " +
                             "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum " +
+                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " +
                             "from (select * from cpu_ts order by hostname) " +
                             ") order by ts desc",
                     expectedBackwardPlan);
 
             String expectedBackwardLimitPlan = "Limit lo: 9223372036854775807L\n" +
                     "    Window\n" +
-                    "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                    "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                    "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                    "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
                     "        DataFrame\n" +
                     "            Row backward scan\n" +
                     "            Frame backward scan on: cpu_ts\n";
@@ -8719,7 +8795,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "( " +
                             "select ts, hostname, usage_system, " +
                             "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum " +
+                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " +
                             "from cpu_ts " +
                             "order by ts desc  " +
                             ") order by ts desc",
@@ -8729,7 +8806,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "( " +
                             "select ts, hostname, usage_system, " +
                             "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum " +
+                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " +
                             "from (select * from cpu_ts order by ts desc) " +
                             "order by ts desc  " +
                             ") order by ts desc",
@@ -8751,22 +8829,26 @@ public class ExplainPlanTest extends AbstractCairoTest {
             String sql = "select i, " +
                     "row_number() over (partition by sym), " +
                     "avg(i) over (partition by i rows unbounded preceding), " +
-                    "sum(i) over (partition by i rows unbounded preceding) " +
+                    "sum(i) over (partition by i rows unbounded preceding), " +
+                    "first_value(i) over (partition by i rows unbounded preceding) " +
                     "from x limit 3";
             assertPlan(
                     sql,
                     "Limit lo: 3\n" +
                             "    Window\n" +
-                            "      functions: [row_number() over (partition by [sym]),avg(i) over (partition by [i] rows between unbounded preceding and current row ),sum(i) over (partition by [i] rows between unbounded preceding and current row )]\n" +
+                            "      functions: [row_number() over (partition by [sym])," +
+                            "avg(i) over (partition by [i] rows between unbounded preceding and current row )," +
+                            "sum(i) over (partition by [i] rows between unbounded preceding and current row )," +
+                            "first_value(i) over (partition by [i] rows between unbounded preceding and current row )]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: x\n"
             );
 
-            assertSql("i\trow_number\tavg\tsum\n" +
-                    "1\t1\t1.0\t1.0\n" +
-                    "2\t2\t2.0\t2.0\n" +
-                    "3\t1\t3.0\t3.0\n", sql);
+            assertSql("i\trow_number\tavg\tsum\tfirst_value\n" +
+                    "1\t1\t1.0\t1.0\t1.0\n" +
+                    "2\t2\t2.0\t2.0\t2.0\n" +
+                    "3\t1\t3.0\t3.0\t3.0\n", sql);
         });
     }
 

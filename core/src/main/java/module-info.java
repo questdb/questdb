@@ -806,6 +806,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.window.RowNumberFunctionFactory,
             io.questdb.griffin.engine.functions.window.RankFunctionFactory,
             io.questdb.griffin.engine.functions.window.AvgDoubleWindowFunctionFactory,
+            io.questdb.griffin.engine.functions.window.FirstValueDoubleWindowFunctionFactory,
             io.questdb.griffin.engine.functions.window.SumDoubleWindowFunctionFactory,
 
             // metadata functions
