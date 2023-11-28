@@ -1492,7 +1492,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 }
                 prepareCommandComplete(true);
                 return;
-            } catch (TableReferenceOutOfDateException | WriterOutOfDateException ex) {
+            } catch (TableReferenceOutOfDateException ex) {
                 if (!recompileStale || retries == TableReferenceOutOfDateException.MAX_RETRY_ATTEMPTS) {
                     if (transactionState == IN_TRANSACTION) {
                         transactionState = ERROR_TRANSACTION;
