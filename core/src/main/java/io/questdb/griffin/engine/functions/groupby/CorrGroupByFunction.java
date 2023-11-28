@@ -43,7 +43,6 @@ public class CorrGroupByFunction extends AbstractRegressionGroupByFunction {
 
     @Override
     public double getDouble(Record rec) {
-        // corr = Sxy / sqrt(Sx * Sy)
         double sumX = rec.getDouble(valueIndex + 1);
         double sumY = rec.getDouble(valueIndex + 3);
         double sumXY = rec.getDouble(valueIndex + 4);
