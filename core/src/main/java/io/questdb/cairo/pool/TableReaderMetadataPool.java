@@ -22,13 +22,24 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.cairo.pool;
 
-public interface TableMetadata extends TableRecordMetadata {
-    int getMaxUncommittedRows();
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.TableToken;
 
-    long getO3MaxLag();
+public class TableReaderMetadataPool extends AbstractMultiTenantPool<MetadataPoolTenant> {
 
-    int getPartitionBy();
-    boolean isSoftLink();
+    public TableReaderMetadataPool(CairoConfiguration configuration) {
+        super(configuration, configuration.getMetadataPoolCapacity(), configuration.getInactiveReaderTTL());
+    }
+
+    @Override
+    protected byte getListenerSrc() {
+        return PoolListener.SRC_TABLE_READER_METADATA;
+    }
+
+    @Override
+    protected MetadataPoolTenant newTenant(TableToken tableToken, Entry<MetadataPoolTenant> entry, int index) {
+        return new TableReaderMetadataTenantImpl(this, entry, index, tableToken, false);
+    }
 }

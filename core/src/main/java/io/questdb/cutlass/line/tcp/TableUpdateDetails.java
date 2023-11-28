@@ -689,7 +689,7 @@ public class TableUpdateDetails implements Closeable {
             if (latestKnownMetadata == null) {
                 // Get the latest metadata.
                 try {
-                    latestKnownMetadata = engine.getMetadata(tableToken);
+                    latestKnownMetadata = engine.getSequencerMetadata(tableToken);
                 } catch (CairoException | TableReferenceOutOfDateException ex) {
                     if (isWal()) {
                         LOG.critical().$("could not write to WAL [ex=").$(ex).I$();
