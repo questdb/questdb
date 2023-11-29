@@ -148,7 +148,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                             runQuery = false;
                         } catch (TableReferenceOutOfDateException e) {
                             if (retries == TableReferenceOutOfDateException.MAX_RETRY_ATTEMPTS) {
-                                throw e;
+                                throw SqlException.$(0, e.getFlyweightMessage());
                             }
                             info(state).$(e.getFlyweightMessage()).$();
                             state.recordCursorFactory = Misc.free(state.recordCursorFactory);

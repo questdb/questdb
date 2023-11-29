@@ -1497,7 +1497,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     if (transactionState == IN_TRANSACTION) {
                         transactionState = ERROR_TRANSACTION;
                     }
-                    throw ex;
+                    throw SqlException.$(0, ex.getFlyweightMessage());
                 }
                 LOG.info().$(ex.getFlyweightMessage()).$();
                 Misc.free(typesAndInsert);
@@ -1559,7 +1559,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     if (transactionState == IN_TRANSACTION) {
                         transactionState = ERROR_TRANSACTION;
                     }
-                    throw e;
+                    throw SqlException.$(0, e.getFlyweightMessage());
                 }
                 LOG.info().$(e.getFlyweightMessage()).$();
                 typesAndUpdate = Misc.free(typesAndUpdate);
@@ -2796,7 +2796,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     rnd = sqlExecutionContext.getRandom();
                 } catch (TableReferenceOutOfDateException e) {
                     if (retries == TableReferenceOutOfDateException.MAX_RETRY_ATTEMPTS) {
-                        throw e;
+                        throw SqlException.$(0, e.getFlyweightMessage());
                     }
                     LOG.info().$(e.getFlyweightMessage()).$();
                     freeFactory();

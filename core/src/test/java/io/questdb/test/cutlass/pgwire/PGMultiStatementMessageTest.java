@@ -65,7 +65,12 @@ public class PGMultiStatementMessageTest extends BasePGTest {
             try {
                 while (System.nanoTime() < deadlineNanos && barrier.getNumberWaiting() == 0) {
                     engine.ddl("alter table x add column distraction int", sqlExecutionContext);
+                    Os.sleep(1); // give compiler a chance to compile and execute
+                    if (barrier.getNumberWaiting() != 0) {
+                        break;
+                    }
                     engine.ddl("alter table x drop column distraction", sqlExecutionContext);
+                    Os.sleep(1);
                 }
             } catch (SqlException e) {
                 throw new RuntimeException(e);
@@ -81,9 +86,11 @@ public class PGMultiStatementMessageTest extends BasePGTest {
             }
         }).start();
 
+        // the SQL includes INSERT can later test that we don't get duplicate rows
+        // when SQL execution is re-started
         try (PGTestSetup test = new PGTestSetup()) {
             Statement statement = test.statement;
-            for (int i = 0; i < 10; i++) {
+            for (int i = 0; i < 1000; i++) {
                 statement.execute(
                         "INSERT INTO x (ts, i) VALUES(now(), 1); " +
                                 "SELECT * FROM x; ");
@@ -91,11 +98,10 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         } finally {
             barrier.await();
         }
-        Os.sleep(1000);
         drainWalQueue();
         try (RecordCursorFactory factory = select("select count() from x", sqlExecutionContext)) {
             assertCursor("count\n" +
-                            "10\n",
+                            "1000\n",
                     factory,
                     false, false, true
             );
