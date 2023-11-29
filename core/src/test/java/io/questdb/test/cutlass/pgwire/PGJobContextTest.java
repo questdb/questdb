@@ -2355,7 +2355,7 @@ if __name__ == "__main__":
 
         assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary) -> {
             ddl("create table if not exists tab as " +
-                    "(select x::timestamp ts, x, rnd_double() d from long_sequence(1000000)) timestamp(ts) partition by day");
+                    "(select x::timestamp ts, x, rnd_double() d from long_sequence(5000000)) timestamp(ts) partition by day");
             ddl("create table if not exists dest as (select x l from long_sequence(10000))");
             mayDrainWalQueue();
 

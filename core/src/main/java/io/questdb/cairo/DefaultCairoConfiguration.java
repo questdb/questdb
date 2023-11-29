@@ -179,6 +179,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getCountDistinctCapacity() {
+        return 16;
+    }
+
+    @Override
+    public double getCountDistinctLoadFactor() {
+        return 0.7;
+    }
+
+    @Override
     public int getCreateAsSelectRetryCount() {
         return 5;
     }
@@ -532,6 +542,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlCompilerPoolCapacity() {
+        return 10;
+    }
+
+    @Override
     public int getSqlCopyBufferSize() {
         return 1024 * 1024;
     }
@@ -854,6 +869,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean getWalEnabledDefault() {
         return false;
+    }
+
+    @Override
+    public int getWalMaxSegmentFileDescriptorsCache() {
+        return 1000;
+    }
+
+    @Override
+    public long getWalMaxLagSize() {
+        return 75 * Numbers.SIZE_1MB;
     }
 
     @Override

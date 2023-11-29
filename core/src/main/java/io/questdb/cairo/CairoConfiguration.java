@@ -120,6 +120,10 @@ public interface CairoConfiguration {
 
     int getCopyPoolCapacity();
 
+    int getCountDistinctCapacity();
+
+    double getCountDistinctLoadFactor();
+
     int getCreateAsSelectRetryCount();
 
     int getCreateTableModelPoolCapacity();
@@ -201,6 +205,8 @@ public interface CairoConfiguration {
     int getMaxSymbolNotEqualsCount();
 
     int getMaxUncommittedRows();
+
+    int getWalMaxSegmentFileDescriptorsCache();
 
     int getMetadataPoolCapacity();
 
@@ -341,6 +347,8 @@ public interface CairoConfiguration {
 
     double getSqlCompactMapLoadFactor();
 
+    int getSqlCompilerPoolCapacity();
+
     int getSqlCopyBufferSize();
 
     // null input root disables "copy" sql
@@ -480,6 +488,8 @@ public interface CairoConfiguration {
     long getWalDataAppendPageSize();
 
     boolean getWalEnabledDefault();
+
+    long getWalMaxLagSize();
 
     int getWalMaxLagTxnCount();
 

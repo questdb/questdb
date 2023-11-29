@@ -695,6 +695,9 @@ public class WalWriterTest extends AbstractCairoTest {
             compile("alter table " + tableToken.getTableName() + " alter column sym2 add index");
             compile("alter table " + tableToken.getTableName() + " alter column sym2 drop index");
             compile("alter table " + tableToken.getTableName() + " add i2 int");
+
+            drainWalQueue();
+
             insert("insert into " + tableToken.getTableName() + "(ts, i2) values ('2022-02-24', 2)");
 
             drainWalQueue();

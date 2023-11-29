@@ -31,23 +31,18 @@ import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.str.Path;
 
-class TableRenameSupportExecutionContext extends SqlExecutionContextImpl {
+class WalApplySqlExecutionContext extends SqlExecutionContextImpl {
     private TableToken tableToken;
 
-    TableRenameSupportExecutionContext(CairoEngine cairoEngine, int workerCount, int sharedWorkerCount) {
+    WalApplySqlExecutionContext(CairoEngine cairoEngine, int workerCount, int sharedWorkerCount) {
         super(cairoEngine, workerCount, sharedWorkerCount);
     }
 
-    @Override
-    public TableRecordMetadata getMetadata(TableToken tableToken) {
-        final CairoEngine engine = getCairoEngine();
-        return engine.getMetadata(this.tableToken);
-    }
-
-    @Override
-    public TableRecordMetadata getMetadata(TableToken tableToken, long structureVersion) {
-        final CairoEngine engine = getCairoEngine();
-        return engine.getMetadata(this.tableToken, structureVersion);
+    public TableRecordMetadata getSequencerMetadata(TableToken tableToken) {
+        // When WAL is applied and SQL is re-compiled
+        // the correct metadata for writing is reader metadata,
+        // because the sequencer metadata looks at the future.
+        return getCairoEngine().getTableReaderMetadata(this.tableToken);
     }
 
     @Override

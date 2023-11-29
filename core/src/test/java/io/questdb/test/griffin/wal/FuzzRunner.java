@@ -75,6 +75,7 @@ public class FuzzRunner {
     private boolean isO3;
     private double notSetProb;
     private double nullSetProb;
+    private int parallelWalCount;
     private double rollbackProb;
     private long s0;
     private long s1;
@@ -122,7 +123,7 @@ public class FuzzRunner {
             for (int i = 0; i < tableCount; i++) {
                 String tableName = multiTable ? getWalParallelApplyTableName(tableNameBase, i) : tableNameBase;
                 AtomicLong waitBarrierVersion = new AtomicLong();
-                int parallelWalCount = Math.max(2, rnd.nextInt(5));
+                int parallelWalCount = this.parallelWalCount > 0 ? this.parallelWalCount : Math.max(2, rnd.nextInt(5));
                 AtomicInteger nextOperation = new AtomicInteger(-1);
                 ObjList<FuzzTransaction> transactions = fuzzTransactions.get(i);
                 AtomicLong doneCount = new AtomicLong();
@@ -363,12 +364,16 @@ public class FuzzRunner {
 
     public ObjList<FuzzTransaction> generateTransactions(String tableName, Rnd rnd, long start, long end) {
         TableToken tableToken = engine.verifyTableName(tableName);
-        try (TableMetadata metadata = engine.getMetadata(tableToken)) {
+        try (TableMetadata metadata = engine.getTableReaderMetadata(tableToken)) {
             return generateSet(rnd, metadata, start, end, tableName);
         }
     }
 
     public void setFuzzCounts(boolean isO3, int fuzzRowCount, int transactionCount, int strLen, int symbolStrLenMax, int symbolCountMax, int initialRowCount, int partitionCount) {
+        setFuzzCounts(isO3, fuzzRowCount, transactionCount, strLen, symbolStrLenMax, symbolCountMax, initialRowCount, partitionCount, -1);
+    }
+
+    public void setFuzzCounts(boolean isO3, int fuzzRowCount, int transactionCount, int strLen, int symbolStrLenMax, int symbolCountMax, int initialRowCount, int partitionCount, int parallelWalCount) {
         this.isO3 = isO3;
         this.fuzzRowCount = fuzzRowCount;
         this.transactionCount = transactionCount;
@@ -377,6 +382,7 @@ public class FuzzRunner {
         this.symbolCountMax = symbolCountMax;
         this.initialRowCount = initialRowCount;
         this.partitionCount = partitionCount;
+        this.parallelWalCount = parallelWalCount;
     }
 
     public void setFuzzProbabilities(double cancelRowsProb, double notSetProb, double nullSetProb, double rollbackProb, double collAddProb, double collRemoveProb, double colRenameProb, double dataAddProb, double truncateProb, double equalTsRowsProb, double tableDropProb) {
@@ -756,7 +762,7 @@ public class FuzzRunner {
         ObjList<FuzzTransaction> transactions;
         transactions = generateTransactions(tableNameNoWal, rnd);
         String timestampColumnName;
-        try (TableMetadata meta = engine.getMetadata(nonWalTt)) {
+        try (TableMetadata meta = engine.getSequencerMetadata(nonWalTt)) {
             timestampColumnName = meta.getColumnName(meta.getTimestampIndex());
         }
 
