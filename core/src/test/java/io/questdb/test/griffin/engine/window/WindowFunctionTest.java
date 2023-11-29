@@ -47,6 +47,72 @@ public class WindowFunctionTest extends AbstractCairoTest {
     private static final List<String> WINDOW_ONLY_FUNCTIONS;
 
     @Test
+    public void testCachedWindowFactoryMaintainsOrderOfRecordsWithSameTimestamp1() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table nodts_tab (ts timestamp, val int)");
+            insert("insert into nodts_tab values (0, 1)");
+            insert("insert into nodts_tab values (0, 2)");
+
+            String noDtsResult = "ts\tval\tavg\n" +
+                    "1970-01-01T00:00:00.000000Z\t1\t1.0\n" +
+                    "1970-01-01T00:00:00.000000Z\t1\t1.0\n" +
+                    "1970-01-01T00:00:00.000000Z\t2\t1.3333333333333333\n" +
+                    "1970-01-01T00:00:00.000000Z\t2\t1.5\n";
+
+            assertQuery(noDtsResult,
+                    "SELECT T1.ts, T1.val, avg(T1.val) OVER (PARTITION BY 1=1 ORDER BY T1.ts) " +
+                            "FROM nodts_tab AS T1 " +
+                            "CROSS JOIN nodts_tab AS T2",
+                    null,
+                    true,
+                    false);
+
+            assertQuery(noDtsResult,
+                    "SELECT T1.ts, T1.val, avg(T1.val) OVER (PARTITION BY 1=1 ORDER BY T1.ts desc) " +
+                            "FROM nodts_tab AS T1 " +
+                            "CROSS JOIN nodts_tab AS T2",
+                    null,
+                    true,
+                    false);
+        });
+    }
+
+    @Test
+    public void testCachedWindowFactoryMaintainsOrderOfRecordsWithSameTimestamp2() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab (ts timestamp, val int) timestamp(ts)");
+            insert("insert into tab values (0, 1)");
+            insert("insert into tab values (0, 1)");
+            insert("insert into tab values (0, 2)");
+            insert("insert into tab values (0, 2)");
+
+            assertQuery("ts\tval\tavg\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t1.0\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t1.0\n" +
+                            "1970-01-01T00:00:00.000000Z\t2\t1.3333333333333333\n" +
+                            "1970-01-01T00:00:00.000000Z\t2\t1.5\n",
+                    "SELECT ts, val, avg(val) OVER (PARTITION BY 1=1 ORDER BY ts) " +
+                            "FROM tab",
+                    "ts",
+                    false,
+                    true);
+
+            assertQuery("ts\tval\tavg\n" +
+                            "1970-01-01T00:00:00.000000Z\t2\t2.0\n" +
+                            "1970-01-01T00:00:00.000000Z\t2\t2.0\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t1.6666666666666667\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t1.5\n",
+                    "SELECT ts, val, avg(val) OVER (PARTITION BY 1=1 ORDER BY ts DESC) " +
+                            "FROM tab " +
+                            "ORDER BY ts DESC",
+                    "ts",
+                    false,
+                    true);
+        });
+    }
+
+
+    @Test
     public void testFrameFunctionDoesntAcceptFollowingInNonDefaultFrameDefinition() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
@@ -1511,16 +1577,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     false
             );
 
-            //TODO: fix the issue with cached window factory records appearing in reverse order for the same timestamp
             assertQuery(
                     "ts\ti\tj\tavg\tsum\tfirst_value\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.8571428571428572\t13.0\t3.0\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\t1.8571428571428572\t13.0\t3.0\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\t3\t1.8571428571428572\t13.0\t3.0\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t1.8571428571428572\t13.0\t3.0\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t1.8571428571428572\t13.0\t3.0\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\t1\t1.8571428571428572\t13.0\t3.0\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t1.8571428571428572\t13.0\t3.0\n",
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.8571428571428572\t13.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t1.8571428571428572\t13.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\t3\t1.8571428571428572\t13.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t1.8571428571428572\t13.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t1.8571428571428572\t13.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\t1\t1.8571428571428572\t13.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t1.8571428571428572\t13.0\t1.0\n",
                     "select ts, i, j, " +
                             "avg(d) over (order by i rows between unbounded preceding and unbounded following), " +
                             "sum(d) over (order by i rows between unbounded preceding and unbounded following), " +
@@ -1531,7 +1596,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     false
             );
 
-            //TODO: fix the issue with cached window factory records appearing in reverse order for the same timestamp
             assertQuery(
                     "ts\ti\tj\tavg\tsum\tfirst_value\n" +
                             "1970-01-01T00:00:00.000001Z\t0\t1\t2.0\t6.0\t1.0\n" +
@@ -2334,18 +2398,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testRowNumberWithFilter() throws Exception {
         assertQuery(
                 "author\tsym\tcommits\trk\n" +
-                        "user2\tETH\t3\t2\n" +
-                        "user1\tETH\t3\t1\n",
+                        "user2\tETH\t3\t1\n" +
+                        "user1\tETH\t3\t2\n",
                 "with active_devs as (" +
                         "    select author, sym, count() as commits" +
                         "    from dev_stats" +
                         "    where author is not null and author != 'github-actions[bot]'" +
                         "    order by commits desc" +
                         "    limit 100" +
-                        "), active_ranked as (" +
+                        "), " +
+                        "active_ranked as (" +
                         "    select author, sym, commits, row_number() over (partition by sym order by commits desc) as rk" +
                         "    from active_devs" +
-                        ") select * from active_ranked where sym = 'ETH'",
+                        ") " +
+                        "select * from active_ranked where sym = 'ETH'",
                 "create table dev_stats as " +
                         "(" +
                         "select" +
@@ -2444,16 +2510,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testRowNumberWithNoPartitionAndOrderBySymbolWildcardLast() throws Exception {
         assertQuery(
                 "row_number\tprice\tsymbol\tts\n" +
-                        "10\t0.8043224099968393\tCC\t1970-01-01T00:00:00.000000Z\n" +
-                        "7\t0.2845577791213847\tBB\t1970-01-02T03:46:40.000000Z\n" +
+                        "8\t0.8043224099968393\tCC\t1970-01-01T00:00:00.000000Z\n" +
+                        "2\t0.2845577791213847\tBB\t1970-01-02T03:46:40.000000Z\n" +
                         "9\t0.9344604857394011\tCC\t1970-01-03T07:33:20.000000Z\n" +
                         "1\t0.7905675319675964\tAA\t1970-01-04T11:20:00.000000Z\n" +
-                        "6\t0.8899286912289663\tBB\t1970-01-05T15:06:40.000000Z\n" +
-                        "8\t0.11427984775756228\tCC\t1970-01-06T18:53:20.000000Z\n" +
-                        "5\t0.4217768841969397\tBB\t1970-01-07T22:40:00.000000Z\n" +
-                        "4\t0.7261136209823622\tBB\t1970-01-09T02:26:40.000000Z\n" +
-                        "3\t0.6693837147631712\tBB\t1970-01-10T06:13:20.000000Z\n" +
-                        "2\t0.8756771741121929\tBB\t1970-01-11T10:00:00.000000Z\n",
+                        "3\t0.8899286912289663\tBB\t1970-01-05T15:06:40.000000Z\n" +
+                        "10\t0.11427984775756228\tCC\t1970-01-06T18:53:20.000000Z\n" +
+                        "4\t0.4217768841969397\tBB\t1970-01-07T22:40:00.000000Z\n" +
+                        "5\t0.7261136209823622\tBB\t1970-01-09T02:26:40.000000Z\n" +
+                        "6\t0.6693837147631712\tBB\t1970-01-10T06:13:20.000000Z\n" +
+                        "7\t0.8756771741121929\tBB\t1970-01-11T10:00:00.000000Z\n",
                 "select row_number() over (order by symbol), * from trades",
                 "create table trades as " +
                         "(" +
@@ -2501,16 +2567,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testRowNumberWithNoPartitionAndSameOrderNotFollowedByBaseFactory() throws Exception {
         assertQuery(
                 "ts\ts\trn\n" +
-                        "1970-01-10T06:13:20.000000Z\ta\t1\n" +
+                        "1970-01-01T00:00:00.000000Z\ta\t1\n" +
                         "1970-01-02T03:46:40.000000Z\ta\t2\n" +
-                        "1970-01-01T00:00:00.000000Z\ta\t3\n" +
-                        "1970-01-11T10:00:00.000000Z\tb\t4\n" +
+                        "1970-01-10T06:13:20.000000Z\ta\t3\n" +
+                        "1970-01-03T07:33:20.000000Z\tb\t4\n" +
                         "1970-01-09T02:26:40.000000Z\tb\t5\n" +
-                        "1970-01-03T07:33:20.000000Z\tb\t6\n" +
-                        "1970-01-07T22:40:00.000000Z\tc\t7\n" +
-                        "1970-01-06T18:53:20.000000Z\tc\t8\n" +
-                        "1970-01-05T15:06:40.000000Z\tc\t9\n" +
-                        "1970-01-04T11:20:00.000000Z\tc\t10\n",
+                        "1970-01-11T10:00:00.000000Z\tb\t6\n" +
+                        "1970-01-04T11:20:00.000000Z\tc\t7\n" +
+                        "1970-01-05T15:06:40.000000Z\tc\t8\n" +
+                        "1970-01-06T18:53:20.000000Z\tc\t9\n" +
+                        "1970-01-07T22:40:00.000000Z\tc\t10\n",
                 "select *, row_number() over (order by s) as rn from tab where ts in ('1970-01') order by s",
                 "create table tab as " +
                         "(" +
@@ -2558,16 +2624,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testRowNumberWithPartitionAndOrderBySymbolNoWildcard() throws Exception {
         assertQuery(
                 "row_number\n" +
-                        "3\n" +
-                        "6\n" +
+                        "1\n" +
+                        "1\n" +
                         "2\n" +
                         "1\n" +
-                        "5\n" +
-                        "1\n" +
+                        "2\n" +
+                        "3\n" +
+                        "3\n" +
                         "4\n" +
-                        "3\n" +
-                        "2\n" +
-                        "1\n",
+                        "5\n" +
+                        "6\n",
                 "select row_number() over (partition by symbol order by symbol) from trades",
                 "create table trades as " +
                         "(" +
@@ -2587,16 +2653,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testRowNumberWithPartitionAndOrderBySymbolWildcardFirst() throws Exception {
         assertQuery(
                 "price\tsymbol\tts\trow_number\n" +
-                        "0.8043224099968393\tCC\t1970-01-01T00:00:00.000000Z\t3\n" +
-                        "0.2845577791213847\tBB\t1970-01-02T03:46:40.000000Z\t6\n" +
+                        "0.8043224099968393\tCC\t1970-01-01T00:00:00.000000Z\t1\n" +
+                        "0.2845577791213847\tBB\t1970-01-02T03:46:40.000000Z\t1\n" +
                         "0.9344604857394011\tCC\t1970-01-03T07:33:20.000000Z\t2\n" +
                         "0.7905675319675964\tAA\t1970-01-04T11:20:00.000000Z\t1\n" +
-                        "0.8899286912289663\tBB\t1970-01-05T15:06:40.000000Z\t5\n" +
-                        "0.11427984775756228\tCC\t1970-01-06T18:53:20.000000Z\t1\n" +
-                        "0.4217768841969397\tBB\t1970-01-07T22:40:00.000000Z\t4\n" +
-                        "0.7261136209823622\tBB\t1970-01-09T02:26:40.000000Z\t3\n" +
-                        "0.6693837147631712\tBB\t1970-01-10T06:13:20.000000Z\t2\n" +
-                        "0.8756771741121929\tBB\t1970-01-11T10:00:00.000000Z\t1\n",
+                        "0.8899286912289663\tBB\t1970-01-05T15:06:40.000000Z\t2\n" +
+                        "0.11427984775756228\tCC\t1970-01-06T18:53:20.000000Z\t3\n" +
+                        "0.4217768841969397\tBB\t1970-01-07T22:40:00.000000Z\t3\n" +
+                        "0.7261136209823622\tBB\t1970-01-09T02:26:40.000000Z\t4\n" +
+                        "0.6693837147631712\tBB\t1970-01-10T06:13:20.000000Z\t5\n" +
+                        "0.8756771741121929\tBB\t1970-01-11T10:00:00.000000Z\t6\n",
                 "select *, row_number() over (partition by symbol order by symbol) from trades",
                 "create table trades as " +
                         "(" +
@@ -2616,16 +2682,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testRowNumberWithPartitionAndOrderBySymbolWildcardLast() throws Exception {
         assertQuery(
                 "row_number\tprice\tsymbol\tts\n" +
-                        "3\t0.8043224099968393\tCC\t1970-01-01T00:00:00.000000Z\n" +
-                        "6\t0.2845577791213847\tBB\t1970-01-02T03:46:40.000000Z\n" +
+                        "1\t0.8043224099968393\tCC\t1970-01-01T00:00:00.000000Z\n" +
+                        "1\t0.2845577791213847\tBB\t1970-01-02T03:46:40.000000Z\n" +
                         "2\t0.9344604857394011\tCC\t1970-01-03T07:33:20.000000Z\n" +
                         "1\t0.7905675319675964\tAA\t1970-01-04T11:20:00.000000Z\n" +
-                        "5\t0.8899286912289663\tBB\t1970-01-05T15:06:40.000000Z\n" +
-                        "1\t0.11427984775756228\tCC\t1970-01-06T18:53:20.000000Z\n" +
-                        "4\t0.4217768841969397\tBB\t1970-01-07T22:40:00.000000Z\n" +
-                        "3\t0.7261136209823622\tBB\t1970-01-09T02:26:40.000000Z\n" +
-                        "2\t0.6693837147631712\tBB\t1970-01-10T06:13:20.000000Z\n" +
-                        "1\t0.8756771741121929\tBB\t1970-01-11T10:00:00.000000Z\n",
+                        "2\t0.8899286912289663\tBB\t1970-01-05T15:06:40.000000Z\n" +
+                        "3\t0.11427984775756228\tCC\t1970-01-06T18:53:20.000000Z\n" +
+                        "3\t0.4217768841969397\tBB\t1970-01-07T22:40:00.000000Z\n" +
+                        "4\t0.7261136209823622\tBB\t1970-01-09T02:26:40.000000Z\n" +
+                        "5\t0.6693837147631712\tBB\t1970-01-10T06:13:20.000000Z\n" +
+                        "6\t0.8756771741121929\tBB\t1970-01-11T10:00:00.000000Z\n",
                 "select row_number() over (partition by symbol order by symbol), * from trades",
                 "create table trades as " +
                         "(" +
