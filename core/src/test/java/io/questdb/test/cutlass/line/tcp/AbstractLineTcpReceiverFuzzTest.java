@@ -483,7 +483,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
                     handleWriterReturnEvent(tableName);
                 }
             } else {
-                if (factoryType == PoolListener.SRC_METADATA && event == PoolListener.EV_UNLOCKED) {
+                if (factoryType == PoolListener.SRC_SEQUENCER_METADATA && event == PoolListener.EV_UNLOCKED) {
                     handleWriterUnlockEvent(tableName);
                 }
                 if (PoolListener.isWalOrWriter(factoryType) && event == PoolListener.EV_GET) {

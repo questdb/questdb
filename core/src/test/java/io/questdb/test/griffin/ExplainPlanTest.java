@@ -5883,7 +5883,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSelectFromAllTables() throws Exception {
         assertPlan(
                 "select * from all_tables()",
-                "all_tables\n"
+                "all_tables()\n"
         );
     }
 

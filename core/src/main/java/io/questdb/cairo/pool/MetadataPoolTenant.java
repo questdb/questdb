@@ -22,13 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.cairo.pool;
 
-public interface TableMetadata extends TableRecordMetadata {
-    int getMaxUncommittedRows();
+import io.questdb.cairo.sql.TableMetadata;
 
-    long getO3MaxLag();
-
-    int getPartitionBy();
-    boolean isSoftLink();
+public interface MetadataPoolTenant extends TableMetadata, PoolTenant<MetadataPoolTenant> {
 }
