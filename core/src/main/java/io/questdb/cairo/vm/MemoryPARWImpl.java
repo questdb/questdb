@@ -570,6 +570,10 @@ public class MemoryPARWImpl implements MemoryARW {
         if (pageHi - appendPointer > 3) {
             Unsafe.getUnsafe().putInt(appendPointer, value);
             appendPointer += 4;
+        } else if (pageHi == appendPointer) {
+            pageAt(getAppendOffset() + 1);
+            Unsafe.getUnsafe().putInt(appendPointer, value);
+            appendPointer += 4;
         } else {
             putIntBytes(value);
         }

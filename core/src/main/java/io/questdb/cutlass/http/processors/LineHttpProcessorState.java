@@ -35,18 +35,18 @@ import io.questdb.std.str.StringSink;
 public class LineHttpProcessorState implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(LineHttpProcessorState.class);
     private final IlpWalAppender appender;
+    private final StringSink error = new StringSink();
+    private final IlpTudCache ilpTudCache;
     private final LineTcpParser parser;
     private final int recvBufSize;
-    int line = 0;
+    private final WeakClosableObjectPool<SymbolCache> symbolCachePool;
     private long buffer;
     private Status currentStatus = Status.OK;
-    private StringSink error = new StringSink();
     private int fd = -1;
-    private IlpTudCache ilpTudCache;
+    private int line = 0;
     private long recvBufEnd;
     private long recvBufPos;
     private long recvBufStartOfMeasurement;
-    private WeakClosableObjectPool<SymbolCache> symbolCachePool;
 
     public LineHttpProcessorState(int recvBufSize, CairoEngine engine, LineHttpProcessorConfiguration configuration) {
         assert recvBufSize > 0;
@@ -76,6 +76,8 @@ public class LineHttpProcessorState implements QuietCloseable {
     public void clear() {
         Vect.memset(buffer, recvBufSize, 0);
         recvBufPos = buffer;
+        error.clear();
+        currentStatus = Status.OK;
     }
 
     @Override

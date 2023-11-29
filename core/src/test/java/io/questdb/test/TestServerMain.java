@@ -28,13 +28,7 @@ import io.questdb.Bootstrap;
 import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.security.SecurityContextFactory;
-import io.questdb.cairo.sql.TableReferenceOutOfDateException;
-import io.questdb.cairo.wal.ApplyWal2TableJob;
-import io.questdb.cairo.wal.CheckWalTransactionsJob;
-import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -53,6 +47,18 @@ public class TestServerMain extends ServerMain {
 
     public TestServerMain(final Bootstrap bootstrap) {
         super(bootstrap);
+    }
+
+    public static TestServerMain createWithManualWalRun(String... args) {
+        return new TestServerMain(args) {
+            @Override
+            protected void setupWalApplyJob(
+                    WorkerPool workerPool,
+                    CairoEngine engine,
+                    int sharedWorkerCount
+            ) {
+            }
+        };
     }
 
     public void assertSql(String sql, String expected) {

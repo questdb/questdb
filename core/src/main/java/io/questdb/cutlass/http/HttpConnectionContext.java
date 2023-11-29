@@ -474,12 +474,14 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             }
             return true;
         } else if (read == 0) {
+            // Schedule for read
             dispatcher.registerChannel(this, IOOperation.READ);
             return false;
         } else {
             // client disconnected
             processor.failRequest(this, null);
             dispatcher.disconnect(this, DISCONNECT_REASON_KICKED_OUT_AT_RECV);
+            reset();
             return false;
         }
     }
@@ -737,13 +739,13 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 if (multipartRequest && !multipartProcessor) {
                     // bad request - multipart request for processor that doesn't expect multipart
                     busyRecv = rejectRequest("Bad request. Non-multipart GET expected.");
+                } else if (multipartProcessor && multipartRequest) {
+                    busyRecv = consumeMultipart(socket, processor, headerEnd, read, newRequest, rescheduleContext);
                 } else if (contentLength > -1 && multipartProcessor) {
                     busyRecv = consumeContent(contentLength, socket, processor, headerEnd, read, newRequest, rescheduleContext);
                 } else if (!multipartRequest && multipartProcessor) {
                     // bad request - regular request for processor that expects multipart
                     busyRecv = rejectRequest("Bad request. Multipart POST expected.");
-                } else if (multipartProcessor) {
-                    busyRecv = consumeMultipart(socket, processor, headerEnd, read, newRequest, rescheduleContext);
                 } else {
                     // Do not expect any more bytes to be sent to us before
                     // we respond back to client. We will disconnect the client when
