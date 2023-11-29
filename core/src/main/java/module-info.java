@@ -759,6 +759,12 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.groupby.VarSampleGroupByFunctionFactory,
 //                 var_pop()
             io.questdb.griffin.engine.functions.groupby.VarPopGroupByFunctionFactory,
+//                 covar_samp()
+            io.questdb.griffin.engine.functions.groupby.CovarSampleGroupByFunctionFactory,
+//                 covar_pop()
+            io.questdb.griffin.engine.functions.groupby.CovarPopGroupByFunctionFactory,
+//                 corr()
+            io.questdb.griffin.engine.functions.groupby.CorrGroupByFunctionFactory,
 //                  ^
             io.questdb.griffin.engine.functions.math.PowDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.table.AllTablesFunctionFactory,
