@@ -244,7 +244,6 @@ public class ServerMain implements Closeable {
     private synchronized void initialize() {
         initialized = true;
 
-
         // create the worker pool manager, and configure the shared pool
         final boolean walSupported = config.getCairoConfiguration().isWalSupported();
         final boolean isReadOnly = config.getCairoConfiguration().isReadOnlyInstance();
