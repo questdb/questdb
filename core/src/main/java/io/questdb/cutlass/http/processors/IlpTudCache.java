@@ -118,7 +118,8 @@ public class IlpTudCache implements QuietCloseable {
                 engine.getWalWriter(tableToken),
                 defaultColumnTypes,
                 nameUtf8,
-                symbolCachePool
+                symbolCachePool,
+                -1
         );
 
         tableUpdateDetails.putAt(key, nameUtf8, tud);

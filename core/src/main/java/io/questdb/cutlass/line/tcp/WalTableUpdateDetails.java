@@ -38,9 +38,10 @@ public class WalTableUpdateDetails extends TableUpdateDetails {
             TableWriterAPI writer,
             DefaultColumnTypes defaultColumnTypes,
             Utf8String tableNameUtf8,
-            Pool<SymbolCache> symbolCachePool
+            Pool<SymbolCache> symbolCachePool,
+            long commitInterval
     ) {
-        super(engine, securityContext, writer, -1, defaultColumnTypes, tableNameUtf8, symbolCachePool, -1);
+        super(engine, securityContext, writer, -1, defaultColumnTypes, tableNameUtf8, symbolCachePool, commitInterval);
     }
 
     @Override
