@@ -393,6 +393,19 @@ public class TableTransactionLog implements Closeable {
         }
 
         @Override
+        public boolean extend() {
+            final long newTxnCount = ff.readNonNegativeLong(fd, MAX_TXN_OFFSET);
+            if (newTxnCount > txnCount) {
+                remap(newTxnCount);
+
+                this.txnLo = txn - 1;
+                this.txnOffset -= RECORD_SIZE;
+                return true;
+            }
+            return false;
+        }
+
+        @Override
         public int getSegmentId() {
             return Unsafe.getUnsafe().getInt(address + txnOffset + TX_LOG_SEGMENT_OFFSET);
         }
@@ -432,16 +445,8 @@ public class TableTransactionLog implements Closeable {
         }
 
         @Override
-        public boolean setPosition() {
-            final long newTxnCount = ff.readNonNegativeLong(fd, MAX_TXN_OFFSET);
-            if (newTxnCount > txnCount) {
-                remap(newTxnCount);
-
-                this.txnLo = txn - 1;
-                this.txnOffset -= RECORD_SIZE;
-                return true;
-            }
-            return false;
+        public long getMaxTxn() {
+            return txnCount - 1;
         }
 
         @Override

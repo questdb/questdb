@@ -448,6 +448,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                     walWriter.commit();
 
                     addColumn(walWriter, "c", ColumnType.INT);
+                    drainWalQueue();
 
                     update("UPDATE " + tableName + " SET b = a");
                     update("UPDATE " + tableName + " SET c = a");
