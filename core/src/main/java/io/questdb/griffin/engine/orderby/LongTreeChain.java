@@ -74,35 +74,40 @@ public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
 
         comparator.setLeft(leftRecord);
 
-        long p = root;
+        long ptr = root;
         long parent;
         int cmp;
         do {
-            parent = p;
-            final long r = refOf(p);
-            sourceCursor.recordAt(rightRecord, valueChain.getLong(r));
+            parent = ptr;
+            final long ref = refOf(ptr);
+            sourceCursor.recordAt(rightRecord, valueChain.getLong(ref));
             cmp = comparator.compare(rightRecord);
             if (cmp < 0) {
-                p = leftOf(p);
+                ptr = leftOf(ptr);
             } else if (cmp > 0) {
-                p = rightOf(p);
+                ptr = rightOf(ptr);
             } else {
-                setRef(p, appendValue(leftRecord.getRowId(), r));
+                long oldChainEnd = lastRefOf(ptr);
+                long newChainEnd = appendValue(leftRecord.getRowId(), -1);
+                valueChain.putLong(oldChainEnd + Long.BYTES, newChainEnd);
+                setLastRef(ptr, newChainEnd);
                 return;
             }
-        } while (p > -1);
+        } while (ptr > -1);
 
-        p = allocateBlock();
-        setParent(p, parent);
+        ptr = allocateBlock();
+        setParent(ptr, parent);
 
-        setRef(p, appendValue(leftRecord.getRowId(), -1L));
+        long chainStart = appendValue(leftRecord.getRowId(), -1L);
+        setRef(ptr, chainStart);
+        setLastRef(ptr, chainStart);
 
         if (cmp < 0) {
-            setLeft(parent, p);
+            setLeft(parent, ptr);
         } else {
-            setRight(parent, p);
+            setRight(parent, ptr);
         }
-        fixInsert(p);
+        fixInsert(ptr);
     }
 
     @Override
@@ -110,16 +115,18 @@ public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
         //nothing to do here
     }
 
-    private long appendValue(long value, long prevValueOffset) {
+    private long appendValue(long value, long nextValueOffset) {
         final long offset = valueChain.getAppendOffset();
-        valueChain.putLong128(value, prevValueOffset);
+        valueChain.putLong128(value, nextValueOffset);
         return offset;
     }
 
     @Override
     protected void putParent(long value) {
         root = allocateBlock();
-        setRef(root, appendValue(value, -1L));
+        long chainStart = appendValue(value, -1L);
+        setRef(root, chainStart);
+        setLastRef(root, chainStart);
         setParent(root, -1);
     }
 
@@ -149,7 +156,7 @@ public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
 
         public long next() {
             long result = chainCurrent;
-            chainCurrent = valueChain.getLong(chainCurrent + 8);
+            chainCurrent = valueChain.getLong(chainCurrent + Long.BYTES);
             return valueChain.getLong(result);
         }
 

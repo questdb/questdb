@@ -658,10 +658,10 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void testGroupByAliasInDifferentOrder1() throws Exception {
         assertQuery("k1\tk2\tcount\n" +
-                        "0\t0\t2\n" +
                         "0\t2\t3\n" +
-                        "1\t3\t2\n" +
-                        "1\t1\t3\n",
+                        "0\t0\t2\n" +
+                        "1\t1\t3\n" +
+                        "1\t3\t2\n",
                 "select key1 as k1, key2 as k2, count(*) from t group by k2, k1 order by 1",
                 "create table t as ( select x%2 key1, x%4 key2, x as value from long_sequence(10)); ", null, true, true
         );
@@ -670,10 +670,10 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void testGroupByAliasInDifferentOrder2() throws Exception {
         assertQuery("k1\tk2\tcount\n" +
-                        "1\t0\t2\n" +
                         "1\t2\t3\n" +
-                        "2\t3\t2\n" +
-                        "2\t1\t3\n",
+                        "1\t0\t2\n" +
+                        "2\t1\t3\n" +
+                        "2\t3\t2\n",
                 "select key1+1 as k1, key2 as k2, count(*) from t group by k2, k1 order by 1",
                 "create table t as ( select x%2 key1, x%4 key2, x as value from long_sequence(10)); ", null, true, true
         );
