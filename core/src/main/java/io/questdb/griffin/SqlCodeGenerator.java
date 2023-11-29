@@ -4051,10 +4051,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         final TableToken tableToken = executionContext.getTableToken(tab);
         if (model.isUpdate() && !executionContext.isWalApplication() && executionContext.getCairoEngine().isWalTable(tableToken)) {
-            try (TableRecordMetadata metadata = engine.getMetadata(tableToken, model.getMetadataVersion())) {
+            // two phase update execution, this is client-side branch. It has to execute against the sequencer metadata
+            // to allow the client to succeed even if WAL apply does not run.
+            try (TableRecordMetadata metadata = engine.getSequencerMetadata(tableToken, model.getMetadataVersion())) {
                 return generateTableQuery0(model, executionContext, latestBy, supportsRandomAccess, null, metadata);
             }
         } else {
+            // this is server side execution of the update. It executes against the reader metadata, which by now
+            // has to be fully up-to-date due to WAL apply execution order.
             try (TableReader reader = executionContext.getReader(tableToken, model.getMetadataVersion())) {
                 return generateTableQuery0(model, executionContext, latestBy, supportsRandomAccess, reader, reader.getMetadata());
             }

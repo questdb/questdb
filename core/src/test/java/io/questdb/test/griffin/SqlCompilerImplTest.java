@@ -3050,7 +3050,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     );
 
                     try (TableWriter writer = getWriter("x");
-                         TableMetadata tableMetadata = engine.getMetadata(writer.getTableToken())) {
+                         TableMetadata tableMetadata = engine.getSequencerMetadata(writer.getTableToken())) {
                         sink.clear();
                         tableMetadata.toJson(sink);
                         TestUtils.assertEquals(
