@@ -71,7 +71,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
     }
 
     public ObjList<FuzzTransaction> generateSet(Rnd rnd, TableRecordMetadata metadata, long start, long end, String tableName) {
-        return fuzzer.generateSet(rnd, metadata, start, end, tableName);
+        return fuzzer.generateSet(rnd, metadata, start, end, tableName, metadata.getMetadataVersion());
     }
 
     @Before
@@ -147,6 +147,14 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         return symbols;
     }
 
+    protected int getMaxWalFdCache(Rnd rnd) {
+        return rnd.nextInt(1000);
+    }
+
+    protected long getMaxWalSize(Rnd rnd) {
+        return rnd.nextLong(10 * Numbers.SIZE_1MB);
+    }
+
     protected String getTestName() {
         return testName.getMethodName().replace('[', '_').replace(']', '_');
     }
@@ -192,14 +200,6 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         node1.getConfigurationOverrides().setWalApplyTableTimeQuota(maxApplyTimePerTable);
         node1.getConfigurationOverrides().setPartitionO3SplitThreshold(splitPartitionThreshold);
         node1.getConfigurationOverrides().setO3PartitionSplitMaxCount(o3PartitionSplitMaxCount);
-    }
-
-    protected int getMaxWalFdCache(Rnd rnd) {
-        return rnd.nextInt(1000);
-    }
-
-    protected long getMaxWalSize(Rnd rnd) {
-        return rnd.nextLong(10 * Numbers.SIZE_1MB);
     }
 
     protected void setFuzzProperties(long maxApplyTimePerTable, long splitPartitionThreshold, int o3PartitionSplitMaxCount, long walMaxLagSize, int maxWalFdCache) {

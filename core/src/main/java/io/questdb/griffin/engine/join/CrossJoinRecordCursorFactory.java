@@ -132,7 +132,9 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
             }
 
             if (masterSize == 0) {
-                counter.add(slavePartialSize);
+                if (!isMasterHasNextPending) {
+                    counter.add(slavePartialSize);
+                }
             } else {
                 if (!isSlaveSizeCalculated) {
                     if (!isSlaveReset) {

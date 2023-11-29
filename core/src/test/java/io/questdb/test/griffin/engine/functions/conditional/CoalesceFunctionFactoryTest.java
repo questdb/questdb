@@ -24,10 +24,10 @@
 
 package io.questdb.test.griffin.engine.functions.conditional;
 
-import io.questdb.test.AbstractCairoTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.Rnd;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -344,17 +344,22 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testStrCoalesceSymbolNocacheSorted() throws Exception {
-        assertQuery("coalesce\tx\ta\n", "select coalesce(x, a) as coalesce, x, a\n" +
-                "from t\n" +
-                "order by 1", "create table t (x string, a symbol nocache)", null, "insert into t select " +
-                " rnd_str(NULL, 'X', 'Y') as x,\n" +
-                " rnd_symbol('A', 'B', NULL) as a\n" +
-                "from long_sequence(5)", "coalesce\tx\ta\n" +
-                "A\t\tA\n" +
-                "B\t\tB\n" +
-                "X\tX\t\n" +
-                "Y\tY\tB\n" +
-                "Y\tY\t\n", true, true, false);
+        assertQuery("coalesce\tx\ta\n",
+                "select coalesce(x, a) as coalesce, x, a\n" +
+                        "from t\n" +
+                        "order by 1",
+                "create table t (x string, a symbol nocache)",
+                null,
+                "insert into t select " +
+                        " rnd_str(NULL, 'X', 'Y') as x,\n" +
+                        " rnd_symbol('A', 'B', NULL) as a\n" +
+                        "from long_sequence(5)",
+                "coalesce\tx\ta\n" +
+                        "A\t\tA\n" +
+                        "B\t\tB\n" +
+                        "X\tX\t\n" +
+                        "Y\tY\t\n" +
+                        "Y\tY\tB\n", true, true, false);
     }
 
     @Test
@@ -386,9 +391,9 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
                 "coalesce\tx\ta\n" +
                         "P\t\tP\n" +
                         "W\t\tW\n" +
-                        "X\tX\tY\n" +
+                        "X\tX\tT\n" +
                         "X\tX\tW\n" +
-                        "X\tX\tT\n",
+                        "X\tX\tY\n",
                 "select coalesce(x, a) as coalesce, x, a\n" +
                         "from alex\n" +
                         "order by 1",
@@ -473,53 +478,66 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testSymbolNocache3ArgsSorted() throws Exception {
-        assertQuery("coalesce\tx\ta\tb\n", "select coalesce(x, a, b) coalesce, x, a, b " +
-                "from t\n" +
-                "order by 1", "create table t (x symbol nocache, a symbol nocache, b symbol nocache)", null, "insert into t select " +
-                " rnd_symbol('X', 'Y', NULL) as x,\n" +
-                " rnd_symbol('A', 'AA', NULL) as a,\n" +
-                " rnd_symbol('B', 'BB', NULL) as b\n" +
-                "from long_sequence(5)", "coalesce\tx\ta\tb\n" +
-                "\t\t\t\n" +
-                "AA\t\tAA\tB\n" +
-                "X\tX\tA\tBB\n" +
-                "Y\tY\tAA\tBB\n" +
-                "Y\tY\tAA\t\n", true, true, false);
+        assertQuery("coalesce\tx\ta\tb\n",
+                "select coalesce(x, a, b) coalesce, x, a, b " +
+                        "from t\n" +
+                        "order by 1",
+                "create table t (x symbol nocache, a symbol nocache, b symbol nocache)",
+                null,
+                "insert into t select " +
+                        " rnd_symbol('X', 'Y', NULL) as x,\n" +
+                        " rnd_symbol('A', 'AA', NULL) as a,\n" +
+                        " rnd_symbol('B', 'BB', NULL) as b\n" +
+                        "from long_sequence(5)",
+                "coalesce\tx\ta\tb\n" +
+                        "\t\t\t\n" +
+                        "AA\t\tAA\tB\n" +
+                        "X\tX\tA\tBB\n" +
+                        "Y\tY\tAA\t\n" +
+                        "Y\tY\tAA\tBB\n", true, true, false);
     }
 
     @Test
     public void testSymbolNocacheCoalesceSorted() throws Exception {
         assertQuery("coalesce\tx\ta\n", "select coalesce(a, x) as coalesce, x, a\n" +
-                "from t\n" +
-                "order by 1", "create table t (x symbol nocache, a symbol nocache)", null, "insert into t select " +
-                " rnd_symbol('X', 'Y', 'Z', NULL) as x,\n" +
-                " rnd_symbol('A', 'B', 'C', NULL) as a\n" +
-                "from long_sequence(10)", "coalesce\tx\ta\n" +
-                "A\tY\tA\n" +
-                "A\tX\tA\n" +
-                "A\tZ\tA\n" +
-                "B\tX\tB\n" +
-                "C\tY\tC\n" +
-                "C\tX\tC\n" +
-                "Y\tY\t\n" +
-                "Y\tY\t\n" +
-                "Z\tZ\t\n" +
-                "Z\tZ\t\n", true, true, false);
+                        "from t\n" +
+                        "order by 1", "create table t (x symbol nocache, a symbol nocache)",
+                null,
+                "insert into t select " +
+                        " rnd_symbol('X', 'Y', 'Z', NULL) as x,\n" +
+                        " rnd_symbol('A', 'B', 'C', NULL) as a\n" +
+                        "from long_sequence(10)",
+                "coalesce\tx\ta\n" +
+                        "A\tZ\tA\n" +
+                        "A\tX\tA\n" +
+                        "A\tY\tA\n" +
+                        "B\tX\tB\n" +
+                        "C\tX\tC\n" +
+                        "C\tY\tC\n" +
+                        "Y\tY\t\n" +
+                        "Y\tY\t\n" +
+                        "Z\tZ\t\n" +
+                        "Z\tZ\t\n", true, true, false);
     }
 
     @Test
     public void testSymbolNocacheCoalesceStrSorted() throws Exception {
-        assertQuery("coalesce\tx\ta\n", "select coalesce(a, x) as coalesce, x, a\n" +
-                "from t\n" +
-                "order by 1", "create table t (x string, a symbol nocache)", null, "insert into t select " +
-                " rnd_str('X', NULL) as x,\n" +
-                " rnd_symbol('A', 'AA') as a\n" +
-                "from long_sequence(5)", "coalesce\tx\ta\n" +
-                "A\tX\tA\n" +
-                "A\tX\tA\n" +
-                "AA\tX\tAA\n" +
-                "AA\t\tAA\n" +
-                "AA\t\tAA\n", true, true, false);
+        assertQuery("coalesce\tx\ta\n",
+                "select coalesce(a, x) as coalesce, x, a\n" +
+                        "from t\n" +
+                        "order by 1",
+                "create table t (x string, a symbol nocache)",
+                null,
+                "insert into t select " +
+                        " rnd_str('X', NULL) as x,\n" +
+                        " rnd_symbol('A', 'AA') as a\n" +
+                        "from long_sequence(5)",
+                "coalesce\tx\ta\n" +
+                        "A\tX\tA\n" +
+                        "A\tX\tA\n" +
+                        "AA\t\tAA\n" +
+                        "AA\t\tAA\n" +
+                        "AA\tX\tAA\n", true, true, false);
     }
 
     @Test
