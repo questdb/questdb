@@ -58,12 +58,14 @@ public interface WindowFunction extends Function {
     }
 
     /**
-     * Releases native memory and resets internal state to default/initial. Called on [Cached]Window cursor close.
+     * Releases native memory and resets internal state to default/initial.
+     * It differs from close() in that it doesn't release memory held by metadata, e.g. partition by key functions.
+     * This means function may still be used after calling reopen().
      **/
     void reset();
 
     /*
-          Set index of record chain column used to store window function result.
-         */
+      Set index of record chain column used to store window function result.
+     */
     void setColumnIndex(int columnIndex);
 }
