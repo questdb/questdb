@@ -24,18 +24,17 @@
 
 package io.questdb.cairo;
 
-import io.questdb.BuildInformation;
-import io.questdb.FactoryProvider;
-import io.questdb.TelemetryConfiguration;
-import io.questdb.VolumeDefinitions;
+import io.questdb.*;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.function.LongSupplier;
 
@@ -54,6 +53,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean enableTestFactories() {
         return delegate.enableTestFactories();
+    }
+
+    @Override
+    public @Nullable ObjObjHashMap<ConfigPropertyKey, ConfigPropertyValue> getAllPairs() {
+        return delegate.getAllPairs();
     }
 
     @Override
@@ -159,6 +163,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getCopyPoolCapacity() {
         return delegate.getCopyPoolCapacity();
+    }
+
+    @Override
+    public int getCountDistinctCapacity() {
+        return delegate.getCountDistinctCapacity();
+    }
+
+    @Override
+    public double getCountDistinctLoadFactor() {
+        return delegate.getCountDistinctLoadFactor();
     }
 
     @Override
@@ -329,6 +343,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getMaxUncommittedRows() {
         return delegate.getMaxUncommittedRows();
+    }
+
+    @Override
+    public int getWalMaxSegmentFileDescriptorsCache() {
+        return delegate.getWalMaxSegmentFileDescriptorsCache();
     }
 
     @Override
@@ -519,6 +538,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public double getSqlCompactMapLoadFactor() {
         return delegate.getSqlCompactMapLoadFactor();
+    }
+
+    @Override
+    public int getSqlCompilerPoolCapacity() {
+        return delegate.getSqlCompilerPoolCapacity();
     }
 
     @Override
@@ -727,6 +751,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlWindowMaxRecursion() {
+        return delegate.getSqlWindowMaxRecursion();
+    }
+
+    @Override
     public int getSqlWindowRowIdMaxPages() {
         return delegate.getSqlWindowRowIdMaxPages();
     }
@@ -839,6 +868,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean getWalEnabledDefault() {
         return delegate.getWalEnabledDefault();
+    }
+
+    @Override
+    public long getWalMaxLagSize() {
+        return delegate.getWalMaxLagSize();
     }
 
     @Override

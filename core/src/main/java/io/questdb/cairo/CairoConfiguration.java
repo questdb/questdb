@@ -35,6 +35,7 @@ import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.lang.ThreadLocal;
 import java.util.Map;
@@ -55,6 +56,15 @@ public interface CairoConfiguration {
     }
 
     boolean enableTestFactories();
+
+    /**
+     * All effective configuration values are seen by the server instance.
+     *
+     * @return key value pairs of the configuration
+     */
+    default @Nullable ObjObjHashMap<ConfigPropertyKey, ConfigPropertyValue> getAllPairs() {
+        return null;
+    }
 
     boolean getAllowTableRegistrySharedWrite();
 
@@ -109,6 +119,10 @@ public interface CairoConfiguration {
     LongSupplier getCopyIDSupplier();
 
     int getCopyPoolCapacity();
+
+    int getCountDistinctCapacity();
+
+    double getCountDistinctLoadFactor();
 
     int getCreateAsSelectRetryCount();
 
@@ -191,6 +205,8 @@ public interface CairoConfiguration {
     int getMaxSymbolNotEqualsCount();
 
     int getMaxUncommittedRows();
+
+    int getWalMaxSegmentFileDescriptorsCache();
 
     int getMetadataPoolCapacity();
 
@@ -331,6 +347,8 @@ public interface CairoConfiguration {
 
     double getSqlCompactMapLoadFactor();
 
+    int getSqlCompilerPoolCapacity();
+
     int getSqlCopyBufferSize();
 
     // null input root disables "copy" sql
@@ -419,6 +437,8 @@ public interface CairoConfiguration {
 
     int getSqlWindowInitialRangeBufferSize();
 
+    int getSqlWindowMaxRecursion();
+
     int getSqlWindowRowIdMaxPages();
 
     int getSqlWindowRowIdPageSize();
@@ -468,6 +488,8 @@ public interface CairoConfiguration {
     long getWalDataAppendPageSize();
 
     boolean getWalEnabledDefault();
+
+    long getWalMaxLagSize();
 
     int getWalMaxLagTxnCount();
 

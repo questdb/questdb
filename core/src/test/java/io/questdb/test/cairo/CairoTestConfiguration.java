@@ -110,6 +110,11 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
+    public Map<String, String> getEnv() {
+        return overrides.getEnv();
+    }
+
+    @Override
     public @NotNull FactoryProvider getFactoryProvider() {
         return overrides.getFactoryProvider() == null ? super.getFactoryProvider() : overrides.getFactoryProvider();
     }
@@ -138,6 +143,16 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     @Override
     public int getMaxUncommittedRows() {
         return overrides.getMaxUncommittedRows() >= 0 ? overrides.getMaxUncommittedRows() : super.getMaxUncommittedRows();
+    }
+
+    @Override
+    public int getWalMaxSegmentFileDescriptorsCache() {
+        return overrides.getWalMaxSegmentFileDescriptorsCache() >= 0 ? overrides.getWalMaxSegmentFileDescriptorsCache() : super.getWalMaxSegmentFileDescriptorsCache();
+    }
+
+    @Override
+    public long getWalMaxLagSize() {
+        return overrides.getWalMaxLagSize() >= 0 ? overrides.getWalMaxLagSize() : super.getWalMaxLagSize();
     }
 
     @Override
@@ -202,16 +217,6 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
-    public boolean getSimulateCrashEnabled() {
-        return overrides.getSimulateCrashEnabled();
-    }
-
-    @Override
-    public Map<String, String> getEnv() {
-        return overrides.getEnv();
-    }
-
-    @Override
     public int getRepeatMigrationsFromVersion() {
         return overrides.getRepeatMigrationsFromVersion();
     }
@@ -234,6 +239,11 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     @Override
     public int getSampleByIndexSearchPageSize() {
         return overrides.getSampleByIndexSearchPageSize() > 0 ? overrides.getSampleByIndexSearchPageSize() : super.getSampleByIndexSearchPageSize();
+    }
+
+    @Override
+    public boolean getSimulateCrashEnabled() {
+        return overrides.getSimulateCrashEnabled();
     }
 
     @Override
@@ -287,6 +297,11 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
+    public int getSqlWindowMaxRecursion() {
+        return overrides.getSqlWindowMaxRecursion() > 0 ? overrides.getSqlWindowMaxRecursion() : super.getSqlWindowMaxRecursion();
+    }
+
+    @Override
     public int getSqlWindowStoreMaxPages() {
         return overrides.getSqlWindowStoreMaxPages() > 0 ? overrides.getSqlWindowStoreMaxPages() : super.getSqlWindowStoreMaxPages();
     }
@@ -309,6 +324,11 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     @Override
     public @NotNull VolumeDefinitions getVolumeDefinitions() {
         return volumeDefinitions;
+    }
+
+    @Override
+    public int getWalApplyLookAheadTransactionCount() {
+        return overrides.getWalApplyLookAheadTransactionCount() >= 0 ? overrides.getWalApplyLookAheadTransactionCount() : super.getWalApplyLookAheadTransactionCount();
     }
 
     @Override

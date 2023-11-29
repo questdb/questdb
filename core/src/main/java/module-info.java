@@ -107,8 +107,10 @@ open module io.questdb {
     exports io.questdb.cutlass.line.tcp.auth;
     exports io.questdb.cairo.frm;
     exports io.questdb.cairo.frm.file;
+    exports io.questdb.std.histogram.org.HdrHistogram;
     exports io.questdb.client;
     exports io.questdb.std.bytes;
+    exports io.questdb.std.histogram.org.HdrHistogram.packedarray;
 
     provides FunctionFactory with
             // test functions
@@ -639,6 +641,11 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.groupby.CountDistinctUuidGroupByFunctionFactory,
             //      'haversine_dist_degree' group by function
             io.questdb.griffin.engine.functions.groupby.HaversineDistDegreeGroupByFunctionFactory,
+            //      'approx_percentile' group by function
+            io.questdb.griffin.engine.functions.groupby.ApproxPercentileDoubleGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.ApproxPercentileDoubleGroupByDefaultFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.ApproxPercentileLongGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.ApproxPercentileLongGroupByDefaultFunctionFactory,
 //                  'isOrdered'
             io.questdb.griffin.engine.functions.groupby.IsIPv4OrderedGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.IsLongOrderedGroupByFunctionFactory,
@@ -675,6 +682,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.catalogue.PgRolesFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedPgRolesFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.InformationSchemaFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.InformationSchemaColumnsFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedPgTypeFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedPgDescriptionFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedPgNamespaceFunctionFactory,
@@ -708,10 +716,11 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.catalogue.PgRangeFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PgGetKeywordsFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetKeywordsFunctionFactory,
-            io.questdb.griffin.engine.functions.catalogue.TableListFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.ShowTablesFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.KeywordsFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.FunctionListFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.WalTableListFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.WalTransactionsFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.DumpMemoryUsageFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedAgeFunctionFactory,
@@ -750,6 +759,12 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.groupby.VarSampleGroupByFunctionFactory,
 //                 var_pop()
             io.questdb.griffin.engine.functions.groupby.VarPopGroupByFunctionFactory,
+//                 covar_samp()
+            io.questdb.griffin.engine.functions.groupby.CovarSampleGroupByFunctionFactory,
+//                 covar_pop()
+            io.questdb.griffin.engine.functions.groupby.CovarPopGroupByFunctionFactory,
+//                 corr()
+            io.questdb.griffin.engine.functions.groupby.CorrGroupByFunctionFactory,
 //                  ^
             io.questdb.griffin.engine.functions.math.PowDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.table.AllTablesFunctionFactory,

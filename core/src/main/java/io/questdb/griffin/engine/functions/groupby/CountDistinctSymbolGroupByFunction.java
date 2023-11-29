@@ -29,10 +29,15 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.CompactIntHashSet;
+import io.questdb.griffin.engine.functions.columns.SymbolColumn;
+import io.questdb.std.BitSet;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
@@ -40,33 +45,37 @@ import static io.questdb.cairo.sql.SymbolTable.VALUE_IS_NULL;
 
 public class CountDistinctSymbolGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
     private final Function arg;
-    private final ObjList<CompactIntHashSet> sets = new ObjList<>();
+    private final int setInitialCapacity;
+    private final ObjList<BitSet> sets = new ObjList<>();
+    private int knownSymbolCount = -1;
     private int setIndex;
     private int valueIndex;
 
-    public CountDistinctSymbolGroupByFunction(Function arg) {
+    public CountDistinctSymbolGroupByFunction(Function arg, int setInitialCapacity) {
         this.arg = arg;
+        this.setInitialCapacity = setInitialCapacity * BitSet.BITS_PER_WORD;
     }
 
     @Override
     public void clear() {
         sets.clear();
         setIndex = 0;
+        knownSymbolCount = -1;
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        final CompactIntHashSet set;
+        final BitSet set;
         if (sets.size() <= setIndex) {
-            sets.extendAndSet(setIndex, set = new CompactIntHashSet(64, 0.7, VALUE_IS_NULL));
+            sets.extendAndSet(setIndex, set = new BitSet(setInitialCapacity));
         } else {
             set = sets.getQuick(setIndex);
+            set.clear();
         }
-        set.clear();
 
         final int val = arg.getInt(record);
         if (val != VALUE_IS_NULL) {
-            set.add(val);
+            set.set(val);
             mapValue.putLong(valueIndex, 1L);
         } else {
             mapValue.putLong(valueIndex, 0L);
@@ -76,16 +85,21 @@ public class CountDistinctSymbolGroupByFunction extends LongFunction implements 
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        final CompactIntHashSet set = sets.getQuick(mapValue.getInt(valueIndex + 1));
+        final BitSet set = sets.getQuick(mapValue.getInt(valueIndex + 1));
         final int val = arg.getInt(record);
         if (val != VALUE_IS_NULL) {
-            final int index = set.keyIndex(val);
-            if (index < 0) {
+            if (set.get(val)) {
                 return;
             }
-            set.addAt(index, val);
+            set.set(val);
             mapValue.addLong(valueIndex, 1);
         }
+    }
+
+    @Override
+    public boolean earlyExit(MapValue mapValue) {
+        // Fast path for the case when we've reached total number of symbols.
+        return knownSymbolCount != -1 && mapValue.getLong(valueIndex) == knownSymbolCount;
     }
 
     @Override
@@ -104,8 +118,26 @@ public class CountDistinctSymbolGroupByFunction extends LongFunction implements 
     }
 
     @Override
+    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        arg.init(symbolTableSource, executionContext);
+        knownSymbolCount = -1;
+        if (arg instanceof SymbolColumn) {
+            final SymbolColumn argCol = (SymbolColumn) arg;
+            final StaticSymbolTable symbolTable = argCol.getStaticSymbolTable();
+            if (symbolTable != null) {
+                knownSymbolCount = symbolTable.getSymbolCount();
+            }
+        }
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
+    }
+
+    @Override
+    public boolean isEarlyExitSupported() {
+        return true;
     }
 
     @Override

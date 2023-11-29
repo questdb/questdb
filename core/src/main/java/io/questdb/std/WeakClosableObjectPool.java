@@ -28,7 +28,7 @@ import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
-public class WeakClosableObjectPool<T> extends WeakObjectPoolBase<T> implements Closeable, Pool<T> {
+public class WeakClosableObjectPool<T> extends WeakObjectPoolBase<T> implements Pool<T>, Closeable {
     private final ObjectFactory<T> factory;
 
     public WeakClosableObjectPool(@NotNull ObjectFactory<T> factory, int initSize) {

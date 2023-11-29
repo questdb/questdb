@@ -26,17 +26,13 @@ package io.questdb.griffin;
 
 import io.questdb.*;
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriterMetadata;
-import io.questdb.griffin.engine.functions.catalogue.*;
 import io.questdb.griffin.engine.ops.*;
-import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
-import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
-import io.questdb.griffin.engine.table.TableListRecordCursorFactory;
 import io.questdb.griffin.model.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -59,7 +55,7 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import static io.questdb.cairo.wal.WalUtils.WAL_FORMAT_VERSION;
 import static io.questdb.griffin.SqlKeywords.*;
 
-public class SqlCompilerImpl implements SqlCompiler, Closeable {
+public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallback {
     static final ObjList<String> sqlControlSymbols = new ObjList<>(8);
     //null object used to skip null checks in batch method
     private static final BatchCallback EMPTY_CALLBACK = new BatchCallback() {
@@ -349,7 +345,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
     public ExpressionNode testParseExpression(CharSequence expression, QueryModel model) throws SqlException {
         clear();
         lexer.of(expression);
-        return parser.expr(lexer, model);
+        return parser.expr(lexer, model, this);
     }
 
     // test only
@@ -358,7 +354,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
     public void testParseExpression(CharSequence expression, ExpressionParserListener listener) throws SqlException {
         clear();
         lexer.of(expression);
-        parser.expr(lexer, listener);
+        parser.expr(lexer, listener, this);
     }
 
     private static void configureLexer(GenericLexer lexer) {
@@ -402,7 +398,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
         final TableToken tableToken = tableExistsOrFail(tableNamePosition, GenericLexer.unquote(tok), executionContext);
         final SecurityContext securityContext = executionContext.getSecurityContext();
 
-        try (TableRecordMetadata tableMetadata = executionContext.getMetadata(tableToken)) {
+        try (TableRecordMetadata tableMetadata = executionContext.getSequencerMetadata(tableToken)) {
             final String expectedTokenDescription = "'add', 'alter', 'attach', 'detach', 'drop', 'resume', 'rename', 'set' or 'squash'";
             tok = expectToken(lexer, expectedTokenDescription);
 
@@ -1035,7 +1031,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                 }
 
                 final int functionPosition = lexer.getPosition();
-                ExpressionNode expr = parser.expr(lexer, (QueryModel) null);
+                ExpressionNode expr = parser.expr(lexer, (QueryModel) null, this);
                 String designatedTimestampColumnName = null;
                 int tsIndex = tableMetadata.getTimestampIndex();
                 if (tsIndex >= 0) {
@@ -1339,7 +1335,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
     }
 
     private ExecutionModel compileExecutionModel(SqlExecutionContext executionContext) throws SqlException {
-        ExecutionModel model = parser.parse(lexer, executionContext);
+        ExecutionModel model = parser.parse(lexer, executionContext, this);
 
         if (ExecutionModel.EXPLAIN != model.getModelType()) {
             return compileExecutionModel0(executionContext, model);
@@ -1353,7 +1349,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
     private ExecutionModel compileExecutionModel0(SqlExecutionContext executionContext, ExecutionModel model) throws SqlException {
         switch (model.getModelType()) {
             case ExecutionModel.QUERY:
-                return optimiser.optimise((QueryModel) model, executionContext);
+                return optimiser.optimise((QueryModel) model, executionContext, this);
             case ExecutionModel.INSERT: {
                 InsertModel insertModel = (InsertModel) model;
                 if (insertModel.getQueryModel() != null) {
@@ -1368,8 +1364,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
             case ExecutionModel.UPDATE:
                 final QueryModel queryModel = (QueryModel) model;
                 TableToken tableToken = executionContext.getTableToken(queryModel.getTableName());
-                try (TableRecordMetadata metadata = executionContext.getMetadata(tableToken)) {
-                    optimiser.optimiseUpdate(queryModel, executionContext, metadata);
+                try (TableRecordMetadata metadata = executionContext.getSequencerMetadata(tableToken)) {
+                    optimiser.optimiseUpdate(queryModel, executionContext, metadata, this);
                     return model;
                 }
             default:
@@ -1455,7 +1451,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
             case ExecutionModel.UPDATE:
                 final QueryModel updateQueryModel = (QueryModel) executionModel;
                 TableToken tableToken = executionContext.getTableToken(updateQueryModel.getTableName());
-                try (TableRecordMetadata metadata = executionContext.getMetadata(tableToken)) {
+                try (TableRecordMetadata metadata = executionContext.getSequencerMetadata(tableToken)) {
                     final UpdateOperation updateOperation = generateUpdate(updateQueryModel, executionContext, metadata);
                     compiledQuery.ofUpdate(updateOperation);
                 }
@@ -1780,13 +1776,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
             SqlException {
         final CreateTableModel createTableModel = (CreateTableModel) model;
         final ExpressionNode name = createTableModel.getName();
-        TableToken tableToken = executionContext.getTableTokenIfExists(name.token);
 
         // Fast path for CREATE TABLE IF NOT EXISTS in scenario when the table already exists
-        int status = executionContext.getTableStatus(path, tableToken);
-        if (createTableModel.isIgnoreIfExists() && status != TableUtils.TABLE_DOES_NOT_EXIST) {
-            compiledQuery.ofCreateTable(tableToken);
-        } else if (status != TableUtils.TABLE_DOES_NOT_EXIST) {
+        final int status = executionContext.getTableStatus(path, name.token);
+        if (createTableModel.isIgnoreIfExists() && status == TableUtils.TABLE_EXISTS) {
+            compiledQuery.ofCreateTable(executionContext.getTableTokenIfExists(name.token));
+        } else if (status == TableUtils.TABLE_EXISTS) {
             throw SqlException.$(name.position, "table already exists");
         } else {
 
@@ -1803,6 +1798,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                 }
             }
 
+            final TableToken tableToken;
             this.insertCount = -1;
             if (createTableModel.getQueryModel() == null) {
                 try {
@@ -2076,7 +2072,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
         ObjList<Function> valueFunctions = null;
         TableToken token = tableExistsOrFail(tableNameExpr.position, tableNameExpr.token, executionContext);
 
-        try (TableRecordMetadata metadata = engine.getMetadata(token)) {
+        try (TableRecordMetadata metadata = engine.getSequencerMetadata(token)) {
             final long metadataVersion = metadata.getMetadataVersion();
             final InsertOperationImpl insertOperation = new InsertOperationImpl(engine, metadata.getTableToken(), metadataVersion);
             final int metadataTimestampIndex = metadata.getTimestampIndex();
@@ -2507,99 +2503,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
         }
     }
 
-    private void sqlShow(SqlExecutionContext executionContext) throws SqlException {
-        CharSequence tok = SqlUtil.fetchNext(lexer);
-        if (tok != null) {
-            // show tables
-            // show columns from tab
-            // show partitions from tab
-            // show transaction isolation level
-            // show transaction_isolation
-            // show max_identifier_length
-            // show standard_conforming_strings
-            // show search_path
-            // show datestyle
-            // show time zone
-            // show server_version
-            RecordCursorFactory factory = null;
-            if (isTablesKeyword(tok)) {
-                factory = new TableListRecordCursorFactory();
-            } else if (isColumnsKeyword(tok)) {
-                factory = new ShowColumnsRecordCursorFactory(sqlShowFromTable(executionContext), lexer.lastTokenPosition());
-            } else if (isPartitionsKeyword(tok)) {
-                factory = new ShowPartitionsRecordCursorFactory(sqlShowFromTable(executionContext));
-            } else if (isTransactionKeyword(tok)) {
-                factory = sqlShowTransaction();
-            } else if (isTransactionIsolation(tok)) {
-                factory = new ShowTransactionIsolationLevelCursorFactory();
-            } else if (isMaxIdentifierLength(tok)) {
-                factory = new ShowMaxIdentifierLengthCursorFactory();
-            } else if (isStandardConformingStrings(tok)) {
-                factory = new ShowStandardConformingStringsCursorFactory();
-            } else if (isSearchPath(tok)) {
-                factory = new ShowSearchPathCursorFactory();
-            } else if (isDateStyleKeyword(tok)) {
-                factory = new ShowDateStyleCursorFactory();
-            } else if (isServerVersionKeyword(tok)) {
-                factory = new ShowServerVersionCursorFactory();
-            } else if (isTimeKeyword(tok)) {
-                tok = SqlUtil.fetchNext(lexer);
-                if (tok != null && SqlKeywords.isZoneKeyword(tok)) {
-                    factory = new ShowTimeZoneFactory();
-                }
-            } else {
-                factory = unknownShowStatement(executionContext, tok);
-            }
-            if (factory != null) {
-                tok = SqlUtil.fetchNext(lexer);
-                if (tok == null || Chars.equals(tok, ';')) {
-                    compiledQuery.of(factory);
-                    return;
-                } else {
-                    Misc.free(factory);
-                    throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
-                }
-            }
-        }
-        throw SqlException.position(lexer.getPosition()).put("expected ")
-                .put("'TABLES', 'COLUMNS FROM <tab>', 'PARTITIONS FROM <tab>', ")
-                .put("'TRANSACTION ISOLATION LEVEL', 'transaction_isolation', ")
-                .put("'max_identifier_length', 'standard_conforming_strings', ")
-                .put("'search_path', 'datestyle', or 'time zone'");
-    }
-
-    private TableToken sqlShowFromTable(SqlExecutionContext executionContext) throws SqlException {
-        CharSequence tok;
-        tok = SqlUtil.fetchNext(lexer);
-        if (tok == null || !isFromKeyword(tok)) {
-            throw SqlException.position(lexer.lastTokenPosition()).put("expected 'from'");
-        }
-        tok = SqlUtil.fetchNext(lexer);
-        if (tok == null) {
-            throw SqlException.position(lexer.getPosition()).put("expected a table name");
-        }
-        final CharSequence tableName = GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tok), lexer.lastTokenPosition());
-        return tableExistsOrFail(lexer.lastTokenPosition(), tableName, executionContext);
-    }
-
-    private RecordCursorFactory sqlShowTransaction() throws SqlException {
-        CharSequence tok = SqlUtil.fetchNext(lexer);
-        if (tok != null && isIsolationKeyword(tok)) {
-            tok = SqlUtil.fetchNext(lexer);
-            if (tok != null && isLevelKeyword(tok)) {
-                return new ShowTransactionIsolationLevelCursorFactory();
-            }
-            throw SqlException.position(tok != null ? lexer.lastTokenPosition() : lexer.getPosition()).put("expected 'level'");
-        }
-        throw SqlException.position(tok != null ? lexer.lastTokenPosition() : lexer.getPosition()).put("expected 'isolation'");
-    }
-
     private TableToken tableExistsOrFail(int position, CharSequence tableName, SqlExecutionContext executionContext) throws SqlException {
-        TableToken tableToken = executionContext.getTableTokenIfExists(tableName);
-        if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS) {
+        if (executionContext.getTableStatus(path, tableName) != TableUtils.TABLE_EXISTS) {
             throw SqlException.tableDoesNotExist(position, tableName);
         }
-        return tableToken;
+        return executionContext.getTableTokenIfExists(tableName);
     }
 
     private void truncateTables(SqlExecutionContext executionContext) throws SqlException {
@@ -2746,7 +2654,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
     }
 
     private void validateAndOptimiseInsertAsSelect(SqlExecutionContext executionContext, InsertModel model) throws SqlException {
-        final QueryModel queryModel = optimiser.optimise(model.getQueryModel(), executionContext);
+        final QueryModel queryModel = optimiser.optimise(model.getQueryModel(), executionContext, this);
         int columnNameListSize = model.getColumnNameList().size();
         if (columnNameListSize > 0 && queryModel.getBottomUpColumns().size() != columnNameListSize) {
             throw SqlException.$(model.getTableNameExpr().position, "column count mismatch");
@@ -2833,6 +2741,27 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
         return tok;
     }
 
+    // returns true if it dropped the table, false otherwise (or throws exception)
+    protected boolean dropTable(
+            SqlExecutionContext executionContext,
+            CharSequence tableName,
+            int tableNamePosition,
+            boolean hasIfExists
+    ) throws SqlException {
+        final TableToken tableToken = executionContext.getTableTokenIfExists(tableName);
+        if (tableToken == null) {
+            if (hasIfExists) {
+                compiledQuery.ofDrop();
+                return false;
+            }
+            throw SqlException.tableDoesNotExist(tableNamePosition, tableName);
+        }
+        executionContext.getSecurityContext().authorizeTableDrop(tableToken);
+        engine.drop(path, tableToken);
+        compiledQuery.ofDrop();
+        return true;
+    }
+
     RecordCursorFactory generate(
             @Transient QueryModel queryModel,
             @Transient SqlExecutionContext executionContext
@@ -2893,7 +2822,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
         final KeywordBasedExecutor reindexTable = this::reindexTable;
         final KeywordBasedExecutor dropStatement = dropStmtCompiler::executorSelector;
         final KeywordBasedExecutor sqlBackup = backupAgent::sqlBackup;
-        final KeywordBasedExecutor sqlShow = this::sqlShow;
         final KeywordBasedExecutor vacuumTable = this::vacuum;
         final KeywordBasedExecutor snapshotDatabase = this::snapshotDatabase;
         final KeywordBasedExecutor compileDeallocate = this::compileDeallocate;
@@ -2911,7 +2839,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
         keywordBasedExecutors.put("reset", compileSet);  //no-op
         keywordBasedExecutors.put("drop", dropStatement);
         keywordBasedExecutors.put("backup", sqlBackup);
-        keywordBasedExecutors.put("show", sqlShow);
         keywordBasedExecutors.put("vacuum", vacuumTable);
         keywordBasedExecutors.put("snapshot", snapshotDatabase);
         keywordBasedExecutors.put("deallocate", compileDeallocate);
@@ -2952,11 +2879,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
             boolean hasIfExists
     ) throws SqlException {
         throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
-    }
-
-    @SuppressWarnings({"unused", "RedundantThrows"})
-    protected RecordCursorFactory unknownShowStatement(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
-        return null; // no-op
     }
 
     @FunctionalInterface
@@ -3457,26 +3379,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
             compiledQuery.ofDrop();
         }
 
-        private void dropTable(
-                SqlExecutionContext executionContext,
-                CharSequence tableName,
-                int tableNamePosition,
-                boolean hasIfExists
-        ) throws SqlException {
-            TableToken tableToken = executionContext.getTableTokenIfExists(tableName);
-            if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS) {
-                if (hasIfExists) {
-                    compiledQuery.ofDrop();
-                } else {
-                    throw SqlException.tableDoesNotExist(tableNamePosition, tableName);
-                }
-            } else {
-                executionContext.getSecurityContext().authorizeTableDrop(tableToken);
-                engine.drop(path, tableToken);
-                compiledQuery.ofDrop();
-            }
-        }
-
         private void executorSelector(SqlExecutionContext executionContext) throws SqlException {
             // the selected method depends on the second token, we have already seen DROP
             CharSequence tok = SqlUtil.fetchNext(lexer);
@@ -3507,9 +3409,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                     tok = SqlUtil.fetchNext(lexer);
                     if (tok == null || Chars.equals(tok, ';')) {
                         dropTable(executionContext, tableName, tableNamePosition, hasIfExists);
-                        return;
+                    } else {
+                        unknownDropTableSuffix(executionContext, tok, tableName, tableNamePosition, hasIfExists);
                     }
-                    unknownDropTableSuffix(executionContext, tok, tableName, tableNamePosition, hasIfExists);
+                    return;
                 } else if (SqlKeywords.isAllKeyword(tok)) {
                     // DROP ALL TABLES [;]
                     tok = SqlUtil.fetchNext(lexer);

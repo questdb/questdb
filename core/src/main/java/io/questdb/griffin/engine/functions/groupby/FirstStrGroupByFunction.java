@@ -50,33 +50,6 @@ public class FirstStrGroupByFunction extends StrFunction implements GroupByFunct
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
-        boolean hasStr = rec.getBool(valueIndex);
-        return hasStr ? sink : null;
-    }
-
-    @Override
-    public CharSequence getStrB(Record rec) {
-        return getStr(rec);
-    }
-
-    @Override
-    public boolean isConstant() {
-        return false;
-    }
-
-    @Override
-    public boolean isScalar() {
-        return false;
-    }
-
-    @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.BOOLEAN);
-    }
-
-    @Override
     public void computeFirst(MapValue mapValue, Record record) {
         CharSequence str = arg.getStr(record);
         sink.clear();
@@ -104,9 +77,35 @@ public class FirstStrGroupByFunction extends StrFunction implements GroupByFunct
     }
 
     @Override
+    public CharSequence getStr(Record rec) {
+        boolean hasStr = rec.getBool(valueIndex);
+        return hasStr ? sink : null;
+    }
+
+    @Override
+    public CharSequence getStrB(Record rec) {
+        return getStr(rec);
+    }
+
+    @Override
+    public boolean isConstant() {
+        return false;
+    }
+
+    @Override
+    public boolean isScalar() {
+        return false;
+    }
+
+    @Override
+    public void pushValueTypes(ArrayColumnTypes columnTypes) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.BOOLEAN);
+    }
+
+    @Override
     public void setNull(MapValue mapValue) {
         mapValue.putBool(valueIndex, false);
         sink.clear();
     }
-
 }

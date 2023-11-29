@@ -702,7 +702,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             fuzzer.createInitialTable(tableNameNoWal, false);
 
             String timestampColumnName;
-            try (TableMetadata meta = engine.getMetadata(dedupTt)) {
+            try (TableMetadata meta = engine.getSequencerMetadata(dedupTt)) {
                 timestampColumnName = meta.getColumnName(meta.getTimestampIndex());
             }
 

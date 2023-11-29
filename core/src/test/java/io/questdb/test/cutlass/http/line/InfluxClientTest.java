@@ -53,7 +53,7 @@ public class InfluxClientTest extends AbstractBootstrapTest {
     public void testInsertWithIlpHttp() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarEquivalent(), "2048"
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
             )) {
                 serverMain.start();
 
@@ -74,7 +74,7 @@ public class InfluxClientTest extends AbstractBootstrapTest {
     public void testInsertWithIlpHttpParallelManyTables() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarEquivalent(), "2048"
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
             )) {
                 serverMain.start();
 
@@ -123,7 +123,7 @@ public class InfluxClientTest extends AbstractBootstrapTest {
     public void testInsertWithIlpHttpParallelOneTables() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarEquivalent(), "2048"
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
             )) {
                 serverMain.start();
 

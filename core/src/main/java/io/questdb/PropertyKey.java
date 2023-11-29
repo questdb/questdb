@@ -29,7 +29,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
-public enum PropertyKey implements ConfigProperty {
+public enum PropertyKey implements ConfigPropertyKey {
     BINARYDATA_ENCODING_MAXLENGTH("binarydata.encoding.maxlength"),
     CAIRO_ROOT("cairo.root"),
     CAIRO_VOLUMES("cairo.volumes"),
@@ -117,6 +117,8 @@ public enum PropertyKey implements ConfigProperty {
     CAIRO_SQL_GROUPBY_POOL_CAPACITY("cairo.sql.groupby.pool.capacity"),
     CAIRO_SQL_MAX_SYMBOL_NOT_EQUALS_COUNT("cairo.sql.max.symbol.not.equals.count"),
     CAIRO_SQL_BIND_VARIABLE_POOL_SIZE("cairo.sql.bind.variable.pool.size"),
+    CAIRO_SQL_COUNT_DISTINCT_CAPACITY("cairo.sql.count.distinct.capacity"),
+    CAIRO_SQL_COUNT_DISTINCT_LOAD_FACTOR("cairo.sql.count.distinct.load.factor"),
     CAIRO_DATE_LOCALE("cairo.date.locale"),
     CAIRO_SQL_DISTINCT_TIMESTAMP_KEY_CAPACITY("cairo.sql.distinct.timestamp.key.capacity"),
     CAIRO_SQL_DISTINCT_TIMESTAMP_LOAD_FACTOR("cairo.sql.distinct.timestamp.load.factor"),
@@ -167,6 +169,7 @@ public enum PropertyKey implements ConfigProperty {
     CAIRO_REPLACE_BUFFER_MAX_SIZE("cairo.replace.buffer.max.size"),
     CAIRO_SQL_STR_FUNCTION_BUFFER_MAX_SIZE("cairo.sql.string.function.buffer.max.size"),
     CAIRO_SQL_ANALYTIC_STORE_PAGE_SIZE("cairo.sql.analytic.store.page.size"),
+    CAIRO_SQL_WINDOW_MAX_RECURSION("cairo.sql.window.max.recursion"),
     CAIRO_SQL_WINDOW_STORE_PAGE_SIZE("cairo.sql.window.store.page.size"),
     CAIRO_SQL_ANALYTIC_STORE_MAX_PAGES("cairo.sql.analytic.store.max.pages"),
     CAIRO_SQL_WINDOW_STORE_MAX_PAGES("cairo.sql.window.store.max.pages"),
@@ -417,6 +420,8 @@ public enum PropertyKey implements ConfigProperty {
     CAIRO_WAL_INACTIVE_WRITER_TTL("cairo.wal.inactive.writer.ttl"),
     CAIRO_WAL_SQUASH_UNCOMMITTED_ROWS_MULTIPLIER("cairo.wal.squash.uncommitted.rows.multiplier"),
     CAIRO_WAL_MAX_LAG_TXN_COUNT("cairo.wal.max.lag.txn.count"),
+    CAIRO_WAL_MAX_LAG_SIZE("cairo.wal.max.lag.size"),
+    CAIRO_WAL_MAX_SEGMENT_FILE_DESCRIPTORS_CACHE("cairo.wal.max.segment.file.descriptors.cache"),
     CAIRO_WAL_APPLY_TABLE_TIME_QUOTA("cairo.wal.apply.table.time.quota"),
     CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT("cairo.wal.apply.look.ahead.txn.count"),
     CAIRO_WAL_TEMP_PENDING_RENAME_TABLE_PREFIX("cairo.wal.temp.pending.rename.table.prefix"),
@@ -431,6 +436,7 @@ public enum PropertyKey implements ConfigProperty {
     WRITER_MEMORY_LIMIT("cairo.writer.memory.limit");
 
     private static final Map<String, PropertyKey> nameMapping;
+    private final String envVarName;
     private final String propertyPath;
     private final boolean sensitive;
 
@@ -440,11 +446,17 @@ public enum PropertyKey implements ConfigProperty {
 
     PropertyKey(String propertyPath, boolean sensitive) {
         this.propertyPath = propertyPath;
+        this.envVarName = ServerMain.propertyPathToEnvVarName(propertyPath);
         this.sensitive = sensitive;
     }
 
     public static Optional<PropertyKey> getByString(String name) {
         return Optional.ofNullable(nameMapping.get(name));
+    }
+
+    @Override
+    public String getEnvVarName() {
+        return envVarName;
     }
 
     @Override

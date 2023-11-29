@@ -125,6 +125,8 @@ public interface ConfigurationOverrides {
 
     int getSqlJoinMetadataPageSize();
 
+    int getSqlWindowMaxRecursion();
+
     int getSqlWindowStoreMaxPages();
 
     int getSqlWindowStorePageSize();
@@ -133,7 +135,13 @@ public interface ConfigurationOverrides {
 
     MicrosecondClock getTestMicrosClock();
 
+    int getWalApplyLookAheadTransactionCount();
+
     long getWalApplyTableTimeQuota();
+
+    int getWalMaxSegmentFileDescriptorsCache();
+
+    long getWalMaxLagSize();
 
     int getWalMaxLagTxnCount();
 
@@ -273,6 +281,8 @@ public interface ConfigurationOverrides {
 
     void setSqlJoinMetadataPageSize(int sqlJoinMetadataPageSize);
 
+    void setSqlWindowMaxRecursion(int maxRecursion);
+
     void setSqlWindowStoreMaxPages(int windowStoreMaxPages);
 
     void setSqlWindowStorePageSize(int windowStorePageSize);
@@ -280,6 +290,12 @@ public interface ConfigurationOverrides {
     void setTestMicrosClock(MicrosecondClock testMicrosClock);
 
     void setWalApplyTableTimeQuota(long walApplyTableTimeQuota);
+
+    void setWalLookAheadTransactionCount(int walApplyTableTimeQuota);
+
+    void setWalMaxSegmentFileDescriptorsCache(int value);
+
+    void setWalMaxLagSize(long value);
 
     void setWalMaxLagTxnCount(int walMaxLagTxnCount);
 

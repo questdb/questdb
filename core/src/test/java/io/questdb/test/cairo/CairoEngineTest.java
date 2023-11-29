@@ -30,11 +30,13 @@ import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.mp.Job;
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Files;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -48,7 +50,11 @@ import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
-import static org.junit.Assert.fail;
+import java.util.concurrent.atomic.AtomicReference;
+
+import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
+import static io.questdb.cairo.TableUtils.TABLE_RESERVED;
+import static org.junit.Assert.*;
 
 public class CairoEngineTest extends AbstractCairoTest {
 
@@ -173,7 +179,6 @@ public class CairoEngineTest extends AbstractCairoTest {
     @Test
     public void testExpiry() throws Exception {
         assertMemoryLeak(() -> {
-
             class MyListener implements PoolListener {
                 int count = 0;
 
@@ -187,7 +192,20 @@ public class CairoEngineTest extends AbstractCairoTest {
 
             MyListener listener = new MyListener();
 
-            try (CairoEngine engine = new CairoEngine(configuration)) {
+            try (CairoEngine engine = new CairoEngine(
+                    new DefaultCairoConfiguration(configuration.getRoot()) {
+                        @Override
+                        public boolean getAllowTableRegistrySharedWrite() {
+                            return true;
+                        }
+
+                        @Override
+                        public long getIdleCheckInterval() {
+                            // Make it big to prevent second run even on slow machines
+                            return Timestamps.DAY_MICROS;
+                        }
+                    })
+            ) {
                 TableToken x = createX(engine);
 
                 engine.setPoolListener(listener);
@@ -202,6 +220,50 @@ public class CairoEngineTest extends AbstractCairoTest {
                 Assert.assertFalse(job.run(0));
 
                 Assert.assertEquals(2, listener.count);
+            }
+        });
+    }
+
+    @Test
+    public void testGetTableTokenIfExists() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = "x";
+            final SOCountDownLatch latch = new SOCountDownLatch(1);
+            final AtomicReference<Throwable> ref = new AtomicReference<>();
+            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE) {
+                @Override
+                public int getColumnCount() {
+                    latch.await();
+                    return super.getColumnCount();
+                }
+            }) {
+                final Thread createTableThread = new Thread(() -> {
+                    model.col("a", ColumnType.INT);
+                    try {
+                        createTable(model);
+                    } catch (Throwable th) {
+                        LOG.error().$("Error in thread").$(th).$();
+                        ref.set(th);
+                    } finally {
+                        Path.clearThreadLocals();
+                    }
+                });
+                createTableThread.start();
+
+                waitForTableStatus(TABLE_RESERVED);
+                final TableToken token1 = engine.getTableTokenIfExists(tableName);
+                assertNull(token1);
+
+                latch.countDown();
+
+                waitForTableStatus(TABLE_EXISTS);
+                final TableToken token2 = engine.getTableTokenIfExists(tableName);
+                assertEquals(tableName, token2.getTableName());
+
+                createTableThread.join();
+                if (ref.get() != null) {
+                    fail("Error " + ref.get().getMessage());
+                }
             }
         });
     }
@@ -491,6 +553,12 @@ public class CairoEngineTest extends AbstractCairoTest {
                 Assert.assertTrue(engine.clear());
             }
         });
+    }
+
+    private static void waitForTableStatus(int status) {
+        while (engine.getTableStatus("x") != status) {
+            Os.sleep(50);
+        }
     }
 
     private void assertReader(CairoEngine engine, TableToken name) {

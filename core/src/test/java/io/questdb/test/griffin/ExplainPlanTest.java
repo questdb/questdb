@@ -41,6 +41,7 @@ import io.questdb.griffin.engine.functions.bool.InTimestampTimestampFunctionFact
 import io.questdb.griffin.engine.functions.cast.CastStrToRegClassFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToStrArrayFunctionFactory;
 import io.questdb.griffin.engine.functions.catalogue.StringToStringArrayFunction;
+import io.questdb.griffin.engine.functions.catalogue.WalTransactionsFunctionFactory;
 import io.questdb.griffin.engine.functions.columns.*;
 import io.questdb.griffin.engine.functions.conditional.CoalesceFunctionFactory;
 import io.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory;
@@ -737,6 +738,27 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "            Row forward scan\n" +
                             "            Frame forward scan on: t\n"
             );
+        });
+    }
+
+    @Test
+    public void testDistinctOverWindowFunction() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table test (event double )");
+            insert("insert into test select x from long_sequence(3)");
+
+            String query = "select * from ( SELECT DISTINCT avg(event) OVER (PARTITION BY 1) FROM test )";
+            assertPlan(query,
+                    "Distinct\n" +
+                            "  keys: avg\n" +
+                            "    CachedWindow\n" +
+                            "      unorderedFunctions: [avg(event) over (partition by [1])]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: test\n");
+
+            assertSql("avg\n2.0\n", query);
+            assertSql("avg\n2.0\n", "selecT * from ( " + query + " )");
         });
     }
 
@@ -1760,7 +1782,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         constFuncs.put(ColumnType.DATE, list(new DateConstant(0)));
         constFuncs.put(ColumnType.TIMESTAMP, list(new TimestampConstant(86400000000L)));
         constFuncs.put(ColumnType.FLOAT, list(new FloatConstant(5f)));
-        constFuncs.put(ColumnType.DOUBLE, list(new DoubleConstant(6)));
+        constFuncs.put(ColumnType.DOUBLE, list(new DoubleConstant(1))); // has to be [0.0, 1.0] for approx_percentile
         constFuncs.put(ColumnType.STRING, list(new StrConstant("bbb"), new StrConstant("1"), new StrConstant("1.1.1.1"), new StrConstant("1.1.1.1/24")));
         constFuncs.put(ColumnType.SYMBOL, list(new SymbolConstant("symbol", 0)));
         constFuncs.put(ColumnType.LONG256, list(new Long256Constant(0, 1, 2, 3)));
@@ -1832,6 +1854,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         FunctionFactoryCache cache = engine.getFunctionFactoryCache();
         LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> factories = cache.getFactories();
         factories.forEach((key, value) -> {
+            FUNCTIONS:
             for (int i = 0, n = value.size(); i < n; i++) {
                 planSink.clear();
 
@@ -1949,6 +1972,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 args.add(new IntConstant(2));
                             } else if (!useConst) {
                                 args.add(colFuncs.get(sigArgType));
+                            } else if (factory instanceof WalTransactionsFunctionFactory && sigArgType == ColumnType.STRING) {
+                                // Skip it, it requires a WAL table to exist
+                                break FUNCTIONS;
                             } else {
                                 args.add(getConst(constFuncs, sigArgType, p, no));
                             }
@@ -5857,7 +5883,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSelectFromAllTables() throws Exception {
         assertPlan(
                 "select * from all_tables()",
-                "all_tables\n"
+                "all_tables()\n"
         );
     }
 
@@ -5892,6 +5918,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( s string, sy symbol, i int, ts timestamp)",
                 "select * from table_partitions('tab')",
                 "show_partitions of: tab\n"
+        );
+    }
+
+    @Test
+    public void testSelectWalTransactions() throws Exception {
+        assertPlan(
+                "create table tab ( s string, sy symbol, i int, ts timestamp) timestamp(ts) partition by day WAL",
+                "select * from wal_transactions('tab')",
+                "wal_transactions of: tab\n"
         );
     }
 

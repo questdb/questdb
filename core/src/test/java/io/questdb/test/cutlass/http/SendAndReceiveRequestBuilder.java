@@ -60,7 +60,7 @@ public class SendAndReceiveRequestBuilder {
     private int compareLength = -1;
     private boolean expectReceiveDisconnect;
     private boolean expectSendDisconnect;
-    private int maxWaitTimeoutMs = 30_000;
+    private int maxWaitTimeoutMs = 600_000;
     private NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
     private long pauseBetweenSendAndReceive;
     private int port = 9001;
@@ -330,7 +330,6 @@ public class SendAndReceiveRequestBuilder {
         return this;
     }
 
-    @SuppressWarnings("unused")
     public SendAndReceiveRequestBuilder withMaxWaitTimeout(int maxWaitTimeoutMs) {
         this.maxWaitTimeoutMs = maxWaitTimeoutMs;
         return this;
@@ -346,7 +345,6 @@ public class SendAndReceiveRequestBuilder {
         return this;
     }
 
-    @SuppressWarnings("unused")
     public SendAndReceiveRequestBuilder withPort(int port) {
         this.port = port;
         return this;

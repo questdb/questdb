@@ -51,8 +51,8 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
     }
 
     @Override
-    protected R newTenant(TableToken tableName, Entry<R> entry, int index) {
-        return new R(this, entry, index, tableName, messageBus, readerListener);
+    protected R newTenant(TableToken tableToken, Entry<R> entry, int index) {
+        return new R(this, entry, index, tableToken, messageBus, readerListener);
     }
 
     @TestOnly
@@ -61,7 +61,7 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
         void onOpenPartition(TableToken tableToken, int partitionIndex);
     }
 
-    public static class R extends TableReader implements PoolTenant {
+    public static class R extends TableReader implements PoolTenant<R> {
         private final int index;
         private final ReaderListener readerListener;
         private Entry<R> entry;
@@ -96,7 +96,6 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
             }
         }
 
-        @SuppressWarnings("unchecked")
         @Override
         public Entry<R> getEntry() {
             return entry;

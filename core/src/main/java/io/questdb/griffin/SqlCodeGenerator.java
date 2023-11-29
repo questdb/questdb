@@ -1478,16 +1478,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private RecordCursorFactory generateFunctionQuery(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        final Function function = model.getTableNameFunction();
-        if (function != null) {
-            // We're transferring ownership of the function's factory to another factory
-            // setting function to NULL will prevent double-ownership.
-            // We should not release function itself, they typically just a lightweight factory wrapper.
-            // Releasing function will also release the factory, which we don't want to happen.
-            model.setTableNameFunction(null);
-            return function.getRecordCursorFactory();
+        final RecordCursorFactory tableFactory = model.getTableNameFunction();
+        if (tableFactory != null) {
+            // We're transferring ownership of the tableFactory's factory to another factory
+            // setting tableFactory to NULL will prevent double-ownership.
+            // We should not release tableFactory itself, they typically just a lightweight factory wrapper.
+            model.setTableFactory(null);
+            return tableFactory;
         } else {
-            // when function is null we have to recompile it from scratch, including creating new factory
+            // when tableFactory is null we have to recompile it from scratch, including creating new factory
             return TableUtils.createCursorFunction(functionParser, model, executionContext).getRecordCursorFactory();
         }
     }
@@ -2759,6 +2758,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 return generateSelectDistinct(model, executionContext);
             case QueryModel.SELECT_MODEL_CURSOR:
                 return generateSelectCursor(model, executionContext);
+            case QueryModel.SELECT_MODEL_SHOW:
+                return model.getTableNameFunction();
             default:
                 if (model.getJoinModels().size() > 1 && processJoins) {
                     return generateJoins(model, executionContext);
@@ -4050,10 +4051,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         final TableToken tableToken = executionContext.getTableToken(tab);
         if (model.isUpdate() && !executionContext.isWalApplication() && executionContext.getCairoEngine().isWalTable(tableToken)) {
-            try (TableRecordMetadata metadata = engine.getMetadata(tableToken, model.getMetadataVersion())) {
+            // two phase update execution, this is client-side branch. It has to execute against the sequencer metadata
+            // to allow the client to succeed even if WAL apply does not run.
+            try (TableRecordMetadata metadata = engine.getSequencerMetadata(tableToken, model.getMetadataVersion())) {
                 return generateTableQuery0(model, executionContext, latestBy, supportsRandomAccess, null, metadata);
             }
         } else {
+            // this is server side execution of the update. It executes against the reader metadata, which by now
+            // has to be fully up-to-date due to WAL apply execution order.
             try (TableReader reader = executionContext.getReader(tableToken, model.getMetadataVersion())) {
                 return generateTableQuery0(model, executionContext, latestBy, supportsRandomAccess, reader, reader.getMetadata());
             }

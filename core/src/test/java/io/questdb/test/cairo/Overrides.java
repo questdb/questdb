@@ -90,10 +90,14 @@ public class Overrides implements ConfigurationOverrides {
     private int sqlCopyBufferSize = 1024 * 1024;
     private int sqlJoinMetadataMaxResizes = -1;
     private int sqlJoinMetadataPageSize = -1;
+    private int sqlWindowMaxRecursion;
     private int sqlWindowStoreMaxPages;
     private int sqlWindowStorePageSize;
     private int tableRegistryCompactionThreshold;
     private long walApplyTableTimeQuota = -1;
+    private int walLookAheadTransactionCount = -1;
+    private int walMaxSegmentFileDescriptorsCache = -1;
+    private long walMaxLagSize = -1;
     private int walMaxLagTxnCount = -1;
     private long walPurgeInterval = -1;
     private long walSegmentRolloverRowCount = -1;
@@ -330,6 +334,10 @@ public class Overrides implements ConfigurationOverrides {
         return sqlJoinMetadataPageSize;
     }
 
+    public int getSqlWindowMaxRecursion() {
+        return sqlWindowMaxRecursion;
+    }
+
     public int getSqlWindowStoreMaxPages() {
         return sqlWindowStoreMaxPages;
     }
@@ -349,8 +357,23 @@ public class Overrides implements ConfigurationOverrides {
     }
 
     @Override
+    public int getWalApplyLookAheadTransactionCount() {
+        return walLookAheadTransactionCount;
+    }
+
+    @Override
     public long getWalApplyTableTimeQuota() {
         return walApplyTableTimeQuota;
+    }
+
+    @Override
+    public int getWalMaxSegmentFileDescriptorsCache() {
+        return walMaxSegmentFileDescriptorsCache;
+    }
+
+    @Override
+    public long getWalMaxLagSize() {
+        return walMaxLagSize;
     }
 
     @Override
@@ -478,11 +501,13 @@ public class Overrides implements ConfigurationOverrides {
         tableRegistryCompactionThreshold = -1;
         maxOpenPartitions = -1;
         walApplyTableTimeQuota = -1;
+        walLookAheadTransactionCount = -1;
         walMaxLagTxnCount = -1;
         repeatMigrationsFromVersion = -1;
         factoryProvider = null;
         simulateCrashEnabled = false;
         env = null;
+        walMaxLagSize = -1;
     }
 
     @Override
@@ -745,6 +770,11 @@ public class Overrides implements ConfigurationOverrides {
     }
 
     @Override
+    public void setSqlWindowMaxRecursion(int maxRecursion) {
+        this.sqlWindowMaxRecursion = maxRecursion;
+    }
+
+    @Override
     public void setSqlWindowStoreMaxPages(int windowStoreMaxPages) {
         this.sqlWindowStoreMaxPages = windowStoreMaxPages;
     }
@@ -763,6 +793,22 @@ public class Overrides implements ConfigurationOverrides {
     public void setWalApplyTableTimeQuota(long walApplyTableTimeQuota) {
         this.walApplyTableTimeQuota = walApplyTableTimeQuota;
     }
+
+    @Override
+    public void setWalLookAheadTransactionCount(int walLookAheadTransactionCount) {
+        this.walLookAheadTransactionCount = walLookAheadTransactionCount;
+    }
+
+    @Override
+    public void setWalMaxSegmentFileDescriptorsCache(int value) {
+        walMaxSegmentFileDescriptorsCache = value;
+    }
+
+    @Override
+    public void setWalMaxLagSize(long value) {
+        walMaxLagSize = value;
+    }
+
 
     public void setWalMaxLagTxnCount(int walMaxLagTxnCount) {
         this.walMaxLagTxnCount = walMaxLagTxnCount;
