@@ -443,18 +443,20 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     throw new UnsupportedOperationException("Unsupported command type: " + cmdType);
             }
         } catch (SqlException ex) {
-            // This is fine, some syntax error, we should not block WAL processing if SQL is not valid
-            LOG.error().$("error applying SQL to wal table [table=")
-                    .utf8(tableWriter.getTableToken().getTableName()).$(", sql=").$(sql).$(", error=").$(ex.getFlyweightMessage()).I$();
-            return -1;
+            throw CairoException.nonCritical().put("error applying SQL to wal table [table=")
+                    .put(tableWriter.getTableToken().getTableName()).put(", sql=").put(sql)
+                    .put(", position=").put(ex.getPosition())
+                    .put(", error=").put(ex.getFlyweightMessage());
         } catch (CairoException e) {
-            if (e.isWALTolerable()) {
-                // This is fine, some syntax error, we should not block WAL processing if SQL is not valid
-                LOG.error().$("error applying SQL to wal table [table=")
-                        .utf8(tableWriter.getTableToken().getTableName()).$(", sql=").$(sql).$(", error=").$(e.getFlyweightMessage()).I$();
-                return -1;
-            } else {
+            LOG.error().$("error applying SQL to wal table [table=")
+                    .utf8(tableWriter.getTableToken().getTableName()).$(", sql=").$(sql)
+                    .$(", error=").$(e.getFlyweightMessage())
+                    .$(", errno=").$(e.getErrno()).I$();
+
+            if (!e.isWALTolerable()) {
                 throw e;
+            } else {
+                return -1;
             }
         }
     }

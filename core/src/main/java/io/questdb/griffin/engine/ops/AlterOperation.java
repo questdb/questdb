@@ -424,7 +424,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         for (int i = 0, n = extraInfo.size() / 2; i < n; i++) {
             long partitionTimestamp = extraInfo.getQuick(i * 2);
             if (!svc.removePartition(partitionTimestamp)) {
-                throw CairoException.nonCritical()
+                throw CairoException.partitionManipulationRecoverable()
                         .put("could not remove partition [table=").put(tableToken != null ? tableToken.getTableName() : "<null>")
                         .put(", partitionTimestamp=").ts(partitionTimestamp)
                         .put(", partitionBy=").put(PartitionBy.toString(svc.getPartitionBy()))

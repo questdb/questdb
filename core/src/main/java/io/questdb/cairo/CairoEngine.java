@@ -548,7 +548,9 @@ public class CairoEngine implements Closeable, WriterSource {
         try {
             return tableReaderMetadataPool.get(tableToken);
         } catch (CairoException e) {
-            if (!tableToken.isWal()) {
+            if (tableToken.isWal()) {
+                throw e;
+            } else {
                 tryRepairTable(tableToken, e);
             }
         }
