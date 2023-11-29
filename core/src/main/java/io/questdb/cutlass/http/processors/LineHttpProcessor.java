@@ -88,10 +88,9 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
                     state.commit();
                     if (state.getStatus() == LineHttpProcessorState.Status.OK) {
                         HttpChunkedResponseSocket r = context.getChunkedResponseSocket();
-                        r.status(200, "text/plain");
+                        r.status(204, "text/plain");
                         r.sendHeader();
-                        r.putAscii("OK");
-                        r.sendChunk(true);
+                        r.send();
                     } else {
                         // TODO: better error message
                         sendError(context, "commit failed");

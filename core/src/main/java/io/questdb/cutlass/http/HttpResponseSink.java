@@ -446,6 +446,14 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
 
         @Override
+        public void send() throws PeerDisconnectedException, PeerIsSlowToReadException {
+            headersSent = true;
+            chunkedRequestDone = true;
+            buffer.prepareToReadFromBuffer(false, true);
+            resumeSend();
+        }
+
+        @Override
         public void sendChunk(boolean done) throws PeerDisconnectedException, PeerIsSlowToReadException {
             headersSent = true;
             chunkedRequestDone = done;
@@ -793,6 +801,7 @@ public class HttpResponseSink implements Closeable, Mutable {
 
     static {
         httpStatusMap.put(200, "OK");
+        httpStatusMap.put(204, "OK");
         httpStatusMap.put(206, "Partial content");
         httpStatusMap.put(304, "Not Modified");
         httpStatusMap.put(400, "Bad request");

@@ -71,7 +71,7 @@ public class InfluxClientTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testInsertWithIlpHttpParallel() throws Exception {
+    public void testInsertWithIlpHttpParallelManyTables() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarEquivalent(), "2048"
@@ -119,6 +119,51 @@ public class InfluxClientTest extends AbstractBootstrapTest {
         });
     }
 
+    @Test
+    public void testInsertWithIlpHttpParallelOneTables() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarEquivalent(), "2048"
+            )) {
+                serverMain.start();
+
+                String tableName = "h2o_feet";
+                int count = 10_000;
+
+                int threads = 5;
+                ObjList<Thread> threadList = new ObjList<>();
+                int httpPort = serverMain.getConfiguration().getHttpServerConfiguration().getDispatcherConfiguration().getBindPort();
+                AtomicReference<Throwable> error = new AtomicReference<>();
+
+                for (int i = 0; i < threads; i++) {
+                    threadList.add(new Thread(() -> {
+                        try {
+                            sendIlp(tableName, count, httpPort);
+                        } catch (Throwable e) {
+                            e.printStackTrace();
+                            error.set(e);
+                        }
+                    }));
+                    threadList.getLast().start();
+                }
+
+                for (int i = 0; i < threads; i++) {
+                    threadList.getQuick(i).join();
+                }
+
+                LOG.info().$("== all threads finished ==").$();
+
+                if (error.get() != null) {
+                    throw new RuntimeException(error.get());
+                }
+
+                serverMain.waitWalTxnApplied(tableName, 1);
+                serverMain.assertSql("SELECT count() FROM " + tableName, "count\n" + count * threads + "\n");
+                serverMain.assertSql("SELECT sum(water_level) FROM " + tableName, "sum\n" + (count * (count - 1) / 2) * threads + "\n");
+            }
+        });
+    }
+
     private static void sendIlp(String tableName, int count, int port) throws NumericException {
         final String serverURL = "http://127.0.0.1:" + port, username = "root", password = "root";
         long timestamp = IntervalUtils.parseFloorPartialTimestamp("2023-11-27T18:53:24.834Z");
@@ -131,15 +176,17 @@ public class InfluxClientTest extends AbstractBootstrapTest {
                     .tag("async", "true")
                     .build();
 
-            for (; i < count / 2; i++) {
-                batchPoints.point(Point.measurement(tableName)
-                        .time(timestamp, TimeUnit.MICROSECONDS)
-                        .tag("location", "santa_monica")
-                        .addField("level description", "below 3 feet asd fasd fasfd asdf asdf asdfasdf asdf asdfasdfas dfads".substring(0, i % 68))
-                        .addField("water_level", i)
-                        .build());
+            if (count / 2 > 0) {
+                for (; i < count / 2; i++) {
+                    batchPoints.point(Point.measurement(tableName)
+                            .time(timestamp, TimeUnit.MICROSECONDS)
+                            .tag("location", "santa_monica")
+                            .addField("level description", "below 3 feet asd fasd fasfd asdf asdf asdfasdf asdf asdfasdfas dfads".substring(0, i % 68))
+                            .addField("water_level", i)
+                            .build());
+                }
+                influxDB.write(batchPoints);
             }
-            influxDB.write(batchPoints);
 
             BatchPoints batchPoints2 = BatchPoints
                     .database("test_db")

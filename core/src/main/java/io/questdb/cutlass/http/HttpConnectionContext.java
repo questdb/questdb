@@ -737,7 +737,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 if (multipartRequest && !multipartProcessor) {
                     // bad request - multipart request for processor that doesn't expect multipart
                     busyRecv = rejectRequest("Bad request. Non-multipart GET expected.");
-                } else if (contentLength > 0 && multipartProcessor) {
+                } else if (contentLength > -1 && multipartProcessor) {
                     busyRecv = consumeContent(contentLength, socket, processor, headerEnd, read, newRequest, rescheduleContext);
                 } else if (!multipartRequest && multipartProcessor) {
                     // bad request - regular request for processor that expects multipart
