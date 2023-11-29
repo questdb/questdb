@@ -39,7 +39,7 @@ public class CovarPopGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testCovarPopAllNull() throws Exception {
         assertMemoryLeak(() -> assertSql(
-                "covar_pop\nNaN\n", "select covar_pop(x, y) from (select x cast(null as double), cast(null as double) y from long_sequence(100))"
+                "covar_pop\nNaN\n", "select covar_pop(x, y) from (select cast(null as double) x, cast(null as double) y from long_sequence(100))"
         ));
     }
 
@@ -56,7 +56,7 @@ public class CovarPopGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testCovarPopDoubleValues() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tbl1 as (select cast(x as double) as x, cast(x as double) y from long_sequence(100))");
+            ddl("create table tbl1 as (select cast(x as double) x, cast(x as double) y from long_sequence(100))");
             assertSql(
                     "covar_pop\n833.25\n", "select covar_pop(x, y) from tbl1"
             );
