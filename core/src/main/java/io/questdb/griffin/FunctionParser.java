@@ -539,6 +539,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         FunctionFactory candidate = null;
         FunctionFactoryDescriptor candidateDescriptor = null;
         boolean candidateSigVarArgConst = false;
+        boolean candidateSigVarArg = true;
         int candidateSigArgCount = 0;
         int candidateSigArgTypeScore = -1;
         int bestMatch = MATCH_NO_MATCH;
@@ -683,7 +684,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
                         overloadPossible |= arg.isUndefined();
                     }
-
                     // can we use overload mechanism?
                     if (overloadPossible) {
                         switch (match) {
@@ -713,7 +713,13 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
                 if (factory.isWindow()) {
                     // prefer window functions in window context, otherwise non-window functions
-                    sigArgTypeScore += isWindowContext ? -10 : 10;
+                    if (isWindowContext) {
+                        // choose window-ed avg(D) over group by implementation that matches arg type better
+                        match = MATCH_EXACT_MATCH;
+                        sigArgTypeScore -= 10;
+                    } else {
+                        sigArgTypeScore += 10;
+                    }
                 }
 
                 if (match == MATCH_EXACT_MATCH || match >= bestMatch) {
@@ -721,12 +727,17 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     // special case - if signature enforces constant vararg we
                     // have to ensure all args are indeed constant
 
+                    // when match is the same, prefer non-var-arg functions
+                    if (match == bestMatch && sigVarArg && !candidateSigVarArg) {
+                        continue;
+                    }
 
                     if (match != MATCH_EXACT_MATCH) {
                         if (candidateSigArgTypeScore > sigArgTypeScore || bestMatch < match) {
                             candidate = factory;
                             candidateDescriptor = descriptor;
                             candidateSigArgCount = sigArgCount;
+                            candidateSigVarArg = sigVarArg;
                             candidateSigVarArgConst = sigVarArgConst;
                             candidateSigArgTypeScore = sigArgTypeScore;
                         }
@@ -735,7 +746,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         candidate = factory;
                         candidateDescriptor = descriptor;
                         candidateSigArgCount = sigArgCount;
+                        candidateSigVarArg = sigVarArg;
                         candidateSigVarArgConst = sigVarArgConst;
+                        bestMatch = match;
                         if (isWindowContext == factory.isWindow()) {
                             break;
                         }

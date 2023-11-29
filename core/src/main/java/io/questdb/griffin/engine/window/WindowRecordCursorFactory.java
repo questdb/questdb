@@ -129,14 +129,7 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
         }
         Misc.free(base);
         Misc.free(cursor);
-        //window functions are closed on cursor close above
-        for (int i = 0, n = functions.size(); i < n; i++) {
-            Function function = functions.getQuick(i);
-            if (!(function instanceof WindowFunction)) {
-                function.close();
-            }
-        }
-        functions.clear();
+        Misc.freeObjList(functions);
         closed = true;
     }
 

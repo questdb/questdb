@@ -146,7 +146,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
                             partitionBySink,
                             args.get(0)
                     );
-                } // range between [unbounded | x] preceding and [x preceding | current row]
+                } // range between [unbounded | x] preceding and [x preceding | current row], except unbounded preceding to current row
                 else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
@@ -491,13 +491,9 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
                 firstIdx = 0;
 
                 if (Numbers.isFinite(d)) {
-                    if (frameLoBounded || !frameIncludesCurrentValue) {
-                        memory.putLong(startOffset, timestamp);
-                        memory.putDouble(startOffset + Long.BYTES, d);
-                        size = 1;
-                    } else {
-                        size = 0;
-                    }
+                    memory.putLong(startOffset, timestamp);
+                    memory.putDouble(startOffset + Long.BYTES, d);
+                    size = 1;
 
                     if (frameIncludesCurrentValue) {
                         sum = d;
@@ -745,6 +741,12 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
             frameIncludesCurrentValue = rowsHi == 0;
 
             this.memory = memory;
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            memory.close();
         }
 
         @Override

@@ -1217,6 +1217,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
             ddl("create table tab (ts timestamp, i long, j long, otherTs timestamp) timestamp(ts) partition by month");
 
             for (String func : FRAME_FUNCTIONS) {
+                assertException("select ts, i, j, #FUNCT_NAME(j) over (order by ts range between 4 preceding and current row) from nodts".replace("#FUNCT_NAME", func),
+                        47, "RANGE is supported only for queries ordered by designated timestamp"
+                );
+
                 assertException("select ts, i, j, #FUNCT_NAME(j) over (partition by i order by ts range between 4 preceding and current row) from nodts".replace("#FUNCT_NAME", func),
                         62, "RANGE is supported only for queries ordered by designated timestamp"
                 );
@@ -3135,6 +3139,82 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     TestUtils.assertContains(e.getMessage(), "window function called in non-window context, make sure to add OVER clause");
                 }
             }
+        });
+    }
+
+    @Test
+    public void testWindowFunctionReleaseNativeMemory() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab (ts timestamp, val long) timestamp(ts)");
+            ddl("insert into tab select x::timestamp, x from long_sequence(10)");
+
+            final String EXPRESSION = "rnd_str(100,100,100,10)";//chosen because it allocates native memory that needs to be freed
+
+            List<String> frameTypes = Arrays.asList("rows", "range");
+            List<String> frameVariants = Arrays.asList(
+                    // without partition keys
+                    "over ()", // whole result set
+                    "over ( #ORDERBY #FRAME current row)",
+                    "over ( #ORDERBY #FRAME between unbounded preceding and 1 preceding)",
+                    "over ( #ORDERBY #FRAME between unbounded preceding and current row)",
+                    "over ( #ORDERBY #FRAME between 10 preceding and 1 preceding)",
+                    "over ( #ORDERBY #FRAME between 10 preceding and current row)",
+                    // with partition keys
+                    "over ( partition by #EXPRESSION )", //whole partition
+                    "over ( partition by #EXPRESSION #ORDERBY #FRAME current row)",
+                    "over ( partition by #EXPRESSION #ORDERBY #FRAME between unbounded preceding and 1 preceding)",
+                    "over ( partition by #EXPRESSION #ORDERBY #FRAME between unbounded preceding and current row)",
+                    "over ( partition by #EXPRESSION #ORDERBY #FRAME between 10 preceding and 1 preceding)",
+                    "over ( partition by #EXPRESSION #ORDERBY #FRAME between 10 preceding and current row)"
+            );
+
+            List<String> orderByVariants = Arrays.asList(
+                    "", //only allowed for rows frame
+                    "order by val",
+                    "order by val, ts",
+                    "order by ts"
+                    //TODO: add
+                    //,"order by ts desc"
+                    //, "order by " + EXPRESSION
+            );
+
+            for (String function : FRAME_FUNCTIONS) {
+                for (String frameType : frameTypes) {
+                    for (String frameVariant : frameVariants) {
+                        for (String orderBy : orderByVariants) {
+                            if ("range".equals(frameType) && !orderBy.startsWith("order by ts")) {
+                                continue;//range frame requires order by timestamp
+                            }
+
+                            String query = "select count(*) from (" +
+                                    ("select *, #FUNCTION(length(#EXPRESSION)) " + frameVariant + " from tab)")
+                                            .replace("#FUNCTION", function)
+                                            .replace("#EXPRESSION", EXPRESSION)
+                                            .replace("#FRAME", frameType)
+                                            .replace("#ORDERBY", orderBy);
+                            try {
+                                assertSql("count\n10\n", query);
+                            } catch (Exception e) {
+                                throw new AssertionError("Failed for query: " + query, e);
+                            }
+                        }
+                    }
+                }
+
+//                assertSql("count\n10\n",
+//                        "select count(*) from (select x, #FUNCTION(length(rnd_str(100,100,100,10))) over ( partition by rnd_str(100,100,100,10) ) from tab)");
+//
+//                assertQuery("count\n10\n",
+//                        "select count(*) from (" +
+//                                "select *, " +
+//                                "avg(val) over ( partition by rnd_str(100,100,100,10) order by ts rows between unbounded preceding and current row ) " +
+//                                "from tab)",
+//                        null,
+//                        false,
+//                        true);
+            }
+
+
         });
     }
 
