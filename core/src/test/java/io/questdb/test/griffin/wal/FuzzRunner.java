@@ -296,8 +296,8 @@ public class FuzzRunner {
         s1 = 0;
     }
 
-    public TableToken createInitialTable(String tableName, boolean awaitTxns) throws SqlException {
-        return createInitialTable(tableName, awaitTxns, initialRowCount);
+    public TableToken createInitialTable(String tableName, boolean isWal) throws SqlException {
+        return createInitialTable(tableName, isWal, initialRowCount);
     }
 
     public TableToken createInitialTable(String tableName, boolean isWal, int rowCount) throws SqlException {
