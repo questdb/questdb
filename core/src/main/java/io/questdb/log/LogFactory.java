@@ -154,13 +154,6 @@ public class LogFactory implements Closeable {
         return getInstance().create(key);
     }
 
-    @TestOnly
-    public static void guaranteeLogsFor(Class<?>... classes) {
-        for (int i = 0, n = classes.length; i < n; i++) {
-            guaranteedLoggers.add(classes[i].getName());
-        }
-    }
-
     public static synchronized void haltInstance() {
         LogFactory logFactory = INSTANCE;
         if (logFactory != null) {
@@ -170,6 +163,20 @@ public class LogFactory implements Closeable {
 
     @SuppressWarnings({"EmptyMethod", "unused"})
     public static void init() {
+    }
+
+    @TestOnly
+    public static void removeGuaranteedLoggers(Class<?>... classes) {
+        for (int i = 0, n = classes.length; i < n; i++) {
+            guaranteedLoggers.remove(classes[i].getName());
+        }
+    }
+
+    @TestOnly
+    public static void setGuaranteedLoggers(Class<?>... classes) {
+        for (int i = 0, n = classes.length; i < n; i++) {
+            guaranteedLoggers.add(classes[i].getName());
+        }
     }
 
     public synchronized void add(final LogWriterConfig config) {

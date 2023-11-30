@@ -266,7 +266,7 @@ public final class SyncLogger extends AbstractLogRecord implements Log {
     @Override
     public LogRecord utf8(@Nullable CharSequence sequence) {
         if (sequence == null) {
-            sink().put("null");
+            sink().putAscii("null");
         } else {
             sink().put(sequence);
         }
