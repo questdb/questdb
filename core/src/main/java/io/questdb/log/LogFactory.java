@@ -60,6 +60,7 @@ public class LogFactory implements Closeable {
     private static final int DEFAULT_QUEUE_DEPTH = 1024;
     private static final String EMPTY_STR = "";
     private static final LengthDescendingComparator LDC = new LengthDescendingComparator();
+    private static final ObjList<CharSequence> guaranteedLoggers = new ObjList<>();
     private static final CharSequenceHashSet reserved = new CharSequenceHashSet();
     private static LogFactory INSTANCE;
     private static boolean envEnabled = true;
@@ -68,7 +69,6 @@ public class LogFactory implements Closeable {
     private final MicrosecondClock clock;
     private final AtomicBoolean closed = new AtomicBoolean();
     private final ObjList<DeferredLogger> deferredLoggers = new ObjList<>();
-    private final ObjList<CharSequence> guaranteedLoggers = new ObjList<>();
     private final ObjHashSet<LogWriter> jobs = new ObjHashSet<>();
     private final AtomicBoolean running = new AtomicBoolean();
     private final CharSequenceObjHashMap<ScopeConfiguration> scopeConfigMap = new CharSequenceObjHashMap<>();
@@ -152,6 +152,13 @@ public class LogFactory implements Closeable {
 
     public static Log getLog(String key) {
         return getInstance().create(key);
+    }
+
+    @TestOnly
+    public static void guaranteeLogsFor(Class<?>... classes) {
+        for (int i = 0, n = classes.length; i < n; i++) {
+            guaranteedLoggers.add(classes[i].getName());
+        }
     }
 
     public static synchronized void haltInstance() {
