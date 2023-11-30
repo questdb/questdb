@@ -60,11 +60,10 @@ public class LogFactory implements Closeable {
     private static final int DEFAULT_QUEUE_DEPTH = 1024;
     private static final String EMPTY_STR = "";
     private static final LengthDescendingComparator LDC = new LengthDescendingComparator();
-    private static final ObjList<CharSequence> guaranteedLoggers = new ObjList<>();
     private static final CharSequenceHashSet reserved = new CharSequenceHashSet();
     private static LogFactory INSTANCE;
     private static boolean envEnabled = true;
-    private static boolean overwriteWithSyncLogging = false;
+    private static boolean guaranteedLogging = false;
     private static String rootDir;
     private final MicrosecondClock clock;
     private final AtomicBoolean closed = new AtomicBoolean();
@@ -111,24 +110,36 @@ public class LogFactory implements Closeable {
         }
     }
 
-    public static void configureAsync() {
-        overwriteWithSyncLogging = false;
-    }
-
     public static void configureRootDir(String rootDir) {
         LogFactory.rootDir = rootDir;
-    }
-
-    public static void configureSync() {
-        overwriteWithSyncLogging = true;
     }
 
     public static void disableEnv() {
         envEnabled = false;
     }
 
+    @TestOnly
+    public static void disableGuaranteedLogging() {
+        guaranteedLogging = false;
+    }
+
+    @TestOnly
+    public static void disableGuaranteedLogging(Class<?>... classes) {
+        setGuaranteedLogging(false, classes);
+    }
+
     public static void enableEnv() {
         envEnabled = true;
+    }
+
+    @TestOnly
+    public static void enableGuaranteedLogging() {
+        guaranteedLogging = true;
+    }
+
+    @TestOnly
+    public static void enableGuaranteedLogging(Class<?>... classes) {
+        setGuaranteedLogging(true, classes);
     }
 
     public static synchronized LogFactory getInstance() {
@@ -163,20 +174,6 @@ public class LogFactory implements Closeable {
 
     @SuppressWarnings({"EmptyMethod", "unused"})
     public static void init() {
-    }
-
-    @TestOnly
-    public static void removeGuaranteedLoggers(Class<?>... classes) {
-        for (int i = 0, n = classes.length; i < n; i++) {
-            guaranteedLoggers.remove(classes[i].getName());
-        }
-    }
-
-    @TestOnly
-    public static void setGuaranteedLoggers(Class<?>... classes) {
-        for (int i = 0, n = classes.length; i < n; i++) {
-            guaranteedLoggers.add(classes[i].getName());
-        }
     }
 
     public synchronized void add(final LogWriterConfig config) {
@@ -250,13 +247,17 @@ public class LogFactory implements Closeable {
     }
 
     public synchronized Log create(String key) {
+        return create(key, guaranteedLogging);
+    }
+
+    public synchronized Log create(String key, boolean guaranteedLogging) {
         if (!configured) {
             DeferredLogger log = new DeferredLogger(key);
             deferredLoggers.add(log);
             return log;
         }
 
-        ScopeConfiguration scopeConfiguration = find(key);
+        final ScopeConfiguration scopeConfiguration = find(key);
         if (scopeConfiguration == null) {
             return new Logger(
                     clock,
@@ -273,54 +274,15 @@ public class LogFactory implements Closeable {
                     null
             );
         }
-        final Holder inf = scopeConfiguration.getHolder(Numbers.msb(LogLevel.INFO));
         final Holder dbg = scopeConfiguration.getHolder(Numbers.msb(LogLevel.DEBUG));
+        final Holder inf = scopeConfiguration.getHolder(Numbers.msb(LogLevel.INFO));
         final Holder err = scopeConfiguration.getHolder(Numbers.msb(LogLevel.ERROR));
         final Holder cri = scopeConfiguration.getHolder(Numbers.msb(LogLevel.CRITICAL));
         final Holder adv = scopeConfiguration.getHolder(Numbers.msb(LogLevel.ADVISORY));
-        if (!overwriteWithSyncLogging) {
-            if (!guaranteedLoggers.contains(key)) {
-                return new Logger(
-                        clock,
-                        compressScope(key, sink),
-                        dbg == null ? null : dbg.ring,
-                        dbg == null ? null : dbg.lSeq,
-                        inf == null ? null : inf.ring,
-                        inf == null ? null : inf.lSeq,
-                        err == null ? null : err.ring,
-                        err == null ? null : err.lSeq,
-                        cri == null ? null : cri.ring,
-                        cri == null ? null : cri.lSeq,
-                        adv == null ? null : adv.ring,
-                        adv == null ? null : adv.lSeq
-                );
-            } else {
-                return new GuaranteedLogger(
-                        clock,
-                        compressScope(key, sink),
-                        dbg == null ? null : dbg.ring,
-                        dbg == null ? null : dbg.lSeq,
-                        inf == null ? null : inf.ring,
-                        inf == null ? null : inf.lSeq,
-                        err == null ? null : err.ring,
-                        err == null ? null : err.lSeq,
-                        cri == null ? null : cri.ring,
-                        cri == null ? null : cri.lSeq,
-                        adv == null ? null : adv.ring,
-                        adv == null ? null : adv.lSeq
-                );
-            }
+        if (!guaranteedLogging) {
+            return createLogger(key, dbg, inf, err, cri, adv);
         }
-
-        return new SyncLogger(
-                clock,
-                compressScope(key, sink),
-                dbg == null ? null : dbg.lSeq,
-                inf == null ? null : inf.lSeq,
-                err == null ? null : err.lSeq,
-                cri == null ? null : cri.lSeq,
-                adv == null ? null : adv.lSeq
-        );
+        return createGuaranteedLogger(key, dbg, inf, err, cri, adv);
     }
 
     @TestOnly
@@ -582,6 +544,23 @@ public class LogFactory implements Closeable {
         return System.getProperty(DEBUG_TRIGGER) != null || System.getenv().containsKey(DEBUG_TRIGGER_ENV);
     }
 
+    private static void setGuaranteedLogging(boolean guaranteedLogging, Class<?>... classes) {
+        for (int i = 0, n = classes.length; i < n; i++) {
+            final Class<?> clazz = classes[i];
+            setLogger(clazz, getInstance().create(clazz.getName(), guaranteedLogging));
+        }
+    }
+
+    private static void setLogger(Class<?> clazz, Log logger) {
+        try {
+            final Field field = clazz.getDeclaredField("LOG");
+            field.setAccessible(true);
+            field.set(null, logger);
+        } catch (NoSuchFieldException | IllegalAccessException e) {
+            throw new RuntimeException("Could not set logger", e);
+        }
+    }
+
     private void configureDefaultWriter() {
         int level = DEFAULT_LOG_LEVEL;
         if (isForcedDebug()) {
@@ -624,16 +603,43 @@ public class LogFactory implements Closeable {
             }
         }
 
-        String syncLoggers = getProperty(properties, "guaranteedLoggers");
-        if (syncLoggers != null && !syncLoggers.isEmpty()) {
-            for (String gl : syncLoggers.split(",")) {
-                if (gl != null && !gl.isEmpty()) {
-                    guaranteedLoggers.add(gl.trim());
-                }
-            }
-        }
-
         bind();
+    }
+
+    @NotNull
+    private GuaranteedLogger createGuaranteedLogger(String key, Holder dbg, Holder inf, Holder err, Holder cri, Holder adv) {
+        return new GuaranteedLogger(
+                clock,
+                compressScope(key, sink),
+                dbg == null ? null : dbg.ring,
+                dbg == null ? null : dbg.lSeq,
+                inf == null ? null : inf.ring,
+                inf == null ? null : inf.lSeq,
+                err == null ? null : err.ring,
+                err == null ? null : err.lSeq,
+                cri == null ? null : cri.ring,
+                cri == null ? null : cri.lSeq,
+                adv == null ? null : adv.ring,
+                adv == null ? null : adv.lSeq
+        );
+    }
+
+    @NotNull
+    private Logger createLogger(String key, Holder dbg, Holder inf, Holder err, Holder cri, Holder adv) {
+        return new Logger(
+                clock,
+                compressScope(key, sink),
+                dbg == null ? null : dbg.ring,
+                dbg == null ? null : dbg.lSeq,
+                inf == null ? null : inf.ring,
+                inf == null ? null : inf.lSeq,
+                err == null ? null : err.ring,
+                err == null ? null : err.lSeq,
+                cri == null ? null : cri.ring,
+                cri == null ? null : cri.lSeq,
+                adv == null ? null : adv.ring,
+                adv == null ? null : adv.lSeq
+        );
     }
 
     private ScopeConfiguration find(CharSequence key) {
