@@ -46,6 +46,7 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
     private final Function hiFunction;
     private final Function loFunction;
     private final ListColumnFilter sortColumnFilter;
+    int timestampIndex;
     // initialization delayed to getCursor() because lo/hi need to be evaluated
     private DelegatingRecordCursor cursor; // LimitedSizeSortedLightRecordCursor or SortedLightRecordCursor
 
@@ -56,7 +57,8 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
             RecordComparator comparator,
             Function loFunc,
             @Nullable Function hiFunc,
-            ListColumnFilter sortColumnFilter
+            ListColumnFilter sortColumnFilter,
+            int timestampIndex //index of timestamp that base record cursor is already sorted on
     ) {
         super(metadata);
         this.base = base;
@@ -65,6 +67,7 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
         this.configuration = configuration;
         this.comparator = comparator;
         this.sortColumnFilter = sortColumnFilter;
+        this.timestampIndex = timestampIndex;
     }
 
     @Override
@@ -178,7 +181,11 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
                 limit
         );
 
-        this.cursor = new LimitedSizeSortedLightRecordCursor(chain, comparator, limit, skipFirst, skipLast);
+        if (timestampIndex == -1) {
+            this.cursor = new LimitedSizeSortedLightRecordCursor(chain, comparator, limit, skipFirst, skipLast);
+        } else {
+            this.cursor = new LimitedSizePartiallySortedLightRecordCursor(chain, comparator, limit, skipFirst, skipLast, timestampIndex);
+        }
     }
 
     @Override
@@ -192,6 +199,9 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
         sink.meta("lo").val(loFunction);
         if (hiFunction != null) {
             sink.meta("hi").val(hiFunction);
+        }
+        if (timestampIndex != -1) {
+            sink.meta("partiallySorted").val(true);
         }
         SortedLightRecordCursorFactory.addSortKeys(sink, sortColumnFilter);
         sink.child(base);
