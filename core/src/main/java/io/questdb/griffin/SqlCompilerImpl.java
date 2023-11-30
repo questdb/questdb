@@ -2784,7 +2784,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 return generateFactory(queryModel, executionContext);
             } catch (TableReferenceOutOfDateException e) {
                 if (--remainingRetries < 0) {
-                    throw SqlException.$(0, "unable to generate query plan, table structure changed too many times, [q=`").put(queryModel).put('`').put(", fd=").put(executionContext.getRequestFd()).put(']');
+                    throw SqlException.$(0, e.getFlyweightMessage());
                 }
                 LOG.info().$("retrying plan [q=`").$(queryModel).$("`, fd=").$(executionContext.getRequestFd()).$(']').$();
                 clear();
