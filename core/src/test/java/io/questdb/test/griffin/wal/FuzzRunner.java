@@ -161,7 +161,15 @@ public class FuzzRunner {
                 purgeJobThread.start();
                 applyThreads.add(purgeJobThread);
 
-                Thread purgePartitionThread = new Thread(() -> runPurgePartitionJob(done, forceReaderReload, errors, new Rnd(rnd.nextLong(), rnd.nextLong()), tableNameBase, tableCount, multiTable));
+                Thread purgePartitionThread = new Thread(() -> runPurgePartitionJob(
+                        done,
+                        forceReaderReload,
+                        errors,
+                        new Rnd(rnd.nextLong(), rnd.nextLong()),
+                        tableNameBase,
+                        tableCount,
+                        multiTable
+                ));
                 purgePartitionThread.start();
                 applyThreads.add(purgePartitionThread);
             }
@@ -288,8 +296,8 @@ public class FuzzRunner {
         s1 = 0;
     }
 
-    public TableToken createInitialTable(String tableName, boolean isWal) throws SqlException {
-        return createInitialTable(tableName, isWal, initialRowCount);
+    public TableToken createInitialTable(String tableName, boolean awaitTxns) throws SqlException {
+        return createInitialTable(tableName, awaitTxns, initialRowCount);
     }
 
     public TableToken createInitialTable(String tableName, boolean isWal, int rowCount) throws SqlException {
@@ -315,20 +323,6 @@ public class FuzzRunner {
             engine.ddl("alter table " + tableName + " add column str_top long", sqlExecutionContext);
             engine.ddl("alter table " + tableName + " add column sym_top symbol index", sqlExecutionContext);
             engine.ddl("alter table " + tableName + " add column ip4 ipv4", sqlExecutionContext);
-            if (isWal) {
-                // Make sure that all initial transactions are applied to the table.
-                drainWalQueue();
-                // There might be multiple ApplyWal2TableJob running, so we need to
-                // await until the transactions are applied.
-                TestUtils.assertEventually(() -> {
-                    TableToken tableToken = engine.verifyTableName(tableName);
-                    try (TableMetadata sequencerMetadata = engine.getSequencerMetadata(tableToken)) {
-                        try (TableMetadata readerMetadata = engine.getTableReaderMetadata(tableToken)) {
-                            Assert.assertEquals(sequencerMetadata.getMetadataVersion(), readerMetadata.getMetadataVersion());
-                        }
-                    }
-                });
-            }
         }
         return engine.verifyTableName(tableName);
     }
@@ -347,9 +341,17 @@ public class FuzzRunner {
         return rnd;
     }
 
-    public ObjList<FuzzTransaction> generateSet(Rnd rnd, TableRecordMetadata metadata, long start, long end, String tableName) {
+    public ObjList<FuzzTransaction> generateSet(
+            Rnd rnd,
+            TableRecordMetadata sequencerMetadata,
+            TableRecordMetadata readerMetadata,
+            long start,
+            long end,
+            String tableName
+    ) {
         return FuzzTransactionGenerator.generateSet(
-                metadata,
+                sequencerMetadata,
+                readerMetadata,
                 rnd,
                 start,
                 end,
@@ -368,7 +370,7 @@ public class FuzzRunner {
                 equalTsRowsProb,
                 strLen,
                 generateSymbols(rnd, rnd.nextInt(Math.max(1, symbolCountMax - 5)) + 5, symbolStrLenMax, tableName),
-                (int) metadata.getMetadataVersion(),
+                (int) sequencerMetadata.getMetadataVersion(),
                 tableDropProb
         );
     }
@@ -383,8 +385,7 @@ public class FuzzRunner {
         TableToken tableToken = engine.verifyTableName(tableName);
         try (TableMetadata sequencerMetadata = engine.getSequencerMetadata(tableToken)) {
             try (TableMetadata readerMetadata = engine.getTableReaderMetadata(tableToken)) {
-                Assert.assertEquals("metadata version mismatch for " + tableToken, sequencerMetadata.getMetadataVersion(), readerMetadata.getMetadataVersion());
-                return generateSet(rnd, readerMetadata, start, end, tableName);
+                return generateSet(rnd, sequencerMetadata, readerMetadata, start, end, tableName);
             }
         }
     }
@@ -580,15 +581,6 @@ public class FuzzRunner {
                 Path.clearThreadLocals();
             }
         });
-    }
-
-    @SuppressWarnings("StatementWithEmptyBody")
-    private void drainWalQueue() {
-        try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1)) {
-            CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
-            while (walApplyJob.run(0) || checkWalTransactionsJob.run(0)) {
-            }
-        }
     }
 
     private void drainWalQueue(Rnd applyRnd, String tableName) {
