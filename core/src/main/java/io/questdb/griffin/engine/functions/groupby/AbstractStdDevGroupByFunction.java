@@ -36,9 +36,9 @@ import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 /**
- * The abstract class, in addition, provides a method to aggregate statistics.
+ * The abstract class, in addition, provides a method to aggregate univariate statistics.
  * We use the B. P. Welford algorithm which works by first aggregating sum of squares Sxx = sum[(X - mean) ^ 2].
- * Computation of standard deviation and variance is then simple (e.g. variance = Sxx / (n - 1))
+ * Computation of standard deviation and variance is then simple (e.g. variance = Sxx / (n - 1), standard deviation = sqrt(variance))
  *
  * @see <a href="https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Welford's_online_algorithm">Welford's algorithm</a>
  */

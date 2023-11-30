@@ -746,6 +746,15 @@ io.questdb.griffin.engine.functions.groupby.VarSampleGroupByFunctionFactory
 # var_pop()
 io.questdb.griffin.engine.functions.groupby.VarPopGroupByFunctionFactory
 
+# covar_samp()
+io.questdb.griffin.engine.functions.groupby.CovarSampleGroupByFunctionFactory
+
+# covar_pop()
+io.questdb.griffin.engine.functions.groupby.CovarPopGroupByFunctionFactory
+
+# corr()
+io.questdb.griffin.engine.functions.groupby.CorrGroupByFunctionFactory
+
 # strpos()
 io.questdb.griffin.engine.functions.str.StrPosFunctionFactory
 io.questdb.griffin.engine.functions.str.StrPosCharFunctionFactory
@@ -797,6 +806,8 @@ io.questdb.griffin.engine.functions.str.RTrimFunctionFactory
 io.questdb.griffin.engine.functions.window.RowNumberFunctionFactory
 io.questdb.griffin.engine.functions.window.RankFunctionFactory
 io.questdb.griffin.engine.functions.window.AvgDoubleWindowFunctionFactory
+io.questdb.griffin.engine.functions.window.FirstValueDoubleWindowFunctionFactory
+io.questdb.griffin.engine.functions.window.SumDoubleWindowFunctionFactory
 
 # metadata functions
 io.questdb.griffin.engine.functions.metadata.BuildFunctionFactory
