@@ -292,28 +292,45 @@ public class FuzzRunner {
         return createInitialTable(tableName, isWal, initialRowCount);
     }
 
-    public TableToken createInitialTable(String tableName1, boolean isWal, int rowCount) throws SqlException {
+    public TableToken createInitialTable(String tableName, boolean isWal, int rowCount) throws SqlException {
         SharedRandom.RANDOM.set(new Rnd());
-        if (engine.getTableTokenIfExists(tableName1) == null) {
-            compile("create table " + tableName1 + " as (" +
-                    "select x as c1, " +
-                    " rnd_symbol('AB', 'BC', 'CD') c2, " +
-                    " timestamp_sequence('2022-02-24', 1000000L) ts, " +
-                    " rnd_symbol('DE', null, 'EF', 'FG') sym2," +
-                    " cast(x as int) c3," +
-                    " rnd_bin() c4," +
-                    " to_long128(3 * x, 6 * x) c5," +
-                    " rnd_str('a', 'bdece', null, ' asdflakji idid', 'dk')," +
-                    " rnd_boolean() bool1 " +
-                    " from long_sequence(" + rowCount + ")" +
-                    "), index(sym2) timestamp(ts) partition by DAY " + (isWal ? "WAL" : "BYPASS WAL"));
+        if (engine.getTableTokenIfExists(tableName) == null) {
+            engine.ddl(
+                    "create table " + tableName + " as (" +
+                            "select x as c1, " +
+                            " rnd_symbol('AB', 'BC', 'CD') c2, " +
+                            " timestamp_sequence('2022-02-24', 1000000L) ts, " +
+                            " rnd_symbol('DE', null, 'EF', 'FG') sym2," +
+                            " cast(x as int) c3," +
+                            " rnd_bin() c4," +
+                            " to_long128(3 * x, 6 * x) c5," +
+                            " rnd_str('a', 'bdece', null, ' asdflakji idid', 'dk')," +
+                            " rnd_boolean() bool1 " +
+                            " from long_sequence(" + rowCount + ")" +
+                            "), index(sym2) timestamp(ts) partition by DAY " + (isWal ? "WAL" : "BYPASS WAL"),
+                    sqlExecutionContext
+            );
             // force few column tops
-            compile("alter table " + tableName1 + " add column long_top long");
-            compile("alter table " + tableName1 + " add column str_top long");
-            compile("alter table " + tableName1 + " add column sym_top symbol index");
-            compile("alter table " + tableName1 + " add column ip4 ipv4");
+            engine.ddl("alter table " + tableName + " add column long_top long", sqlExecutionContext);
+            engine.ddl("alter table " + tableName + " add column str_top long", sqlExecutionContext);
+            engine.ddl("alter table " + tableName + " add column sym_top symbol index", sqlExecutionContext);
+            engine.ddl("alter table " + tableName + " add column ip4 ipv4", sqlExecutionContext);
+            if (isWal) {
+                // Make sure that all initial transactions are applied to the table.
+                drainWalQueue();
+                // There might be multiple ApplyWal2TableJob running, so we need to
+                // await until the transactions are applied.
+                TestUtils.assertEventually(() -> {
+                    TableToken tableToken = engine.verifyTableName(tableName);
+                    try (TableMetadata sequencerMetadata = engine.getSequencerMetadata(tableToken)) {
+                        try (TableMetadata readerMetadata = engine.getTableReaderMetadata(tableToken)) {
+                            Assert.assertEquals(sequencerMetadata.getMetadataVersion(), readerMetadata.getMetadataVersion());
+                        }
+                    }
+                });
+            }
         }
-        return engine.verifyTableName(tableName1);
+        return engine.verifyTableName(tableName);
     }
 
     public Rnd generateRandom(Log log) {
@@ -330,7 +347,7 @@ public class FuzzRunner {
         return rnd;
     }
 
-    public ObjList<FuzzTransaction> generateSet(Rnd rnd, TableRecordMetadata metadata, long start, long end, String tableName, long seqMetadataVersion) {
+    public ObjList<FuzzTransaction> generateSet(Rnd rnd, TableRecordMetadata metadata, long start, long end, String tableName) {
         return FuzzTransactionGenerator.generateSet(
                 metadata,
                 rnd,
@@ -351,7 +368,7 @@ public class FuzzRunner {
                 equalTsRowsProb,
                 strLen,
                 generateSymbols(rnd, rnd.nextInt(Math.max(1, symbolCountMax - 5)) + 5, symbolStrLenMax, tableName),
-                (int) seqMetadataVersion,
+                (int) metadata.getMetadataVersion(),
                 tableDropProb
         );
     }
@@ -364,9 +381,10 @@ public class FuzzRunner {
 
     public ObjList<FuzzTransaction> generateTransactions(String tableName, Rnd rnd, long start, long end) {
         TableToken tableToken = engine.verifyTableName(tableName);
-        try (TableMetadata readerMetadata = engine.getTableReaderMetadata(tableToken)) {
-            try (TableMetadata sequencerMetadata = engine.getSequencerMetadata(tableToken)) {
-                return generateSet(rnd, readerMetadata, start, end, tableName, sequencerMetadata.getMetadataVersion());
+        try (TableMetadata sequencerMetadata = engine.getSequencerMetadata(tableToken)) {
+            try (TableMetadata readerMetadata = engine.getTableReaderMetadata(tableToken)) {
+                Assert.assertEquals("metadata version mismatch for " + tableToken, sequencerMetadata.getMetadataVersion(), readerMetadata.getMetadataVersion());
+                return generateSet(rnd, readerMetadata, start, end, tableName);
             }
         }
     }
@@ -454,12 +472,6 @@ public class FuzzRunner {
 
     private void checkNoSuspendedTables(ObjHashSet<TableToken> tableTokenBucket) {
         engine.getTableSequencerAPI().forAllWalTables(tableTokenBucket, false, checkNoSuspendedTablesRef);
-    }
-
-    private void compile(String sql) throws SqlException {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            compiler.compile(sql, sqlExecutionContext).execute(null).await();
-        }
     }
 
     @NotNull
@@ -568,6 +580,15 @@ public class FuzzRunner {
                 Path.clearThreadLocals();
             }
         });
+    }
+
+    @SuppressWarnings("StatementWithEmptyBody")
+    private void drainWalQueue() {
+        try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1)) {
+            CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
+            while (walApplyJob.run(0) || checkWalTransactionsJob.run(0)) {
+            }
+        }
     }
 
     private void drainWalQueue(Rnd applyRnd, String tableName) {

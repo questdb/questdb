@@ -71,7 +71,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
     }
 
     public ObjList<FuzzTransaction> generateSet(Rnd rnd, TableRecordMetadata metadata, long start, long end, String tableName) {
-        return fuzzer.generateSet(rnd, metadata, start, end, tableName, metadata.getMetadataVersion());
+        return fuzzer.generateSet(rnd, metadata, start, end, tableName);
     }
 
     @Before
