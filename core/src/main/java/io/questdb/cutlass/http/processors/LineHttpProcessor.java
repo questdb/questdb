@@ -24,14 +24,15 @@
 
 package io.questdb.cutlass.http.processors;
 
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cutlass.http.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.network.ServerDisconnectException;
+import io.questdb.std.str.DirectUtf8Sequence;
+
+import static io.questdb.cutlass.http.HttpConstants.TRACE_ID;
 
 public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartContentListener {
     private static final Log LOG = LogFactory.getLog(StaticContentProcessor.class);
@@ -40,6 +41,7 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
     private final CairoEngine engine;
     private final int recvBufferSize;
     LineHttpProcessorState state;
+    private DirectUtf8Sequence requestId;
 
     public LineHttpProcessor(CairoEngine engine, int recvBufferSize, LineHttpProcessorConfiguration configuration) {
         this.engine = engine;
@@ -81,22 +83,19 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
         state = LV.get(context);
 
         try {
-            if (state.getStatus() == LineHttpProcessorState.Status.ERROR) {
-                sendError(context, state.getError());
-            } else if (state.getStatus() == LineHttpProcessorState.Status.OK) {
+            HttpChunkedResponseSocket r = context.getChunkedResponseSocket();
+            if (state.isOk()) {
                 try {
                     state.commit();
-                    HttpChunkedResponseSocket r = context.getChunkedResponseSocket();
                     r.status(204, "text/plain"); // OK, no content
                     r.sendHeader();
                     r.send();
                 } catch (Throwable th) {
-                    LOG.error().$(th).$();
-                    sendError(context, th.getMessage());
+                    LOG.error().$("unexpected error committing the data [requestId=").$(requestId).$(", exception=").$(th).$();
+                    sendError(context, "commit failed", th);
                 }
-            } else if (state.getStatus() == LineHttpProcessorState.Status.NEEDS_REED) {
-                LOG.error().$("Incomplete request").$();
-                sendError(context, "Incomplete request");
+            } else {
+                sendError(context);
             }
         } finally {
             state.clear();
@@ -111,14 +110,23 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
     @Override
     public void resumeRecv(HttpConnectionContext context) {
         state = LV.get(context);
-        state.of(context.getFd());
+        requestId = context.getRequestHeader().getHeader(TRACE_ID);
+        state.of(context.getFd(), requestId);
     }
 
-    private void sendError(HttpConnectionContext context, CharSequence errorText) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    private void sendError(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
         HttpChunkedResponseSocket r = context.getChunkedResponseSocket();
-        r.status(400, "text/plain");
+        r.status(state.getHttpResponseCode(), "text/plain");
         r.sendHeader();
-        r.putAscii(errorText);
+        state.formatError(r);
+        r.sendChunk(true);
+    }
+
+    private void sendError(HttpConnectionContext context, String message, Throwable th) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        HttpChunkedResponseSocket r = context.getChunkedResponseSocket();
+        r.status(500, "text/plain");
+        r.sendHeader();
+        state.formatError(r, message, th);
         r.sendChunk(true);
     }
 }

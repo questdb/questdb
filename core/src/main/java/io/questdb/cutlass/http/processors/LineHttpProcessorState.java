@@ -30,7 +30,10 @@ import io.questdb.cutlass.line.tcp.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
+import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sink;
+import org.jetbrains.annotations.Nullable;
 
 public class LineHttpProcessorState implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(LineHttpProcessorState.class);
@@ -40,6 +43,7 @@ public class LineHttpProcessorState implements QuietCloseable {
     private final LineTcpParser parser;
     private final int recvBufSize;
     private final WeakClosableObjectPool<SymbolCache> symbolCachePool;
+    int errorLine = -1;
     private long buffer;
     private Status currentStatus = Status.OK;
     private int fd = -1;
@@ -47,6 +51,7 @@ public class LineHttpProcessorState implements QuietCloseable {
     private long recvBufEnd;
     private long recvBufPos;
     private long recvBufStartOfMeasurement;
+    private DirectUtf8Sequence requestId;
 
     public LineHttpProcessorState(int recvBufSize, CairoEngine engine, LineHttpProcessorConfiguration configuration) {
         assert recvBufSize > 0;
@@ -74,10 +79,14 @@ public class LineHttpProcessorState implements QuietCloseable {
     }
 
     public void clear() {
+        ilpTudCache.clear();
         Vect.memset(buffer, recvBufSize, 0);
+        parser.of(buffer);
         recvBufPos = buffer;
         error.clear();
         currentStatus = Status.OK;
+        errorLine = 0;
+        line = 0;
     }
 
     @Override
@@ -92,21 +101,47 @@ public class LineHttpProcessorState implements QuietCloseable {
         ilpTudCache.commitAll();
     }
 
+    public void formatError(Utf8Sink sink) {
+        sink.putAscii("{\"code\":\"").putAscii(currentStatus.codeStr);
+        sink.putAscii("\",\"message\":\"").putAscii("failed to parse line protocol: errors encountered on line(s):");
+        sink.put(error); // TODO: escape to be valid json string
+        sink.putAscii("\",\"line\":").put(errorLine).putAscii('}');
+    }
+
+    public void formatError(Utf8Sink sink, CharSequence message, @Nullable Throwable exception) {
+        sink.put("{\"code\":\"internal error\",\"err\":\"");
+        sink.put(message).put("\"");
+        if (exception != null) {
+            sink.put(",\"message\":\"");
+            sink.put(exception.getMessage()); // TODO: escape to be valid json string
+        }
+        sink.put("\"}");
+    }
+
     public CharSequence getError() {
         return error;
+    }
+
+    public int getHttpResponseCode() {
+        return currentStatus.responseCode;
     }
 
     public Status getStatus() {
         return currentStatus;
     }
 
-    public void of(int fd) {
-        this.fd = fd;
+    public boolean isOk() {
+        return currentStatus == Status.OK;
     }
 
-    public Status parse(long lo, long hi) {
-        if (currentStatus == Status.ERROR) {
-            return currentStatus;
+    public void of(int fd, DirectUtf8Sequence requestId) {
+        this.fd = fd;
+        this.requestId = requestId;
+    }
+
+    public void parse(long lo, long hi) {
+        if (stopParse()) {
+            return;
         }
 
         try {
@@ -114,16 +149,14 @@ public class LineHttpProcessorState implements QuietCloseable {
             while (pos < hi) {
                 pos = copyToLocalBuffer(pos, hi);
                 currentStatus = processLocalBuffer();
-                if (currentStatus == Status.ERROR) {
-                    return currentStatus;
+                if (stopParse()) {
+                    return;
                 }
             }
-            return currentStatus;
         } catch (Throwable th) {
             LOG.error().$("could not parse HTTP request [fd=").$(fd).$(", ex=").$(th).$(']').$();
             error.put(th.getMessage());
-            currentStatus = Status.ERROR;
-            return currentStatus;
+            currentStatus = Status.INTERNAL_ERROR;
         }
     }
 
@@ -134,7 +167,6 @@ public class LineHttpProcessorState implements QuietCloseable {
     }
 
     private void appendMeasurement() {
-//        LOG.info().$("parsed measurement [table=").$(parser.getMeasurementName()).$(", fd=").$(fd).I$();
         WalTableUpdateDetails tud = this.ilpTudCache.getTableUpdateDetails(AllowAllSecurityContext.INSTANCE, parser, symbolCachePool);
 
         try {
@@ -151,14 +183,6 @@ public class LineHttpProcessorState implements QuietCloseable {
             parser.shl(shl);
             recvBufPos -= shl;
             this.recvBufStartOfMeasurement -= shl;
-
-//            LOG.info().$("compacting buffer [fd=").$(fd)
-//                    .$(", shl=").$(shl)
-//                    .$(", recvBufPos=").$(recvBufPos)
-//                    .$(", buffer=").$(buffer)
-//                    .$(", fd=").$(fd).$(']')
-//                    .I$();
-
             return true;
         }
         return recvBufPos < recvBufEnd;
@@ -187,14 +211,13 @@ public class LineHttpProcessorState implements QuietCloseable {
                     }
 
                     case ERROR: {
-                        saveParseError();
-                        return Status.ERROR;
+                        return saveParseError(parser);
                     }
 
                     case BUFFER_UNDERFLOW: {
                         if (!compactBuffer(recvBufStartOfMeasurement)) {
                             error.put("buffer underflow [table=").put(parser.getMeasurementName()).put(", line=").put(line + 1).put("]");
-                            return Status.ERROR;
+                            return Status.MESSAGE_TOO_LARGE;
                         }
                         return Status.NEEDS_REED;
                     }
@@ -204,20 +227,45 @@ public class LineHttpProcessorState implements QuietCloseable {
                         .$('[').$(fd).$("] could not process line data [table=").$(parser.getMeasurementName())
                         .$(", ex=").$(ex)
                         .I$();
-                saveParseError(ex);
-                return Status.ERROR;
+                return saveParseError(ex);
             }
         }
         return status;
     }
 
-    private void saveParseError() {
-        error.put("parse error [table=").put(parser.getMeasurementName()).put(", line=").put(line + 1).put("]");
-        LOG.info().$("parse error [table=").$(parser.getMeasurementName()).$(", line=").$(line + 1).$(']').$();
+    private Status saveParseError(LineTcpParser parser) {
+        errorLine = line + 1;
+        int errorPos = error.length();
+        error.put("\nerror parsing line ").put(errorLine);
+        switch (parser.getErrorCode()) {
+            case NO_FIELDS:
+                error.put(": No fields were provided");
+                break;
+            case MISSING_FIELD_VALUE:
+                error.put(": Could not parse entire line. Field value is missing: ").put(parser.getLastEntityName());
+                break;
+            case MISSING_TAG_VALUE:
+                error.put(": Could not parse entire line. Tag value is missing: ").put(parser.getLastEntityName());
+                break;
+            default:
+                error.put(": ").put(String.valueOf(parser.getErrorCode()));
+                break;
+        }
+
+        LOG.info().$("parse error [table=").$(parser.getMeasurementName())
+                .$(", line=").$(line + 1)
+                .$(error.subSequence(errorPos, error.length()))
+                .$(", request=").$(requestId)
+                .$(", fd=").$(fd)
+                .$();
+        line++;
+        return Status.PARSE_ERROR;
     }
 
-    private void saveParseError(Throwable ex) {
+    private Status saveParseError(Throwable ex) {
         error.put("parse error [table=").put(parser.getMeasurementName()).put(", line=").put(line + 1).put(", error=").put(ex.getMessage()).put("]");
+        errorLine = line + 1;
+        return Status.INTERNAL_ERROR;
     }
 
     private void startNewMeasurement() {
@@ -228,13 +276,26 @@ public class LineHttpProcessorState implements QuietCloseable {
             recvBufPos = buffer;
             recvBufStartOfMeasurement = buffer;
             parser.of(buffer);
-//            LOG.info().$("start of line at the end of the buffer, resetting the buffer [fd=").$(fd).I$();
         }
     }
 
+    private boolean stopParse() {
+        return currentStatus != Status.OK && currentStatus != Status.NEEDS_REED;
+    }
+
     public enum Status {
-        OK,
-        ERROR,
-        NEEDS_REED
+        OK(null, 204),
+        NEEDS_REED("invalid", 400),
+        PARSE_ERROR("invalid", 400),
+        INTERNAL_ERROR("internal error", 500),
+        MESSAGE_TOO_LARGE("request too large", 413);
+
+        private final String codeStr;
+        private final int responseCode;
+
+        Status(String codeStr, int responseCode) {
+            this.codeStr = codeStr;
+            this.responseCode = responseCode;
+        }
     }
 }

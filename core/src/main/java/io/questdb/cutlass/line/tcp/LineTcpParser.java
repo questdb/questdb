@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.line.tcp;
 
+import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -118,6 +119,13 @@ public class LineTcpParser {
 
     public ErrorCode getErrorCode() {
         return errorCode;
+    }
+
+    public DirectUtf8Sequence getLastEntityName() {
+        if (currentEntity != null) {
+            return currentEntity.getName();
+        }
+        return null;
     }
 
     public DirectUtf8Sequence getMeasurementName() {
@@ -366,14 +374,7 @@ public class LineTcpParser {
                 return false;
             }
 
-            if (entityCache.size() <= nEntities) {
-                currentEntity = new ProtoEntity();
-                entityCache.add(currentEntity);
-            } else {
-                currentEntity = entityCache.get(nEntities);
-                currentEntity.clear();
-            }
-
+            currentEntity = popEntity();
             nEntities++;
             currentEntity.setName();
             entityHandler = ENTITY_HANDLER_VALUE;
@@ -418,10 +419,16 @@ public class LineTcpParser {
             }
         }
 
+        // For error logging.
+        if (!emptyEntity) {
+            currentEntity = popEntity();
+            nEntities++;
+            currentEntity.setName();
+        }
         if (tagsComplete) {
-            errorCode = ErrorCode.INCOMPLETE_FIELD;
+            errorCode = ErrorCode.MISSING_FIELD_VALUE;
         } else {
-            errorCode = ErrorCode.INCOMPLETE_TAG;
+            errorCode = ErrorCode.MISSING_TAG_VALUE;
         }
         return false;
     }
@@ -521,6 +528,18 @@ public class LineTcpParser {
         return ParseResult.ERROR;
     }
 
+    private ProtoEntity popEntity() {
+        ProtoEntity currentEntity;
+        if (entityCache.size() <= nEntities) {
+            currentEntity = new ProtoEntity();
+            entityCache.add(currentEntity);
+        } else {
+            currentEntity = entityCache.get(nEntities);
+            currentEntity.clear();
+        }
+        return currentEntity;
+    }
+
     private boolean prepareQuotedEntity(long openQuoteIdx, long bufHi) {
         // the byte at openQuoteIdx (bufAt + 1) is '"', from here it can only be
         // the start of a string value. Get it ready for immediate consumption by
@@ -583,7 +602,7 @@ public class LineTcpParser {
         INVALID_FIELD_VALUE_STR_UNDERFLOW,
         INVALID_TABLE_NAME,
         INVALID_COLUMN_NAME,
-        NONE
+        MISSING_FIELD_VALUE, MISSING_TAG_VALUE, NONE
     }
 
     public enum ParseResult {

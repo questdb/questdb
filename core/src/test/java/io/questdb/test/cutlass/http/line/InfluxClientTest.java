@@ -25,6 +25,7 @@
 package io.questdb.test.cutlass.http.line;
 
 import io.questdb.PropertyKey;
+import io.questdb.ServerMain;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
@@ -32,12 +33,17 @@ import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.influxdb.InfluxDB;
+import org.influxdb.InfluxDBException;
 import org.influxdb.InfluxDBFactory;
 import org.influxdb.dto.BatchPoints;
 import org.influxdb.dto.Point;
+import org.jetbrains.annotations.NotNull;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -47,6 +53,42 @@ public class InfluxClientTest extends AbstractBootstrapTest {
         super.setUp();
         TestUtils.unchecked(() -> createDummyConfiguration());
         dbPath.parent().$();
+    }
+
+    @Test
+    public void testInsertMixValidAndInvalidLines() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
+            )) {
+                serverMain.start();
+                long timestamp = IntervalUtils.parseFloorPartialTimestamp("2023-11-27T18:53:24.834Z");
+
+                try (final InfluxDB influxDB = getConnection(serverMain)) {
+
+                    List<String> points = new ArrayList<>();
+                    points.add("good_point abc=1,def=2,ghi=3 " + timestamp + "\n");
+                    points.add("badPoint a3 " + timestamp + "\n");
+                    assertRequestError(influxDB, points, "{" +
+                            "\"code\":\"invalid\"," +
+                            "\"message\":\"failed to parse line protocol: errors encountered on line(s):\\n" +
+                            "error parsing line 2: Could not parse entire line. Field value is missing: a3\"," +
+                            "\"line\":2" +
+                            "}");
+
+                    points.add("badPoint,a3 " + timestamp + "\n");
+                    assertRequestError(influxDB, points, "{" +
+                            "\"code\":\"invalid\"," +
+                            "\"message\":\"failed to parse line protocol: errors encountered on line(s):\\n" +
+                            "error parsing line 1: Could not parse entire line. Tag value is missing: a3\"," +
+                            "\"line\":1" +
+                            "}");
+                }
+
+                serverMain.assertSql("SELECT count() FROM good_point", "count\n0\n");
+                serverMain.assertSql("select table_name from tables() where table_name='badPoint'", "table_name\n");
+            }
+        });
     }
 
     @Test
@@ -60,8 +102,7 @@ public class InfluxClientTest extends AbstractBootstrapTest {
                 String tableName = "h2o_feet";
                 int count = 9250;
 
-                int httpPort = serverMain.getConfiguration().getHttpServerConfiguration().getDispatcherConfiguration().getBindPort();
-                sendIlp(tableName, count, httpPort);
+                sendIlp(tableName, count, serverMain);
 
                 serverMain.waitWalTxnApplied(tableName, 1);
                 serverMain.assertSql("SELECT count() FROM h2o_feet", "count\n" + count + "\n");
@@ -83,14 +124,13 @@ public class InfluxClientTest extends AbstractBootstrapTest {
 
                 int threads = 5;
                 ObjList<Thread> threadList = new ObjList<>();
-                int httpPort = serverMain.getConfiguration().getHttpServerConfiguration().getDispatcherConfiguration().getBindPort();
                 AtomicReference<Throwable> error = new AtomicReference<>();
 
                 for (int i = 0; i < threads; i++) {
                     final int threadNo = i;
                     threadList.add(new Thread(() -> {
                         try {
-                            sendIlp(tableName + threadNo, count, httpPort);
+                            sendIlp(tableName + threadNo, count, serverMain);
                         } catch (Throwable e) {
                             e.printStackTrace();
                             error.set(e);
@@ -132,13 +172,12 @@ public class InfluxClientTest extends AbstractBootstrapTest {
 
                 int threads = 5;
                 ObjList<Thread> threadList = new ObjList<>();
-                int httpPort = serverMain.getConfiguration().getHttpServerConfiguration().getDispatcherConfiguration().getBindPort();
                 AtomicReference<Throwable> error = new AtomicReference<>();
 
                 for (int i = 0; i < threads; i++) {
                     threadList.add(new Thread(() -> {
                         try {
-                            sendIlp(tableName, count, httpPort);
+                            sendIlp(tableName, count, serverMain);
                         } catch (Throwable e) {
                             e.printStackTrace();
                             error.set(e);
@@ -164,12 +203,28 @@ public class InfluxClientTest extends AbstractBootstrapTest {
         });
     }
 
-    private static void sendIlp(String tableName, int count, int port) throws NumericException {
-        final String serverURL = "http://127.0.0.1:" + port, username = "root", password = "root";
+    private static void assertRequestError(InfluxDB influxDB, List<String> points, String error) {
+        try {
+            influxDB.write(points);
+            Assert.fail();
+        } catch (InfluxDBException e) {
+            TestUtils.assertEquals(error, e.getMessage());
+        }
+        points.clear();
+    }
+
+    @NotNull
+    private static InfluxDB getConnection(ServerMain serverMain) {
+        int httpPort = serverMain.getConfiguration().getHttpServerConfiguration().getDispatcherConfiguration().getBindPort();
+        final String serverURL = "http://127.0.0.1:" + httpPort, username = "root", password = "root";
+        return InfluxDBFactory.connect(serverURL, username, password);
+    }
+
+    private static void sendIlp(String tableName, int count, ServerMain serverMain) throws NumericException {
         long timestamp = IntervalUtils.parseFloorPartialTimestamp("2023-11-27T18:53:24.834Z");
         int i = 0;
 
-        try (final InfluxDB influxDB = InfluxDBFactory.connect(serverURL, username, password)) {
+        try (final InfluxDB influxDB = getConnection(serverMain)) {
 
             BatchPoints batchPoints = BatchPoints
                     .database("test_db")

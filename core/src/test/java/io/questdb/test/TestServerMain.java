@@ -35,10 +35,12 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 
 public class TestServerMain extends ServerMain {
+    private StringSink sink = new StringSink();
     private SqlExecutionContext sqlExecutionContext;
 
     public TestServerMain(String... args) {
@@ -72,7 +74,7 @@ public class TestServerMain extends ServerMain {
                         null
                 );
             }
-            TestUtils.assertSql(getEngine(), sqlExecutionContext, sql, Misc.getThreadLocalSink(), expected);
+            TestUtils.assertSql(getEngine(), sqlExecutionContext, sql, sink, expected);
         } catch (SqlException e) {
             throw new AssertionError(e);
         }
