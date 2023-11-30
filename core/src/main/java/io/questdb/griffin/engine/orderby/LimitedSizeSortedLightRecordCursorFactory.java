@@ -181,7 +181,7 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
                 limit
         );
 
-        if (timestampIndex == -1) {
+        if (timestampIndex == -1 || !isFirstN) {
             this.cursor = new LimitedSizeSortedLightRecordCursor(chain, comparator, limit, skipFirst, skipLast);
         } else {
             this.cursor = new LimitedSizePartiallySortedLightRecordCursor(chain, comparator, limit, skipFirst, skipLast, timestampIndex);
