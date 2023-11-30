@@ -3580,6 +3580,34 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNestedCrossJoinCount() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table t(c0 timestamp, c1 int, c2 int);\n");
+            insert("insert into t values('2023-09-21T10:00:00.000000Z',1,1);\n");
+            insert("insert into t values('2023-09-21T10:00:00.000000Z',1,1);\n");
+
+            assertSql("count\n0\n",
+                    "select count(*) " +
+                            "from t as t1 " +
+                            "join t as t2 on t1.c0<t2.c0 " +
+                            "cross join t as t3");
+
+            assertSql("count\n0\n",
+                    "select count(*) " +
+                            "from t as t3 " +
+                            "cross join t as t1 " +
+                            "join t as t2 on t1.c0<t2.c0 ");
+
+            assertSql("count\n0\n",
+                    "select count(*) " +
+                            "from t as t3 " +
+                            "cross join t as t2 " +
+                            "join t as t1 on t1.c0<t2.c0 ");
+        });
+
+    }
+
+    @Test
     public void testSelectAliasTest() throws Exception {
         assertMemoryLeak(() -> {
             ddl(

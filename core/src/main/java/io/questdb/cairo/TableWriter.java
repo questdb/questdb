@@ -623,13 +623,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final int columnIndex = getColumnIndexQuiet(metaMem, columnName, columnCount);
 
         if (columnIndex == -1) {
-            throw CairoException.nonCritical().put("column '").put(columnName).put("' does not exist");
+            throw CairoException.invalidMetadataRecoverable("column does not exist", columnName);
         }
 
         commit();
 
         if (isColumnIndexed(metaMem, columnIndex)) {
-            throw CairoException.nonCritical().put("column is already indexed [column=").put(columnName).put(']');
+            throw CairoException.invalidMetadataRecoverable("column is already indexed", columnName);
         }
 
         final int existingType = getColumnType(metaMem, columnIndex);
@@ -637,7 +637,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         if (!ColumnType.isSymbol(existingType)) {
             LOG.error().$("cannot create index for [column='").utf8(columnName).$(", type=").$(ColumnType.nameOf(existingType)).$(", path=").$(path).I$();
-            throw CairoException.nonCritical().put("cannot create index for [column='").put(columnName).put("', type=").put(ColumnType.nameOf(existingType)).put(", path=").put(path).put(']');
+            throw CairoException.invalidMetadataRecoverable("cannot create index, column type is not SYMBOL", columnName);
         }
 
         // create indexer
@@ -707,7 +707,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             return rowsAffected;
         } catch (CairoException ex) {
-            // This is non-critical error, we can mark seqTxn as processed
             if (ex.isWALTolerable()) {
                 try {
                     rollback(); // rollback in case on any dirty state
@@ -1229,11 +1228,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         final int columnIndex = getColumnIndexQuiet(metaMem, columnName, columnCount);
         if (columnIndex == -1) {
-            throw CairoException.invalidMetadata("column does not exist", columnName);
+            throw CairoException.invalidMetadataRecoverable("column does not exist", columnName);
         }
         if (!isColumnIndexed(metaMem, columnIndex)) {
             // if a column is indexed, it is also of type SYMBOL
-            throw CairoException.invalidMetadata("column is not indexed", columnName);
+            throw CairoException.invalidMetadataRecoverable("column is not indexed", columnName);
         }
         final int defaultIndexValueBlockSize = Numbers.ceilPow2(configuration.getIndexValueBlockSize());
 

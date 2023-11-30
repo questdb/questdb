@@ -34,13 +34,15 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
     protected static final byte BLACK = 0;
     protected static final byte EMPTY = -1;//empty reference; used to mark leaves/sentinels
     // parent is at offset 0
-    protected static final int O_LEFT = 8;
+    protected static final int OFFSET_LEFT = 8;
     protected static final byte RED = 1;
-    // P(8) + L + R + C(1) + REF
-    private static final int BLOCK_SIZE = 8 + 8 + 8 + 1 + 8; // 33(it would be good to align to power of two, but entry would use way too much memory)
-    private static final int O_COLOUR = 24;
-    private static final int O_REF = 25;
-    private static final int O_RIGHT = 16;
+    // P(8) + L + R + C(1) + REF + LAST_REF
+    private static final int BLOCK_SIZE = 8 + 8 + 8 + 1 + 8 + 8; // 41 (it would be good to align to power of two, but entry would use way too much memory)
+    private static final int OFFSET_COLOUR = 24;
+    // offset to last reference in value chain (kept to avoid having to traverse whole chain on each addition)
+    private static final int OFFSET_LAST_REF = 33;
+    private static final int OFFSET_REF = 25;
+    private static final int OFFSET_RIGHT = 16;
     protected final MemoryPages mem;
     protected long root = -1;
 
@@ -115,11 +117,15 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
     }
 
     protected static byte colorOf(long blockAddress) {
-        return blockAddress == -1 ? BLACK : Unsafe.getUnsafe().getByte(blockAddress + O_COLOUR);
+        return blockAddress == -1 ? BLACK : Unsafe.getUnsafe().getByte(blockAddress + OFFSET_COLOUR);
+    }
+
+    protected static long lastRefOf(long blockAddress) {
+        return blockAddress == -1 ? -1 : Unsafe.getUnsafe().getLong(blockAddress + OFFSET_LAST_REF);
     }
 
     protected static long leftOf(long blockAddress) {
-        return blockAddress == -1 ? -1 : Unsafe.getUnsafe().getLong(blockAddress + O_LEFT);
+        return blockAddress == -1 ? -1 : Unsafe.getUnsafe().getLong(blockAddress + OFFSET_LEFT);
     }
 
     protected static long parent2Of(long blockAddress) {
@@ -131,20 +137,24 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
     }
 
     protected static long refOf(long blockAddress) {
-        return blockAddress == -1 ? -1 : Unsafe.getUnsafe().getLong(blockAddress + O_REF);
+        return blockAddress == -1 ? -1 : Unsafe.getUnsafe().getLong(blockAddress + OFFSET_REF);
     }
 
     //methods below check for -1 to simulate sentinel value and thus simplify insert/remove methods
     protected static long rightOf(long blockAddress) {
-        return blockAddress == -1 ? -1 : Unsafe.getUnsafe().getLong(blockAddress + O_RIGHT);
+        return blockAddress == -1 ? -1 : Unsafe.getUnsafe().getLong(blockAddress + OFFSET_RIGHT);
     }
 
     protected static void setColor(long blockAddress, byte colour) {
-        Unsafe.getUnsafe().putByte(blockAddress + O_COLOUR, colour);
+        Unsafe.getUnsafe().putByte(blockAddress + OFFSET_COLOUR, colour);
+    }
+
+    protected static void setLastRef(long blockAddress, long recRef) {
+        Unsafe.getUnsafe().putLong(blockAddress + OFFSET_LAST_REF, recRef);
     }
 
     protected static void setLeft(long blockAddress, long left) {
-        Unsafe.getUnsafe().putLong(blockAddress + O_LEFT, left);
+        Unsafe.getUnsafe().putLong(blockAddress + OFFSET_LEFT, left);
     }
 
     protected static void setParent(long blockAddress, long parent) {
@@ -152,11 +162,11 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
     }
 
     protected static void setRef(long blockAddress, long recRef) {
-        Unsafe.getUnsafe().putLong(blockAddress + O_REF, recRef);
+        Unsafe.getUnsafe().putLong(blockAddress + OFFSET_REF, recRef);
     }
 
     protected static void setRight(long blockAddress, long right) {
-        Unsafe.getUnsafe().putLong(blockAddress + O_RIGHT, right);
+        Unsafe.getUnsafe().putLong(blockAddress + OFFSET_RIGHT, right);
     }
 
     protected static long successor(long current) {
