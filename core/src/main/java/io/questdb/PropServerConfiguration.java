@@ -290,6 +290,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlPageFrameMinRows;
     private final boolean sqlParallelFilterEnabled;
     private final boolean sqlParallelFilterPreTouchEnabled;
+    private final int sqlQueryRegistryPoolSize;
     private final int sqlRenameTableModelPoolCapacity;
     private final int sqlSmallMapKeyCapacity;
     private final int sqlSmallMapPageSize;
@@ -342,9 +343,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long walApplyWorkerSleepThreshold;
     private final long walApplyWorkerYieldThreshold;
     private final boolean walEnabledDefault;
-    private final int walMaxSegmentFileDescriptorsCache;
     private final long walMaxLagSize;
     private final int walMaxLagTxnCount;
+    private final int walMaxSegmentFileDescriptorsCache;
     private final long walPurgeInterval;
     private final int walPurgeWaitBeforeDelete;
     private final int walRecreateDistressedSequencerAttempts;
@@ -924,6 +925,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlGroupByPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_GROUPBY_POOL_CAPACITY, 1024);
             this.sqlMaxSymbolNotEqualsCount = getInt(properties, env, PropertyKey.CAIRO_SQL_MAX_SYMBOL_NOT_EQUALS_COUNT, 100);
             this.sqlBindVariablePoolSize = getInt(properties, env, PropertyKey.CAIRO_SQL_BIND_VARIABLE_POOL_SIZE, 8);
+            this.sqlQueryRegistryPoolSize = getInt(properties, env, PropertyKey.CAIRO_SQL_QUERY_REGISTRY_POOL_SIZE, 32);
             this.sqlCountDistinctCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_COUNT_DISTINCT_CAPACITY, 16);
             this.sqlCountDistinctLoadFactor = getDouble(properties, env, PropertyKey.CAIRO_SQL_COUNT_DISTINCT_LOAD_FACTOR, "0.7");
             final String sqlCopyFormatsFile = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_FORMATS_FILE, "/text_loader.json");
@@ -2209,6 +2211,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getQueryRegistryPoolSize() {
+            return sqlQueryRegistryPoolSize;
+        }
+
+        @Override
         public int getReaderPoolMaxSegments() {
             return readerPoolMaxSegments;
         }
@@ -2613,11 +2620,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getWalMaxSegmentFileDescriptorsCache() {
-            return walMaxSegmentFileDescriptorsCache;
-        }
-
-        @Override
         public long getWalMaxLagSize() {
             return walMaxLagSize;
         }
@@ -2625,6 +2627,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getWalMaxLagTxnCount() {
             return walMaxLagTxnCount;
+        }
+
+        @Override
+        public int getWalMaxSegmentFileDescriptorsCache() {
+            return walMaxSegmentFileDescriptorsCache;
         }
 
         @Override

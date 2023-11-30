@@ -59,7 +59,6 @@ package io.questdb.std;
  * http://creativecommons.org/publicdomain/zero/1.0/
  */
 
-import io.questdb.std.str.CloneableMutable;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.ObjectStreamField;
@@ -68,13 +67,11 @@ import java.lang.ThreadLocal;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.util.*;
-import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.LockSupport;
 import java.util.concurrent.locks.ReentrantLock;
-import java.util.function.BiFunction;
-import java.util.function.Function;
+import java.util.function.LongFunction;
 
 /**
  * A hash table supporting full concurrency of retrievals and
@@ -128,7 +125,7 @@ import java.util.function.Function;
  * {@code hashCode()} is a sure way to slow down performance of any
  * hash table. To ameliorate impact, when keys are {@link Comparable},
  * this class may use comparison order among keys to help break ties.
- * <p>A {@link Set} projection of a ConcurrentHashMap may be created
+ * <p>A {@link Set} projection of a ConcurrentLongHashMap may be created
  * (using {@link #newKeySet()} or {@link #newKeySet(int)}), or viewed
  * (using {@link #keySet(Object)} when only keys are of interest, and the
  * mapped values are (perhaps transiently) not used or all take the
@@ -138,20 +135,20 @@ import java.util.function.Function;
  * interfaces.
  * <p>Like {@link Hashtable} but unlike {@link HashMap}, this class
  * does <em>not</em> allow {@code null} to be used as a key or value.
- * <p>ConcurrentHashMaps support a set of sequential and parallel bulk
+ * <p>ConcurrentLongHashMap supports a set of sequential and parallel bulk
  * operations that are designed
  * to be safely, and often sensibly, applied even with maps that are
  * being concurrently updated by other threads; for example, when
  * computing a snapshot summary of the values in a shared registry.
  * There are three kinds of operation, each with four forms, accepting
  * functions with Keys, Values, Entries, and (Key, Value) arguments
- * and/or return values. Because the elements of a ConcurrentHashMap
+ * and/or return values. Because the elements of a ConcurrentLongHashMap
  * are not ordered in any particular way, and may be processed in
  * different orders in different parallel executions, the correctness
  * of supplied functions should not depend on any ordering, or on any
  * other objects or values that may transiently change while
  * computation is in progress; and except for forEach actions, should
- * ideally be side-effect-free. Bulk operations on {@link java.util.Map.Entry}
+ * ideally be side-effect-free. Bulk operations on {@link LongEntry}
  * objects do not support method {@code setValue}.
  * <ul>
  * <li> forEach: Perform a given action on each element.
@@ -175,7 +172,7 @@ import java.util.function.Function;
  * </li>
  * </ul>
  * <p>The concurrency properties of bulk operations follow
- * from those of ConcurrentHashMap: Any non-null result returned
+ * from those of ConcurrentLongHashMap: Any non-null result returned
  * from {@code get(key)} and related access methods bears a
  * happens-before relation with the associated insertion or
  * update.  The result of any bulk operation reflects the
@@ -201,11 +198,9 @@ import java.util.function.Function;
  * filterings by composing them yourself under this "null means
  * there is nothing there now" rule before using them in search or
  * reduce operations.
- * <p>Methods accepting and/or returning Entry arguments maintain
+ * <p>Methods accepting and/or returning LongEntry arguments maintain
  * key-value associations. They may be useful for example when
- * finding the key for the greatest value. Note that "plain" Entry
- * arguments can be supplied using {@code new
- * AbstractMap.SimpleEntry(k,v)}.
+ * finding the key for the greatest value.
  * <p>Bulk operations may complete abruptly, throwing an
  * exception encountered in the application of a supplied
  * function. Bear in mind when handling such exceptions that other
@@ -229,9 +224,8 @@ import java.util.function.Function;
  * @since 1.5
  */
 @SuppressWarnings("SynchronizationOnLocalVariableOrMethodParameter")
-public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
-        implements ConcurrentMap<CharSequence, V>, Serializable {
-    static final int HASH_BITS = 0x7fffffff; // usable bits of normal node hash
+public class ConcurrentLongHashMap<V> implements Serializable {
+    static final long EMPTY_KEY = -1;
 
     /*
      * Overview:
@@ -465,6 +459,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
      */
 
     /* ---------------- Constants -------------- */
+    static final int HASH_BITS = 0x7fffffff; // usable bits of normal node hash
     /**
      * The largest possible (non-power of two) array size.
      * Needed by toArray and related methods.
@@ -623,7 +618,6 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
     private transient volatile CounterCell[] counterCells;
     // Original (since JDK1.2) Map methods
     private transient EntrySetView<V> entrySet;
-    private transient boolean ics = true;
     /* ---------------- Public operations -------------- */
     // views
     private transient KeySetView<V> keySet;
@@ -647,55 +641,6 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
     private transient ValuesView<V> values;
 
     /**
-     * Creates a new, empty map with the default initial table size (16).
-     */
-    public ConcurrentHashMap(boolean isCaseSensitive) {
-        this.ics = isCaseSensitive;
-    }
-
-    public ConcurrentHashMap() {
-        this(true);
-    }
-
-    /**
-     * Creates a new, empty map with an initial table size
-     * accommodating the specified number of elements without the need
-     * to dynamically resize.
-     *
-     * @param initialCapacity The implementation performs internal
-     *                        sizing to accommodate this many elements.
-     * @throws IllegalArgumentException if the initial capacity of
-     *                                  elements is negative
-     */
-    public ConcurrentHashMap(int initialCapacity, boolean isCaseSensitive) {
-        this.ics = isCaseSensitive;
-        if (initialCapacity < 0)
-            throw new IllegalArgumentException();
-        this.sizeCtl = ((initialCapacity >= (MAXIMUM_CAPACITY >>> 1)) ?
-                MAXIMUM_CAPACITY :
-                tableSizeFor(initialCapacity + (initialCapacity >>> 1) + 1));
-    }
-
-    public ConcurrentHashMap(int initialCapacity) {
-        this(initialCapacity, true);
-    }
-
-    /**
-     * Creates a new map with the same mappings as the given map.
-     *
-     * @param m the map
-     */
-    public ConcurrentHashMap(Map<? extends CharSequence, ? extends V> m, boolean isCaseSensitive) {
-        this.ics = isCaseSensitive;
-        this.sizeCtl = DEFAULT_CAPACITY;
-        putAll(m);
-    }
-
-    public ConcurrentHashMap(Map<? extends CharSequence, ? extends V> m) {
-        this(m, true);
-    }
-
-    /**
      * Creates a new, empty map with an initial table size based on
      * the given number of elements ({@code initialCapacity}), table
      * density ({@code loadFactor}), and number of concurrently
@@ -710,8 +655,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
      *                                  negative or the load factor or concurrencyLevel are
      *                                  nonpositive
      */
-    public ConcurrentHashMap(int initialCapacity, float loadFactor, boolean isCaseSensitive) {
-        this.ics = isCaseSensitive;
+    public ConcurrentLongHashMap(int initialCapacity, float loadFactor) {
         if (!(loadFactor > 0.0f) || initialCapacity < 0)
             throw new IllegalArgumentException();
         if (initialCapacity < 1)   // Use at least as many bins
@@ -721,27 +665,53 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                 MAXIMUM_CAPACITY : tableSizeFor((int) size);
     }
 
-    public ConcurrentHashMap(int initialCapacity, float loadFactor) {
-        this(initialCapacity, loadFactor, true);
+    /**
+     * Creates a new map with the same mappings as the given map.
+     *
+     * @param m the map
+     */
+    public ConcurrentLongHashMap(ConcurrentLongHashMap<? extends V> m) {
+        this.sizeCtl = DEFAULT_CAPACITY;
+        putAll(m);
     }
 
     /**
-     * Creates a new {@link Set} backed by a ConcurrentHashMap
+     * Creates a new, empty map with the default initial table size (16).
+     */
+    public ConcurrentLongHashMap() {
+    }
+
+    /**
+     * Creates a new, empty map with an initial table size
+     * accommodating the specified number of elements without the need
+     * to dynamically resize.
+     *
+     * @param initialCapacity The implementation performs internal
+     *                        sizing to accommodate this many elements.
+     * @throws IllegalArgumentException if the initial capacity of
+     *                                  elements is negative
+     */
+    public ConcurrentLongHashMap(int initialCapacity) {
+        if (initialCapacity < 0)
+            throw new IllegalArgumentException();
+        this.sizeCtl = ((initialCapacity >= (MAXIMUM_CAPACITY >>> 1)) ?
+                MAXIMUM_CAPACITY :
+                tableSizeFor(initialCapacity + (initialCapacity >>> 1) + 1));
+    }
+
+    /**
+     * Creates a new {@link Set} backed by a ConcurrentLongHashMap
      * from the given type to {@code Boolean.TRUE}.
      *
      * @return the new set
      * @since 1.8
      */
-    public static KeySetView<Boolean> newKeySet(boolean isCaseSensitive) {
-        return new KeySetView<>(new ConcurrentHashMap<>(isCaseSensitive), Boolean.TRUE);
-    }
-
     public static KeySetView<Boolean> newKeySet() {
-        return new KeySetView<>(new ConcurrentHashMap<>(), Boolean.TRUE);
+        return new KeySetView<>(new ConcurrentLongHashMap<>(), Boolean.TRUE);
     }
 
     /**
-     * Creates a new {@link Set} backed by a ConcurrentHashMap
+     * Creates a new {@link Set} backed by a ConcurrentLongHashMap
      * from the given type to {@code Boolean.TRUE}.
      *
      * @param initialCapacity The implementation performs internal
@@ -751,12 +721,8 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
      *                                  elements is negative
      * @since 1.8
      */
-    public static KeySetView<Boolean> newKeySet(int initialCapacity, boolean isCaseSensitive) {
-        return new KeySetView<>(new ConcurrentHashMap<>(initialCapacity, isCaseSensitive), Boolean.TRUE);
-    }
-
     public static KeySetView<Boolean> newKeySet(int initialCapacity) {
-        return new KeySetView<>(new ConcurrentHashMap<>(initialCapacity), Boolean.TRUE);
+        return new KeySetView<>(new ConcurrentLongHashMap<>(initialCapacity), Boolean.TRUE);
     }
 
     /**
@@ -805,16 +771,18 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
      * @param key               key with which the specified value is to be associated
      * @param remappingFunction the function to compute a value
      * @return the new value associated with the specified key, or null if none
-     * @throws NullPointerException  if the specified key or remappingFunction
-     *                               is null
-     * @throws IllegalStateException if the computation detectably
-     *                               attempts a recursive update to this map that would
-     *                               otherwise never complete
-     * @throws RuntimeException      or Error if the remappingFunction does so,
-     *                               in which case the mapping is unchanged
+     * @throws IllegalArgumentException if the specified key is negative
+     * @throws NullPointerException     if the specified remappingFunction is null
+     * @throws IllegalStateException    if the computation detectably
+     *                                  attempts a recursive update to this map that would
+     *                                  otherwise never complete
+     * @throws RuntimeException         or Error if the remappingFunction does so,
+     *                                  in which case the mapping is unchanged
      */
-    public V compute(CharSequence key, BiFunction<CharSequence, ? super V, ? extends V> remappingFunction) {
-        if (key == null || remappingFunction == null)
+    public V compute(long key, BiLongFunction<? super V, ? extends V> remappingFunction) {
+        if (key < 0)
+            throw new IllegalArgumentException();
+        if (remappingFunction == null)
             throw new NullPointerException();
         int h = spread(keyHashCode(key));
         V val = null;
@@ -826,7 +794,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
             if (tab == null || (n = tab.length) == 0)
                 tab = initTable();
             else if ((f = tabAt(tab, i = (n - 1) & h)) == null) {
-                Node<V> r = new ReservationNode<V>(ics);
+                Node<V> r = new ReservationNode<V>();
                 synchronized (r) {
                     if (casTabAt(tab, i, r)) {
                         binCount = 1;
@@ -834,7 +802,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                         try {
                             if ((val = remappingFunction.apply(key, null)) != null) {
                                 delta = 1;
-                                node = new Node<V>(h, key, val, null, ics);
+                                node = new Node<V>(h, key, val, null);
                             }
                         } finally {
                             setTabAt(tab, i, node);
@@ -851,9 +819,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                         if (fh >= 0) {
                             binCount = 1;
                             for (Node<V> e = f, pred = null; ; ++binCount) {
-                                CharSequence ek;
-                                if (e.hash == h &&
-                                        ((ek = e.key) == key || (keyEquals(key, ek)))) {
+                                if (e.hash == h && (e.key == key)) {
                                     val = remappingFunction.apply(key, e.val);
                                     if (val != null)
                                         e.val = val;
@@ -872,8 +838,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                                     val = remappingFunction.apply(key, null);
                                     if (val != null) {
                                         delta = 1;
-                                        pred.next =
-                                                new Node<V>(h, key, val, null, ics);
+                                        pred.next = new Node<V>(h, key, val, null);
                                     }
                                     break;
                                 }
@@ -883,7 +848,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                             TreeBin<V> t = (TreeBin<V>) f;
                             TreeNode<V> r, p;
                             if ((r = t.root) != null)
-                                p = r.findTreeNode(h, key, null);
+                                p = r.findTreeNode(h, key);
                             else
                                 p = null;
                             V pv = (p == null) ? null : p.val;
@@ -930,16 +895,18 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
      * @param mappingFunction the function to compute a value
      * @return the current (existing or computed) value associated with
      * the specified key, or null if the computed value is null
-     * @throws NullPointerException  if the specified key or mappingFunction
-     *                               is null
-     * @throws IllegalStateException if the computation detectably
-     *                               attempts a recursive update to this map that would
-     *                               otherwise never complete
-     * @throws RuntimeException      or Error if the mappingFunction does so,
-     *                               in which case the mapping is left unestablished
+     * @throws IllegalArgumentException if the specified key is negative
+     * @throws NullPointerException     if the specified mappingFunction is null
+     * @throws IllegalStateException    if the computation detectably
+     *                                  attempts a recursive update to this map that would
+     *                                  otherwise never complete
+     * @throws RuntimeException         or Error if the mappingFunction does so,
+     *                                  in which case the mapping is left unestablished
      */
-    public V computeIfAbsent(CharSequence key, Object token, BiFunction<CharSequence, Object, ? extends V> mappingFunction) {
-        if (key == null || mappingFunction == null)
+    public V computeIfAbsent(long key, Object token, BiLongFunction<Object, ? extends V> mappingFunction) {
+        if (key < 0)
+            throw new IllegalArgumentException();
+        if (mappingFunction == null)
             throw new NullPointerException();
         int h = spread(keyHashCode(key));
         V val = null;
@@ -950,14 +917,14 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
             if (tab == null || (n = tab.length) == 0)
                 tab = initTable();
             else if ((f = tabAt(tab, i = (n - 1) & h)) == null) {
-                Node<V> r = new ReservationNode<V>(ics);
+                Node<V> r = new ReservationNode<>();
                 synchronized (r) {
                     if (casTabAt(tab, i, r)) {
                         binCount = 1;
                         Node<V> node = null;
                         try {
                             if ((val = mappingFunction.apply(key, token)) != null)
-                                node = new Node<V>(h, key, val, null, ics);
+                                node = new Node<>(h, key, val, null);
                         } finally {
                             setTabAt(tab, i, node);
                         }
@@ -974,10 +941,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                         if (fh >= 0) {
                             binCount = 1;
                             for (Node<V> e = f; ; ++binCount) {
-                                CharSequence ek;
-                                V ev;
-                                if (e.hash == h &&
-                                        ((ek = e.key) == key || (keyEquals(key, ek)))) {
+                                if (e.hash == h && e.key == key) {
                                     val = e.val;
                                     break;
                                 }
@@ -985,7 +949,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                                 if ((e = e.next) == null) {
                                     if ((val = mappingFunction.apply(key, token)) != null) {
                                         added = true;
-                                        pred.next = new Node<V>(h, key, val, null, ics);
+                                        pred.next = new Node<>(h, key, val, null);
                                     }
                                     break;
                                 }
@@ -995,7 +959,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                             TreeBin<V> t = (TreeBin<V>) f;
                             TreeNode<V> r, p;
                             if ((r = t.root) != null &&
-                                    (p = r.findTreeNode(h, key, null)) != null)
+                                    (p = r.findTreeNode(h, key)) != null)
                                 val = p.val;
                             else if ((val = mappingFunction.apply(key, token)) != null) {
                                 added = true;
@@ -1032,16 +996,19 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
      * @param mappingFunction the function to compute a value
      * @return the current (existing or computed) value associated with
      * the specified key, or null if the computed value is null
-     * @throws NullPointerException  if the specified key or mappingFunction
-     *                               is null
-     * @throws IllegalStateException if the computation detectably
-     *                               attempts a recursive update to this map that would
-     *                               otherwise never complete
-     * @throws RuntimeException      or Error if the mappingFunction does so,
-     *                               in which case the mapping is left unestablished
+     * @throws IllegalArgumentException if the specified key is negative
+     * @throws NullPointerException     if the specified key or mappingFunction
+     *                                  is null
+     * @throws IllegalStateException    if the computation detectably
+     *                                  attempts a recursive update to this map that would
+     *                                  otherwise never complete
+     * @throws RuntimeException         or Error if the mappingFunction does so,
+     *                                  in which case the mapping is left unestablished
      */
-    public V computeIfAbsent(CharSequence key, Function<CharSequence, ? extends V> mappingFunction) {
-        if (key == null || mappingFunction == null)
+    public V computeIfAbsent(long key, LongFunction<? extends V> mappingFunction) {
+        if (key < 0)
+            throw new IllegalArgumentException();
+        if (mappingFunction == null)
             throw new NullPointerException();
         int h = spread(keyHashCode(key));
         V val = null;
@@ -1052,14 +1019,14 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
             if (tab == null || (n = tab.length) == 0)
                 tab = initTable();
             else if ((f = tabAt(tab, i = (n - 1) & h)) == null) {
-                Node<V> r = new ReservationNode<V>(ics);
+                Node<V> r = new ReservationNode<V>();
                 synchronized (r) {
                     if (casTabAt(tab, i, r)) {
                         binCount = 1;
                         Node<V> node = null;
                         try {
                             if ((val = mappingFunction.apply(key)) != null)
-                                node = new Node<V>(h, key, val, null, ics);
+                                node = new Node<V>(h, key, val, null);
                         } finally {
                             setTabAt(tab, i, node);
                         }
@@ -1076,10 +1043,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                         if (fh >= 0) {
                             binCount = 1;
                             for (Node<V> e = f; ; ++binCount) {
-                                CharSequence ek;
-                                V ev;
-                                if (e.hash == h &&
-                                        ((ek = e.key) == key || (keyEquals(key, ek)))) {
+                                if (e.hash == h && e.key == key) {
                                     val = e.val;
                                     break;
                                 }
@@ -1087,7 +1051,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                                 if ((e = e.next) == null) {
                                     if ((val = mappingFunction.apply(key)) != null) {
                                         added = true;
-                                        pred.next = new Node<V>(h, key, val, null, ics);
+                                        pred.next = new Node<V>(h, key, val, null);
                                     }
                                     break;
                                 }
@@ -1097,7 +1061,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                             TreeBin<V> t = (TreeBin<V>) f;
                             TreeNode<V> r, p;
                             if ((r = t.root) != null &&
-                                    (p = r.findTreeNode(h, key, null)) != null)
+                                    (p = r.findTreeNode(h, key)) != null)
                                 val = p.val;
                             else if ((val = mappingFunction.apply(key)) != null) {
                                 added = true;
@@ -1132,16 +1096,18 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
      * @param key               key with which a value may be associated
      * @param remappingFunction the function to compute a value
      * @return the new value associated with the specified key, or null if none
-     * @throws NullPointerException  if the specified key or remappingFunction
-     *                               is null
-     * @throws IllegalStateException if the computation detectably
-     *                               attempts a recursive update to this map that would
-     *                               otherwise never complete
-     * @throws RuntimeException      or Error if the remappingFunction does so,
-     *                               in which case the mapping is unchanged
+     * @throws IllegalArgumentException if the specified key is negative
+     * @throws NullPointerException     if the specified remappingFunction is null
+     * @throws IllegalStateException    if the computation detectably
+     *                                  attempts a recursive update to this map that would
+     *                                  otherwise never complete
+     * @throws RuntimeException         or Error if the remappingFunction does so,
+     *                                  in which case the mapping is unchanged
      */
-    public V computeIfPresent(CharSequence key, BiFunction<CharSequence, ? super V, ? extends V> remappingFunction) {
-        if (key == null || remappingFunction == null)
+    public V computeIfPresent(long key, BiLongFunction<? super V, ? extends V> remappingFunction) {
+        if (key < 0)
+            throw new IllegalArgumentException();
+        if (remappingFunction == null)
             throw new NullPointerException();
         int h = spread(keyHashCode(key));
         V val = null;
@@ -1162,9 +1128,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                         if (fh >= 0) {
                             binCount = 1;
                             for (Node<V> e = f, pred = null; ; ++binCount) {
-                                CharSequence ek;
-                                if (e.hash == h &&
-                                        ((ek = e.key) == key || (keyEquals(key, ek)))) {
+                                if (e.hash == h && e.key == key) {
                                     val = remappingFunction.apply(key, e.val);
                                     if (val != null)
                                         e.val = val;
@@ -1187,7 +1151,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                             TreeBin<V> t = (TreeBin<V>) f;
                             TreeNode<V> r, p;
                             if ((r = t.root) != null &&
-                                    (p = r.findTreeNode(h, key, null)) != null) {
+                                    (p = r.findTreeNode(h, key)) != null) {
                                 val = remappingFunction.apply(key, p.val);
                                 if (val != null)
                                     p.val = val;
@@ -1218,7 +1182,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
      * {@code equals} method; {@code false} otherwise
      * @throws NullPointerException if the specified key is null
      */
-    public boolean containsKey(Object key) {
+    public boolean containsKey(long key) {
         return get(key) != null;
     }
 
@@ -1232,7 +1196,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
      * specified value
      * @throws NullPointerException if the specified value is null
      */
-    public boolean containsValue(Object value) {
+    public boolean containsValue(V value) {
         if (value == null)
             throw new NullPointerException();
         Node<V>[] t = table;
@@ -1261,7 +1225,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
      * @return the set view
      */
     @NotNull
-    public Set<Map.Entry<CharSequence, V>> entrySet() {
+    public Set<LongEntry<V>> entrySet() {
         EntrySetView<V> es;
         return (es = entrySet) != null ? es : (entrySet = new EntrySetView<>(this));
     }
@@ -1278,9 +1242,9 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
      */
     public boolean equals(Object o) {
         if (o != this) {
-            if (!(o instanceof Map))
+            if (!(o instanceof ConcurrentLongHashMap))
                 return false;
-            Map<?, ?> m = (Map<?, ?>) o;
+            ConcurrentLongHashMap<?> m = (ConcurrentLongHashMap<?>) o;
             Traverser<V> it = getTraverser(table);
             for (Node<V> p; (p = it.advance()) != null; ) {
                 V val = p.val;
@@ -1288,9 +1252,10 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                 if (v == null || (v != val && !v.equals(val)))
                     return false;
             }
-            for (Map.Entry<?, ?> e : m.entrySet()) {
-                Object mk, mv, v;
-                if ((mk = e.getKey()) == null ||
+            for (LongEntry<?> e : m.entrySet()) {
+                long mk;
+                Object mv, v;
+                if ((mk = e.getKey()) == EMPTY_KEY ||
                         (mv = e.getValue()) == null ||
                         (v = get(mk)) == null ||
                         (mv != v && !mv.equals(v)))
@@ -1312,30 +1277,20 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
      * @return value to which specified key is mapped
      * @throws NullPointerException if the specified key is null
      */
-    @Override
-    public V get(Object key) {
-        if (key instanceof CharSequence) {
-            return get((CharSequence) key);
-        }
-        return null;
-    }
-
-    public V get(CharSequence key) {
+    public V get(long key) {
         Node<V>[] tab;
         Node<V> e, p;
         int n, eh;
-        CharSequence ek;
         int h = spread(keyHashCode(key));
         if ((tab = table) != null && (n = tab.length) > 0 &&
                 (e = tabAt(tab, (n - 1) & h)) != null) {
             if ((eh = e.hash) == h) {
-                if ((ek = e.key) == key || (ek != null && keyEquals(key, ek)))
+                if (e.key == key)
                     return e.val;
             } else if (eh < 0)
                 return (p = e.find(h, key)) != null ? p.val : null;
             while ((e = e.next) != null) {
-                if (e.hash == h &&
-                        ((ek = e.key) == key || (ek != null && keyEquals(key, ek))))
+                if (e.hash == h && e.key == key)
                     return e.val;
             }
         }
@@ -1353,12 +1308,10 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
      * @return the mapping for the key, if present; else the default value
      * @throws NullPointerException if the specified key is null
      */
-    public V getOrDefault(Object key, V defaultValue) {
+    public V getOrDefault(long key, V defaultValue) {
         V v;
         return (v = get(key)) == null ? defaultValue : v;
     }
-
-    // ConcurrentMap methods
 
     /**
      * Returns the hash code value for this {@link Map}, i.e.,
@@ -1377,6 +1330,8 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         }
         return h;
     }
+
+    // ConcurrentMap methods
 
     /**
      * {@inheritDoc}
@@ -1423,11 +1378,9 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         return (ks = keySet) != null ? ks : (keySet = new KeySetView<>(this, null));
     }
 
-    // Overrides of JDK8+ Map extension method defaults
-
     /**
      * Returns the number of mappings. This method should be used
-     * instead of {@link #size} because a ConcurrentHashMap may
+     * instead of {@link #size} because a ConcurrentLongHashMap may
      * contain more mappings than can be represented as an int. The
      * value returned is an estimate; the actual count may differ if
      * there are concurrent insertions or removals.
@@ -1438,6 +1391,8 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
     public long mappingCount() {
         return Math.max(sumCount(), 0L); // ignore transient negative values
     }
+
+    // Overrides of JDK8+ Map extension method defaults
 
     /**
      * Maps the specified key to the specified value in this table.
@@ -1451,7 +1406,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
      * {@code null} if there was no mapping for {@code key}
      * @throws NullPointerException if the specified key or value is null
      */
-    public V put(CharSequence key, V value) {
+    public V put(long key, V value) {
         return putVal(key, value, false);
     }
 
@@ -1462,9 +1417,9 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
      *
      * @param m mappings to be stored in this map
      */
-    public void putAll(@NotNull Map<? extends CharSequence, ? extends V> m) {
+    public void putAll(@NotNull ConcurrentLongHashMap<? extends V> m) {
         tryPresize(m.size());
-        for (Map.Entry<? extends CharSequence, ? extends V> e : m.entrySet())
+        for (LongEntry<? extends V> e : m.entrySet())
             putVal(e.getKey(), e.getValue(), false);
     }
 
@@ -1475,20 +1430,13 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
      * or {@code null} if there was no mapping for the key
      * @throws NullPointerException if the specified key or value is null
      */
-    public V putIfAbsent(@NotNull CharSequence key, V value) {
+    public V putIfAbsent(long key, V value) {
         return putVal(key, value, true);
     }
 
-    /**
-     * {@inheritDoc}
-     *
-     * @throws NullPointerException if the specified key is null
-     */
-    @SuppressWarnings("unchecked")
-    public boolean remove(@NotNull Object key, Object value) {
-        return value != null && replaceNode((CharSequence) key, null, (V) value) != null;
+    public boolean remove(long key, V value) {
+        return value != null && replaceNode(key, null, value) != null;
     }
-    // Hashtable legacy methods
 
     /**
      * Removes the key (and its corresponding value) from this map.
@@ -1499,20 +1447,17 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
      * {@code null} if there was no mapping for {@code key}
      * @throws NullPointerException if the specified key is null
      */
-    public V remove(CharSequence key) {
+    public V remove(long key) {
         return replaceNode(key, null, null);
     }
 
-    // ConcurrentHashMap-only methods
+    // Hashtable legacy methods
 
-    /**
-     * {@inheritDoc}
-     *
-     * @throws NullPointerException if any of the arguments are null
-     */
-    public boolean replace(@NotNull CharSequence key, @NotNull V oldValue, @NotNull V newValue) {
+    public boolean replace(long key, @NotNull V oldValue, @NotNull V newValue) {
         return replaceNode(key, newValue, oldValue) != null;
     }
+
+    // ConcurrentLongHashMap-only methods
 
     /**
      * {@inheritDoc}
@@ -1521,7 +1466,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
      * or {@code null} if there was no mapping for the key
      * @throws NullPointerException if the specified key or value is null
      */
-    public V replace(@NotNull CharSequence key, @NotNull V value) {
+    public V replace(long key, @NotNull V value) {
         return replaceNode(key, value, null);
     }
 
@@ -1553,9 +1498,9 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         Node<V> p;
         if ((p = it.advance()) != null) {
             for (; ; ) {
-                CharSequence k = p.key;
+                long k = p.key;
                 V v = p.val;
-                sb.append(k == this ? "(this Map)" : k);
+                sb.append(k);
                 sb.append('=');
                 sb.append(v == this ? "(this Map)" : v);
                 if ((p = it.advance()) == null)
@@ -1565,8 +1510,6 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         }
         return sb.append('}').toString();
     }
-
-    /* ---------------- Special Nodes -------------- */
 
     /**
      * Returns a {@link Collection} view of the values contained in this map.
@@ -1588,7 +1531,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         return (vs = values) != null ? vs : (values = new ValuesView<>(this));
     }
 
-    /* ---------------- Table Initialization and Resizing -------------- */
+    /* ---------------- Special Nodes -------------- */
 
     private static long initialSeed() {
         String pp = System.getProperty("java.util.secureRandomSeed");
@@ -1604,12 +1547,10 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                 mix64(System.nanoTime()));
     }
 
-    private static boolean keyEquals(final CharSequence lhs, final CharSequence rhs, boolean isCaseSensitive) {
-        return isCaseSensitive ? Chars.equals(lhs, rhs) : Chars.equalsIgnoreCase(lhs, rhs);
-    }
+    /* ---------------- Table Initialization and Resizing -------------- */
 
-    private static int keyHashCode(final CharSequence key, boolean isCaseSensitive) {
-        return isCaseSensitive ? Chars.hashCode(key) : Chars.lowerCaseHashCode(key);
+    private static int keyHashCode(final long key) {
+        return Long.hashCode(key);
     }
 
     private static long mix64(long z) {
@@ -1795,15 +1736,6 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         return tab;
     }
 
-    private boolean keyEquals(final CharSequence lhs, final CharSequence rhs) {
-        return keyEquals(lhs, rhs, ics);
-    }
-
-    private int keyHashCode(final CharSequence key) {
-        return keyHashCode(key, ics);
-    }
-    /* ---------------- Counter support -------------- */
-
     /**
      * Moves and/or copies the nodes in each bin to new table. See
      * above for explanation.
@@ -1825,7 +1757,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
             transferIndex = n;
         }
         int nextn = nextTab.length;
-        ForwardingNode<V> fwd = new ForwardingNode<>(nextTab, ics);
+        ForwardingNode<V> fwd = new ForwardingNode<>(nextTab);
         boolean advance = true;
         boolean finishing = false; // to ensure sweep before committing nextTab
         for (int i = 0, bound = 0; ; ) {
@@ -1888,12 +1820,12 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                             }
                             for (Node<V> p = f; p != lastRun; p = p.next) {
                                 int ph = p.hash;
-                                CharSequence pk = p.key;
+                                long pk = p.key;
                                 V pv = p.val;
                                 if ((ph & n) == 0)
-                                    ln = new Node<>(ph, pk, pv, ln, ics);
+                                    ln = new Node<>(ph, pk, pv, ln);
                                 else
-                                    hn = new Node<>(ph, pk, pv, hn, ics);
+                                    hn = new Node<>(ph, pk, pv, hn);
                             }
                             setTabAt(nextTab, i, ln);
                             setTabAt(nextTab, i + n, hn);
@@ -1906,8 +1838,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                             int lc = 0, hc = 0;
                             for (Node<V> e = t.first; e != null; e = e.next) {
                                 int h = e.hash;
-                                TreeNode<V> p = new TreeNode<>
-                                        (h, e.key, e.val, null, null, ics);
+                                TreeNode<V> p = new TreeNode<>(h, e.key, e.val, null, null);
                                 if ((h & n) == 0) {
                                     if ((p.prev = loTail) == null)
                                         lo = p;
@@ -1925,9 +1856,9 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                                 }
                             }
                             ln = (lc <= UNTREEIFY_THRESHOLD) ? untreeify(lo) :
-                                    (hc != 0) ? new TreeBin<>(lo, ics) : t;
+                                    (hc != 0) ? new TreeBin<>(lo) : t;
                             hn = (hc <= UNTREEIFY_THRESHOLD) ? untreeify(hi) :
-                                    (lc != 0) ? new TreeBin<>(hi, ics) : t;
+                                    (lc != 0) ? new TreeBin<>(hi) : t;
                             setTabAt(nextTab, i, ln);
                             setTabAt(nextTab, i + n, hn);
                             setTabAt(tab, i, fwd);
@@ -1938,6 +1869,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
             }
         }
     }
+    /* ---------------- Counter support -------------- */
 
     /**
      * Replaces all linked nodes in bin at given index unless table is
@@ -1955,14 +1887,14 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                         TreeNode<V> hd = null, tl = null;
                         for (Node<V> e = b; e != null; e = e.next) {
                             TreeNode<V> p =
-                                    new TreeNode<>(e.hash, e.key, e.val, null, null, ics);
+                                    new TreeNode<>(e.hash, e.key, e.val, null, null);
                             if ((p.prev = tl) == null)
                                 hd = p;
                             else
                                 tl.next = p;
                             tl = p;
                         }
-                        setTabAt(tab, index, new TreeBin<>(hd, ics));
+                        setTabAt(tab, index, new TreeBin<>(hd));
                     }
                 }
             }
@@ -2014,8 +1946,6 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         }
     }
 
-    /* ---------------- Conversion from/to TreeBins -------------- */
-
     static int advanceProbe(int probe) {
         probe ^= probe << 13;   // xorshift
         probe ^= probe >>> 17;
@@ -2024,12 +1954,12 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         return probe;
     }
 
+    /* ---------------- Conversion from/to TreeBins -------------- */
+
     static <V> boolean casTabAt(Node<V>[] tab, int i,
                                 Node<V> v) {
         return Unsafe.getUnsafe().compareAndSwapObject(tab, ((long) i << ASHIFT) + ABASE, null, v);
     }
-
-    /* ---------------- TreeNodes -------------- */
 
     /**
      * Returns x's Class if it is of the form "class C implements
@@ -2057,23 +1987,23 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         return null;
     }
 
-    /* ---------------- TreeBins -------------- */
+    /* ---------------- TreeNodes -------------- */
 
     /**
      * Returns k.compareTo(x) if x matches kc (k's screened comparable
      * class), else 0.
      */
-    @SuppressWarnings({"rawtypes", "unchecked"}) // for cast to Comparable
-    static int compareComparables(Class<?> kc, Object k, Object x) {
-        return (x == null || x.getClass() != kc ? 0 :
-                ((Comparable) k).compareTo(x));
+    static int compareComparables(long k, long x) {
+        return Long.compare(k, x);
     }
 
-    /* ----------------Table Traversal -------------- */
+    /* ---------------- TreeBins -------------- */
 
     static int getProbe() {
         return Unsafe.getUnsafe().getInt(Thread.currentThread(), PROBE);
     }
+
+    /* ----------------Table Traversal -------------- */
 
     /**
      * Initialize Thread fields for the current thread.  Called only
@@ -2134,7 +2064,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
     static <V> Node<V> untreeify(Node<V> b) {
         Node<V> hd = null, tl = null;
         for (Node<V> q = b; q != null; q = q.next) {
-            Node<V> p = new Node<>(q.hash, q.key, q.val, null, q.ics);
+            Node<V> p = new Node<>(q.hash, q.key, q.val, null);
             if (tl == null)
                 hd = p;
             else
@@ -2143,8 +2073,6 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         }
         return hd;
     }
-
-    /* ----------------Views -------------- */
 
     /**
      * Helps transfer if a resize is in progress.
@@ -2170,11 +2098,14 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         return table;
     }
 
+    /* ----------------Views -------------- */
+
     /**
      * Implementation for put and putIfAbsent
      */
-    final V putVal(CharSequence key, V value, boolean onlyIfAbsent) {
-        if (key == null || value == null) throw new NullPointerException();
+    final V putVal(long key, V value, boolean onlyIfAbsent) {
+        if (key < 0) throw new IllegalArgumentException();
+        if (value == null) throw new NullPointerException();
         int hash = spread(keyHashCode(key));
         int binCount = 0;
         Node<V> _new = null;
@@ -2186,7 +2117,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                 tab = initTable();
             else if ((f = tabAt(tab, i = (n - 1) & hash)) == null) {
                 if (_new == null) {
-                    _new = new Node<>(hash, key instanceof CloneableMutable ? ((CloneableMutable) key).copy() : key, value, null, ics);
+                    _new = new Node<>(hash, key, value, null);
                 }
                 if (casTabAt(tab, i, _new)) {
                     break;                   // no lock when adding to empty bin
@@ -2200,10 +2131,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                         if (fh >= 0) {
                             binCount = 1;
                             for (Node<V> e = f; ; ++binCount) {
-                                CharSequence ek;
-                                if (e.hash == hash &&
-                                        ((ek = e.key) == key ||
-                                                (ek != null && keyEquals(key, ek)))) {
+                                if (e.hash == hash && e.key == key) {
                                     oldVal = e.val;
                                     if (!onlyIfAbsent)
                                         e.val = value;
@@ -2212,7 +2140,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                                 Node<V> pred = e;
                                 if ((e = e.next) == null) {
                                     if (_new == null) {
-                                        pred.next = new Node<>(hash, key instanceof CloneableMutable ? ((CloneableMutable) key).copy() : key, value, null, ics);
+                                        pred.next = new Node<>(hash, key, value, null);
                                     } else {
                                         pred.next = _new;
                                     }
@@ -2222,8 +2150,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                         } else if (f instanceof TreeBin) {
                             Node<V> p;
                             binCount = 2;
-                            if ((p = ((TreeBin<V>) f).putTreeVal(hash, key instanceof CloneableMutable ? ((CloneableMutable) key).copy() : key,
-                                    value)) != null) {
+                            if ((p = ((TreeBin<V>) f).putTreeVal(hash, key, value)) != null) {
                                 oldVal = p.val;
                                 if (!onlyIfAbsent)
                                     p.val = value;
@@ -2249,7 +2176,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
      * Replaces node value with v, conditional upon match of cv if
      * non-null.  If resulting value is null, delete.
      */
-    final V replaceNode(CharSequence key, V value, V cv) {
+    final V replaceNode(long key, V value, V cv) {
         int hash = spread(keyHashCode(key));
         for (Node<V>[] tab = table; ; ) {
             Node<V> f;
@@ -2267,10 +2194,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                         if (fh >= 0) {
                             validated = true;
                             for (Node<V> e = f, pred = null; ; ) {
-                                CharSequence ek;
-                                if (e.hash == hash &&
-                                        ((ek = e.key) == key ||
-                                                (ek != null && keyEquals(key, ek)))) {
+                                if (e.hash == hash && e.key == key) {
                                     V ev = e.val;
                                     if (cv == null || cv == ev || (cv.equals(ev))) {
                                         oldVal = ev;
@@ -2292,7 +2216,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                             TreeBin<V> t = (TreeBin<V>) f;
                             TreeNode<V> r, p;
                             if ((r = t.root) != null &&
-                                    (p = r.findTreeNode(hash, key, null)) != null) {
+                                    (p = r.findTreeNode(hash, key)) != null) {
                                 V pv = p.val;
                                 if (cv == null || cv == pv || cv.equals(pv)) {
                                     oldVal = pv;
@@ -2331,13 +2255,25 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         return sum;
     }
 
+    public interface LongEntry<V> {
+        boolean equals(Object var1);
+
+        long getKey();
+
+        V getValue();
+
+        int hashCode();
+
+        V setValue(V var1);
+    }
+
     /**
      * Base of key, value, and entry Iterators. Adds fields to
      * Traverser to support iterator.remove.
      */
     static class BaseIterator<V> extends Traverser<V> {
         Node<V> lastReturned;
-        ConcurrentHashMap<V> map;
+        ConcurrentLongHashMap<V> map;
 
         public final boolean hasNext() {
             return next != null;
@@ -2351,7 +2287,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
             map.replaceNode(p.key, null, null);
         }
 
-        void of(ConcurrentHashMap<V> map) {
+        void of(ConcurrentLongHashMap<V> map) {
             Node<V>[] tab = map.table;
             int l = tab == null ? 0 : tab.length;
             super.of(tab, l, l);
@@ -2367,9 +2303,9 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
             implements Collection<E>, java.io.Serializable {
         private static final String oomeMsg = "Required array size too large";
         private static final long serialVersionUID = 7249069246763182397L;
-        final ConcurrentHashMap<V> map;
+        final ConcurrentLongHashMap<V> map;
 
-        CollectionView(ConcurrentHashMap<V> map) {
+        CollectionView(ConcurrentLongHashMap<V> map) {
             this.map = map;
         }
 
@@ -2398,7 +2334,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
          *
          * @return the map backing this view
          */
-        public ConcurrentHashMap<V> getMap() {
+        public ConcurrentLongHashMap<V> getMap() {
             return map;
         }
 
@@ -2418,6 +2354,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
 
         public abstract boolean remove(Object o);
 
+        @Override
         public final boolean removeAll(@NotNull Collection<?> c) {
             boolean modified = false;
             for (Iterator<E> it = iterator(); it.hasNext(); ) {
@@ -2429,10 +2366,10 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
             return modified;
         }
 
-
         // implementations below rely on concrete classes supplying these
         // abstract methods
 
+        @Override
         public final boolean retainAll(@NotNull Collection<?> c) {
             boolean modified = false;
             for (Iterator<E> it = iterator(); it.hasNext(); ) {
@@ -2444,12 +2381,13 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
             return modified;
         }
 
+        @Override
         public final int size() {
             return map.size();
         }
 
-        @NotNull
-        public final Object[] toArray() {
+        @Override
+        public final Object @NotNull [] toArray() {
             long sz = map.mappingCount();
             if (sz > MAX_ARRAY_SIZE)
                 throw new OutOfMemoryError(oomeMsg);
@@ -2471,9 +2409,9 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
             return (i == n) ? r : Arrays.copyOf(r, i);
         }
 
-        @NotNull
+        @Override
         @SuppressWarnings("unchecked")
-        public final <T> T[] toArray(@NotNull T[] a) {
+        public final <T> T @NotNull [] toArray(@NotNull T @NotNull [] a) {
             long sz = map.mappingCount();
             if (sz > MAX_ARRAY_SIZE)
                 throw new OutOfMemoryError(oomeMsg);
@@ -2513,6 +2451,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
          *
          * @return a string representation of this collection
          */
+        @Override
         public final String toString() {
             StringBuilder sb = new StringBuilder();
             sb.append('[');
@@ -2528,7 +2467,6 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
             }
             return sb.append(']').toString();
         }
-
     }
 
     /**
@@ -2544,13 +2482,14 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
     }
 
     static final class EntryIterator<V> extends BaseIterator<V>
-            implements Iterator<Map.Entry<CharSequence, V>> {
+            implements Iterator<LongEntry<V>> {
 
-        public Map.Entry<CharSequence, V> next() {
+        @Override
+        public LongEntry<V> next() {
             Node<V> p;
             if ((p = next) == null)
                 throw new NoSuchElementException();
-            CharSequence k = p.key;
+            long k = p.key;
             V v = p.val;
             lastReturned = p;
             advance();
@@ -2559,43 +2498,48 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
     }
 
     /**
-     * A view of a ConcurrentHashMap as a {@link Set} of (key, value)
+     * A view of a ConcurrentLongHashMap as a {@link Set} of (key, value)
      * entries.  This class cannot be directly instantiated. See
      * {@link #entrySet()}.
      */
-    static final class EntrySetView<V> extends CollectionView<V, Entry<CharSequence, V>>
-            implements Set<Map.Entry<CharSequence, V>>, java.io.Serializable {
+    static final class EntrySetView<V> extends CollectionView<V, LongEntry<V>>
+            implements Set<LongEntry<V>>, java.io.Serializable {
         private static final long serialVersionUID = 2249069246763182397L;
 
         private final ThreadLocal<EntryIterator<V>> tlEntryIterator = ThreadLocal.withInitial(EntryIterator::new);
 
-        EntrySetView(ConcurrentHashMap<V> map) {
+        EntrySetView(ConcurrentLongHashMap<V> map) {
             super(map);
         }
 
-        public boolean add(Entry<CharSequence, V> e) {
+        @Override
+        public boolean add(LongEntry<V> e) {
             return map.putVal(e.getKey(), e.getValue(), false) == null;
         }
 
-        public boolean addAll(@NotNull Collection<? extends Entry<CharSequence, V>> c) {
+        @Override
+        public boolean addAll(@NotNull Collection<? extends LongEntry<V>> c) {
             boolean added = false;
-            for (Entry<CharSequence, V> e : c) {
+            for (LongEntry<V> e : c) {
                 if (add(e))
                     added = true;
             }
             return added;
         }
 
+        @Override
         public boolean contains(Object o) {
-            Object k, v, r;
-            Map.Entry<?, ?> e;
-            return ((o instanceof Map.Entry) &&
-                    (k = (e = (Map.Entry<?, ?>) o).getKey()) != null &&
+            long k;
+            Object v, r;
+            LongEntry<?> e;
+            return ((o instanceof LongEntry) &&
+                    (k = (e = (LongEntry<?>) o).getKey()) != EMPTY_KEY &&
                     (r = map.get(k)) != null &&
                     (v = e.getValue()) != null &&
                     (v == r || v.equals(r)));
         }
 
+        @Override
         public boolean equals(Object o) {
             Set<?> c;
             return ((o instanceof Set) &&
@@ -2603,6 +2547,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                             (containsAll(c) && c.containsAll(this))));
         }
 
+        @Override
         public int hashCode() {
             int h = 0;
             Node<V>[] t = map.table;
@@ -2619,19 +2564,21 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
          * @return an iterator over the entries of the backing map
          */
         @NotNull
-        public Iterator<Map.Entry<CharSequence, V>> iterator() {
+        public Iterator<LongEntry<V>> iterator() {
             EntryIterator<V> it = tlEntryIterator.get();
             it.of(map);
             return it;
         }
 
+        @Override
         public boolean remove(Object o) {
-            Object k, v;
-            Map.Entry<?, ?> e;
-            return ((o instanceof Map.Entry) &&
-                    (k = (e = (Map.Entry<?, ?>) o).getKey()) != null &&
+            long k;
+            Object v;
+            LongEntry<?> e;
+            return ((o instanceof LongEntry) &&
+                    (k = (e = (LongEntry<?>) o).getKey()) != EMPTY_KEY &&
                     (v = e.getValue()) != null &&
-                    map.remove(k, v));
+                    map.remove(k, (V) v));
         }
     }
 
@@ -2641,25 +2588,24 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
     static final class ForwardingNode<V> extends Node<V> {
         final Node<V>[] nextTable;
 
-        ForwardingNode(Node<V>[] tab, boolean ics) {
-            super(MOVED, null, null, null, ics);
+        ForwardingNode(Node<V>[] tab) {
+            super(MOVED, EMPTY_KEY, null, null);
             this.nextTable = tab;
         }
 
-        Node<V> find(int h, CharSequence k) {
+        @Override
+        Node<V> find(int h, long k) {
             // loop to avoid arbitrarily deep recursion on forwarding nodes
             outer:
             for (Node<V>[] tab = nextTable; ; ) {
                 Node<V> e;
                 int n;
-                if (k == null || tab == null || (n = tab.length) == 0 ||
+                if (k == EMPTY_KEY || tab == null || (n = tab.length) == 0 ||
                         (e = tabAt(tab, (n - 1) & h)) == null)
                     return null;
                 for (; ; ) {
                     int eh;
-                    CharSequence ek;
-                    if ((eh = e.hash) == h &&
-                            ((ek = e.key) == k || (ek != null && keyEquals(k, ek, ics))))
+                    if ((eh = e.hash) == h && e.key == k)
                         return e;
                     if (eh < 0) {
                         if (e instanceof ForwardingNode) {
@@ -2675,14 +2621,13 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         }
     }
 
-    static final class KeyIterator<V> extends BaseIterator<V>
-            implements Iterator<CharSequence> {
+    static final class KeyIterator<V> extends BaseIterator<V> {
 
-        public CharSequence next() {
+        public long next() {
             Node<V> p;
             if ((p = next) == null)
                 throw new NoSuchElementException();
-            CharSequence k = p.key;
+            long k = p.key;
             lastReturned = p;
             advance();
             return k;
@@ -2690,7 +2635,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
     }
 
     /**
-     * A view of a ConcurrentHashMap as a {@link Set} of keys, in
+     * A view of a ConcurrentLongHashMap as a long set of keys, in
      * which additions may optionally be enabled by mapping to a
      * common value.  This class cannot be directly instantiated.
      * See {@link #keySet() keySet()},
@@ -2700,14 +2645,14 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
      *
      * @since 1.8
      */
-    public static class KeySetView<V> extends CollectionView<V, CharSequence>
-            implements Set<CharSequence>, java.io.Serializable {
+    public static class KeySetView<V> implements java.io.Serializable {
         private static final long serialVersionUID = 7249069246763182397L;
+        private final ConcurrentLongHashMap<V> map;
         private final ThreadLocal<KeyIterator<V>> tlKeyIterator = ThreadLocal.withInitial(KeyIterator::new);
         private final V value;
 
-        KeySetView(ConcurrentHashMap<V> map, V value) {  // non-public
-            super(map);
+        KeySetView(ConcurrentLongHashMap<V> map, V value) {  // non-public
+            this.map = map;
             this.value = value;
         }
 
@@ -2715,55 +2660,32 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
          * Adds the specified key to this set view by mapping the key to
          * the default mapped value in the backing map, if defined.
          *
-         * @param e key to be added
+         * @param k key to be added
          * @return {@code true} if this set changed as a result of the call
          * @throws NullPointerException          if the specified key is null
          * @throws UnsupportedOperationException if no default mapped value
          *                                       for additions was provided
          */
-        public boolean add(CharSequence e) {
+        public boolean add(long k) {
             V v;
             if ((v = value) == null)
                 throw new UnsupportedOperationException();
-            return map.putVal(e, v, true) == null;
+            return map.putVal(k, v, true) == null;
         }
 
-        /**
-         * Adds all of the elements in the specified collection to this set,
-         * as if by calling {@link #add} on each one.
-         *
-         * @param c the elements to be inserted into this set
-         * @return {@code true} if this set changed as a result of the call
-         * @throws NullPointerException          if the collection or any of its
-         *                                       elements are {@code null}
-         * @throws UnsupportedOperationException if no default mapped value
-         *                                       for additions was provided
-         */
-        public boolean addAll(@NotNull Collection<? extends CharSequence> c) {
-            boolean added = false;
-            V v;
-            if ((v = value) == null)
-                throw new UnsupportedOperationException();
-            for (CharSequence e : c) {
-                if (map.putVal(e, v, true) == null)
-                    added = true;
-            }
-            return added;
+        public final void clear() {
+            map.clear();
         }
 
-        /**
-         * {@inheritDoc}
-         *
-         * @throws NullPointerException if the specified key is null
-         */
-        public boolean contains(Object o) {
-            return map.containsKey(o);
+        public boolean contains(long k) {
+            return map.containsKey(k);
         }
 
+        @Override
         public boolean equals(Object o) {
-            Set<?> c;
-            return ((o instanceof Set) &&
-                    ((c = (Set<?>) o) == this ||
+            KeySetView<?> c;
+            return ((o instanceof KeySetView) &&
+                    ((c = (KeySetView<?>) o) == this ||
                             (containsAll(c) && c.containsAll(this))));
         }
 
@@ -2778,18 +2700,28 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
             return value;
         }
 
+        @Override
         public int hashCode() {
             int h = 0;
-            for (CharSequence e : this)
-                h += e.hashCode();
+            KeyIterator<V> it = iterator();
+            if (it.hasNext()) {
+                do {
+                    long k = it.next();
+                    h += keyHashCode(k);
+                } while (it.hasNext());
+            }
             return h;
+        }
+
+        public final boolean isEmpty() {
+            return map.isEmpty();
         }
 
         /**
          * @return an iterator over the keys of the backing map
          */
         @NotNull
-        public Iterator<CharSequence> iterator() {
+        public KeyIterator<V> iterator() {
             KeyIterator<V> it = tlKeyIterator.get();
             it.of(map);
             return it;
@@ -2800,49 +2732,87 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
          * corresponding value) from the backing map.  This method does
          * nothing if the key is not in the map.
          *
-         * @param o the key to be removed from the backing map
+         * @param k the key to be removed from the backing map
          * @return {@code true} if the backing map contained the specified key
          * @throws NullPointerException if the specified key is null
          */
-        public boolean remove(Object o) {
-            return map.remove(o) != null;
+        public boolean remove(long k) {
+            return map.remove(k) != null;
+        }
+
+        public final int size() {
+            return map.size();
+        }
+
+        @Override
+        public final String toString() {
+            StringBuilder sb = new StringBuilder();
+            sb.append('[');
+            KeyIterator<V> it = iterator();
+            if (it.hasNext()) {
+                for (; ; ) {
+                    long k = it.next();
+                    sb.append(k);
+                    if (!it.hasNext())
+                        break;
+                    sb.append(',').append(' ');
+                }
+            }
+            return sb.append(']').toString();
+        }
+
+        private boolean containsAll(@NotNull KeySetView<?> c) {
+            KeyIterator<V> it = iterator();
+            if (it.hasNext()) {
+                do {
+                    long k = it.next();
+                    if (!contains(k))
+                        return false;
+                } while (it.hasNext());
+            }
+            return true;
         }
     }
 
     /**
      * Exported Entry for EntryIterator
      */
-    static final class MapEntry<V> implements Map.Entry<CharSequence, V> {
-        final CharSequence key; // non-null
-        final ConcurrentHashMap<V> map;
+    static final class MapEntry<V> implements LongEntry<V> {
+        final long key; // != EMPTY_KEY
+        final ConcurrentLongHashMap<V> map;
         V val;       // non-null
 
-        MapEntry(CharSequence key, V val, ConcurrentHashMap<V> map) {
+        MapEntry(long key, V val, ConcurrentLongHashMap<V> map) {
             this.key = key;
             this.val = val;
             this.map = map;
         }
 
+        @Override
         public boolean equals(Object o) {
-            Object k, v;
-            Map.Entry<?, ?> e;
-            return ((o instanceof Map.Entry) &&
-                    (k = (e = (Map.Entry<?, ?>) o).getKey()) != null &&
+            long k;
+            Object v;
+            LongEntry<?> e;
+            return ((o instanceof LongEntry) &&
+                    (k = (e = (LongEntry<?>) o).getKey()) != EMPTY_KEY &&
                     (v = e.getValue()) != null &&
-                    (k == key || map.keyEquals((CharSequence) k, key)) &&
+                    (k == key) &&
                     (v == val || v.equals(val)));
         }
 
-        public CharSequence getKey() {
+        @Override
+        public long getKey() {
             return key;
         }
 
+        @Override
         public V getValue() {
             return val;
         }
 
+        @Override
         public int hashCode() {
-            return map.keyHashCode(key) ^ val.hashCode();
+            return keyHashCode(key) ^ val.hashCode();
         }
 
         /**
@@ -2853,6 +2823,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
          * could even have been removed, in which case the put will
          * re-establish). We do not and cannot guarantee more.
          */
+        @NotNull
         public V setValue(V value) {
             if (value == null) throw new NullPointerException();
             V v = val;
@@ -2861,6 +2832,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
             return v;
         }
 
+        @Override
         public String toString() {
             return key + "=" + val;
         }
@@ -2874,47 +2846,52 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
      * are special, and contain null keys and values (but are never
      * exported).  Otherwise, keys and vals are never null.
      */
-    static class Node<V> implements Map.Entry<CharSequence, V> {
+    static class Node<V> implements LongEntry<V> {
         final int hash;
-        final boolean ics;
-        final CharSequence key;
+        final long key;
         volatile Node<V> next;
         volatile V val;
 
-        Node(int hash, CharSequence key, V val, Node<V> next, boolean ics) {
+        Node(int hash, long key, V val, Node<V> next) {
             this.hash = hash;
             this.key = key;
             this.val = val;
             this.next = next;
-            this.ics = ics;
         }
 
+        @Override
         public final boolean equals(Object o) {
-            Object k, v, u;
-            Map.Entry<?, ?> e;
-            return ((o instanceof Map.Entry) &&
-                    (k = (e = (Map.Entry<?, ?>) o).getKey()) != null &&
+            long k;
+            Object v, u;
+            LongEntry<?> e;
+            return ((o instanceof LongEntry) &&
+                    (k = (e = (LongEntry<?>) o).getKey()) != EMPTY_KEY &&
                     (v = e.getValue()) != null &&
-                    (k == key || keyEquals((CharSequence) k, key, ics)) &&
+                    (k == key) &&
                     (v == (u = val) || v.equals(u)));
         }
 
-        public final CharSequence getKey() {
+        @Override
+        public final long getKey() {
             return key;
         }
 
+        @Override
         public final V getValue() {
             return val;
         }
 
+        @Override
         public final int hashCode() {
-            return keyHashCode(key, ics) ^ val.hashCode();
+            return keyHashCode(key) ^ val.hashCode();
         }
 
+        @Override
         public final V setValue(V value) {
             throw new UnsupportedOperationException();
         }
 
+        @Override
         public final String toString() {
             return key + "=" + val;
         }
@@ -2922,13 +2899,11 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         /**
          * Virtualized support for map.get(); overridden in subclasses.
          */
-        Node<V> find(int h, CharSequence k) {
+        Node<V> find(int h, long k) {
             Node<V> e = this;
-            if (k != null) {
+            if (k != EMPTY_KEY) {
                 do {
-                    CharSequence ek;
-                    if (e.hash == h &&
-                            ((ek = e.key) == k || (ek != null && keyEquals(k, ek, ics))))
+                    if (e.hash == h && (e.key == k))
                         return e;
                 } while ((e = e.next) != null);
             }
@@ -2940,11 +2915,12 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
      * A place-holder node used in computeIfAbsent and compute
      */
     static final class ReservationNode<V> extends Node<V> {
-        ReservationNode(boolean ics) {
-            super(RESERVED, null, null, null, ics);
+        ReservationNode() {
+            super(RESERVED, EMPTY_KEY, null, null);
         }
 
-        Node<V> find(int h, Object k) {
+        @Override
+        Node<V> find(int h, long k) {
             return null;
         }
     }
@@ -2958,7 +2934,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         final float loadFactor;
 
         Segment() {
-            this.loadFactor = ConcurrentHashMap.LOAD_FACTOR;
+            this.loadFactor = ConcurrentLongHashMap.LOAD_FACTOR;
         }
     }
 
@@ -3106,8 +3082,8 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         /**
          * Creates bin with initial set of nodes headed by b.
          */
-        TreeBin(TreeNode<V> b, boolean ics) {
-            super(TREEBIN, null, null, null, ics);
+        TreeBin(TreeNode<V> b) {
+            super(TREEBIN, EMPTY_KEY, null, null);
             this.first = b;
             TreeNode<V> r = null;
             for (TreeNode<V> x = b, next; x != null; x = next) {
@@ -3118,19 +3094,16 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                     x.red = false;
                     r = x;
                 } else {
-                    CharSequence k = x.key;
+                    long k = x.key;
                     int h = x.hash;
-                    Class<?> kc = null;
                     for (TreeNode<V> p = r; ; ) {
                         int dir, ph;
-                        CharSequence pk = p.key;
+                        long pk = p.key;
                         if ((ph = p.hash) > h)
                             dir = -1;
                         else if (ph < h)
                             dir = 1;
-                        else if ((kc == null &&
-                                (kc = comparableClassFor(k)) == null) ||
-                                (dir = compareComparables(kc, k, pk)) == 0)
+                        else if ((dir = compareComparables(k, pk)) == 0)
                             dir = tieBreakOrder(k, pk);
                         TreeNode<V> xp = p;
                         if ((p = (dir <= 0) ? p.left : p.right) == null) {
@@ -3402,14 +3375,13 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
          * using tree comparisons from root, but continues linear
          * search when lock not available.
          */
-        Node<V> find(int h, CharSequence k) {
-            if (k != null) {
+        @Override
+        Node<V> find(int h, long k) {
+            if (k != EMPTY_KEY) {
                 for (Node<V> e = first; e != null; ) {
                     int s;
-                    CharSequence ek;
                     if (((s = lockState) & (WAITER | WRITER)) != 0) {
-                        if (e.hash == h &&
-                                ((ek = e.key) == k || (ek != null && keyEquals(k, ek, ics))))
+                        if (e.hash == h && e.key == k)
                             return e;
                         e = e.next;
                     } else if (U.compareAndSwapInt(this, LOCKSTATE, s,
@@ -3417,7 +3389,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                         TreeNode<V> r, p;
                         try {
                             p = ((r = root) == null ? null :
-                                    r.findTreeNode(h, k, null));
+                                    r.findTreeNode(h, k));
                         } finally {
                             Thread w;
                             if (U.getAndAddInt(this, LOCKSTATE, -READER) ==
@@ -3436,31 +3408,28 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
          *
          * @return null if added
          */
-        TreeNode<V> putTreeVal(int h, CharSequence k, V v) {
-            Class<?> kc = null;
+        TreeNode<V> putTreeVal(int h, long k, V v) {
             boolean searched = false;
             for (TreeNode<V> p = root; ; ) {
                 int dir, ph;
-                CharSequence pk;
+                long pk;
                 if (p == null) {
-                    first = root = new TreeNode<>(h, k, v, null, null, ics);
+                    first = root = new TreeNode<>(h, k, v, null, null);
                     break;
                 } else if ((ph = p.hash) > h)
                     dir = -1;
                 else if (ph < h)
                     dir = 1;
-                else if ((pk = p.key) == k || (pk != null && keyEquals(k, pk, ics)))
+                else if ((pk = p.key) == k)
                     return p;
-                else if ((kc == null &&
-                        (kc = comparableClassFor(k)) == null) ||
-                        (dir = compareComparables(kc, k, pk)) == 0) {
+                else if ((dir = compareComparables(k, pk)) == 0) {
                     if (!searched) {
                         TreeNode<V> q, ch;
                         searched = true;
                         if (((ch = p.left) != null &&
-                                (q = ch.findTreeNode(h, k, kc)) != null) ||
+                                (q = ch.findTreeNode(h, k)) != null) ||
                                 ((ch = p.right) != null &&
-                                        (q = ch.findTreeNode(h, k, kc)) != null))
+                                        (q = ch.findTreeNode(h, k)) != null))
                             return q;
                     }
                     dir = tieBreakOrder(k, pk);
@@ -3469,7 +3438,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                 TreeNode<V> xp = p;
                 if ((p = (dir <= 0) ? p.left : p.right) == null) {
                     TreeNode<V> x, f = first;
-                    first = x = new TreeNode<>(h, k, v, f, xp, ics);
+                    first = x = new TreeNode<>(h, k, v, f, xp);
                     if (f != null)
                         f.prev = x;
                     if (dir <= 0)
@@ -3638,43 +3607,41 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         boolean red;
         TreeNode<V> right;
 
-        TreeNode(int hash, CharSequence key, V val, Node<V> next,
-                 TreeNode<V> parent, boolean ics) {
-            super(hash, key, val, next, ics);
+        TreeNode(int hash, long key, V val, Node<V> next, TreeNode<V> parent) {
+            super(hash, key, val, next);
             this.parent = parent;
         }
 
-        Node<V> find(int h, CharSequence k) {
-            return findTreeNode(h, k, null);
+        @Override
+        Node<V> find(int h, long k) {
+            return findTreeNode(h, k);
         }
 
         /**
          * Returns the TreeNode (or null if not found) for the given key
          * starting at given root.
          */
-        TreeNode<V> findTreeNode(int h, CharSequence k, Class<?> kc) {
-            if (k != null) {
+        TreeNode<V> findTreeNode(int h, long k) {
+            if (k != EMPTY_KEY) {
                 TreeNode<V> p = this;
                 do {
                     int ph, dir;
-                    CharSequence pk;
+                    long pk;
                     TreeNode<V> q;
                     TreeNode<V> pl = p.left, pr = p.right;
                     if ((ph = p.hash) > h)
                         p = pl;
                     else if (ph < h)
                         p = pr;
-                    else if ((pk = p.key) == k || (pk != null && keyEquals(k, pk, ics)))
+                    else if ((pk = p.key) == k)
                         return p;
                     else if (pl == null)
                         p = pr;
                     else if (pr == null)
                         p = pl;
-                    else if ((kc != null ||
-                            (kc = comparableClassFor(k)) != null) &&
-                            (dir = compareComparables(kc, k, pk)) != 0)
+                    else if ((dir = compareComparables(k, pk)) != 0)
                         p = (dir < 0) ? pl : pr;
-                    else if ((q = pr.findTreeNode(h, k, kc)) != null)
+                    else if ((q = pr.findTreeNode(h, k)) != null)
                         return q;
                     else
                         p = pl;
@@ -3700,7 +3667,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
     }
 
     /**
-     * A view of a ConcurrentHashMap as a {@link Collection} of
+     * A view of a ConcurrentLongHashMap as a {@link Collection} of
      * values, in which additions are disabled. This class cannot be
      * directly instantiated. See {@link #values()}.
      */
@@ -3709,22 +3676,26 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         private static final long serialVersionUID = 2249069246763182397L;
         private final ThreadLocal<ValueIterator<V>> tlValueIterator = ThreadLocal.withInitial(ValueIterator::new);
 
-        ValuesView(ConcurrentHashMap<V> map) {
+        ValuesView(ConcurrentLongHashMap<V> map) {
             super(map);
         }
 
+        @Override
         public boolean add(V e) {
             throw new UnsupportedOperationException();
         }
 
+        @Override
         public boolean addAll(@NotNull Collection<? extends V> c) {
             throw new UnsupportedOperationException();
         }
 
+        @Override
         public boolean contains(Object o) {
-            return map.containsValue(o);
+            return map.containsValue((V) o);
         }
 
+        @Override
         @NotNull
         public Iterator<V> iterator() {
             ValueIterator<V> it = tlValueIterator.get();
@@ -3732,6 +3703,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
             return it;
         }
 
+        @Override
         public boolean remove(Object o) {
             if (o != null) {
                 for (Iterator<V> it = iterator(); it.hasNext(); ) {
@@ -3757,7 +3729,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
 
     static {
         try {
-            Class<?> k = ConcurrentHashMap.class;
+            Class<?> k = ConcurrentLongHashMap.class;
             SIZECTL = Unsafe.getUnsafe().objectFieldOffset
                     (k.getDeclaredField("sizeCtl"));
             TRANSFERINDEX = Unsafe.getUnsafe().objectFieldOffset

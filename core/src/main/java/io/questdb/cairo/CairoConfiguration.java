@@ -206,8 +206,6 @@ public interface CairoConfiguration {
 
     int getMaxUncommittedRows();
 
-    int getWalMaxSegmentFileDescriptorsCache();
-
     int getMetadataPoolCapacity();
 
     @NotNull
@@ -288,6 +286,8 @@ public interface CairoConfiguration {
     default QueryLogger getQueryLogger() {
         return DefaultQueryLogger.INSTANCE;
     }
+
+    int getQueryRegistryPoolSize();
 
     @NotNull
     default Rnd getRandom() {
@@ -492,6 +492,8 @@ public interface CairoConfiguration {
     long getWalMaxLagSize();
 
     int getWalMaxLagTxnCount();
+
+    int getWalMaxSegmentFileDescriptorsCache();
 
     long getWalPurgeInterval();
 

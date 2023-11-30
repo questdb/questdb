@@ -465,6 +465,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getQueryRegistryPoolSize() {
+        return 8;
+    }
+
+    @Override
     public int getReaderPoolMaxSegments() {
         return 5;
     }
@@ -872,11 +877,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getWalMaxSegmentFileDescriptorsCache() {
-        return 1000;
-    }
-
-    @Override
     public long getWalMaxLagSize() {
         return 75 * Numbers.SIZE_1MB;
     }
@@ -884,6 +884,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getWalMaxLagTxnCount() {
         return 20;
+    }
+
+    @Override
+    public int getWalMaxSegmentFileDescriptorsCache() {
+        return 1000;
     }
 
     @Override
