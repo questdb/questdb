@@ -70,8 +70,15 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         return fuzzer.generateRandom(log, s0, s1);
     }
 
-    public ObjList<FuzzTransaction> generateSet(Rnd rnd, TableRecordMetadata metadata, long start, long end, String tableName) {
-        return fuzzer.generateSet(rnd, metadata, start, end, tableName, metadata.getMetadataVersion());
+    public ObjList<FuzzTransaction> generateSet(
+            Rnd rnd,
+            TableRecordMetadata sequencerMetadata,
+            TableRecordMetadata readerMetadata,
+            long start,
+            long end,
+            String tableName
+    ) {
+        return fuzzer.generateSet(rnd, sequencerMetadata, readerMetadata, start, end, tableName);
     }
 
     @Before

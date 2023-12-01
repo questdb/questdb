@@ -4792,38 +4792,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRewriteAggregateWithAddition() throws Exception {
-        assertMemoryLeak(() -> {
-            compile("  CREATE TABLE tab ( x int );");
-
-            assertPlan(
-                    "SELECT sum(x), sum(x+10) FROM tab",
-                    "VirtualRecord\n" +
-                            "  functions: [sum,sum+COUNT*10]\n" +
-                            "    GroupBy vectorized: true\n" +
-                            "      values: [sum(x),count(x)]\n" +
-                            "        DataFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: tab\n"
-            );
-
-            assertPlan(
-                    "SELECT sum(x), sum(10+x) FROM tab",
-                    "VirtualRecord\n" +
-                            "  functions: [sum,COUNT*10+sum]\n" +
-                            "    GroupBy vectorized: true\n" +
-                            "      values: [sum(x),count(x)]\n" +
-                            "        DataFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: tab\n"
-            );
-        });
-    }
-
-    @Test
     public void testRewriteAggregateWithAdditionIsDisabledForNonIntegerType() throws Exception {
         assertMemoryLeak(() -> {
-            compile("  CREATE TABLE tab ( x double );");
+            compile("CREATE TABLE tab ( x double );");
 
             assertPlan(
                     "SELECT sum(x), sum(x+10) FROM tab",
@@ -4848,8 +4819,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregateWithAdditionOnJoin() throws Exception {
         assertMemoryLeak(() -> {
-            compile("  CREATE TABLE taba ( x int, id int );");
-            compile("  CREATE TABLE tabb ( x int, id int );");
+            compile("CREATE TABLE taba ( x int, id int );");
+            compile("CREATE TABLE tabb ( x int, id int );");
 
             assertPlan(
                     "SELECT sum(taba.x),sum(tabb.x), sum(taba.x+10), sum(tabb.x+10) " +
@@ -4894,9 +4865,38 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRewriteAggregateWithMultiplication() throws Exception {
+    public void testRewriteAggregateWithIntAddition() throws Exception {
         assertMemoryLeak(() -> {
-            compile("  CREATE TABLE tab ( x int );");
+            compile("CREATE TABLE tab ( x int );");
+
+            assertPlan(
+                    "SELECT sum(x), sum(x+10) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,sum+COUNT*10]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x),count(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+
+            assertPlan(
+                    "SELECT sum(x), sum(10+x) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,COUNT*10+sum]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x),count(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+        });
+    }
+
+    @Test
+    public void testRewriteAggregateWithIntMultiplication() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE tab ( x int );");
 
             assertPlan(
                     "SELECT sum(x), sum(x*10) FROM tab",
@@ -4923,9 +4923,125 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRewriteAggregateWithIntSubtraction() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE tab ( x int );");
+
+            assertPlan(
+                    "SELECT sum(x), sum(x-10) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,sum-COUNT*10]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x),count(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+
+            assertPlan(
+                    "SELECT sum(x), sum(10-x) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,COUNT*10-sum]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x),count(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+        });
+    }
+
+    @Test
+    public void testRewriteAggregateWithLongAddition() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE tab ( x long );");
+
+            assertPlan(
+                    "SELECT sum(x), sum(x+2) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,sum+COUNT*2]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x),count(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+
+            assertPlan(
+                    "SELECT sum(x), sum(2+x) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,COUNT*2+sum]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x),count(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+        });
+    }
+
+    @Test
+    public void testRewriteAggregateWithLongMultiplication() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE tab ( x long );");
+
+            assertPlan(
+                    "SELECT sum(x), sum(x*10) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,sum*10]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+
+            assertPlan(
+                    "SELECT sum(x), sum(10*x) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,10*sum]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+        });
+    }
+
+    @Test
+    public void testRewriteAggregateWithLongSubtraction() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE tab ( x long );");
+
+            assertPlan(
+                    "SELECT sum(x), sum(x-10) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,sum-COUNT*10]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x),count(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+
+            assertPlan(
+                    "SELECT sum(x), sum(10-x) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,COUNT*10-sum]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x),count(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+        });
+    }
+
+    @Test
     public void testRewriteAggregateWithMultiplicationIsDisabledForNonIntegerColumnType() throws Exception {
         assertMemoryLeak(() -> {
-            compile("  CREATE TABLE tab ( x double );");
+            compile("CREATE TABLE tab ( x double );");
 
             assertPlan(
                     "SELECT sum(x), sum(x*10) FROM tab",
@@ -4950,7 +5066,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregateWithMultiplicationIsDisabledForNonIntegerConstantType() throws Exception {
         assertMemoryLeak(() -> {
-            compile("  CREATE TABLE tab ( x double );");
+            compile("CREATE TABLE tab ( x double );");
 
             assertPlan(
                     "SELECT sum(x), sum(x*10.0) FROM tab",
@@ -4975,8 +5091,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregateWithMultiplicationOnJoin() throws Exception {
         assertMemoryLeak(() -> {
-            compile("  CREATE TABLE taba ( x int, id int );");
-            compile("  CREATE TABLE tabb ( x int, id int );");
+            compile("CREATE TABLE taba ( x int, id int );");
+            compile("CREATE TABLE tabb ( x int, id int );");
 
             assertPlan(
                     "SELECT sum(taba.x),sum(tabb.x),sum(taba.x*10), sum(tabb.x*10) " +
@@ -5021,16 +5137,74 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRewriteAggregateWithSubtraction() throws Exception {
+    public void testRewriteAggregateWithShortAddition() throws Exception {
         assertMemoryLeak(() -> {
-            compile("  CREATE TABLE tab ( x int );");
+            compile("CREATE TABLE tab ( x short );");
+
+            assertPlan(
+                    "SELECT sum(x), sum(x+42) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,sum+COUNT*42]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x),count(*)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+
+            assertPlan(
+                    "SELECT sum(x), sum(42+x) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,COUNT*42+sum]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x),count(*)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+        });
+    }
+
+    @Test
+    public void testRewriteAggregateWithShortMultiplication() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE tab ( x short );");
+
+            assertPlan(
+                    "SELECT sum(x), sum(x*10) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,sum*10]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+
+            assertPlan(
+                    "SELECT sum(x), sum(10*x) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,10*sum]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+        });
+    }
+
+    @Test
+    public void testRewriteAggregateWithShortSubtraction() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE tab ( x short );");
 
             assertPlan(
                     "SELECT sum(x), sum(x-10) FROM tab",
                     "VirtualRecord\n" +
                             "  functions: [sum,sum-COUNT*10]\n" +
                             "    GroupBy vectorized: true\n" +
-                            "      values: [sum(x),count(x)]\n" +
+                            "      values: [sum(x),count(*)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: tab\n"
@@ -5041,7 +5215,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "VirtualRecord\n" +
                             "  functions: [sum,COUNT*10-sum]\n" +
                             "    GroupBy vectorized: true\n" +
-                            "      values: [sum(x),count(x)]\n" +
+                            "      values: [sum(x),count(*)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: tab\n"
@@ -5052,7 +5226,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregateWithSubtractionIsDisabledForNonIntegerType() throws Exception {
         assertMemoryLeak(() -> {
-            compile("  CREATE TABLE tab ( x double );");
+            compile("CREATE TABLE tab ( x double );");
 
             assertPlan(
                     "SELECT sum(x), sum(x-10) FROM tab",
@@ -5077,8 +5251,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregateWithSubtractionOnJoin() throws Exception {
         assertMemoryLeak(() -> {
-            compile("  CREATE TABLE taba ( x int, id int );");
-            compile("  CREATE TABLE tabb ( x int, id int );");
+            compile("CREATE TABLE taba ( x int, id int );");
+            compile("CREATE TABLE tabb ( x int, id int );");
 
             assertPlan(
                     "SELECT sum(taba.x),sum(tabb.x),sum(taba.x-10), sum(tabb.x-10) " +
@@ -5125,7 +5299,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregates() throws Exception {
         assertMemoryLeak(() -> {
-            compile("  CREATE TABLE hits\n" +
+            compile("CREATE TABLE hits\n" +
                     "(\n" +
                     "    EventTime timestamp,\n" +
                     "    ResolutionWidth int,\n" +
@@ -5150,7 +5324,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregatesOnJoin() throws Exception {
         assertMemoryLeak(() -> {
-            compile("  CREATE TABLE hits1" +
+            compile("CREATE TABLE hits1" +
                     "(" +
                     "    EventTime timestamp, " +
                     "    ResolutionWidth int, " +

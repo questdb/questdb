@@ -22,14 +22,36 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.test.griffin.engine.functions.groupby;
 
-public interface TableMetadata extends TableRecordMetadata {
-    int getMaxUncommittedRows();
+import io.questdb.test.AbstractCairoTest;
+import org.junit.Test;
 
-    long getO3MaxLag();
+public class SumShortVecGroupByFunctionFactoryTest extends AbstractCairoTest {
 
-    int getPartitionBy();
+    @Test
+    public void testMixedWithCount() throws Exception {
+        assertQuery(
+                "sum\tcount\n" +
+                        "20384\t1001\n",
+                "select sum(f), count() from tab",
+                "create table tab as (select rnd_short(0, 42) f from long_sequence(1001))",
+                null,
+                false,
+                true
+        );
+    }
 
-    boolean isSoftLink();
+    @Test
+    public void testSimple() throws Exception {
+        assertQuery(
+                "sum\n" +
+                        "1073011\n",
+                "select sum(f) from tab",
+                "create table tab as (select rnd_short(0, 12323) f from long_sequence(181))",
+                null,
+                false,
+                true
+        );
+    }
 }

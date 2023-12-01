@@ -29,21 +29,20 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 /**
  * The abstract class, in addition, provides a method to aggregate bivariate/regression statistics.
- * We use an algorithm similar to B. P. Welford's which works by first aggregating sum of squares of 
+ * We use an algorithm similar to B.P. Welford's which works by first aggregating sum of squares of
  * independent and dependent variables Sxy = sum[(X - meanX) * (Y - meanY)].
  * Computation of covariance is then simple, e.g. covariance = Sxy / (n - 1)
  *
  * @see <a href="https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Online">Welford's algorithm</a>
  */
-
 public abstract class AbstractCovarGroupByFunction extends DoubleFunction implements GroupByFunction, BinaryFunction {
     protected final Function xFunction;
     protected final Function yFunction;
@@ -52,24 +51,6 @@ public abstract class AbstractCovarGroupByFunction extends DoubleFunction implem
     protected AbstractCovarGroupByFunction(@NotNull Function arg0, @NotNull Function arg1) {
         this.xFunction = arg0;
         this.yFunction = arg1;
-    }
-
-    protected void aggregate(MapValue mapValue, double x, double y) {
-        double meanX = mapValue.getDouble(valueIndex);
-        double meanY = mapValue.getDouble(valueIndex + 1);
-        double sumXY = mapValue.getDouble(valueIndex + 2);
-        long count = mapValue.getLong(valueIndex + 3) + 1;
-
-        double oldMeanX = meanX;
-        meanX += (x - meanX) / count;
-        double oldMeanY = meanY;
-        meanY += (y - meanY) / count;
-        sumXY += (x - oldMeanX) * (y - meanY);
-
-        mapValue.putDouble(valueIndex, meanX);
-        mapValue.putDouble(valueIndex + 1, meanY);
-        mapValue.putDouble(valueIndex + 2, sumXY);
-        mapValue.addLong(valueIndex + 3, 1L);
     }
 
     @Override
@@ -131,6 +112,24 @@ public abstract class AbstractCovarGroupByFunction extends DoubleFunction implem
         mapValue.putDouble(valueIndex + 1, Double.NaN);
         mapValue.putDouble(valueIndex + 2, Double.NaN);
         mapValue.putLong(valueIndex + 3, 0);
+    }
+
+    protected void aggregate(MapValue mapValue, double x, double y) {
+        double meanX = mapValue.getDouble(valueIndex);
+        double meanY = mapValue.getDouble(valueIndex + 1);
+        double sumXY = mapValue.getDouble(valueIndex + 2);
+        long count = mapValue.getLong(valueIndex + 3) + 1;
+
+        double oldMeanX = meanX;
+        meanX += (x - meanX) / count;
+        double oldMeanY = meanY;
+        meanY += (y - meanY) / count;
+        sumXY += (x - oldMeanX) * (y - meanY);
+
+        mapValue.putDouble(valueIndex, meanX);
+        mapValue.putDouble(valueIndex + 1, meanY);
+        mapValue.putDouble(valueIndex + 2, sumXY);
+        mapValue.addLong(valueIndex + 3, 1L);
     }
 }
 

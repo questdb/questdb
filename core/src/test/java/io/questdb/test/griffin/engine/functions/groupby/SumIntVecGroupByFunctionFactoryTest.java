@@ -33,9 +33,19 @@ public class SumIntVecGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testAddColumn() throws Exception {
         // fix page frame size, because it affects AVG accuracy
         pageFrameMaxRows = 10_000;
-        assertQuery("avg\n" +
-                        "5261.376146789\n", "select round(avg(f),9) avg from tab", "create table tab as (select rnd_int(-55, 9009, 2) f from long_sequence(131))", null, "alter table tab add column b int", "avg\n" +
-                        "5261.376146789\n", false, true, false);
+        assertQuery(
+                "avg\n" +
+                        "5261.376146789\n",
+                "select round(avg(f),9) avg from tab",
+                "create table tab as (select rnd_int(-55, 9009, 2) f from long_sequence(131))",
+                null,
+                "alter table tab add column b int",
+                "avg\n" +
+                        "5261.376146789\n",
+                false,
+                true,
+                false
+        );
 
         assertQuery(
                 "avg\tsum\n" +
@@ -50,9 +60,19 @@ public class SumIntVecGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAllNullThenOne() throws Exception {
-        assertQuery("sum\n" +
-                        "NaN\n", "select sum(f) from tab", "create table tab as (select cast(null as int) f from long_sequence(33))", null, "insert into tab select 4567866 from long_sequence(1)", "sum\n" +
-                        "4567866\n", false, true, false);
+        assertQuery(
+                "sum\n" +
+                        "NaN\n",
+                "select sum(f) from tab",
+                "create table tab as (select cast(null as int) f from long_sequence(33))",
+                null,
+                "insert into tab select 4567866 from long_sequence(1)",
+                "sum\n" +
+                        "4567866\n",
+                false,
+                true,
+                false
+        );
     }
 
     @Test
