@@ -155,7 +155,7 @@ public class LineHttpProcessorState implements QuietCloseable {
             }
         } catch (Throwable th) {
             LOG.error().$("could not parse HTTP request [fd=").$(fd).$(", ex=").$(th).$(']').$();
-            error.put(th.getMessage());
+            handleUnknownParseError(th);
             currentStatus = Status.INTERNAL_ERROR;
         }
     }
@@ -166,13 +166,20 @@ public class LineHttpProcessorState implements QuietCloseable {
         recvBufPos = buffer;
     }
 
-    private void appendMeasurement() {
+    private Status appendMeasurement() throws IlpTudCache.TableCreateException {
         WalTableUpdateDetails tud = this.ilpTudCache.getTableUpdateDetails(AllowAllSecurityContext.INSTANCE, parser, symbolCachePool);
-
         try {
             appender.appendToWal(AllowAllSecurityContext.INSTANCE, parser, tud);
-        } catch (Throwable e) {
-            LOG.info().$("problem appending to WAL [table=").$(parser.getMeasurementName()).$(", ex=").$(e).I$();
+            return Status.OK;
+        } catch (IlpException e) {
+            errorLine = ++line;
+            int errorStartPos = error.length();
+            error.put("\nerror in line ").put(errorLine).put(": ");
+            error.put(e.getFlyweightMessage());
+            logError(parser, errorStartPos);
+            return Status.APPEND_ERROR;
+        } catch (CommitFailedException ex) {
+            return Status.COLUMN_ADD_ERROR;
         }
     }
 
@@ -196,47 +203,10 @@ public class LineHttpProcessorState implements QuietCloseable {
         return lo + copyLen;
     }
 
-    private Status processLocalBuffer() {
-        Status status = Status.OK;
-        while (recvBufPos > buffer) {
-            try {
-                LineTcpParser.ParseResult rc = parser.parseMeasurement(recvBufPos);
-                switch (rc) {
-                    case MEASUREMENT_COMPLETE: {
-                        appendMeasurement();
-                        line++;
-                        startNewMeasurement();
-                        status = Status.OK;
-                        break;
-                    }
-
-                    case ERROR: {
-                        return saveParseError(parser);
-                    }
-
-                    case BUFFER_UNDERFLOW: {
-                        if (!compactBuffer(recvBufStartOfMeasurement)) {
-                            error.put("buffer underflow [table=").put(parser.getMeasurementName()).put(", line=").put(line + 1).put("]");
-                            return Status.MESSAGE_TOO_LARGE;
-                        }
-                        return Status.NEEDS_REED;
-                    }
-                }
-            } catch (Throwable ex) {
-                LOG.error()
-                        .$('[').$(fd).$("] could not process line data [table=").$(parser.getMeasurementName())
-                        .$(", ex=").$(ex)
-                        .I$();
-                return saveParseError(ex);
-            }
-        }
-        return status;
-    }
-
-    private Status saveParseError(LineTcpParser parser) {
-        errorLine = line + 1;
+    private Status handleLineError(LineTcpParser parser) {
+        errorLine = ++line;
         int errorPos = error.length();
-        error.put("\nerror parsing line ").put(errorLine);
+        error.put("\nerror in line ").put(errorLine);
         switch (parser.getErrorCode()) {
             case NO_FIELDS:
                 error.put(": No fields were provided");
@@ -247,25 +217,99 @@ public class LineHttpProcessorState implements QuietCloseable {
             case MISSING_TAG_VALUE:
                 error.put(": Could not parse entire line. Tag value is missing: ").put(parser.getLastEntityName());
                 break;
+            case INVALID_TIMESTAMP:
+                error.put(": Could not parse timestamp: ").put(parser.getErrorTimestampValue());
+                break;
             default:
                 error.put(": ").put(String.valueOf(parser.getErrorCode()));
                 break;
         }
+        logError(parser, errorPos);
+        return Status.PARSE_ERROR;
+    }
 
+    private Status handleLineError(LineTcpParser parser, IlpTudCache.TableCreateException ex) {
+        errorLine = ++line;
+        int errorPos = error.length();
+        error.put("\nerror in line ").put(errorLine);
+        error.put(": table: ").put(parser.getMeasurementName());
+        if (ex.getMsg() != null) {
+            error.put("; ").put(ex.getMsg());
+        }
+        if (ex.getToken() != null) {
+            error.put(": ").put(ex.getToken());
+        }
+        logError(parser, errorPos);
+        return Status.PARSE_ERROR;
+    }
+
+    private Status handleLineError(LineTcpParser parser, CairoException ex) {
+        LOG.error()
+                .$('[').$(fd).$("] could not process line data [table=").$(parser.getMeasurementName())
+                .$(", ex=").$(ex.getFlyweightMessage())
+                .I$();
+
+        error.put("parse error [table=").put(parser.getMeasurementName())
+                .put(", line=").put(line + 1)
+                .put(", errno=").put(ex.getErrno()).put("]")
+                .put(", error=").put(ex.getFlyweightMessage()).put("]");
+        errorLine = line + 1;
+        return Status.INTERNAL_ERROR;
+    }
+
+    private Status handleUnknownParseError(Throwable ex) {
+        LOG.error().$('[').$(fd)
+                .$("] could not process line data requestId=").$(requestId).$(", ex=").$(ex).$();
+        // If this is some silly exception, no point of sending it to the client.
+        error.put("parse error: ").put(ex.getClass().getCanonicalName());
+        return Status.INTERNAL_ERROR;
+    }
+
+    private void logError(LineTcpParser parser, int errorPos) {
         LOG.info().$("parse error [table=").$(parser.getMeasurementName())
-                .$(", line=").$(line + 1)
+                .$(", line=").$(errorLine)
                 .$(error.subSequence(errorPos, error.length()))
                 .$(", request=").$(requestId)
                 .$(", fd=").$(fd)
                 .$();
-        line++;
-        return Status.PARSE_ERROR;
     }
 
-    private Status saveParseError(Throwable ex) {
-        error.put("parse error [table=").put(parser.getMeasurementName()).put(", line=").put(line + 1).put(", error=").put(ex.getMessage()).put("]");
-        errorLine = line + 1;
-        return Status.INTERNAL_ERROR;
+    private Status processLocalBuffer() {
+        Status status = Status.OK;
+        while (recvBufPos > buffer) {
+            try {
+                LineTcpParser.ParseResult rc = parser.parseMeasurement(recvBufPos);
+                switch (rc) {
+                    case MEASUREMENT_COMPLETE: {
+                        if ((status = appendMeasurement()) != Status.OK) {
+                            return status;
+                        }
+                        line++;
+                        startNewMeasurement();
+                        break;
+                    }
+
+                    case ERROR: {
+                        return handleLineError(parser);
+                    }
+
+                    case BUFFER_UNDERFLOW: {
+                        if (!compactBuffer(recvBufStartOfMeasurement)) {
+                            error.put("buffer underflow [table=").put(parser.getMeasurementName()).put(", line=").put(line + 1).put("]");
+                            return Status.MESSAGE_TOO_LARGE;
+                        }
+                        return Status.NEEDS_REED;
+                    }
+                }
+            } catch (IlpTudCache.TableCreateException parseException) {
+                return handleLineError(parser, parseException);
+            } catch (CairoException parseException) {
+                return handleLineError(parser, parseException);
+            } catch (Throwable ex) {
+                return handleUnknownParseError(ex);
+            }
+        }
+        return status;
     }
 
     private void startNewMeasurement() {
@@ -287,8 +331,10 @@ public class LineHttpProcessorState implements QuietCloseable {
         OK(null, 204),
         NEEDS_REED("invalid", 400),
         PARSE_ERROR("invalid", 400),
+        APPEND_ERROR("invalid", 400),
         INTERNAL_ERROR("internal error", 500),
-        MESSAGE_TOO_LARGE("request too large", 413);
+        MESSAGE_TOO_LARGE("request too large", 413),
+        COLUMN_ADD_ERROR("invalid", 400);
 
         private final String codeStr;
         private final int responseCode;

@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -119,6 +118,10 @@ public class LineTcpParser {
 
     public ErrorCode getErrorCode() {
         return errorCode;
+    }
+
+    public DirectUtf8Sequence getErrorTimestampValue() {
+        return charSeq;
     }
 
     public DirectUtf8Sequence getLastEntityName() {

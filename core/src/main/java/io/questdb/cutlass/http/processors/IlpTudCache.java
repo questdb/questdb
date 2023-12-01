@@ -42,6 +42,7 @@ public class IlpTudCache implements QuietCloseable {
     private final MemoryMARW ddlMem = Vm.getMARWInstance();
     private final DefaultColumnTypes defaultColumnTypes;
     private final CairoEngine engine;
+    private final TableCreateException parseException = new TableCreateException();
     private final Path path = new Path();
     private final StringSink tableNameUtf16 = new StringSink();
     private final TableStructureAdapter tableStructureAdapter;
@@ -95,7 +96,7 @@ public class IlpTudCache implements QuietCloseable {
             SecurityContext securityContext,
             @NotNull LineTcpParser parser,
             Pool<SymbolCache> symbolCachePool
-    ) {
+    ) throws TableCreateException {
         int key = tableUpdateDetails.keyIndex(parser.getMeasurementName());
         if (key < 0) {
             return tableUpdateDetails.valueAt(key);
@@ -105,7 +106,7 @@ public class IlpTudCache implements QuietCloseable {
         Utf8s.utf8ToUtf16(parser.getMeasurementName(), tableNameUtf16);
         TableToken tableToken = getOrCreateTable(securityContext, parser, tableNameUtf16);
         if (!engine.isWalTable(tableToken)) {
-            throw CairoException.nonCritical().put("table is not WAL [table=").put(tableNameUtf16).put(']');
+            throw parseException.of("cannot insert in non-WAL table", null);
         }
 
         TelemetryTask.store(telemetry, TelemetryOrigin.ILP_TCP, TelemetrySystemEvent.ILP_RESERVE_WRITER);
@@ -126,26 +127,30 @@ public class IlpTudCache implements QuietCloseable {
         return tud;
     }
 
-    private TableToken getOrCreateTable(SecurityContext securityContext, @NotNull LineTcpParser parser, StringSink tableNameUtf16) {
+    private TableToken getOrCreateTable(SecurityContext securityContext, @NotNull LineTcpParser parser, StringSink tableNameUtf16) throws TableCreateException {
+        int maxFileNameLength = engine.getConfiguration().getMaxFileNameLength();
+        if (!TableUtils.isValidTableName(tableNameUtf16, maxFileNameLength)) {
+            throw parseException.of("invalid table name", null);
+        }
         TableToken tableToken = engine.getTableTokenIfExists(tableNameUtf16);
         int status = engine.getTableStatus(path, tableToken);
         if (status != TableUtils.TABLE_EXISTS) {
             if (!autoCreateNewTables) {
-                throw CairoException.nonCritical()
-                        .put("table does not exist, creating new tables is disabled [table=").put(tableNameUtf16)
-                        .put(']');
+                throw parseException.of("table does not exist, creating new tables is disabled", null);
             }
             if (!autoCreateNewColumns) {
-                throw CairoException.nonCritical()
-                        .put("table does not exist, cannot create table, creating new columns is disabled [table=").put(tableNameUtf16)
-                        .put(']');
+                throw parseException.of("table does not exist, cannot create table, creating new columns is disabled", null);
             }
             // validate that parser entities do not contain NULLs
             TableStructureAdapter tsa = tableStructureAdapter.of(tableNameUtf16, parser);
 
             for (int i = 0, n = tsa.getColumnCount(); i < n; i++) {
+                CharSequence columnName = tsa.getColumnNameNoValidation(i);
+                if (!TableUtils.isValidColumnName(columnName, maxFileNameLength)) {
+                    throw parseException.of("invalid column name", columnName);
+                }
                 if (tsa.getColumnType(i) == LineTcpParser.ENTITY_TYPE_NULL) {
-                    throw CairoException.nonCritical().put("unknown column type [columnName=").put(tsa.getColumnName(i)).put(']');
+                    throw parseException.of("invalid column type", columnName);
                 }
             }
             tableToken = engine.createTable(securityContext, ddlMem, path, true, tsa, false);
@@ -153,4 +158,22 @@ public class IlpTudCache implements QuietCloseable {
         return tableToken;
     }
 
+    public static class TableCreateException extends Exception {
+        private String msg;
+        private CharSequence token;
+
+        public String getMsg() {
+            return msg;
+        }
+
+        public CharSequence getToken() {
+            return token;
+        }
+
+        TableCreateException of(String message, CharSequence token) {
+            this.msg = message;
+            this.token = token;
+            return this;
+        }
+    }
 }

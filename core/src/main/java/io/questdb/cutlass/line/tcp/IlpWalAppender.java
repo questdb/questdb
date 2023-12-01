@@ -35,8 +35,7 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8s;
 
-import static io.questdb.cutlass.line.tcp.LineTcpMeasurementEvent.*;
-import static io.questdb.cutlass.line.tcp.LineTcpMeasurementEvent.castError;
+import static io.questdb.cutlass.line.tcp.IlpException.*;
 import static io.questdb.cutlass.line.tcp.TableUpdateDetails.ThreadLocalDetails.COLUMN_NOT_FOUND;
 import static io.questdb.cutlass.line.tcp.TableUpdateDetails.ThreadLocalDetails.DUPLICATED_COLUMN;
 
@@ -57,6 +56,22 @@ public class IlpWalAppender {
     }
 
     public void appendToWal(
+            SecurityContext securityContext,
+            LineTcpParser parser,
+            TableUpdateDetails tud
+    ) throws CommitFailedException {
+        while (true) {
+            try {
+                appendToWal0(securityContext, parser, tud);
+                break;
+            } catch (MetadataChangedException e) {
+                // do another retry, metadata has changed while processing the line
+                // and all the resolved column indexes have been invalidated
+            }
+        }
+    }
+
+    private void appendToWal0(
             SecurityContext securityContext,
             LineTcpParser parser,
             TableUpdateDetails tud
@@ -151,11 +166,13 @@ public class IlpWalAppender {
 
                 final LineTcpParser.ProtoEntity ent = parser.getEntity(i);
                 switch (ent.getType()) {
-                    case LineTcpParser.ENTITY_TYPE_TAG: {
+                    case LineTcpParser.ENTITY_TYPE_TAG:
+                    case LineTcpParser.ENTITY_TYPE_SYMBOL: {
+                        // parser would reject this condition based on config
                         if (ColumnType.tagOf(colType) == ColumnType.SYMBOL) {
                             r.putSymUtf8(columnIndex, ent.getValue(), parser.hasNonAsciiChars());
                         } else {
-                            throw castError("tag", i, colType, ent.getName());
+                            throw castError(tud.getTableNameUtf16(), "TAG", colType, ent.getName());
                         }
                         break;
                     }
@@ -171,7 +188,7 @@ public class IlpWalAppender {
                                 } else if (entityValue == Numbers.LONG_NaN) {
                                     r.putInt(columnIndex, Numbers.INT_NaN);
                                 } else {
-                                    throw boundsError(entityValue, i, ColumnType.INT);
+                                    throw boundsError(entityValue, ColumnType.INT, tud.getTableNameUtf16(), writer.getMetadata().getColumnName(columnIndex));
                                 }
                                 break;
                             }
@@ -182,7 +199,7 @@ public class IlpWalAppender {
                                 } else if (entityValue == Numbers.LONG_NaN) {
                                     r.putShort(columnIndex, (short) 0);
                                 } else {
-                                    throw boundsError(entityValue, i, ColumnType.SHORT);
+                                    throw boundsError(entityValue, ColumnType.SHORT, tud.getTableNameUtf16(), writer.getMetadata().getColumnName(columnIndex));
                                 }
                                 break;
                             }
@@ -193,7 +210,7 @@ public class IlpWalAppender {
                                 } else if (entityValue == Numbers.LONG_NaN) {
                                     r.putByte(columnIndex, (byte) 0);
                                 } else {
-                                    throw boundsError(entityValue, i, ColumnType.BYTE);
+                                    throw boundsError(entityValue, ColumnType.BYTE, tud.getTableNameUtf16(), writer.getMetadata().getColumnName(columnIndex));
                                 }
                                 break;
                             }
@@ -213,7 +230,7 @@ public class IlpWalAppender {
                                 r.putSymUtf8(columnIndex, ent.getValue(), parser.hasNonAsciiChars());
                                 break;
                             default:
-                                throw castError("integer", i, colType, ent.getName());
+                                throw castError(tud.getTableNameUtf16(), "INTEGER", colType, ent.getName());
                         }
                         break;
                     }
@@ -229,7 +246,7 @@ public class IlpWalAppender {
                                 r.putSymUtf8(columnIndex, ent.getValue(), parser.hasNonAsciiChars());
                                 break;
                             default:
-                                throw castError("float", i, colType, ent.getName());
+                                throw castError(tud.getTableNameUtf16(), "FLOAT", colType, ent.getName());
                         }
                         break;
                     }
@@ -243,7 +260,7 @@ public class IlpWalAppender {
                                         int value = Numbers.parseIPv4Nl(entityValue);
                                         r.putInt(columnIndex, value);
                                     } catch (NumericException e) {
-                                        throw castError("string", i, colType, ent.getName());
+                                        throw castError(tud.getTableNameUtf16(), "STRING", colType, ent.getName());
                                     }
                                     break;
                                 case ColumnType.STRING:
@@ -257,10 +274,10 @@ public class IlpWalAppender {
                                         if (Numbers.decodeLowShort(encodedResult) > 0) {
                                             r.putChar(columnIndex, (char) Numbers.decodeHighShort(encodedResult));
                                         } else {
-                                            throw castError("string", i, colType, ent.getName());
+                                            throw castError(tud.getTableNameUtf16(), "STRING", colType, ent.getName());
                                         }
                                     } else {
-                                        throw castError("string", i, colType, ent.getName());
+                                        throw castError(tud.getTableNameUtf16(), "STRING", colType, ent.getName());
                                     }
                                     break;
                                 case ColumnType.SYMBOL:
@@ -270,7 +287,7 @@ public class IlpWalAppender {
                                     r.putUuidUtf8(columnIndex, entityValue);
                                     break;
                                 default:
-                                    throw castError("string", i, colType, ent.getName());
+                                    throw castError(tud.getTableNameUtf16(), "STRING", colType, ent.getName());
                             }
                         } else {
                             long geoHash;
@@ -293,7 +310,7 @@ public class IlpWalAppender {
                                 r.putSymUtf8(columnIndex, ent.getValue(), parser.hasNonAsciiChars());
                                 break;
                             default:
-                                throw castError("long256", i, colType, ent.getName());
+                                throw castError(tud.getTableNameUtf16(), "LONG256", colType, ent.getName());
                         }
                         break;
                     }
@@ -324,7 +341,7 @@ public class IlpWalAppender {
                                 r.putSymUtf8(columnIndex, ent.getValue(), parser.hasNonAsciiChars());
                                 break;
                             default:
-                                throw castError("boolean", i, colType, ent.getName());
+                                throw castError(tud.getTableNameUtf16(), "BOOLEAN", colType, ent.getName());
                         }
                         break;
                     }
@@ -342,16 +359,7 @@ public class IlpWalAppender {
                                 r.putSymUtf8(columnIndex, ent.getValue(), parser.hasNonAsciiChars());
                                 break;
                             default:
-                                throw castError("timestamp", i, colType, ent.getName());
-                        }
-                        break;
-                    }
-                    // parser would reject this condition based on config
-                    case LineTcpParser.ENTITY_TYPE_SYMBOL: {
-                        if (ColumnType.tagOf(colType) == ColumnType.SYMBOL) {
-                            r.putSymUtf8(columnIndex, ent.getValue(), parser.hasNonAsciiChars());
-                        } else {
-                            throw castError("symbol", i, colType, ent.getName());
+                                throw castError(tud.getTableNameUtf16(), "TIMESTAMP", colType, ent.getName());
                         }
                         break;
                     }

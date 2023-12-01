@@ -71,6 +71,14 @@ public class TableStructureAdapter implements TableStructure {
         throw CairoException.nonCritical().put("column name contains invalid characters [colName=").put(colName).put(']');
     }
 
+    public CharSequence getColumnNameNoValidation(int columnIndex) {
+        assert columnIndex < getColumnCount();
+        if (columnIndex == getTimestampIndex()) {
+            return DEFAULT_TIMESTAMP_FIELD;
+        }
+        return entities.get(columnIndex).getName().toString();
+    }
+
     @Override
     public int getColumnType(int columnIndex) {
         if (columnIndex == getTimestampIndex()) {

@@ -38,6 +38,7 @@ import io.questdb.std.str.Utf8s;
 
 import java.io.Closeable;
 
+import static io.questdb.cutlass.line.tcp.IlpException.*;
 import static io.questdb.cutlass.line.tcp.LineTcpParser.ENTITY_TYPE_NULL;
 import static io.questdb.cutlass.line.tcp.TableUpdateDetails.ThreadLocalDetails.COLUMN_NOT_FOUND;
 
@@ -74,37 +75,6 @@ class LineTcpMeasurementEvent implements Closeable {
         this.stringToCharCastAllowed = stringToCharCastAllowed;
     }
 
-    public static CairoException boundsError(long entityValue, int columnIndex, int colType) {
-        return CairoException.nonCritical()
-                .put("line protocol integer is out of ").put(ColumnType.nameOf(colType))
-                .put(" bounds [columnIndex=").put(columnIndex)
-                .put(", value=").put(entityValue)
-                .put(']');
-    }
-
-    public static CairoException castError(String ilpType, int columnWriterIndex, int colType, DirectUtf8Sequence name) {
-        return CairoException.nonCritical()
-                .put("cast error for line protocol ").put(ilpType)
-                .put(" [columnWriterIndex=").put(columnWriterIndex)
-                .put(", columnType=").put(ColumnType.nameOf(colType))
-                .put(":").put(colType)
-                .put(", name=").put(name)
-                .put(']');
-    }
-
-    public static CairoException invalidColNameError(CharSequence colName, String tableNameUtf16) {
-        return CairoException.nonCritical()
-                .put("invalid column name [table=").put(tableNameUtf16)
-                .put(", columnName=").put(colName)
-                .put(']');
-    }
-
-    public static CairoException newColumnsNotAllowed(String colName, String tableNameUtf16) {
-        return CairoException.nonCritical()
-                .put("column does not exist, creating new columns is disabled [table=").put(tableNameUtf16)
-                .put(", columnName=").put(colName)
-                .put(']');
-    }
 
     @Override
     public void close() {
@@ -363,7 +333,7 @@ class LineTcpMeasurementEvent implements Closeable {
                                 localDetails.getSymbolLookup(columnWriterIndex)
                         );
                     } else {
-                        throw castError("tag", columnWriterIndex, colType, entity.getName());
+                        throw castError(tud.getTableNameUtf16(), "tag", colType, entity.getName());
                     }
                     break;
                 }
@@ -379,7 +349,7 @@ class LineTcpMeasurementEvent implements Closeable {
                             } else if (entityValue == Numbers.LONG_NaN) {
                                 offset = buffer.addInt(offset, Numbers.INT_NaN);
                             } else {
-                                throw boundsError(entityValue, nEntity, ColumnType.INT);
+                                throw boundsError(entityValue, ColumnType.INT, tud.getTableNameUtf16(), nEntity);
                             }
                             break;
                         }
@@ -390,7 +360,7 @@ class LineTcpMeasurementEvent implements Closeable {
                             } else if (entityValue == Numbers.LONG_NaN) {
                                 offset = buffer.addShort(offset, (short) 0);
                             } else {
-                                throw boundsError(entityValue, nEntity, ColumnType.SHORT);
+                                throw boundsError(entityValue, ColumnType.SHORT, tud.getTableNameUtf16(), nEntity);
                             }
                             break;
                         }
@@ -401,7 +371,7 @@ class LineTcpMeasurementEvent implements Closeable {
                             } else if (entityValue == Numbers.LONG_NaN) {
                                 offset = buffer.addByte(offset, (byte) 0);
                             } else {
-                                throw boundsError(entityValue, nEntity, ColumnType.BYTE);
+                                throw boundsError(entityValue, ColumnType.BYTE, tud.getTableNameUtf16(), nEntity);
                             }
                             break;
                         }
@@ -427,7 +397,7 @@ class LineTcpMeasurementEvent implements Closeable {
                             );
                             break;
                         default:
-                            throw castError("integer", columnWriterIndex, colType, entity.getName());
+                            throw castError(tud.getTableNameUtf16(), "integer", colType, entity.getName());
                     }
                     break;
                 }
@@ -447,7 +417,7 @@ class LineTcpMeasurementEvent implements Closeable {
                             );
                             break;
                         default:
-                            throw castError("float", columnWriterIndex, colType, entity.getName());
+                            throw castError(tud.getTableNameUtf16(), "float", colType, entity.getName());
                     }
                     break;
                 }
@@ -461,7 +431,7 @@ class LineTcpMeasurementEvent implements Closeable {
                                     int value = Numbers.parseIPv4Nl(entityValue);
                                     offset = buffer.addInt(offset, value);
                                 } catch (NumericException e) {
-                                    throw castError("string", columnWriterIndex, colType, entity.getName());
+                                    throw castError(tud.getTableNameUtf16(), "string", colType, entity.getName());
                                 }
                                 break;
                             case ColumnType.STRING:
@@ -475,10 +445,10 @@ class LineTcpMeasurementEvent implements Closeable {
                                     if (Numbers.decodeLowShort(encodedResult) > 0) {
                                         offset = buffer.addChar(offset, (char) Numbers.decodeHighShort(encodedResult));
                                     } else {
-                                        throw castError("string", columnWriterIndex, colType, entity.getName());
+                                        throw castError(tud.getTableNameUtf16(), "string", colType, entity.getName());
                                     }
                                 } else {
-                                    throw castError("string", columnWriterIndex, colType, entity.getName());
+                                    throw castError(tud.getTableNameUtf16(), "string", colType, entity.getName());
                                 }
                                 break;
                             case ColumnType.SYMBOL:
@@ -493,11 +463,11 @@ class LineTcpMeasurementEvent implements Closeable {
                                 try {
                                     offset = buffer.addUuid(offset, entityValue);
                                 } catch (NumericException e) {
-                                    throw castError("string", columnWriterIndex, colType, entity.getName());
+                                    throw castError(tud.getTableNameUtf16(), "string", colType, entity.getName());
                                 }
                                 break;
                             default:
-                                throw castError("string", columnWriterIndex, colType, entity.getName());
+                                throw castError(tud.getTableNameUtf16(), "string", colType, entity.getName());
                         }
                     } else {
                         offset = buffer.addGeoHash(offset, entityValue, colTypeMeta);
@@ -518,7 +488,7 @@ class LineTcpMeasurementEvent implements Closeable {
                             );
                             break;
                         default:
-                            throw castError("long256", columnWriterIndex, colType, entity.getName());
+                            throw castError(tud.getTableNameUtf16(), "long256", colType, entity.getName());
                     }
                     break;
                 }
@@ -555,7 +525,7 @@ class LineTcpMeasurementEvent implements Closeable {
                             );
                             break;
                         default:
-                            throw castError("boolean", columnWriterIndex, colType, entity.getName());
+                            throw castError(tud.getTableNameUtf16(), "boolean", colType, entity.getName());
                     }
                     break;
                 }
@@ -578,7 +548,7 @@ class LineTcpMeasurementEvent implements Closeable {
                             );
                             break;
                         default:
-                            throw castError("timestamp", columnWriterIndex, colType, entity.getName());
+                            throw castError(tud.getTableNameUtf16(), "timestamp", colType, entity.getName());
                     }
                     break;
                 }
@@ -591,7 +561,7 @@ class LineTcpMeasurementEvent implements Closeable {
                                 localDetails.getSymbolLookup(columnWriterIndex)
                         );
                     } else {
-                        throw castError("symbol", columnWriterIndex, colType, entity.getName());
+                        throw castError(tud.getTableNameUtf16(), "symbol", colType, entity.getName());
                     }
                     break;
                 }

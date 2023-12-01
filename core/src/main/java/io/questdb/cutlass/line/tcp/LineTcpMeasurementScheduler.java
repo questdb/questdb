@@ -297,15 +297,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
 
         if (tud.isWal()) {
             try {
-                while (true) {
-                    try {
-                        appendToWal(securityContext, parser, tud);
-                        break;
-                    } catch (MetadataChangedException e) {
-                        // do another retry, metadata has changed while processing the line
-                        // and all the resolved column indexes have been invalidated
-                    }
-                }
+                ilpWalAppender.appendToWal(securityContext, parser, tud);
             } catch (CommitFailedException ex) {
                 if (ex.isTableDropped()) {
                     // table dropped, nothing to worry about
@@ -340,14 +332,6 @@ public class LineTcpMeasurementScheduler implements Closeable {
                 .$(", ex=").$(ex)
                 .I$();
         throw CairoException.critical(0).put("could not write ILP message to WAL [tableName=").put(measurementName).put(", error=").put(ex.getMessage()).put(']');
-    }
-
-    private void appendToWal(
-            SecurityContext securityContext,
-            LineTcpParser parser,
-            TableUpdateDetails tud
-    ) throws CommitFailedException, MetadataChangedException {
-        ilpWalAppender.appendToWal(securityContext, parser, tud);
     }
 
     private void closeLocals(LowerCaseCharSequenceObjHashMap<TableUpdateDetails> tudUtf16) {

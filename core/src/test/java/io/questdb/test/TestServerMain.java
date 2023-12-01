@@ -80,6 +80,23 @@ public class TestServerMain extends ServerMain {
         }
     }
 
+    public void compile(String sql) {
+        try {
+            if (sqlExecutionContext == null) {
+                sqlExecutionContext = new SqlExecutionContextImpl(getEngine(), 1).with(
+                        getEngine().getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                        null,
+                        null,
+                        -1,
+                        null
+                );
+            }
+            getEngine().compile(sql, sqlExecutionContext);
+        } catch (SqlException e) {
+            throw new AssertionError(e);
+        }
+    }
+
     public void waitWalTxnApplied(String tableName, long expectedTxn) {
         int waitLim = 15;
         int sleep = 10;
