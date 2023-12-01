@@ -30,5 +30,6 @@ public interface TableMetadata extends TableRecordMetadata {
     long getO3MaxLag();
 
     int getPartitionBy();
+
     boolean isSoftLink();
 }
