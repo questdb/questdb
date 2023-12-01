@@ -238,13 +238,16 @@ public class ShowTablesFunctionFactory implements FunctionFactory {
                 }
 
                 private boolean open(TableToken tableToken) {
-                    if (
-                            !showAllTables
-                                    && Chars.startsWith(tableToken.getTableName(), sysTablePrefix)
-                                    && (hideTelemetryTables && (Chars.equals(tableToken.getTableName(), TelemetryTask.TABLE_NAME)
-                                    || Chars.equals(tableToken.getTableName(), TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME)))
-                    ) {
-                        return false;
+                    if (!showAllTables) {
+                        // sys table
+                        if (Chars.startsWith(tableToken.getTableName(), sysTablePrefix)) {
+                            return false;
+                        }
+                        // telemetry table
+                        if (hideTelemetryTables && (Chars.equals(tableToken.getTableName(), TelemetryTask.TABLE_NAME)
+                                || Chars.equals(tableToken.getTableName(), TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME))) {
+                            return false;
+                        }
                     }
 
                     if (getMetadata() == METADATA) {
