@@ -41,6 +41,7 @@ import io.questdb.griffin.engine.functions.bool.InTimestampTimestampFunctionFact
 import io.questdb.griffin.engine.functions.cast.CastStrToRegClassFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToStrArrayFunctionFactory;
 import io.questdb.griffin.engine.functions.catalogue.StringToStringArrayFunction;
+import io.questdb.griffin.engine.functions.catalogue.WalTransactionsFunctionFactory;
 import io.questdb.griffin.engine.functions.columns.*;
 import io.questdb.griffin.engine.functions.conditional.CoalesceFunctionFactory;
 import io.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory;
@@ -495,21 +496,26 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "   from long_sequence(100)" +
                     ") timestamp(ts) partition by hour");
 
-            String sql = "select i, row_number() over (partition by sym), avg(i) over () from x limit 3";
+            String sql = "select i, " +
+                    "row_number() over (partition by sym), " +
+                    "avg(i) over (), " +
+                    "sum(i) over (), " +
+                    "first_value(i) over (), " +
+                    "from x limit 3";
             assertPlan(
                     sql,
                     "Limit lo: 3\n" +
                             "    CachedWindow\n" +
-                            "      unorderedFunctions: [row_number() over (partition by [sym]),avg(i) over ()]\n" +
+                            "      unorderedFunctions: [row_number() over (partition by [sym]),avg(i) over (),sum(i) over (),first_value(i) over ()]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: x\n"
             );
 
-            assertSql("i\trow_number\tavg\n" +
-                    "1\t1\t50.5\n" +
-                    "2\t2\t50.5\n" +
-                    "3\t1\t50.5\n", sql);
+            assertSql("i\trow_number\tavg\tsum\tfirst_value\n" +
+                    "1\t1\t50.5\t5050.0\t1.0\n" +
+                    "2\t2\t50.5\t5050.0\t1.0\n" +
+                    "3\t1\t50.5\t5050.0\t1.0\n", sql);
         });
     }
 
@@ -757,7 +763,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "            Frame forward scan on: test\n");
 
             assertSql("avg\n2.0\n", query);
-            assertSql("avg\n2.0\n", "selecT * from ( " + query + " )");
+            assertSql("avg\n2.0\n", "select * from ( " + query + " )");
         });
     }
 
@@ -1853,6 +1859,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         FunctionFactoryCache cache = engine.getFunctionFactoryCache();
         LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> factories = cache.getFactories();
         factories.forEach((key, value) -> {
+            FUNCTIONS:
             for (int i = 0, n = value.size(); i < n; i++) {
                 planSink.clear();
 
@@ -1970,6 +1977,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 args.add(new IntConstant(2));
                             } else if (!useConst) {
                                 args.add(colFuncs.get(sigArgType));
+                            } else if (factory instanceof WalTransactionsFunctionFactory && sigArgType == ColumnType.STRING) {
+                                // Skip it, it requires a WAL table to exist
+                                break FUNCTIONS;
                             } else {
                                 args.add(getConst(constFuncs, sigArgType, p, no));
                             }
@@ -4782,38 +4792,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRewriteAggregateWithAddition() throws Exception {
-        assertMemoryLeak(() -> {
-            compile("  CREATE TABLE tab ( x int );");
-
-            assertPlan(
-                    "SELECT sum(x), sum(x+10) FROM tab",
-                    "VirtualRecord\n" +
-                            "  functions: [sum,sum+COUNT*10]\n" +
-                            "    GroupBy vectorized: true\n" +
-                            "      values: [sum(x),count(x)]\n" +
-                            "        DataFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: tab\n"
-            );
-
-            assertPlan(
-                    "SELECT sum(x), sum(10+x) FROM tab",
-                    "VirtualRecord\n" +
-                            "  functions: [sum,COUNT*10+sum]\n" +
-                            "    GroupBy vectorized: true\n" +
-                            "      values: [sum(x),count(x)]\n" +
-                            "        DataFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: tab\n"
-            );
-        });
-    }
-
-    @Test
     public void testRewriteAggregateWithAdditionIsDisabledForNonIntegerType() throws Exception {
         assertMemoryLeak(() -> {
-            compile("  CREATE TABLE tab ( x double );");
+            compile("CREATE TABLE tab ( x double );");
 
             assertPlan(
                     "SELECT sum(x), sum(x+10) FROM tab",
@@ -4838,8 +4819,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregateWithAdditionOnJoin() throws Exception {
         assertMemoryLeak(() -> {
-            compile("  CREATE TABLE taba ( x int, id int );");
-            compile("  CREATE TABLE tabb ( x int, id int );");
+            compile("CREATE TABLE taba ( x int, id int );");
+            compile("CREATE TABLE tabb ( x int, id int );");
 
             assertPlan(
                     "SELECT sum(taba.x),sum(tabb.x), sum(taba.x+10), sum(tabb.x+10) " +
@@ -4884,9 +4865,38 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRewriteAggregateWithMultiplication() throws Exception {
+    public void testRewriteAggregateWithIntAddition() throws Exception {
         assertMemoryLeak(() -> {
-            compile("  CREATE TABLE tab ( x int );");
+            compile("CREATE TABLE tab ( x int );");
+
+            assertPlan(
+                    "SELECT sum(x), sum(x+10) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,sum+COUNT*10]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x),count(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+
+            assertPlan(
+                    "SELECT sum(x), sum(10+x) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,COUNT*10+sum]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x),count(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+        });
+    }
+
+    @Test
+    public void testRewriteAggregateWithIntMultiplication() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE tab ( x int );");
 
             assertPlan(
                     "SELECT sum(x), sum(x*10) FROM tab",
@@ -4913,9 +4923,125 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRewriteAggregateWithIntSubtraction() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE tab ( x int );");
+
+            assertPlan(
+                    "SELECT sum(x), sum(x-10) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,sum-COUNT*10]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x),count(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+
+            assertPlan(
+                    "SELECT sum(x), sum(10-x) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,COUNT*10-sum]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x),count(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+        });
+    }
+
+    @Test
+    public void testRewriteAggregateWithLongAddition() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE tab ( x long );");
+
+            assertPlan(
+                    "SELECT sum(x), sum(x+2) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,sum+COUNT*2]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x),count(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+
+            assertPlan(
+                    "SELECT sum(x), sum(2+x) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,COUNT*2+sum]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x),count(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+        });
+    }
+
+    @Test
+    public void testRewriteAggregateWithLongMultiplication() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE tab ( x long );");
+
+            assertPlan(
+                    "SELECT sum(x), sum(x*10) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,sum*10]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+
+            assertPlan(
+                    "SELECT sum(x), sum(10*x) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,10*sum]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+        });
+    }
+
+    @Test
+    public void testRewriteAggregateWithLongSubtraction() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE tab ( x long );");
+
+            assertPlan(
+                    "SELECT sum(x), sum(x-10) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,sum-COUNT*10]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x),count(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+
+            assertPlan(
+                    "SELECT sum(x), sum(10-x) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,COUNT*10-sum]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x),count(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+        });
+    }
+
+    @Test
     public void testRewriteAggregateWithMultiplicationIsDisabledForNonIntegerColumnType() throws Exception {
         assertMemoryLeak(() -> {
-            compile("  CREATE TABLE tab ( x double );");
+            compile("CREATE TABLE tab ( x double );");
 
             assertPlan(
                     "SELECT sum(x), sum(x*10) FROM tab",
@@ -4940,7 +5066,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregateWithMultiplicationIsDisabledForNonIntegerConstantType() throws Exception {
         assertMemoryLeak(() -> {
-            compile("  CREATE TABLE tab ( x double );");
+            compile("CREATE TABLE tab ( x double );");
 
             assertPlan(
                     "SELECT sum(x), sum(x*10.0) FROM tab",
@@ -4965,8 +5091,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregateWithMultiplicationOnJoin() throws Exception {
         assertMemoryLeak(() -> {
-            compile("  CREATE TABLE taba ( x int, id int );");
-            compile("  CREATE TABLE tabb ( x int, id int );");
+            compile("CREATE TABLE taba ( x int, id int );");
+            compile("CREATE TABLE tabb ( x int, id int );");
 
             assertPlan(
                     "SELECT sum(taba.x),sum(tabb.x),sum(taba.x*10), sum(tabb.x*10) " +
@@ -5011,16 +5137,74 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRewriteAggregateWithSubtraction() throws Exception {
+    public void testRewriteAggregateWithShortAddition() throws Exception {
         assertMemoryLeak(() -> {
-            compile("  CREATE TABLE tab ( x int );");
+            compile("CREATE TABLE tab ( x short );");
+
+            assertPlan(
+                    "SELECT sum(x), sum(x+42) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,sum+COUNT*42]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x),count(*)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+
+            assertPlan(
+                    "SELECT sum(x), sum(42+x) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,COUNT*42+sum]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x),count(*)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+        });
+    }
+
+    @Test
+    public void testRewriteAggregateWithShortMultiplication() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE tab ( x short );");
+
+            assertPlan(
+                    "SELECT sum(x), sum(x*10) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,sum*10]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+
+            assertPlan(
+                    "SELECT sum(x), sum(10*x) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,10*sum]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+        });
+    }
+
+    @Test
+    public void testRewriteAggregateWithShortSubtraction() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE tab ( x short );");
 
             assertPlan(
                     "SELECT sum(x), sum(x-10) FROM tab",
                     "VirtualRecord\n" +
                             "  functions: [sum,sum-COUNT*10]\n" +
                             "    GroupBy vectorized: true\n" +
-                            "      values: [sum(x),count(x)]\n" +
+                            "      values: [sum(x),count(*)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: tab\n"
@@ -5031,7 +5215,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "VirtualRecord\n" +
                             "  functions: [sum,COUNT*10-sum]\n" +
                             "    GroupBy vectorized: true\n" +
-                            "      values: [sum(x),count(x)]\n" +
+                            "      values: [sum(x),count(*)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: tab\n"
@@ -5042,7 +5226,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregateWithSubtractionIsDisabledForNonIntegerType() throws Exception {
         assertMemoryLeak(() -> {
-            compile("  CREATE TABLE tab ( x double );");
+            compile("CREATE TABLE tab ( x double );");
 
             assertPlan(
                     "SELECT sum(x), sum(x-10) FROM tab",
@@ -5067,8 +5251,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregateWithSubtractionOnJoin() throws Exception {
         assertMemoryLeak(() -> {
-            compile("  CREATE TABLE taba ( x int, id int );");
-            compile("  CREATE TABLE tabb ( x int, id int );");
+            compile("CREATE TABLE taba ( x int, id int );");
+            compile("CREATE TABLE tabb ( x int, id int );");
 
             assertPlan(
                     "SELECT sum(taba.x),sum(tabb.x),sum(taba.x-10), sum(tabb.x-10) " +
@@ -5115,7 +5299,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregates() throws Exception {
         assertMemoryLeak(() -> {
-            compile("  CREATE TABLE hits\n" +
+            compile("CREATE TABLE hits\n" +
                     "(\n" +
                     "    EventTime timestamp,\n" +
                     "    ResolutionWidth int,\n" +
@@ -5140,7 +5324,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregatesOnJoin() throws Exception {
         assertMemoryLeak(() -> {
-            compile("  CREATE TABLE hits1" +
+            compile("CREATE TABLE hits1" +
                     "(" +
                     "    EventTime timestamp, " +
                     "    ResolutionWidth int, " +
@@ -5878,7 +6062,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSelectFromAllTables() throws Exception {
         assertPlan(
                 "select * from all_tables()",
-                "all_tables\n"
+                "all_tables()\n"
         );
     }
 
@@ -6857,6 +7041,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
+        );
+    }
+
+    @Test
+    public void testSelectWalTransactions() throws Exception {
+        assertPlan(
+                "create table tab ( s string, sy symbol, i int, ts timestamp) timestamp(ts) partition by day WAL",
+                "select * from wal_transactions('tab')",
+                "wal_transactions of: tab\n"
         );
     }
 
@@ -8282,38 +8475,57 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
 
-            assertPlan("select ts, i, j, avg(j) over (order by i, j rows unbounded preceding) from tab",
+            assertPlan("select ts, i, j, " +
+                            "avg(j) over (order by i, j rows unbounded preceding), " +
+                            "sum(j) over (order by i, j rows unbounded preceding), " +
+                            "first_value(j) over (order by i, j rows unbounded preceding), " +
+                            "from tab",
                     "CachedWindow\n" +
-                            "  orderedFunctions: [[i, j] => [avg(j) over (rows between unbounded preceding and current row)]]\n" +
+                            "  orderedFunctions: [[i, j] => [avg(j) over (rows between unbounded preceding and current row)," +
+                            "sum(j) over (rows between unbounded preceding and current row),first_value(j) over ()]]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n");
 
-            assertPlan("select ts, i, j, avg(j) over (partition by i order by ts rows between 1 preceding and current row)  from tab",
+            assertPlan("select ts, i, j, " +
+                            "avg(j) over (partition by i order by ts rows between 1 preceding and current row), " +
+                            "sum(j) over (partition by i order by ts rows between 1 preceding and current row), " +
+                            "first_value(j) over (partition by i order by ts rows between 1 preceding and current row) " +
+                            "from tab",
                     "Window\n" +
-                            "  functions: [avg(j) over (partition by [i] rows between 1 preceding and current row)]\n" +
+                            "  functions: [avg(j) over (partition by [i] rows between 1 preceding and current row)," +
+                            "sum(j) over (partition by [i] rows between 1 preceding and current row),first_value(j) over (partition by [i] rows between 1 preceding and current row)]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n");
 
             assertPlan("select row_number() over (partition by i order by i desc, j asc), " +
-                            "avg(j) over (partition by i order by j, i desc rows unbounded preceding) " +
+                            "avg(j) over (partition by i order by j, i desc rows unbounded preceding), " +
+                            "sum(j) over (partition by i order by j, i desc rows unbounded preceding), " +
+                            "first_value(j) over (partition by i order by j, i desc rows unbounded preceding) " +
                             "from tab " +
                             "order by ts desc",
                     "SelectedRecord\n" +
                             "    CachedWindow\n" +
-                            "      orderedFunctions: [[i desc, j] => [row_number() over (partition by [i])],[j, i desc] => [avg(j) over (partition by [i] rows between unbounded preceding and current row )]]\n" +
+                            "      orderedFunctions: [[i desc, j] => [row_number() over (partition by [i])]," +
+                            "[j, i desc] => [avg(j) over (partition by [i] rows between unbounded preceding and current row )," +
+                            "sum(j) over (partition by [i] rows between unbounded preceding and current row )," +
+                            "first_value(j) over (partition by [i] rows between unbounded preceding and current row )]]\n" +
                             "        DataFrame\n" +
                             "            Row backward scan\n" +
                             "            Frame backward scan on: tab\n");
 
             assertPlan("select row_number() over (partition by i order by i desc, j asc), " +
-                            "        avg(j) over (partition by i, j order by i desc, j asc rows unbounded preceding)," +
+                            "        avg(j) over (partition by i, j order by i desc, j asc rows unbounded preceding), " +
+                            "        sum(j) over (partition by i, j order by i desc, j asc rows unbounded preceding), " +
+                            "        first_value(j) over (partition by i, j order by i desc, j asc rows unbounded preceding), " +
                             "        rank() over (partition by j, i) " +
                             "from tab order by ts desc",
                     "SelectedRecord\n" +
                             "    CachedWindow\n" +
-                            "      orderedFunctions: [[i desc, j] => [row_number() over (partition by [i]),avg(j) over (partition by [i,j] rows between unbounded preceding and current row )]]\n" +
+                            "      orderedFunctions: [[i desc, j] => [row_number() over (partition by [i]),avg(j) over (partition by [i,j] rows between unbounded preceding and current row )," +
+                            "sum(j) over (partition by [i,j] rows between unbounded preceding and current row )," +
+                            "first_value(j) over (partition by [i,j] rows between unbounded preceding and current row )]]\n" +
                             "      unorderedFunctions: [rank() over (partition by [j,i])]\n" +
                             "        DataFrame\n" +
                             "            Row backward scan\n" +
@@ -8326,42 +8538,58 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table  cpu_ts ( hostname symbol, usage_system double, ts timestamp ) timestamp(ts);");
 
-            assertPlan("select sum(avg) from (\n" +
-                            "select ts, hostname, usage_system, avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg " +
+            assertPlan("select sum(avg), sum(sum), sum(first_value) from (\n" +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over (partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over (partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over (partition by hostname order by ts desc rows between 100 preceding and current row) first_value " +
                             "from cpu_ts " +
                             "order by ts desc\n" +
                             ") ",
                     "GroupBy vectorized: false\n" +
-                            "  values: [sum(avg)]\n" +
+                            "  values: [sum(avg),sum(sum),sum(first_value)]\n" +
                             "    Window\n" +
-                            "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
                             "        DataFrame\n" +
                             "            Row backward scan\n" +
                             "            Frame backward scan on: cpu_ts\n");
 
-            assertPlan("select sum(avg) from (\n" +
-                            "select ts, hostname, usage_system, avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg " +
+            assertPlan("select sum(avg), sum(sum), sum(first_value) from (\n" +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
                             "from cpu_ts " +
                             ") ",
                     "GroupBy vectorized: false\n" +
-                            "  values: [sum(avg)]\n" +
+                            "  values: [sum(avg),sum(sum),sum(first_value)]\n" +
                             "    Window\n" +
-                            "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: cpu_ts\n");
 
-            assertPlan("select sum(avg) sm from (\n" +
-                            "select ts, hostname, usage_system, avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg " +
+            assertPlan("select sum(avg), sum(sum) sm, sum(first_value) fst from (\n" +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
                             "from cpu_ts " +
                             "order by ts asc\n" +
                             ") order by sm ",
                     "Sort\n" +
                             "  keys: [sm]\n" +
                             "    GroupBy vectorized: false\n" +
-                            "      values: [sum(avg)]\n" +
+                            "      values: [sum(avg),sum(sum),sum(first_value)]\n" +
                             "        Window\n" +
-                            "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)" +
+                            "]\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: cpu_ts\n");
@@ -8373,31 +8601,39 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table  cpu_ts ( hostname symbol, usage_system double, ts timestamp ) timestamp(ts);");
 
-            assertPlan("select sum(avg) from ( " +
+            assertPlan("select sum(avg), sum(sum), first(first_value) from ( " +
                             "select ts, hostname, usage_system, " +
-                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg " +
+                            "avg(usage_system) over (partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over (partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over (partition by hostname order by ts desc rows between 100 preceding and current row) first_value " +
                             "from cpu_ts " +
                             "order by ts desc" +
                             ") ",
                     "GroupBy vectorized: false\n" +
-                            "  values: [sum(avg)]\n" +
+                            "  values: [sum(avg),sum(sum),first(first_value)]\n" +
                             "    Window\n" +
-                            "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
                             "        DataFrame\n" +
                             "            Row backward scan\n" +
                             "            Frame backward scan on: cpu_ts\n");
 
-            assertPlan("select sum(avg) from ( " +
+            assertPlan("select sum(avg), sum(sum), first(first_value) from ( " +
                             "select ts, hostname, usage_system, " +
-                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg " +
+                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " +
                             "from (select * from cpu_ts order by ts desc) " +
                             ") order by 1 desc",
                     "Sort\n" +
                             "  keys: [sum desc]\n" +
                             "    GroupBy vectorized: false\n" +
-                            "      values: [sum(avg)]\n" +
+                            "      values: [sum(avg),sum(sum),first(first_value)]\n" +
                             "        CachedWindow\n" +
-                            "          orderedFunctions: [[ts desc] => [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]]\n" +
+                            "          orderedFunctions: [[ts desc] => [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]]\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: cpu_ts\n");
@@ -8413,7 +8649,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan("select * from " +
                             "( " +
                             "select ts, hostname, usage_system, " +
-                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg " +
+                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value, " +
                             "from cpu_ts " +
                             "order by ts desc " +
                             ") order by ts asc",
@@ -8421,7 +8659,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  keys: [ts]\n" +
                             "    Limit lo: 9223372036854775807L\n" +
                             "        Window\n" +
-                            "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
                             "            DataFrame\n" +
                             "                Row backward scan\n" +
                             "                Frame backward scan on: cpu_ts\n");
@@ -8429,7 +8669,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan("select * from " +
                             "( " +
                             "select ts, hostname, usage_system, " +
-                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
                             "from cpu_ts " +
                             "order by ts asc " +
                             ") order by ts desc",
@@ -8437,7 +8679,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  keys: [ts desc]\n" +
                             "    Limit lo: 9223372036854775807L\n" +
                             "        Window\n" +
-                            "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: cpu_ts\n");
@@ -8445,7 +8689,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan("select * from " +
                             "( " +
                             "select ts, hostname, usage_system, " +
-                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
                             "from cpu_ts " +
                             "order by ts asc " +
                             ") order by hostname",
@@ -8453,7 +8699,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  keys: [hostname]\n" +
                             "    Limit lo: 9223372036854775807L\n" +
                             "        Window\n" +
-                            "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: cpu_ts\n");
@@ -8461,11 +8709,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan("select * from " +
                             "( " +
                             "select ts, hostname, usage_system, " +
-                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg " +
+                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " +
                             "from (select * from cpu_ts order by ts desc) " +
                             ") order by ts asc ",
                     "CachedWindow\n" +
-                            "  orderedFunctions: [[ts desc] => [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]]\n" +
+                            "  orderedFunctions: [[ts desc] => [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: cpu_ts\n");
@@ -8473,11 +8725,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan("select * from " +
                             "( " +
                             "select ts, hostname, usage_system, " +
-                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
                             "from (select * from cpu_ts order by ts asc) " +
                             ") order by ts desc ",
                     "CachedWindow\n" +
-                            "  orderedFunctions: [[ts] => [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]]\n" +
+                            "  orderedFunctions: [[ts] => [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]]\n" +
                             "    DataFrame\n" +
                             "        Row backward scan\n" +
                             "        Frame backward scan on: cpu_ts\n");
@@ -8485,13 +8741,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan("select * from " +
                             "( " +
                             "select ts, hostname, usage_system, " +
-                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
                             "from (select * from cpu_ts order by ts asc) " +
                             ") order by hostname ",
                     "Sort\n" +
                             "  keys: [hostname]\n" +
                             "    Window\n" +
-                            "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: cpu_ts\n");
@@ -8499,13 +8759,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan("select * from " +
                             "( " +
                             "select ts, hostname, usage_system, " +
-                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
                             "from (select * from cpu_ts order by ts desc) " +
                             ") order by hostname ",
                     "Sort\n" +
                             "  keys: [hostname]\n" +
                             "    Window\n" +
-                            "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: cpu_ts\n");
@@ -8513,7 +8777,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan("select * from " +
                             "( " +
                             "select ts, hostname, usage_system, " +
-                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg " +
+                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " +
                             "from (select * from cpu_ts order by ts asc) " +
                             "order by ts desc " +
                             ") order by ts asc ",
@@ -8521,7 +8787,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  keys: [ts]\n" +
                             "    Limit lo: 9223372036854775807L\n" +
                             "        Window\n" +
-                            "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
                             "            DataFrame\n" +
                             "                Row backward scan\n" +
                             "                Frame backward scan on: cpu_ts\n");
@@ -8529,7 +8797,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan("select * from " +
                             "( " +
                             "select ts, hostname, usage_system, " +
-                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
                             "from (select * from cpu_ts order by ts desc) " +
                             "order by ts asc " +
                             ") order by ts desc ",
@@ -8537,7 +8807,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  keys: [ts desc]\n" +
                             "    Limit lo: 9223372036854775807L\n" +
                             "        Window\n" +
-                            "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: cpu_ts\n");
@@ -8545,7 +8817,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan("select * from " +
                             "( " +
                             "select ts, hostname, usage_system, " +
-                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
                             "from (select * from cpu_ts order by ts desc ) " +
                             "order by ts asc " +
                             ") order by hostname ",
@@ -8553,7 +8827,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  keys: [hostname]\n" +
                             "    Limit lo: 9223372036854775807L\n" +
                             "        Window\n" +
-                            "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: cpu_ts\n");
@@ -8568,7 +8844,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             ddl("create table  cpu_ts ( hostname symbol, usage_system double, ts timestamp ) timestamp(ts);");
 
             String expectedForwardPlan = "Window\n" +
-                    "  functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                    "  functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                    "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                    "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
                     "    DataFrame\n" +
                     "        Row forward scan\n" +
                     "        Frame forward scan on: cpu_ts\n";
@@ -8576,7 +8854,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan("select * from " +
                             "( " +
                             "select ts, hostname, usage_system, " +
-                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
                             "from cpu_ts " +
                             ") order by ts asc",
                     expectedForwardPlan);
@@ -8584,7 +8864,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan("select * from " +
                             "( " +
                             "select ts, hostname, usage_system, " +
-                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value, " +
                             "from (select * from cpu_ts order by ts asc) " +
                             ") order by ts asc",
                     expectedForwardPlan);
@@ -8592,7 +8874,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan("select * from " +
                             "( " +
                             "select ts, hostname, usage_system, " +
-                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
                             "from (select * from cpu_ts order by ts desc) " +
                             ") order by ts asc",
                     expectedForwardPlan);
@@ -8600,7 +8884,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan("select * from " +
                             "( " +
                             "select ts, hostname, usage_system, " +
-                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
                             "from (select * from cpu_ts order by hostname) " +
                             ") order by ts asc",
                     expectedForwardPlan);
@@ -8608,7 +8894,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             String expectedForwardLimitPlan =
                     "Limit lo: 9223372036854775807L\n" +
                             "    Window\n" +
-                            "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: cpu_ts\n";
@@ -8616,7 +8904,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan("select * from " +
                             "( " +
                             "select ts, hostname, usage_system, " +
-                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
                             "from cpu_ts " +
                             "order by ts asc  " +
                             ") order by ts asc",
@@ -8625,21 +8915,27 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan("select * from " +
                             "( " +
                             "select ts, hostname, usage_system, " +
-                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
                             "from (select * from cpu_ts order by ts asc) " +
                             "order by ts asc  " +
                             ") order by ts asc",
                     expectedForwardLimitPlan);
 
             String expectedBackwardPlan = "Window\n" +
-                    "  functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                    "  functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                    "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                    "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
                     "    DataFrame\n" +
                     "        Row backward scan\n" +
                     "        Frame backward scan on: cpu_ts\n";
             assertPlan("select * from " +
                             "( " +
                             "select ts, hostname, usage_system, " +
-                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg " +
+                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " +
                             "from cpu_ts " +
                             ") order by ts desc",
                     expectedBackwardPlan);
@@ -8647,7 +8943,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan("select * from " +
                             "( " +
                             "select ts, hostname, usage_system, " +
-                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg " +
+                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " +
                             "from (select * from cpu_ts order by ts desc) " +
                             ") order by ts desc",
                     expectedBackwardPlan);
@@ -8655,7 +8953,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan("select * from " +
                             "( " +
                             "select ts, hostname, usage_system, " +
-                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg " +
+                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " +
                             "from (select * from cpu_ts order by ts asc) " +
                             ") order by ts desc",
                     expectedBackwardPlan);
@@ -8663,14 +8963,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan("select * from " +
                             "( " +
                             "select ts, hostname, usage_system, " +
-                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg " +
+                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " +
                             "from (select * from cpu_ts order by hostname) " +
                             ") order by ts desc",
                     expectedBackwardPlan);
 
             String expectedBackwardLimitPlan = "Limit lo: 9223372036854775807L\n" +
                     "    Window\n" +
-                    "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                    "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                    "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                    "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
                     "        DataFrame\n" +
                     "            Row backward scan\n" +
                     "            Frame backward scan on: cpu_ts\n";
@@ -8678,7 +8982,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan("select * from " +
                             "( " +
                             "select ts, hostname, usage_system, " +
-                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg " +
+                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " +
                             "from cpu_ts " +
                             "order by ts desc  " +
                             ") order by ts desc",
@@ -8687,7 +8993,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan("select * from " +
                             "( " +
                             "select ts, hostname, usage_system, " +
-                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg " +
+                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " +
                             "from (select * from cpu_ts order by ts desc) " +
                             "order by ts desc  " +
                             ") order by ts desc",
@@ -8706,21 +9014,29 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "   from long_sequence(100)" +
                     ") timestamp(ts) partition by hour");
 
-            String sql = "select i, row_number() over (partition by sym), avg(i) over (partition by i rows unbounded preceding) from x limit 3";
+            String sql = "select i, " +
+                    "row_number() over (partition by sym), " +
+                    "avg(i) over (partition by i rows unbounded preceding), " +
+                    "sum(i) over (partition by i rows unbounded preceding), " +
+                    "first_value(i) over (partition by i rows unbounded preceding) " +
+                    "from x limit 3";
             assertPlan(
                     sql,
                     "Limit lo: 3\n" +
                             "    Window\n" +
-                            "      functions: [row_number() over (partition by [sym]),avg(i) over (partition by [i] rows between unbounded preceding and current row )]\n" +
+                            "      functions: [row_number() over (partition by [sym])," +
+                            "avg(i) over (partition by [i] rows between unbounded preceding and current row )," +
+                            "sum(i) over (partition by [i] rows between unbounded preceding and current row )," +
+                            "first_value(i) over (partition by [i] rows between unbounded preceding and current row )]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: x\n"
             );
 
-            assertSql("i\trow_number\tavg\n" +
-                    "1\t1\t1.0\n" +
-                    "2\t2\t2.0\n" +
-                    "3\t1\t3.0\n", sql);
+            assertSql("i\trow_number\tavg\tsum\tfirst_value\n" +
+                    "1\t1\t1.0\t1.0\t1.0\n" +
+                    "2\t2\t2.0\t2.0\t2.0\n" +
+                    "3\t1\t3.0\t3.0\t3.0\n", sql);
         });
     }
 

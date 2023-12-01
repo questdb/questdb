@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.str.Sinkable;
 import io.questdb.test.AbstractCairoTest;
@@ -63,4 +64,11 @@ public class SqlExceptionTest extends AbstractCairoTest {
         sink.put((Sinkable) SqlException.$(123, "hello"));
         TestUtils.assertEquals("[123]: hello", sink);
     }
+
+    @Test
+    public void testUnsupportedCast() {
+        TestUtils.assertEquals("[10]: unsupported cast [column=columnName, from=SYMBOL, to=BINARY]",
+                SqlException.unsupportedCast(10, "columnName", ColumnType.SYMBOL, ColumnType.BINARY));
+    }
+
 }

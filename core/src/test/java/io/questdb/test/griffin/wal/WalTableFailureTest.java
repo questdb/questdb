@@ -1168,6 +1168,48 @@ public class WalTableFailureTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testWalMultipleColumnConvertions() throws Exception {
+        ddl("create table abc (x0 symbol, x string, y string, y1 symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
+        insert("insert into abc values('aa', 'a', 'b', 'bb', '2022-02-24T01')");
+        drainWalQueue();
+
+        ddl("alter table abc add column new_col SYMBOL INDEX");
+        ddl("update abc set new_col = x");
+        ddl("alter table abc drop column x");
+        ddl("alter table abc rename column new_col to x");
+
+        ddl("alter table abc add column new_col SYMBOL INDEX");
+        ddl("update abc set new_col = y");
+        ddl("alter table abc drop column y");
+        ddl("alter table abc rename column new_col to y");
+
+        drainWalQueue();
+
+        assertSql("x0\ty1\tts\tx\ty\n" +
+                "aa\tbb\t2022-02-24T01:00:00.000000Z\ta\tb\n", "abc");
+    }
+
+    @Test
+    public void testWalUpdateFailedCompilationSuspendsTable() throws Exception {
+        String tableName = testName.getMethodName();
+        String query = "update " + tableName + " set x = 1111";
+        node1.getConfigurationOverrides().setSpinLockTimeout(1);
+        runCheckTableSuspended(tableName, query, new TestFilesFacadeImpl() {
+            private int attempt = 0;
+
+            @Override
+            public int openRO(LPSZ name) {
+                if (Utf8s.containsAscii(name, "_meta") && attempt++ >= 2) {
+                    if (!engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(tableName))) {
+                        return -1;
+                    }
+                }
+                return super.openRO(name);
+            }
+        });
+    }
+
     private static void assertAlterTableTypeFail(String alterStmt, String expected) {
         try {
             compile(alterStmt);

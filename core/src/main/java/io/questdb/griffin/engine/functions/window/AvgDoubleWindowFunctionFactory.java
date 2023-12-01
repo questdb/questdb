@@ -34,8 +34,6 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.DoubleFunction;
-import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.WindowColumn;
@@ -148,7 +146,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
                             partitionBySink,
                             args.get(0)
                     );
-                } // range between [unbounded | x] preceding and [x preceding | current row]
+                } // range between [unbounded | x] preceding and [x preceding | current row], except unbounded preceding to current row
                 else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
@@ -224,7 +222,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
                     ArrayColumnTypes columnTypes = new ArrayColumnTypes();
                     columnTypes.add(ColumnType.DOUBLE);// sum
                     columnTypes.add(ColumnType.LONG);// current frame size
-                    columnTypes.add(ColumnType.INT);// position of current oldest element
+                    columnTypes.add(ColumnType.LONG);// position of current oldest element
                     columnTypes.add(ColumnType.LONG);// start offset of native array
 
                     Map map = MapFactory.createMap(
@@ -307,9 +305,9 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
     }
 
     // (rows between current row and current row) processes 1-element-big set, so simply it returns expression value
-    static class AvgOverCurrentRowFunction extends BaseAvgFunction {
+    static class AvgOverCurrentRowFunction extends BaseDoubleWindowFunction {
 
-        private double avg;
+        private double value;
 
         AvgOverCurrentRowFunction(Function arg) {
             super(arg);
@@ -317,12 +315,17 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
 
         @Override
         public void computeNext(Record record) {
-            avg = arg.getDouble(record);
+            value = arg.getDouble(record);
         }
 
         @Override
         public double getDouble(Record rec) {
-            return avg;
+            return value;
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
         }
 
         @Override
@@ -333,16 +336,21 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), avg);
+            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), value);
         }
     }
 
     // handles avg() over (partition by x)
     // order by is absent so default frame mode includes all rows in partition
-    static class AvgOverPartitionFunction extends BasePartitionedAvgFunction {
+    static class AvgOverPartitionFunction extends BasePartitionedDoubleWindowFunction {
 
         public AvgOverPartitionFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
             super(map, partitionByRecord, partitionBySink, arg);
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
         }
 
         @Override
@@ -405,7 +413,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
     // Removable cumulative aggregation with timestamp & value stored in resizable ring buffers
     // When lower bound is unbounded we add but immediately discard any values that enter the frame so buffer should only contain values
     // between upper bound and current row's value.
-    static class AvgOverPartitionRangeFrameFunction extends BasePartitionedAvgFunction {
+    static class AvgOverPartitionRangeFrameFunction extends BasePartitionedDoubleWindowFunction {
 
         private static final int RECORD_SIZE = Long.BYTES + Double.BYTES;
         private final boolean frameIncludesCurrentValue;
@@ -418,6 +426,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         private final MemoryARW memory;
         private final long minDiff;
         private final int timestampIndex;
+        protected double sum;
         private double avg;
 
         public AvgOverPartitionRangeFrameFunction(
@@ -482,36 +491,35 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
                 firstIdx = 0;
 
                 if (Numbers.isFinite(d)) {
-                    if (frameLoBounded || !frameIncludesCurrentValue) {
-                        memory.putLong(startOffset, timestamp);
-                        memory.putDouble(startOffset + Long.BYTES, d);
-                        size = 1;
-                    } else {
-                        size = 0;
-                    }
+                    memory.putLong(startOffset, timestamp);
+                    memory.putDouble(startOffset + Long.BYTES, d);
+                    size = 1;
 
                     if (frameIncludesCurrentValue) {
                         sum = d;
                         avg = d;
+                        this.sum = d;
                         frameSize = 1;
                     } else {
                         sum = 0.0;
                         avg = Double.NaN;
+                        this.sum = Double.NaN;
                         frameSize = 0;
                     }
                 } else {
                     size = 0;
                     sum = 0.0;
                     avg = Double.NaN;
+                    this.sum = Double.NaN;
                     frameSize = 0;
                 }
             } else {
                 sum = mapValue.getDouble(0);
                 frameSize = mapValue.getLong(1);
                 startOffset = mapValue.getLong(2);
-                size = mapValue.getInt(3);
-                capacity = mapValue.getInt(4);
-                firstIdx = mapValue.getInt(5);
+                size = mapValue.getLong(3);
+                capacity = mapValue.getLong(4);
+                firstIdx = mapValue.getLong(5);
 
                 long newFirstIdx = firstIdx;
 
@@ -611,7 +619,14 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
                     firstIdx = newFirstIdx;
                 }
 
-                avg = (frameSize != 0 ? sum / frameSize : Double.NaN);
+                if (frameSize != 0) {
+                    avg = sum / frameSize;
+                    this.sum = sum;
+                } else {
+                    avg = Double.NaN;
+                    this.sum = Double.NaN;
+                }
+
             }
 
             mapValue.putDouble(0, sum);
@@ -625,6 +640,11 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         @Override
         public double getDouble(Record rec) {
             return avg;
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
         }
 
         @Override
@@ -642,6 +662,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
             super.reopen();
             // memory will allocate on first use
             avg = Double.NaN;
+            sum = Double.NaN;
         }
 
         @Override
@@ -653,7 +674,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val(NAME);
+            sink.val(getName());
             sink.val('(').val(arg).val(')');
             sink.val(" over (");
             sink.val("partition by ");
@@ -683,7 +704,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
 
     // handles avg() over (partition by x [order by o] rows between y and z)
     // removable cumulative aggregation
-    static class AvgOverPartitionRowsFrameFunction extends BasePartitionedAvgFunction {
+    static class AvgOverPartitionRowsFrameFunction extends BasePartitionedDoubleWindowFunction {
 
         //number of values we need to keep to compute over frame
         // (can be bigger than frame because we've to buffer values between rowsHi and current row )
@@ -694,6 +715,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         private final int frameSize;
         // holds fixed-size ring buffers of double values
         private final MemoryARW memory;
+        protected double sum;
         private double avg;
 
         public AvgOverPartitionRowsFrameFunction(
@@ -708,17 +730,23 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
             super(map, partitionByRecord, partitionBySink, arg);
 
             if (rowsLo > Long.MIN_VALUE) {
-                frameSize = (int) (rowsHi - rowsLo);
+                frameSize = (int) (rowsHi - rowsLo + (rowsHi < 0 ? 1 : 0));
                 bufferSize = (int) Math.abs(rowsLo);
                 frameLoBounded = true;
             } else {
-                frameSize = (int) Math.abs(rowsHi);
-                bufferSize = frameSize;
+                frameSize = 1;
+                bufferSize = (int) Math.abs(rowsHi);
                 frameLoBounded = false;
             }
             frameIncludesCurrentValue = rowsHi == 0;
 
             this.memory = memory;
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            memory.close();
         }
 
         @Override
@@ -737,7 +765,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
 
             long count;
             double sum;
-            int loIdx;//current index of lo frame value ('oldest')
+            long loIdx;//current index of lo frame value ('oldest')
             long startOffset;
             double d = arg.getDouble(record);
 
@@ -748,9 +776,11 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
                     sum = d;
                     count = 1;
                     avg = d;
+                    this.sum = d;
                 } else {
                     sum = 0.0;
                     avg = Double.NaN;
+                    this.sum = Double.NaN;
                     count = 0;
                 }
 
@@ -760,22 +790,29 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
             } else {
                 sum = value.getDouble(0);
                 count = value.getLong(1);
-                loIdx = value.getInt(2);
-                startOffset = value.getInt(3);
+                loIdx = value.getLong(2);
+                startOffset = value.getLong(3);
 
                 //compute value using top frame element (that could be current or previous row)
-                double hiValue = frameIncludesCurrentValue ? d : memory.getDouble(startOffset + (long) ((loIdx + frameSize) % bufferSize) * Double.BYTES);
+                double hiValue = frameIncludesCurrentValue ? d : memory.getDouble(startOffset + ((loIdx + frameSize - 1) % bufferSize) * Double.BYTES);
                 if (Numbers.isFinite(hiValue)) {
                     count++;
                     sum += hiValue;
                 }
 
                 //here sum is correct for current row
-                avg = count != 0 ? sum / count : Double.NaN;
+                if (count != 0) {
+                    avg = sum / count;
+                    this.sum = sum;
+                } else {
+                    avg = Double.NaN;
+                    this.sum = Double.NaN;
+                }
+
 
                 if (frameLoBounded) {
                     //remove the oldest element
-                    double loValue = memory.getDouble(startOffset + (long) loIdx * Double.BYTES);
+                    double loValue = memory.getDouble(startOffset + loIdx * Double.BYTES);
                     if (Numbers.isFinite(loValue)) {
                         sum -= loValue;
                         count--;
@@ -787,12 +824,17 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
             value.putLong(1, count);
             value.putLong(2, (loIdx + 1) % bufferSize);
             value.putLong(3, startOffset);//not necessary because it doesn't change
-            memory.putDouble(startOffset + (long) loIdx * Double.BYTES, d);
+            memory.putDouble(startOffset + loIdx * Double.BYTES, d);
         }
 
         @Override
         public double getDouble(Record rec) {
             return avg;
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
         }
 
         @Override
@@ -820,7 +862,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val(NAME);
+            sink.val(getName());
             sink.val('(').val(arg).val(')');
             sink.val(" over (");
             sink.val("partition by ");
@@ -833,7 +875,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
                 sink.val("unbounded");
             }
             sink.val(" preceding and ");
-            if (bufferSize - frameSize == 0) {
+            if (frameIncludesCurrentValue) {
                 sink.val("current row");
             } else {
                 sink.val(bufferSize - frameSize).val(" preceding");
@@ -851,7 +893,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
     // Handles avg() over ([order by ts] range between [unbounded | x] preceding and [ x preceding | current row ] ); no partition by key
     // When lower bound is unbounded we add but immediately discard any values that enter the frame so buffer should only contain values
     // between upper bound and current row's value .
-    static class AvgOverRangeFrameFunction extends BaseAvgFunction implements Reopenable {
+    static class AvgOverRangeFrameFunction extends BaseDoubleWindowFunction implements Reopenable {
         private final int RECORD_SIZE = Long.BYTES + Double.BYTES;
         private final boolean frameLoBounded;
         private final long initialCapacity;
@@ -862,6 +904,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         private final MemoryARW memory;
         private final long minDiff;
         private final int timestampIndex;
+        protected double externalSum;
         private double avg;
         private long capacity;
         private long firstIdx;
@@ -981,13 +1024,24 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
                 }
                 firstIdx = newFirstIdx;
             }
+            if (frameSize != 0) {
+                avg = sum / frameSize;
+                externalSum = sum;
 
-            avg = frameSize != 0 ? sum / frameSize : Double.NaN;
+            } else {
+                avg = Double.NaN;
+                externalSum = Double.NaN;
+            }
         }
 
         @Override
         public double getDouble(Record rec) {
             return avg;
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
         }
 
         @Override
@@ -1003,6 +1057,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         @Override
         public void reopen() {
             avg = Double.NaN;
+            externalSum = Double.NaN;
             capacity = initialCapacity;
             startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
             firstIdx = 0;
@@ -1019,7 +1074,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val(NAME);
+            sink.val(getName());
             sink.val('(').val(arg).val(')');
             sink.val(" over (");
             sink.val("range between ");
@@ -1041,6 +1096,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         public void toTop() {
             super.toTop();
             avg = Double.NaN;
+            externalSum = Double.NaN;
             capacity = initialCapacity;
             memory.truncate();
             startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
@@ -1053,12 +1109,13 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
 
     // Handles avg() over ([order by o] rows between y and z); there's no partition by.
     // Removable cumulative aggregation.
-    static class AvgOverRowsFrameFunction extends BaseAvgFunction implements Reopenable {
+    static class AvgOverRowsFrameFunction extends BaseDoubleWindowFunction implements Reopenable {
         private final MemoryARW buffer;
         private final int bufferSize;
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         private final int frameSize;
+        protected double externalSum = 0;
         private double avg = 0;
         private long count = 0;
         private int loIdx = 0;
@@ -1068,7 +1125,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
             super(arg);
 
             if (rowsLo > Long.MIN_VALUE) {
-                frameSize = (int) (rowsHi - rowsLo);
+                frameSize = (int) (rowsHi - rowsLo + (rowsHi < 0 ? 1 : 0));
                 bufferSize = (int) Math.abs(rowsLo);//number of values we need to keep to compute over frame
                 frameLoBounded = true;
             } else {
@@ -1093,13 +1150,19 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
             double d = arg.getDouble(record);
 
             //compute value using top frame element (that could be current or previous row)
-            double hiValue = frameIncludesCurrentValue ? d : buffer.getDouble((long) ((loIdx + frameSize) % bufferSize) * Double.BYTES);
+            double hiValue = frameIncludesCurrentValue ? d : buffer.getDouble((long) ((loIdx + frameSize - 1) % bufferSize) * Double.BYTES);
             if (Numbers.isFinite(hiValue)) {
                 sum += hiValue;
                 count++;
             }
+            if (count != 0) {
+                avg = sum / count;
+                externalSum = sum;
+            } else {
+                avg = Double.NaN;
+                externalSum = Double.NaN;
+            }
 
-            avg = count != 0 ? sum / count : Double.NaN;
 
             if (frameLoBounded) {
                 //remove the oldest element with newest
@@ -1118,6 +1181,11 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         @Override
         public double getDouble(Record rec) {
             return avg;
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
         }
 
         @Override
@@ -1152,7 +1220,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val(NAME);
+            sink.val(getName());
             sink.val('(').val(arg).val(')');
             sink.val(" over (");
             sink.val(" rows between ");
@@ -1162,7 +1230,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
                 sink.val("unbounded");
             }
             sink.val(" preceding and ");
-            if (bufferSize - frameSize == 0) {
+            if (frameIncludesCurrentValue) {
                 sink.val("current row");
             } else {
                 sink.val(bufferSize - frameSize).val(" preceding");
@@ -1189,10 +1257,9 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
 
     // Handles:
     // - avg(a) over (partition by x rows between unbounded preceding and current row)
-    // - avg(a) over (partition by x order by ts groups between unbounded preceding and current row)
     // - avg(a) over (partition by x order by ts range between unbounded preceding and current row)
     // Doesn't require value buffering.
-    static class AvgOverUnboundedPartitionRowsFrameFunction extends BasePartitionedAvgFunction {
+    static class AvgOverUnboundedPartitionRowsFrameFunction extends BasePartitionedDoubleWindowFunction {
 
         private double avg;
 
@@ -1236,6 +1303,11 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public String getName() {
+            return NAME;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
         }
@@ -1257,8 +1329,8 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         }
     }
 
-    // Handles avg() over (rows between unbounded preceding and current row); there's no partititon by.
-    static class AvgOverUnboundedRowsFrameFunction extends BaseAvgFunction {
+    // Handles avg() over (rows between unbounded preceding and current row); there's no partition by.
+    static class AvgOverUnboundedRowsFrameFunction extends BaseDoubleWindowFunction {
 
         private double avg;
         private long count = 0;
@@ -1282,6 +1354,11 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         @Override
         public double getDouble(Record rec) {
             return avg;
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
         }
 
         @Override
@@ -1322,13 +1399,18 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
     }
 
     // avg() over () - empty clause, no partition by no order by, no frame == default frame
-    static class AvgOverWholeResultSetFunction extends BaseAvgFunction {
+    static class AvgOverWholeResultSetFunction extends BaseDoubleWindowFunction {
         private double avg;
         private long count;
         private double sum;
 
         public AvgOverWholeResultSetFunction(Function arg) {
             super(arg);
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
         }
 
         @Override
@@ -1370,104 +1452,6 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
             avg = Double.NaN;
             count = 0;
             sum = 0.0;
-        }
-    }
-
-    private static abstract class BaseAvgFunction extends DoubleFunction implements WindowFunction, ScalarFunction {
-        protected final Function arg;
-        protected int columnIndex;
-
-        public BaseAvgFunction(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public void close() {
-            arg.close();
-        }
-
-        @Override
-        public double getDouble(Record rec) {
-            //unused
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void initRecordComparator(RecordComparatorCompiler recordComparatorCompiler, ArrayColumnTypes chainTypes, IntList order) {
-        }
-
-        @Override
-        public void reset() {
-
-        }
-
-        @Override
-        public void setColumnIndex(int columnIndex) {
-            this.columnIndex = columnIndex;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(NAME);
-            sink.val('(').val(arg).val(')');
-            sink.val(" over ()");
-        }
-
-        @Override
-        public void toTop() {
-            arg.toTop();
-        }
-    }
-
-    private static abstract class BasePartitionedAvgFunction extends BaseAvgFunction implements Reopenable {
-        protected final Map map;
-        protected final VirtualRecord partitionByRecord;
-        protected final RecordSink partitionBySink;
-
-        public BasePartitionedAvgFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
-            super(arg);
-            this.map = map;
-            this.partitionByRecord = partitionByRecord;
-            this.partitionBySink = partitionBySink;
-        }
-
-        @Override
-        public void close() {
-            super.close();
-            map.close();
-            Misc.freeObjList(partitionByRecord.getFunctions());
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            super.init(symbolTableSource, executionContext);
-            Function.init(partitionByRecord.getFunctions(), symbolTableSource, executionContext);
-        }
-
-        @Override
-        public void reopen() {
-            map.reopen();
-        }
-
-        @Override
-        public void reset() {
-            map.close();
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(NAME);
-            sink.val('(').val(arg).val(')');
-            sink.val(" over (");
-            sink.val("partition by ");
-            sink.val(partitionByRecord.getFunctions());
-            sink.val(')');
-        }
-
-        @Override
-        public void toTop() {
-            super.toTop();
-            map.clear();
         }
     }
 

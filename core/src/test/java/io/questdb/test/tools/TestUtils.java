@@ -1134,8 +1134,7 @@ public final class TestUtils {
         URL resource = ServerMain.class.getResource(resourceName);
         assertNotNull("Someone accidentally deleted resource " + resourceName + "?", resource);
         try {
-            // normalize the path to use '/' on all OSes
-            return Paths.get(resource.toURI()).toFile().getAbsolutePath().replace('\\', '/');
+            return Paths.get(resource.toURI()).toFile().getAbsolutePath();
         } catch (URISyntaxException e) {
             throw new RuntimeException("Could not determine resource path", e);
         }
@@ -1180,8 +1179,7 @@ public final class TestUtils {
         URL resource = TestUtils.class.getResource(resourceName);
         assertNotNull("Someone accidentally deleted test resource " + resourceName + "?", resource);
         try {
-            // normalize the path to use '/' on all OSes
-            return Paths.get(resource.toURI()).toFile().getAbsolutePath().replace('\\', '/');
+            return Paths.get(resource.toURI()).toFile().getAbsolutePath();
         } catch (URISyntaxException e) {
             throw new RuntimeException("Could not determine resource path", e);
         }

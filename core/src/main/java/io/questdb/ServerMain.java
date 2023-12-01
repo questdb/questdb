@@ -80,10 +80,15 @@ public class ServerMain implements Closeable {
 
         // create cairo engine
         engine = freeOnExit.register(bootstrap.newCairoEngine());
-        config.init(engine, freeOnExit);
-        Unsafe.setWriterMemLimit(config.getCairoConfiguration().getWriterMemoryLimit());
-        freeOnExit.register(config.getFactoryProvider());
-        engine.load();
+        try {
+            config.init(engine, freeOnExit);
+            Unsafe.setWriterMemLimit(config.getCairoConfiguration().getWriterMemoryLimit());
+            freeOnExit.register(config.getFactoryProvider());
+            engine.load();
+        } catch (Throwable th) {
+            freeOnExit.close();
+            throw th;
+        }
     }
 
     public static LineAuthenticatorFactory getLineAuthenticatorFactory(ServerConfiguration configuration) {
@@ -220,7 +225,6 @@ public class ServerMain implements Closeable {
 
     private synchronized void initialize() {
         initialized = true;
-
 
         // create the worker pool manager, and configure the shared pool
         final boolean walSupported = config.getCairoConfiguration().isWalSupported();

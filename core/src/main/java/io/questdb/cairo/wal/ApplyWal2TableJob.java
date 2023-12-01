@@ -36,10 +36,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.Job;
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.Misc;
-import io.questdb.std.Transient;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
@@ -299,19 +296,20 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             tempPath.of(engine.getConfiguration().getRoot()).concat(tableToken).slash().putAscii(WAL_NAME_BASE).put(walId).slash().put(segmentId);
                             final long start = microClock.getTicks();
 
-                            if (!writer.getWalTnxDetails().hasRecord(seqTxn + lookAheadTransactionCount)) {
+                            long lastLoadedTxnDetails = writer.getWalTnxDetails().getLastSeqTxn();
+                            if (seqTxn > lastLoadedTxnDetails
+                                    || (lastLoadedTxnDetails < seqTxn + lookAheadTransactionCount && (transactionLogCursor.getMaxTxn() > lastLoadedTxnDetails || transactionLogCursor.extend()))
+                            ) {
                                 // Last few transactions left to process from the list
                                 // of observed transactions built upfront in the beginning of the loop.
-                                // Check if more transaction exist, exit restart the loop to have better picture
-                                // of the future transactions and optimise the application.
-                                if (transactionLogCursor.setPosition()) {
-                                    writer.readWalTxnDetails(transactionLogCursor);
-                                    transactionLogCursor.toTop();
-                                    totalTransactionCount += iTransaction;
-                                    iTransaction = 0;
-                                    continue;
-                                }
+                                // Read more transactions from the sequencer into readWalTxnDetails to continue
+                                writer.readWalTxnDetails(transactionLogCursor);
+                                transactionLogCursor.setPosition(seqTxn);
                             }
+
+                            long walSegment = writer.getWalTnxDetails().getWalSegmentId(seqTxn);
+                            assert walId == Numbers.decodeHighInt(walSegment);
+                            assert segmentId == Numbers.decodeLowInt(walSegment);
 
                             isTerminating = runStatus.isTerminating();
                             final long added = processWalCommit(
@@ -445,18 +443,20 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     throw new UnsupportedOperationException("Unsupported command type: " + cmdType);
             }
         } catch (SqlException ex) {
-            // This is fine, some syntax error, we should not block WAL processing if SQL is not valid
-            LOG.error().$("error applying SQL to wal table [table=")
-                    .utf8(tableWriter.getTableToken().getTableName()).$(", sql=").$(sql).$(", error=").$(ex.getFlyweightMessage()).I$();
-            return -1;
+            throw CairoException.nonCritical().put("error applying SQL to wal table [table=")
+                    .put(tableWriter.getTableToken().getTableName()).put(", sql=").put(sql)
+                    .put(", position=").put(ex.getPosition())
+                    .put(", error=").put(ex.getFlyweightMessage());
         } catch (CairoException e) {
-            if (e.isWALTolerable()) {
-                // This is fine, some syntax error, we should not block WAL processing if SQL is not valid
-                LOG.error().$("error applying SQL to wal table [table=")
-                        .utf8(tableWriter.getTableToken().getTableName()).$(", sql=").$(sql).$(", error=").$(e.getFlyweightMessage()).I$();
-                return -1;
-            } else {
+            LOG.error().$("error applying SQL to wal table [table=")
+                    .utf8(tableWriter.getTableToken().getTableName()).$(", sql=").$(sql)
+                    .$(", error=").$(e.getFlyweightMessage())
+                    .$(", errno=").$(e.getErrno()).I$();
+
+            if (!e.isWALTolerable()) {
                 throw e;
+            } else {
+                return -1;
             }
         }
     }
@@ -523,6 +523,12 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             LOG.critical().$("job failed, table suspended [table=").utf8(tableToken.getDirName())
                     .$(", error=").$(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno())
+                    .I$();
+            return WAL_APPLY_FAILED;
+        } catch (Throwable ex) {
+            telemetryFacade.store(TelemetrySystemEvent.WAL_APPLY_SUSPEND, TelemetryOrigin.WAL_APPLY);
+            LOG.critical().$("job failed, table suspended [table=").utf8(tableToken.getDirName())
+                    .$(", error=").$(ex)
                     .I$();
             return WAL_APPLY_FAILED;
         }

@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.log.Log;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Chars;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
@@ -69,8 +70,15 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         return fuzzer.generateRandom(log, s0, s1);
     }
 
-    public ObjList<FuzzTransaction> generateSet(Rnd rnd, TableRecordMetadata metadata, long start, long end, String tableName) {
-        return fuzzer.generateSet(rnd, metadata, start, end, tableName);
+    public ObjList<FuzzTransaction> generateSet(
+            Rnd rnd,
+            TableRecordMetadata sequencerMetadata,
+            TableRecordMetadata readerMetadata,
+            long start,
+            long end,
+            String tableName
+    ) {
+        return fuzzer.generateSet(rnd, sequencerMetadata, readerMetadata, start, end, tableName);
     }
 
     @Before
@@ -146,6 +154,14 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         return symbols;
     }
 
+    protected int getMaxWalFdCache(Rnd rnd) {
+        return rnd.nextInt(1000);
+    }
+
+    protected long getMaxWalSize(Rnd rnd) {
+        return rnd.nextLong(10 * Numbers.SIZE_1MB);
+    }
+
     protected String getTestName() {
         return testName.getMethodName().replace('[', '_').replace(']', '_');
     }
@@ -191,6 +207,14 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         node1.getConfigurationOverrides().setWalApplyTableTimeQuota(maxApplyTimePerTable);
         node1.getConfigurationOverrides().setPartitionO3SplitThreshold(splitPartitionThreshold);
         node1.getConfigurationOverrides().setO3PartitionSplitMaxCount(o3PartitionSplitMaxCount);
+    }
+
+    protected void setFuzzProperties(long maxApplyTimePerTable, long splitPartitionThreshold, int o3PartitionSplitMaxCount, long walMaxLagSize, int maxWalFdCache) {
+        node1.getConfigurationOverrides().setWalApplyTableTimeQuota(maxApplyTimePerTable);
+        node1.getConfigurationOverrides().setPartitionO3SplitThreshold(splitPartitionThreshold);
+        node1.getConfigurationOverrides().setO3PartitionSplitMaxCount(o3PartitionSplitMaxCount);
+        node1.getConfigurationOverrides().setWalMaxLagSize(walMaxLagSize);
+        node1.getConfigurationOverrides().setWalMaxSegmentFileDescriptorsCache(maxWalFdCache);
     }
 
     protected void setRandomAppendPageSize(Rnd rnd) {

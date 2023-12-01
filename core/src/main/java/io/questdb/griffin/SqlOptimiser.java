@@ -28,9 +28,9 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.catalogue.*;
+import io.questdb.griffin.engine.functions.table.AllTablesFunctionFactory;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
-import io.questdb.griffin.engine.table.ShowTablesRecordCursorFactory;
 import io.questdb.griffin.model.*;
 import io.questdb.std.*;
 import io.questdb.std.str.FlyweightCharSequence;
@@ -71,6 +71,7 @@ public class SqlOptimiser implements Mutable {
     private final CharacterStore characterStore;
     private final IntList clausesToSteal = new IntList();
     private final ColumnPrefixEraser columnPrefixEraser = new ColumnPrefixEraser();
+    private final CairoConfiguration configuration;
     private final CharSequenceIntHashMap constNameToIndex = new CharSequenceIntHashMap();
     private final CharSequenceObjHashMap<ExpressionNode> constNameToNode = new CharSequenceObjHashMap<>();
     private final CharSequenceObjHashMap<CharSequence> constNameToToken = new CharSequenceObjHashMap<>();
@@ -124,6 +125,7 @@ public class SqlOptimiser implements Mutable {
             FunctionParser functionParser,
             Path path
     ) {
+        this.configuration = configuration;
         this.expressionNodePool = expressionNodePool;
         this.characterStore = characterStore;
         this.traversalAlgo = traversalAlgo;
@@ -940,6 +942,25 @@ public class SqlOptimiser implements Mutable {
                 checkForAggregates(column.getAst());
             }
         }
+    }
+
+    private QueryColumn checkSimpleIntegerColumn(ExpressionNode column, QueryModel model) {
+        if (column == null || column.type != LITERAL) {
+            return null;
+        }
+
+        CharSequence tok = column.token;
+        final int dot = Chars.indexOf(tok, '.');
+        QueryColumn qc = getQueryColumn(model, tok, dot);
+
+        if (qc != null &&
+                (qc.getColumnType() == ColumnType.BYTE ||
+                        qc.getColumnType() == ColumnType.SHORT ||
+                        qc.getColumnType() == ColumnType.INT ||
+                        qc.getColumnType() == ColumnType.LONG)) {
+            return qc;
+        }
+        return null;
     }
 
     private void collectModelAlias(QueryModel parent, int modelIndex, QueryModel model) throws SqlException {
@@ -2094,19 +2115,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     private boolean isSimpleIntegerColumn(ExpressionNode column, QueryModel model) {
-        if (column == null || column.type != LITERAL) {
-            return false;
-        }
-
-        CharSequence tok = column.token;
-        final int dot = Chars.indexOf(tok, '.');
-        QueryColumn qc = getQueryColumn(model, tok, dot);
-
-        return qc != null &&
-                (qc.getColumnType() == ColumnType.BYTE ||
-                        qc.getColumnType() == ColumnType.SHORT ||
-                        qc.getColumnType() == ColumnType.INT ||
-                        qc.getColumnType() == ColumnType.LONG);
+        return checkSimpleIntegerColumn(column, model) != null;
     }
 
     private ExpressionNode makeJoinAlias() {
@@ -2550,8 +2559,10 @@ public class SqlOptimiser implements Mutable {
 
         if (model.isUpdate() && !executionContext.isWalApplication()) {
             assert lo == 0;
-            try (TableRecordMetadata metadata = executionContext.getMetadata(tableToken)) {
-                enumerateColumns(model, metadata);
+            try {
+                try (TableRecordMetadata metadata = executionContext.getCairoEngine().getSequencerMetadata(tableToken)) {
+                    enumerateColumns(model, metadata);
+                }
             } catch (CairoException e) {
                 throw SqlException.position(tableNamePosition).put(e);
             }
@@ -2875,7 +2886,7 @@ public class SqlOptimiser implements Mutable {
         if (model.getSelectModelType() == QueryModel.SELECT_MODEL_SHOW) {
             switch (model.getShowKind()) {
                 case QueryModel.SHOW_TABLES:
-                    tableFactory = new ShowTablesRecordCursorFactory();
+                    tableFactory = new ShowTablesFunctionFactory.ShowTablesCursorFactory(configuration, AllTablesFunctionFactory.METADATA, AllTablesFunctionFactory.SIGNATURE);
                     break;
                 case QueryModel.SHOW_COLUMNS:
                     tableToken = executionContext.getTableTokenIfExists(model.getTableNameExpr().token);
@@ -3163,17 +3174,23 @@ public class SqlOptimiser implements Mutable {
     }
 
     private ExpressionNode pushOperationOutsideAgg(ExpressionNode agg, ExpressionNode op, ExpressionNode column, ExpressionNode constant, QueryModel model) {
-        if (!isSimpleIntegerColumn(column, model)) {
+        final QueryColumn qc = checkSimpleIntegerColumn(column, model);
+        if (qc == null) {
             return agg;
         }
 
         agg.rhs = column;
 
         ExpressionNode count = expressionNodePool.next();
-        count.paramCount = 1;
         count.token = "COUNT";
         count.type = FUNCTION;
-        count.rhs = column;
+        // INT and LONG are nullable, so we need to use COUNT(column) for them.
+        if (qc.getColumnType() == ColumnType.INT || qc.getColumnType() == ColumnType.LONG) {
+            count.paramCount = 1;
+            count.rhs = column;
+        } else {
+            count.paramCount = 0;
+        }
         count.position = agg.position;
 
         ExpressionNode mul = expressionNodePool.next();
@@ -3185,7 +3202,7 @@ public class SqlOptimiser implements Mutable {
         mul.lhs = count;
         mul.rhs = constant;
 
-        if (op.lhs == column) {//maintain order for subtraction
+        if (op.lhs == column) { // maintain order for subtraction
             op.lhs = agg;
             op.rhs = mul;
         } else {
@@ -3442,7 +3459,7 @@ public class SqlOptimiser implements Mutable {
                 functionParser.getFunctionFactoryCache().isGroupBy(agg.token) &&
                 Chars.equalsIgnoreCase("sum", agg.token) &&
                 op.type == OPERATION) {
-            if (Chars.equals(op.token, '*')) { //sum(x*10) == sum(x)*10
+            if (Chars.equals(op.token, '*')) { // sum(x*10) == sum(x)*10
                 if (isIntegerConstant(op.rhs) && isSimpleIntegerColumn(op.lhs, model)) {
                     agg.rhs = op.lhs;
                     op.lhs = agg;

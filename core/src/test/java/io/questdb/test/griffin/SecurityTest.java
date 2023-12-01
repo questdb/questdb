@@ -444,7 +444,17 @@ public class SecurityTest extends AbstractCairoTest {
                     " from long_sequence(1000)) timestamp(ts)");
             assertQuery(
                     memoryRestrictedCompiler,
-                    "sym2\td\nGZ\t0.006817672510656014\nGZ\t0.0014986299883373855\nGZ\t0.007868356216637062\nGZ\t0.007985454958725269\nGZ\t0.0011075361080621349\nRX\t4.016718301054212E-4\nRX\t0.006651203432318287\nRX\t6.503932953429992E-4\nRX\t0.0072398675350549\nRX\t0.0016532800623808575\n",
+                    "sym2\td\n" +
+                            "GZ\t0.0011075361080621349\n" +
+                            "GZ\t0.007985454958725269\n" +
+                            "GZ\t0.007868356216637062\n" +
+                            "GZ\t0.0014986299883373855\n" +
+                            "GZ\t0.006817672510656014\n" +
+                            "RX\t0.0016532800623808575\n" +
+                            "RX\t0.0072398675350549\n" +
+                            "RX\t6.503932953429992E-4\n" +
+                            "RX\t0.006651203432318287\n" +
+                            "RX\t4.016718301054212E-4\n",
                     "select sym2, d from tb1 where d < 0.01 order by sym2",
                     null,
                     true,

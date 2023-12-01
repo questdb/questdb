@@ -872,6 +872,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getWalMaxSegmentFileDescriptorsCache() {
+        return 1000;
+    }
+
+    @Override
+    public long getWalMaxLagSize() {
+        return 75 * Numbers.SIZE_1MB;
+    }
+
+    @Override
     public int getWalMaxLagTxnCount() {
         return 20;
     }

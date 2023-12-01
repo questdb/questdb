@@ -63,6 +63,8 @@ import static io.questdb.griffin.CompiledQuery.*;
 public class CairoEngine implements Closeable, WriterSource {
     public static final Predicate<CharSequence> EMPTY_RESOLVER = (tableName) -> false;
     public static final String REASON_BUSY_READER = "busyReader";
+    public static final String REASON_BUSY_SEQUENCER_METADATA_POOL = "busySequencerMetaPool";
+    public static final String REASON_BUSY_TABLE_READER_METADATA_POOL = "busyTableReaderMetaPool";
     public static final String REASON_SNAPSHOT_IN_PROGRESS = "snapshotInProgress";
     private static final Log LOG = LogFactory.getLog(CairoEngine.class);
     protected final CairoConfiguration configuration;
@@ -71,14 +73,15 @@ public class CairoEngine implements Closeable, WriterSource {
     private final EngineMaintenanceJob engineMaintenanceJob;
     private final FunctionFactoryCache ffCache;
     private final MessageBusImpl messageBus;
-    private final MetadataPool metadataPool;
     private final Metrics metrics;
     private final Predicate<CharSequence> protectedTableResolver;
     private final ReaderPool readerPool;
+    private final SequencerMetadataPool sequencerMetadataPool;
     private final DatabaseSnapshotAgentImpl snapshotAgent;
     private final SqlCompilerPool sqlCompilerPool;
     private final IDGenerator tableIdGenerator;
     private final TableNameRegistry tableNameRegistry;
+    private final TableReaderMetadataPool tableReaderMetadataPool;
     private final TableSequencerAPI tableSequencerAPI;
     private final Telemetry<TelemetryTask> telemetry;
     private final Telemetry<TelemetryWalTask> telemetryWal;
@@ -110,7 +113,8 @@ public class CairoEngine implements Closeable, WriterSource {
         // Message bus and metrics must be initialized before the pools.
         this.writerPool = new WriterPool(configuration, this);
         this.readerPool = new ReaderPool(configuration, messageBus);
-        this.metadataPool = new MetadataPool(configuration, this);
+        this.sequencerMetadataPool = new SequencerMetadataPool(configuration, this);
+        this.tableReaderMetadataPool = new TableReaderMetadataPool(configuration);
         this.walWriterPool = new WalWriterPool(configuration, this);
         this.engineMaintenanceJob = new EngineMaintenanceJob(configuration);
         this.telemetry = new Telemetry<>(TelemetryTask.TELEMETRY, configuration);
@@ -244,9 +248,10 @@ public class CairoEngine implements Closeable, WriterSource {
         boolean b1 = readerPool.releaseAll();
         boolean b2 = writerPool.releaseAll();
         boolean b3 = tableSequencerAPI.releaseAll();
-        boolean b4 = metadataPool.releaseAll();
+        boolean b4 = sequencerMetadataPool.releaseAll();
         boolean b5 = walWriterPool.releaseAll();
-        return b1 & b2 & b3 & b4 & b5;
+        boolean b6 = tableReaderMetadataPool.releaseAll();
+        return b1 & b2 & b3 & b4 & b5 & b6;
     }
 
     @Override
@@ -254,7 +259,8 @@ public class CairoEngine implements Closeable, WriterSource {
         Misc.free(sqlCompilerPool);
         Misc.free(writerPool);
         Misc.free(readerPool);
-        Misc.free(metadataPool);
+        Misc.free(sequencerMetadataPool);
+        Misc.free(tableReaderMetadataPool);
         Misc.free(walWriterPool);
         Misc.free(tableIdGenerator);
         Misc.free(messageBus);
@@ -423,38 +429,6 @@ public class CairoEngine implements Closeable, WriterSource {
         return messageBus;
     }
 
-    public TableMetadata getMetadata(TableToken tableToken) {
-        verifyTableToken(tableToken);
-        try {
-            return metadataPool.get(tableToken);
-        } catch (CairoException e) {
-            tryRepairTable(tableToken, e);
-        }
-        return metadataPool.get(tableToken);
-    }
-
-    public TableRecordMetadata getMetadata(TableToken tableToken, long metadataVersion) {
-        verifyTableToken(tableToken);
-        try {
-            final TableRecordMetadata metadata = metadataPool.get(tableToken);
-            if (metadataVersion != TableUtils.ANY_TABLE_VERSION && metadata.getMetadataVersion() != metadataVersion) {
-                final TableReferenceOutOfDateException ex = TableReferenceOutOfDateException.of(
-                        tableToken,
-                        metadata.getTableId(),
-                        metadata.getTableId(),
-                        metadataVersion,
-                        metadata.getMetadataVersion()
-                );
-                metadata.close();
-                throw ex;
-            }
-            return metadata;
-        } catch (CairoException e) {
-            tryRepairTable(tableToken, e);
-        }
-        return metadataPool.get(tableToken);
-    }
-
     public Metrics getMetrics() {
         return metrics;
     }
@@ -523,6 +497,36 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    public TableMetadata getSequencerMetadata(TableToken tableToken) {
+        if (!tableToken.isWal()) {
+            return getTableReaderMetadata(tableToken);
+        }
+        verifyTableToken(tableToken);
+        return sequencerMetadataPool.get(tableToken);
+    }
+
+    public TableRecordMetadata getSequencerMetadata(TableToken tableToken, long metadataVersion) {
+        verifyTableToken(tableToken);
+        try {
+            final TableRecordMetadata metadata = sequencerMetadataPool.get(tableToken);
+            if (metadataVersion != TableUtils.ANY_TABLE_VERSION && metadata.getMetadataVersion() != metadataVersion) {
+                final TableReferenceOutOfDateException ex = TableReferenceOutOfDateException.of(
+                        tableToken,
+                        metadata.getTableId(),
+                        metadata.getTableId(),
+                        metadataVersion,
+                        metadata.getMetadataVersion()
+                );
+                metadata.close();
+                throw ex;
+            }
+            return metadata;
+        } catch (CairoException e) {
+            tryRepairTable(tableToken, e);
+        }
+        return sequencerMetadataPool.get(tableToken);
+    }
+
     public DatabaseSnapshotAgent getSnapshotAgent() {
         return snapshotAgent;
     }
@@ -537,6 +541,20 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public IDGenerator getTableIdGenerator() {
         return tableIdGenerator;
+    }
+
+    public TableMetadata getTableReaderMetadata(TableToken tableToken) {
+        verifyTableToken(tableToken);
+        try {
+            return tableReaderMetadataPool.get(tableToken);
+        } catch (CairoException e) {
+            if (tableToken.isWal()) {
+                throw e;
+            } else {
+                tryRepairTable(tableToken, e);
+            }
+        }
+        return tableReaderMetadataPool.get(tableToken);
     }
 
     public TableSequencerAPI getTableSequencerAPI() {
@@ -699,21 +717,28 @@ public class CairoEngine implements Closeable, WriterSource {
             return REASON_SNAPSHOT_IN_PROGRESS;
         }
         // busy metadata is same as busy reader from user perspective
-        String lockedReason = REASON_BUSY_READER;
-        if (metadataPool.lock(tableToken)) {
-            lockedReason = writerPool.lock(tableToken, lockReason);
-            if (lockedReason == null) {
-                // not locked
-                if (readerPool.lock(tableToken)) {
-                    LOG.info().$("locked [table=`").utf8(tableToken.getDirName())
-                            .$("`, thread=").$(Thread.currentThread().getId())
-                            .I$();
-                    return null;
+        String lockedReason;
+        if (tableReaderMetadataPool.lock(tableToken)) {
+            if (sequencerMetadataPool.lock(tableToken)) {
+                lockedReason = writerPool.lock(tableToken, lockReason);
+                if (lockedReason == null) {
+                    // not locked
+                    if (readerPool.lock(tableToken)) {
+                        LOG.info().$("locked [table=`").utf8(tableToken.getDirName())
+                                .$("`, thread=").$(Thread.currentThread().getId())
+                                .I$();
+                        return null;
+                    }
+                    writerPool.unlock(tableToken);
+                    lockedReason = REASON_BUSY_READER;
                 }
-                writerPool.unlock(tableToken);
-                lockedReason = REASON_BUSY_READER;
+                sequencerMetadataPool.unlock(tableToken);
+            } else {
+                lockedReason = REASON_BUSY_SEQUENCER_METADATA_POOL;
             }
-            metadataPool.unlock(tableToken);
+            tableReaderMetadataPool.unlock(tableToken);
+        } else {
+            lockedReason = REASON_BUSY_TABLE_READER_METADATA_POOL;
         }
         return lockedReason;
     }
@@ -794,8 +819,9 @@ public class CairoEngine implements Closeable, WriterSource {
 
     @TestOnly
     public boolean releaseAllReaders() {
-        boolean b1 = metadataPool.releaseAll();
-        return readerPool.releaseAll() & b1;
+        boolean b1 = sequencerMetadataPool.releaseAll();
+        boolean b2 = tableReaderMetadataPool.releaseAll();
+        return readerPool.releaseAll() & b1 & b2;
     }
 
     @TestOnly
@@ -812,7 +838,8 @@ public class CairoEngine implements Closeable, WriterSource {
         boolean useful = writerPool.releaseInactive();
         useful |= readerPool.releaseInactive();
         useful |= tableSequencerAPI.releaseInactive();
-        useful |= metadataPool.releaseInactive();
+        useful |= sequencerMetadataPool.releaseInactive();
+        useful |= tableReaderMetadataPool.releaseInactive();
         useful |= walWriterPool.releaseInactive();
         return useful;
     }
@@ -962,7 +989,8 @@ public class CairoEngine implements Closeable, WriterSource {
 
     @TestOnly
     public void setPoolListener(PoolListener poolListener) {
-        this.metadataPool.setPoolListener(poolListener);
+        this.tableReaderMetadataPool.setPoolListener(poolListener);
+        this.sequencerMetadataPool.setPoolListener(poolListener);
         this.writerPool.setPoolListener(poolListener);
         this.readerPool.setPoolListener(poolListener);
         this.walWriterPool.setPoolListener(poolListener);
@@ -1222,7 +1250,8 @@ public class CairoEngine implements Closeable, WriterSource {
     private void unlockTableUnsafe(TableToken tableToken, TableWriter writer, boolean newTable) {
         readerPool.unlock(tableToken);
         writerPool.unlock(tableToken, writer, newTable);
-        metadataPool.unlock(tableToken);
+        sequencerMetadataPool.unlock(tableToken);
+        tableReaderMetadataPool.unlock(tableToken);
     }
 
     private void validNameOrThrow(CharSequence tableName) {
