@@ -47,13 +47,13 @@ public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRe
     private RecordCursor base;
     private Record baseRecord;
     private SqlExecutionCircuitBreaker circuitBreaker;
+    private long groupTimestamp;
     private boolean isChainBuilt;
     private boolean isOpen;
     private long rowsInGroup;
     private long rowsLeft;
     private long rowsSoFar;
     private boolean timestampInitialized;
-    private long timestampValue;
 
     public LimitedSizePartiallySortedLightRecordCursor(
             LimitedSizeLongTreeChain chain,
@@ -128,7 +128,7 @@ public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRe
         isChainBuilt = false;
         rowsInGroup = 0;
         rowsSoFar = 0;
-        timestampValue = Numbers.LONG_NaN;
+        groupTimestamp = Numbers.LONG_NaN;
         timestampInitialized = false;
         chain.clear();
     }
@@ -167,7 +167,7 @@ public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRe
                             placeHolderRecord,
                             comparator
                     );
-                    timestampValue = baseRecord.getTimestamp(timestampIndex);
+                    groupTimestamp = baseRecord.getTimestamp(timestampIndex);
                     rowsInGroup = 1;
                     timestampInitialized = true;
                 }
@@ -177,7 +177,7 @@ public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRe
                 circuitBreaker.statefulThrowExceptionIfTripped();
 
                 long currentTimestamp = baseRecord.getTimestamp(timestampIndex);
-                if (timestampValue == currentTimestamp) {
+                if (groupTimestamp == currentTimestamp) {
                     rowsInGroup++;
                 } else {
                     rowsSoFar += rowsInGroup;
@@ -185,7 +185,7 @@ public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRe
                         break;
                     }
 
-                    timestampValue = currentTimestamp;
+                    groupTimestamp = currentTimestamp;
                     rowsInGroup = 1;
                 }
 

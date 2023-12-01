@@ -46,7 +46,7 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
     private final Function hiFunction;
     private final Function loFunction;
     private final ListColumnFilter sortColumnFilter;
-    int timestampIndex;
+    private final int timestampIndex;
     // initialization delayed to getCursor() because lo/hi need to be evaluated
     private DelegatingRecordCursor cursor; // LimitedSizeSortedLightRecordCursor or SortedLightRecordCursor
 
