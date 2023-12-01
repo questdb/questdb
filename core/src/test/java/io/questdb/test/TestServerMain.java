@@ -97,6 +97,10 @@ public class TestServerMain extends ServerMain {
         }
     }
 
+    public void waitWalTxnApplied(String tableName) {
+        waitWalTxnApplied(tableName, -1);
+    }
+
     public void waitWalTxnApplied(String tableName, long expectedTxn) {
         int waitLim = 15;
         int sleep = 10;

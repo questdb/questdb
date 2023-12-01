@@ -448,10 +448,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             read = socket.recv(recvBuffer, recvBufferSize);
         }
 
-//        LOG.info().$("content recv [len=").$(read)
-//                .$(", totalReceived=").$(totalReceived + read)
-//                .$(", contentLength=").$(contentLength)
-//                .I$();
         processor.resumeRecv(this);
         if (read > 0) {
             HttpMultipartContentListener contentProcessor = (HttpMultipartContentListener) processor;
