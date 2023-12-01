@@ -324,8 +324,8 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent {
             }
 
             LOG.info()
-                    .$("starting snapshot recovery [currentId=`").$(currentInstanceId)
-                    .$("`, previousId=`").$(snapshotInstanceId)
+                    .$("starting snapshot recovery [currentId=").$(currentInstanceId)
+                    .$(", previousId=").$(snapshotInstanceId)
                     .I$();
 
             // OK, we need to recover from the snapshot.
