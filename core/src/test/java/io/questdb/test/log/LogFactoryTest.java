@@ -193,7 +193,7 @@ public class LogFactoryTest {
             Assert.assertEquals(Logger.class, logger2.getClass());
         }
     }
- 
+
     @Test
     public void testGuaranteedLoggingForClasses() {
         try (LogFactory factory = new LogFactory()) {
@@ -214,7 +214,10 @@ public class LogFactoryTest {
             LogFactory.disableGuaranteedLogging(SqlCompilerImpl.class);
             Assert.assertEquals(Logger.class, getLogger(SqlCompilerImpl.class).getClass());
         } finally {
-            Files.remove(Path.getThreadLocal("io"));
+            final Path ioPath = Path.getThreadLocal("io");
+            if (Files.exists(ioPath)) {
+                Files.remove(ioPath);
+            }
         }
     }
 
