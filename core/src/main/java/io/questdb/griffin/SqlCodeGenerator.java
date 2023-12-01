@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameReduceTaskFactory;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.duckdb.*;
 import io.questdb.griffin.engine.*;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
@@ -4058,6 +4059,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             try (TableReader reader = executionContext.getReader(tableToken, model.getMetadataVersion())) {
                 return generateTableQuery0(model, executionContext, latestBy, supportsRandomAccess, reader, reader.getMetadata());
             }
+//            boolean duckDB = true;
+//            if (duckDB) {
+//                DuckDBInstance duckDBInstance = executionContext.getCairoEngine().getDuckDBInstance();
+//                DuckDBConnection connection = duckDBInstance.getConnection();
+//                DuckDBPreparedStatement stmt = connection.prepareStatement("INSERT INTO integers VALUES (?, ?);");
+//                new DuckDBRecordCursorFactory(stmt, connection);
+//            }
         }
     }
 

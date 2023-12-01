@@ -24,68 +24,83 @@
 
 package io.questdb.duckdb;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.std.Unsafe;
 
 public class DuckDB {
     public static final int DUCKDB_TYPE_INVALID = 0;
-    // bool
-    public static final int DUCKDB_TYPE_BOOLEAN = 1;
-    // int8_t
-    public static final int  DUCKDB_TYPE_TINYINT = 2;
-    // int16_t
-    public static final int  DUCKDB_TYPE_SMALLINT = 3;
-    // int32_t
-    public static final int DUCKDB_TYPE_INTEGER = 4;
-    // int64_t
-    public static final int DUCKDB_TYPE_BIGINT = 5;
-    // uint8_t
-    public static final int DUCKDB_TYPE_UTINYINT = 6;
-    // uint16_t
-    public static final int DUCKDB_TYPE_USMALLINT = 7;
-    // uint32_t
-    public static final int DUCKDB_TYPE_UINTEGER = 8;
-    // uint64_t
-    public static final int DUCKDB_TYPE_UBIGINT = 9;
-    // float
-    public static final int DUCKDB_TYPE_FLOAT = 10;
-    // double
-    public static final int DUCKDB_TYPE_DOUBLE = 11;
-    // duckdb_timestamp = 0; in microseconds
-    public static final int DUCKDB_TYPE_TIMESTAMP = 12;
-    // duckdb_date
-    public static final int DUCKDB_TYPE_DATE = 13;
-    // duckdb_time
-    public static final int DUCKDB_TYPE_TIME = 14;
-    // duckdb_interval
-    public static final int DUCKDB_TYPE_INTERVAL = 15;
-    // duckdb_hugeint
-    public static final int DUCKDB_TYPE_HUGEINT = 16;
-    // const char*
-    public static final int DUCKDB_TYPE_VARCHAR = 17;
-    // duckdb_blob
-    public static final int DUCKDB_TYPE_BLOB = 18;
-    // decimal
-    public static final int DUCKDB_TYPE_DECIMAL = 19;
-    // duckdb_timestamp = 0; in seconds
-    public static final int DUCKDB_TYPE_TIMESTAMP_S = 20;
-    // duckdb_timestamp = 0; in milliseconds
-    public static final int DUCKDB_TYPE_TIMESTAMP_MS = 21;
-    // duckdb_timestamp = 0; in nanoseconds
-    public static final int DUCKDB_TYPE_TIMESTAMP_NS = 22;
-    // enum type = 0; only useful as logical type
-    public static final int DUCKDB_TYPE_ENUM = 23;
-    // list type = 0; only useful as logical type
-    public static final int DUCKDB_TYPE_LIST = 24;
-    // struct type = 0; only useful as logical type
-    public static final int DUCKDB_TYPE_STRUCT = 25;
-    // map type = 0; only useful as logical type
-    public static final int DUCKDB_TYPE_MAP = 26;
-    // duckdb_hugeint
-    public static final int DUCKDB_TYPE_UUID = 27;
-    // union type = 0; only useful as logical type
-    public static final int DUCKDB_TYPE_UNION = 28;
-    // duckdb_bit
-    public static final int DUCKDB_TYPE_BIT = 29;
+    public static final int DUCKDB_TYPE_SQLNULL = 1; /* NULL type, used for constant NULL */
+    public static final int DUCKDB_TYPE_UNKNOWN = 2; /* unknown type, used for parameter expressions */
+    public static final int DUCKDB_TYPE_ANY = 3;     /* ANY type, used for functions that accept any type as parameter */
+    public static final int DUCKDB_TYPE_USER = 4; /* A User Defined Type (e.g., ENUMs before the binder) */
+    public static final int DUCKDB_TYPE_BOOLEAN = 10;
+    public static final int DUCKDB_TYPE_TINYINT = 11;
+    public static final int DUCKDB_TYPE_SMALLINT = 12;
+    public static final int DUCKDB_TYPE_INTEGER = 13;
+    public static final int DUCKDB_TYPE_BIGINT = 14;
+    public static final int DUCKDB_TYPE_DATE = 15;
+    public static final int DUCKDB_TYPE_TIME = 16;
+    public static final int DUCKDB_TYPE_TIMESTAMP_SEC = 17;
+    public static final int DUCKDB_TYPE_TIMESTAMP_MS = 18;
+    public static final int DUCKDB_TYPE_TIMESTAMP = 19; //! us
+    public static final int DUCKDB_TYPE_TIMESTAMP_NS = 20;
+    public static final int DUCKDB_TYPE_DECIMAL = 21;
+    public static final int DUCKDB_TYPE_FLOAT = 22;
+    public static final int DUCKDB_TYPE_DOUBLE = 23;
+    public static final int DUCKDB_TYPE_CHAR = 24;
+    public static final int DUCKDB_TYPE_VARCHAR = 25;
+    public static final int DUCKDB_TYPE_BLOB = 26;
+    public static final int DUCKDB_TYPE_INTERVAL = 27;
+    public static final int DUCKDB_TYPE_UTINYINT = 28;
+    public static final int DUCKDB_TYPE_USMALLINT = 29;
+    public static final int DUCKDB_TYPE_UINTEGER = 30;
+    public static final int DUCKDB_TYPE_UBIGINT = 31;
+    public static final int DUCKDB_TYPE_TIMESTAMP_TZ = 32;
+    public static final int DUCKDB_TYPE_TIME_TZ = 34;
+    public static final int DUCKDB_TYPE_JSON = 35;
+
+    public static final int DUCKDB_TYPE_HUGEINT = 50;
+    public static final int DUCKDB_TYPE_POINTER = 51;
+    public static final int DUCKDB_TYPE_VALIDITY = 53;
+    public static final int DUCKDB_TYPE_UUID = 54;
+
+    public static final int DUCKDB_TYPE_STRUCT = 100;
+    public static final int DUCKDB_TYPE_LIST = 101;
+    public static final int DUCKDB_TYPE_MAP = 102;
+    public static final int DUCKDB_TYPE_TABLE = 103;
+    public static final int DUCKDB_TYPE_ENUM = 104;
+    public static final int DUCKDB_TYPE_AGGREGATE_STATE = 105;
+    public static final int DUCKDB_TYPE_LAMBDA = 106;
+    public static final int DUCKDB_TYPE_UNION = 107;
+
+    public static int getQdbColumnType(int duckDbType) {
+        switch (duckDbType) {
+            case DuckDB.DUCKDB_TYPE_BOOLEAN:
+                return ColumnType.BOOLEAN;
+            case DuckDB.DUCKDB_TYPE_TINYINT:
+                return ColumnType.BYTE;
+            case DuckDB.DUCKDB_TYPE_SMALLINT:
+                return ColumnType.SHORT;
+            case DuckDB.DUCKDB_TYPE_INTEGER:
+                return ColumnType.INT;
+            case DuckDB.DUCKDB_TYPE_BIGINT:
+                return ColumnType.LONG;
+            case DuckDB.DUCKDB_TYPE_FLOAT:
+                return ColumnType.FLOAT;
+            case DuckDB.DUCKDB_TYPE_DOUBLE:
+                return ColumnType.DOUBLE;
+            case DuckDB.DUCKDB_TYPE_VARCHAR:
+                return ColumnType.STRING;
+            case DuckDB.DUCKDB_TYPE_DATE:
+                return ColumnType.DATE;
+            case DuckDB.DUCKDB_TYPE_TIMESTAMP:
+                return ColumnType.TIMESTAMP;
+            case DuckDB.DUCKDB_TYPE_HUGEINT:
+                return ColumnType.UUID;
+            default:
+                return ColumnType.UNDEFINED;
+        }
+    }
 
     public static boolean validityRowIsValid(long validityPtr, long row) {
         if (validityPtr == 0) {
@@ -97,53 +112,61 @@ public class DuckDB {
         return (mask & (1L << idx_in_entry)) != 0;
     }
 
-    // accept db path, (0, 0) means in memory database
-    // return 0 on failure, valid dbPtr on success
+    // Database API
     public static native long databaseOpen(long pathPtr, long pathSize);
     public static native long databaseOpenExt(long pathPtr, long pathSize, long configPtr);
     public static native void databaseClose(long dbPtr);
-
-    // return 0 on failure, valid connectionPtr on success
     public static native long databaseConnect(long dbPtr);
 
+    // Connection API
     public static native void connectionInterrupt(long connectionPtr);
-    public static native double connectionQueryProgress(long connectionPtr);
     public static native void connectionDisconnect(long connectionPrt);
-    // return 0 on failure, valid resultPtr on success
-    // resultPtr must be destroyed with resultDestroy
     public static native long connectionQuery(long connectionPtr, long queryPtr, long querySize);
-    // return 0 on success, 1 on failure
-    public static native long connectionExec(long connectionPtr, long queryPtr, long querySize);
 
+    // Configuration API
     public static native long configCreate();
-    public static native long configSet(long configPtr, long namePtr, long nameSize, long optionPtr, long optionSize);
+    public static native boolean configSet(long configPtr, long namePtr, long nameSize, long optionPtr, long optionSize);
     public static native void configDestroy(long configPtr);
 
+    // Prepared Statement API
+    public static native long connectionPrepare(long connection, long query_ptr, long query_size);
+    public static native long preparedExecute(long stmt);
+    public static native void preparedDestroy(long stmt);
+    public static native long preparedGetError(long stmt);
+    public static native long preparedGetQueryText(long stmt);
+    public static native int preparedGetStatementType(long stmt);
+    public static native int preparedGetStatementReturnType(long stmt);
+    public static native boolean preparedAllowStreamResult(long stmt);
+    public static native long preparedParameterCount(long stmt);
+    public static native long preparedGetColumnCount(long stmt);
+    public static native int preparedGetColumnLogicalType(long stmt, long col);
+    public static native int preparedGetColumnPhysicalType(long stmt, long col);
+    public static native long preparedGetColumnName(long stmt, long col);
+
+    // Result API
+    public static native long resultGetError(long result);
+    public static native long resultFetchChunk(long result);
     public static native void resultDestroy(long resultPtr);
-    // return zero terminated utf8 string on success, 0 on failure
     public static native long resultColumnName(long resultPtr, long col);
-    public static native int resultColumnType(long resultPtr, long col);
+    public static native int resultColumnPhysicalType(long resultPtr, long col);
+    public static native int resultColumnLogicalType(long resultPtr, long col);
     public static native long resultColumnCount(long resultPtr);
+    public static native long resultGetMaterialized(long resultPtr);
     public static native long resultRowCount(long resultPtr);
-    public static native long resultColumnData(long resultPtr, long col);
-    // return uint64_t*
-    public static native long resultNullmaskData(long resultPtr, long col);
-    // return zero terminated utf8 string or 0
     public static native long resultError(long resultPtr);
-    // return data_chunk pointer
-    // must be destroyed with dataChunkDestroy
+    public static native int resultGetQueryResultType(long resultPtr);
     public static native long resultGetDataChunk(long resultPtr, long chunkIndex);
     public static native long resultDataChunkCount(long resultPtr);
 
+    // Data Chunk API
     public static native void dataChunkDestroy(long chunkPtr);
     public static native long dataChunkGetColumnCount(long chunkPtr);
     public static native long dataChunkGetVector(long chunkPtr, long colIdx);
     public static native long dataChunkGetSize(long chunkPtr);
 
-    // return physical type not logical, could be updated later
-    public static native long vectorGetColumnType(long vectorPtr);
+    // Vector API
+    public static native int vectorGetColumnLogicalType(long vectorPtr);
+    public static native int vectorGetColumnPhysicalType(long vectorPtr);
     public static native long vectorGetData(long vectorPtr);
-    // return uint64_t*
-    // use validityRowIsValid to check if row is valid
     public static native long vectorGetValidity(long vectorPtr);
 }
