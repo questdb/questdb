@@ -29,20 +29,19 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 /**
- * We use an algorithm similar to B. P. Welford's which works by first aggregating sum of squares of 
+ * We use an algorithm similar to B.P. Welford's which works by first aggregating sum of squares of
  * independent and dependent variables Sxx = sum[(X - meanX) ^ 2], Syy = sum[(Y - meanY) ^ 2], Sxy = sum[(X - meanX) * (Y - meanY)].
  * Computation of correlation is then simple, e.g. correlation = Sxy / sqrt(Sxx * Syy)
  *
  * @see <a href="https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Online">Welford's algorithm</a>
  */
-
 public class CorrGroupByFunction extends DoubleFunction implements GroupByFunction, BinaryFunction {
     protected final Function xFunction;
     protected final Function yFunction;
@@ -51,30 +50,6 @@ public class CorrGroupByFunction extends DoubleFunction implements GroupByFuncti
     protected CorrGroupByFunction(@NotNull Function arg0, @NotNull Function arg1) {
         this.xFunction = arg0;
         this.yFunction = arg1;
-    }
-
-    protected void aggregate(MapValue mapValue, double x, double y) {
-        double meanX = mapValue.getDouble(valueIndex);
-        double sumX = mapValue.getDouble(valueIndex + 1);
-        double meanY = mapValue.getDouble(valueIndex + 2);
-        double sumY = mapValue.getDouble(valueIndex + 3);
-        double sumXY = mapValue.getDouble(valueIndex + 4);
-        long count = mapValue.getLong(valueIndex + 5) + 1;
-
-        double oldMeanX = meanX;
-        meanX += (x - meanX) / count;
-        sumX += (x - meanX) * (x - oldMeanX);
-        double oldMeanY = meanY;
-        meanY += (y - meanY) / count;
-        sumY += (y - meanY) * (y - oldMeanY);
-        sumXY += (x - oldMeanX) * (y - meanY);
-
-        mapValue.putDouble(valueIndex, meanX);
-        mapValue.putDouble(valueIndex + 1, sumX);
-        mapValue.putDouble(valueIndex + 2, meanY);
-        mapValue.putDouble(valueIndex + 3, sumY);
-        mapValue.putDouble(valueIndex + 4, sumXY);
-        mapValue.addLong(valueIndex + 5, 1L);
     }
 
     @Override
@@ -118,12 +93,13 @@ public class CorrGroupByFunction extends DoubleFunction implements GroupByFuncti
     }
 
     @Override
-    public String getName() {
-        return "corr";
-    }
-    @Override
     public Function getLeft() {
         return xFunction;
+    }
+
+    @Override
+    public String getName() {
+        return "corr";
     }
 
     @Override
@@ -161,5 +137,29 @@ public class CorrGroupByFunction extends DoubleFunction implements GroupByFuncti
         mapValue.putDouble(valueIndex + 3, Double.NaN);
         mapValue.putDouble(valueIndex + 4, Double.NaN);
         mapValue.putLong(valueIndex + 5, 0);
+    }
+
+    protected void aggregate(MapValue mapValue, double x, double y) {
+        double meanX = mapValue.getDouble(valueIndex);
+        double sumX = mapValue.getDouble(valueIndex + 1);
+        double meanY = mapValue.getDouble(valueIndex + 2);
+        double sumY = mapValue.getDouble(valueIndex + 3);
+        double sumXY = mapValue.getDouble(valueIndex + 4);
+        long count = mapValue.getLong(valueIndex + 5) + 1;
+
+        double oldMeanX = meanX;
+        meanX += (x - meanX) / count;
+        sumX += (x - meanX) * (x - oldMeanX);
+        double oldMeanY = meanY;
+        meanY += (y - meanY) / count;
+        sumY += (y - meanY) * (y - oldMeanY);
+        sumXY += (x - oldMeanX) * (y - meanY);
+
+        mapValue.putDouble(valueIndex, meanX);
+        mapValue.putDouble(valueIndex + 1, sumX);
+        mapValue.putDouble(valueIndex + 2, meanY);
+        mapValue.putDouble(valueIndex + 3, sumY);
+        mapValue.putDouble(valueIndex + 4, sumXY);
+        mapValue.addLong(valueIndex + 5, 1L);
     }
 }
