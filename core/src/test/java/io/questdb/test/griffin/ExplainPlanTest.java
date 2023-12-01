@@ -4792,7 +4792,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRewriteAggregateWithAddition() throws Exception {
+    public void testRewriteAggregateWithAdditionInt() throws Exception {
         assertMemoryLeak(() -> {
             compile("  CREATE TABLE tab ( x int );");
 
@@ -4846,6 +4846,35 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRewriteAggregateWithAdditionLong() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("  CREATE TABLE tab ( x long );");
+
+            assertPlan(
+                    "SELECT sum(x), sum(x+2) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,sum+COUNT*2]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x),count(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+
+            assertPlan(
+                    "SELECT sum(x), sum(2+x) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,COUNT*2+sum]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x),count(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+        });
+    }
+
+    @Test
     public void testRewriteAggregateWithAdditionOnJoin() throws Exception {
         assertMemoryLeak(() -> {
             compile("  CREATE TABLE taba ( x int, id int );");
@@ -4889,6 +4918,35 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "                    DataFrame\n" +
                             "                        Row forward scan\n" +
                             "                        Frame forward scan on: tabb\n"
+            );
+        });
+    }
+
+    @Test
+    public void testRewriteAggregateWithAdditionShort() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("  CREATE TABLE tab ( x short );");
+
+            assertPlan(
+                    "SELECT sum(x), sum(x+42) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,sum+COUNT*42]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x),count(*)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+
+            assertPlan(
+                    "SELECT sum(x), sum(42+x) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,COUNT*42+sum]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x),count(*)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
             );
         });
     }
@@ -5927,15 +5985,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSelectWalTransactions() throws Exception {
-        assertPlan(
-                "create table tab ( s string, sy symbol, i int, ts timestamp) timestamp(ts) partition by day WAL",
-                "select * from wal_transactions('tab')",
-                "wal_transactions of: tab\n"
-        );
-    }
-
-    @Test
     public void testSelectFromTableWriterMetrics() throws Exception {
         assertPlan(
                 "select * from table_writer_metrics()",
@@ -6876,6 +6925,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
+        );
+    }
+
+    @Test
+    public void testSelectWalTransactions() throws Exception {
+        assertPlan(
+                "create table tab ( s string, sy symbol, i int, ts timestamp) timestamp(ts) partition by day WAL",
+                "select * from wal_transactions('tab')",
+                "wal_transactions of: tab\n"
         );
     }
 
