@@ -177,7 +177,7 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent {
 
                     path.trimTo(snapshotDbLen).$();
                     try (
-                            ShowTablesCursorFactory factory = new ShowTablesCursorFactory(configuration, AllTablesFunctionFactory.METADATA, AllTablesFunctionFactory.SIGNATURE);
+                            ShowTablesCursorFactory factory = new ShowTablesCursorFactory(configuration, AllTablesFunctionFactory.METADATA, AllTablesFunctionFactory.SIGNATURE, true);
                             RecordCursor cursor = factory.getCursor(executionContext);
                             MemoryCMARW mem = Vm.getCMARWInstance()
                     ) {
