@@ -4647,7 +4647,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab (i int, ts timestamp) timestamp(ts)",
                 "select * from (select * from tab order by ts, i desc limit 10) order by ts",
-                "Sort light lo: 10\n" +
+                "Sort light lo: 10 partiallySorted: true\n" +
                         "  keys: [ts, i desc]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
@@ -7928,7 +7928,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "where i1*i2 != 0",
                 "SelectedRecord\n" +
                         "    Filter filter: i1*i2!=0\n" +
-                        "        Sort light lo: 100\n" +
+                        "        Sort light lo: 100 partiallySorted: true\n" +
                         "          keys: [ts1, l1]\n" +
                         "            SelectedRecord\n" +
                         "                SelectedRecord\n" +
@@ -8016,7 +8016,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * from (select * from a order by ts asc, l limit 10) lt join (select * from a) order by ts asc",
                     "SelectedRecord\n" +
                             "    Lt Join\n" +
-                            "        Sort light lo: 10\n" +
+                            "        Sort light lo: 10 partiallySorted: true\n" +
                             "          keys: [ts, l]\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +

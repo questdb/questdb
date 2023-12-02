@@ -409,7 +409,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     // Checks if lo, hi is set and lo >= 0 while hi < 0 (meaning - return whole result set except some rows at start and some at the end)
     // because such case can't really be optimized by topN/bottomN
-    private boolean canBeOptimized(QueryModel model, SqlExecutionContext context, Function loFunc, Function hiFunc) {
+    private boolean canSortAndLimitBeOptimized(QueryModel model, SqlExecutionContext context, Function loFunc, Function hiFunc) {
         if (model.getLimitLo() == null && model.getLimitHi() == null) {
             return false;
         }
@@ -2263,6 +2263,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                 }
 
+                boolean preSortedByTs = false;
                 // if first column index is the same as timestamp of underlying record cursor factory
                 // we could have two possibilities:
                 // 1. if we only have one column to order by - the cursor would already be ordered
@@ -2280,6 +2281,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     && recordCursorFactory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD) {
                                 return recordCursorFactory;
                             }
+                        } else { //orderByColumnCount > 1
+                            preSortedByTs = (orderBy.get(column) == QueryModel.ORDER_DIRECTION_ASCENDING && recordCursorFactory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD) ||
+                                    (orderBy.get(column) == ORDER_DIRECTION_DESCENDING && recordCursorFactory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD);
                         }
                     }
                 }
@@ -2294,8 +2298,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 final Function hiFunc = getHiFunction(model, executionContext);
 
                 if (recordCursorFactory.recordCursorSupportsRandomAccess()) {
-                    if (canBeOptimized(model, executionContext, loFunc, hiFunc)) {
+                    if (canSortAndLimitBeOptimized(model, executionContext, loFunc, hiFunc)) {
                         model.setLimitImplemented(true);
+                        int baseCursorTimestampIndex = preSortedByTs ? timestampIndex : -1;
                         return new LimitedSizeSortedLightRecordCursorFactory(
                                 configuration,
                                 orderedMetadata,
@@ -2303,7 +2308,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 recordComparatorCompiler.compile(metadata, listColumnFilterA),
                                 loFunc,
                                 hiFunc,
-                                listColumnFilterA.copy()
+                                listColumnFilterA.copy(),
+                                baseCursorTimestampIndex
                         );
                     } else {
                         return new SortedLightRecordCursorFactory(
