@@ -265,6 +265,16 @@ public class InfluxClientTest extends AbstractBootstrapTest {
                             "\"message\":\"failed to parse line protocol: errors encountered on line(s):\\n" +
                             "error in line 1: Could not parse entire line. Tag value is missing: bad\",\"line\":1}");
 
+                    assertRequestError(influxDB, points, "good_point, nonasciibadꠇ,field=2 1233456\n", "{" +
+                            "\"code\":\"invalid\"," +
+                            "\"message\":\"failed to parse line protocol: errors encountered on line(s):\\n" +
+                            "error in line 1: Could not parse entire line. Field value is missing: nonasciibadꠇ\",\"line\":1}");
+
+                    assertRequestError(influxDB, points, "good_point, nonjson\\\"bad,field=2 1233456\n", "{" +
+                            "\"code\":\"invalid\"," +
+                            "\"message\":\"failed to parse line protocol: errors encountered on line(s):\\n" +
+                            "error in line 1: Could not parse entire line. Field value is missing: nonjson\\\"bad\",\"line\":1}");
+
                     assertRequestError(influxDB, points, "good_point, bad,field=2 1233456\n", "{" +
                             "\"code\":\"invalid\"," +
                             "\"message\":\"failed to parse line protocol: errors encountered on line(s):\\n" +

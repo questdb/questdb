@@ -1153,6 +1153,7 @@ public class MemoryPARWImpl implements MemoryARW {
     }
 
     protected final void setExtendSegmentSize(long extendSegmentSize) {
+        assert extendSegmentSize > 3; // Int writing assumes page sized of at least 4 bytes
         clear();
         this.extendSegmentSize = Numbers.ceilPow2(extendSegmentSize);
         this.extendSegmentMsb = Numbers.msb(this.extendSegmentSize);

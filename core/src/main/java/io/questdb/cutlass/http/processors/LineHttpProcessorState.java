@@ -105,7 +105,7 @@ public class LineHttpProcessorState implements QuietCloseable {
     public void formatError(Utf8Sink sink) {
         sink.putAscii("{\"code\":\"").putAscii(currentStatus.codeStr);
         sink.putAscii("\",\"message\":\"").putAscii("failed to parse line protocol: errors encountered on line(s):");
-        sink.put(error); // TODO: escape to be valid json string
+        sink.put(error);
         sink.putAscii("\",\"line\":").put(errorLine).putAscii('}');
     }
 
@@ -114,7 +114,7 @@ public class LineHttpProcessorState implements QuietCloseable {
         sink.put(message).put("\"");
         if (exception != null) {
             sink.put(",\"message\":\"");
-            sink.put(exception.getMessage()); // TODO: escape to be valid json string
+            sink.put(exception.getMessage());
         }
         sink.put("\"}");
     }
