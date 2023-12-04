@@ -956,28 +956,6 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testSingleCharSymbol() throws Exception {
-//        assertQuery(
-//                "category\tres\n" +
-//                        "V\tfalse\n" +
-//                        "T\tfalse\n" +
-//                        "J\tfalse\n" +
-//                        "W\ttrue\n" +
-//                        "C\tfalse\n" +
-//                        "P\tfalse\n" +
-//                        "S\tfalse\n" +
-//                        "W\ttrue\n" +
-//                        "H\tfalse\n" +
-//                        "Y\tfalse\n",
-//                "select * from tab where category = 'W';",
-//                "create table tab as (" +
-//                        "select rnd_char()::symbol as category" +
-//                        " from long_sequence(10)" +
-//                        ")",
-//                null,
-//                true,
-//                true
-//        );
-
         assertQuery(
                 "category\tres\n" +
                         "V\tfalse\n" +
