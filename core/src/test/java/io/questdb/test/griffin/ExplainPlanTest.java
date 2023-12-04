@@ -1647,7 +1647,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testFilterOnExcludedIndexedSymbolManyValues() throws Exception {
         assertMemoryLeak(() -> {
             drop("drop table if exists trips");
-            ddl("CREATE TABLE trips(l long, s symbol " + "index" + "  capacity 5, ts TIMESTAMP) " +
+            ddl("CREATE TABLE trips(l long, s symbol index capacity 5, ts TIMESTAMP) " +
                     "timestamp(ts) partition by month");
 
             assertPlan("select s, count() from trips where s is not null order by count desc",
@@ -1689,6 +1689,19 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  values: [count(*)]\n" +
                             "    Async JIT Filter workers: 1\n" +
                             "      filter: (s is not null and s!='A1000')\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trips\n"
+            );
+
+            bindVariableService.clear();
+            bindVariableService.setStr("s1", "A100");
+            assertPlan("select s, count() from trips where s is not null and s != :s1",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "    Async JIT Filter workers: 1\n" +
+                            "      filter: (s is not null and s!=:s1::string)\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: trips\n"
@@ -1744,6 +1757,30 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  values: [count(*)]\n" +
                             "    Async JIT Filter workers: 1\n" +
                             "      filter: ((100<l or l!=0) and s is not null)\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trips\n"
+            );
+
+            assertPlan("select s, count() from trips where l > 100 or l != 0 and s not in (null, 'A1000', 'A2000')",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "    Async Filter workers: 1\n" +
+                            "      filter: ((100<l or l!=0) and not (s in [null,A1000,A2000]))\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trips\n"
+            );
+
+            bindVariableService.clear();
+            bindVariableService.setStr("s1", "A500");
+            assertPlan("select s, count() from trips where l > 100 or l != 0 and s not in (null, 'A1000', :s1)",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "    Async Filter workers: 1\n" +
+                            "      filter: ((100<l or l!=0) and not (s in [null,A1000] or s in [:s1::string]))\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: trips\n"
@@ -1801,6 +1838,19 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "            Frame forward scan on: trips\n"
             );
 
+            bindVariableService.clear();
+            bindVariableService.setStr("s1", "A100");
+            assertPlan("select s, count() from trips where s is not null and s != :s1",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "    Async JIT Filter workers: 1\n" +
+                            "      filter: (s is not null and s!=:s1::string)\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trips\n"
+            );
+
             assertPlan("select s, count() from trips where s is not null and l != 0",
                     "GroupBy vectorized: false\n" +
                             "  keys: [s]\n" +
@@ -1851,6 +1901,19 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  values: [count(*)]\n" +
                             "    Async JIT Filter workers: 1\n" +
                             "      filter: ((100<l or l!=0) and s is not null)\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trips\n"
+            );
+
+            bindVariableService.clear();
+            bindVariableService.setStr("s1", "A500");
+            assertPlan("select s, count() from trips where l > 100 or l != 0 and s not in (null, 'A1000', :s1)",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "    Async Filter workers: 1\n" +
+                            "      filter: ((100<l or l!=0) and not (s in [null,A1000] or s in [:s1::string]))\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: trips\n"
