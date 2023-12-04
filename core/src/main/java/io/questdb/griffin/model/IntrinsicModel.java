@@ -48,6 +48,7 @@ public class IntrinsicModel implements Mutable {
     public int intrinsicValue = UNDEFINED;
     // Indexed symbol column used as the initial "efficient" filter for the query.
     public CharSequence keyColumn;
+    public ObjList<ExpressionNode> keyExcludedNodes = new ObjList<>();
     public QueryModel keySubQuery;
 
     public RuntimeIntrinsicIntervalModel buildIntervalModel() {
@@ -63,6 +64,7 @@ public class IntrinsicModel implements Mutable {
         filter = null;
         intrinsicValue = UNDEFINED;
         keySubQuery = null;
+        keyExcludedNodes.clear();
     }
 
     public void clearBetweenTempParsing() {
