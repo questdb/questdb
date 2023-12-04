@@ -25,7 +25,10 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.MessageBus;
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameReduceTaskFactory;
@@ -103,7 +106,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                 bindVarFunctions,
                 preTouchColumnTypes
         );
-        this.frameSequence = new PageFrameSequence<>(configuration, messageBus, REDUCER, reduceTaskFactory);
+        this.frameSequence = new PageFrameSequence<>(configuration, messageBus, REDUCER, reduceTaskFactory, PageFrameReduceTask.TYPE_FILTER);
         this.limitLoFunction = limitLoFunction;
         this.limitLoPos = limitLoPos;
         this.maxNegativeLimit = configuration.getSqlMaxNegativeLimit();
@@ -180,7 +183,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     public void toPlan(PlanSink sink) {
         sink.type("Async JIT Filter");
         sink.meta("workers").val(workerCount);
-        //calc order and limit if possible 
+        // calc order and limit if possible
         long rowsRemaining;
         int baseOrder = base.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
         int order;
@@ -220,7 +223,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
             @NotNull SqlExecutionCircuitBreaker circuitBreaker,
             @Nullable PageFrameSequence<?> stealingFrameSequence
     ) {
-        final DirectLongList rows = task.getRows();
+        final DirectLongList rows = task.getFilteredRows();
         final DirectLongList columns = task.getColumns();
         final long frameRowCount = task.getFrameRowCount();
         final AsyncJitFilterAtom atom = task.getFrameSequence(AsyncJitFilterAtom.class).getAtom();
@@ -324,7 +327,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         }
 
         private void prepareBindVarMemory(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            //don't trigger memory allocation if there are no variables 
+            // don't trigger memory allocation if there are no variables
             if (bindVarFunctions.size() > 0) {
                 bindVarMemory.truncate();
                 for (int i = 0, n = bindVarFunctions.size(); i < n; i++) {

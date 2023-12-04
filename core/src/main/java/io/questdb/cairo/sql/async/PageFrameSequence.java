@@ -25,6 +25,7 @@
 package io.questdb.cairo.sql.async;
 
 import io.questdb.MessageBus;
+import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
@@ -37,6 +38,7 @@ import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -49,12 +51,16 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     private static final long LOCAL_TASK_CURSOR = Long.MAX_VALUE;
     private static final Log LOG = LogFactory.getLog(PageFrameSequence.class);
     private final MillisecondClock clock;
+    private final CairoConfiguration configuration;
     private final LongList frameRowCounts = new LongList();
+    private final ArrayColumnTypes groupByKeyTypes;
+    private final ArrayColumnTypes groupByValueTypes;
     private final PageFrameReduceTaskFactory localTaskFactory;
     private final MessageBus messageBus;
     private final PageAddressCache pageAddressCache;
     private final AtomicInteger reduceCounter = new AtomicInteger(0);
     private final PageFrameReducer reducer;
+    private final byte taskType; // PageFrameReduceTask.TYPE_*
     private final AtomicBoolean valid = new AtomicBoolean(true);
     public volatile boolean done;
     private T atom;
@@ -80,13 +86,18 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             CairoConfiguration configuration,
             MessageBus messageBus,
             PageFrameReducer reducer,
-            PageFrameReduceTaskFactory localTaskFactory
+            PageFrameReduceTaskFactory localTaskFactory,
+            byte taskType
     ) {
+        this.configuration = configuration;
         this.pageAddressCache = new PageAddressCache(configuration);
         this.messageBus = messageBus;
         this.reducer = reducer;
         this.clock = configuration.getMillisecondClock();
         this.localTaskFactory = localTaskFactory;
+        this.taskType = taskType;
+        this.groupByKeyTypes = taskType == PageFrameReduceTask.TYPE_GROUP_BY ? new ArrayColumnTypes() : null;
+        this.groupByValueTypes = taskType == PageFrameReduceTask.TYPE_GROUP_BY ? new ArrayColumnTypes() : null;
     }
 
     /**
@@ -208,6 +219,14 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         return frameRowCounts.getQuick(frameIndex);
     }
 
+    public ArrayColumnTypes getGroupByKeyTypes() {
+        return groupByKeyTypes;
+    }
+
+    public ArrayColumnTypes getGroupByValueTypes() {
+        return groupByValueTypes;
+    }
+
     public long getId() {
         return id;
     }
@@ -247,6 +266,10 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             return localTask;
         }
         return reduceQueue.get(cursor);
+    }
+
+    public byte getTaskType() {
+        return taskType;
     }
 
     public boolean isActive() {
@@ -358,6 +381,20 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             atom.initCursor();
             buildAddressCache();
             readyToDispatch = true;
+        }
+    }
+
+    public void prepareForGroupBy(
+            @Transient @NotNull ArrayColumnTypes keyTypes,
+            @Transient @NotNull ArrayColumnTypes valueTypes
+    ) {
+        for (int i = 0, n = keyTypes.getColumnCount(); i < n; i++) {
+            final int columnType = keyTypes.getColumnType(i);
+            groupByKeyTypes.add(columnType);
+        }
+        for (int i = 0, n = valueTypes.getColumnCount(); i < n; i++) {
+            final int columnType = valueTypes.getColumnType(i);
+            groupByValueTypes.add(columnType);
         }
     }
 
@@ -521,6 +558,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
 
         if (localTask == null) {
             localTask = localTaskFactory.getInstance();
+            localTask.setType(taskType);
         }
         localTask.of(this, dispatchStartFrameIndex++);
 
@@ -528,6 +566,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             LOG.debug()
                     .$("reducing locally [shard=").$(shard)
                     .$(", id=").$(id)
+                    .$(", taskType=").$(taskType)
                     .$(", frameIndex=").$(localTask.getFrameIndex())
                     .$(", frameCount=").$(frameCount)
                     .$(", active=").$(isActive())

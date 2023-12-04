@@ -24,9 +24,12 @@
 
 package io.questdb.cairo.map;
 
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.Mutable;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -39,6 +42,10 @@ public interface Map extends Mutable, Closeable, Reopenable {
     MapRecord getRecord();
 
     void restoreInitialCapacity();
+
+    default void setTypes(@NotNull ColumnTypes keyTypes, @Nullable ColumnTypes valueTypes) {
+        throw new UnsupportedOperationException();
+    }
 
     long size();
 

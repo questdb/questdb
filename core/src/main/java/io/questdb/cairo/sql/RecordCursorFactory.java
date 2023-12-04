@@ -148,7 +148,7 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      * - {@link #SCAN_DIRECTION_FORWARD}, {@link #SCAN_DIRECTION_BACKWARD} - for regular data/interval frame scans
      * - {@link #SCAN_DIRECTION_OTHER} - for some index scans, e.g. cursor-order index lookup with multiple values
      * where order is 'random'.<br>
-     * Note: tables with designated timestamp keep rows in timestamp order, so :
+     * Note: tables with designated timestamp keep rows in timestamp order, so:
      * - forward scan produces rows in ascending ts order
      * - backward scan produces rows in descending ts order
      */
@@ -165,8 +165,10 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         return null;
     }
 
-    /* Returns true if this factory handles limit M , N clause already and false otherwise .
-     *  If true then separate limit cursor factory is not needed (and could actually cause problem by re-applying limit logic).   */
+    /**
+     * Returns true if this factory handles limit M , N clause already and false otherwise .
+     * If true then separate limit cursor factory is not needed (and could actually cause problem by re-applying limit logic).
+     */
     default boolean implementsLimit() {
         return false;
     }
@@ -184,7 +186,9 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         return false;
     }
 
-    /* Adds description of this factory to EXPLAIN output. */
+    /**
+     * Adds description of this factory to EXPLAIN output.
+     */
     @Override
     default void toPlan(PlanSink sink) {
         sink.type(getClass().getName());

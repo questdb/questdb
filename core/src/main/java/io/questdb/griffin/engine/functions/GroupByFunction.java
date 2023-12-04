@@ -72,8 +72,18 @@ public interface GroupByFunction extends Function, Mutable {
         return false;
     }
 
+    // returns whether the function can be used in parallel GROUP BY
+    default boolean isParallelismSupported() {
+        return false;
+    }
+
     default boolean isScalar() {
         return true;
+    }
+
+    // used in parallel GROUP BY to merge partial results
+    default void merge(MapValue destMapValue, MapValue srcMapValue) {
+        throw new UnsupportedOperationException();
     }
 
     void pushValueTypes(ArrayColumnTypes columnTypes);

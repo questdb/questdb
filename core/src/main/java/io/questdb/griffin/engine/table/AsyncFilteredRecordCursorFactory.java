@@ -85,7 +85,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
             }
         }
         this.filterAtom = new AsyncFilterAtom(configuration, filter, perWorkerFilters, preTouchColumnTypes);
-        this.frameSequence = new PageFrameSequence<>(configuration, messageBus, REDUCER, reduceTaskFactory);
+        this.frameSequence = new PageFrameSequence<>(configuration, messageBus, REDUCER, reduceTaskFactory, PageFrameReduceTask.TYPE_FILTER);
         this.limitLoFunction = limitLoFunction;
         this.limitLoPos = limitLoPos;
         this.maxNegativeLimit = configuration.getSqlMaxNegativeLimit();
@@ -162,7 +162,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
     public void toPlan(PlanSink sink) {
         sink.type("Async Filter");
         sink.meta("workers").val(workerCount);
-        //calc order and limit if possible  
+        // calc order and limit if possible
         long rowsRemaining;
         int baseOrder = base.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
         int order;
@@ -202,7 +202,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
             @NotNull SqlExecutionCircuitBreaker circuitBreaker,
             @Nullable PageFrameSequence<?> stealingFrameSequence
     ) {
-        final DirectLongList rows = task.getRows();
+        final DirectLongList rows = task.getFilteredRows();
         final long frameRowCount = task.getFrameRowCount();
         final AsyncFilterAtom atom = task.getFrameSequence(AsyncFilterAtom.class).getAtom();
 

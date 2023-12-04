@@ -73,6 +73,24 @@ public class MinLongGroupByFunction extends LongFunction implements GroupByFunct
     }
 
     @Override
+    public boolean isParallelismSupported() {
+        return arg.isReadThreadSafe();
+    }
+
+    @Override
+    public void merge(MapValue destMapValue, MapValue srcMapValue) {
+        long srcMin = srcMapValue.getLong(valueIndex);
+        if (destMapValue.isNew()) {
+            destMapValue.putLong(valueIndex, srcMin);
+        } else {
+            long destMin = destMapValue.getLong(valueIndex);
+            if (srcMin < destMin) {
+                destMapValue.putLong(valueIndex, srcMin);
+            }
+        }
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.LONG);

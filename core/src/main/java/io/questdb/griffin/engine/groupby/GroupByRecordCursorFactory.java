@@ -62,8 +62,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             ObjList<Function> recordFunctions
     ) {
         super(groupByMetadata);
-        // sink will be storing record columns to map key
         try {
+            // sink will be storing record columns to map key
             this.mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter, false);
             this.base = base;
             this.groupByFunctions = groupByFunctions;

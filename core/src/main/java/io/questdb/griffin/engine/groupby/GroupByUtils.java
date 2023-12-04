@@ -53,7 +53,6 @@ public class GroupByUtils {
             @Transient IntList groupByFunctionPositions,
             ArrayColumnTypes valueTypes
     ) throws SqlException {
-
         groupByFunctionPositions.clear();
 
         final ObjList<QueryColumn> columns = model.getColumns();
@@ -97,7 +96,6 @@ public class GroupByUtils {
             boolean timestampUnimportant,
             int timestampIndex
     ) throws SqlException {
-
         recordFunctionPositions.clear();
 
         // Process group-by functions first to get the idea of
@@ -254,6 +252,15 @@ public class GroupByUtils {
             }
         }
         validateGroupByColumns(model, inferredKeyColumnCount);
+    }
+
+    public static boolean supportParallelism(ObjList<GroupByFunction> groupByFunctions) {
+        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+            if (!groupByFunctions.getQuick(i).isParallelismSupported()) {
+                return false;
+            }
+        }
+        return true;
     }
 
     public static void toTop(ObjList<? extends Function> args) {

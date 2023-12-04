@@ -67,8 +67,8 @@ final class FastMapRecord implements MapRecord {
             int keySize,
             int[] valueOffsets,
             FastMapValue value,
-            @NotNull @Transient ColumnTypes keyTypes,
-            @Nullable @Transient ColumnTypes valueTypes
+            @Transient @NotNull ColumnTypes keyTypes,
+            @Transient @Nullable ColumnTypes valueTypes
     ) {
         this.keySize = keySize;
         this.valueOffsets = valueOffsets;
@@ -166,6 +166,20 @@ final class FastMapRecord implements MapRecord {
         this.bs = bs;
         this.keyLong256A = keyLong256A;
         this.keyLong256B = keyLong256B;
+    }
+
+    @Override
+    public void copyKey(MapKey destKey) {
+        if (!(destKey instanceof FastMap.BaseKey)) {
+            throw new IllegalArgumentException();
+        }
+
+        FastMap.BaseKey destFastKey = (FastMap.BaseKey) destKey;
+        int keySize = this.keySize;
+        if (keySize == -1) {
+            keySize = Unsafe.getUnsafe().getInt(startAddress);
+        }
+        destFastKey.copyRawKey(keyAddress, keySize);
     }
 
     @Override

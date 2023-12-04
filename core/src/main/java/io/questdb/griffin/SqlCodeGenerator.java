@@ -1362,7 +1362,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             SqlExecutionContext executionContext,
             ExpressionNode filterExpr
     ) throws SqlException {
-        backupWhereClause(filterExpr);//back up in case filters need to be compiled again
+        backupWhereClause(filterExpr); // back up in case filters need to be compiled again
         model.setWhereClause(null);
 
         final Function filter;
@@ -2623,7 +2623,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             if (isFillNone) {
-
                 if (keyTypes.getColumnCount() == 0) {
                     // this sample by is not keyed
                     return new SampleByFillNoneNotKeyedRecordCursorFactory(
@@ -3179,7 +3178,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         tempVaf.getQuick(i).pushValueTypes(arrayColumnTypes);
                     }
 
-                    if (tempVaf.size() == 0) {// similar to DistinctKeyRecordCursorFactory, handles e.g. select id from tab group by id
+                    if (tempVaf.size() == 0) { // similar to DistinctKeyRecordCursorFactory, handles e.g. select id from tab group by id
                         int keyKind = specialCaseKeys ? SqlCodeGenerator.GKK_HOUR_INT : SqlCodeGenerator.GKK_VANILLA_INT;
                         CountVectorAggregateFunction countFunction = new CountVectorAggregateFunction(keyKind);
                         countFunction.pushValueTypes(arrayColumnTypes);
@@ -3267,6 +3266,27 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             } catch (Throwable e) {
                 Misc.freeObjList(recordFunctions);
                 throw e;
+            }
+
+            // TODO(puzpuzpuz): add enable parallel GROUP BY flag
+            // TODO(puzpuzpuz): consider non-thread-safe functions used as keys, e.g. select regexp_replace(k, ...) k, max(v) v from x
+            if (factory.supportPageFrameCursor() && GroupByUtils.supportParallelism(groupByFunctions)) {
+                return new AsyncGroupByRecordCursorFactory(
+                        asm,
+                        configuration,
+                        executionContext.getMessageBus(),
+                        factory,
+                        groupByMetadata,
+                        listColumnFilterA,
+                        keyTypes,
+                        valueTypes,
+                        groupByFunctions,
+                        recordFunctions,
+                        null, // TODO(puzpuzpuz): filter goes here
+                        reduceTaskFactory,
+                        null, // TODO(puzpuzpuz): filter goes here
+                        executionContext.getSharedWorkerCount()
+                );
             }
 
             if (keyTypes.getColumnCount() == 0) {
