@@ -2974,8 +2974,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 final GenericRecordMetadata distinctColumnMetadata = new GenericRecordMetadata();
                 distinctColumnMetadata.add(readerMetadata.getColumnMetadata(columnIndex));
-                final RecordCursorFactory factory = generateSubQuery(model.getNestedModel(), executionContext);
                 if (ColumnType.isSymbol(columnType)) {
+                    final RecordCursorFactory factory = generateSubQuery(model.getNestedModel(), executionContext);
                     try {
                         return new DistinctSymbolRecordCursorFactory(engine.getConfiguration(), factory);
                     } catch (Throwable t) {
@@ -2983,6 +2983,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         throw t;
                     }
                 } else if (columnType == ColumnType.INT) {
+                    final RecordCursorFactory factory = generateSubQuery(model.getNestedModel(), executionContext);
                     if (factory.supportPageFrameCursor()) {
                         try {
                             return new DistinctIntKeyRecordCursorFactory(
