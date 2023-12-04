@@ -1,4 +1,4 @@
-FROM debian:buster
+FROM debian:bullseye
 ARG tag_name
 
 ENV GOSU_VERSION=1.14
@@ -10,13 +10,8 @@ RUN apt-get update \
 RUN wget -O- https://apt.corretto.aws/corretto.key | gpg --dearmor | tee /etc/apt/trusted.gpg.d/winehq.gpg >/dev/null && \
     add-apt-repository 'deb https://apt.corretto.aws stable main' && \
     apt-get update && \
-    apt-get install --no-install-recommends -y java-17-amazon-corretto-jdk=1:${JDK_VERSION}
-
-ENV TMP_MAVEN_VERSION=3.9.5
-RUN wget https://apache.org/dist/maven/maven-3/$TMP_MAVEN_VERSION/binaries/apache-maven-$TMP_MAVEN_VERSION-bin.tar.gz -P /tmp
-RUN tar xf /tmp/apache-maven-*.tar.gz -C /opt
-RUN rm /tmp/apache-maven-*-bin.tar.gz
-RUN ln -s /opt/apache-maven-$TMP_MAVEN_VERSION/bin/mvn /usr/bin/mvn
+    apt-get install --no-install-recommends -y java-17-amazon-corretto-jdk=1:${JDK_VERSION} && \
+    apt-get -y install maven
 
 ENV JAVA_HOME=/usr/lib/jvm/java-17-amazon-corretto
 WORKDIR /build
