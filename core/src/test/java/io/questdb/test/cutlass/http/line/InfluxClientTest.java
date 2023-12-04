@@ -235,7 +235,7 @@ public class InfluxClientTest extends AbstractBootstrapTest {
                     throw new RuntimeException(error.get());
                 }
 
-                serverMain.waitWalTxnApplied(tableName, 2);
+                serverMain.waitWalTxnApplied(tableName, threads * 2);
                 serverMain.assertSql("SELECT count() FROM " + tableName, "count\n" + count * threads + "\n");
                 serverMain.assertSql("SELECT sum(water_level) FROM " + tableName, "sum\n" + (count * (count - 1) / 2) * threads + "\n");
             }

@@ -33,7 +33,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
-import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;

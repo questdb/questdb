@@ -605,7 +605,9 @@ public class LineTcpParser {
         INVALID_FIELD_VALUE_STR_UNDERFLOW,
         INVALID_TABLE_NAME,
         INVALID_COLUMN_NAME,
-        MISSING_FIELD_VALUE, MISSING_TAG_VALUE, NONE
+        MISSING_FIELD_VALUE,
+        MISSING_TAG_VALUE,
+        NONE
     }
 
     public enum ParseResult {

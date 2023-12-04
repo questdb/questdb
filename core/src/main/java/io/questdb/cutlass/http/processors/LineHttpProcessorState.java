@@ -66,7 +66,7 @@ public class LineHttpProcessorState implements QuietCloseable {
                 engine.getConfiguration().getMaxFileNameLength(),
                 configuration.getMicrosecondClock()
         );
-        var defaultColumnTypes = new DefaultColumnTypes(configuration.getDefaultColumnTypeForFloat(), configuration.getDefaultColumnTypeForInteger());
+        DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(configuration.getDefaultColumnTypeForFloat(), configuration.getDefaultColumnTypeForInteger());
         this.ilpTudCache = new IlpTudCache(
                 engine,
                 configuration.autoCreateNewColumns(),
