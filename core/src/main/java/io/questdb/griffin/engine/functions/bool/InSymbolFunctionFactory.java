@@ -167,7 +167,17 @@ public class InSymbolFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val(arg).val(" in ").val(set);
+            sink.val(arg);
+            boolean hasLiterals = set != null && set.size() > 0;
+            if (hasLiterals) {
+                sink.val(" in ").val(set);
+            }
+            if (deferredValues != null && deferredValues.size() > 0) {
+                if (hasLiterals) {
+                    sink.val(" or ").val(arg);
+                }
+                sink.val(" in ").val(deferredValues);
+            }
         }
 
         private boolean testAsInt(Record rec) {
