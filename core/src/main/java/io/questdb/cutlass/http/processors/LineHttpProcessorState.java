@@ -87,12 +87,13 @@ public class LineHttpProcessorState implements QuietCloseable {
         currentStatus = Status.OK;
         errorLine = 0;
         line = 0;
+        recvBufStartOfMeasurement = 0;
     }
 
     @Override
     public void close() {
         Unsafe.free(buffer, recvBufSize, MemoryTag.NATIVE_HTTP_CONN);
-        recvBufEnd = recvBufPos = buffer = 0;
+        recvBufStartOfMeasurement = recvBufEnd = recvBufPos = buffer = 0;
         Misc.free(ilpTudCache);
         Misc.free(symbolCachePool);
     }
