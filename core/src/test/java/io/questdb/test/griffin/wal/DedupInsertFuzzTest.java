@@ -646,15 +646,18 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             String comaSeparatedUpsertCols;
             String timestampColumnName;
 
-            try (TableReader reader = getReader(tableNameWalNoDedup)) {
-                TableReaderMetadata metadata = reader.getMetadata();
-                chooseUpsertKeys(metadata, dedupKeys, rnd, upsertKeyIndexes);
-                timestampColumnName = metadata.getColumnName(metadata.getTimestampIndex());
+            try (
+                    TableReader reader = getReader(tableNameWalNoDedup);
+                    TableMetadata sequencerMetadata = engine.getSequencerMetadata(reader.getTableToken())
+            ) {
+                TableReaderMetadata readerMetadata = reader.getMetadata();
+                chooseUpsertKeys(readerMetadata, dedupKeys, rnd, upsertKeyIndexes);
+                timestampColumnName = readerMetadata.getColumnName(readerMetadata.getTimestampIndex());
 
                 long start = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T23:59:59");
                 long end = start + 2 * Timestamps.SECOND_MICROS;
-                transactions = generateSet(rnd, metadata, start, end, tableNameWalNoDedup);
-                comaSeparatedUpsertCols = toCommaSeparatedString(metadata, upsertKeyIndexes);
+                transactions = generateSet(rnd, sequencerMetadata, readerMetadata, start, end, tableNameWalNoDedup);
+                comaSeparatedUpsertCols = toCommaSeparatedString(readerMetadata, upsertKeyIndexes);
             }
             String alterStatement = String.format(
                     "alter table %s dedup upsert keys(%s))",

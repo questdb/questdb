@@ -292,7 +292,6 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
                 // how do we get to the end? If we consume our own queue there is chance we will be consuming
                 // aggregation tasks not related to this execution (we work in concurrent environment)
                 // To deal with that we need to have our own checklist.
-
                 reclaimed = getRunWhatsLeft(
                         bus.getVectorAggregateSubSeq(),
                         queue,
