@@ -271,6 +271,7 @@ public class LineHttpProcessorState implements QuietCloseable {
                 .$(error.subSequence(errorPos, error.length()))
                 .$(", request=").$(requestId)
                 .$(", fd=").$(fd)
+                .$(", mangledLine=`").$utf8(recvBufStartOfMeasurement == 0 ? buffer : recvBufStartOfMeasurement, parser.getBufferAddress()).$('`')
                 .$();
     }
 

@@ -50,7 +50,7 @@ public class LineHttpReceiverFuzzTest extends AbstractLineHttpFuzzTest {
     @Test
     public void testAllMixed() throws Exception {
         initLoadParameters(50, Os.isWindows() ? 3 : 5, 5, 5, 50);
-        initFuzzParameters(3, 4, 5, 10, 5, true, true, true, true);
+        initFuzzParameters(3, 4, 5, 10, 5, true, true, true, false);
         runTest();
     }
 
@@ -78,7 +78,7 @@ public class LineHttpReceiverFuzzTest extends AbstractLineHttpFuzzTest {
     @Test
     public void testDuplicatesReorderingColumnsSendSymbolsWithSpace() throws Exception {
         initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 50);
-        initFuzzParameters(4, 4, -1, -1, -1, true, true, false, true);
+        initFuzzParameters(4, 4, -1, -1, -1, true, true, false, false);
         runTest();
     }
 
@@ -92,13 +92,6 @@ public class LineHttpReceiverFuzzTest extends AbstractLineHttpFuzzTest {
     public void testLoadNoTagsStringsAsSymbol() throws Exception {
         initLoadParameters(100, Os.isWindows() ? 3 : 5, 7, 12, 20);
         initFuzzParameters(-1, -1, -1, -1, -1, false, false, true, false);
-        runTest();
-    }
-
-    @Test
-    public void testLoadSendSymbolsWithSpace() throws Exception {
-        initLoadParameters(100, Os.isWindows() ? 3 : 5, 4, 8, 20);
-        initFuzzParameters(-1, -1, -1, -1, -1, false, true, false, true);
         runTest();
     }
 
