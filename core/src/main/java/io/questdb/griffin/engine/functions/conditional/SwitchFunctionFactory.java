@@ -43,7 +43,6 @@ public class SwitchFunctionFactory implements FunctionFactory {
     private static final LongMethod GET_LONG = SwitchFunctionFactory::getLong;
     private static final IntMethod GET_SHORT = SwitchFunctionFactory::getShort;
     private static final CharSequenceMethod GET_STRING = SwitchFunctionFactory::getString;
-    private static final CharSequenceMethod GET_SYMBOL = SwitchFunctionFactory::getSymbol;
     private static final LongMethod GET_TIMESTAMP = SwitchFunctionFactory::getTimestamp;
 
     @Override
@@ -120,9 +119,8 @@ public class SwitchFunctionFactory implements FunctionFactory {
             case ColumnType.BOOLEAN:
                 return getIfElseFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch);
             case ColumnType.STRING:
-                return getCharSequenceKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_STRING);
             case ColumnType.SYMBOL:
-                return getCharSequenceKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_SYMBOL);
+                return getCharSequenceKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_STRING);
             default:
                 throw SqlException.
                         $(argPositions.getQuick(0), "type ")
