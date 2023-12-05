@@ -42,8 +42,6 @@ public class SwitchFunctionFactory implements FunctionFactory {
     private static final IntMethod GET_INT = SwitchFunctionFactory::getInt;
     private static final LongMethod GET_LONG = SwitchFunctionFactory::getLong;
     private static final IntMethod GET_SHORT = SwitchFunctionFactory::getShort;
-    private static final CharSequenceMethod GET_STRING = SwitchFunctionFactory::getString;
-    private static final CharSequenceMethod GET_SYMBOL = SwitchFunctionFactory::getSymbol;
     private static final LongMethod GET_TIMESTAMP = SwitchFunctionFactory::getTimestamp;
 
     @Override
@@ -120,9 +118,8 @@ public class SwitchFunctionFactory implements FunctionFactory {
             case ColumnType.BOOLEAN:
                 return getIfElseFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch);
             case ColumnType.STRING:
-                return getCharSequenceKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_STRING);
             case ColumnType.SYMBOL:
-                return getCharSequenceKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_SYMBOL);
+                return getCharSequenceKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch);
             default:
                 throw SqlException.
                         $(argPositions.getQuick(0), "type ")
@@ -159,10 +156,6 @@ public class SwitchFunctionFactory implements FunctionFactory {
         return function.getStr(record);
     }
 
-    private static CharSequence getSymbol(Function function, Record record) {
-        return function.getSymbol(record);
-    }
-
     private static long getTimestamp(Function function, Record record) {
         return function.getTimestamp(record);
     }
@@ -174,15 +167,14 @@ public class SwitchFunctionFactory implements FunctionFactory {
             int n,
             Function keyFunction,
             int valueType,
-            Function elseBranch,
-            CharSequenceMethod method
+            Function elseBranch
     ) throws SqlException {
         final CharSequenceObjHashMap<Function> map = new CharSequenceObjHashMap<>();
         final ObjList<Function> argsToPoke = new ObjList<>();
         Function nullFunc = null;
         for (int i = 1; i < n; i += 2) {
             final Function fun = args.getQuick(i);
-            final CharSequence key = method.getKey(fun, null);
+            final CharSequence key = SwitchFunctionFactory.getString(fun, null);
             if (key == null) {
                 nullFunc = args.getQuick(i + 1);
             } else {
@@ -199,7 +191,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
         final CaseFunctionPicker picker;
         if (nullFunc == null) {
             picker = record -> {
-                final CharSequence value = method.getKey(keyFunction, record);
+                final CharSequence value = SwitchFunctionFactory.getString(keyFunction, record);
                 if (value != null) {
                     final int index = map.keyIndex(value);
                     if (index < 0) {
@@ -211,7 +203,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
         } else {
             final Function nullFuncRef = nullFunc;
             picker = record -> {
-                final CharSequence value = method.getKey(keyFunction, record);
+                final CharSequence value = SwitchFunctionFactory.getString(keyFunction, record);
                 if (value == null) {
                     return nullFuncRef;
                 }
@@ -361,11 +353,6 @@ public class SwitchFunctionFactory implements FunctionFactory {
         argsToPoke.add(keyFunction);
 
         return CaseCommon.getCaseFunction(position, valueType, picker, argsToPoke);
-    }
-
-    @FunctionalInterface
-    private interface CharSequenceMethod {
-        CharSequence getKey(Function function, Record record);
     }
 
     @FunctionalInterface
