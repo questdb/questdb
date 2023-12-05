@@ -26,7 +26,6 @@ package org.questdb;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SingleColumnType;
-import io.questdb.cairo.map.CompactMap;
 import io.questdb.cairo.map.FastMap;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
@@ -49,7 +48,6 @@ public class FastMapWriteBenchmark {
     private static final double loadFactor = 0.7;
     private static final HashMap<String, Long> hmap = new HashMap<>(64, (float) loadFactor);
     private static final FastMap fmap = new FastMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), 64, loadFactor, 1024);
-    private static final CompactMap qmap = new CompactMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), 64, loadFactor, 1024, Integer.MAX_VALUE);
     private final Rnd rnd = new Rnd();
 
     public static void main(String[] args) throws RunnerException {
@@ -70,18 +68,9 @@ public class FastMapWriteBenchmark {
 
     @Setup(Level.Iteration)
     public void reset() {
-        System.out.print(" [q=" + qmap.size() + ", l=" + fmap.size() + ", cap=" + qmap.getKeyCapacity() + "] ");
+        System.out.print(" [l=" + fmap.size() + ", cap=" + fmap.getKeyCapacity() + "] ");
         fmap.clear();
-        qmap.clear();
         rnd.reset();
-    }
-
-    @Benchmark
-    public void testCompactMap() {
-        MapKey key = qmap.withKey();
-        key.putStr(rnd.nextChars(M));
-        MapValue value = key.createValue();
-        value.putLong(0, 20);
     }
 
     @Benchmark
@@ -93,7 +82,8 @@ public class FastMapWriteBenchmark {
     }
 
     @Benchmark
-    public void testHashMap() {
+    public HashMap<String, Long> testHashMap() {
         hmap.put(rnd.nextChars(M).toString(), 20L);
+        return hmap;
     }
 }

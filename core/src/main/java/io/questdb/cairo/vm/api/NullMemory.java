@@ -60,6 +60,7 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
 
     @Override
     public void extend(long size) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -173,6 +174,7 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
 
     @Override
     public void putBool(long offset, boolean value) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -182,6 +184,7 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
 
     @Override
     public void putByte(long offset, byte value) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -191,6 +194,7 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
 
     @Override
     public void putChar(long offset, char value) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -200,6 +204,7 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
 
     @Override
     public void putDouble(long offset, double value) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -209,6 +214,7 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
 
     @Override
     public void putFloat(long offset, float value) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -218,6 +224,7 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
 
     @Override
     public void putInt(long offset, int value) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -227,6 +234,7 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
 
     @Override
     public void putLong(long offset, long value) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -256,10 +264,12 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
 
     @Override
     public void putLong256(long offset, Long256 value) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void putLong256(long offset, long l0, long l1, long l2, long l3) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -291,6 +301,7 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
 
     @Override
     public void putShort(long offset, short value) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -310,10 +321,17 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
 
     @Override
     public void putStr(long offset, CharSequence value) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void putStr(long offset, long strAddr) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void putStr(long offset, CharSequence value, int pos, int len) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -328,6 +346,7 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
 
     @Override
     public void shiftAddressRight(long shiftRightOffset) {
+        throw new UnsupportedOperationException();
     }
 
     @Override

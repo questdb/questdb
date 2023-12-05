@@ -60,6 +60,8 @@ public interface MemoryW extends Closeable {
 
     void putStr(long offset, CharSequence value);
 
+    void putStr(long offset, long strAddr);
+
     void putStr(long offset, CharSequence value, int pos, int len);
 
     void truncate();

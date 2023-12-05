@@ -3865,7 +3865,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 chainTypes,
                 listColumnFilterA,
                 false,
-                listColumnFilterB
+                listColumnFilterB,
+                base.supportsDirectStrings()
         );
 
         return new CachedWindowRecordCursorFactory(

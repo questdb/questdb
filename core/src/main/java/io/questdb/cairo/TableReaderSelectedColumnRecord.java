@@ -42,10 +42,6 @@ public class TableReaderSelectedColumnRecord implements Record {
         this.columnIndexes = columnIndexes;
     }
 
-    public long getAdjustedRecordIndex() {
-        return recordIndex;
-    }
-
     @Override
     public BinarySequence getBin(int columnIndex) {
         final int col = deferenceColumn(columnIndex);
@@ -254,6 +250,19 @@ public class TableReaderSelectedColumnRecord implements Record {
     }
 
     @Override
+    public long getStrAddr(int columnIndex) {
+        final int col = deferenceColumn(columnIndex);
+        final long recordIndex = getAdjustedRecordIndex(col) * Long.BYTES;
+        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(
+                recordIndex,
+                TableReader.getPrimaryColumnIndex(columnBase, col)
+        );
+        long offset = reader.getColumn(absoluteColumnIndex + 1).getLong(recordIndex);
+        assert recordIndex != 0 || (offset == 0 || offset == Numbers.LONG_NaN);
+        return reader.getColumn(absoluteColumnIndex).addressOf(offset);
+    }
+
+    @Override
     public CharSequence getStrB(int columnIndex) {
         final int col = deferenceColumn(columnIndex);
         final long recordIndex = getAdjustedRecordIndex(col) * Long.BYTES;
@@ -304,10 +313,6 @@ public class TableReaderSelectedColumnRecord implements Record {
     @Override
     public long getUpdateRowId() {
         return getRowId();
-    }
-
-    public void incrementRecordIndex() {
-        recordIndex++;
     }
 
     public void jumpTo(int partitionIndex, long recordIndex) {

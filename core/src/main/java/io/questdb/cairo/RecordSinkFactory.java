@@ -32,8 +32,13 @@ import org.jetbrains.annotations.Nullable;
 
 public class RecordSinkFactory {
 
-    public static RecordSink getInstance(BytecodeAssembler asm, ColumnTypes columnTypes, @Transient ColumnFilter columnFilter, boolean symAsString) {
-        return getInstance(asm, columnTypes, columnFilter, symAsString, null);
+    public static RecordSink getInstance(
+            BytecodeAssembler asm,
+            ColumnTypes columnTypes,
+            @Transient ColumnFilter columnFilter,
+            boolean symAsString
+    ) {
+        return getInstance(asm, columnTypes, columnFilter, symAsString, null, false);
     }
 
     public static RecordSink getInstance(
@@ -41,7 +46,8 @@ public class RecordSinkFactory {
             ColumnTypes columnTypes,
             @Transient ColumnFilter columnFilter,
             boolean symAsString,
-            @Transient @Nullable IntList skewIndex
+            @Transient @Nullable IntList skewIndex,
+            boolean sourceSupportsDirectStrings
     ) {
         asm.init(RecordSink.class);
         asm.setupPool();
@@ -67,6 +73,7 @@ public class RecordSinkFactory {
         final int rGetFloat = asm.poolInterfaceMethod(Record.class, "getFloat", "(I)F");
         final int rGetDouble = asm.poolInterfaceMethod(Record.class, "getDouble", "(I)D");
         final int rGetStr = asm.poolInterfaceMethod(Record.class, "getStr", "(I)Ljava/lang/CharSequence;");
+        final int rGetStrAddr = asm.poolInterfaceMethod(Record.class, "getStrAddr", "(I)J");
         final int rGetSym = asm.poolInterfaceMethod(Record.class, "getSym", "(I)Ljava/lang/CharSequence;");
         final int rGetBin = asm.poolInterfaceMethod(Record.class, "getBin", "(I)Lio/questdb/std/BinarySequence;");
         final int rGetRecord = asm.poolInterfaceMethod(Record.class, "getRecord", "(I)Lio/questdb/cairo/sql/Record;");
@@ -84,6 +91,7 @@ public class RecordSinkFactory {
         final int wPutFloat = asm.poolInterfaceMethod(RecordSinkSPI.class, "putFloat", "(F)V");
         final int wPutDouble = asm.poolInterfaceMethod(RecordSinkSPI.class, "putDouble", "(D)V");
         final int wPutStr = asm.poolInterfaceMethod(RecordSinkSPI.class, "putStr", "(Ljava/lang/CharSequence;)V");
+        final int wPutStrAddr = asm.poolInterfaceMethod(RecordSinkSPI.class, "putStr", "(J)V");
         final int wPutDate = asm.poolInterfaceMethod(RecordSinkSPI.class, "putDate", "(J)V");
         final int wPutTimestamp = asm.poolInterfaceMethod(RecordSinkSPI.class, "putTimestamp", "(J)V");
         final int wPutBin = asm.poolInterfaceMethod(RecordSinkSPI.class, "putBin", "(Lio/questdb/std/BinarySequence;)V");
@@ -215,8 +223,13 @@ public class RecordSinkFactory {
                     asm.aload(2);
                     asm.aload(1);
                     asm.iconst(getSkewedIndex(index, skewIndex));
-                    asm.invokeInterface(rGetStr, 1);
-                    asm.invokeInterface(wPutStr, 1);
+                    if (sourceSupportsDirectStrings) {
+                        asm.invokeInterface(rGetStrAddr, 1);
+                        asm.invokeInterface(wPutStrAddr, 1);
+                    } else {
+                        asm.invokeInterface(rGetStr, 1);
+                        asm.invokeInterface(wPutStr, 1);
+                    }
                     break;
                 case ColumnType.BINARY:
                     asm.aload(2);

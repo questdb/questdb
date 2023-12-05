@@ -138,6 +138,11 @@ public class DelegatingRecord implements Record {
     }
 
     @Override
+    public long getStrAddr(int col) {
+        return base.getStrAddr(col);
+    }
+
+    @Override
     public void getStr(int col, CharSink sink) {
         base.getStr(col, sink);
     }

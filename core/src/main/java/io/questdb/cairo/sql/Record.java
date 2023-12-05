@@ -241,7 +241,7 @@ public interface Record {
      * @param col numeric index of the column
      * @return 64-bit integer
      */
-
+    @SuppressWarnings("unused")
     default long getLongIPv4(int col) {
         throw new UnsupportedOperationException();
     }
@@ -282,6 +282,16 @@ public interface Record {
      * @return string, null if string is empty
      */
     default CharSequence getStr(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Storage address of the string.
+     *
+     * @param col numeric index of the column
+     * @return string is length prefixed, if string is null, length is -1
+     */
+    default long getStrAddr(int col) {
         throw new UnsupportedOperationException();
     }
 

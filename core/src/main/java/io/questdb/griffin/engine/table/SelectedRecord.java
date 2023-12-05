@@ -160,6 +160,11 @@ class SelectedRecord implements Record {
     }
 
     @Override
+    public long getStrAddr(int col) {
+        return base.getStrAddr(getColumnIndex(col));
+    }
+
+    @Override
     public void getStr(int col, CharSink sink) {
         base.getStr(getColumnIndex(col), sink);
     }

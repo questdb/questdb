@@ -210,6 +210,7 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
         return value != null ? putStrUnsafe(value, 0, value.length()) : putNullStr();
     }
 
+    @Override
     default long putStr(char value) {
         if (value != 0) {
             long addr = appendAddressFor(Integer.BYTES + Character.BYTES);
@@ -232,6 +233,17 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
             putStr(offset, value, 0, value.length());
         } else {
             putNullStr(offset);
+        }
+    }
+
+    default void putStr(long offset, long strAddr) {
+        final int len = Unsafe.getUnsafe().getInt(strAddr);
+        if (len > 0) {
+            final long storageLen = Vm.getStorageLength(len);
+            final long dest = appendAddressFor(offset, storageLen);
+            Vect.memcpy(dest, strAddr, storageLen);
+        } else {
+            putInt(offset, len);
         }
     }
 

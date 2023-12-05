@@ -777,6 +777,19 @@ public class MemoryPARWImpl implements MemoryARW {
     }
 
     @Override
+    public void putStr(long offset, long strAddr) {
+        final int len = Unsafe.getUnsafe().getInt(strAddr);
+        putInt(offset, len);
+        if (len > 0) {
+            if (roOffsetLo < offset && offset < roOffsetHi - len * 2L - 4) {
+                Vect.memcpy(absolutePointer, strAddr + 4, len * 2L);
+            } else {
+                putStrSplit(offset + 4, strAddr + 4, len);
+            }
+        }
+    }
+
+    @Override
     public void putStr(long offset, CharSequence value, int pos, int len) {
         putInt(offset, len);
         if (roOffsetLo < offset && offset < roOffsetHi - len * 2L - 4) {
@@ -1046,6 +1059,35 @@ public class MemoryPARWImpl implements MemoryARW {
             offset += half * 2L;
             if (offset < roOffsetHi) {
                 char c = value.charAt(start + half);
+                putByte(offset, (byte) c);
+                putByte(offset + 1, (byte) (c >> 8));
+                offset += 2;
+                half++;
+            } else {
+                jumpTo0(offset);
+            }
+
+            len -= half;
+            start += half;
+        } while (true);
+    }
+
+    private void putStrSplit(long offset, long strAddr, int len) {
+        int start = 0;
+        do {
+            int half = (int) ((roOffsetHi - offset) / 2);
+
+            if (len <= half) {
+                Vect.memcpy(absolutePointer + offset, strAddr, len * 2L);
+//                copyStrChars(value, start, len, absolutePointer + offset);
+                break;
+            }
+
+            Vect.memcpy(absolutePointer + offset, strAddr, half * 2L);
+//            copyStrChars(value, start, half, absolutePointer + offset);
+            offset += half * 2L;
+            if (offset < roOffsetHi) {
+                char c = Unsafe.getUnsafe().getChar(strAddr + start * 2L + half * 2L);
                 putByte(offset, (byte) c);
                 putByte(offset + 1, (byte) (c >> 8));
                 offset += 2;

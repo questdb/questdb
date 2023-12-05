@@ -51,11 +51,19 @@ public interface RecordSinkSPI {
 
     void putLong256(Long256 value);
 
+    /**
+     * Method is used by the bytecode compiler.
+     *
+     * @param value typically the value is ignored
+     */
+    @SuppressWarnings("unused")
     void putRecord(Record value);
 
     void putShort(short value);
 
     void putStr(CharSequence value);
+
+    void putStr(long addr);
 
     void putStr(CharSequence value, int lo, int hi);
 

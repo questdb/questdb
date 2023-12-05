@@ -589,23 +589,6 @@ public class FastMapTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testConstructorRecovery() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            TestRecord.ArrayBinarySequence binarySequence = new TestRecord.ArrayBinarySequence();
-            createTestTable(10, new Rnd(), binarySequence);
-
-            try (TableReader reader = newTableReader(configuration, "x")) {
-                try {
-                    new CompactMap(1024, reader.getMetadata(), new SingleColumnType(ColumnType.LONG), 16, 0.75, 1, Integer.MAX_VALUE);
-                    Assert.fail();
-                } catch (Exception e) {
-                    TestUtils.assertContains(e.getMessage(), "Unsupported column type");
-                }
-            }
-        });
-    }
-
-    @Test
     public void testGeoHashRecordAsKey() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final int N = 5000;

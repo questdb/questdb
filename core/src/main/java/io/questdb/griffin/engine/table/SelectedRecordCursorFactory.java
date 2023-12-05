@@ -102,6 +102,11 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public boolean supportsDirectStrings() {
+        return base.supportsDirectStrings();
+    }
+
+    @Override
     public boolean supportsUpdateRowId(TableToken tableToken) {
         return base.supportsUpdateRowId(tableToken);
     }

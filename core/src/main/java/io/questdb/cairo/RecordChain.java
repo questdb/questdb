@@ -253,6 +253,20 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
     }
 
     @Override
+    public void putStr(long strAddr) {
+        int len = Unsafe.getUnsafe().getInt(strAddr);
+        if (len > 0) {
+            mem.putLong(rowToDataOffset(recordOffset), varAppendOffset);
+            recordOffset += 8;
+            mem.putStr(varAppendOffset, strAddr);
+            varAppendOffset += Vm.getStorageLength(len);
+        } else {
+            mem.putLong(rowToDataOffset(recordOffset), len);
+            recordOffset += 8;
+        }
+    }
+
+    @Override
     public void putStr(CharSequence value, int lo, int hi) {
         final int len = hi - lo;
         mem.putLong(rowToDataOffset(recordOffset), varAppendOffset);

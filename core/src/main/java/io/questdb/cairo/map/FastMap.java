@@ -640,6 +640,11 @@ public class FastMap implements Map, Reopenable {
         }
 
         @Override
+        public void putStr(long addr) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public void putTimestamp(long value) {
             putLong(value);
         }
@@ -779,6 +784,22 @@ public class FastMap implements Map, Reopenable {
             for (int i = 0; i < len; i++) {
                 Unsafe.getUnsafe().putChar(appendAddress + ((long) i << 1), value.charAt(i));
             }
+            appendAddress += (long) len << 1;
+        }
+
+        @Override
+        public void putStr(long strAddr) {
+            final int len = Unsafe.getUnsafe().getInt(strAddr);
+            if (len < 1) {
+                checkSize(4);
+                Unsafe.getUnsafe().putInt(appendAddress, len);
+                appendAddress += Integer.BYTES;
+                return;
+            }
+
+            checkSize((len << 1) + Integer.BYTES);
+            Vect.memcpy(appendAddress, strAddr, len * 2L + Integer.BYTES);
+            appendAddress += Integer.BYTES;
             appendAddress += (long) len << 1;
         }
 

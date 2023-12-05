@@ -46,11 +46,6 @@ public class LatestByValueDeferredFilteredRecordCursorFactory extends AbstractDe
     }
 
     @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return true;
-    }
-
-    @Override
     public void toPlan(PlanSink sink) {
         sink.type("LatestByValueDeferredFiltered");
         super.toPlan(sink);

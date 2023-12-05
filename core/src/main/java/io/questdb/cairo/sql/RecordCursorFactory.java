@@ -180,6 +180,16 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         return false;
     }
 
+    /**
+     * Some factories might be able to return pointers to string locations,
+     * which can help avoid byte by byte copying of string contents to direct memory destinations.
+     *
+     * @return true when factory is able to provide record cursor, which record implements getStrAddr()
+     */
+    default boolean supportsDirectStrings() {
+        return false;
+    }
+
     default boolean supportsUpdateRowId(TableToken tableName) {
         return false;
     }
