@@ -62,6 +62,11 @@ abstract class AbstractDataFrameRecordCursorFactory extends AbstractRecordCursor
     }
 
     @Override
+    public boolean supportsDirectStrings() {
+        return true;
+    }
+
+    @Override
     public TableToken getTableToken() {
         return dataFrameCursorFactory.getTableToken();
     }

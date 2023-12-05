@@ -225,7 +225,7 @@ public class RecordSinkFactory {
                     asm.iconst(getSkewedIndex(index, skewIndex));
                     if (sourceSupportsDirectStrings) {
                         asm.invokeInterface(rGetStrAddr, 1);
-                        asm.invokeInterface(wPutStrAddr, 1);
+                        asm.invokeInterface(wPutStrAddr, 2);
                     } else {
                         asm.invokeInterface(rGetStr, 1);
                         asm.invokeInterface(wPutStr, 1);
