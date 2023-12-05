@@ -1030,6 +1030,7 @@ public final class WhereClauseParser implements Mutable {
                                     if (tempKeyValues.size() == 0) {
                                         model.intrinsicValue = IntrinsicModel.FALSE;
                                     }
+                                    keyExclNodes.add(node);
                                 } else {
                                     addExcludedValue(node, b, value);
                                 }
@@ -1055,7 +1056,6 @@ public final class WhereClauseParser implements Mutable {
                                 addExcludedValue(node, b, value);
                                 return true;
                             }
-                            keyExclNodes.add(node);
                             return true;
                         } else if (Chars.equalsIgnoreCaseNc(columnName, preferredKeyColumn)) {
                             keyExclNodes.add(node);
@@ -1437,6 +1437,7 @@ public final class WhereClauseParser implements Mutable {
 
             }
         }
+        model.keyExcludedNodes.addAll(keyExclNodes);
         keyExclNodes.clear();
     }
 
@@ -1588,7 +1589,7 @@ public final class WhereClauseParser implements Mutable {
             );
             model.keyExcludedValueFuncs.add(func);
         }
-
+        model.keyExcludedNodes.addAll(keyExclNodes);
         clearExcludedKeys();
     }
 
