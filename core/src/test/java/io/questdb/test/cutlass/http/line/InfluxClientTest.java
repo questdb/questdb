@@ -391,6 +391,35 @@ public class InfluxClientTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testRestrictedCreateColumnsError() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048",
+                    PropertyKey.LINE_AUTO_CREATE_NEW_COLUMNS.getEnvVarName(), "false"
+            )) {
+                serverMain.start();
+                serverMain.compile("create table ex_tbl(b byte, s short, f float, d double, str string, sym symbol, tss timestamp, " +
+                        "i int, l long, ip ipv4, g geohash(4c), ts timestamp) timestamp(ts) partition by DAY WAL");
+
+                try (final InfluxDB influxDB = IlpHttpUtils.getConnection(serverMain)) {
+
+                    List<String> points = new ArrayList<>();
+                    assertRequestErrorContains(influxDB, points, "ex_tbl,a3=2 1222233456\n", "{" +
+                            "\"code\":\"invalid\"," +
+                            "\"message\":\"failed to parse line protocol: errors encountered on line(s):\\n" +
+                            "error in line 1: table: ex_tbl, column: a3 does not exist, creating new columns is disabled\",\"line\":1,\"errorId\":");
+
+                    assertRequestErrorContains(influxDB, points, "ex_tbl2, d=2 1222233456\n", "{" +
+                            "\"code\":\"invalid\"," +
+                            "\"message\":\"failed to parse line protocol: errors encountered on line(s):\\n" +
+                            "error in line 1: table: ex_tbl2; table does not exist, cannot create table, creating new columns is disabled\",\"line\":1,\"errorId\":");
+
+                }
+            }
+        });
+    }
+
+    @Test
     public void testRestrictedCreateTableError() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
@@ -420,7 +449,6 @@ public class InfluxClientTest extends AbstractBootstrapTest {
         });
     }
 
-
     private static void sendIlp(String tableName, int count, ServerMain serverMain) throws NumericException {
         long timestamp = IntervalUtils.parseFloorPartialTimestamp("2023-11-27T18:53:24.834Z");
         int i = 0;
@@ -432,9 +460,12 @@ public class InfluxClientTest extends AbstractBootstrapTest {
                     .tag("async", "true")
                     .build();
 
+            String tableNameUpper = tableName.toUpperCase();
+
             if (count / 2 > 0) {
                 for (; i < count / 2; i++) {
-                    batchPoints.point(Point.measurement(tableName)
+                    String tn = i % 2 == 0 ? tableName : tableNameUpper;
+                    batchPoints.point(Point.measurement(tn)
                             .time(timestamp, TimeUnit.MICROSECONDS)
                             .tag("location", "santa_monica")
                             .addField("level description", "below 3 feet asd fasd fasfd asdf asdf asdfasdf asdf asdfasdfas dfads".substring(0, i % 68))
@@ -449,7 +480,8 @@ public class InfluxClientTest extends AbstractBootstrapTest {
                     .tag("async", "true")
                     .build();
             for (; i < count; i++) {
-                batchPoints2.point(Point.measurement(tableName)
+                String tn = i % 2 == 0 ? tableName : tableNameUpper;
+                batchPoints2.point(Point.measurement(tn)
                         .time(timestamp, TimeUnit.MICROSECONDS)
                         .tag("location", "santa_monica")
                         .addField("level description", "below 3 feet asd fasd fasfd asdf asdf asdfasdf asdf asdfasdfas dfads".substring(0, i % 68))

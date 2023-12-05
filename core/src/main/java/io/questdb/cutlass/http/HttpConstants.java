@@ -44,7 +44,6 @@ public final class HttpConstants {
     public static final Utf8String HEADER_SET_COOKIE = new Utf8String("Set-Cookie");
     public static final Utf8String HEADER_STATEMENT_TIMEOUT = new Utf8String("Statement-Timeout");
     public static final Utf8String HEADER_TRANSFER_ENCODING = new Utf8String("Transfer-Encoding");
-    public static final Utf8String TRACE_ID = new Utf8String("trace-id");
     public static final Utf8String URL_PARAM_ATOMICITY = new Utf8String("atomicity");
     public static final Utf8String URL_PARAM_ATTACHMENT = new Utf8String("attachment");
     public static final Utf8String URL_PARAM_COLS = new Utf8String("cols");

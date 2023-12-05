@@ -60,7 +60,7 @@ public class IlpWalAppender {
             LineTcpParser parser,
             TableUpdateDetails tud
     ) throws CommitFailedException {
-        while (true) {
+        while (!tud.isDropped()) {
             try {
                 appendToWal0(securityContext, parser, tud);
                 break;

@@ -26,6 +26,8 @@ package io.questdb.test.cutlass.http.line;
 
 import io.questdb.Bootstrap;
 import io.questdb.DefaultBootstrapConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
@@ -35,13 +37,16 @@ import io.questdb.test.TestServerMain;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.influxdb.InfluxDB;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
+import static io.questdb.cairo.wal.WalUtils.EVENT_INDEX_FILE_NAME;
 import static io.questdb.test.cutlass.http.line.IlpHttpUtils.*;
 
 public class LineHttpFailureTests extends AbstractBootstrapTest {
@@ -82,12 +87,311 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
                     assertRequestOk(influxDB, points, "m1,tag1=value1 f1=1i,y=12i");
 
                     assertRequestErrorContains(influxDB, points, "m1,tag1=value1 f1=1i,x=12i",
-                            "failed to parse line protocol: errors encountered on line(s):write error: m1, line: 2",
-                            ", errorId:",
-                            ", errno: 2",
+                            "failed to parse line protocol: errors encountered on line(s):write error: m1, errno: ",
+                            ",\"errorId\":",
                             ", error: could not open read-write"
                     );
+
+                    // Retry is ok
+                    assertRequestOk(influxDB, points, "m1,tag1=value1 f1=1i,x=12i");
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testAppendExceptions() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final FilesFacade filesFacade = new TestFilesFacadeImpl() {
+                private final AtomicInteger attempt = new AtomicInteger();
+
+                @Override
+                public int openRW(LPSZ name, long opts) {
+                    if (Utf8s.endsWithAscii(name, Files.SEPARATOR + "x.d") && attempt.getAndIncrement() == 0) {
+                        throw new OutOfMemoryError();
+                    }
+                    return super.openRW(name, opts);
+                }
+            };
+
+            final Bootstrap bootstrap = new Bootstrap(new DefaultBootstrapConfiguration() {
+                @Override
+                public FilesFacade getFilesFacade() {
+                    return filesFacade;
+                }
+            }, TestUtils.getServerMainArgs(root));
+
+            try (final TestServerMain serverMain = new TestServerMain(bootstrap)) {
+                serverMain.start();
+
+                final List<String> points = new ArrayList<>();
+                try (final InfluxDB influxDB = IlpHttpUtils.getConnection(serverMain)) {
+                    assertRequestOk(influxDB, points, "m1,tag1=value1 f1=1i,y=12i");
+
+                    assertRequestErrorContains(influxDB, points, "m1,tag1=value1 f1=1i,x=12i",
+                            "{\"code\":\"internal error\",\"message\":\"failed to parse line protocol: " +
+                                    "errors encountered on line(s):write error: m1, error: java.lang.OutOfMemoryError\"," +
+                                    "\"line\":1,\"errorId\"",
+                            ",\"errorId\":"
+                    );
+
+                    // Retry is ok
+                    assertRequestOk(influxDB, points, "m1,tag1=value1 f1=1i,x=12i");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCommitFailed() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final FilesFacade filesFacade = new TestFilesFacadeImpl() {
+                private final AtomicInteger counter = new AtomicInteger(2);
+
+                @Override
+                public long append(int fd, long buf, int len) {
+                    if (fd == this.fd && counter.decrementAndGet() == 0) {
+                        throw CairoException.critical(24).put("test error");
+                    }
+                    return Files.append(fd, buf, len);
+                }
+
+                @Override
+                public int openRW(LPSZ name, long opts) {
+                    int fd = super.openRW(name, opts);
+                    if (Utf8s.endsWithAscii(name, Files.SEPARATOR + EVENT_INDEX_FILE_NAME)
+                            && Utf8s.containsAscii(name, "failed_table")) {
+                        this.fd = fd;
+                    }
+                    return fd;
+                }
+            };
+
+            final Bootstrap bootstrap = new Bootstrap(new DefaultBootstrapConfiguration() {
+                @Override
+                public FilesFacade getFilesFacade() {
+                    return filesFacade;
+                }
+            }, TestUtils.getServerMainArgs(root));
+
+            try (final TestServerMain serverMain = new TestServerMain(bootstrap)) {
+                serverMain.start();
+
+                final List<String> points = new ArrayList<>();
+                try (final InfluxDB influxDB = IlpHttpUtils.getConnection(serverMain)) {
+                    points.add("first_table,ok=true allgood=true\n");
+                    points.add("second_table,ok=true allgood=true\n");
+                    assertRequestErrorContains(influxDB, points, "failed_table,tag1=value1 f1=1i,y=12i",
+                            "{\"code\":\"internal error\",\"message\":\"failed to parse line protocol: commit error for table: failed_table, errno: 24, error: test error,\"errorId\":");
+
+                    // Retry is ok
+                    assertRequestOk(influxDB, points, "failed_table,tag1=value1 f1=1i,y=12i,x=12i");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDropTableWhileAppend() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            AtomicReference<TestServerMain> server = new AtomicReference<>();
+            final FilesFacade filesFacade = new TestFilesFacadeImpl() {
+                private final AtomicInteger attempt = new AtomicInteger();
+
+                @Override
+                public int openRW(LPSZ name, long opts) {
+                    if (Utf8s.endsWithAscii(name, Files.SEPARATOR + "x.d") && attempt.getAndIncrement() == 0) {
+                        server.get().compile("drop table m1");
+                    }
+                    return super.openRW(name, opts);
+                }
+            };
+
+            final Bootstrap bootstrap = new Bootstrap(new DefaultBootstrapConfiguration() {
+                @Override
+                public FilesFacade getFilesFacade() {
+                    return filesFacade;
+                }
+            }, TestUtils.getServerMainArgs(root));
+
+            try (final TestServerMain serverMain = new TestServerMain(bootstrap)) {
+                serverMain.start();
+                server.set(serverMain);
+
+                final List<String> points = new ArrayList<>();
+                try (final InfluxDB influxDB = IlpHttpUtils.getConnection(serverMain)) {
+                    assertRequestOk(influxDB, points, "m1,tag1=value1 f1=1i,y=12i");
+                    assertRequestOk(influxDB, points, "m1,tag1=value1 f1=1i,y=12i,x=12i");
+                }
+
+                Assert.assertNull(serverMain.getEngine().getTableTokenIfExists("m1"));
+            }
+        });
+    }
+
+    @Test
+    public void testDropTableWhileWrite() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            AtomicReference<TestServerMain> server = new AtomicReference<>();
+            final FilesFacade filesFacade = new TestFilesFacadeImpl() {
+                private final AtomicInteger attempt = new AtomicInteger();
+
+                @Override
+                public int openRW(LPSZ name, long opts) {
+                    if (Utf8s.endsWithAscii(name, Files.SEPARATOR + "x.d") && attempt.getAndIncrement() == 0) {
+                        server.get().compile("drop table m1");
+                    }
+                    return super.openRW(name, opts);
+                }
+            };
+
+            final Bootstrap bootstrap = new Bootstrap(new DefaultBootstrapConfiguration() {
+                @Override
+                public FilesFacade getFilesFacade() {
+                    return filesFacade;
+                }
+            }, TestUtils.getServerMainArgs(root));
+
+            long timestamp = IntervalUtils.parseFloorPartialTimestamp("2023-11-27T18:53:24.834Z");
+            try (final TestServerMain serverMain = new TestServerMain(bootstrap)) {
+                serverMain.start();
+                server.set(serverMain);
+
+                final List<String> points = new ArrayList<>();
+                try (final InfluxDB influxDB = IlpHttpUtils.getConnection(serverMain)) {
+                    assertRequestOk(influxDB, points, "m1,tag1=value1 f1=1i,y=12i");
+
+                    points.add("ok_point m1=1i " + timestamp + "000\n");
+                    assertRequestOk(influxDB, points, "m1,tag1=value1 f1=1i,y=12i,x=12i");
+                }
+
+                Assert.assertNull(serverMain.getEngine().getTableTokenIfExists("m1"));
+                Assert.assertNotNull(serverMain.getEngine().getTableTokenIfExists("ok_point"));
+
+                serverMain.waitWalTxnApplied("ok_point", 1);
+                serverMain.assertSql("select * from ok_point", "m1\ttimestamp\n" +
+                        "1\t2023-11-27T18:53:24.834000Z\n");
+            }
+        });
+    }
+
+    @Test
+    public void testTableCommitFailedWhileColumnIsAdded() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            AtomicReference<TestServerMain> server = new AtomicReference<>();
+            final FilesFacade filesFacade = new TestFilesFacadeImpl() {
+                private final AtomicInteger counter = new AtomicInteger(2);
+
+                @Override
+                public long append(int fd, long buf, int len) {
+                    if (fd == this.fd && counter.decrementAndGet() == 0) {
+                        throw new UnsupportedOperationException();
+                    }
+                    return Files.append(fd, buf, len);
+                }
+
+                @Override
+                public int openRW(LPSZ name, long opts) {
+                    int fd = super.openRW(name, opts);
+                    if (Utf8s.endsWithAscii(name, Files.SEPARATOR + EVENT_INDEX_FILE_NAME)
+                            && Utf8s.containsAscii(name, "drop")) {
+                        this.fd = fd;
+                    }
+                    return fd;
+                }
+            };
+
+            final Bootstrap bootstrap = new Bootstrap(new DefaultBootstrapConfiguration() {
+                @Override
+                public FilesFacade getFilesFacade() {
+                    return filesFacade;
+                }
+            }, TestUtils.getServerMainArgs(root));
+
+            try (final TestServerMain serverMain = new TestServerMain(bootstrap)) {
+                serverMain.start();
+                server.set(serverMain);
+
+                final List<String> points = new ArrayList<>();
+                try (final InfluxDB influxDB = IlpHttpUtils.getConnection(serverMain)) {
+                    points.add("good,tag1=value1 f1=1i");
+
+                    // This will trigger commit and the commit will fail
+                    points.add("drop,tag1=value1 f1=1i,y=12i");
+                    assertRequestErrorContains(influxDB, points, "drop,tag1=value1 f1=1i,y=12i,z=45",
+                            "{\"code\":\"internal error\",\"message\":\"failed to parse line protocol: commit error for table: drop, error: java.lang.UnsupportedOperationException,\"errorId\":");
+
+
+                    // Retry is ok
+                    points.add("good,tag1=value1 f1=1i");
+                    assertRequestOk(influxDB, points, "drop,tag1=value1 f1=1i,y=12i");
+                }
+
+                serverMain.waitWalTxnApplied("good", 1);
+                serverMain.assertSql("select count() from good", "count\n" +
+                        "1\n");
+                serverMain.waitWalTxnApplied("drop", 1);
+                serverMain.assertSql("select count() from \"drop\"", "count\n" +
+                        "1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testTableIsDroppedWhileColumnIsAdded() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            AtomicReference<TestServerMain> server = new AtomicReference<>();
+            final FilesFacade filesFacade = new TestFilesFacadeImpl() {
+                private final AtomicInteger attempt = new AtomicInteger();
+
+                @Override
+                public int openRW(LPSZ name, long opts) {
+                    if (Utf8s.endsWithAscii(name, Files.SEPARATOR + "good_y.d") && attempt.getAndIncrement() == 0) {
+                        server.get().compile("drop table \"drop\"");
+                    }
+                    return super.openRW(name, opts);
+                }
+            };
+
+            final Bootstrap bootstrap = new Bootstrap(new DefaultBootstrapConfiguration() {
+                @Override
+                public FilesFacade getFilesFacade() {
+                    return filesFacade;
+                }
+            }, TestUtils.getServerMainArgs(root));
+
+            try (final TestServerMain serverMain = new TestServerMain(bootstrap)) {
+                serverMain.start();
+                server.set(serverMain);
+
+                final List<String> points = new ArrayList<>();
+                try (final InfluxDB influxDB = IlpHttpUtils.getConnection(serverMain)) {
+                    points.add("good,tag1=value1 f1=1i");
+                    points.add("drop,tag1=value1 f1=1i,y=12i");
+                    // This will trigger dropping table "drop"
+                    points.add("good,tag1=value1 f1=1i,good_y=12i");
+                    // This line append will fail withe error that the table is dropped
+                    // but it shouldn't affect the transaction
+                    points.add("drop,tag1=value1 f1=1i,y=12i,z=45");
+
+                    points.add("good,tag1=value1 f1=1i,good_y=12i");
+                    points.add("drop,tag1=value1 f1=1i,y=12i,z=45");
+                    points.add("drop,tag1=value1 f1=1i,y=12i,z=45");
+
+                    assertRequestOk(influxDB, points, "drop,tag1=value1 f1=1i,y=12i,z=45");
+
+                    Assert.assertNull(serverMain.getEngine().getTableTokenIfExists("drop"));
+                    Assert.assertNotNull(serverMain.getEngine().getTableTokenIfExists("good"));
+
+                    serverMain.waitWalTxnApplied("good", 1);
+                    serverMain.assertSql("select count from good", "count\n" +
+                            "3\n");
+
+                    // This should re-create table "drop"
+                    points.add("good,tag1=value1 f1=1i");
+                    assertRequestOk(influxDB, points, "drop,tag1=value1 f1=1i,y=12i");
+                }
+
             }
         });
     }

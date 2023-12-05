@@ -63,6 +63,7 @@ public class TableUpdateDetails implements Closeable {
     // Number of rows processed since the last reshuffle, this is an estimate because it is incremented by
     // multiple threads without synchronisation
     private long eventsProcessedSinceReshuffle = 0;
+    private boolean isDropped;
     private long lastMeasurementMillis = Long.MAX_VALUE;
     private MetadataService metadataService;
     private int networkIOOwnerCount = 0;
@@ -258,6 +259,10 @@ public class TableUpdateDetails implements Closeable {
         return assignedToJob;
     }
 
+    public boolean isDropped() {
+        return this.isDropped;
+    }
+
     public boolean isWal() {
         return writerThreadId == -1;
     }
@@ -278,8 +283,16 @@ public class TableUpdateDetails implements Closeable {
         }
     }
 
+    public void rollback() {
+        writerAPI.rollback();
+    }
+
     public void setAssignedToJob(boolean assignedToJob) {
         this.assignedToJob = assignedToJob;
+    }
+
+    public void setIsDropped() {
+        this.isDropped = true;
     }
 
     public void setWriterInError() {

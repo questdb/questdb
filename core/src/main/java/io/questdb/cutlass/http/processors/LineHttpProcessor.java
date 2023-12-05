@@ -30,9 +30,6 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.std.str.DirectUtf8Sequence;
-
-import static io.questdb.cutlass.http.HttpConstants.TRACE_ID;
 
 public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartContentListener {
     private static final Log LOG = LogFactory.getLog(StaticContentProcessor.class);
@@ -41,7 +38,6 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
     private final CairoEngine engine;
     private final int recvBufferSize;
     LineHttpProcessorState state;
-    private DirectUtf8Sequence requestId;
 
     public LineHttpProcessor(CairoEngine engine, int recvBufferSize, LineHttpProcessorConfiguration configuration) {
         this.engine = engine;
@@ -86,15 +82,14 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
             HttpChunkedResponseSocket r = context.getChunkedResponseSocket();
             state.onMessageComplete();
             if (state.isOk()) {
-                try {
-                    state.commit();
-                    r.status(204, "text/plain"); // OK, no content
-                    r.sendHeader();
-                    r.send();
-                } catch (Throwable th) {
-                    LOG.error().$("unexpected error committing the data [requestId=").$(requestId).$(", exception=").$(th).$();
-                    sendError(context, "commit failed", th);
-                }
+                state.commit();
+            }
+
+            // Check state again, commit may have failed
+            if (state.isOk()) {
+                r.status(204, "text/plain"); // OK, no content
+                r.sendHeader();
+                r.send();
             } else {
                 sendError(context);
             }
@@ -111,8 +106,7 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
     @Override
     public void resumeRecv(HttpConnectionContext context) {
         state = LV.get(context);
-        requestId = context.getRequestHeader().getHeader(TRACE_ID);
-        state.of(context.getFd(), requestId);
+        state.of(context.getFd());
     }
 
     private void sendError(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -120,14 +114,6 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
         r.status(state.getHttpResponseCode(), "text/plain");
         r.sendHeader();
         state.formatError(r);
-        r.sendChunk(true);
-    }
-
-    private void sendError(HttpConnectionContext context, String message, Throwable th) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        HttpChunkedResponseSocket r = context.getChunkedResponseSocket();
-        r.status(500, "text/plain");
-        r.sendHeader();
-        state.formatError(r, message, th);
         r.sendChunk(true);
     }
 }

@@ -49,8 +49,4 @@ public class WalTableUpdateDetails extends TableUpdateDetails {
     public ThreadLocalDetails getThreadLocalDetails(int workerId) {
         return super.getThreadLocalDetails(0);
     }
-
-    public void rollback() {
-        writerAPI.rollback();
-    }
 }

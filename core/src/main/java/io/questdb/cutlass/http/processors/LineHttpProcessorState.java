@@ -24,19 +24,17 @@
 
 package io.questdb.cutlass.http.processors;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CommitFailedException;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cutlass.line.tcp.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.std.*;
-import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
@@ -107,44 +105,36 @@ public class LineHttpProcessorState implements QuietCloseable {
     }
 
     public void commit() {
-        ilpTudCache.commitAll();
+        try {
+            ilpTudCache.commitAll();
+        } catch (Throwable th) {
+            ilpTudCache.setDistressed();
+            currentStatus = handleCommitError(th);
+        }
     }
 
     public void formatError(Utf8Sink sink) {
         sink.putAscii("{\"code\":\"").putAscii(currentStatus.codeStr);
-        sink.putAscii("\",\"message\":\"").putAscii("failed to parse line protocol: errors encountered on line(s):");
-        sink.put(error);
-        sink.putAscii("\",\"line\":").put(errorLine);
-        sink.putAscii(",\"errorId\":\"").putAscii(ERROR_ID).put('-').put(errorId).putAscii("\"").putAscii('}');
-    }
-
-    public void formatError(Utf8Sink sink, CharSequence message, @Nullable Throwable exception) {
-        sink.put("{\"code\":\"internal error\",\"err\":\"");
-        sink.put(message).put("\"");
-        if (exception != null) {
-            sink.put(",\"message\":\"");
-            sink.put(exception.getMessage());
+        sink.putAscii("\",\"message\":\"").putAscii("failed to parse line protocol: ");
+        if (errorLine > -1) {
+            sink.putAscii("errors encountered on line(s):");
         }
-        sink.put("\"}");
-    }
-
-    public CharSequence getError() {
-        return error;
+        sink.put(error);
+        if (errorLine > -1) {
+            sink.putAscii("\",\"line\":").put(errorLine);
+        }
+        sink.putAscii(",\"errorId\":\"").putAscii(ERROR_ID).put('-').put(errorId).putAscii("\"").putAscii('}');
     }
 
     public int getHttpResponseCode() {
         return currentStatus.responseCode;
     }
 
-    public Status getStatus() {
-        return currentStatus;
-    }
-
     public boolean isOk() {
         return currentStatus == Status.OK;
     }
 
-    public void of(int fd, DirectUtf8Sequence requestId) {
+    public void of(int fd) {
         this.fd = fd;
     }
 
@@ -164,25 +154,14 @@ public class LineHttpProcessorState implements QuietCloseable {
             return;
         }
 
-        try {
-            long pos = lo;
-            while (pos < hi) {
-                pos = copyToLocalBuffer(pos, hi);
-                currentStatus = processLocalBuffer();
-                if (stopParse()) {
-                    return;
-                }
+        long pos = lo;
+        while (pos < hi) {
+            pos = copyToLocalBuffer(pos, hi);
+            currentStatus = processLocalBuffer();
+            if (stopParse()) {
+                return;
             }
-        } catch (Throwable th) {
-            handleUnknownParseError(th);
-            currentStatus = Status.INTERNAL_ERROR;
         }
-    }
-
-    public void reset() {
-        error.clear();
-        currentStatus = Status.OK;
-        recvBufPos = buffer;
     }
 
     private static String generateErrorId() {
@@ -202,7 +181,16 @@ public class LineHttpProcessorState implements QuietCloseable {
             logError(parser, errorStartPos);
             return Status.APPEND_ERROR;
         } catch (CommitFailedException ex) {
-            return Status.COLUMN_ADD_ERROR;
+            if (ex.isTableDropped()) {
+                tud.setIsDropped();
+                return Status.OK;
+            } else {
+                ilpTudCache.setDistressed();
+                return handleCommitError(ex.getReason());
+            }
+        } catch (Throwable th) {
+            ilpTudCache.setDistressed();
+            throw th;
         }
     }
 
@@ -224,6 +212,25 @@ public class LineHttpProcessorState implements QuietCloseable {
         Vect.memcpy(recvBufPos, lo, copyLen);
         recvBufPos = recvBufPos + copyLen;
         return lo + copyLen;
+    }
+
+    private Status handleCommitError(Throwable ex) {
+        errorId = ERROR_COUNT.incrementAndGet();
+        LOG.critical()
+                .$('[').$(fd).$("] could not commit [table=").$(parser.getMeasurementName())
+                .$(", errorId=").$(ERROR_ID).$('-').$(errorId)
+                .$(", ex=").$(ex.getMessage())
+                .I$();
+
+        error.put("commit error for table: ").put(parser.getMeasurementName());
+        if (ex instanceof CairoException) {
+            CairoException exception = (CairoException) ex;
+            error.put(", errno: ").put(exception.getErrno()).put(", error: ").put(exception.getFlyweightMessage());
+        } else {
+            error.put(", error: ").put(ex.getClass().getCanonicalName());
+        }
+        errorLine = -1;
+        return Status.INTERNAL_ERROR;
     }
 
     private Status handleLineError(LineTcpParser parser) {
@@ -279,15 +286,13 @@ public class LineHttpProcessorState implements QuietCloseable {
         LogRecord error = ex.isCritical() ? LOG.critical() : LOG.error();
         error
                 .$('[').$(fd).$("] could not process line data [table=").$(parser.getMeasurementName())
-                .$(", errorId=").$(errorId)
+                .$(", errorId=").$(ERROR_ID).$('-').$(errorId)
                 .$(", errno=").$(ex.getErrno())
                 .$(", mangledLine=`").$utf8(recvBufStartOfMeasurement == 0 ? buffer : recvBufStartOfMeasurement, parser.getBufferAddress()).$('`')
                 .$(", ex=").$(ex.getFlyweightMessage())
                 .I$();
 
         this.error.put("write error: ").put(parser.getMeasurementName())
-                .put(", line: ").put(line + 1)
-                .put(", errorId: ").put(ERROR_ID).put('-').put(errorId)
                 .put(", errno: ").put(ex.getErrno())
                 .put(", error: ").put(ex.getFlyweightMessage());
         errorLine = line + 1;
@@ -295,16 +300,15 @@ public class LineHttpProcessorState implements QuietCloseable {
     }
 
     private Status handleUnknownParseError(Throwable ex) {
+        errorId = ERROR_COUNT.incrementAndGet();
         LOG.critical()
                 .$('[').$(fd).$("] could not process line data [table=").$(parser.getMeasurementName())
                 .$(", mangledLine=`").$utf8(recvBufStartOfMeasurement == 0 ? buffer : recvBufStartOfMeasurement, parser.getBufferAddress()).$('`')
-                .$(", errorId=").$(errorId)
+                .$(", errorId=").$(ERROR_ID).$('-').$(errorId)
                 .$(", ex=").$(ex.getMessage())
                 .I$();
 
         this.error.put("write error: ").put(parser.getMeasurementName())
-                .put(", line: ").put(line + 1)
-                .put(", errorId: ").put(ERROR_ID).put('-').put(errorId)
                 .put(", error: ").put(ex.getClass().getCanonicalName());
         errorLine = line + 1;
         return Status.INTERNAL_ERROR;

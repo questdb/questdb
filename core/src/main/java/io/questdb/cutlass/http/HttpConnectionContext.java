@@ -438,8 +438,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             HttpRequestProcessor processor,
             long headerEnd,
             int read,
-            boolean newRequest,
-            RescheduleContext rescheduleContext
+            boolean newRequest
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
         if (newRequest) {
             processor.onHeadersReady(this);
@@ -738,7 +737,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 } else if (multipartProcessor && multipartRequest) {
                     busyRecv = consumeMultipart(socket, processor, headerEnd, read, newRequest, rescheduleContext);
                 } else if (contentLength > -1 && multipartProcessor) {
-                    busyRecv = consumeContent(contentLength, socket, processor, headerEnd, read, newRequest, rescheduleContext);
+                    busyRecv = consumeContent(contentLength, socket, processor, headerEnd, read, newRequest);
                 } else if (!multipartRequest && multipartProcessor) {
                     // bad request - regular request for processor that expects multipart
                     busyRecv = rejectRequest("Bad request. Multipart POST expected.");

@@ -66,6 +66,7 @@ public class IlpHttpUtils {
     public static void assertRequestOk(InfluxDB influxDB, List<String> points, String line) {
         points.add(line);
         influxDB.write(points);
+        points.clear();
     }
 
     @NotNull

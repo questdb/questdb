@@ -31,15 +31,12 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.line.tcp.*;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.*;
 import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.NotNull;
 
 public class IlpTudCache implements QuietCloseable {
-    private static final Log LOG = LogFactory.getLog(LineHttpProcessorState.class);
     private final boolean autoCreateNewColumns;
     private final boolean autoCreateNewTables;
     private final MemoryMARW ddlMem = Vm.getMARWInstance();
@@ -49,8 +46,9 @@ public class IlpTudCache implements QuietCloseable {
     private final Path path = new Path();
     private final StringSink tableNameUtf16 = new StringSink();
     private final TableStructureAdapter tableStructureAdapter;
-    private final Utf8SequenceObjHashMap<WalTableUpdateDetails> tableUpdateDetails = new Utf8SequenceObjHashMap<>();
+    private final LowerCaseUtf8SequenceObjHashMap<WalTableUpdateDetails> tableUpdateDetails = new LowerCaseUtf8SequenceObjHashMap<>();
     private final Telemetry<TelemetryTask> telemetry;
+    private boolean distressed = false;
 
     public IlpTudCache(
             CairoEngine engine,
@@ -72,7 +70,14 @@ public class IlpTudCache implements QuietCloseable {
         for (int i = 0, n = keys.size(); i < n; i++) {
             Utf8Sequence tableName = tableUpdateDetails.keys().get(i);
             WalTableUpdateDetails tud = tableUpdateDetails.get(tableName);
-            tud.rollback();
+            if (distressed) {
+                Misc.free(tud);
+            } else {
+                tud.rollback();
+            }
+        }
+        if (distressed) {
+            tableUpdateDetails.clear();
         }
     }
 
@@ -90,22 +95,38 @@ public class IlpTudCache implements QuietCloseable {
         Misc.free(path);
     }
 
-    public void commitAll() {
-        ObjList<Utf8String> keys = tableUpdateDetails.keys();
-        for (int i = 0, n = keys.size(); i < n; i++) {
-            Utf8Sequence tableName = tableUpdateDetails.keys().get(i);
-            WalTableUpdateDetails tud = tableUpdateDetails.get(tableName);
-            try {
-                tud.commit(false);
-            } catch (CommitFailedException e) {
-                // We can ignore dropped tables and simply roll back the transaction
-                if (!e.isTableDropped()) {
-                    LOG.critical().$("commit failed [table=").$(tableName).$(']').$();
-                    throw CairoException.critical(-1).put("commit failed [table=").put(tableName)
-                            .put(", error=").put(e.getMessage()).put(']');
+    public void commitAll() throws Throwable {
+        boolean droppedTableFound;
+        do {
+            droppedTableFound = false;
+            ObjList<Utf8String> keys = tableUpdateDetails.keys();
+            for (int i = 0, n = keys.size(); i < n; i++) {
+                Utf8Sequence tableName = tableUpdateDetails.keys().get(i);
+                WalTableUpdateDetails tud = tableUpdateDetails.get(tableName);
+                try {
+                    if (!tud.isDropped()) {
+                        tud.commit(false);
+                    }
+                } catch (CommitFailedException e) {
+                    // We can ignore dropped tables and simply roll back the transaction
+                    if (!e.isTableDropped()) {
+                        // This real commit error, abort the batch commit
+                        throw e.getReason();
+                    } else {
+                        // Remove dropped table TUD from cache
+                        // and repeat the commit procedure
+                        tud.setIsDropped();
+                    }
+                }
+
+                if (tud.isDropped()) {
+                    tableUpdateDetails.remove(tableName);
+                    Misc.free(tud);
+                    droppedTableFound = true;
+                    break;
                 }
             }
-        }
+        } while (droppedTableFound);
     }
 
     public WalTableUpdateDetails getTableUpdateDetails(
@@ -142,6 +163,10 @@ public class IlpTudCache implements QuietCloseable {
 
         tableUpdateDetails.putAt(key, nameUtf8, tud);
         return tud;
+    }
+
+    public void setDistressed() {
+        this.distressed = true;
     }
 
     private TableToken getOrCreateTable(SecurityContext securityContext, @NotNull LineTcpParser parser, StringSink tableNameUtf16) throws TableCreateException {
