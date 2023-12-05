@@ -51,7 +51,6 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     private static final long LOCAL_TASK_CURSOR = Long.MAX_VALUE;
     private static final Log LOG = LogFactory.getLog(PageFrameSequence.class);
     private final MillisecondClock clock;
-    private final CairoConfiguration configuration;
     private final LongList frameRowCounts = new LongList();
     private final ArrayColumnTypes groupByKeyTypes;
     private final ArrayColumnTypes groupByValueTypes;
@@ -89,7 +88,6 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             PageFrameReduceTaskFactory localTaskFactory,
             byte taskType
     ) {
-        this.configuration = configuration;
         this.pageAddressCache = new PageAddressCache(configuration);
         this.messageBus = messageBus;
         this.reducer = reducer;
