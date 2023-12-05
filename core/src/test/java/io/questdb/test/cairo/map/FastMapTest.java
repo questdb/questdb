@@ -606,6 +606,106 @@ public class FastMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyKeyFixedSizeKey() {
+        ArrayColumnTypes keyTypes = new ArrayColumnTypes();
+        keyTypes.add(ColumnType.INT);
+        keyTypes.add(ColumnType.LONG);
+
+        ArrayColumnTypes valueTypes = new ArrayColumnTypes();
+        valueTypes.add(ColumnType.LONG);
+
+        try (
+                FastMap mapA = new FastMap(1024, keyTypes, valueTypes, 64, 0.8, 24);
+                FastMap mapB = new FastMap(1024, keyTypes, valueTypes, 64, 0.8, 24);
+        ) {
+            final int N = 100000;
+            for (int i = 0; i < N; i++) {
+                MapKey keyA = mapA.withKey();
+                keyA.putInt(i);
+                keyA.putLong(i + 1);
+
+                MapKey keyB = mapB.withKey();
+                keyB.putInt(i);
+                keyB.putLong(i + 1);
+
+                MapValue valueA = keyA.createValue();
+                Assert.assertTrue(valueA.isNew());
+                valueA.putLong(0, i + 2);
+
+                MapValue valueB = keyB.createValue();
+                Assert.assertTrue(valueB.isNew());
+                valueB.putLong(0, i + 2);
+            }
+
+            Assert.assertEquals(mapA.size(), mapB.size());
+
+            // assert that all map A keys can be found in map B
+            RecordCursor cursorA = mapA.getCursor();
+            MapRecord recordA = mapA.getRecord();
+            while (cursorA.hasNext()) {
+                MapValue valueA = recordA.getValue();
+
+                MapKey keyB = mapB.withKey();
+                recordA.copyKey(keyB);
+                MapValue valueB = keyB.findValue();
+
+                Assert.assertFalse(valueB.isNew());
+                Assert.assertEquals(valueA.getLong(0), valueB.getLong(0));
+            }
+        }
+    }
+
+    @Test
+    public void testCopyKeyVarSizeKey() {
+        ArrayColumnTypes keyTypes = new ArrayColumnTypes();
+        keyTypes.add(ColumnType.INT);
+        keyTypes.add(ColumnType.STRING);
+
+        ArrayColumnTypes valueTypes = new ArrayColumnTypes();
+        valueTypes.add(ColumnType.LONG);
+
+        try (
+                FastMap mapA = new FastMap(1024, keyTypes, valueTypes, 64, 0.8, 24);
+                FastMap mapB = new FastMap(1024, keyTypes, valueTypes, 64, 0.8, 24);
+        ) {
+            final int N = 100000;
+            for (int i = 0; i < N; i++) {
+                MapKey keyA = mapA.withKey();
+                keyA.putInt(i);
+                keyA.putStr(Chars.repeat("a", i % 32));
+
+                MapKey keyB = mapB.withKey();
+                keyB.putInt(i);
+                keyB.putStr(Chars.repeat("a", i % 32));
+
+                MapValue valueA = keyA.createValue();
+                Assert.assertTrue(valueA.isNew());
+                valueA.putLong(0, i + 2);
+
+                MapValue valueB = keyB.createValue();
+                Assert.assertTrue(valueB.isNew());
+                valueB.putLong(0, i + 2);
+            }
+
+            Assert.assertEquals(mapA.size(), mapB.size());
+
+            // assert that all map A keys can be found in map B
+            RecordCursor cursorA = mapA.getCursor();
+            MapRecord recordA = mapA.getRecord();
+            while (cursorA.hasNext()) {
+                MapValue valueA = recordA.getValue();
+
+                MapKey keyB = mapB.withKey();
+                recordA.copyKey(keyB);
+                MapValue valueB = keyB.findValue();
+
+                Assert.assertFalse(valueB.isNew());
+                Assert.assertEquals(valueA.getLong(0), valueB.getLong(0));
+            }
+        }
+    }
+
+    @Test
     public void testGeoHashRecordAsKey() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final int N = 5000;
@@ -984,7 +1084,6 @@ public class FastMapTest extends AbstractCairoTest {
                                 1
                         )
                 ) {
-
                     RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, true);
 
                     final int keyColumnOffset = map.getValueColumnCount();
@@ -1045,6 +1144,73 @@ public class FastMapTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testSetTypesCalledMultipleTimes() {
+        try (FastMap map = new FastMap(1024, null, null, 64, 0.8, 24)) {
+            ArrayColumnTypes keyTypes = new ArrayColumnTypes();
+            keyTypes.add(ColumnType.INT);
+
+            ArrayColumnTypes valueTypes = new ArrayColumnTypes();
+            valueTypes.add(ColumnType.LONG);
+
+            map.setTypes(keyTypes, valueTypes);
+
+            final int N = 1000;
+            for (int i = 0; i < N; i++) {
+                MapKey key = map.withKey();
+                key.putInt(i);
+
+                MapValue value = key.createValue();
+                Assert.assertTrue(value.isNew());
+                value.putLong(0, i + 1);
+            }
+
+            Assert.assertEquals(N, map.size());
+
+            for (int i = 0; i < N; i++) {
+                MapKey key = map.withKey();
+                key.putInt(i);
+
+                MapValue value = key.findValue();
+                Assert.assertFalse(value.isNew());
+                Assert.assertEquals(i + 1, value.getLong(0));
+            }
+
+            // Now clear the map and change the types.
+            // We expect the map to be usable with new types.
+
+            keyTypes = new ArrayColumnTypes();
+            keyTypes.add(ColumnType.STRING);
+
+            valueTypes = new ArrayColumnTypes();
+            valueTypes.add(ColumnType.INT);
+
+            map.clear();
+            map.setTypes(keyTypes, valueTypes);
+
+            final int M = 1001;
+            for (int i = 0; i < M; i++) {
+                MapKey key = map.withKey();
+                key.putStr(String.valueOf(i));
+
+                MapValue value = key.createValue();
+                Assert.assertTrue(value.isNew());
+                value.putInt(0, i + 1);
+            }
+
+            Assert.assertEquals(M, map.size());
+
+            for (int i = 0; i < M; i++) {
+                MapKey key = map.withKey();
+                key.putStr(String.valueOf(i));
+
+                MapValue value = key.findValue();
+                Assert.assertFalse(value.isNew());
+                Assert.assertEquals(i + 1, value.getInt(0));
+            }
+        }
     }
 
     @Test
