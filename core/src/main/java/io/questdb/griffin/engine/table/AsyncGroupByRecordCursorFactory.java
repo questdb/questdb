@@ -39,6 +39,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
+import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Misc;
@@ -59,6 +60,8 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
     private final AsyncGroupByRecordCursor cursor;
     private final AsyncGroupByAtom filterAtom;
     private final PageFrameSequence<AsyncGroupByAtom> frameSequence;
+    private final ObjList<GroupByFunction> groupByFunctions;
+    private final ObjList<Function> recordFunctions;
     private final int workerCount;
 
     // TODO(puzpuzpuz): make sure we close all functions properly
@@ -84,6 +87,8 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             this.base = base;
             this.frameSequence = new PageFrameSequence<>(configuration, messageBus, REDUCER, reduceTaskFactory, PageFrameReduceTask.TYPE_GROUP_BY);
             frameSequence.prepareForGroupBy(keyTypes, valueTypes);
+            this.groupByFunctions = groupByFunctions;
+            this.recordFunctions = recordFunctions;
             this.cursor = new AsyncGroupByRecordCursor(configuration, keyTypes, valueTypes, groupByFunctions, recordFunctions);
             this.filterAtom = new AsyncGroupByAtom(
                     asm,
@@ -115,7 +120,10 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final int order = base.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
-        cursor.of(execute(executionContext, collectSubSeq, order));
+        execute(executionContext, collectSubSeq, order);
+        // init all record function for this cursor, in case functions require metadata and/or symbol tables
+        Function.init(recordFunctions, frameSequence.getSymbolTableSource(), executionContext);
+        cursor.of(frameSequence);
         return cursor;
     }
 
@@ -133,6 +141,8 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
     public void toPlan(PlanSink sink) {
         sink.type("Async Group By");
         sink.meta("workers").val(workerCount);
+        sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(recordFunctions, getMetadata()));
+        sink.optAttr("values", groupByFunctions, true);
         sink.attr("filter").val(filterAtom);
     }
 
@@ -182,8 +192,11 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
 
     @Override
     protected void _close() {
-        Misc.free(base);
+        Misc.freeObjList(groupByFunctions);
+        Misc.freeObjList(recordFunctions);
         Misc.free(filterAtom);
         Misc.free(frameSequence);
+        Misc.free(base);
+        Misc.free(cursor);
     }
 }

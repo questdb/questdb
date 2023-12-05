@@ -79,6 +79,7 @@ class AsyncGroupByRecordCursor extends VirtualFunctionSkewedSymbolRecordCursor {
                 frameSequence.await();
             }
             frameSequence.clear();
+            super.close();
         }
     }
 

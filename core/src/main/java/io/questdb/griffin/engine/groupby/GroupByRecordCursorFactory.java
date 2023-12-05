@@ -76,6 +76,19 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         }
     }
 
+    public static ObjList<String> getKeys(ObjList<Function> recordFunctions, RecordMetadata metadata) {
+        ObjList<String> keyFuncs = null;
+        for (int i = 0, n = recordFunctions.size(); i < n; i++) {
+            if (!(recordFunctions.get(i) instanceof GroupByFunction)) {
+                if (keyFuncs == null) {
+                    keyFuncs = new ObjList<>();
+                }
+                keyFuncs.add(metadata.getColumnName(i));
+            }
+        }
+        return keyFuncs;
+    }
+
     @Override
     public RecordCursorFactory getBaseFactory() {
         return base;
@@ -115,22 +128,9 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         return base.usesCompiledFilter();
     }
 
-    static ObjList<String> getKeys(ObjList<Function> recordFunctions, RecordMetadata metadata) {
-        ObjList<String> keyFuncs = null;
-        for (int i = 0, n = recordFunctions.size(); i < n; i++) {
-            if (!(recordFunctions.get(i) instanceof GroupByFunction)) {
-                if (keyFuncs == null) {
-                    keyFuncs = new ObjList<>();
-                }
-                keyFuncs.add(metadata.getColumnName(i));
-            }
-        }
-
-        return keyFuncs;
-    }
-
     @Override
     protected void _close() {
+        Misc.freeObjList(groupByFunctions);
         Misc.freeObjList(recordFunctions);
         Misc.free(base);
         Misc.free(cursor);
@@ -169,7 +169,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             if (isOpen) {
                 isOpen = false;
                 Misc.free(dataMap);
-                Misc.clearObjList(groupByFunctions);
                 super.close();
             }
         }
