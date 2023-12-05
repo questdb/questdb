@@ -24,6 +24,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.SqlJitMode;
+import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -401,15 +402,15 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
 
             assertQuery(
                     "month\tts1\tuid\n" +
-                    "1970-01-01T00:05:00.000000Z\t1970-01-01T00:03:00.000001Z\tA3a\n" +
-                    "1970-01-01T00:05:00.000000Z\t1970-01-01T00:04:00.000001Z\tA4a\n" +
-                    "1970-01-01T00:05:00.000000Z\t1970-01-01T00:05:00.000001Z\tA5a\n" +
-                    "1970-01-01T00:04:00.000000Z\t1970-01-01T00:03:00.000001Z\tA3a\n" +
-                    "1970-01-01T00:04:00.000000Z\t1970-01-01T00:04:00.000001Z\tA4a\n" +
-                    "1970-01-01T00:04:00.000000Z\t1970-01-01T00:05:00.000001Z\tA5a\n" +
-                    "1970-01-01T00:03:00.000000Z\t1970-01-01T00:03:00.000001Z\tA3a\n" +
-                    "1970-01-01T00:03:00.000000Z\t1970-01-01T00:04:00.000001Z\tA4a\n" +
-                    "1970-01-01T00:03:00.000000Z\t1970-01-01T00:05:00.000001Z\tA5a\n",
+                            "1970-01-01T00:05:00.000000Z\t1970-01-01T00:03:00.000001Z\tA3a\n" +
+                            "1970-01-01T00:05:00.000000Z\t1970-01-01T00:04:00.000001Z\tA4a\n" +
+                            "1970-01-01T00:05:00.000000Z\t1970-01-01T00:05:00.000001Z\tA5a\n" +
+                            "1970-01-01T00:04:00.000000Z\t1970-01-01T00:03:00.000001Z\tA3a\n" +
+                            "1970-01-01T00:04:00.000000Z\t1970-01-01T00:04:00.000001Z\tA4a\n" +
+                            "1970-01-01T00:04:00.000000Z\t1970-01-01T00:05:00.000001Z\tA5a\n" +
+                            "1970-01-01T00:03:00.000000Z\t1970-01-01T00:03:00.000001Z\tA3a\n" +
+                            "1970-01-01T00:03:00.000000Z\t1970-01-01T00:04:00.000001Z\tA4a\n" +
+                            "1970-01-01T00:03:00.000000Z\t1970-01-01T00:05:00.000001Z\tA5a\n",
                     query,
                     null,
                     true,
@@ -500,14 +501,88 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
 
             assertQuery(
                     "vendor_id\n" +
-                    "A2\n" +
-                    "A1\n",
+                            "A2\n" +
+                            "A1\n",
                     query,
                     null,
                     true,
                     true
             );
         });
+    }
+
+    @Test
+    public void testOrderByTimestampAndOtherField() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE tab (" +
+                    "  ts TIMESTAMP," +
+                    "  key STRING," +
+                    "  value int " +
+                    ") timestamp (ts) PARTITION BY DAY");
+            insert("insert into tab values (0, 'c', 1), (0, 'b', 2), (0, 'a', 3), (1, 'd', 4), (2, 'e', 5)");
+
+            assertPlan("SELECT key " +
+                            "FROM tab " +
+                            "WHERE key IS NOT NULL " +
+                            "ORDER BY ts, key " +
+                            "LIMIT 10",
+                    "SelectedRecord\n" +
+                            "    Sort light lo: 10 partiallySorted: true\n" +
+                            "      keys: [ts, key]\n" +
+                            "        Async Filter workers: 1\n" +
+                            "          filter: key is not null \n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: tab\n");
+        });
+
+        assertLimitQueries("ts\tkey\tvalue\n" +
+                        "1970-01-01T00:00:00.000000Z\ta\t3\n" +
+                        "1970-01-01T00:00:00.000000Z\tb\t2\n" +
+                        "1970-01-01T00:00:00.000000Z\tc\t1\n" +
+                        "1970-01-01T00:00:00.000001Z\td\t4\n" +
+                        "1970-01-01T00:00:00.000002Z\te\t5\n",
+                "SELECT * " +
+                        "FROM tab " +
+                        "WHERE key IS NOT NULL " +
+                        "ORDER BY ts, key " +
+                        "LIMIT ", "ts");
+
+        assertLimitQueries("ts\tkey\tvalue\n" +
+                        "1970-01-01T00:00:00.000000Z\tc\t1\n" +
+                        "1970-01-01T00:00:00.000000Z\tb\t2\n" +
+                        "1970-01-01T00:00:00.000000Z\ta\t3\n" +
+                        "1970-01-01T00:00:00.000001Z\td\t4\n" +
+                        "1970-01-01T00:00:00.000002Z\te\t5\n",
+                "SELECT * " +
+                        "FROM tab " +
+                        "WHERE key IS NOT NULL " +
+                        "ORDER BY ts, key DESC " +
+                        "LIMIT ", "ts");
+
+        assertLimitQueries("ts\tkey\tvalue\n" +
+                        "1970-01-01T00:00:00.000002Z\te\t5\n" +
+                        "1970-01-01T00:00:00.000001Z\td\t4\n" +
+                        "1970-01-01T00:00:00.000000Z\ta\t3\n" +
+                        "1970-01-01T00:00:00.000000Z\tb\t2\n" +
+                        "1970-01-01T00:00:00.000000Z\tc\t1\n",
+                "SELECT * " +
+                        "FROM tab " +
+                        "WHERE key IS NOT NULL " +
+                        "ORDER BY ts desc, key " +
+                        "LIMIT ", "ts###DESC");
+
+        assertLimitQueries("ts\tkey\tvalue\n" +
+                        "1970-01-01T00:00:00.000002Z\te\t5\n" +
+                        "1970-01-01T00:00:00.000001Z\td\t4\n" +
+                        "1970-01-01T00:00:00.000000Z\tc\t1\n" +
+                        "1970-01-01T00:00:00.000000Z\tb\t2\n" +
+                        "1970-01-01T00:00:00.000000Z\ta\t3\n",
+                "SELECT * " +
+                        "FROM tab " +
+                        "WHERE key IS NOT NULL " +
+                        "ORDER BY ts desc, key desc " +
+                        "LIMIT ", "ts###DESC");
     }
 
     @Test
@@ -711,6 +786,35 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
             testOrderByTimestampWithFilterDesc();
         } finally {
             sqlExecutionContext.setJitMode(jitMode);
+        }
+    }
+
+    private void assertLimitQueries(String result, String query, String expectedTimestamp) throws SqlException {
+        int firstLineStart = result.indexOf('\n') + 1;
+        String header = result.substring(0, firstLineStart);
+
+        for (int hi = 0, hiIdx = 0; hi < 10; hi++) {
+            hiIdx = result.indexOf('\n', hiIdx + 1);
+            if (hiIdx == -1) {
+                hiIdx = result.length();
+            } else {
+                hiIdx++;
+            }
+
+            for (int lo = 0, loIdx = 0; lo <= hi; lo++) {
+                loIdx = result.indexOf('\n', loIdx + 1);
+                if (loIdx == -1) {
+                    loIdx = result.length();
+                } else {
+                    loIdx++;
+                }
+
+                String expected = header + result.substring(loIdx, hiIdx);
+
+                assertQuery(expected,
+                        query + " " + lo + ", " + hi,
+                        expectedTimestamp, true, true);
+            }
         }
     }
 

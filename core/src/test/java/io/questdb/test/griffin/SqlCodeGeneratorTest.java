@@ -821,7 +821,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         ")",
                 null,
                 true,
-                true
+                false
         );
     }
 
@@ -6794,17 +6794,27 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "YYQE\n" +
                 "ZSXU\n";
 
-        assertQuery(expected, "select distinct a from x order by a", "create table x as " +
-                "(" +
-                "select" +
-                " rnd_symbol(20,4,6,2) a" +
-                " from" +
-                " long_sequence(10000)" +
-                ")", null, "insert into x select * from (" +
-                "select" +
-                " rnd_symbol(10,3,5,0) a" +
-                " from long_sequence(1000000)" +
-                ") ", expected2, true, true, false);
+        assertQuery(
+                expected,
+                "select distinct a from x order by a",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_symbol(20,4,6,2) a" +
+                        " from" +
+                        " long_sequence(10000)" +
+                        ")",
+                null,
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_symbol(10,3,5,0) a" +
+                        " from long_sequence(1000000)" +
+                        ") ",
+                expected2,
+                true,
+                false,
+                false
+        );
     }
 
     @Test
