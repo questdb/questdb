@@ -64,7 +64,6 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
     private final ObjList<Function> recordFunctions;
     private final int workerCount;
 
-    // TODO(puzpuzpuz): make sure we close all functions properly
     public AsyncGroupByRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
             @NotNull CairoConfiguration configuration,
@@ -134,7 +133,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
-        return false;
+        return true;
     }
 
     @Override
