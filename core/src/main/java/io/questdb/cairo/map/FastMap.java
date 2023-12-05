@@ -446,17 +446,17 @@ public class FastMap implements Map, Reopenable {
 
         @Override
         public MapValue createValue() {
-            return createValue(value);
-        }
-
-        @Override
-        public MapValue createValue2() {
-            return createValue(value2);
-        }
-
-        @Override
-        public MapValue createValue3() {
-            return createValue(value3);
+            int keySize = commit();
+            // calculate hash remembering "key" structure
+            // [ key size | key block | value block ]
+            int hashCode = hash();
+            int index = hashCode & mask;
+            long offset = getOffset(offsets, index);
+            if (offset > -1 && hashCode == getHashCode(offsets, index) && eq(offset)) {
+                long startAddress = heapStart + offset;
+                return valueOf(startAddress, startAddress + keyOffset + keySize, false, value);
+            }
+            return createValueSlow(value, offset, index, hashCode, keySize);
         }
 
         @Override
@@ -490,22 +490,11 @@ public class FastMap implements Map, Reopenable {
             // no-op
         }
 
-        private MapValue createValue(FastMapValue value) {
-            int keySize = commit();
-            // calculate hash remembering "key" structure
-            // [ key size | key block | value block ]
-            int hashCode = hash();
-            int index = hashCode & mask;
-            long offset = getOffset(offsets, index);
-
+        private FastMapValue createValueSlow(FastMapValue value, long offset, int index, int hashCode, int keySize) {
             if (offset < 0) {
                 return asNew(this, index, hashCode, value);
-            } else if (hashCode == getHashCode(offsets, index) && eq(offset)) {
-                long startAddress = heapStart + offset;
-                return valueOf(startAddress, startAddress + keyOffset + keySize, false, value);
-            } else {
-                return probe0(this, index, hashCode, keySize, value);
             }
+            return probe0(this, index, hashCode, keySize, value);
         }
 
         private MapValue findValue(FastMapValue value) {

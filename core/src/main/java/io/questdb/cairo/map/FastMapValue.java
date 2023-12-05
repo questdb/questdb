@@ -197,6 +197,12 @@ final class FastMapValue implements MapValue {
     }
 
     @Override
+    public void maxLong(int index, long value) {
+        final long p = address0(index);
+        Unsafe.getUnsafe().putLong(p, Math.max(value, Unsafe.getUnsafe().getLong(p)));
+    }
+
+    @Override
     public void putBool(int index, boolean value) {
         putByte(index, (byte) (value ? 1 : 0));
     }

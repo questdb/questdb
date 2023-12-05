@@ -36,14 +36,6 @@ public interface MapKey extends RecordSinkSPI {
 
     MapValue createValue();
 
-    default MapValue createValue2() {
-        throw new UnsupportedOperationException();
-    }
-
-    default MapValue createValue3() {
-        throw new UnsupportedOperationException();
-    }
-
     MapValue findValue();
 
     default MapValue findValue2() {
