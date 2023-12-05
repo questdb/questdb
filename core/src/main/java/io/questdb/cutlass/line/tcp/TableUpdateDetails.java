@@ -46,6 +46,7 @@ public class TableUpdateDetails implements Closeable {
     private static final Log LOG = LogFactory.getLog(TableUpdateDetails.class);
     private static final DirectUtf8SymbolLookup NOT_FOUND_LOOKUP = value -> SymbolTable.VALUE_NOT_FOUND;
     private final long commitInterval;
+    private final boolean commitOnClose;
     private final DefaultColumnTypes defaultColumnTypes;
     private final int defaultMaxUncommittedRows;
     private final CairoEngine engine;
@@ -104,6 +105,7 @@ public class TableUpdateDetails implements Closeable {
             );
         }
         this.tableNameUtf8 = tableNameUtf8;
+        this.commitOnClose = true;
     }
 
     protected TableUpdateDetails(
@@ -114,12 +116,14 @@ public class TableUpdateDetails implements Closeable {
             DefaultColumnTypes defaultColumnTypes,
             Utf8String tableNameUtf8,
             Pool<SymbolCache> symbolCachePool,
-            long commitInterval
+            long commitInterval,
+            boolean commitOnClose
     ) {
         this.writerThreadId = writerThreadId;
         this.engine = engine;
         this.ownSecurityContext = ownSecurityContext;
         this.defaultColumnTypes = defaultColumnTypes;
+        this.commitOnClose = commitOnClose;
         final CairoConfiguration cairoConfiguration = engine.getConfiguration();
         this.millisecondClock = cairoConfiguration.getMillisecondClock();
         this.writerTickRowsCountMod = cairoConfiguration.getWriterTickRowsCountMod();
@@ -170,8 +174,10 @@ public class TableUpdateDetails implements Closeable {
             closeLocals();
             if (writerAPI != null) {
                 try {
-                    authorizeCommit();
-                    writerAPI.commit();
+                    if (commitOnClose) {
+                        authorizeCommit();
+                        writerAPI.commit();
+                    }
                 } catch (CairoException ex) {
                     if (!ex.isTableDropped()) {
                         LOG.error().$("cannot commit writer transaction, rolling back before releasing it [table=").$(tableToken).$(",ex=").$((Throwable) ex).I$();

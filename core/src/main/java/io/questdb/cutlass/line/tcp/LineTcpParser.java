@@ -120,6 +120,13 @@ public class LineTcpParser {
         return errorCode;
     }
 
+    public DirectUtf8Sequence getErrorFieldValue() {
+        if (currentEntity != null) {
+            return currentEntity.value;
+        }
+        return null;
+    }
+
     public DirectUtf8Sequence getErrorTimestampValue() {
         return charSeq;
     }

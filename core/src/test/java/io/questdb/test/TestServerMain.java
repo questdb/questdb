@@ -39,7 +39,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 
 public class TestServerMain extends ServerMain {
-    private StringSink sink = new StringSink();
+    private final StringSink sink = new StringSink();
     private SqlExecutionContext sqlExecutionContext;
 
     public TestServerMain(String... args) {

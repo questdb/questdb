@@ -31,12 +31,15 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.line.tcp.*;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.*;
 import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.NotNull;
 
 public class IlpTudCache implements QuietCloseable {
+    private static final Log LOG = LogFactory.getLog(LineHttpProcessorState.class);
     private final boolean autoCreateNewColumns;
     private final boolean autoCreateNewTables;
     private final MemoryMARW ddlMem = Vm.getMARWInstance();
@@ -70,13 +73,19 @@ public class IlpTudCache implements QuietCloseable {
             Utf8Sequence tableName = tableUpdateDetails.keys().get(i);
             WalTableUpdateDetails tud = tableUpdateDetails.get(tableName);
             tud.rollback();
-            tud.close();
         }
-        tableUpdateDetails.clear();
     }
 
     @Override
     public void close() {
+        // Close happens when HTTP connection is closed
+        ObjList<Utf8String> keys = tableUpdateDetails.keys();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            Utf8Sequence tableName = tableUpdateDetails.keys().get(i);
+            WalTableUpdateDetails tud = tableUpdateDetails.get(tableName);
+            Misc.free(tud);
+        }
+        tableUpdateDetails.clear();
         Misc.free(ddlMem);
         Misc.free(path);
     }
@@ -86,10 +95,17 @@ public class IlpTudCache implements QuietCloseable {
         for (int i = 0, n = keys.size(); i < n; i++) {
             Utf8Sequence tableName = tableUpdateDetails.keys().get(i);
             WalTableUpdateDetails tud = tableUpdateDetails.get(tableName);
-            // Close will commit
-            tud.close();
+            try {
+                tud.commit(false);
+            } catch (CommitFailedException e) {
+                // We can ignore dropped tables and simply roll back the transaction
+                if (!e.isTableDropped()) {
+                    LOG.critical().$("commit failed [table=").$(tableName).$(']').$();
+                    throw CairoException.critical(-1).put("commit failed [table=").put(tableName)
+                            .put(", error=").put(e.getMessage()).put(']');
+                }
+            }
         }
-        tableUpdateDetails.clear();
     }
 
     public WalTableUpdateDetails getTableUpdateDetails(
@@ -120,7 +136,8 @@ public class IlpTudCache implements QuietCloseable {
                 defaultColumnTypes,
                 nameUtf8,
                 symbolCachePool,
-                -1
+                -1,
+                false
         );
 
         tableUpdateDetails.putAt(key, nameUtf8, tud);

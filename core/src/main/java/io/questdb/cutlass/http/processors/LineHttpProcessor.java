@@ -84,6 +84,7 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
 
         try {
             HttpChunkedResponseSocket r = context.getChunkedResponseSocket();
+            state.onMessageComplete();
             if (state.isOk()) {
                 try {
                     state.commit();

@@ -808,6 +808,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         httpStatusMap.put(401, "Unauthorized");
         httpStatusMap.put(403, "Forbidden");
         httpStatusMap.put(404, "Not Found");
+        httpStatusMap.put(413, "Content Too Large");
         httpStatusMap.put(416, "Request range not satisfiable");
         httpStatusMap.put(431, "Headers too large");
         httpStatusMap.put(500, "Internal server error");

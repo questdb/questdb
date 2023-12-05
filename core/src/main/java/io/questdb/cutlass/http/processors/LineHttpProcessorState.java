@@ -29,13 +29,21 @@ import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cutlass.line.tcp.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.log.LogRecord;
 import io.questdb.std.*;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicLong;
+
 public class LineHttpProcessorState implements QuietCloseable {
+    private static final AtomicLong ERROR_COUNT = new AtomicLong();
+    private static final String ERROR_ID = generateErrorId();
     private static final Log LOG = LogFactory.getLog(LineHttpProcessorState.class);
     private final IlpWalAppender appender;
     private final StringSink error = new StringSink();
@@ -46,12 +54,12 @@ public class LineHttpProcessorState implements QuietCloseable {
     int errorLine = -1;
     private long buffer;
     private Status currentStatus = Status.OK;
+    private long errorId;
     private int fd = -1;
     private int line = 0;
     private long recvBufEnd;
     private long recvBufPos;
     private long recvBufStartOfMeasurement;
-    private DirectUtf8Sequence requestId;
 
     public LineHttpProcessorState(int recvBufSize, CairoEngine engine, LineHttpProcessorConfiguration configuration) {
         assert recvBufSize > 0;
@@ -106,7 +114,8 @@ public class LineHttpProcessorState implements QuietCloseable {
         sink.putAscii("{\"code\":\"").putAscii(currentStatus.codeStr);
         sink.putAscii("\",\"message\":\"").putAscii("failed to parse line protocol: errors encountered on line(s):");
         sink.put(error);
-        sink.putAscii("\",\"line\":").put(errorLine).putAscii('}');
+        sink.putAscii("\",\"line\":").put(errorLine);
+        sink.putAscii(",\"errorId\":\"").putAscii(ERROR_ID).put('-').put(errorId).putAscii("\"").putAscii('}');
     }
 
     public void formatError(Utf8Sink sink, CharSequence message, @Nullable Throwable exception) {
@@ -137,7 +146,17 @@ public class LineHttpProcessorState implements QuietCloseable {
 
     public void of(int fd, DirectUtf8Sequence requestId) {
         this.fd = fd;
-        this.requestId = requestId;
+    }
+
+    public void onMessageComplete() {
+        if (currentStatus == Status.NEEDS_REED) {
+            // Last line did not have \n as a last character
+            // this is allowed by the protocol, no error in Influx
+            // NEEDS_REED status means that there is still a buffer space to read to.
+            assert recvBufPos < recvBufEnd;
+            Unsafe.getUnsafe().putByte(recvBufPos++, (byte) '\n');
+            currentStatus = processLocalBuffer();
+        }
     }
 
     public void parse(long lo, long hi) {
@@ -155,7 +174,6 @@ public class LineHttpProcessorState implements QuietCloseable {
                 }
             }
         } catch (Throwable th) {
-            LOG.error().$("could not parse HTTP request [fd=").$(fd).$(", ex=").$(th).$(']').$();
             handleUnknownParseError(th);
             currentStatus = Status.INTERNAL_ERROR;
         }
@@ -165,6 +183,10 @@ public class LineHttpProcessorState implements QuietCloseable {
         error.clear();
         currentStatus = Status.OK;
         recvBufPos = buffer;
+    }
+
+    private static String generateErrorId() {
+        return UUID.randomUUID().toString().substring(24, 36);
     }
 
     private Status appendMeasurement() throws IlpTudCache.TableCreateException {
@@ -221,6 +243,14 @@ public class LineHttpProcessorState implements QuietCloseable {
             case INVALID_TIMESTAMP:
                 error.put(": Could not parse timestamp: ").put(parser.getErrorTimestampValue());
                 break;
+            case INVALID_FIELD_VALUE:
+                error.put(": Could not parse entire line, field value is invalid. Field: ")
+                        .put(parser.getLastEntityName()).put("; value: ").put(parser.getErrorFieldValue());
+                break;
+            case INVALID_TAG_VALUE:
+                error.put(": Could not parse entire line, tag value is invalid. Tag: ")
+                        .put(parser.getLastEntityName()).put("; value: ").put(parser.getErrorFieldValue());
+                break;
             default:
                 error.put(": ").put(String.valueOf(parser.getErrorCode()));
                 break;
@@ -245,35 +275,50 @@ public class LineHttpProcessorState implements QuietCloseable {
     }
 
     private Status handleLineError(LineTcpParser parser, CairoException ex) {
-        LOG.error()
+        errorId = ERROR_COUNT.incrementAndGet();
+        LogRecord error = ex.isCritical() ? LOG.critical() : LOG.error();
+        error
                 .$('[').$(fd).$("] could not process line data [table=").$(parser.getMeasurementName())
+                .$(", errorId=").$(errorId)
+                .$(", errno=").$(ex.getErrno())
+                .$(", mangledLine=`").$utf8(recvBufStartOfMeasurement == 0 ? buffer : recvBufStartOfMeasurement, parser.getBufferAddress()).$('`')
                 .$(", ex=").$(ex.getFlyweightMessage())
                 .I$();
 
-        error.put("parse error [table=").put(parser.getMeasurementName())
-                .put(", line=").put(line + 1)
-                .put(", errno=").put(ex.getErrno()).put("]")
-                .put(", error=").put(ex.getFlyweightMessage()).put("]");
+        this.error.put("write error: ").put(parser.getMeasurementName())
+                .put(", line: ").put(line + 1)
+                .put(", errorId: ").put(ERROR_ID).put('-').put(errorId)
+                .put(", errno: ").put(ex.getErrno())
+                .put(", error: ").put(ex.getFlyweightMessage());
         errorLine = line + 1;
         return Status.INTERNAL_ERROR;
     }
 
     private Status handleUnknownParseError(Throwable ex) {
-        LOG.error().$('[').$(fd)
-                .$("] could not process line data requestId=").$(requestId).$(", ex=").$(ex).$();
-        // If this is some silly exception, no point of sending it to the client.
-        error.put("parse error: ").put(ex.getClass().getCanonicalName());
+        LOG.critical()
+                .$('[').$(fd).$("] could not process line data [table=").$(parser.getMeasurementName())
+                .$(", mangledLine=`").$utf8(recvBufStartOfMeasurement == 0 ? buffer : recvBufStartOfMeasurement, parser.getBufferAddress()).$('`')
+                .$(", errorId=").$(errorId)
+                .$(", ex=").$(ex.getMessage())
+                .I$();
+
+        this.error.put("write error: ").put(parser.getMeasurementName())
+                .put(", line: ").put(line + 1)
+                .put(", errorId: ").put(ERROR_ID).put('-').put(errorId)
+                .put(", error: ").put(ex.getClass().getCanonicalName());
+        errorLine = line + 1;
         return Status.INTERNAL_ERROR;
     }
 
     private void logError(LineTcpParser parser, int errorPos) {
-        LOG.info().$("parse error [table=").$(parser.getMeasurementName())
+        errorId = ERROR_COUNT.incrementAndGet();
+        LOG.info().$("parse error [errorId=").$(ERROR_ID).$('-').$(errorId)
+                .$(", table=").$(parser.getMeasurementName())
                 .$(", line=").$(errorLine)
                 .$(error.subSequence(errorPos, error.length()))
-                .$(", request=").$(requestId)
                 .$(", fd=").$(fd)
                 .$(", mangledLine=`").$utf8(recvBufStartOfMeasurement == 0 ? buffer : recvBufStartOfMeasurement, parser.getBufferAddress()).$('`')
-                .$();
+                .I$();
     }
 
     private Status processLocalBuffer() {
@@ -297,7 +342,8 @@ public class LineHttpProcessorState implements QuietCloseable {
 
                     case BUFFER_UNDERFLOW: {
                         if (!compactBuffer(recvBufStartOfMeasurement)) {
-                            error.put("buffer underflow [table=").put(parser.getMeasurementName()).put(", line=").put(line + 1).put("]");
+                            errorLine = ++line;
+                            error.put("unable to read data: ILP line does not fit QuestDB ILP buffer size");
                             return Status.MESSAGE_TOO_LARGE;
                         }
                         return Status.NEEDS_REED;
