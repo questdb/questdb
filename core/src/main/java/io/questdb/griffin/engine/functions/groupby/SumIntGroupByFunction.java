@@ -91,13 +91,13 @@ public class SumIntGroupByFunction extends LongFunction implements GroupByFuncti
 
     @Override
     public void merge(MapValue destMapValue, MapValue srcMapValue) {
-        int srcSum = srcMapValue.getInt(valueIndex);
+        long srcSum = srcMapValue.getLong(valueIndex);
         long srcCount = srcMapValue.getLong(valueIndex + 1);
         if (destMapValue.isNew()) {
-            destMapValue.putInt(valueIndex, srcSum);
+            destMapValue.putLong(valueIndex, srcSum);
             destMapValue.putLong(valueIndex + 1, srcCount);
         } else {
-            destMapValue.addInt(valueIndex, srcSum);
+            destMapValue.addLong(valueIndex, srcSum);
             destMapValue.addLong(valueIndex + 1, srcCount);
         }
     }

@@ -94,9 +94,9 @@ public class FastMap implements Map, Reopenable {
     private int keySize;
     private int mask;
     private int nResizes;
+    private DirectIntList offsets;
     // Holds [compressed_offset, hash_code] pairs.
     // Offsets are shifted by +1 (0 -> 1, 1 -> 2, etc.), so that we fill the memory with 0.
-    private DirectIntList offsets;
     private FastMapRecord record;
     private int size = 0;
     private FastMapValue value;
