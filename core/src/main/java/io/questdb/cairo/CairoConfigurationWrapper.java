@@ -346,11 +346,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getWalMaxSegmentFileDescriptorsCache() {
-        return delegate.getWalMaxSegmentFileDescriptorsCache();
-    }
-
-    @Override
     public int getMetadataPoolCapacity() {
         return delegate.getMetadataPoolCapacity();
     }
@@ -881,6 +876,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getWalMaxSegmentFileDescriptorsCache() {
+        return delegate.getWalMaxSegmentFileDescriptorsCache();
+    }
+
+    @Override
     public long getWalPurgeInterval() {
         return delegate.getWalPurgeInterval();
     }
@@ -1013,6 +1013,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isSqlParallelFilterPreTouchEnabled() {
         return delegate.isSqlParallelFilterPreTouchEnabled();
+    }
+
+    @Override
+    public boolean isSqlParallelGroupByEnabled() {
+        return delegate.isSqlParallelGroupByEnabled();
     }
 
     @Override

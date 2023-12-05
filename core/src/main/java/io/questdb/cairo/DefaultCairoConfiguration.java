@@ -872,11 +872,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getWalMaxSegmentFileDescriptorsCache() {
-        return 1000;
-    }
-
-    @Override
     public long getWalMaxLagSize() {
         return 75 * Numbers.SIZE_1MB;
     }
@@ -884,6 +879,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getWalMaxLagTxnCount() {
         return 20;
+    }
+
+    @Override
+    public int getWalMaxSegmentFileDescriptorsCache() {
+        return 1000;
     }
 
     @Override
@@ -1017,6 +1017,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isSqlParallelFilterPreTouchEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isSqlParallelGroupByEnabled() {
         return true;
     }
 

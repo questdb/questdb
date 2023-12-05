@@ -244,6 +244,7 @@ public class PropServerConfigurationTest {
 
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelFilterEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelFilterPreTouchEnabled());
+        Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelGroupByEnabled());
         Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getSqlPageFrameMaxRows());
         Assert.assertEquals(1000, configuration.getCairoConfiguration().getSqlPageFrameMinRows());
         Assert.assertEquals(4, configuration.getCairoConfiguration().getPageFrameReduceShardCount());
@@ -1091,6 +1092,7 @@ public class PropServerConfigurationTest {
 
             Assert.assertFalse(configuration.getCairoConfiguration().isSqlParallelFilterEnabled());
             Assert.assertFalse(configuration.getCairoConfiguration().isSqlParallelFilterPreTouchEnabled());
+            Assert.assertFalse(configuration.getCairoConfiguration().isSqlParallelGroupByEnabled());
             Assert.assertEquals(1000, configuration.getCairoConfiguration().getSqlPageFrameMaxRows());
             Assert.assertEquals(100, configuration.getCairoConfiguration().getSqlPageFrameMinRows());
             Assert.assertEquals(128, configuration.getCairoConfiguration().getPageFrameReduceShardCount());

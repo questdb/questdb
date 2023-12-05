@@ -290,6 +290,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlPageFrameMinRows;
     private final boolean sqlParallelFilterEnabled;
     private final boolean sqlParallelFilterPreTouchEnabled;
+    private final boolean sqlParallelGroupByEnabled;
     private final int sqlRenameTableModelPoolCapacity;
     private final int sqlSmallMapKeyCapacity;
     private final int sqlSmallMapPageSize;
@@ -342,9 +343,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long walApplyWorkerSleepThreshold;
     private final long walApplyWorkerYieldThreshold;
     private final boolean walEnabledDefault;
-    private final int walMaxSegmentFileDescriptorsCache;
     private final long walMaxLagSize;
     private final int walMaxLagTxnCount;
+    private final int walMaxSegmentFileDescriptorsCache;
     private final long walPurgeInterval;
     private final int walPurgeWaitBeforeDelete;
     private final int walRecreateDistressedSequencerAttempts;
@@ -909,6 +910,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.cairoPageFrameReduceColumnListCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_COLUMN_LIST_CAPACITY, 16));
             this.sqlParallelFilterEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED, true);
             this.sqlParallelFilterPreTouchEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_ENABLED, true);
+            this.sqlParallelGroupByEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUP_BY_ENABLED, true);
             this.cairoPageFrameReduceShardCount = getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 4);
 
             this.writerDataIndexKeyAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_WRITER_DATA_INDEX_KEY_APPEND_PAGE_SIZE, 512 * 1024));
@@ -2613,11 +2615,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getWalMaxSegmentFileDescriptorsCache() {
-            return walMaxSegmentFileDescriptorsCache;
-        }
-
-        @Override
         public long getWalMaxLagSize() {
             return walMaxLagSize;
         }
@@ -2625,6 +2622,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getWalMaxLagTxnCount() {
             return walMaxLagTxnCount;
+        }
+
+        @Override
+        public int getWalMaxSegmentFileDescriptorsCache() {
+            return walMaxSegmentFileDescriptorsCache;
         }
 
         @Override
@@ -2760,6 +2762,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isSqlParallelFilterPreTouchEnabled() {
             return sqlParallelFilterPreTouchEnabled;
+        }
+
+        @Override
+        public boolean isSqlParallelGroupByEnabled() {
+            return sqlParallelGroupByEnabled;
         }
 
         @Override

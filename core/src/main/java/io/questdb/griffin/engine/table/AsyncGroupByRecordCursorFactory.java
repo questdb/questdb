@@ -144,6 +144,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(recordFunctions, getMetadata()));
         sink.optAttr("values", groupByFunctions, true);
         sink.attr("filter").val(filterAtom);
+        sink.child(base);
     }
 
     @Override
@@ -193,6 +194,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
     @Override
     protected void _close() {
         Misc.free(base);
+        Misc.free(cursor);
         Misc.freeObjList(recordFunctions);
         Misc.free(filterAtom);
         Misc.free(frameSequence);

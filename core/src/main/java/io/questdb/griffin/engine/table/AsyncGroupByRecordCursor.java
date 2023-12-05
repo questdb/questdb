@@ -28,12 +28,13 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.map.*;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.groupby.VirtualFunctionSkewedSymbolRecordCursor;
+import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Misc;
@@ -42,15 +43,19 @@ import io.questdb.std.Os;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
-class AsyncGroupByRecordCursor extends VirtualFunctionSkewedSymbolRecordCursor {
+class AsyncGroupByRecordCursor implements RecordCursor {
 
     private static final Log LOG = LogFactory.getLog(AsyncGroupByRecordCursor.class);
     private final Map dataMap; // used to accumulate all partial results
     private final ObjList<GroupByFunction> groupByFunctions;
+    private final VirtualRecord recordA;
+    private final VirtualRecord recordB;
+    private final ObjList<Function> recordFunctions;
     private int frameIndex;
     private int frameLimit;
     private PageFrameSequence<?> frameSequence;
     private boolean isOpen;
+    private RecordCursor mapCursor;
 
     public AsyncGroupByRecordCursor(
             CairoConfiguration configuration,
@@ -59,8 +64,10 @@ class AsyncGroupByRecordCursor extends VirtualFunctionSkewedSymbolRecordCursor {
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions
     ) {
-        super(recordFunctions);
         this.groupByFunctions = groupByFunctions;
+        this.recordFunctions = recordFunctions;
+        this.recordA = new VirtualRecord(recordFunctions);
+        this.recordB = new VirtualRecord(recordFunctions);
         this.dataMap = MapFactory.createMap(configuration, keyTypes, valueTypes);
         this.isOpen = true;
     }
@@ -68,19 +75,37 @@ class AsyncGroupByRecordCursor extends VirtualFunctionSkewedSymbolRecordCursor {
     @Override
     public void close() {
         if (isOpen) {
-            LOG.debug()
-                    .$("closing [shard=").$(frameSequence.getShard())
-                    .$(", frameCount=").$(frameLimit)
-                    .I$();
-
             isOpen = false;
             Misc.free(dataMap);
-            if (frameLimit > -1) {
-                frameSequence.await();
+            mapCursor = Misc.free(mapCursor);
+
+            if (frameSequence != null) {
+                LOG.debug()
+                        .$("closing [shard=").$(frameSequence.getShard())
+                        .$(", frameCount=").$(frameLimit)
+                        .I$();
+
+                if (frameLimit > -1) {
+                    frameSequence.await();
+                }
+                frameSequence.clear();
             }
-            frameSequence.clear();
-            super.close();
         }
+    }
+
+    @Override
+    public Record getRecord() {
+        return recordA;
+    }
+
+    @Override
+    public Record getRecordB() {
+        return recordB;
+    }
+
+    @Override
+    public SymbolTable getSymbolTable(int columnIndex) {
+        return (SymbolTable) recordFunctions.getQuick(columnIndex);
     }
 
     @Override
@@ -88,7 +113,19 @@ class AsyncGroupByRecordCursor extends VirtualFunctionSkewedSymbolRecordCursor {
         if (frameIndex == -1) {
             buildMap();
         }
-        return super.hasNext();
+        return mapCursor.hasNext();
+    }
+
+    @Override
+    public SymbolTable newSymbolTable(int columnIndex) {
+        return ((SymbolFunction) recordFunctions.getQuick(columnIndex)).newSymbolTable();
+    }
+
+    @Override
+    public void recordAt(Record record, long atRowId) {
+        if (mapCursor != null) {
+            mapCursor.recordAt(((VirtualRecord) record).getBaseRecord(), atRowId);
+        }
     }
 
     @Override
@@ -96,7 +133,15 @@ class AsyncGroupByRecordCursor extends VirtualFunctionSkewedSymbolRecordCursor {
         if (frameIndex == -1) {
             return -1;
         }
-        return super.size();
+        return mapCursor != null ? mapCursor.size() : -1;
+    }
+
+    @Override
+    public void toTop() {
+        if (mapCursor != null) {
+            mapCursor.toTop();
+            GroupByUtils.toTop(recordFunctions);
+        }
     }
 
     private void buildMap() {
@@ -165,7 +210,9 @@ class AsyncGroupByRecordCursor extends VirtualFunctionSkewedSymbolRecordCursor {
             throwTimeoutException();
         }
 
-        super.of(dataMap.getCursor());
+        mapCursor = dataMap.getCursor();
+        recordA.of(mapCursor.getRecord());
+        recordB.of(mapCursor.getRecordB());
     }
 
     private void throwTimeoutException() {

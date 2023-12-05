@@ -62,7 +62,7 @@ public final class FastMapCursor implements RecordCursor {
 
     @Override
     public void close() {
-        map.restoreInitialCapacity();
+        // no-op
     }
 
     @Override

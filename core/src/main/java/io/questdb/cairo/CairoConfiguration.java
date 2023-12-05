@@ -206,8 +206,6 @@ public interface CairoConfiguration {
 
     int getMaxUncommittedRows();
 
-    int getWalMaxSegmentFileDescriptorsCache();
-
     int getMetadataPoolCapacity();
 
     @NotNull
@@ -493,6 +491,8 @@ public interface CairoConfiguration {
 
     int getWalMaxLagTxnCount();
 
+    int getWalMaxSegmentFileDescriptorsCache();
+
     long getWalPurgeInterval();
 
     default int getWalPurgeWaitBeforeDelete() {
@@ -565,6 +565,8 @@ public interface CairoConfiguration {
     boolean isSqlParallelFilterEnabled();
 
     boolean isSqlParallelFilterPreTouchEnabled();
+
+    boolean isSqlParallelGroupByEnabled();
 
     boolean isTableTypeConversionEnabled();
 

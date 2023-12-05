@@ -2173,7 +2173,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             QueryModel model,
             SqlExecutionContext executionContext
     ) throws SqlException {
-
         if (factory.followedLimitAdvice()) {
             return factory;
         }
@@ -3070,7 +3069,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 factory = generateSubQuery(nested, executionContext);
                 pageFramingSupported = factory.supportPageFrameCursor();
                 if (pageFramingSupported) {
-
                     // find position of the hour() argument in the factory meta
                     tempKeyIndexesInBase.add(factory.getMetadata().getColumnIndex(columnExpr.rhs.token));
 
@@ -3268,9 +3266,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 throw e;
             }
 
-            // TODO(puzpuzpuz): add enable parallel GROUP BY flag
             // TODO(puzpuzpuz): consider non-thread-safe functions used as keys, e.g. select regexp_replace(k, ...) k, max(v) v from x
-            if (factory.supportPageFrameCursor() && GroupByUtils.supportParallelism(groupByFunctions)) {
+            final boolean enableParallelGroupBy = configuration.isSqlParallelGroupByEnabled();
+            if (enableParallelGroupBy && factory.supportPageFrameCursor() && GroupByUtils.supportParallelism(groupByFunctions)) {
                 return new AsyncGroupByRecordCursorFactory(
                         asm,
                         configuration,
