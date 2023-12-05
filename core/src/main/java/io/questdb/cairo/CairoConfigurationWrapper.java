@@ -346,11 +346,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getWalMaxSegmentFileDescriptorsCache() {
-        return delegate.getWalMaxSegmentFileDescriptorsCache();
-    }
-
-    @Override
     public int getMetadataPoolCapacity() {
         return delegate.getMetadataPoolCapacity();
     }
@@ -646,11 +641,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlJitRowsThreshold() {
-        return delegate.getSqlJitRowsThreshold();
-    }
-
-    @Override
     public int getSqlJoinContextPoolCapacity() {
         return delegate.getSqlJoinContextPoolCapacity();
     }
@@ -878,6 +868,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getWalMaxLagTxnCount() {
         return delegate.getWalMaxLagTxnCount();
+    }
+
+    @Override
+    public int getWalMaxSegmentFileDescriptorsCache() {
+        return delegate.getWalMaxSegmentFileDescriptorsCache();
     }
 
     @Override
