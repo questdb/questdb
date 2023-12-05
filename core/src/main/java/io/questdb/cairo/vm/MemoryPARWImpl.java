@@ -1079,12 +1079,10 @@ public class MemoryPARWImpl implements MemoryARW {
 
             if (len <= half) {
                 Vect.memcpy(absolutePointer + offset, strAddr, len * 2L);
-//                copyStrChars(value, start, len, absolutePointer + offset);
                 break;
             }
 
             Vect.memcpy(absolutePointer + offset, strAddr, half * 2L);
-//            copyStrChars(value, start, half, absolutePointer + offset);
             offset += half * 2L;
             if (offset < roOffsetHi) {
                 char c = Unsafe.getUnsafe().getChar(strAddr + start * 2L + half * 2L);
