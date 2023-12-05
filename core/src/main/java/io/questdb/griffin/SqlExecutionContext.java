@@ -93,10 +93,6 @@ public interface SqlExecutionContext extends Closeable {
         return getCairoEngine().getMessageBus();
     }
 
-    default TableRecordMetadata getSequencerMetadata(TableToken tableToken) {
-        return getCairoEngine().getSequencerMetadata(tableToken);
-    }
-
     long getMicrosecondTimestamp();
 
     long getNow();
@@ -117,6 +113,10 @@ public interface SqlExecutionContext extends Closeable {
 
     @NotNull
     SecurityContext getSecurityContext();
+
+    default TableRecordMetadata getSequencerMetadata(TableToken tableToken) {
+        return getCairoEngine().getSequencerMetadata(tableToken);
+    }
 
     default int getSharedWorkerCount() {
         return getWorkerCount();

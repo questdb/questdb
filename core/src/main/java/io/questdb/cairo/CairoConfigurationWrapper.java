@@ -1011,6 +1011,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlParallelGroupByEnabled() {
+        return delegate.isSqlParallelGroupByEnabled();
+    }
+
+    @Override
     public boolean isTableTypeConversionEnabled() {
         return delegate.isTableTypeConversionEnabled();
     }

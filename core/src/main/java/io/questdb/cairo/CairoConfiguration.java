@@ -564,6 +564,8 @@ public interface CairoConfiguration {
 
     boolean isSqlParallelFilterPreTouchEnabled();
 
+    boolean isSqlParallelGroupByEnabled();
+
     boolean isTableTypeConversionEnabled();
 
     boolean isWalApplyEnabled();

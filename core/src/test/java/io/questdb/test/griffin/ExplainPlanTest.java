@@ -2318,9 +2318,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( l long, b boolean)",
                 "select b, min(l)  from a group by b",
-                "GroupBy vectorized: false\n" +
+                "Async Group By workers: 1\n" +
                         "  keys: [b]\n" +
                         "  values: [min(l)]\n" +
+                        "  filter: null\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
@@ -2348,9 +2349,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( l long, d double)",
                 "select d, min(l) from a group by d",
-                "GroupBy vectorized: false\n" +
+                "Async Group By workers: 1\n" +
                         "  keys: [d]\n" +
                         "  values: [min(l)]\n" +
+                        "  filter: null\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
@@ -2362,9 +2364,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( l long, f float)",
                 "select f, min(l) from a group by f",
-                "GroupBy vectorized: false\n" +
+                "Async Group By workers: 1\n" +
                         "  keys: [f]\n" +
                         "  values: [min(l)]\n" +
+                        "  filter: null\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
@@ -2527,9 +2530,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( l long, d double)",
                 "select l, min(d) from a group by l",
-                "GroupBy vectorized: false\n" +
+                "Async Group By workers: 1\n" +
                         "  keys: [l]\n" +
                         "  values: [min(d)]\n" +
+                        "  filter: null\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
@@ -2574,8 +2578,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( gb geohash(4b), gs geohash(12b), gi geohash(24b), gl geohash(40b))",
                 "select first(gb), last(gb), first(gs), last(gs), first(gi), last(gi), first(gl), last(gl) from a",
-                "GroupBy vectorized: false\n" +
+                "Async Group By workers: 1\n" +
                         "  values: [first(gb),last(gb),first(gs),last(gs),first(gi),last(gi),first(gl),last(gl)]\n" +
+                        "  filter: null\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
@@ -2587,8 +2592,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( i int, d double)",
                 "select min(d), max(d*d) from a",
-                "GroupBy vectorized: false\n" +
+                "Async Group By workers: 1\n" +
                         "  values: [min(d),max(d*d)]\n" +
+                        "  filter: null\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
@@ -2600,8 +2606,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( i int, d double)",
                 "select max(d+1) from a",
-                "GroupBy vectorized: false\n" +
+                "Async Group By workers: 1\n" +
                         "  values: [max(d+1)]\n" +
+                        "  filter: null\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
@@ -2626,8 +2633,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( i int, d double)",
                 "select first(10), last(d), avg(10), min(10), max(10) from a",
-                "GroupBy vectorized: false\n" +
+                "Async Group By workers: 1\n" +
                         "  values: [first(10),last(d),avg(10),min(10),max(10)]\n" +
+                        "  filter: null\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
@@ -5065,8 +5073,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlan(
                     "SELECT sum(x), sum(x+10) FROM tab",
-                    "GroupBy vectorized: false\n" +
+                    "Async Group By workers: 1\n" +
                             "  values: [sum(x),sum(x+10)]\n" +
+                            "  filter: null\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n"
@@ -5074,8 +5083,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlan(
                     "SELECT sum(x), sum(10+x) FROM tab",
-                    "GroupBy vectorized: false\n" +
+                    "Async Group By workers: 1\n" +
                             "  values: [sum(x),sum(10+x)]\n" +
+                            "  filter: null\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n"
@@ -5312,8 +5322,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlan(
                     "SELECT sum(x), sum(x*10) FROM tab",
-                    "GroupBy vectorized: false\n" +
+                    "Async Group By workers: 1\n" +
                             "  values: [sum(x),sum(x*10)]\n" +
+                            "  filter: null\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n"
@@ -5321,8 +5332,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlan(
                     "SELECT sum(x), sum(10*x) FROM tab",
-                    "GroupBy vectorized: false\n" +
+                    "Async Group By workers: 1\n" +
                             "  values: [sum(x),sum(10*x)]\n" +
+                            "  filter: null\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n"
@@ -5337,8 +5349,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlan(
                     "SELECT sum(x), sum(x*10.0) FROM tab",
-                    "GroupBy vectorized: false\n" +
+                    "Async Group By workers: 1\n" +
                             "  values: [sum(x),sum(x*10.0)]\n" +
+                            "  filter: null\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n"
@@ -5346,8 +5359,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlan(
                     "SELECT sum(x), sum(10.0*x) FROM tab",
-                    "GroupBy vectorized: false\n" +
+                    "Async Group By workers: 1\n" +
                             "  values: [sum(x),sum(10.0*x)]\n" +
+                            "  filter: null\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n"
@@ -5497,8 +5511,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlan(
                     "SELECT sum(x), sum(x-10) FROM tab",
-                    "GroupBy vectorized: false\n" +
+                    "Async Group By workers: 1\n" +
                             "  values: [sum(x),sum(x-10)]\n" +
+                            "  filter: null\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n"
@@ -5506,8 +5521,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlan(
                     "SELECT sum(x), sum(10-x) FROM tab",
-                    "GroupBy vectorized: false\n" +
+                    "Async Group By workers: 1\n" +
                             "  values: [sum(x),sum(10-x)]\n" +
+                            "  filter: null\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n"
