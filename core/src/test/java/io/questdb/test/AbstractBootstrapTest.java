@@ -168,7 +168,6 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
         TestUtils.createTestPath(confPath);
         String file = confPath + Files.SEPARATOR + "server.conf";
         try (PrintWriter writer = new PrintWriter(file, CHARSET)) {
-
             // enable all services, but UDP; it has to be enabled per test
             writer.println(HTTP_ENABLED + "=true");
             writer.println(HTTP_MIN_ENABLED + "=true");
@@ -205,7 +204,9 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
             // extra
             if (extra != null) {
                 for (String s : extra) {
-                    writer.println(s);
+                    // '\' is interpreted by java.util.Properties as an escape character
+                    // and we don't want that for Windows paths.
+                    writer.println(s.replace("\\", "\\\\"));
                 }
             }
         }

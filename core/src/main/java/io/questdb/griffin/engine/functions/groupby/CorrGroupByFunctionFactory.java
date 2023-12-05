@@ -22,14 +22,28 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.griffin.engine.functions.groupby;
 
-public interface TableMetadata extends TableRecordMetadata {
-    int getMaxUncommittedRows();
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 
-    long getO3MaxLag();
+public class CorrGroupByFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "corr(DD)";
+    }
 
-    int getPartitionBy();
+    @Override
+    public boolean isGroupBy() {
+        return true;
+    }
 
-    boolean isSoftLink();
+    @Override
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new CorrGroupByFunction(args.getQuick(0), args.getQuick(1));
+    }
 }

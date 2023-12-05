@@ -22,14 +22,30 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.griffin.engine.functions.groupby;
 
-public interface TableMetadata extends TableRecordMetadata {
-    int getMaxUncommittedRows();
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import org.jetbrains.annotations.NotNull;
 
-    long getO3MaxLag();
+public class CovarPopGroupByFunction extends AbstractCovarGroupByFunction {
 
-    int getPartitionBy();
+    protected CovarPopGroupByFunction(@NotNull Function arg0, @NotNull Function arg1) {
+        super(arg0, arg1);
+    }
 
-    boolean isSoftLink();
+    @Override
+    public double getDouble(Record rec) {
+        long count = rec.getLong(valueIndex + 3);
+        if (count > 0) {
+            double sumXY = rec.getDouble(valueIndex + 2);
+            return sumXY / count;
+        }
+        return Double.NaN;
+    }
+
+    @Override
+    public String getName() {
+        return "covar_pop";
+    }
 }

@@ -257,7 +257,7 @@ public class DropIndexTest extends AbstractCairoTest {
             assertException(
                     "ALTER TABLE підрахунок ALTER COLUMN колонка DROP INDEX",
                     36,
-                    "column is not indexed [name=колонка]"
+                    "column is not indexed [column=колонка]"
             );
         });
     }

@@ -35,7 +35,8 @@ public class FuzzTransactionGenerator {
     private static final int MAX_COLUMNS = 200;
 
     public static ObjList<FuzzTransaction> generateSet(
-            RecordMetadata metadata,
+            RecordMetadata sequencerMetadata,
+            RecordMetadata readerMetadata,
             Rnd rnd,
             long minTimestamp,
             long maxTimestamp,
@@ -59,7 +60,7 @@ public class FuzzTransactionGenerator {
     ) {
         ObjList<FuzzTransaction> transactionList = new ObjList<>();
         int waitBarrierVersion = 0;
-        RecordMetadata meta = GenericRecordMetadata.deepCopyOf(metadata);
+        RecordMetadata meta = deepMetadataCopyOf(sequencerMetadata, readerMetadata);
 
         long lastTimestamp = minTimestamp;
 
@@ -182,6 +183,29 @@ public class FuzzTransactionGenerator {
             ));
         }
         to.setTimestampIndex(from.getTimestampIndex());
+    }
+
+    private static GenericRecordMetadata deepMetadataCopyOf(RecordMetadata sequencerMetadata, RecordMetadata readerMetadata) {
+        if (sequencerMetadata != null && readerMetadata != null) {
+            GenericRecordMetadata metadata = new GenericRecordMetadata();
+            for (int i = 0, n = sequencerMetadata.getColumnCount(); i < n; i++) {
+                metadata.add(
+                        new TableColumnMetadata(
+                                sequencerMetadata.getColumnName(i),
+                                sequencerMetadata.getColumnType(i),
+                                sequencerMetadata.isColumnIndexed(i),
+                                sequencerMetadata.getIndexValueBlockCapacity(i),
+                                sequencerMetadata.isSymbolTableStatic(i),
+                                sequencerMetadata.getMetadata(i),
+                                sequencerMetadata.getWriterIndex(i),
+                                readerMetadata.getColumnCount() > i && readerMetadata.isDedupKey(i)
+                        )
+                );
+            }
+            metadata.setTimestampIndex(sequencerMetadata.getTimestampIndex());
+            return metadata;
+        }
+        return null;
     }
 
     private static int generateNewColumnType(Rnd rnd) {

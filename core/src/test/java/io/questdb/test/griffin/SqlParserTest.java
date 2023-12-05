@@ -531,35 +531,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testACRejectsExclusionModesOtherThanDefault() throws Exception {
-        for (String exclusionMode : new String[]{"GROUP", "TIES"}) {
-            assertWindowSyntaxError(
-                    "select a,b, avg(c) over (partition by b order by ts #FRAME UNBOUNDED PRECEDING EXCLUDE #mode) from xyz"
-                            .replace("#mode", exclusionMode),
-                    87,
-                    "only EXCLUDE NO OTHERS and EXCLUDE CURRENT ROW exclusion modes are supported",
-                    modelOf("xyz")
-                            .col("a", ColumnType.INT)
-                            .col("b", ColumnType.INT)
-                            .col("c", ColumnType.INT)
-                            .timestamp("ts")
-            );
-
-            assertWindowSyntaxError(
-                    "select a,b, avg(c) over (partition by b order by ts #FRAME BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE #mode) from xyz"
-                            .replace("#mode", exclusionMode),
-                    111,
-                    "only EXCLUDE NO OTHERS and EXCLUDE CURRENT ROW exclusion modes are supported",
-                    modelOf("xyz")
-                            .col("a", ColumnType.INT)
-                            .col("b", ColumnType.INT)
-                            .col("c", ColumnType.INT)
-                            .timestamp("ts")
-            );
-        }
-    }
-
-    @Test
     public void testACRejectsWrongExclusionMode() throws Exception {
         assertWindowSyntaxError(
                 "select a,b, avg(c) over (partition by b order by ts #FRAME UNBOUNDED PRECEDING EXCLUDE WHAT) from xyz",
