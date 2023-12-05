@@ -641,11 +641,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlJitRowsThreshold() {
-        return delegate.getSqlJitRowsThreshold();
-    }
-
-    @Override
     public int getSqlJoinContextPoolCapacity() {
         return delegate.getSqlJoinContextPoolCapacity();
     }

@@ -388,8 +388,6 @@ public interface CairoConfiguration {
 
     int getSqlJitPageAddressCacheThreshold();
 
-    int getSqlJitRowsThreshold();
-
     int getSqlJoinContextPoolCapacity();
 
     int getSqlJoinMetadataMaxResizes();

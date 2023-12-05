@@ -647,11 +647,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlJitRowsThreshold() {
-        return Numbers.SIZE_1MB;
-    }
-
-    @Override
     public int getSqlJoinContextPoolCapacity() {
         return 64;
     }
