@@ -1644,6 +1644,285 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFilterOnExcludedIndexedSymbolManyValues() throws Exception {
+        assertMemoryLeak(() -> {
+            drop("drop table if exists trips");
+            ddl("CREATE TABLE trips(l long, s symbol index capacity 5, ts TIMESTAMP) " +
+                    "timestamp(ts) partition by month");
+
+            assertPlan("select s, count() from trips where s is not null order by count desc",
+                    "Sort light\n" +
+                            "  keys: [count desc]\n" +
+                            "    GroupBy vectorized: false\n" +
+                            "      keys: [s]\n" +
+                            "      values: [count(*)]\n" +
+                            "        FilterOnExcludedValues symbolOrder: desc\n" +
+                            "          symbolFilter: s not in [null]\n" +
+                            "            Cursor-order scan\n" +
+                            "            Frame forward scan on: trips\n"
+            );
+
+            insert("insert into trips " +
+                    "  select x, 'A' || ( x%3000 )," +
+                    "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 1000000) " +
+                    "  from long_sequence(10000);");
+            insert("insert into trips " +
+                    "  select x, null," +
+                    "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 1000000) " +
+                    "  from long_sequence(4000);"
+            );
+
+            assertPlan("select s, count() from trips where s is not null",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "    Async JIT Filter workers: 1\n" +
+                            "      filter: s is not null\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trips\n"
+            );
+
+            assertPlan("select s, count() from trips where s is not null and s != 'A1000'",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "    Async JIT Filter workers: 1\n" +
+                            "      filter: (s is not null and s!='A1000')\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trips\n"
+            );
+
+            bindVariableService.clear();
+            bindVariableService.setStr("s1", "A100");
+            assertPlan("select s, count() from trips where s is not null and s != :s1",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "    Async JIT Filter workers: 1\n" +
+                            "      filter: (s is not null and s!=:s1::string)\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trips\n"
+            );
+
+            assertPlan("select s, count() from trips where s is not null and l != 0",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "    Async JIT Filter workers: 1\n" +
+                            "      filter: (l!=0 and s is not null)\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trips\n"
+            );
+
+            assertPlan("select s, count() from trips where s is not null or l != 0",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "    Async JIT Filter workers: 1\n" +
+                            "      filter: (s is not null or l!=0)\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trips\n"
+            );
+
+            assertPlan("select s, count() from trips where l != 0 and s is not null",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "    Async JIT Filter workers: 1\n" +
+                            "      filter: (l!=0 and s is not null)\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trips\n"
+            );
+
+            assertPlan("select s, count() from trips where l != 0 or s is not null",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "    Async JIT Filter workers: 1\n" +
+                            "      filter: (l!=0 or s is not null)\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trips\n"
+            );
+
+            assertPlan("select s, count() from trips where l > 100 or l != 0 and s is not null",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "    Async JIT Filter workers: 1\n" +
+                            "      filter: ((100<l or l!=0) and s is not null)\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trips\n"
+            );
+
+            assertPlan("select s, count() from trips where l > 100 or l != 0 and s not in (null, 'A1000', 'A2000')",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "    Async Filter workers: 1\n" +
+                            "      filter: ((100<l or l!=0) and not (s in [null,A1000,A2000]))\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trips\n"
+            );
+
+            bindVariableService.clear();
+            bindVariableService.setStr("s1", "A500");
+            assertPlan("select s, count() from trips where l > 100 or l != 0 and s not in (null, 'A1000', :s1)",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "    Async Filter workers: 1\n" +
+                            "      filter: ((100<l or l!=0) and not (s in [null,A1000] or s in [:s1::string]))\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trips\n"
+            );
+        });
+    }
+
+    @Test
+    public void testFilterOnExcludedNonIndexedSymbolManyValues() throws Exception {
+        assertMemoryLeak(() -> {
+            drop("drop table if exists trips");
+            ddl("CREATE TABLE trips(l long, s symbol capacity 5, ts TIMESTAMP) " +
+                    "timestamp(ts) partition by month");
+
+            assertPlan("select s, count() from trips where s is not null",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "    Async JIT Filter workers: 1\n" +
+                            "      filter: s is not null\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trips\n"
+            );
+
+            insert("insert into trips " +
+                    "  select x, 'A' || ( x%3000 )," +
+                    "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 1000000) " +
+                    "  from long_sequence(10000);");
+            insert("insert into trips " +
+                    "  select x, null," +
+                    "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 1000000) " +
+                    "  from long_sequence(4000);"
+            );
+
+            assertPlan("select s, count() from trips where s is not null",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "    Async JIT Filter workers: 1\n" +
+                            "      filter: s is not null\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trips\n"
+            );
+
+            assertPlan("select s, count() from trips where s is not null and s != 'A1000'",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "    Async JIT Filter workers: 1\n" +
+                            "      filter: (s is not null and s!='A1000')\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trips\n"
+            );
+
+            bindVariableService.clear();
+            bindVariableService.setStr("s1", "A100");
+            assertPlan("select s, count() from trips where s is not null and s != :s1",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "    Async JIT Filter workers: 1\n" +
+                            "      filter: (s is not null and s!=:s1::string)\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trips\n"
+            );
+
+            assertPlan("select s, count() from trips where s is not null and l != 0",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "    Async JIT Filter workers: 1\n" +
+                            "      filter: (s is not null and l!=0)\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trips\n"
+            );
+
+            assertPlan("select s, count() from trips where s is not null or l != 0",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "    Async JIT Filter workers: 1\n" +
+                            "      filter: (s is not null or l!=0)\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trips\n"
+            );
+
+            assertPlan("select s, count() from trips where l != 0 and s is not null",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "    Async JIT Filter workers: 1\n" +
+                            "      filter: (l!=0 and s is not null)\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trips\n"
+            );
+
+            assertPlan("select s, count() from trips where l != 0 or s is not null",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "    Async JIT Filter workers: 1\n" +
+                            "      filter: (l!=0 or s is not null)\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trips\n"
+            );
+
+            assertPlan("select s, count() from trips where l > 100 or l != 0 and s is not null",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "    Async JIT Filter workers: 1\n" +
+                            "      filter: ((100<l or l!=0) and s is not null)\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trips\n"
+            );
+
+            bindVariableService.clear();
+            bindVariableService.setStr("s1", "A500");
+            assertPlan("select s, count() from trips where l > 100 or l != 0 and s not in (null, 'A1000', :s1)",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "    Async Filter workers: 1\n" +
+                            "      filter: ((100<l or l!=0) and not (s in [null,A1000] or s in [:s1::string]))\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trips\n"
+            );
+
+        });
+    }
+
+    @Test
     public void testFiltersOnIndexedSymbolColumns() throws SqlException {
         ddl("CREATE TABLE reference_prices (\n" +
                 "  venue SYMBOL index ,\n" +
@@ -3066,20 +3345,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
         );
     }
 
-    @Test // TODO: subquery should just read symbols from map
+    @Test
     public void testLatestOn12() throws Exception {
         assertPlan(
                 "create table a ( i int, s symbol, ts timestamp) timestamp(ts);",
                 "select s, i, ts from a where s in (select distinct s from a) and length(s) = 2 latest on ts partition by s",
                 "LatestBySubQuery\n" +
                         "    Subquery\n" +
-                        "        DistinctKey\n" +
-                        "            GroupBy vectorized: true workers: 1\n" +
-                        "              keys: [s]\n" +
-                        "              values: [count(*)]\n" +
-                        "                DataFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: a\n" +
+                        "        DistinctSymbol\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: a\n" +
                         "    Row backward scan on: s\n" +
                         "      filter: length(s)=2\n" +
                         "    Frame backward scan on: a\n"
@@ -3087,60 +3363,51 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     }
 
-    @Test // TODO: subquery should just read symbols from map
+    @Test
     public void testLatestOn12a() throws Exception {
         assertPlan(
                 "create table a ( i int, s symbol, ts timestamp) timestamp(ts);",
                 "select s, i, ts from a where s in (select distinct s from a) latest on ts partition by s",
                 "LatestBySubQuery\n" +
                         "    Subquery\n" +
-                        "        DistinctKey\n" +
-                        "            GroupBy vectorized: true workers: 1\n" +
-                        "              keys: [s]\n" +
-                        "              values: [count(*)]\n" +
-                        "                DataFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: a\n" +
+                        "        DistinctSymbol\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: a\n" +
                         "    Row backward scan on: s\n" +
                         "    Frame backward scan on: a\n"
         );
 
     }
 
-    @Test // TODO: subquery should just read symbols from map
+    @Test
     public void testLatestOn13() throws Exception {
         assertPlan(
                 "create table a ( i int, s symbol index, ts timestamp) timestamp(ts);",
                 "select i, ts, s from a where s in (select distinct s from a) and length(s) = 2 latest on ts partition by s",
                 "LatestBySubQuery\n" +
                         "    Subquery\n" +
-                        "        DistinctKey\n" +
-                        "            GroupBy vectorized: true workers: 1\n" +
-                        "              keys: [s]\n" +
-                        "              values: [count(*)]\n" +
-                        "                DataFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: a\n" +
+                        "        DistinctSymbol\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: a\n" +
                         "    Index backward scan on: s\n" +
                         "      filter: length(s)=2\n" +
                         "    Frame backward scan on: a\n"
         );
     }
 
-    @Test // TODO: subquery should just read symbols from map
+    @Test
     public void testLatestOn13a() throws Exception {
         assertPlan(
                 "create table a ( i int, s symbol index, ts timestamp) timestamp(ts);",
                 "select i, ts, s from a where s in (select distinct s from a) latest on ts partition by s",
                 "LatestBySubQuery\n" +
                         "    Subquery\n" +
-                        "        DistinctKey\n" +
-                        "            GroupBy vectorized: true workers: 1\n" +
-                        "              keys: [s]\n" +
-                        "              values: [count(*)]\n" +
-                        "                DataFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: a\n" +
+                        "        DistinctSymbol\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: a\n" +
                         "    Index backward scan on: s\n" +
                         "    Frame backward scan on: a\n"
         );
@@ -5915,34 +6182,26 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    // TODO: should scan symbols table (note: some symbols from the symbol table may be
-    //  not present in the end table due to, say, UPDATE)
     public void testSelectDistinct2() throws Exception {
         assertPlan(
                 "create table tab ( s symbol, ts timestamp);",
                 "select distinct(s) from tab",
-                "DistinctKey\n" +
-                        "    GroupBy vectorized: true workers: 1\n" +
-                        "      keys: [s]\n" +
-                        "      values: [count(*)]\n" +
-                        "        DataFrame\n" +
-                        "            Row forward scan\n" +
-                        "            Frame forward scan on: tab\n"
+                "DistinctSymbol\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: tab\n"
         );
     }
 
-    @Test // TODO: should scan symbols table
+    @Test
     public void testSelectDistinct3() throws Exception {
         assertPlan(
                 "create table tab ( s symbol index, ts timestamp);",
                 "select distinct(s) from tab",
-                "DistinctKey\n" +
-                        "    GroupBy vectorized: true workers: 1\n" +
-                        "      keys: [s]\n" +
-                        "      values: [count(*)]\n" +
-                        "        DataFrame\n" +
-                        "            Row forward scan\n" +
-                        "            Frame forward scan on: tab\n"
+                "DistinctSymbol\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: tab\n"
         );
     }
 
@@ -9360,3 +9619,4 @@ public class ExplainPlanTest extends AbstractCairoTest {
         });
     }
 }
+

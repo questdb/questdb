@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.wal;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.api.MemoryR;
@@ -615,7 +616,8 @@ public class FuzzRunner {
                 return getReader(tableNameWal);
             } catch (CairoException e) {
                 if (Chars.contains(e.getFlyweightMessage(), "table does not exist")
-                        || Chars.contains(e.getFlyweightMessage(), "table name is reserved")) {
+                        || Chars.contains(e.getFlyweightMessage(), "table name is reserved")
+                        || e instanceof EntryLockedException) {
                     LOG.error().$((Throwable) e).$();
                     Os.sleep(10);
                 } else {

@@ -2974,19 +2974,25 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 final GenericRecordMetadata distinctColumnMetadata = new GenericRecordMetadata();
                 distinctColumnMetadata.add(readerMetadata.getColumnMetadata(columnIndex));
-                if (ColumnType.isSymbol(columnType) || columnType == ColumnType.INT) {
+                if (ColumnType.isSymbol(columnType)) {
                     final RecordCursorFactory factory = generateSubQuery(model.getNestedModel(), executionContext);
-
+                    try {
+                        return new DistinctSymbolRecordCursorFactory(engine.getConfiguration(), factory);
+                    } catch (Throwable t) {
+                        Misc.free(factory);
+                        throw t;
+                    }
+                } else if (columnType == ColumnType.INT) {
+                    final RecordCursorFactory factory = generateSubQuery(model.getNestedModel(), executionContext);
                     if (factory.supportPageFrameCursor()) {
                         try {
-                            return new DistinctKeyRecordCursorFactory(
+                            return new DistinctIntKeyRecordCursorFactory(
                                     engine.getConfiguration(),
                                     factory,
                                     distinctColumnMetadata,
                                     arrayColumnTypes,
                                     tempVaf,
-                                    executionContext.getSharedWorkerCount(),
-                                    tempSymbolSkewIndexes
+                                    executionContext.getSharedWorkerCount()
                             );
                         } catch (Throwable t) {
                             Misc.free(factory);
@@ -4464,34 +4470,65 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     );
                 } else if (
                         nKeyExcludedValues > 0
-                                && reader.getSymbolMapReader(keyColumnIndex).getSymbolCount() < configuration.getMaxSymbolNotEqualsCount()
                 ) {
-                    Function filter = compileFilter(intrinsicModel, myMeta, executionContext);
-                    if (filter != null && filter.isConstant()) {
-                        try {
-                            if (!filter.getBool(null)) {
-                                Misc.free(dfcFactory);
-                                return new EmptyTableRecordCursorFactory(myMeta);
+                    if (reader.getSymbolMapReader(keyColumnIndex).getSymbolCount() < configuration.getMaxSymbolNotEqualsCount()) {
+                        Function filter = compileFilter(intrinsicModel, myMeta, executionContext);
+                        if (filter != null && filter.isConstant()) {
+                            try {
+                                if (!filter.getBool(null)) {
+                                    Misc.free(dfcFactory);
+                                    return new EmptyTableRecordCursorFactory(myMeta);
+                                }
+                            } finally {
+                                filter = Misc.free(filter);
                             }
-                        } finally {
-                            filter = Misc.free(filter);
+                        }
+
+                        return new FilterOnExcludedValuesRecordCursorFactory(
+                                myMeta,
+                                dfcFactory,
+                                intrinsicModel.keyExcludedValueFuncs,
+                                keyColumnIndex,
+                                filter,
+                                model.getOrderByAdviceMnemonic(),
+                                orderByKeyColumn,
+                                orderByTimestamp,
+                                getOrderByDirectionOrDefault(model, 0),
+                                indexDirection,
+                                columnIndexes,
+                                configuration.getMaxSymbolNotEqualsCount()
+                        );
+                    } else if (intrinsicModel.keyExcludedNodes.size() > 0) {
+                        // restore filter
+                        ExpressionNode root = intrinsicModel.keyExcludedNodes.getQuick(0);
+
+                        for (int i = 1, n = intrinsicModel.keyExcludedNodes.size(); i < n; i++) {
+                            ExpressionNode expression = intrinsicModel.keyExcludedNodes.getQuick(i);
+
+                            ExpressionNode newRoot = expressionNodePool.next();
+                            newRoot.token = "and";
+                            newRoot.type = OPERATION;
+                            newRoot.precedence = 0;
+                            newRoot.paramCount = 2;
+                            newRoot.lhs = expression;
+                            newRoot.rhs = root;
+
+                            root = newRoot;
+                        }
+
+                        if (intrinsicModel.filter == null) {
+                            intrinsicModel.filter = root;
+                        } else {
+                            ExpressionNode filter = expressionNodePool.next();
+                            filter.token = "and";
+                            filter.type = OPERATION;
+                            filter.precedence = 0;
+                            filter.paramCount = 2;
+                            filter.lhs = intrinsicModel.filter;
+                            filter.rhs = root;
+                            intrinsicModel.filter = filter;
                         }
                     }
-
-                    return new FilterOnExcludedValuesRecordCursorFactory(
-                            myMeta,
-                            dfcFactory,
-                            intrinsicModel.keyExcludedValueFuncs,
-                            keyColumnIndex,
-                            filter,
-                            model.getOrderByAdviceMnemonic(),
-                            orderByKeyColumn,
-                            orderByTimestamp,
-                            getOrderByDirectionOrDefault(model, 0),
-                            indexDirection,
-                            columnIndexes,
-                            configuration.getMaxSymbolNotEqualsCount()
-                    );
                 }
             }
 
