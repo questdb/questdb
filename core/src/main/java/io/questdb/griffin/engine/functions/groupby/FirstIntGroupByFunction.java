@@ -74,6 +74,19 @@ public class FirstIntGroupByFunction extends IntFunction implements GroupByFunct
     }
 
     @Override
+    public boolean isParallelismSupported() {
+        return arg.isReadThreadSafe();
+    }
+
+    @Override
+    public void merge(MapValue destMapValue, MapValue srcMapValue) {
+        if (destMapValue.isNew()) {
+            int srcFirst = srcMapValue.getInt(valueIndex);
+            destMapValue.putInt(valueIndex, srcFirst);
+        }
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.INT);

@@ -72,6 +72,24 @@ public class MaxFloatGroupByFunction extends FloatFunction implements GroupByFun
     }
 
     @Override
+    public boolean isParallelismSupported() {
+        return arg.isReadThreadSafe();
+    }
+
+    @Override
+    public void merge(MapValue destMapValue, MapValue srcMapValue) {
+        float srcMax = srcMapValue.getFloat(valueIndex);
+        if (destMapValue.isNew()) {
+            destMapValue.putFloat(valueIndex, srcMax);
+        } else {
+            float destMax = destMapValue.getFloat(valueIndex);
+            if (srcMax > destMax || Float.isNaN(destMax)) {
+                destMapValue.putFloat(valueIndex, srcMax);
+            }
+        }
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.FLOAT);

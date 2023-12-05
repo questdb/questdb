@@ -44,4 +44,10 @@ public class LastCharGroupByFunction extends FirstCharGroupByFunction {
     public String getName() {
         return "last";
     }
+
+    @Override
+    public void merge(MapValue destMapValue, MapValue srcMapValue) {
+        char srcLast = srcMapValue.getChar(valueIndex);
+        destMapValue.putChar(valueIndex, srcLast);
+    }
 }

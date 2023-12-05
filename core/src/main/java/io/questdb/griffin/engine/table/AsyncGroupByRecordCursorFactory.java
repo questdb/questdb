@@ -61,6 +61,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
     private final PageFrameSequence<AsyncGroupByAtom> frameSequence;
     private final int workerCount;
 
+    // TODO(puzpuzpuz): make sure we close all functions properly
     public AsyncGroupByRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
             @NotNull CairoConfiguration configuration,

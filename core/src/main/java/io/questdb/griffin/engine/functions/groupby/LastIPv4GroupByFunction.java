@@ -43,4 +43,10 @@ public class LastIPv4GroupByFunction extends FirstIPv4GroupByFunction {
     public String getName() {
         return "last";
     }
+
+    @Override
+    public void merge(MapValue destMapValue, MapValue srcMapValue) {
+        int srcLast = srcMapValue.getInt(valueIndex);
+        destMapValue.putInt(valueIndex, srcLast);
+    }
 }

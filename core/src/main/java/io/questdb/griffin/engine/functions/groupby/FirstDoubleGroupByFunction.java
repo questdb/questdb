@@ -44,7 +44,7 @@ public class FirstDoubleGroupByFunction extends DoubleFunction implements GroupB
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putDouble(this.valueIndex, this.arg.getDouble(record));
+        mapValue.putDouble(valueIndex, arg.getDouble(record));
     }
 
     @Override
@@ -59,12 +59,25 @@ public class FirstDoubleGroupByFunction extends DoubleFunction implements GroupB
 
     @Override
     public double getDouble(Record rec) {
-        return rec.getDouble(this.valueIndex);
+        return rec.getDouble(valueIndex);
     }
 
     @Override
     public String getName() {
         return "first";
+    }
+
+    @Override
+    public boolean isParallelismSupported() {
+        return arg.isReadThreadSafe();
+    }
+
+    @Override
+    public void merge(MapValue destMapValue, MapValue srcMapValue) {
+        if (destMapValue.isNew()) {
+            double srcFirst = srcMapValue.getDouble(valueIndex);
+            destMapValue.putDouble(valueIndex, srcFirst);
+        }
     }
 
     @Override
@@ -75,7 +88,7 @@ public class FirstDoubleGroupByFunction extends DoubleFunction implements GroupB
 
     @Override
     public void setDouble(MapValue mapValue, double value) {
-        mapValue.putDouble(this.valueIndex, value);
+        mapValue.putDouble(valueIndex, value);
     }
 
     @Override

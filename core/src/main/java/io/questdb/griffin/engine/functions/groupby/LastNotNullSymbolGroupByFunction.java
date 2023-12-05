@@ -38,7 +38,7 @@ public class LastNotNullSymbolGroupByFunction extends FirstSymbolGroupByFunction
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        if (SymbolTable.VALUE_IS_NULL != arg.getInt(record)) {
+        if (arg.getInt(record) != SymbolTable.VALUE_IS_NULL) {
             computeFirst(mapValue, record);
         }
     }
@@ -46,5 +46,13 @@ public class LastNotNullSymbolGroupByFunction extends FirstSymbolGroupByFunction
     @Override
     public String getName() {
         return "last_not_null";
+    }
+
+    @Override
+    public void merge(MapValue destMapValue, MapValue srcMapValue) {
+        int srcLast = srcMapValue.getInt(valueIndex);
+        if (srcLast != SymbolTable.VALUE_IS_NULL) {
+            destMapValue.putInt(valueIndex, srcLast);
+        }
     }
 }

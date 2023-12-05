@@ -44,4 +44,10 @@ public class LastByteGroupByFunction extends FirstByteGroupByFunction {
     public String getName() {
         return "last";
     }
+
+    @Override
+    public void merge(MapValue destMapValue, MapValue srcMapValue) {
+        byte srcLast = srcMapValue.getByte(valueIndex);
+        destMapValue.putByte(valueIndex, srcLast);
+    }
 }

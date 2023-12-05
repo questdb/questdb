@@ -79,6 +79,24 @@ public class MaxIPv4GroupByFunction extends IPv4Function implements GroupByFunct
     }
 
     @Override
+    public boolean isParallelismSupported() {
+        return arg.isReadThreadSafe();
+    }
+
+    @Override
+    public void merge(MapValue destMapValue, MapValue srcMapValue) {
+        long srcMax = Numbers.ipv4ToLong(srcMapValue.getIPv4(valueIndex));
+        if (destMapValue.isNew()) {
+            destMapValue.putInt(valueIndex, (int) srcMax);
+        } else {
+            long destMax = Numbers.ipv4ToLong(destMapValue.getIPv4(valueIndex));
+            if (srcMax > destMax) {
+                destMapValue.putInt(valueIndex, (int) srcMax);
+            }
+        }
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.IPv4);

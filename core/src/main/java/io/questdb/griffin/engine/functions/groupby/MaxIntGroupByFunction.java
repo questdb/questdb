@@ -40,7 +40,6 @@ public class MaxIntGroupByFunction extends IntFunction implements GroupByFunctio
     private int valueIndex;
 
     public MaxIntGroupByFunction(@NotNull Function arg) {
-        super();
         this.arg = arg;
     }
 
@@ -76,6 +75,24 @@ public class MaxIntGroupByFunction extends IntFunction implements GroupByFunctio
     @Override
     public boolean isConstant() {
         return false;
+    }
+
+    @Override
+    public boolean isParallelismSupported() {
+        return arg.isReadThreadSafe();
+    }
+
+    @Override
+    public void merge(MapValue destMapValue, MapValue srcMapValue) {
+        int srcMax = srcMapValue.getInt(valueIndex);
+        if (destMapValue.isNew()) {
+            destMapValue.putInt(valueIndex, srcMax);
+        } else {
+            int destMax = destMapValue.getInt(valueIndex);
+            if (srcMax > destMax) {
+                destMapValue.putInt(valueIndex, srcMax);
+            }
+        }
     }
 
     @Override

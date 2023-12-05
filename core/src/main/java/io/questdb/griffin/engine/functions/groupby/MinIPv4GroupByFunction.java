@@ -40,7 +40,6 @@ public class MinIPv4GroupByFunction extends IPv4Function implements GroupByFunct
     private int valueIndex;
 
     public MinIPv4GroupByFunction(@NotNull Function arg) {
-        super();
         this.arg = arg;
     }
 
@@ -76,6 +75,24 @@ public class MinIPv4GroupByFunction extends IPv4Function implements GroupByFunct
     @Override
     public boolean isConstant() {
         return false;
+    }
+
+    @Override
+    public boolean isParallelismSupported() {
+        return arg.isReadThreadSafe();
+    }
+
+    @Override
+    public void merge(MapValue destMapValue, MapValue srcMapValue) {
+        long srcMin = Numbers.ipv4ToLong(srcMapValue.getIPv4(valueIndex));
+        if (destMapValue.isNew()) {
+            destMapValue.putInt(valueIndex, (int) srcMin);
+        } else {
+            long destMin = Numbers.ipv4ToLong(destMapValue.getIPv4(valueIndex));
+            if (srcMin != Numbers.IPv4_NULL && (srcMin < destMin || destMin == Numbers.IPv4_NULL)) {
+                destMapValue.putInt(valueIndex, (int) srcMin);
+            }
+        }
     }
 
     @Override

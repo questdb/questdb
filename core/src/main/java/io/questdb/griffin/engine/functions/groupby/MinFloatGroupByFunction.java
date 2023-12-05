@@ -72,6 +72,24 @@ public class MinFloatGroupByFunction extends FloatFunction implements GroupByFun
     }
 
     @Override
+    public boolean isParallelismSupported() {
+        return arg.isReadThreadSafe();
+    }
+
+    @Override
+    public void merge(MapValue destMapValue, MapValue srcMapValue) {
+        float srcMin = srcMapValue.getFloat(valueIndex);
+        if (destMapValue.isNew()) {
+            destMapValue.putFloat(valueIndex, srcMin);
+        } else {
+            float destMin = destMapValue.getFloat(valueIndex);
+            if (srcMin < destMin || Float.isNaN(destMin)) {
+                destMapValue.putFloat(valueIndex, srcMin);
+            }
+        }
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.FLOAT);

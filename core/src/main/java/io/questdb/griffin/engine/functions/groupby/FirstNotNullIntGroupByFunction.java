@@ -46,5 +46,4 @@ public class FirstNotNullIntGroupByFunction extends FirstIntGroupByFunction {
     public String getName() {
         return "first_not_null";
     }
-
 }

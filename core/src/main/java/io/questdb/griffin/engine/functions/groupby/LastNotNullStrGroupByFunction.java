@@ -37,7 +37,7 @@ public class LastNotNullStrGroupByFunction extends FirstStrGroupByFunction {
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        if (null != arg.getStr(record)) {
+        if (arg.getStr(record) != null) {
             computeFirst(mapValue, record);
         }
     }

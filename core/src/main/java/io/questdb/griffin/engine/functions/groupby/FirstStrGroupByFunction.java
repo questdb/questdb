@@ -53,11 +53,11 @@ public class FirstStrGroupByFunction extends StrFunction implements GroupByFunct
     public void computeFirst(MapValue mapValue, Record record) {
         CharSequence str = arg.getStr(record);
         sink.clear();
-        if (null != str) {
-            mapValue.putBool(this.valueIndex, true);
+        if (str != null) {
+            mapValue.putBool(valueIndex, true);
             sink.put(str);
         } else {
-            mapValue.putBool(this.valueIndex, false);
+            mapValue.putBool(valueIndex, false);
         }
     }
 

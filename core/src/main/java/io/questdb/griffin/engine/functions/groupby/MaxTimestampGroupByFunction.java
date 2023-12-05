@@ -73,6 +73,24 @@ public class MaxTimestampGroupByFunction extends TimestampFunction implements Gr
     }
 
     @Override
+    public boolean isParallelismSupported() {
+        return arg.isReadThreadSafe();
+    }
+
+    @Override
+    public void merge(MapValue destMapValue, MapValue srcMapValue) {
+        long srcMax = srcMapValue.getLong(valueIndex);
+        if (destMapValue.isNew()) {
+            destMapValue.putLong(valueIndex, srcMax);
+        } else {
+            long destMax = destMapValue.getLong(valueIndex);
+            if (srcMax > destMax) {
+                destMapValue.putLong(valueIndex, srcMax);
+            }
+        }
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.TIMESTAMP);

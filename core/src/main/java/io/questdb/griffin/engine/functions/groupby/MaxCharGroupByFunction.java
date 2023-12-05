@@ -72,6 +72,24 @@ public class MaxCharGroupByFunction extends CharFunction implements GroupByFunct
     }
 
     @Override
+    public boolean isParallelismSupported() {
+        return arg.isReadThreadSafe();
+    }
+
+    @Override
+    public void merge(MapValue destMapValue, MapValue srcMapValue) {
+        char srcMax = srcMapValue.getChar(valueIndex);
+        if (destMapValue.isNew()) {
+            destMapValue.putChar(valueIndex, srcMax);
+        } else {
+            char destMax = destMapValue.getChar(valueIndex);
+            if (srcMax > destMax) {
+                destMapValue.putChar(valueIndex, srcMax);
+            }
+        }
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.CHAR);

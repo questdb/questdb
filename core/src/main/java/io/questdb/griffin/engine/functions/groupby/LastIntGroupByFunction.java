@@ -44,4 +44,10 @@ public class LastIntGroupByFunction extends FirstIntGroupByFunction {
     public String getName() {
         return "last";
     }
+
+    @Override
+    public void merge(MapValue destMapValue, MapValue srcMapValue) {
+        int srcLast = srcMapValue.getInt(valueIndex);
+        destMapValue.putInt(valueIndex, srcLast);
+    }
 }

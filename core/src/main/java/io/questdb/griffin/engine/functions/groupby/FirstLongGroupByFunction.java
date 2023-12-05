@@ -45,7 +45,7 @@ public class FirstLongGroupByFunction extends LongFunction implements GroupByFun
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putLong(this.valueIndex, this.arg.getLong(record));
+        mapValue.putLong(valueIndex, arg.getLong(record));
     }
 
     @Override
@@ -60,12 +60,25 @@ public class FirstLongGroupByFunction extends LongFunction implements GroupByFun
 
     @Override
     public long getLong(Record rec) {
-        return rec.getLong(this.valueIndex);
+        return rec.getLong(valueIndex);
     }
 
     @Override
     public String getName() {
         return "first";
+    }
+
+    @Override
+    public boolean isParallelismSupported() {
+        return arg.isReadThreadSafe();
+    }
+
+    @Override
+    public void merge(MapValue destMapValue, MapValue srcMapValue) {
+        if (destMapValue.isNew()) {
+            long srcFirst = srcMapValue.getLong(valueIndex);
+            destMapValue.putLong(valueIndex, srcFirst);
+        }
     }
 
     @Override
@@ -76,7 +89,7 @@ public class FirstLongGroupByFunction extends LongFunction implements GroupByFun
 
     @Override
     public void setLong(MapValue mapValue, long value) {
-        mapValue.putTimestamp(this.valueIndex, value);
+        mapValue.putTimestamp(valueIndex, value);
     }
 
     @Override

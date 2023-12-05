@@ -44,7 +44,7 @@ public class FirstCharGroupByFunction extends CharFunction implements GroupByFun
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putChar(this.valueIndex, this.arg.getChar(record));
+        mapValue.putChar(valueIndex, arg.getChar(record));
     }
 
     @Override
@@ -59,12 +59,25 @@ public class FirstCharGroupByFunction extends CharFunction implements GroupByFun
 
     @Override
     public char getChar(Record rec) {
-        return rec.getChar(this.valueIndex);
+        return rec.getChar(valueIndex);
     }
 
     @Override
     public String getName() {
         return "first";
+    }
+
+    @Override
+    public boolean isParallelismSupported() {
+        return arg.isReadThreadSafe();
+    }
+
+    @Override
+    public void merge(MapValue destMapValue, MapValue srcMapValue) {
+        if (destMapValue.isNew()) {
+            char srcFirst = srcMapValue.getChar(valueIndex);
+            destMapValue.putChar(valueIndex, srcFirst);
+        }
     }
 
     @Override
@@ -74,7 +87,7 @@ public class FirstCharGroupByFunction extends CharFunction implements GroupByFun
     }
 
     public void setChar(MapValue mapValue, char value) {
-        mapValue.putChar(this.valueIndex, value);
+        mapValue.putChar(valueIndex, value);
     }
 
     @Override

@@ -72,6 +72,24 @@ public class MaxDoubleGroupByFunction extends DoubleFunction implements GroupByF
     }
 
     @Override
+    public boolean isParallelismSupported() {
+        return arg.isReadThreadSafe();
+    }
+
+    @Override
+    public void merge(MapValue destMapValue, MapValue srcMapValue) {
+        double srcMax = srcMapValue.getDouble(valueIndex);
+        if (destMapValue.isNew()) {
+            destMapValue.putDouble(valueIndex, srcMax);
+        } else {
+            double destMax = destMapValue.getDouble(valueIndex);
+            if (srcMax > destMax || Double.isNaN(destMax)) {
+                destMapValue.putDouble(valueIndex, srcMax);
+            }
+        }
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.DOUBLE);

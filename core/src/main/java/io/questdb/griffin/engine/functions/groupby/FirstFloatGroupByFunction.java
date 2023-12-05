@@ -44,7 +44,7 @@ public class FirstFloatGroupByFunction extends FloatFunction implements GroupByF
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putFloat(this.valueIndex, this.arg.getFloat(record));
+        mapValue.putFloat(valueIndex, arg.getFloat(record));
     }
 
     @Override
@@ -59,12 +59,25 @@ public class FirstFloatGroupByFunction extends FloatFunction implements GroupByF
 
     @Override
     public float getFloat(Record rec) {
-        return rec.getFloat(this.valueIndex);
+        return rec.getFloat(valueIndex);
     }
 
     @Override
     public String getName() {
         return "first";
+    }
+
+    @Override
+    public boolean isParallelismSupported() {
+        return arg.isReadThreadSafe();
+    }
+
+    @Override
+    public void merge(MapValue destMapValue, MapValue srcMapValue) {
+        if (destMapValue.isNew()) {
+            float srcFirst = srcMapValue.getFloat(valueIndex);
+            destMapValue.putFloat(valueIndex, srcFirst);
+        }
     }
 
     @Override
@@ -75,7 +88,7 @@ public class FirstFloatGroupByFunction extends FloatFunction implements GroupByF
 
     @Override
     public void setFloat(MapValue mapValue, float value) {
-        mapValue.putFloat(this.valueIndex, value);
+        mapValue.putFloat(valueIndex, value);
     }
 
     @Override

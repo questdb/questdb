@@ -36,7 +36,6 @@ import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 public class FirstIPv4GroupByFunction extends IPv4Function implements GroupByFunction, UnaryFunction {
-
     protected final Function arg;
     protected int valueIndex;
 
@@ -72,6 +71,19 @@ public class FirstIPv4GroupByFunction extends IPv4Function implements GroupByFun
     @Override
     public boolean isConstant() {
         return false;
+    }
+
+    @Override
+    public boolean isParallelismSupported() {
+        return arg.isReadThreadSafe();
+    }
+
+    @Override
+    public void merge(MapValue destMapValue, MapValue srcMapValue) {
+        if (destMapValue.isNew()) {
+            int srcFirst = srcMapValue.getInt(valueIndex);
+            destMapValue.putInt(valueIndex, srcFirst);
+        }
     }
 
     @Override

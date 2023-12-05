@@ -44,4 +44,10 @@ public class LastTimestampGroupByFunction extends FirstTimestampGroupByFunction 
     public String getName() {
         return "last";
     }
+
+    @Override
+    public void merge(MapValue destMapValue, MapValue srcMapValue) {
+        long srcLast = srcMapValue.getLong(valueIndex);
+        destMapValue.putLong(valueIndex, srcLast);
+    }
 }

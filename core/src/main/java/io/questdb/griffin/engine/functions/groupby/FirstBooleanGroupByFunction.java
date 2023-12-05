@@ -36,7 +36,7 @@ import org.jetbrains.annotations.NotNull;
 
 public class FirstBooleanGroupByFunction extends BooleanFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
-    private int valueIndex;
+    protected int valueIndex;
 
     public FirstBooleanGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
@@ -44,7 +44,7 @@ public class FirstBooleanGroupByFunction extends BooleanFunction implements Grou
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putBool(this.valueIndex, this.arg.getBool(record));
+        mapValue.putBool(valueIndex, arg.getBool(record));
     }
 
     @Override
@@ -59,12 +59,25 @@ public class FirstBooleanGroupByFunction extends BooleanFunction implements Grou
 
     @Override
     public boolean getBool(Record rec) {
-        return rec.getBool(this.valueIndex);
+        return rec.getBool(valueIndex);
     }
 
     @Override
     public String getName() {
         return "first";
+    }
+
+    @Override
+    public boolean isParallelismSupported() {
+        return arg.isReadThreadSafe();
+    }
+
+    @Override
+    public void merge(MapValue destMapValue, MapValue srcMapValue) {
+        if (destMapValue.isNew()) {
+            boolean srcFirst = srcMapValue.getBool(valueIndex);
+            destMapValue.putBool(valueIndex, srcFirst);
+        }
     }
 
     @Override
@@ -74,7 +87,7 @@ public class FirstBooleanGroupByFunction extends BooleanFunction implements Grou
     }
 
     public void setBool(MapValue mapValue, boolean value) {
-        mapValue.putBool(this.valueIndex, value);
+        mapValue.putBool(valueIndex, value);
     }
 
     @Override

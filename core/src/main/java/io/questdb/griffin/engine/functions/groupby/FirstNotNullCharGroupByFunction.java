@@ -47,5 +47,4 @@ public class FirstNotNullCharGroupByFunction extends FirstCharGroupByFunction {
     public String getName() {
         return "first_not_null";
     }
-
 }

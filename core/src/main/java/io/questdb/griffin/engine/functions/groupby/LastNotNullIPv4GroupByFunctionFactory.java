@@ -67,6 +67,14 @@ public class LastNotNullIPv4GroupByFunctionFactory implements FunctionFactory {
         public String getName() {
             return "last_not_null";
         }
+
+        @Override
+        public void merge(MapValue destMapValue, MapValue srcMapValue) {
+            int srcLast = srcMapValue.getInt(valueIndex);
+            if (srcLast != Numbers.IPv4_NULL) {
+                destMapValue.putInt(valueIndex, srcLast);
+            }
+        }
     }
 }
 

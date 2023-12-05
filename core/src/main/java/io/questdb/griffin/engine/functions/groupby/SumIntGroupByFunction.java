@@ -85,6 +85,24 @@ public class SumIntGroupByFunction extends LongFunction implements GroupByFuncti
     }
 
     @Override
+    public boolean isParallelismSupported() {
+        return arg.isReadThreadSafe();
+    }
+
+    @Override
+    public void merge(MapValue destMapValue, MapValue srcMapValue) {
+        int srcSum = srcMapValue.getInt(valueIndex);
+        long srcCount = srcMapValue.getLong(valueIndex + 1);
+        if (destMapValue.isNew()) {
+            destMapValue.putInt(valueIndex, srcSum);
+            destMapValue.putLong(valueIndex + 1, srcCount);
+        } else {
+            destMapValue.addInt(valueIndex, srcSum);
+            destMapValue.addLong(valueIndex + 1, srcCount);
+        }
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.LONG);

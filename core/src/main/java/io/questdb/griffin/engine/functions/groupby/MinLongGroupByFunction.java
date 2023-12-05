@@ -84,7 +84,7 @@ public class MinLongGroupByFunction extends LongFunction implements GroupByFunct
             destMapValue.putLong(valueIndex, srcMin);
         } else {
             long destMin = destMapValue.getLong(valueIndex);
-            if (srcMin < destMin) {
+            if (srcMin != Numbers.LONG_NaN && (srcMin < destMin || destMin == Numbers.LONG_NaN)) {
                 destMapValue.putLong(valueIndex, srcMin);
             }
         }

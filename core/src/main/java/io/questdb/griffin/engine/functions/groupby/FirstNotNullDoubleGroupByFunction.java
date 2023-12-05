@@ -46,5 +46,4 @@ public class FirstNotNullDoubleGroupByFunction extends FirstDoubleGroupByFunctio
     public String getName() {
         return "first_not_null";
     }
-
 }

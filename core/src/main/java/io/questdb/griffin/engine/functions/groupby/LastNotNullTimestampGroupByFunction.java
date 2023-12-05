@@ -37,7 +37,7 @@ public class LastNotNullTimestampGroupByFunction extends FirstTimestampGroupByFu
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        if (Numbers.LONG_NaN != arg.getTimestamp(record)) {
+        if (arg.getTimestamp(record) != Numbers.LONG_NaN) {
             computeFirst(mapValue, record);
         }
     }
@@ -45,5 +45,13 @@ public class LastNotNullTimestampGroupByFunction extends FirstTimestampGroupByFu
     @Override
     public String getName() {
         return "last_not_null";
+    }
+
+    @Override
+    public void merge(MapValue destMapValue, MapValue srcMapValue) {
+        long srcLast = srcMapValue.getLong(valueIndex);
+        if (srcLast != Numbers.LONG_NaN) {
+            destMapValue.putLong(valueIndex, srcLast);
+        }
     }
 }

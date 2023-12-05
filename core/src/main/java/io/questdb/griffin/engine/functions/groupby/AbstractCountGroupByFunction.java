@@ -60,6 +60,21 @@ public abstract class AbstractCountGroupByFunction extends LongFunction implemen
     }
 
     @Override
+    public boolean isParallelismSupported() {
+        return arg.isReadThreadSafe();
+    }
+
+    @Override
+    public void merge(MapValue destMapValue, MapValue srcMapValue) {
+        long srcCount = srcMapValue.getLong(valueIndex);
+        if (destMapValue.isNew()) {
+            destMapValue.putLong(valueIndex, srcCount);
+        } else {
+            destMapValue.addLong(valueIndex, srcCount);
+        }
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.LONG);
