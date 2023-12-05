@@ -133,7 +133,7 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
                 WindowFunction function = unorderedFunctions.getQuick(i);
                 if (function.getPassCount() > WindowFunction.ONE_PASS) {
                     if (unorderedTmp == null) {
-                        unorderedTmp = new ObjList<WindowFunction>();
+                        unorderedTmp = new ObjList<>();
                     }
                     unorderedTmp.add(function);
                 }
@@ -279,7 +279,6 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
             if (!isRecordChainBuilt) {
                 buildRecordChain();
             }
-
             recordChain.calculateSize(circuitBreaker, counter);
         }
 

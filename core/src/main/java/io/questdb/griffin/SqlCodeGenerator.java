@@ -2973,19 +2973,25 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 final GenericRecordMetadata distinctColumnMetadata = new GenericRecordMetadata();
                 distinctColumnMetadata.add(readerMetadata.getColumnMetadata(columnIndex));
-                if (ColumnType.isSymbol(columnType) || columnType == ColumnType.INT) {
+                if (ColumnType.isSymbol(columnType)) {
                     final RecordCursorFactory factory = generateSubQuery(model.getNestedModel(), executionContext);
-
+                    try {
+                        return new DistinctSymbolRecordCursorFactory(engine.getConfiguration(), factory);
+                    } catch (Throwable t) {
+                        Misc.free(factory);
+                        throw t;
+                    }
+                } else if (columnType == ColumnType.INT) {
+                    final RecordCursorFactory factory = generateSubQuery(model.getNestedModel(), executionContext);
                     if (factory.supportPageFrameCursor()) {
                         try {
-                            return new DistinctKeyRecordCursorFactory(
+                            return new DistinctIntKeyRecordCursorFactory(
                                     engine.getConfiguration(),
                                     factory,
                                     distinctColumnMetadata,
                                     arrayColumnTypes,
                                     tempVaf,
-                                    executionContext.getSharedWorkerCount(),
-                                    tempSymbolSkewIndexes
+                                    executionContext.getSharedWorkerCount()
                             );
                         } catch (Throwable t) {
                             Misc.free(factory);
