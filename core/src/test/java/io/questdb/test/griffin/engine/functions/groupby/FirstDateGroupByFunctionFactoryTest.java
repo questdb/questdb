@@ -28,10 +28,10 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.test.AbstractCairoTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -39,7 +39,6 @@ public class FirstDateGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAllNull() throws SqlException {
-
         ddl("create table tab (f date)");
 
         try (TableWriter w = getWriter("tab")) {
@@ -53,7 +52,7 @@ public class FirstDateGroupByFunctionFactoryTest extends AbstractCairoTest {
         try (RecordCursorFactory factory = select("select first(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
-                Assert.assertEquals(1, cursor.size());
+                Assert.assertEquals(-1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
                 Assert.assertEquals(Numbers.LONG_NaN, record.getLong(0));
             }
@@ -62,7 +61,6 @@ public class FirstDateGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testFirstNull() throws SqlException {
-
         ddl("create table tab (f date)");
 
         final Rnd rnd = new Rnd();
@@ -80,7 +78,7 @@ public class FirstDateGroupByFunctionFactoryTest extends AbstractCairoTest {
         try (RecordCursorFactory factory = select("select first(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
-                Assert.assertEquals(1, cursor.size());
+                Assert.assertEquals(-1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
                 Assert.assertEquals(Numbers.LONG_NaN, record.getLong(0));
             }
@@ -89,7 +87,6 @@ public class FirstDateGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testNonNull() throws SqlException {
-
         ddl("create table tab (f date)");
 
         final Rnd rnd = new Rnd();
@@ -104,7 +101,7 @@ public class FirstDateGroupByFunctionFactoryTest extends AbstractCairoTest {
         try (RecordCursorFactory factory = select("select first(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
-                Assert.assertEquals(1, cursor.size());
+                Assert.assertEquals(-1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
                 Assert.assertEquals(4689592037643856L, record.getLong(0));
             }
@@ -113,7 +110,8 @@ public class FirstDateGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFill() throws Exception {
-        assertQuery("b\tfirst\tk\n" +
+        assertQuery(
+                "b\tfirst\tk\n" +
                         "\t\t1970-01-03T00:00:00.000000Z\n" +
                         "VTJW\t1970-01-01T23:18:12.817Z\t1970-01-03T00:00:00.000000Z\n" +
                         "RXGZ\t1970-01-01T14:03:03.614Z\t1970-01-03T00:00:00.000000Z\n" +
@@ -274,7 +272,6 @@ public class FirstDateGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testSomeNull() throws SqlException {
-
         ddl("create table tab (f date)");
 
         try (TableWriter w = getWriter("tab")) {
@@ -291,7 +288,7 @@ public class FirstDateGroupByFunctionFactoryTest extends AbstractCairoTest {
         try (RecordCursorFactory factory = select("select first(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
-                Assert.assertEquals(1, cursor.size());
+                Assert.assertEquals(-1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
                 Assert.assertEquals(100, record.getLong(0));
             }

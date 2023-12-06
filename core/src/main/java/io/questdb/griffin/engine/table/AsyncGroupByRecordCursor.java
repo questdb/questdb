@@ -77,6 +77,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         if (isOpen) {
             isOpen = false;
             Misc.free(dataMap);
+            Misc.clearObjList(groupByFunctions);
             mapCursor = Misc.free(mapCursor);
 
             if (frameSequence != null) {

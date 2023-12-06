@@ -51,7 +51,7 @@ public class MinFloatGroupByFunctionFactoryTest extends AbstractCairoTest {
         try (RecordCursorFactory factory = select("select min(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
-                Assert.assertEquals(1, cursor.size());
+                Assert.assertEquals(-1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
                 Assert.assertTrue(Float.isNaN(record.getFloat(0)));
             }
@@ -77,7 +77,7 @@ public class MinFloatGroupByFunctionFactoryTest extends AbstractCairoTest {
         try (RecordCursorFactory factory = select("select min(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
-                Assert.assertEquals(1, cursor.size());
+                Assert.assertEquals(-1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
                 Assert.assertEquals(0.0011075139045715332, record.getFloat(0), 0.0001);
             }
@@ -100,7 +100,7 @@ public class MinFloatGroupByFunctionFactoryTest extends AbstractCairoTest {
         try (RecordCursorFactory factory = select("select min(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
-                Assert.assertEquals(1, cursor.size());
+                Assert.assertEquals(-1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
                 Assert.assertEquals(0.0011075139045715332, record.getFloat(0), 0.0001);
             }
@@ -109,7 +109,8 @@ public class MinFloatGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFill() throws Exception {
-        assertQuery("b\tmin\tk\n" +
+        assertQuery(
+                "b\tmin\tk\n" +
                         "HYRX\t0.1143\t1970-01-03T00:00:00.000000Z\n" +
                         "PEHN\t0.1250\t1970-01-03T00:00:00.000000Z\n" +
                         "\t0.0230\t1970-01-03T00:00:00.000000Z\n" +
@@ -133,7 +134,9 @@ public class MinFloatGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "CPSW\t0.1195\t1970-01-03T09:00:00.000000Z\n" +
                         "PEHN\t0.2535\t1970-01-03T09:00:00.000000Z\n" +
                         "HYRX\t0.0400\t1970-01-03T09:00:00.000000Z\n" +
-                        "VTJW\t-0.2179\t1970-01-03T09:00:00.000000Z\n", "select b, min(a), k from x sample by 3h fill(linear)", "create table x as " +
+                        "VTJW\t-0.2179\t1970-01-03T09:00:00.000000Z\n",
+                "select b, min(a), k from x sample by 3h fill(linear)",
+                "create table x as " +
                         "(" +
                         "select" +
                         " rnd_float(0) a," +
@@ -141,14 +144,17 @@ public class MinFloatGroupByFunctionFactoryTest extends AbstractCairoTest {
                         " timestamp_sequence(172800000000, 360000000) k" +
                         " from" +
                         " long_sequence(100)" +
-                        ") timestamp(k) partition by NONE", "k", "insert into x select * from (" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                "insert into x select * from (" +
                         "select" +
                         " rnd_float(0) a," +
                         " rnd_symbol(5,4,4,1) b," +
                         " timestamp_sequence(277200000000, 360000000) k" +
                         " from" +
                         " long_sequence(35)" +
-                        ") timestamp(k)", "b\tmin\tk\n" +
+                        ") timestamp(k)",
+                "b\tmin\tk\n" +
                         "HYRX\t0.1143\t1970-01-03T00:00:00.000000Z\n" +
                         "PEHN\t0.1250\t1970-01-03T00:00:00.000000Z\n" +
                         "\t0.0230\t1970-01-03T00:00:00.000000Z\n" +
@@ -269,6 +275,10 @@ public class MinFloatGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "PEHN\t-1.1862\t1970-01-04T06:00:00.000000Z\n" +
                         "VTJW\t-2.2037\t1970-01-04T06:00:00.000000Z\n" +
                         "CPSW\t-4.1995\t1970-01-04T06:00:00.000000Z\n" +
-                        "RXGZ\t-1.3064\t1970-01-04T06:00:00.000000Z\n", true, true, false);
+                        "RXGZ\t-1.3064\t1970-01-04T06:00:00.000000Z\n",
+                true,
+                true,
+                false
+        );
     }
 }

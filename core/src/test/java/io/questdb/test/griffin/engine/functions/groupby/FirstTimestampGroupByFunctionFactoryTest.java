@@ -39,7 +39,6 @@ public class FirstTimestampGroupByFunctionFactoryTest extends AbstractCairoTest 
 
     @Test
     public void testAllNull() throws SqlException {
-
         ddl("create table tab (f timestamp)");
 
         try (TableWriter w = getWriter("tab")) {
@@ -53,7 +52,7 @@ public class FirstTimestampGroupByFunctionFactoryTest extends AbstractCairoTest 
         try (RecordCursorFactory factory = select("select first(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
-                Assert.assertEquals(1, cursor.size());
+                Assert.assertEquals(-1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
                 Assert.assertEquals(Numbers.LONG_NaN, record.getTimestamp(0));
             }
@@ -62,7 +61,6 @@ public class FirstTimestampGroupByFunctionFactoryTest extends AbstractCairoTest 
 
     @Test
     public void testFirstNull() throws SqlException {
-
         ddl("create table tab (f timestamp)");
 
         final Rnd rnd = new Rnd();
@@ -80,7 +78,7 @@ public class FirstTimestampGroupByFunctionFactoryTest extends AbstractCairoTest 
         try (RecordCursorFactory factory = select("select first(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
-                Assert.assertEquals(1, cursor.size());
+                Assert.assertEquals(-1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
                 Assert.assertEquals(Numbers.LONG_NaN, record.getTimestamp(0));
             }
@@ -89,7 +87,6 @@ public class FirstTimestampGroupByFunctionFactoryTest extends AbstractCairoTest 
 
     @Test
     public void testNonNull() throws SqlException {
-
         ddl("create table tab (f timestamp)");
 
         final Rnd rnd = new Rnd();
@@ -104,7 +101,7 @@ public class FirstTimestampGroupByFunctionFactoryTest extends AbstractCairoTest 
         try (RecordCursorFactory factory = select("select first(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
-                Assert.assertEquals(1, cursor.size());
+                Assert.assertEquals(-1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
                 Assert.assertEquals(4689592037643856L, record.getLong(0));
             }
@@ -113,7 +110,6 @@ public class FirstTimestampGroupByFunctionFactoryTest extends AbstractCairoTest 
 
     @Test
     public void testSomeNull() throws SqlException {
-
         ddl("create table tab (f timestamp)");
 
         try (TableWriter w = getWriter("tab")) {
@@ -130,7 +126,7 @@ public class FirstTimestampGroupByFunctionFactoryTest extends AbstractCairoTest 
         try (RecordCursorFactory factory = select("select first(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
-                Assert.assertEquals(1, cursor.size());
+                Assert.assertEquals(-1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
                 Assert.assertEquals(100, record.getLong(0));
             }

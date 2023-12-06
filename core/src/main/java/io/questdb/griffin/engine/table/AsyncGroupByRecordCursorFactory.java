@@ -51,6 +51,7 @@ import org.jetbrains.annotations.Nullable;
 import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_DESC;
 
+// TODO(puzpuzpuz): consider splitting AsyncNotKeyedGroupByRecordCursorFactory class
 public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     private static final PageFrameReducer REDUCER = AsyncGroupByRecordCursorFactory::aggregate;

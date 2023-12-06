@@ -28,10 +28,10 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.test.AbstractCairoTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -39,7 +39,6 @@ public class LastDateGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAllNull() throws SqlException {
-
         ddl("create table tab (f date)");
 
         try (TableWriter w = getWriter("tab")) {
@@ -53,7 +52,7 @@ public class LastDateGroupByFunctionFactoryTest extends AbstractCairoTest {
         try (RecordCursorFactory factory = select("select last(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
-                Assert.assertEquals(1, cursor.size());
+                Assert.assertEquals(-1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
                 Assert.assertEquals(Numbers.LONG_NaN, record.getLong(0));
             }
@@ -62,7 +61,6 @@ public class LastDateGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testNonNull() throws SqlException {
-
         ddl("create table tab (f date)");
 
         final Rnd rnd = new Rnd();
@@ -77,7 +75,7 @@ public class LastDateGroupByFunctionFactoryTest extends AbstractCairoTest {
         try (RecordCursorFactory factory = select("select last(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
-                Assert.assertEquals(1, cursor.size());
+                Assert.assertEquals(-1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
                 Assert.assertEquals(-6919361415374675248L, record.getLong(0));
             }
@@ -247,7 +245,6 @@ public class LastDateGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testSomeNull() throws SqlException {
-
         ddl("create table tab (f date)");
 
         try (TableWriter w = getWriter("tab")) {
@@ -264,7 +261,7 @@ public class LastDateGroupByFunctionFactoryTest extends AbstractCairoTest {
         try (RecordCursorFactory factory = select("select last(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
-                Assert.assertEquals(1, cursor.size());
+                Assert.assertEquals(-1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
                 Assert.assertEquals(Numbers.LONG_NaN, record.getDate(0));
             }

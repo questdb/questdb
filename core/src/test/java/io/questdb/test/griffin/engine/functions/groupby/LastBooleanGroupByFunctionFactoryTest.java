@@ -37,7 +37,6 @@ public class LastBooleanGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAllNull() throws SqlException {
-
         ddl("create table tab (f boolean)");
 
         try (TableWriter w = getWriter("tab")) {
@@ -51,7 +50,7 @@ public class LastBooleanGroupByFunctionFactoryTest extends AbstractCairoTest {
         try (RecordCursorFactory factory = select("select last(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
-                Assert.assertEquals(1, cursor.size());
+                Assert.assertEquals(-1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
                 Assert.assertFalse(record.getBool(0));
             }
@@ -66,7 +65,7 @@ public class LastBooleanGroupByFunctionFactoryTest extends AbstractCairoTest {
                 "select last(a)a from tab",
                 "create table tab as (select true a union select true a union select false a)",
                 null,
-                false,
+                true,
                 true
         );
     }
@@ -79,7 +78,7 @@ public class LastBooleanGroupByFunctionFactoryTest extends AbstractCairoTest {
                 "select last(a)a from tab",
                 "create table tab as (select false a union select false a union select true a)",
                 null,
-                false,
+                true,
                 true
         );
     }
