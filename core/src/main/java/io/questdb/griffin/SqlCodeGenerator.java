@@ -3106,7 +3106,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (specialCaseKeys) {
                     QueryModel.restoreWhereClause(expressionNodePool, model);
                 }
-                nestedFilterExpr = nested.getWhereClause();
+                nestedFilterExpr = ExpressionNode.deepClone(expressionNodePool, nested.getWhereClause());
                 factory = generateSubQuery(model, executionContext);
                 pageFramingSupported = factory.supportPageFrameCursor();
             }

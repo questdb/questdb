@@ -2345,6 +2345,21 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test // only none, single int|symbol key cases are vectorized
+    public void testGroupByBooleanWithFilter() throws Exception {
+        assertPlan(
+                "create table a ( l long, b boolean)",
+                "select b, min(l)  from a where b = true group by b",
+                "Async Group By workers: 1\n" +
+                        "  keys: [b]\n" +
+                        "  values: [min(l)]\n" +
+                        "  filter: b=true\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+    }
+
+    @Test // only none, single int|symbol key cases are vectorized
     public void testGroupByDouble() throws Exception {
         assertPlan(
                 "create table a ( l long, d double)",
@@ -2581,6 +2596,20 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "Async Group By workers: 1\n" +
                         "  values: [first(gb),last(gb),first(gs),last(gs),first(gi),last(gi),first(gl),last(gl)]\n" +
                         "  filter: null\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+    }
+
+    @Test
+    public void testGroupByNotKeyed12() throws Exception {
+        assertPlan(
+                "create table a ( gb geohash(4b), gs geohash(12b), gi geohash(24b), gl geohash(40b), i int)",
+                "select first(gb), last(gb), first(gs), last(gs), first(gi), last(gi), first(gl), last(gl) from a where i > 42",
+                "Async Group By workers: 1\n" +
+                        "  values: [first(gb),last(gb),first(gs),last(gs),first(gi),last(gi),first(gl),last(gl)]\n" +
+                        "  filter: 42<first2\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"

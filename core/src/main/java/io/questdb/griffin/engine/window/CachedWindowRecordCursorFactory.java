@@ -211,7 +211,6 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
             }
 
             sink.optAttr("unorderedFunctions", unorderedFunctions, true);
-
         } finally {
             sink.useBaseMetadata(oldVal);
         }

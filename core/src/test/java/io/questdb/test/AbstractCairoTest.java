@@ -1619,7 +1619,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         sink.put("EXPLAIN ").put(query);
 
         try (ExplainPlanFactory planFactory = getPlanFactory(sink); RecordCursor cursor = planFactory.getCursor(sqlExecutionContext)) {
-
             if (!JitUtil.isJitSupported()) {
                 expectedPlan = Chars.toString(expectedPlan).replace("Async JIT", "Async");
             }
