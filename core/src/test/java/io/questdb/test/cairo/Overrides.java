@@ -75,6 +75,7 @@ public class Overrides implements ConfigurationOverrides {
     private int pageFrameReduceQueueCapacity = -1;
     private int pageFrameReduceShardCount = -1;
     private Boolean parallelFilterEnabled = null;
+    private Boolean parallelGroupByEnabled = null;
     private int parallelImportStatusLogKeepNDays = -1;
     private long partitionO3SplitThreshold;
     private int recreateDistressedSequencerAttempts = 3;
@@ -96,9 +97,9 @@ public class Overrides implements ConfigurationOverrides {
     private int tableRegistryCompactionThreshold;
     private long walApplyTableTimeQuota = -1;
     private int walLookAheadTransactionCount = -1;
-    private int walMaxSegmentFileDescriptorsCache = -1;
     private long walMaxLagSize = -1;
     private int walMaxLagTxnCount = -1;
+    private int walMaxSegmentFileDescriptorsCache = -1;
     private long walPurgeInterval = -1;
     private long walSegmentRolloverRowCount = -1;
     private long walSegmentRolloverSize = -1;
@@ -367,11 +368,6 @@ public class Overrides implements ConfigurationOverrides {
     }
 
     @Override
-    public int getWalMaxSegmentFileDescriptorsCache() {
-        return walMaxSegmentFileDescriptorsCache;
-    }
-
-    @Override
     public long getWalMaxLagSize() {
         return walMaxLagSize;
     }
@@ -379,6 +375,11 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public int getWalMaxLagTxnCount() {
         return walMaxLagTxnCount;
+    }
+
+    @Override
+    public int getWalMaxSegmentFileDescriptorsCache() {
+        return walMaxSegmentFileDescriptorsCache;
     }
 
     @Override
@@ -447,6 +448,11 @@ public class Overrides implements ConfigurationOverrides {
     }
 
     @Override
+    public Boolean isParallelGroupByEnabled() {
+        return parallelGroupByEnabled;
+    }
+
+    @Override
     public Boolean isWriterMixedIOEnabled() {
         return writerMixedIOEnabled;
     }
@@ -476,6 +482,7 @@ public class Overrides implements ConfigurationOverrides {
         snapshotInstanceId = null;
         snapshotRecoveryEnabled = null;
         parallelFilterEnabled = null;
+        parallelGroupByEnabled = null;
         writerMixedIOEnabled = null;
         columnPreTouchEnabled = null;
         writerCommandQueueCapacity = 4;
@@ -690,6 +697,11 @@ public class Overrides implements ConfigurationOverrides {
     }
 
     @Override
+    public void setParallelGroupByEnabled(Boolean parallelGroupByEnabled) {
+        this.parallelGroupByEnabled = parallelGroupByEnabled;
+    }
+
+    @Override
     public void setParallelImportStatusLogKeepNDays(int parallelImportStatusLogKeepNDays) {
         this.parallelImportStatusLogKeepNDays = parallelImportStatusLogKeepNDays;
     }
@@ -800,18 +812,17 @@ public class Overrides implements ConfigurationOverrides {
     }
 
     @Override
-    public void setWalMaxSegmentFileDescriptorsCache(int value) {
-        walMaxSegmentFileDescriptorsCache = value;
-    }
-
-    @Override
     public void setWalMaxLagSize(long value) {
         walMaxLagSize = value;
     }
 
-
     public void setWalMaxLagTxnCount(int walMaxLagTxnCount) {
         this.walMaxLagTxnCount = walMaxLagTxnCount;
+    }
+
+    @Override
+    public void setWalMaxSegmentFileDescriptorsCache(int value) {
+        walMaxSegmentFileDescriptorsCache = value;
     }
 
     @Override

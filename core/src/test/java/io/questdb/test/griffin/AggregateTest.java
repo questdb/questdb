@@ -44,11 +44,37 @@ import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class KeyedAggregationTest extends AbstractCairoTest {
+@RunWith(Parameterized.class)
+public class AggregateTest extends AbstractCairoTest {
+    private final boolean enableParallelGroupBy;
+
+    public AggregateTest(boolean enableParallelGroupBy) {
+        this.enableParallelGroupBy = enableParallelGroupBy;
+    }
+
+    @Parameterized.Parameters(name = "parallel={0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {true},
+                {false}
+        });
+    }
+
+    @Override
+    @Before
+    public void setUp() {
+        super.setUp();
+        configOverrideParallelGroupByEnabled(enableParallelGroupBy);
+    }
 
     @Test
     public void testAggByHourReoptimization() throws Exception {
@@ -151,7 +177,8 @@ public class KeyedAggregationTest extends AbstractCairoTest {
                 new TypeVal(ColumnType.getGeoHashTypeWithBits(3), ":GEOHASH(3b)"),
                 new TypeVal(ColumnType.getGeoHashTypeWithBits(10), ":GEOHASH(2c)"),
                 new TypeVal(ColumnType.getGeoHashTypeWithBits(20), ":GEOHASH(4c)"),
-                new TypeVal(ColumnType.getGeoHashTypeWithBits(60), ":GEOHASH(12c)")};
+                new TypeVal(ColumnType.getGeoHashTypeWithBits(60), ":GEOHASH(12c)")
+        };
 
         testAggregations(aggregateFunctions, aggregateColTypes);
     }
@@ -1066,12 +1093,12 @@ public class KeyedAggregationTest extends AbstractCairoTest {
 
     @Test
     public void testNonRostiWithManyAggregateFunctions1() throws Exception {
-        executeWithPool(1, 32, KeyedAggregationTest::runGroupByWithAgg);
+        executeWithPool(1, 32, AggregateTest::runGroupByWithAgg);
     }
 
     @Test
     public void testNonRostiWithManyAggregateFunctions2() throws Exception {
-        executeWithPool(4, 32, KeyedAggregationTest::runGroupByWithAgg);
+        executeWithPool(4, 32, AggregateTest::runGroupByWithAgg);
     }
 
     //test rosti failing to alloc in parallel aggregate computation
@@ -1306,62 +1333,62 @@ public class KeyedAggregationTest extends AbstractCairoTest {
 
     @Test
     public void testRostiWithColTopsAndIdleWorkers() throws Exception {
-        executeWithPool(4, 16, KeyedAggregationTest::runCountTestWithColTops);
+        executeWithPool(4, 16, AggregateTest::runCountTestWithColTops);
     }
 
     @Test
     public void testRostiWithColTopsAndManyWorkers() throws Exception {
-        executeWithPool(4, 32, KeyedAggregationTest::runGroupByTest);
+        executeWithPool(4, 32, AggregateTest::runGroupByTest);
     }
 
     @Test
     public void testRostiWithColTopsAndNoWorkers() throws Exception {
-        executeWithPool(0, 0, KeyedAggregationTest::runGroupByTest);
+        executeWithPool(0, 0, AggregateTest::runGroupByTest);
     }
 
     @Test
     public void testRostiWithIdleWorkers() throws Exception {
-        executeWithPool(4, 16, KeyedAggregationTest::runGroupByTest);
+        executeWithPool(4, 16, AggregateTest::runGroupByTest);
     }
 
     @Test
     public void testRostiWithIdleWorkers2() throws Exception {
-        executeWithPool(4, 1, KeyedAggregationTest::runGroupByTest);
+        executeWithPool(4, 1, AggregateTest::runGroupByTest);
     }
 
     @Test
     public void testRostiWithKeyColTopsAndIdleWorkers() throws Exception {
-        executeWithPool(4, 16, KeyedAggregationTest::runCountTestWithKeyColTops);
+        executeWithPool(4, 16, AggregateTest::runCountTestWithKeyColTops);
     }
 
     @Test
     public void testRostiWithKeyColTopsAndManyWorkers() throws Exception {
-        executeWithPool(4, 32, KeyedAggregationTest::runCountTestWithKeyColTops);
+        executeWithPool(4, 32, AggregateTest::runCountTestWithKeyColTops);
     }
 
     @Test
     public void testRostiWithKeyColTopsAndNoWorkers() throws Exception {
-        executeWithPool(0, 0, KeyedAggregationTest::runCountTestWithKeyColTops);
+        executeWithPool(0, 0, AggregateTest::runCountTestWithKeyColTops);
     }
 
     @Test
     public void testRostiWithManyAggregateFunctions1() throws Exception {
-        executeWithPool(1, 32, KeyedAggregationTest::runGroupByIntWithAgg);
+        executeWithPool(1, 32, AggregateTest::runGroupByIntWithAgg);
     }
 
     @Test
     public void testRostiWithManyAggregateFunctions2() throws Exception {
-        executeWithPool(2, 32, KeyedAggregationTest::runGroupByIntWithAgg);
+        executeWithPool(2, 32, AggregateTest::runGroupByIntWithAgg);
     }
 
     @Test
     public void testRostiWithManyWorkers() throws Exception {
-        executeWithPool(4, 32, KeyedAggregationTest::runGroupByTest);
+        executeWithPool(4, 32, AggregateTest::runGroupByTest);
     }
 
     @Test
     public void testRostiWithNoWorkers() throws Exception {
-        executeWithPool(0, 0, KeyedAggregationTest::runGroupByTest);
+        executeWithPool(0, 0, AggregateTest::runGroupByTest);
     }
 
     @Test
@@ -1460,14 +1487,14 @@ public class KeyedAggregationTest extends AbstractCairoTest {
 
         snapshotMemoryUsage();
         CompiledQuery query = compiler.compile("select k, " +
-                "count(1) c1, " +
-                "count(*) cstar, " +
-                "count(i) ci, " +
-                "count(l) cl, " +
-                "count(d) cd, " +
-                "count(dat) cdat, " +
-                "count(ts) cts " +
-                "from x order by k",
+                        "count(1) c1, " +
+                        "count(*) cstar, " +
+                        "count(i) ci, " +
+                        "count(l) cl, " +
+                        "count(d) cd, " +
+                        "count(dat) cdat, " +
+                        "count(ts) cts " +
+                        "from x order by k",
                 sqlExecutionContext
         );
         try {
@@ -1729,7 +1756,6 @@ public class KeyedAggregationTest extends AbstractCairoTest {
         }
 
         for (TypeVal colType : aggregateColTypes) {
-
             for (String func : aggregateFunctions) {
                 sql.setLength(7);
                 resultHeader.setLength(0);

@@ -139,11 +139,11 @@ public interface ConfigurationOverrides {
 
     long getWalApplyTableTimeQuota();
 
-    int getWalMaxSegmentFileDescriptorsCache();
-
     long getWalMaxLagSize();
 
     int getWalMaxLagTxnCount();
+
+    int getWalMaxSegmentFileDescriptorsCache();
 
     long getWalPurgeInterval();
 
@@ -170,6 +170,8 @@ public interface ConfigurationOverrides {
     boolean isO3QuickSortEnabled();
 
     Boolean isParallelFilterEnabled();
+
+    Boolean isParallelGroupByEnabled();
 
     Boolean isWriterMixedIOEnabled();
 
@@ -249,6 +251,8 @@ public interface ConfigurationOverrides {
 
     void setParallelFilterEnabled(Boolean parallelFilterEnabled);
 
+    void setParallelGroupByEnabled(Boolean parallelGroupByEnabled);
+
     void setParallelImportStatusLogKeepNDays(int parallelImportStatusLogKeepNDays);
 
     void setPartitionO3SplitThreshold(long value);
@@ -293,11 +297,11 @@ public interface ConfigurationOverrides {
 
     void setWalLookAheadTransactionCount(int walApplyTableTimeQuota);
 
-    void setWalMaxSegmentFileDescriptorsCache(int value);
-
     void setWalMaxLagSize(long value);
 
     void setWalMaxLagTxnCount(int walMaxLagTxnCount);
+
+    void setWalMaxSegmentFileDescriptorsCache(int value);
 
     void setWalPurgeInterval(long walPurgeInterval);
 

@@ -28,9 +28,9 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.test.AbstractCairoTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Numbers;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -38,7 +38,6 @@ public class FirstIntGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAllNull() throws SqlException {
-
         ddl("create table tab (f int)");
 
         try (TableWriter w = getWriter("tab")) {
@@ -52,7 +51,7 @@ public class FirstIntGroupByFunctionFactoryTest extends AbstractCairoTest {
         try (RecordCursorFactory factory = select("select first(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
-                Assert.assertEquals(1, cursor.size());
+                Assert.assertEquals(-1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
                 Assert.assertEquals(Numbers.INT_NaN, record.getInt(0));
             }
@@ -61,7 +60,6 @@ public class FirstIntGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testFirstNull() throws SqlException {
-
         ddl("create table tab (f int)");
 
         try (TableWriter w = getWriter("tab")) {
@@ -78,7 +76,7 @@ public class FirstIntGroupByFunctionFactoryTest extends AbstractCairoTest {
         try (RecordCursorFactory factory = select("select first(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
-                Assert.assertEquals(1, cursor.size());
+                Assert.assertEquals(-1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
                 Assert.assertEquals(Numbers.INT_NaN, record.getInt(0));
             }
@@ -87,7 +85,6 @@ public class FirstIntGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testNonNull() throws SqlException {
-
         ddl("create table tab (f int)");
 
         try (TableWriter w = getWriter("tab")) {
@@ -102,7 +99,7 @@ public class FirstIntGroupByFunctionFactoryTest extends AbstractCairoTest {
         try (RecordCursorFactory factory = select("select first(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
-                Assert.assertEquals(1, cursor.size());
+                Assert.assertEquals(-1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
                 Assert.assertEquals(100, record.getInt(0));
             }
@@ -111,7 +108,8 @@ public class FirstIntGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFill() throws Exception {
-        assertQuery("b\tfirst\tk\n" +
+        assertQuery(
+                "b\tfirst\tk\n" +
                         "\t1530831067\t1970-01-03T00:00:00.000000Z\n" +
                         "VTJW\t1125579207\t1970-01-03T00:00:00.000000Z\n" +
                         "RXGZ\t-1520872171\t1970-01-03T00:00:00.000000Z\n" +
@@ -135,7 +133,9 @@ public class FirstIntGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "PEHN\t-1398499532\t1970-01-03T09:00:00.000000Z\n" +
                         "VTJW\t-1377625589\t1970-01-03T09:00:00.000000Z\n" +
                         "RXGZ\tNaN\t1970-01-03T09:00:00.000000Z\n" +
-                        "HYRX\t2147483647\t1970-01-03T09:00:00.000000Z\n", "select b, first(a), k from x sample by 3h fill(linear)", "create table x as " +
+                        "HYRX\t2147483647\t1970-01-03T09:00:00.000000Z\n",
+                "select b, first(a), k from x sample by 3h fill(linear)",
+                "create table x as " +
                         "(" +
                         "select" +
                         " rnd_int() a," +
@@ -143,14 +143,17 @@ public class FirstIntGroupByFunctionFactoryTest extends AbstractCairoTest {
                         " timestamp_sequence(172800000000, 360000000) k" +
                         " from" +
                         " long_sequence(100)" +
-                        ") timestamp(k) partition by NONE", "k", "insert into x select * from (" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                "insert into x select * from (" +
                         "select" +
                         " rnd_int() a," +
                         " rnd_symbol(5,4,4,1) b," +
                         " timestamp_sequence(277200000000, 360000000) k" +
                         " from" +
                         " long_sequence(35)" +
-                        ") timestamp(k)", "b\tfirst\tk\n" +
+                        ") timestamp(k)",
+                "b\tfirst\tk\n" +
                         "\t1530831067\t1970-01-03T00:00:00.000000Z\n" +
                         "VTJW\t1125579207\t1970-01-03T00:00:00.000000Z\n" +
                         "RXGZ\t-1520872171\t1970-01-03T00:00:00.000000Z\n" +
@@ -271,12 +274,15 @@ public class FirstIntGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "PEHN\t2147483647\t1970-01-04T06:00:00.000000Z\n" +
                         "CPSW\t112322330\t1970-01-04T06:00:00.000000Z\n" +
                         "HYRX\t2147483647\t1970-01-04T06:00:00.000000Z\n" +
-                        "ZMZV\tNaN\t1970-01-04T06:00:00.000000Z\n", true, true, false);
+                        "ZMZV\tNaN\t1970-01-04T06:00:00.000000Z\n",
+                true,
+                true,
+                false
+        );
     }
 
     @Test
     public void testSomeNull() throws SqlException {
-
         ddl("create table tab (f int)");
 
         try (TableWriter w = getWriter("tab")) {
@@ -293,11 +299,10 @@ public class FirstIntGroupByFunctionFactoryTest extends AbstractCairoTest {
         try (RecordCursorFactory factory = select("select first(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
-                Assert.assertEquals(1, cursor.size());
+                Assert.assertEquals(-1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
                 Assert.assertEquals(100, record.getInt(0));
             }
         }
     }
-
 }

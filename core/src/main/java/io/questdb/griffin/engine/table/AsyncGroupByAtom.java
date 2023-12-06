@@ -47,10 +47,13 @@ import org.jetbrains.annotations.Nullable;
 import java.io.Closeable;
 
 public class AsyncGroupByAtom implements StatefulAtom, Closeable, Plannable {
+    public static final ColumnTypes nonKeyedStubColumnType = new SingleColumnType(ColumnType.LONG);
+    private static final RecordSink nonKeyedStubSink = (r, w) -> w.putLong(0);
 
     private final Function filter;
     private final GroupByFunctionsUpdater functionUpdater;
     private final RecordSink mapSink;
+    private final boolean nonKeyed;
     private final ObjList<Function> perWorkerFilters;
     private final PerWorkerLocks perWorkerLocks;
 
@@ -68,11 +71,24 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Plannable {
         this.filter = filter;
         this.perWorkerFilters = perWorkerFilters;
         functionUpdater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
-        perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
-        mapSink = RecordSinkFactory.getInstance(asm, columnTypes, listColumnFilter, false);
+        if (perWorkerFilters != null) {
+            perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
+        } else {
+            perWorkerLocks = null;
+        }
+        if (listColumnFilter.size() > 0) {
+            mapSink = RecordSinkFactory.getInstance(asm, columnTypes, listColumnFilter, false);
+            nonKeyed = false;
+        } else {
+            mapSink = nonKeyedStubSink;
+            nonKeyed = true;
+        }
     }
 
     public int acquire(int workerId, boolean owner, SqlExecutionCircuitBreaker circuitBreaker) {
+        if (perWorkerLocks == null) {
+            return -1;
+        }
         if (workerId == -1 && owner) {
             // Owner thread is free to use the original filter anytime.
             return -1;
@@ -130,6 +146,10 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Plannable {
             // DataUnavailableException thrown on worker threads when filtering.
             Function.initCursor(perWorkerFilters);
         }
+    }
+
+    public boolean isNonKeyed() {
+        return nonKeyed;
     }
 
     public void release(int filterId) {

@@ -24,9 +24,9 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.map.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
@@ -51,16 +51,16 @@ class AsyncGroupByRecordCursor implements RecordCursor {
     private final VirtualRecord recordA;
     private final VirtualRecord recordB;
     private final ObjList<Function> recordFunctions;
-    private int frameIndex;
     private int frameLimit;
-    private PageFrameSequence<?> frameSequence;
+    private PageFrameSequence<AsyncGroupByAtom> frameSequence;
+    private boolean isDataMapBuilt;
     private boolean isOpen;
     private RecordCursor mapCursor;
 
     public AsyncGroupByRecordCursor(
             CairoConfiguration configuration,
-            @Transient @NotNull ArrayColumnTypes keyTypes,
-            @Transient @NotNull ArrayColumnTypes valueTypes,
+            @Transient @NotNull ColumnTypes keyTypes,
+            @Transient @NotNull ColumnTypes valueTypes,
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions
     ) {
@@ -110,7 +110,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
 
     @Override
     public boolean hasNext() {
-        if (frameIndex == -1) {
+        if (!isDataMapBuilt) {
             buildMap();
         }
         return mapCursor.hasNext();
@@ -130,7 +130,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
 
     @Override
     public long size() {
-        if (frameIndex == -1) {
+        if (!isDataMapBuilt) {
             return -1;
         }
         return mapCursor != null ? mapCursor.size() : -1;
@@ -150,6 +150,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
             frameLimit = frameSequence.getFrameCount() - 1;
         }
 
+        int frameIndex = -1;
         boolean allFramesActive = true;
         try {
             do {
@@ -210,22 +211,32 @@ class AsyncGroupByRecordCursor implements RecordCursor {
             throwTimeoutException();
         }
 
+        // If the map is still empty in the non-keyed case, initialize an empty entry.
+        final AsyncGroupByAtom atom = frameSequence.getAtom();
+        if (atom.isNonKeyed() && dataMap.size() == 0) {
+            MapKey key = dataMap.withKey();
+            atom.getMapSink().copy(null, key);
+            MapValue value = key.createValue();
+            atom.getFunctionUpdater().updateEmpty(value);
+        }
+
         mapCursor = dataMap.getCursor();
         recordA.of(mapCursor.getRecord());
         recordB.of(mapCursor.getRecordB());
+        isDataMapBuilt = true;
     }
 
     private void throwTimeoutException() {
         throw CairoException.nonCritical().put(AsyncFilteredRecordCursor.exceptionMessage).setInterruption(true);
     }
 
-    void of(PageFrameSequence<?> frameSequence) {
+    void of(PageFrameSequence<AsyncGroupByAtom> frameSequence) {
         if (!isOpen) {
             isOpen = true;
             dataMap.reopen();
         }
         this.frameSequence = frameSequence;
-        frameIndex = -1;
+        isDataMapBuilt = false;
         frameLimit = -1;
     }
 }

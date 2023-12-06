@@ -146,16 +146,6 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
-    public int getWalMaxSegmentFileDescriptorsCache() {
-        return overrides.getWalMaxSegmentFileDescriptorsCache() >= 0 ? overrides.getWalMaxSegmentFileDescriptorsCache() : super.getWalMaxSegmentFileDescriptorsCache();
-    }
-
-    @Override
-    public long getWalMaxLagSize() {
-        return overrides.getWalMaxLagSize() >= 0 ? overrides.getWalMaxLagSize() : super.getWalMaxLagSize();
-    }
-
-    @Override
     public int getMetadataPoolCapacity() {
         return 1;
     }
@@ -342,8 +332,18 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
+    public long getWalMaxLagSize() {
+        return overrides.getWalMaxLagSize() >= 0 ? overrides.getWalMaxLagSize() : super.getWalMaxLagSize();
+    }
+
+    @Override
     public int getWalMaxLagTxnCount() {
         return overrides.getWalMaxLagTxnCount() >= 0 ? overrides.getWalMaxLagTxnCount() : super.getWalMaxLagTxnCount();
+    }
+
+    @Override
+    public int getWalMaxSegmentFileDescriptorsCache() {
+        return overrides.getWalMaxSegmentFileDescriptorsCache() >= 0 ? overrides.getWalMaxSegmentFileDescriptorsCache() : super.getWalMaxSegmentFileDescriptorsCache();
     }
 
     @Override
@@ -419,6 +419,11 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     @Override
     public boolean isSqlParallelFilterPreTouchEnabled() {
         return overrides.isColumnPreTouchEnabled() != null ? overrides.isColumnPreTouchEnabled() : super.isSqlParallelFilterPreTouchEnabled();
+    }
+
+    @Override
+    public boolean isSqlParallelGroupByEnabled() {
+        return overrides.isParallelGroupByEnabled() != null ? overrides.isParallelGroupByEnabled() : super.isSqlParallelGroupByEnabled();
     }
 
     @Override

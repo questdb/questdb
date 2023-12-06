@@ -1206,6 +1206,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
         node1.getConfigurationOverrides().setO3QuickSortEnabled(o3QuickSortEnabled);
     }
 
+    protected static void configOverrideParallelGroupByEnabled(boolean parallelGroupByEnabled) {
+        node1.getConfigurationOverrides().setParallelGroupByEnabled(parallelGroupByEnabled);
+    }
+
     protected static void configOverrideParallelImportStatusLogKeepNDays(int parallelImportStatusLogKeepNDays) {
         node1.getConfigurationOverrides().setParallelImportStatusLogKeepNDays(parallelImportStatusLogKeepNDays);
     }

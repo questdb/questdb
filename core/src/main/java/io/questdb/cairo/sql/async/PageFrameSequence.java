@@ -27,6 +27,7 @@ package io.questdb.cairo.sql.async;
 import io.questdb.MessageBus;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -383,8 +384,8 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     }
 
     public void prepareForGroupBy(
-            @Transient @NotNull ArrayColumnTypes keyTypes,
-            @Transient @NotNull ArrayColumnTypes valueTypes
+            @Transient @NotNull ColumnTypes keyTypes,
+            @Transient @NotNull ColumnTypes valueTypes
     ) {
         for (int i = 0, n = keyTypes.getColumnCount(); i < n; i++) {
             final int columnType = keyTypes.getColumnType(i);
