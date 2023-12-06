@@ -28,7 +28,7 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.window.WindowContext;
@@ -93,8 +93,20 @@ public interface SqlExecutionContext extends Closeable {
         return getCairoEngine().getMessageBus();
     }
 
-    default TableRecordMetadata getSequencerMetadata(TableToken tableToken) {
-        return getCairoEngine().getSequencerMetadata(tableToken);
+    default TableMetadata getMetadataForRead(TableToken tableToken) {
+        return getMetadataForRead(tableToken, TableUtils.ANY_TABLE_VERSION);
+    }
+
+    default TableMetadata getMetadataForRead(TableToken tableToken, long desiredVersion) {
+        return getCairoEngine().getTableMetadata(tableToken, desiredVersion);
+    }
+
+    default TableMetadata getMetadataForWrite(TableToken tableToken, long desiredVersion) {
+        return getCairoEngine().getLegacyMetadata(tableToken, desiredVersion);
+    }
+
+    default TableMetadata getMetadataForWrite(TableToken tableToken) {
+        return getMetadataForWrite(tableToken, TableUtils.ANY_TABLE_VERSION);
     }
 
     long getMicrosecondTimestamp();

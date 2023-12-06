@@ -3048,8 +3048,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                     "partition by DAY WITH maxUncommittedRows=10000, o3MaxLag=250ms;"
                     );
 
-                    try (TableWriter writer = getWriter("x");
-                         TableMetadata tableMetadata = engine.getSequencerMetadata(writer.getTableToken())) {
+                    try (
+                            TableWriter writer = getWriter("x");
+                            TableMetadata tableMetadata = engine.getLegacyMetadata(writer.getTableToken())
+                    ) {
                         sink.clear();
                         tableMetadata.toJson(sink);
                         TestUtils.assertEquals(

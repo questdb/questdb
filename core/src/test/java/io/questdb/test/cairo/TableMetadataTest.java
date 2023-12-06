@@ -59,7 +59,7 @@ public class TableMetadataTest extends AbstractCairoTest {
             TableToken tt = engine.verifyTableName(tableName);
             int maxUncommitted = 1234;
 
-            try (TableMetadata m1 = engine.getTableReaderMetadata(tt)) {
+            try (TableMetadata m1 = engine.getTableMetadata(tt)) {
                 Assert.assertEquals(configuration.getMaxUncommittedRows(), m1.getMaxUncommittedRows());
                 Assert.assertEquals(configuration.getO3MaxLag(), m1.getO3MaxLag());
                 Assert.assertEquals(PartitionBy.WEEK, m1.getPartitionBy());
@@ -68,14 +68,14 @@ public class TableMetadataTest extends AbstractCairoTest {
                 compile("alter table x set param o3MaxLag = 50s");
 
                 if (walEnabled) {
-                    try (TableMetadata m2 = engine.getTableReaderMetadata(tt)) {
+                    try (TableMetadata m2 = engine.getTableMetadata(tt)) {
                         Assert.assertEquals(configuration.getMaxUncommittedRows(), m2.getMaxUncommittedRows());
                         drainWalQueue();
                         Assert.assertEquals(configuration.getMaxUncommittedRows(), m2.getMaxUncommittedRows());
                     }
                 }
 
-                try (TableMetadata m2 = engine.getTableReaderMetadata(tt)) {
+                try (TableMetadata m2 = engine.getTableMetadata(tt)) {
                     Assert.assertEquals(maxUncommitted, m2.getMaxUncommittedRows());
                     if (!walEnabled) {
                         // Not effective for WAL mode
@@ -89,14 +89,14 @@ public class TableMetadataTest extends AbstractCairoTest {
                 Assert.assertEquals(PartitionBy.WEEK, m1.getPartitionBy());
             }
 
-            try (TableMetadata m2 = engine.getTableReaderMetadata(tt)) {
+            try (TableMetadata m2 = engine.getTableMetadata(tt)) {
                 Assert.assertEquals(maxUncommitted, m2.getMaxUncommittedRows());
 
                 if (!walEnabled) {
                     // Not effective for WAL mode
                     Assert.assertEquals(50 * 1_000_000, m2.getO3MaxLag());
                 }
-                try (TableMetadata m1 = engine.getTableReaderMetadata(tt)) {
+                try (TableMetadata m1 = engine.getTableMetadata(tt)) {
                     Assert.assertEquals(maxUncommitted, m1.getMaxUncommittedRows());
 
                     if (!walEnabled) {
@@ -107,7 +107,7 @@ public class TableMetadataTest extends AbstractCairoTest {
             }
 
             compile("alter table x add column f int");
-            try (TableMetadata m1 = engine.getSequencerMetadata(tt)) {
+            try (TableMetadata m1 = engine.getLegacyMetadata(tt)) {
                 // No delay in meta changes for WAL tables
                 Assert.assertEquals(m1.getColumnCount() - 1, m1.getColumnIndex("f"));
             }

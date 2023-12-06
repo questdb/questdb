@@ -364,8 +364,8 @@ public class FuzzRunner {
 
     public ObjList<FuzzTransaction> generateTransactions(String tableName, Rnd rnd, long start, long end) {
         TableToken tableToken = engine.verifyTableName(tableName);
-        try (TableMetadata readerMetadata = engine.getTableReaderMetadata(tableToken)) {
-            try (TableMetadata sequencerMetadata = engine.getSequencerMetadata(tableToken)) {
+        try (TableMetadata readerMetadata = engine.getTableMetadata(tableToken)) {
+            try (TableMetadata sequencerMetadata = engine.getLegacyMetadata(tableToken)) {
                 return generateSet(rnd, readerMetadata, start, end, tableName, sequencerMetadata.getMetadataVersion());
             }
         }
@@ -764,7 +764,7 @@ public class FuzzRunner {
         ObjList<FuzzTransaction> transactions;
         transactions = generateTransactions(tableNameNoWal, rnd);
         String timestampColumnName;
-        try (TableMetadata meta = engine.getTableReaderMetadata(nonWalTt)) {
+        try (TableMetadata meta = engine.getTableMetadata(nonWalTt)) {
             timestampColumnName = meta.getColumnName(meta.getTimestampIndex());
         }
 
