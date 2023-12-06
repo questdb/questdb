@@ -141,6 +141,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         }
         this.pendingRetry = false;
         this.recvBuffer = Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
+        this.localValueMap.disconnect();
     }
 
     @Override
@@ -461,6 +462,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                         return true;
                     } else {
                         dispatcher.disconnect(this, DISCONNECT_REASON_KEEPALIVE_OFF_RECV);
+                        processor.onConnectionClosed(this);
                         return false;
                     }
                 } finally {
@@ -474,7 +476,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             return false;
         } else {
             // client disconnected
-            processor.failRequest(this, null);
+            processor.onConnectionClosed(this);
             dispatcher.disconnect(this, DISCONNECT_REASON_KICKED_OUT_AT_RECV);
             reset();
             return false;
@@ -768,10 +770,12 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 busyRecv = false;
             } catch (PeerDisconnectedException e) {
                 dispatcher.disconnect(this, DISCONNECT_REASON_PEER_DISCONNECT_AT_RECV);
+                processor.onConnectionClosed(this);
                 busyRecv = false;
             } catch (ServerDisconnectException e) {
                 LOG.info().$("kicked out [fd=").$(getFd()).I$();
                 dispatcher.disconnect(this, DISCONNECT_REASON_KICKED_OUT_AT_RECV);
+                processor.onConnectionClosed(this);
                 busyRecv = false;
             } catch (PeerIsSlowToReadException e) {
                 LOG.debug().$("peer is slow reader [two]").$();

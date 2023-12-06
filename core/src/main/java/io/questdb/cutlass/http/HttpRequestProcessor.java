@@ -40,6 +40,9 @@ public interface HttpRequestProcessor {
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
     }
 
+    default void onConnectionClosed(HttpConnectionContext context) {
+    }
+
     default void onHeadersReady(HttpConnectionContext context) {
     }
 

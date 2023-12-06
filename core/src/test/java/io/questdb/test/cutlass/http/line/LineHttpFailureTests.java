@@ -278,7 +278,6 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
     @Test
     public void testTableCommitFailedWhileColumnIsAdded() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            AtomicReference<TestServerMain> server = new AtomicReference<>();
             final FilesFacade filesFacade = new TestFilesFacadeImpl() {
                 private final AtomicInteger counter = new AtomicInteger(2);
 
@@ -310,7 +309,6 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
 
             try (final TestServerMain serverMain = new TestServerMain(bootstrap)) {
                 serverMain.start();
-                server.set(serverMain);
 
                 final List<String> points = new ArrayList<>();
                 try (final InfluxDB influxDB = IlpHttpUtils.getConnection(serverMain)) {

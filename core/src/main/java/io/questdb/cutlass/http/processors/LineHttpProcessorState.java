@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitFailedException;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cutlass.http.ConnectionAware;
 import io.questdb.cutlass.line.tcp.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -39,7 +40,7 @@ import io.questdb.std.str.Utf8Sink;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 
-public class LineHttpProcessorState implements QuietCloseable {
+public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
     private static final AtomicLong ERROR_COUNT = new AtomicLong();
     private static final String ERROR_ID = generateErrorId();
     private static final Log LOG = LogFactory.getLog(LineHttpProcessorState.class);
@@ -134,8 +135,15 @@ public class LineHttpProcessorState implements QuietCloseable {
         return currentStatus == Status.OK;
     }
 
-    public void of(int fd) {
+    public void of(int fd, byte timestampPrecision) {
         this.fd = fd;
+        this.appender.setTimestampAdapter(timestampPrecision);
+    }
+
+    @Override
+    public void onDisconnected() {
+        clear();
+        ilpTudCache.reset();
     }
 
     public void onMessageComplete() {

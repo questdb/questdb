@@ -165,6 +165,16 @@ public class IlpTudCache implements QuietCloseable {
         return tud;
     }
 
+    public void reset() {
+        ObjList<Utf8String> keys = tableUpdateDetails.keys();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            Utf8Sequence tableName = tableUpdateDetails.keys().get(i);
+            WalTableUpdateDetails tud = tableUpdateDetails.get(tableName);
+            Misc.free(tud);
+        }
+        tableUpdateDetails.clear();
+    }
+
     public void setDistressed() {
         this.distressed = true;
     }

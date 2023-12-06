@@ -58,12 +58,13 @@ public class LineTcpParser {
     public static final byte ENTITY_TYPE_TAG = 1;
     public static final byte ENTITY_TYPE_TIMESTAMP = 13;
     public static final byte ENTITY_TYPE_UUID = 20;
-
-    public static final byte ENTITY_UNIT_MICRO = 2;
-    public static final byte ENTITY_UNIT_MILLI = 3;
-    public static final byte ENTITY_UNIT_NANO = 1;
     public static final byte ENTITY_UNIT_NONE = 0;
-
+    public static final byte ENTITY_UNIT_NANO = ENTITY_UNIT_NONE + 1;
+    public static final byte ENTITY_UNIT_MICRO = ENTITY_UNIT_NANO + 1;
+    public static final byte ENTITY_UNIT_MILLI = ENTITY_UNIT_MICRO + 1;
+    public static final byte ENTITY_UNIT_SECOND = ENTITY_UNIT_MILLI + 1;
+    public static final byte ENTITY_UNIT_MINUTE = ENTITY_UNIT_SECOND + 1;
+    public static final byte ENTITY_UNIT_HOUR = ENTITY_UNIT_MINUTE + 1;
     public static final long NULL_TIMESTAMP = Numbers.LONG_NaN;
     public static final int N_ENTITY_TYPES = ENTITY_TYPE_TIMESTAMP + 1;
     public static final int N_MAPPED_ENTITY_TYPES = ENTITY_TYPE_UUID + 1;

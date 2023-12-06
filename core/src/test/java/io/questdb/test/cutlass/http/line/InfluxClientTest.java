@@ -449,6 +449,63 @@ public class InfluxClientTest extends AbstractBootstrapTest {
         });
     }
 
+    @Test
+    public void testTimestampPrecisionSupport() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
+            )) {
+                serverMain.start();
+
+                try (final InfluxDB influxDB = IlpHttpUtils.getConnection(serverMain)) {
+                    influxDB.setLogLevel(InfluxDB.LogLevel.BASIC);
+
+                    long microTime = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T04:00:00.000001Z");
+                    List<String> points = new ArrayList<>();
+                    points.add("m1,tag1=value1 f1=1i,y=12i " + microTime);
+                    influxDB.write("db", "rp", InfluxDB.ConsistencyLevel.ANY, TimeUnit.MICROSECONDS, points);
+                    points.clear();
+
+                    long milliTime = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T05:00:00.001001Z") / 1000L;
+                    points.add("m1,tag1=value1 f1=1i,y=12i " + milliTime);
+                    influxDB.write("db", "rp", InfluxDB.ConsistencyLevel.ANY, TimeUnit.MILLISECONDS, points);
+                    points.clear();
+
+                    long nanoTime = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T06:00:00.000001") * 1000L;
+                    points.add("m1,tag1=value1 f1=1i,y=12i " + nanoTime);
+                    influxDB.write("db", "rp", InfluxDB.ConsistencyLevel.ANY, TimeUnit.NANOSECONDS, points);
+                    points.clear();
+
+                    long secondTime = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T07:00:01") / 1000L / 1000L;
+                    points.add("m1,tag1=value1 f1=1i,y=12i " + secondTime);
+                    influxDB.write("db", "rp", InfluxDB.ConsistencyLevel.ANY, TimeUnit.SECONDS, points);
+                    points.clear();
+
+                    long minuteTime = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T08:01") / 1000L / 1000L / 60L;
+                    points.add("m1,tag1=value1 f1=1i,y=12i " + minuteTime);
+                    influxDB.write("db", "rp", InfluxDB.ConsistencyLevel.ANY, TimeUnit.MINUTES, points);
+                    points.clear();
+
+                    long hourTime = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T09") / 1000L / 1000L / 60L / 60L;
+                    points.add("m1,tag1=value1 f1=1i,y=12i " + hourTime);
+                    influxDB.write("db", "rp", InfluxDB.ConsistencyLevel.ANY, TimeUnit.HOURS, points);
+                    points.clear();
+
+                    // TimeUnit.DAYS is not supported by the InfluxDB client
+                }
+
+                serverMain.waitWalTxnApplied("m1");
+                serverMain.assertSql("SELECT * FROM m1", "tag1\tf1\ty\ttimestamp\n" +
+                        "value1\t1\t12\t2022-02-24T04:00:00.000001Z\n" +
+                        "value1\t1\t12\t2022-02-24T05:00:00.001000Z\n" +
+                        "value1\t1\t12\t2022-02-24T06:00:00.000001Z\n" +
+                        "value1\t1\t12\t2022-02-24T07:00:01.000000Z\n" +
+                        "value1\t1\t12\t2022-02-24T08:01:00.000000Z\n" +
+                        "value1\t1\t12\t2022-02-24T09:00:00.000000Z\n");
+            }
+        });
+    }
+
     private static void sendIlp(String tableName, int count, ServerMain serverMain) throws NumericException {
         long timestamp = IntervalUtils.parseFloorPartialTimestamp("2023-11-27T18:53:24.834Z");
         int i = 0;

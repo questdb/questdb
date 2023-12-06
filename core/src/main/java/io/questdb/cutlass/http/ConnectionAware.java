@@ -22,8 +22,8 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http.processors;
+package io.questdb.cutlass.http;
 
-public class IlpHttpUtils {
-    public static final long NewLine = '\n';
+public interface ConnectionAware {
+    void onDisconnected();
 }

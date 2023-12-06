@@ -35,21 +35,6 @@ import org.junit.Assert;
 import java.util.List;
 
 public class IlpHttpUtils {
-    public static void assertPointsRequestError(InfluxDB influxDB, List<String> points, String error) {
-        try {
-            influxDB.write(points);
-            Assert.fail();
-        } catch (InfluxDBException e) {
-            TestUtils.assertEquals(error, e.getMessage());
-        }
-        points.clear();
-    }
-
-    public static void assertRequestError(InfluxDB influxDB, List<String> points, String line, String error) {
-        points.add(line);
-        assertPointsRequestError(influxDB, points, error);
-    }
-
     public static void assertRequestErrorContains(InfluxDB influxDB, List<String> points, String line, String... errors) {
         points.add(line);
         try {

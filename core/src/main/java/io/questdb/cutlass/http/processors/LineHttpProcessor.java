@@ -30,8 +30,13 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.Utf8String;
+
+import static io.questdb.cutlass.line.tcp.LineTcpParser.*;
 
 public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartContentListener {
+    public static final Utf8String URL_PARAM_PRECISION = new Utf8String("precision");
     private static final Log LOG = LogFactory.getLog(StaticContentProcessor.class);
     private static final LocalValue<LineHttpProcessorState> LV = new LocalValue<>();
     private final LineHttpProcessorConfiguration configuration;
@@ -48,12 +53,23 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
     @Override
     public void failRequest(HttpConnectionContext context, HttpException exception) {
         LOG.info().$("rolling back, client disconnected [fd=").$(context.getFd()).I$();
-        this.state.clear();
+        state = LV.get(context);
+        if (state != null) {
+            state.onDisconnected();
+        }
     }
 
     @Override
     public void onChunk(long lo, long hi) {
         this.state.parse(lo, hi);
+    }
+
+    @Override
+    public void onConnectionClosed(HttpConnectionContext context) {
+        state = LV.get(context);
+        if (state != null) {
+            state.onDisconnected();
+        }
     }
 
     public void onHeadersReady(HttpConnectionContext context) {
@@ -64,6 +80,27 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
         } else {
             state.clear();
         }
+        byte timestampPrecision = ENTITY_UNIT_NANO;
+        DirectUtf8Sequence precision = context.getRequestHeader().getUrlParam(URL_PARAM_PRECISION);
+        if (precision != null) {
+            int len = precision.size();
+            if (len == 1 && precision.byteAt(0) == 'n') {
+                timestampPrecision = ENTITY_UNIT_NANO;
+            } else if (len == 1 && precision.byteAt(0) == 'u') {
+                timestampPrecision = ENTITY_UNIT_MICRO;
+            } else if (len == 2 && precision.byteAt(0) == 'm' && precision.byteAt(1) == 's') {
+                timestampPrecision = ENTITY_UNIT_MILLI;
+            } else if (len == 1 && precision.byteAt(0) == 's') {
+                timestampPrecision = ENTITY_UNIT_SECOND;
+            } else if (len == 1 && precision.byteAt(0) == 'm') {
+                timestampPrecision = ENTITY_UNIT_MINUTE;
+            } else if (len == 1 && precision.byteAt(0) == 'h') {
+                timestampPrecision = ENTITY_UNIT_HOUR;
+            } else {
+                throw HttpException.instance("unsupported precision in URL query string [precision=").put(precision).put(']');
+            }
+        }
+        state.of(context.getFd(), timestampPrecision);
     }
 
     @Override
@@ -106,7 +143,6 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
     @Override
     public void resumeRecv(HttpConnectionContext context) {
         state = LV.get(context);
-        state.of(context.getFd());
     }
 
     private void sendError(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {

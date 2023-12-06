@@ -45,7 +45,11 @@ public class IlpWalAppender {
     private final int maxFileNameLength;
     private final MicrosecondClock microsecondClock;
     private final boolean stringToCharCastAllowed;
-    private final LineTcpTimestampAdapter timestampAdapter;
+    private LineTcpTimestampAdapter timestampAdapter;
+
+    public IlpWalAppender(boolean autoCreateNewColumns, boolean stringToCharCastAllowed, int maxFileNameLength, MicrosecondClock microsecondClock) {
+        this(autoCreateNewColumns, stringToCharCastAllowed, LineTcpTimestampAdapter.DEFAULT_TS_INSTANCE, maxFileNameLength, microsecondClock);
+    }
 
     public IlpWalAppender(boolean autoCreateNewColumns, boolean stringToCharCastAllowed, LineTcpTimestampAdapter timestampAdapter, int maxFileNameLength, MicrosecondClock microsecondClock) {
         this.autoCreateNewColumns = autoCreateNewColumns;
@@ -68,6 +72,31 @@ public class IlpWalAppender {
                 // do another retry, metadata has changed while processing the line
                 // and all the resolved column indexes have been invalidated
             }
+        }
+    }
+
+    public void setTimestampAdapter(byte precision) {
+        switch (precision) {
+            case LineTcpParser.ENTITY_UNIT_NANO:
+                timestampAdapter = LineTcpTimestampAdapter.DEFAULT_TS_NANO_INSTANCE;
+                break;
+            case LineTcpParser.ENTITY_UNIT_MICRO:
+                timestampAdapter = LineTcpTimestampAdapter.DEFAULT_TS_MICRO_INSTANCE;
+                break;
+            case LineTcpParser.ENTITY_UNIT_MILLI:
+                timestampAdapter = LineTcpTimestampAdapter.DEFAULT_TS_MILLI_INSTANCE;
+                break;
+            case LineTcpParser.ENTITY_UNIT_SECOND:
+                timestampAdapter = LineTcpTimestampAdapter.DEFAULT_TS_SECOND_INSTANCE;
+                break;
+            case LineTcpParser.ENTITY_UNIT_MINUTE:
+                timestampAdapter = LineTcpTimestampAdapter.DEFAULT_TS_MINUTE_INSTANCE;
+                break;
+            case LineTcpParser.ENTITY_UNIT_HOUR:
+                timestampAdapter = LineTcpTimestampAdapter.DEFAULT_TS_HOUR_INSTANCE;
+                break;
+            default:
+                throw new UnsupportedOperationException("precision: " + precision);
         }
     }
 
