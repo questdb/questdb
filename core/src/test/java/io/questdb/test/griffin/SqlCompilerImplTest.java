@@ -5606,6 +5606,46 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnionAllWithFirstSubQueryUsingDistinct() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table ict ( event int );");
+            insert("insert into ict select x::int from long_sequence(1000)");
+
+            assertWithReorder(
+                    "avg\n" +
+                            "500.5\n",
+                    "union",
+                    "select avg(event) from ict ",
+                    "select distinct avg(event) from ict"
+            );
+
+            assertWithReorder(
+                    "avg\n" +
+                            "500.5\n" +
+                            "500.5\n",
+                    "union all",
+                    "select avg(event) from ict ",
+                    "select distinct avg(event) from ict"
+            );
+
+            assertWithReorder(
+                    "avg\n" +
+                            "500.5\n",
+                    "intersect",
+                    "select avg(event) from ict ",
+                    "select distinct avg(event) from ict"
+            );
+
+            assertWithReorder(
+                    "avg\n",
+                    "except",
+                    "select avg(event) from ict ",
+                    "select distinct avg(event) from ict"
+            );
+        });
+    }
+
+    @Test
     public void testUseExtensionPoints() {
         try (SqlCompilerWrapper compiler = new SqlCompilerWrapper(engine)) {
 
@@ -5930,6 +5970,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     }
                 }
         );
+    }
+
+    private void assertWithReorder(String expected, String setOperation, String... subqueries) throws SqlException {
+        assertSql(expected, subqueries[0] + " " + setOperation + " " + subqueries[1]);
+        assertSql(expected, subqueries[1] + " " + setOperation + " " + subqueries[0]);
     }
 
     private void selectDoubleInListWithBindVariable() throws Exception {

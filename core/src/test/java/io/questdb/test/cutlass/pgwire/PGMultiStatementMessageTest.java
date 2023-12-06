@@ -73,7 +73,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         });
     }
 
-    @Test //explicit transaction + rollback on two tables
+    @Test // explicit transaction + rollback on two tables
     public void testBeginCreateInsertCommitInsertRollbackRetainsOnlyCommittedDataOnTwoTables() throws Exception {
         assertMemoryLeak(() -> {
             try (PGTestSetup test = new PGTestSetup()) {
@@ -103,7 +103,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         });
     }
 
-    @Test //explicit transaction + rollback on two tables
+    @Test // explicit transaction + rollback on two tables
     public void testBeginCreateInsertCommitRollbackRetainsCommittedDataOnTwoTables() throws Exception {
         assertMemoryLeak(() -> {
             try (PGTestSetup test = new PGTestSetup()) {
@@ -132,7 +132,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         });
     }
 
-    @Test //explicit transaction + commit
+    @Test // explicit transaction + commit
     public void testBeginCreateInsertCommitThenErrorDoesntRollBackCommittedFirstInsert() throws Exception {
         assertMemoryLeak(() -> {
             try (PGTestSetup test = new PGTestSetup()) {
@@ -158,7 +158,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         });
     }
 
-    @Test //explicit transaction + commit
+    @Test // explicit transaction + commit
     public void testBeginCreateInsertCommitThenErrorDoesntRollBackCommittedFirstInsertOnTwoTables() throws Exception {
         assertMemoryLeak(() -> {
             try (PGTestSetup test = new PGTestSetup()) {
@@ -185,7 +185,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         });
     }
 
-    @Test //explicit transaction + rollback
+    @Test // explicit transaction + rollback
     public void testBeginCreateInsertRollback() throws Exception {
         assertMemoryLeak(() -> {
             try (PGTestSetup test = new PGTestSetup()) {
@@ -312,7 +312,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Ignore("without implicit transaction second insert runs in autocommit mode")
-    @Test //example taken from https://www.postgresql.org/docs/current/protocol-flow.html#id-1.10.5.7.4
+    @Test // example taken from https://www.postgresql.org/docs/current/protocol-flow.html#id-1.10.5.7.4
     public void testCreateBeginInsertCommitInsertErrorRetainsOnlyCommittedData() throws Exception {
         assertMemoryLeak(() -> {
             try (PGTestSetup test = new PGTestSetup()) {
@@ -536,7 +536,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         });
     }
 
-    //insert as select isn't transactional and commits data immediately
+    // insert as select isn't transactional and commits data immediately
     @Test
     public void testCreateInsertAsSelectInsertThenRollbackLeavesNonEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
@@ -572,7 +572,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         });
     }
 
-    @Test //implicit transaction + commit
+    @Test // implicit transaction + commit
     public void testCreateInsertCommitThenErrorDoesntRollBackCommittedFirstInsert() throws Exception {
         assertMemoryLeak(() -> {
             try (PGTestSetup test = new PGTestSetup()) {
@@ -596,7 +596,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         });
     }
 
-    @Test //implicit transaction + commit
+    @Test // implicit transaction + commit
     public void testCreateInsertCommitThenErrorDoesntRollBackCommittedFirstInsertOnTwoTables() throws Exception {
         assertMemoryLeak(() -> {
             try (PGTestSetup test = new PGTestSetup()) {
@@ -670,7 +670,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         });
     }
 
-    @Test //implicit transaction + rollback
+    @Test // implicit transaction + rollback
     public void testCreateInsertRollback() throws Exception {
         assertMemoryLeak(() -> {
             try (PGTestSetup test = new PGTestSetup()) {
@@ -692,7 +692,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Ignore("test won't work until implicit transactions are implemented")
-    @Test //implicit transaction + rollback
+    @Test // implicit transaction + rollback
     public void testCreateInsertRollbackOnTwoTables() throws Exception {
         assertMemoryLeak(() -> {
             try (PGTestSetup test = new PGTestSetup()) {
@@ -1342,7 +1342,6 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     public void testRunSeveralQueriesInSingleBlockStatementReturnsAllSelectResultsInOrder() throws Exception {
         assertMemoryLeak(() -> {
             try (PGTestSetup test = new PGTestSetup()) {
-
                 boolean hasResult = test.statement.execute(
                         "create table test(l long, s string);" +
                                 "insert into test values(1, 'a');" +
@@ -1584,12 +1583,12 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     @Test
     public void testShowTableInBlock() throws Exception {
         assertMemoryLeak(() -> {
+            engine.ddl("create table test (i int);", sqlExecutionContext);
             try (PGTestSetup test = new PGTestSetup()) {
                 Statement statement = test.statement;
 
-                boolean hasResult = statement.execute(
-                        "SHOW TABLES; SELECT '15';");
-                assertResults(statement, hasResult, data(row(configuration.getSystemTableNamePrefix() + "text_import_log")), data(row(15L)));
+                boolean hasResult = statement.execute("SHOW TABLES; SELECT '15';");
+                assertResults(statement, hasResult, data(row("test")), data(row(15L)));
             }
         });
     }
