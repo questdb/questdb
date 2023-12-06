@@ -465,7 +465,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (condition) {
             ObjList<Function> workerFilters = new ObjList<>();
             for (int i = 0; i < workerCount; i++) {
-                restoreWhereClause(filterExpr);//restore original filters in node query models
+                restoreWhereClause(filterExpr); // restore original filters in node query models
                 workerFilters.extendAndSet(i, compileBooleanFilter(filterExpr, metadata, executionContext));
             }
             return workerFilters;
@@ -3101,10 +3101,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
 
+            ExpressionNode nestedFilterExpr = null;
             if (factory == null) {
                 if (specialCaseKeys) {
                     QueryModel.restoreWhereClause(expressionNodePool, model);
                 }
+                nestedFilterExpr = nested.getWhereClause();
                 factory = generateSubQuery(model, executionContext);
                 pageFramingSupported = factory.supportPageFrameCursor();
             }
@@ -3250,6 +3252,29 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 throw e;
             }
 
+            boolean supportsParallelism = false;
+            Function nestedFilter = null;
+            final boolean enableParallelGroupBy = configuration.isSqlParallelGroupByEnabled();
+            if (enableParallelGroupBy && GroupByUtils.supportParallelism(groupByFunctions)) {
+                supportsParallelism = factory.supportPageFrameCursor();
+                // Try to steal the filter from the nested model, if possible.
+                if (!supportsParallelism
+                        && nested.getSelectModelType() == QueryModel.SELECT_MODEL_NONE
+                        && nested.getNestedModel() == null
+                        && nestedFilterExpr != null
+                        && nested.getWhereClause() == null) {
+                    RecordCursorFactory candidateFactory = generateSubQuery(model, executionContext);
+                    if (candidateFactory.supportPageFrameCursor()) {
+                        Misc.free(factory);
+                        factory = candidateFactory;
+                        nestedFilter = compileBooleanFilter(nestedFilterExpr, factory.getMetadata(), executionContext);
+                        supportsParallelism = true;
+                    } else {
+                        Misc.free(candidateFactory);
+                    }
+                }
+            }
+
             final ObjList<Function> recordFunctions = new ObjList<>(columnCount);
             final GenericRecordMetadata groupByMetadata = new GenericRecordMetadata();
             try {
@@ -3273,8 +3298,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             // TODO(puzpuzpuz): consider non-thread-safe functions used as keys, e.g. select regexp_replace(k, ...) k, max(v) v from x
-            final boolean enableParallelGroupBy = configuration.isSqlParallelGroupByEnabled();
-            if (enableParallelGroupBy && factory.supportPageFrameCursor() && GroupByUtils.supportParallelism(groupByFunctions)) {
+            if (supportsParallelism) {
                 if (keyTypes.getColumnCount() == 0) {
                     return new AsyncGroupByNotKeyedRecordCursorFactory(
                             asm,
@@ -3285,9 +3309,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             groupByFunctions,
                             recordFunctions,
                             valueTypes.getColumnCount(),
-                            null, // TODO(puzpuzpuz): filter goes here
+                            nestedFilter,
                             reduceTaskFactory,
-                            null, // TODO(puzpuzpuz): filter goes here
+                            compileWorkerFilterConditionally(
+                                    nestedFilter != null && !nestedFilter.isReadThreadSafe(),
+                                    executionContext.getSharedWorkerCount(),
+                                    nestedFilterExpr,
+                                    factory.getMetadata(),
+                                    executionContext
+                            ),
                             executionContext.getSharedWorkerCount()
                     );
                 }
@@ -3303,9 +3333,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         valueTypes,
                         groupByFunctions,
                         recordFunctions,
-                        null, // TODO(puzpuzpuz): filter goes here
+                        nestedFilter,
                         reduceTaskFactory,
-                        null, // TODO(puzpuzpuz): filter goes here
+                        compileWorkerFilterConditionally(
+                                nestedFilter != null && !nestedFilter.isReadThreadSafe(),
+                                executionContext.getSharedWorkerCount(),
+                                nestedFilterExpr,
+                                factory.getMetadata(),
+                                executionContext
+                        ),
                         executionContext.getSharedWorkerCount()
                 );
             }

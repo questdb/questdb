@@ -126,6 +126,20 @@ public class ParallelGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelMultiKeyedGroupByWithNestedFilter() throws Exception {
+        testParallelMultiKeyedGroupBy(
+                "SELECT avg(v), sum(ct), k1, k2 " +
+                        "FROM (SELECT value v, colTop ct, key2 k2, key1 k1 FROM tab WHERE value < 80)",
+                "avg\tsum\tk1\tk2\n" +
+                        "38.5\t381.0\tk1\tk1\n" +
+                        "39.5\t387.0\tk2\tk2\n" +
+                        "40.5\t393.0\tk3\tk3\n" +
+                        "41.5\t399.0\tk4\tk4\n" +
+                        "40.0\t325.0\tk0\tk0\n"
+        );
+    }
+
+    @Test
     public void testParallelNonKeyedGroupBy() throws Exception {
         testParallelNonKeyedGroupBy(
                 "SELECT vwap(price, quantity), sum(colTop) FROM tab",
@@ -138,6 +152,16 @@ public class ParallelGroupByTest extends AbstractCairoTest {
     public void testParallelNonKeyedGroupByWithFilter() throws Exception {
         testParallelNonKeyedGroupBy(
                 "SELECT vwap(price, quantity), sum(colTop) FROM tab WHERE quantity < 80",
+                "vwap\tsum\n" +
+                        "53.0\t1985.0\n"
+        );
+    }
+
+    @Test
+    public void testParallelNonKeyedGroupByWithNestedFilter() throws Exception {
+        testParallelNonKeyedGroupBy(
+                "SELECT vwap(p, q), sum(ct) " +
+                        "FROM (SELECT colTop ct, quantity q, price p FROM tab WHERE quantity < 80)",
                 "vwap\tsum\n" +
                         "53.0\t1985.0\n"
         );
@@ -256,6 +280,20 @@ public class ParallelGroupByTest extends AbstractCairoTest {
                         "k3\t50.5\t755.0\n" +
                         "k4\t51.5\t765.0\n" +
                         "k0\t52.5\t775.0\n"
+        );
+    }
+
+    @Test
+    public void testParallelSingleKeyedGroupByWithNestedFilter() throws Exception {
+        testParallelSingleKeyedGroupBy(
+                "SELECT avg(v), k, sum(ct) " +
+                        "FROM (SELECT colTop ct, value v, key k FROM tab WHERE value < 80)",
+                "avg\tk\tsum\n" +
+                        "38.5\tk1\t381.0\n" +
+                        "39.5\tk2\t387.0\n" +
+                        "40.5\tk3\t393.0\n" +
+                        "41.5\tk4\t399.0\n" +
+                        "40.0\tk0\t325.0\n"
         );
     }
 

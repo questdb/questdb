@@ -81,9 +81,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final int SHOW_COLUMNS = 2;
     public static final int SHOW_DATE_STYLE = 9;
     public static final int SHOW_MAX_IDENTIFIER_LENGTH = 6;
+    public static final int SHOW_PARAMETERS = 11;
     public static final int SHOW_PARTITIONS = 3;
     public static final int SHOW_SEARCH_PATH = 8;
-    public static final int SHOW_PARAMETERS = 11;
     public static final int SHOW_SERVER_VERSION = 12;
     public static final int SHOW_STANDARD_CONFORMING_STRINGS = 7;
     public static final int SHOW_TABLES = 1;
@@ -186,7 +186,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         joinModels.add(this);
     }
 
-    // Recursively clones the current value of whereClause for the model and its sub-models into the backupWhereClause field.
+    /**
+     * Recursively clones the current value of whereClause for the model and its sub-models into the backupWhereClause field.
+     */
     public static void backupWhereClause(final ObjectPool<ExpressionNode> pool, final QueryModel model) {
         QueryModel current = model;
         while (current != null) {
@@ -207,7 +209,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
     }
 
-    // Recursively restores the whereClause field from backupWhereClause for the model and its sub-models.
+    /**
+     * Recursively restores the whereClause field from backupWhereClause for the model and its sub-models.
+     */
     public static void restoreWhereClause(final ObjectPool<ExpressionNode> pool, final QueryModel model) {
         QueryModel current = model;
         while (current != null) {

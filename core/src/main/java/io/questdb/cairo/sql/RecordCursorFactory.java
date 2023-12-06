@@ -45,18 +45,19 @@ import java.io.Closeable;
  * close() method must be called after other calls are complete.
  * <p>
  * Example:
- * <p>
+ * <pre>
  * final SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1);
  * try (SqlCompiler compiler = new SqlCompiler(engine)) {
- * try (RecordCursorFactory factory = compiler.compile("abc", ctx).getRecordCursorFactory()) {
- * try (RecordCursor cursor = factory.getCursor(ctx)) {
- * final Record record = cursor.getRecord();
- * while (cursor.hasNext()) {
- * // access 'record' instance for field values
+ *     try (RecordCursorFactory factory = compiler.compile("abc", ctx).getRecordCursorFactory()) {
+ *         try (RecordCursor cursor = factory.getCursor(ctx)) {
+ *             final Record record = cursor.getRecord();
+ *             while (cursor.hasNext()) {
+ *                 // access 'record' instance for field values
+ *             }
+ *         }
+ *     }
  * }
- * }
- * }
- * }
+ * </pre>
  */
 public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
 
