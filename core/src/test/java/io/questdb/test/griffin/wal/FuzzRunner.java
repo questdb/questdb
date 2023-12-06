@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.wal;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.api.MemoryR;
@@ -161,7 +162,15 @@ public class FuzzRunner {
                 purgeJobThread.start();
                 applyThreads.add(purgeJobThread);
 
-                Thread purgePartitionThread = new Thread(() -> runPurgePartitionJob(done, forceReaderReload, errors, new Rnd(rnd.nextLong(), rnd.nextLong()), tableNameBase, tableCount, multiTable));
+                Thread purgePartitionThread = new Thread(() -> runPurgePartitionJob(
+                        done,
+                        forceReaderReload,
+                        errors,
+                        new Rnd(rnd.nextLong(), rnd.nextLong()),
+                        tableNameBase,
+                        tableCount,
+                        multiTable
+                ));
                 purgePartitionThread.start();
                 applyThreads.add(purgePartitionThread);
             }
@@ -292,28 +301,31 @@ public class FuzzRunner {
         return createInitialTable(tableName, isWal, initialRowCount);
     }
 
-    public TableToken createInitialTable(String tableName1, boolean isWal, int rowCount) throws SqlException {
+    public TableToken createInitialTable(String tableName, boolean isWal, int rowCount) throws SqlException {
         SharedRandom.RANDOM.set(new Rnd());
-        if (engine.getTableTokenIfExists(tableName1) == null) {
-            compile("create table " + tableName1 + " as (" +
-                    "select x as c1, " +
-                    " rnd_symbol('AB', 'BC', 'CD') c2, " +
-                    " timestamp_sequence('2022-02-24', 1000000L) ts, " +
-                    " rnd_symbol('DE', null, 'EF', 'FG') sym2," +
-                    " cast(x as int) c3," +
-                    " rnd_bin() c4," +
-                    " to_long128(3 * x, 6 * x) c5," +
-                    " rnd_str('a', 'bdece', null, ' asdflakji idid', 'dk')," +
-                    " rnd_boolean() bool1 " +
-                    " from long_sequence(" + rowCount + ")" +
-                    "), index(sym2) timestamp(ts) partition by DAY " + (isWal ? "WAL" : "BYPASS WAL"));
+        if (engine.getTableTokenIfExists(tableName) == null) {
+            engine.ddl(
+                    "create table " + tableName + " as (" +
+                            "select x as c1, " +
+                            " rnd_symbol('AB', 'BC', 'CD') c2, " +
+                            " timestamp_sequence('2022-02-24', 1000000L) ts, " +
+                            " rnd_symbol('DE', null, 'EF', 'FG') sym2," +
+                            " cast(x as int) c3," +
+                            " rnd_bin() c4," +
+                            " to_long128(3 * x, 6 * x) c5," +
+                            " rnd_str('a', 'bdece', null, ' asdflakji idid', 'dk')," +
+                            " rnd_boolean() bool1 " +
+                            " from long_sequence(" + rowCount + ")" +
+                            "), index(sym2) timestamp(ts) partition by DAY " + (isWal ? "WAL" : "BYPASS WAL"),
+                    sqlExecutionContext
+            );
             // force few column tops
-            compile("alter table " + tableName1 + " add column long_top long");
-            compile("alter table " + tableName1 + " add column str_top long");
-            compile("alter table " + tableName1 + " add column sym_top symbol index");
-            compile("alter table " + tableName1 + " add column ip4 ipv4");
+            engine.ddl("alter table " + tableName + " add column long_top long", sqlExecutionContext);
+            engine.ddl("alter table " + tableName + " add column str_top long", sqlExecutionContext);
+            engine.ddl("alter table " + tableName + " add column sym_top symbol index", sqlExecutionContext);
+            engine.ddl("alter table " + tableName + " add column ip4 ipv4", sqlExecutionContext);
         }
-        return engine.verifyTableName(tableName1);
+        return engine.verifyTableName(tableName);
     }
 
     public Rnd generateRandom(Log log) {
@@ -330,9 +342,17 @@ public class FuzzRunner {
         return rnd;
     }
 
-    public ObjList<FuzzTransaction> generateSet(Rnd rnd, TableRecordMetadata metadata, long start, long end, String tableName, long seqMetadataVersion) {
+    public ObjList<FuzzTransaction> generateSet(
+            Rnd rnd,
+            TableRecordMetadata sequencerMetadata,
+            TableRecordMetadata readerMetadata,
+            long start,
+            long end,
+            String tableName
+    ) {
         return FuzzTransactionGenerator.generateSet(
-                metadata,
+                sequencerMetadata,
+                readerMetadata,
                 rnd,
                 start,
                 end,
@@ -351,7 +371,7 @@ public class FuzzRunner {
                 equalTsRowsProb,
                 strLen,
                 generateSymbols(rnd, rnd.nextInt(Math.max(1, symbolCountMax - 5)) + 5, symbolStrLenMax, tableName),
-                (int) seqMetadataVersion,
+                (int) sequencerMetadata.getMetadataVersion(),
                 tableDropProb
         );
     }
@@ -364,9 +384,9 @@ public class FuzzRunner {
 
     public ObjList<FuzzTransaction> generateTransactions(String tableName, Rnd rnd, long start, long end) {
         TableToken tableToken = engine.verifyTableName(tableName);
-        try (TableMetadata readerMetadata = engine.getTableMetadata(tableToken)) {
-            try (TableMetadata sequencerMetadata = engine.getLegacyMetadata(tableToken)) {
-                return generateSet(rnd, readerMetadata, start, end, tableName, sequencerMetadata.getMetadataVersion());
+        try (TableMetadata sequencerMetadata = engine.getSequencerMetadata(tableToken)) {
+            try (TableMetadata readerMetadata = engine.getTableReaderMetadata(tableToken)) {
+                return generateSet(rnd, sequencerMetadata, readerMetadata, start, end, tableName);
             }
         }
     }
@@ -454,12 +474,6 @@ public class FuzzRunner {
 
     private void checkNoSuspendedTables(ObjHashSet<TableToken> tableTokenBucket) {
         engine.getTableSequencerAPI().forAllWalTables(tableTokenBucket, false, checkNoSuspendedTablesRef);
-    }
-
-    private void compile(String sql) throws SqlException {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            compiler.compile(sql, sqlExecutionContext).execute(null).await();
-        }
     }
 
     @NotNull
@@ -602,7 +616,8 @@ public class FuzzRunner {
                 return getReader(tableNameWal);
             } catch (CairoException e) {
                 if (Chars.contains(e.getFlyweightMessage(), "table does not exist")
-                        || Chars.contains(e.getFlyweightMessage(), "table name is reserved")) {
+                        || Chars.contains(e.getFlyweightMessage(), "table name is reserved")
+                        || e instanceof EntryLockedException) {
                     LOG.error().$((Throwable) e).$();
                     Os.sleep(10);
                 } else {

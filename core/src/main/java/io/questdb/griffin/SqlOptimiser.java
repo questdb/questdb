@@ -944,6 +944,25 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    private QueryColumn checkSimpleIntegerColumn(ExpressionNode column, QueryModel model) {
+        if (column == null || column.type != LITERAL) {
+            return null;
+        }
+
+        CharSequence tok = column.token;
+        final int dot = Chars.indexOf(tok, '.');
+        QueryColumn qc = getQueryColumn(model, tok, dot);
+
+        if (qc != null &&
+                (qc.getColumnType() == ColumnType.BYTE ||
+                        qc.getColumnType() == ColumnType.SHORT ||
+                        qc.getColumnType() == ColumnType.INT ||
+                        qc.getColumnType() == ColumnType.LONG)) {
+            return qc;
+        }
+        return null;
+    }
+
     private void collectModelAlias(QueryModel parent, int modelIndex, QueryModel model) throws SqlException {
         final ExpressionNode alias = model.getAlias() != null ? model.getAlias() : model.getTableNameExpr();
         if (parent.addModelAliasIndex(alias, modelIndex)) {
@@ -2096,19 +2115,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     private boolean isSimpleIntegerColumn(ExpressionNode column, QueryModel model) {
-        if (column == null || column.type != LITERAL) {
-            return false;
-        }
-
-        CharSequence tok = column.token;
-        final int dot = Chars.indexOf(tok, '.');
-        QueryColumn qc = getQueryColumn(model, tok, dot);
-
-        return qc != null &&
-                (qc.getColumnType() == ColumnType.BYTE ||
-                        qc.getColumnType() == ColumnType.SHORT ||
-                        qc.getColumnType() == ColumnType.INT ||
-                        qc.getColumnType() == ColumnType.LONG);
+        return checkSimpleIntegerColumn(column, model) != null;
     }
 
     private ExpressionNode makeJoinAlias() {
@@ -3167,17 +3174,23 @@ public class SqlOptimiser implements Mutable {
     }
 
     private ExpressionNode pushOperationOutsideAgg(ExpressionNode agg, ExpressionNode op, ExpressionNode column, ExpressionNode constant, QueryModel model) {
-        if (!isSimpleIntegerColumn(column, model)) {
+        final QueryColumn qc = checkSimpleIntegerColumn(column, model);
+        if (qc == null) {
             return agg;
         }
 
         agg.rhs = column;
 
         ExpressionNode count = expressionNodePool.next();
-        count.paramCount = 1;
         count.token = "COUNT";
         count.type = FUNCTION;
-        count.rhs = column;
+        // INT and LONG are nullable, so we need to use COUNT(column) for them.
+        if (qc.getColumnType() == ColumnType.INT || qc.getColumnType() == ColumnType.LONG) {
+            count.paramCount = 1;
+            count.rhs = column;
+        } else {
+            count.paramCount = 0;
+        }
         count.position = agg.position;
 
         ExpressionNode mul = expressionNodePool.next();
@@ -3189,7 +3202,7 @@ public class SqlOptimiser implements Mutable {
         mul.lhs = count;
         mul.rhs = constant;
 
-        if (op.lhs == column) {//maintain order for subtraction
+        if (op.lhs == column) { // maintain order for subtraction
             op.lhs = agg;
             op.rhs = mul;
         } else {
@@ -3446,7 +3459,7 @@ public class SqlOptimiser implements Mutable {
                 functionParser.getFunctionFactoryCache().isGroupBy(agg.token) &&
                 Chars.equalsIgnoreCase("sum", agg.token) &&
                 op.type == OPERATION) {
-            if (Chars.equals(op.token, '*')) { //sum(x*10) == sum(x)*10
+            if (Chars.equals(op.token, '*')) { // sum(x*10) == sum(x)*10
                 if (isIntegerConstant(op.rhs) && isSimpleIntegerColumn(op.lhs, model)) {
                     agg.rhs = op.lhs;
                     op.lhs = agg;

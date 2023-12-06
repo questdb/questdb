@@ -134,8 +134,11 @@ public class TestCases {
         // DistinctRecordCursorFactory
         addTestCase("select distinct sym from (x union all y)");
 
-        // DistinctKeyRecordCursorFactory
+        // DistinctSymbolRecordCursorFactory
         addTestCase("select distinct sym from x order by sym");
+
+        // DistinctIntKeyRecordCursorFactory
+        addTestCase("select distinct i from x order by i");
 
         // GroupByNotKeyedVectorRecordCursor
         addTestCase("select max(i), min(i) from x");

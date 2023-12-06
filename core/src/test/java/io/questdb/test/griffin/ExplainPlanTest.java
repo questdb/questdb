@@ -1644,6 +1644,285 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFilterOnExcludedIndexedSymbolManyValues() throws Exception {
+        assertMemoryLeak(() -> {
+            drop("drop table if exists trips");
+            ddl("CREATE TABLE trips(l long, s symbol index capacity 5, ts TIMESTAMP) " +
+                    "timestamp(ts) partition by month");
+
+            assertPlan("select s, count() from trips where s is not null order by count desc",
+                    "Sort light\n" +
+                            "  keys: [count desc]\n" +
+                            "    GroupBy vectorized: false\n" +
+                            "      keys: [s]\n" +
+                            "      values: [count(*)]\n" +
+                            "        FilterOnExcludedValues symbolOrder: desc\n" +
+                            "          symbolFilter: s not in [null]\n" +
+                            "            Cursor-order scan\n" +
+                            "            Frame forward scan on: trips\n"
+            );
+
+            insert("insert into trips " +
+                    "  select x, 'A' || ( x%3000 )," +
+                    "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 1000000) " +
+                    "  from long_sequence(10000);");
+            insert("insert into trips " +
+                    "  select x, null," +
+                    "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 1000000) " +
+                    "  from long_sequence(4000);"
+            );
+
+            assertPlan("select s, count() from trips where s is not null",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "    Async JIT Filter workers: 1\n" +
+                            "      filter: s is not null\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trips\n"
+            );
+
+            assertPlan("select s, count() from trips where s is not null and s != 'A1000'",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "    Async JIT Filter workers: 1\n" +
+                            "      filter: (s is not null and s!='A1000')\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trips\n"
+            );
+
+            bindVariableService.clear();
+            bindVariableService.setStr("s1", "A100");
+            assertPlan("select s, count() from trips where s is not null and s != :s1",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "    Async JIT Filter workers: 1\n" +
+                            "      filter: (s is not null and s!=:s1::string)\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trips\n"
+            );
+
+            assertPlan("select s, count() from trips where s is not null and l != 0",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "    Async JIT Filter workers: 1\n" +
+                            "      filter: (l!=0 and s is not null)\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trips\n"
+            );
+
+            assertPlan("select s, count() from trips where s is not null or l != 0",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "    Async JIT Filter workers: 1\n" +
+                            "      filter: (s is not null or l!=0)\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trips\n"
+            );
+
+            assertPlan("select s, count() from trips where l != 0 and s is not null",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "    Async JIT Filter workers: 1\n" +
+                            "      filter: (l!=0 and s is not null)\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trips\n"
+            );
+
+            assertPlan("select s, count() from trips where l != 0 or s is not null",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "    Async JIT Filter workers: 1\n" +
+                            "      filter: (l!=0 or s is not null)\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trips\n"
+            );
+
+            assertPlan("select s, count() from trips where l > 100 or l != 0 and s is not null",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "    Async JIT Filter workers: 1\n" +
+                            "      filter: ((100<l or l!=0) and s is not null)\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trips\n"
+            );
+
+            assertPlan("select s, count() from trips where l > 100 or l != 0 and s not in (null, 'A1000', 'A2000')",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "    Async Filter workers: 1\n" +
+                            "      filter: ((100<l or l!=0) and not (s in [null,A1000,A2000]))\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trips\n"
+            );
+
+            bindVariableService.clear();
+            bindVariableService.setStr("s1", "A500");
+            assertPlan("select s, count() from trips where l > 100 or l != 0 and s not in (null, 'A1000', :s1)",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "    Async Filter workers: 1\n" +
+                            "      filter: ((100<l or l!=0) and not (s in [null,A1000] or s in [:s1::string]))\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trips\n"
+            );
+        });
+    }
+
+    @Test
+    public void testFilterOnExcludedNonIndexedSymbolManyValues() throws Exception {
+        assertMemoryLeak(() -> {
+            drop("drop table if exists trips");
+            ddl("CREATE TABLE trips(l long, s symbol capacity 5, ts TIMESTAMP) " +
+                    "timestamp(ts) partition by month");
+
+            assertPlan("select s, count() from trips where s is not null",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "    Async JIT Filter workers: 1\n" +
+                            "      filter: s is not null\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trips\n"
+            );
+
+            insert("insert into trips " +
+                    "  select x, 'A' || ( x%3000 )," +
+                    "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 1000000) " +
+                    "  from long_sequence(10000);");
+            insert("insert into trips " +
+                    "  select x, null," +
+                    "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 1000000) " +
+                    "  from long_sequence(4000);"
+            );
+
+            assertPlan("select s, count() from trips where s is not null",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "    Async JIT Filter workers: 1\n" +
+                            "      filter: s is not null\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trips\n"
+            );
+
+            assertPlan("select s, count() from trips where s is not null and s != 'A1000'",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "    Async JIT Filter workers: 1\n" +
+                            "      filter: (s is not null and s!='A1000')\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trips\n"
+            );
+
+            bindVariableService.clear();
+            bindVariableService.setStr("s1", "A100");
+            assertPlan("select s, count() from trips where s is not null and s != :s1",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "    Async JIT Filter workers: 1\n" +
+                            "      filter: (s is not null and s!=:s1::string)\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trips\n"
+            );
+
+            assertPlan("select s, count() from trips where s is not null and l != 0",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "    Async JIT Filter workers: 1\n" +
+                            "      filter: (s is not null and l!=0)\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trips\n"
+            );
+
+            assertPlan("select s, count() from trips where s is not null or l != 0",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "    Async JIT Filter workers: 1\n" +
+                            "      filter: (s is not null or l!=0)\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trips\n"
+            );
+
+            assertPlan("select s, count() from trips where l != 0 and s is not null",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "    Async JIT Filter workers: 1\n" +
+                            "      filter: (l!=0 and s is not null)\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trips\n"
+            );
+
+            assertPlan("select s, count() from trips where l != 0 or s is not null",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "    Async JIT Filter workers: 1\n" +
+                            "      filter: (l!=0 or s is not null)\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trips\n"
+            );
+
+            assertPlan("select s, count() from trips where l > 100 or l != 0 and s is not null",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "    Async JIT Filter workers: 1\n" +
+                            "      filter: ((100<l or l!=0) and s is not null)\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trips\n"
+            );
+
+            bindVariableService.clear();
+            bindVariableService.setStr("s1", "A500");
+            assertPlan("select s, count() from trips where l > 100 or l != 0 and s not in (null, 'A1000', :s1)",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "    Async Filter workers: 1\n" +
+                            "      filter: ((100<l or l!=0) and not (s in [null,A1000] or s in [:s1::string]))\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trips\n"
+            );
+
+        });
+    }
+
+    @Test
     public void testFiltersOnIndexedSymbolColumns() throws SqlException {
         ddl("CREATE TABLE reference_prices (\n" +
                 "  venue SYMBOL index ,\n" +
@@ -3066,20 +3345,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
         );
     }
 
-    @Test // TODO: subquery should just read symbols from map
+    @Test
     public void testLatestOn12() throws Exception {
         assertPlan(
                 "create table a ( i int, s symbol, ts timestamp) timestamp(ts);",
                 "select s, i, ts from a where s in (select distinct s from a) and length(s) = 2 latest on ts partition by s",
                 "LatestBySubQuery\n" +
                         "    Subquery\n" +
-                        "        DistinctKey\n" +
-                        "            GroupBy vectorized: true workers: 1\n" +
-                        "              keys: [s]\n" +
-                        "              values: [count(*)]\n" +
-                        "                DataFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: a\n" +
+                        "        DistinctSymbol\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: a\n" +
                         "    Row backward scan on: s\n" +
                         "      filter: length(s)=2\n" +
                         "    Frame backward scan on: a\n"
@@ -3087,60 +3363,51 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     }
 
-    @Test // TODO: subquery should just read symbols from map
+    @Test
     public void testLatestOn12a() throws Exception {
         assertPlan(
                 "create table a ( i int, s symbol, ts timestamp) timestamp(ts);",
                 "select s, i, ts from a where s in (select distinct s from a) latest on ts partition by s",
                 "LatestBySubQuery\n" +
                         "    Subquery\n" +
-                        "        DistinctKey\n" +
-                        "            GroupBy vectorized: true workers: 1\n" +
-                        "              keys: [s]\n" +
-                        "              values: [count(*)]\n" +
-                        "                DataFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: a\n" +
+                        "        DistinctSymbol\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: a\n" +
                         "    Row backward scan on: s\n" +
                         "    Frame backward scan on: a\n"
         );
 
     }
 
-    @Test // TODO: subquery should just read symbols from map
+    @Test
     public void testLatestOn13() throws Exception {
         assertPlan(
                 "create table a ( i int, s symbol index, ts timestamp) timestamp(ts);",
                 "select i, ts, s from a where s in (select distinct s from a) and length(s) = 2 latest on ts partition by s",
                 "LatestBySubQuery\n" +
                         "    Subquery\n" +
-                        "        DistinctKey\n" +
-                        "            GroupBy vectorized: true workers: 1\n" +
-                        "              keys: [s]\n" +
-                        "              values: [count(*)]\n" +
-                        "                DataFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: a\n" +
+                        "        DistinctSymbol\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: a\n" +
                         "    Index backward scan on: s\n" +
                         "      filter: length(s)=2\n" +
                         "    Frame backward scan on: a\n"
         );
     }
 
-    @Test // TODO: subquery should just read symbols from map
+    @Test
     public void testLatestOn13a() throws Exception {
         assertPlan(
                 "create table a ( i int, s symbol index, ts timestamp) timestamp(ts);",
                 "select i, ts, s from a where s in (select distinct s from a) latest on ts partition by s",
                 "LatestBySubQuery\n" +
                         "    Subquery\n" +
-                        "        DistinctKey\n" +
-                        "            GroupBy vectorized: true workers: 1\n" +
-                        "              keys: [s]\n" +
-                        "              values: [count(*)]\n" +
-                        "                DataFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: a\n" +
+                        "        DistinctSymbol\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: a\n" +
                         "    Index backward scan on: s\n" +
                         "    Frame backward scan on: a\n"
         );
@@ -4647,7 +4914,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab (i int, ts timestamp) timestamp(ts)",
                 "select * from (select * from tab order by ts, i desc limit 10) order by ts",
-                "Sort light lo: 10\n" +
+                "Sort light lo: 10 partiallySorted: true\n" +
                         "  keys: [ts, i desc]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
@@ -4792,38 +5059,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRewriteAggregateWithAddition() throws Exception {
-        assertMemoryLeak(() -> {
-            compile("  CREATE TABLE tab ( x int );");
-
-            assertPlan(
-                    "SELECT sum(x), sum(x+10) FROM tab",
-                    "VirtualRecord\n" +
-                            "  functions: [sum,sum+COUNT*10]\n" +
-                            "    GroupBy vectorized: true\n" +
-                            "      values: [sum(x),count(x)]\n" +
-                            "        DataFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: tab\n"
-            );
-
-            assertPlan(
-                    "SELECT sum(x), sum(10+x) FROM tab",
-                    "VirtualRecord\n" +
-                            "  functions: [sum,COUNT*10+sum]\n" +
-                            "    GroupBy vectorized: true\n" +
-                            "      values: [sum(x),count(x)]\n" +
-                            "        DataFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: tab\n"
-            );
-        });
-    }
-
-    @Test
     public void testRewriteAggregateWithAdditionIsDisabledForNonIntegerType() throws Exception {
         assertMemoryLeak(() -> {
-            compile("  CREATE TABLE tab ( x double );");
+            compile("CREATE TABLE tab ( x double );");
 
             assertPlan(
                     "SELECT sum(x), sum(x+10) FROM tab",
@@ -4848,8 +5086,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregateWithAdditionOnJoin() throws Exception {
         assertMemoryLeak(() -> {
-            compile("  CREATE TABLE taba ( x int, id int );");
-            compile("  CREATE TABLE tabb ( x int, id int );");
+            compile("CREATE TABLE taba ( x int, id int );");
+            compile("CREATE TABLE tabb ( x int, id int );");
 
             assertPlan(
                     "SELECT sum(taba.x),sum(tabb.x), sum(taba.x+10), sum(tabb.x+10) " +
@@ -4894,9 +5132,38 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRewriteAggregateWithMultiplication() throws Exception {
+    public void testRewriteAggregateWithIntAddition() throws Exception {
         assertMemoryLeak(() -> {
-            compile("  CREATE TABLE tab ( x int );");
+            compile("CREATE TABLE tab ( x int );");
+
+            assertPlan(
+                    "SELECT sum(x), sum(x+10) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,sum+COUNT*10]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x),count(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+
+            assertPlan(
+                    "SELECT sum(x), sum(10+x) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,COUNT*10+sum]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x),count(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+        });
+    }
+
+    @Test
+    public void testRewriteAggregateWithIntMultiplication() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE tab ( x int );");
 
             assertPlan(
                     "SELECT sum(x), sum(x*10) FROM tab",
@@ -4923,9 +5190,125 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRewriteAggregateWithIntSubtraction() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE tab ( x int );");
+
+            assertPlan(
+                    "SELECT sum(x), sum(x-10) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,sum-COUNT*10]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x),count(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+
+            assertPlan(
+                    "SELECT sum(x), sum(10-x) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,COUNT*10-sum]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x),count(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+        });
+    }
+
+    @Test
+    public void testRewriteAggregateWithLongAddition() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE tab ( x long );");
+
+            assertPlan(
+                    "SELECT sum(x), sum(x+2) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,sum+COUNT*2]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x),count(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+
+            assertPlan(
+                    "SELECT sum(x), sum(2+x) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,COUNT*2+sum]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x),count(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+        });
+    }
+
+    @Test
+    public void testRewriteAggregateWithLongMultiplication() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE tab ( x long );");
+
+            assertPlan(
+                    "SELECT sum(x), sum(x*10) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,sum*10]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+
+            assertPlan(
+                    "SELECT sum(x), sum(10*x) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,10*sum]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+        });
+    }
+
+    @Test
+    public void testRewriteAggregateWithLongSubtraction() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE tab ( x long );");
+
+            assertPlan(
+                    "SELECT sum(x), sum(x-10) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,sum-COUNT*10]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x),count(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+
+            assertPlan(
+                    "SELECT sum(x), sum(10-x) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,COUNT*10-sum]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x),count(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+        });
+    }
+
+    @Test
     public void testRewriteAggregateWithMultiplicationIsDisabledForNonIntegerColumnType() throws Exception {
         assertMemoryLeak(() -> {
-            compile("  CREATE TABLE tab ( x double );");
+            compile("CREATE TABLE tab ( x double );");
 
             assertPlan(
                     "SELECT sum(x), sum(x*10) FROM tab",
@@ -4950,7 +5333,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregateWithMultiplicationIsDisabledForNonIntegerConstantType() throws Exception {
         assertMemoryLeak(() -> {
-            compile("  CREATE TABLE tab ( x double );");
+            compile("CREATE TABLE tab ( x double );");
 
             assertPlan(
                     "SELECT sum(x), sum(x*10.0) FROM tab",
@@ -4975,8 +5358,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregateWithMultiplicationOnJoin() throws Exception {
         assertMemoryLeak(() -> {
-            compile("  CREATE TABLE taba ( x int, id int );");
-            compile("  CREATE TABLE tabb ( x int, id int );");
+            compile("CREATE TABLE taba ( x int, id int );");
+            compile("CREATE TABLE tabb ( x int, id int );");
 
             assertPlan(
                     "SELECT sum(taba.x),sum(tabb.x),sum(taba.x*10), sum(tabb.x*10) " +
@@ -5021,16 +5404,74 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRewriteAggregateWithSubtraction() throws Exception {
+    public void testRewriteAggregateWithShortAddition() throws Exception {
         assertMemoryLeak(() -> {
-            compile("  CREATE TABLE tab ( x int );");
+            compile("CREATE TABLE tab ( x short );");
+
+            assertPlan(
+                    "SELECT sum(x), sum(x+42) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,sum+COUNT*42]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x),count(*)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+
+            assertPlan(
+                    "SELECT sum(x), sum(42+x) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,COUNT*42+sum]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x),count(*)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+        });
+    }
+
+    @Test
+    public void testRewriteAggregateWithShortMultiplication() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE tab ( x short );");
+
+            assertPlan(
+                    "SELECT sum(x), sum(x*10) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,sum*10]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+
+            assertPlan(
+                    "SELECT sum(x), sum(10*x) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,10*sum]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+        });
+    }
+
+    @Test
+    public void testRewriteAggregateWithShortSubtraction() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE tab ( x short );");
 
             assertPlan(
                     "SELECT sum(x), sum(x-10) FROM tab",
                     "VirtualRecord\n" +
                             "  functions: [sum,sum-COUNT*10]\n" +
                             "    GroupBy vectorized: true\n" +
-                            "      values: [sum(x),count(x)]\n" +
+                            "      values: [sum(x),count(*)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: tab\n"
@@ -5041,7 +5482,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "VirtualRecord\n" +
                             "  functions: [sum,COUNT*10-sum]\n" +
                             "    GroupBy vectorized: true\n" +
-                            "      values: [sum(x),count(x)]\n" +
+                            "      values: [sum(x),count(*)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: tab\n"
@@ -5052,7 +5493,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregateWithSubtractionIsDisabledForNonIntegerType() throws Exception {
         assertMemoryLeak(() -> {
-            compile("  CREATE TABLE tab ( x double );");
+            compile("CREATE TABLE tab ( x double );");
 
             assertPlan(
                     "SELECT sum(x), sum(x-10) FROM tab",
@@ -5077,8 +5518,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregateWithSubtractionOnJoin() throws Exception {
         assertMemoryLeak(() -> {
-            compile("  CREATE TABLE taba ( x int, id int );");
-            compile("  CREATE TABLE tabb ( x int, id int );");
+            compile("CREATE TABLE taba ( x int, id int );");
+            compile("CREATE TABLE tabb ( x int, id int );");
 
             assertPlan(
                     "SELECT sum(taba.x),sum(tabb.x),sum(taba.x-10), sum(tabb.x-10) " +
@@ -5125,7 +5566,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregates() throws Exception {
         assertMemoryLeak(() -> {
-            compile("  CREATE TABLE hits\n" +
+            compile("CREATE TABLE hits\n" +
                     "(\n" +
                     "    EventTime timestamp,\n" +
                     "    ResolutionWidth int,\n" +
@@ -5150,7 +5591,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregatesOnJoin() throws Exception {
         assertMemoryLeak(() -> {
-            compile("  CREATE TABLE hits1" +
+            compile("CREATE TABLE hits1" +
                     "(" +
                     "    EventTime timestamp, " +
                     "    ResolutionWidth int, " +
@@ -5741,34 +6182,26 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    // TODO: should scan symbols table (note: some symbols from the symbol table may be
-    //  not present in the end table due to, say, UPDATE)
     public void testSelectDistinct2() throws Exception {
         assertPlan(
                 "create table tab ( s symbol, ts timestamp);",
                 "select distinct(s) from tab",
-                "DistinctKey\n" +
-                        "    GroupBy vectorized: true workers: 1\n" +
-                        "      keys: [s]\n" +
-                        "      values: [count(*)]\n" +
-                        "        DataFrame\n" +
-                        "            Row forward scan\n" +
-                        "            Frame forward scan on: tab\n"
+                "DistinctSymbol\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: tab\n"
         );
     }
 
-    @Test // TODO: should scan symbols table
+    @Test
     public void testSelectDistinct3() throws Exception {
         assertPlan(
                 "create table tab ( s symbol index, ts timestamp);",
                 "select distinct(s) from tab",
-                "DistinctKey\n" +
-                        "    GroupBy vectorized: true workers: 1\n" +
-                        "      keys: [s]\n" +
-                        "      values: [count(*)]\n" +
-                        "        DataFrame\n" +
-                        "            Row forward scan\n" +
-                        "            Frame forward scan on: tab\n"
+                "DistinctSymbol\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: tab\n"
         );
     }
 
@@ -5923,15 +6356,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( s string, sy symbol, i int, ts timestamp)",
                 "select * from table_partitions('tab')",
                 "show_partitions of: tab\n"
-        );
-    }
-
-    @Test
-    public void testSelectWalTransactions() throws Exception {
-        assertPlan(
-                "create table tab ( s string, sy symbol, i int, ts timestamp) timestamp(ts) partition by day WAL",
-                "select * from wal_transactions('tab')",
-                "wal_transactions of: tab\n"
         );
     }
 
@@ -6880,6 +7304,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSelectWalTransactions() throws Exception {
+        assertPlan(
+                "create table tab ( s string, sy symbol, i int, ts timestamp) timestamp(ts) partition by day WAL",
+                "select * from wal_transactions('tab')",
+                "wal_transactions of: tab\n"
+        );
+    }
+
+    @Test
     public void testSelectWhereOrderByLimit() throws Exception {
         assertPlan(
                 "create table xx ( x long, str string) ",
@@ -7754,7 +8187,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "where i1*i2 != 0",
                 "SelectedRecord\n" +
                         "    Filter filter: i1*i2!=0\n" +
-                        "        Sort light lo: 100\n" +
+                        "        Sort light lo: 100 partiallySorted: true\n" +
                         "          keys: [ts1, l1]\n" +
                         "            SelectedRecord\n" +
                         "                SelectedRecord\n" +
@@ -7842,7 +8275,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * from (select * from a order by ts asc, l limit 10) lt join (select * from a) order by ts asc",
                     "SelectedRecord\n" +
                             "    Lt Join\n" +
-                            "        Sort light lo: 10\n" +
+                            "        Sort light lo: 10 partiallySorted: true\n" +
                             "          keys: [ts, l]\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
@@ -9186,3 +9619,4 @@ public class ExplainPlanTest extends AbstractCairoTest {
         });
     }
 }
+
