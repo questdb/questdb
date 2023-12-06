@@ -24,10 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnTypes;
-import io.questdb.cairo.map.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
@@ -37,50 +34,54 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
+import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
-import io.questdb.std.Transient;
-import org.jetbrains.annotations.NotNull;
 
-class AsyncGroupByRecordCursor implements RecordCursor {
+class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
 
-    private static final Log LOG = LogFactory.getLog(AsyncGroupByRecordCursor.class);
-    private final Map dataMap; // used to accumulate all partial results
+    private static final Log LOG = LogFactory.getLog(AsyncGroupByNotKeyedRecordCursor.class);
+    private final SimpleMapValue dataValue; // used to accumulate all partial results
     private final ObjList<GroupByFunction> groupByFunctions;
     private final VirtualRecord recordA;
-    private final VirtualRecord recordB;
     private final ObjList<Function> recordFunctions;
+    private final int valueCount;
     private int frameLimit;
-    private PageFrameSequence<AsyncGroupByAtom> frameSequence;
-    private boolean isDataMapBuilt;
+    private PageFrameSequence<AsyncGroupByNotKeyedAtom> frameSequence;
     private boolean isOpen;
-    private RecordCursor mapCursor;
+    private boolean isValueBuilt;
+    private int recordsRemaining = 1;
 
-    public AsyncGroupByRecordCursor(
-            CairoConfiguration configuration,
-            @Transient @NotNull ColumnTypes keyTypes,
-            @Transient @NotNull ColumnTypes valueTypes,
+    public AsyncGroupByNotKeyedRecordCursor(
             ObjList<GroupByFunction> groupByFunctions,
-            ObjList<Function> recordFunctions
+            ObjList<Function> recordFunctions,
+            int valueCount
     ) {
         this.groupByFunctions = groupByFunctions;
         this.recordFunctions = recordFunctions;
+        this.valueCount = valueCount;
+        this.dataValue = new SimpleMapValue(valueCount);
         this.recordA = new VirtualRecord(recordFunctions);
-        this.recordB = new VirtualRecord(recordFunctions);
-        this.dataMap = MapFactory.createMap(configuration, keyTypes, valueTypes);
+        recordA.of(dataValue);
         this.isOpen = true;
+    }
+
+    @Override
+    public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
+        if (recordsRemaining > 0) {
+            counter.add(recordsRemaining);
+            recordsRemaining = 0;
+        }
     }
 
     @Override
     public void close() {
         if (isOpen) {
             isOpen = false;
-            Misc.free(dataMap);
             Misc.clearObjList(groupByFunctions);
-            mapCursor = Misc.free(mapCursor);
 
             if (frameSequence != null) {
                 LOG.debug()
@@ -102,21 +103,16 @@ class AsyncGroupByRecordCursor implements RecordCursor {
     }
 
     @Override
-    public Record getRecordB() {
-        return recordB;
-    }
-
-    @Override
     public SymbolTable getSymbolTable(int columnIndex) {
         return (SymbolTable) recordFunctions.getQuick(columnIndex);
     }
 
     @Override
     public boolean hasNext() {
-        if (!isDataMapBuilt) {
-            buildMap();
+        if (!isValueBuilt) {
+            buildValue();
         }
-        return mapCursor.hasNext();
+        return recordsRemaining-- > 0;
     }
 
     @Override
@@ -125,29 +121,17 @@ class AsyncGroupByRecordCursor implements RecordCursor {
     }
 
     @Override
-    public void recordAt(Record record, long atRowId) {
-        if (mapCursor != null) {
-            mapCursor.recordAt(((VirtualRecord) record).getBaseRecord(), atRowId);
-        }
-    }
-
-    @Override
     public long size() {
-        if (!isDataMapBuilt) {
-            return -1;
-        }
-        return mapCursor != null ? mapCursor.size() : -1;
+        return 1;
     }
 
     @Override
     public void toTop() {
-        if (mapCursor != null) {
-            mapCursor.toTop();
-            GroupByUtils.toTop(recordFunctions);
-        }
+        recordsRemaining = 1;
+        GroupByUtils.toTop(recordFunctions);
     }
 
-    private void buildMap() {
+    private void buildValue() {
         if (frameLimit == -1) {
             frameSequence.prepareForDispatch();
             frameLimit = frameSequence.getFrameCount() - 1;
@@ -174,19 +158,10 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                     allFramesActive &= frameSequence.isActive();
                     frameIndex = task.getFrameIndex();
 
-                    final Map srcMap = task.getGroupByMap();
-                    if (srcMap.size() > 0 && frameSequence.isActive()) {
-                        // Merge the maps.
-                        RecordCursor srcCursor = srcMap.getCursor();
-                        MapRecord srcRecord = srcMap.getRecord();
-                        while (srcCursor.hasNext()) {
-                            MapKey destKey = dataMap.withKey();
-                            srcRecord.copyKey(destKey);
-                            MapValue destValue = destKey.createValue();
-                            MapValue srcValue = srcRecord.getValue();
-                            for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
-                                groupByFunctions.getQuick(i).merge(destValue, srcValue);
-                            }
+                    final SimpleMapValue srcValue = task.getGroupByValue();
+                    if (!srcValue.isNew() && frameSequence.isActive()) {
+                        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+                            groupByFunctions.getQuick(i).merge(dataValue, srcValue);
                         }
                     }
 
@@ -214,24 +189,27 @@ class AsyncGroupByRecordCursor implements RecordCursor {
             throwTimeoutException();
         }
 
-        mapCursor = dataMap.getCursor();
-        recordA.of(mapCursor.getRecord());
-        recordB.of(mapCursor.getRecordB());
-        isDataMapBuilt = true;
+        // Init value with empty values if we got no data.
+        if (dataValue.isNew()) {
+            frameSequence.getAtom().getFunctionUpdater().updateEmpty(dataValue);
+        }
+
+        isValueBuilt = true;
     }
 
     private void throwTimeoutException() {
         throw CairoException.nonCritical().put(AsyncFilteredRecordCursor.exceptionMessage).setInterruption(true);
     }
 
-    void of(PageFrameSequence<AsyncGroupByAtom> frameSequence, SqlExecutionContext executionContext) throws SqlException {
+    void of(PageFrameSequence<AsyncGroupByNotKeyedAtom> frameSequence, SqlExecutionContext executionContext) throws SqlException {
         if (!isOpen) {
             isOpen = true;
-            dataMap.reopen();
         }
         this.frameSequence = frameSequence;
-        Function.init(recordFunctions, frameSequence.getSymbolTableSource(), executionContext);
-        isDataMapBuilt = false;
+        Function.init(groupByFunctions, frameSequence.getSymbolTableSource(), executionContext);
+        dataValue.reset(valueCount);
+        isValueBuilt = false;
         frameLimit = -1;
+        toTop();
     }
 }

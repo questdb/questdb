@@ -3275,6 +3275,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // TODO(puzpuzpuz): consider non-thread-safe functions used as keys, e.g. select regexp_replace(k, ...) k, max(v) v from x
             final boolean enableParallelGroupBy = configuration.isSqlParallelGroupByEnabled();
             if (enableParallelGroupBy && factory.supportPageFrameCursor() && GroupByUtils.supportParallelism(groupByFunctions)) {
+                if (keyTypes.getColumnCount() == 0) {
+                    return new AsyncGroupByNotKeyedRecordCursorFactory(
+                            asm,
+                            configuration,
+                            executionContext.getMessageBus(),
+                            factory,
+                            groupByMetadata,
+                            groupByFunctions,
+                            recordFunctions,
+                            valueTypes.getColumnCount(),
+                            null, // TODO(puzpuzpuz): filter goes here
+                            reduceTaskFactory,
+                            null, // TODO(puzpuzpuz): filter goes here
+                            executionContext.getSharedWorkerCount()
+                    );
+                }
+
                 return new AsyncGroupByRecordCursorFactory(
                         asm,
                         configuration,

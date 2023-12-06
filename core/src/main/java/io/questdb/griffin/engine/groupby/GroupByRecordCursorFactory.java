@@ -99,7 +99,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         final RecordCursor baseCursor = base.getCursor(executionContext);
         final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
         try {
-            // init all record function for this cursor, in case functions require metadata and/or symbol tables
+            // init all record functions for this cursor, in case functions require metadata and/or symbol tables
             Function.init(recordFunctions, baseCursor, executionContext);
             cursor.of(baseCursor, circuitBreaker);
             return cursor;

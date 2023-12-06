@@ -51,7 +51,7 @@ public class LastDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
         try (RecordCursorFactory factory = select("select last(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
-                Assert.assertEquals(-1, cursor.size());
+                Assert.assertEquals(1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
                 Assert.assertTrue(Double.isNaN(record.getDouble(0)));
             }
@@ -66,7 +66,7 @@ public class LastDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                 "select last(x) x from tab",
                 "create table tab as (select cast(x as double) x from long_sequence(10))",
                 null,
-                true,
+                false,
                 true
         );
     }
@@ -79,7 +79,7 @@ public class LastDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                 "select last(y) y from tab",
                 "create table tab as (select cast(x as double) x, cast(null as double) y from long_sequence(100))",
                 null,
-                true,
+                false,
                 true
         );
     }
@@ -100,7 +100,7 @@ public class LastDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
         try (RecordCursorFactory factory = select("select last(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
-                Assert.assertEquals(-1, cursor.size());
+                Assert.assertEquals(1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
                 Assert.assertEquals(0.3901731258748704, record.getDouble(0), 0.0001);
             }

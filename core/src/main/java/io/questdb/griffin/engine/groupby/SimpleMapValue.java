@@ -29,9 +29,18 @@ import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Long256Util;
 
+import java.util.Arrays;
+
 public class SimpleMapValue implements MapValue {
+    private static final int DEFAULT_CAPACITY = 16;
+
     private final Long256Impl long256 = new Long256Impl();
-    private final long[] values;
+    private boolean isNew = true;
+    private long[] values;
+
+    public SimpleMapValue() {
+        this(DEFAULT_CAPACITY);
+    }
 
     public SimpleMapValue(int columnCount) {
         this.values = new long[4 * columnCount];
@@ -83,6 +92,7 @@ public class SimpleMapValue implements MapValue {
     public void copy(SimpleMapValue other) {
         assert values.length >= other.values.length;
         System.arraycopy(other.values, 0, values, 0, other.values.length);
+        isNew = other.isNew;
     }
 
     @Override
@@ -184,7 +194,7 @@ public class SimpleMapValue implements MapValue {
 
     @Override
     public boolean isNew() {
-        return false;
+        return isNew;
     }
 
     @Override
@@ -195,41 +205,49 @@ public class SimpleMapValue implements MapValue {
     @Override
     public void putBool(int index, boolean value) {
         values[4 * index] = value ? 0 : 1;
+        isNew = false;
     }
 
     @Override
     public void putByte(int index, byte value) {
         values[4 * index] = value;
+        isNew = false;
     }
 
     @Override
     public void putChar(int index, char value) {
         values[4 * index] = value;
+        isNew = false;
     }
 
     @Override
     public void putDate(int index, long value) {
         values[4 * index] = value;
+        isNew = false;
     }
 
     @Override
     public void putDouble(int index, double value) {
         values[4 * index] = Double.doubleToLongBits(value);
+        isNew = false;
     }
 
     @Override
     public void putFloat(int index, float value) {
         values[4 * index] = Float.floatToIntBits(value);
+        isNew = false;
     }
 
     @Override
     public void putInt(int index, int value) {
         values[4 * index] = value;
+        isNew = false;
     }
 
     @Override
     public void putLong(int index, long value) {
         values[4 * index] = value;
+        isNew = false;
     }
 
     @Override
@@ -237,6 +255,7 @@ public class SimpleMapValue implements MapValue {
         final int idx = 4 * index;
         values[idx] = lo;
         values[idx + 1] = hi;
+        isNew = false;
     }
 
     @Override
@@ -246,16 +265,29 @@ public class SimpleMapValue implements MapValue {
         values[idx + 1] = value.getLong1();
         values[idx + 2] = value.getLong2();
         values[idx + 3] = value.getLong3();
+        isNew = false;
     }
 
     @Override
     public void putShort(int index, short value) {
         values[4 * index] = value;
+        isNew = false;
     }
 
     @Override
     public void putTimestamp(int index, long value) {
         values[4 * index] = value;
+        isNew = false;
+    }
+
+    public void reset(int columnCount) {
+        int requiredCapacity = 4 * columnCount;
+        if (values.length < requiredCapacity) {
+            values = new long[requiredCapacity];
+        } else {
+            Arrays.fill(values, 0);
+        }
+        isNew = true;
     }
 
     @Override

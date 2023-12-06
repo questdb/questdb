@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StatefulAtom;
@@ -46,20 +46,19 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
-public class AsyncGroupByAtom implements StatefulAtom, Closeable, Plannable {
+public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Plannable {
 
     private final Function filter;
     private final GroupByFunctionsUpdater functionUpdater;
-    private final RecordSink mapSink;
     private final ObjList<Function> perWorkerFilters;
     private final PerWorkerLocks perWorkerLocks;
+    private final int valueCount;
 
-    public AsyncGroupByAtom(
+    public AsyncGroupByNotKeyedAtom(
             @Transient @NotNull BytecodeAssembler asm,
             @NotNull CairoConfiguration configuration,
-            @Transient @NotNull ColumnTypes columnTypes,
-            @Transient @NotNull ListColumnFilter listColumnFilter,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
+            int valueCount,
             @Nullable Function filter,
             @Nullable ObjList<Function> perWorkerFilters,
             int workerCount
@@ -67,13 +66,13 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Plannable {
         assert perWorkerFilters == null || perWorkerFilters.size() == workerCount;
         this.filter = filter;
         this.perWorkerFilters = perWorkerFilters;
+        this.valueCount = valueCount;
         functionUpdater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
         if (perWorkerFilters != null) {
             perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
         } else {
             perWorkerLocks = null;
         }
-        mapSink = RecordSinkFactory.getInstance(asm, columnTypes, listColumnFilter, false);
     }
 
     public int acquire(int workerId, boolean owner, SqlExecutionCircuitBreaker circuitBreaker) {
@@ -107,8 +106,8 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Plannable {
         return functionUpdater;
     }
 
-    public RecordSink getMapSink() {
-        return mapSink;
+    public int getValueCount() {
+        return valueCount;
     }
 
     @Override

@@ -383,7 +383,14 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         }
     }
 
-    public void prepareForGroupBy(
+    public void reset() {
+        // prepare to resend the same sequence as it might be required by toTop()
+        frameRowCounts.clear();
+        assert !done;
+        done = true;
+    }
+
+    public void setGroupByTypes(
             @Transient @NotNull ColumnTypes keyTypes,
             @Transient @NotNull ColumnTypes valueTypes
     ) {
@@ -395,13 +402,6 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             final int columnType = valueTypes.getColumnType(i);
             groupByValueTypes.add(columnType);
         }
-    }
-
-    public void reset() {
-        // prepare to resend the same sequence as it might be required by toTop()
-        frameRowCounts.clear();
-        assert !done;
-        done = true;
     }
 
     /**

@@ -50,7 +50,7 @@ public class FirstBooleanGroupByFunctionFactoryTest extends AbstractCairoTest {
         try (RecordCursorFactory factory = select("select first(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
-                Assert.assertEquals(-1, cursor.size());
+                Assert.assertEquals(1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
                 Assert.assertFalse(record.getBool(0));
             }
@@ -65,7 +65,7 @@ public class FirstBooleanGroupByFunctionFactoryTest extends AbstractCairoTest {
                 "select first(a)a from tab",
                 "create table tab as (select false a union select true a union select true a)",
                 null,
-                true,
+                false,
                 true
         );
     }
@@ -78,7 +78,7 @@ public class FirstBooleanGroupByFunctionFactoryTest extends AbstractCairoTest {
                 "select first(a)a from tab",
                 "create table tab as (select true a union select false a union select false a)",
                 null,
-                true,
+                false,
                 true
         );
     }

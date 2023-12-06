@@ -29,6 +29,7 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.sql.PageAddressCache;
 import io.questdb.cairo.sql.StatefulAtom;
+import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Misc;
@@ -40,13 +41,15 @@ public class PageFrameReduceTask implements Closeable {
 
     public static final byte TYPE_FILTER = 0;
     public static final byte TYPE_GROUP_BY = 1;
+    public static final byte TYPE_GROUP_BY_NOT_KEYED = 2;
     private static final String exceptionMessage = "unexpected filter error";
 
     // Used to pass the list of column page frame addresses to a JIT-compiled filter.
     private final DirectLongList columns;
     private final StringSink errorMsg = new StringSink();
     private final DirectLongList filteredRows;
-    private final Map groupByMap;
+    private final Map groupByMap; // Used in keyed GROUP BY.
+    private final SimpleMapValue groupByValue = new SimpleMapValue(); // Used in non-keyed GROUP BY.
     private final long pageFrameQueueCapacity;
     private int frameIndex = Integer.MAX_VALUE;
     private PageFrameSequence<?> frameSequence;
@@ -102,6 +105,10 @@ public class PageFrameReduceTask implements Closeable {
 
     public Map getGroupByMap() {
         return groupByMap;
+    }
+
+    public SimpleMapValue getGroupByValue() {
+        return groupByValue;
     }
 
     public PageAddressCache getPageAddressCache() {

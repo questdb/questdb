@@ -77,7 +77,7 @@ public abstract class AbstractSampleByRecordCursorFactory extends AbstractRecord
             RecordCursor baseCursor
     ) throws SqlException {
         try {
-            // init all record function for this cursor, in case functions require metadata and/or symbol tables
+            // init all record functions for this cursor, in case functions require metadata and/or symbol tables
             Function.init(recordFunctions, baseCursor, executionContext);
             AbstractNoRecordSampleByCursor cursor = getRawCursor();
             cursor.of(baseCursor, executionContext);

@@ -25,10 +25,8 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.MessageBus;
-import io.questdb.cairo.*;
-import io.questdb.cairo.map.Map;
-import io.questdb.cairo.map.MapKey;
-import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameReduceTaskFactory;
@@ -39,7 +37,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
-import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
+import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Misc;
@@ -51,29 +49,27 @@ import org.jetbrains.annotations.Nullable;
 import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_DESC;
 
-public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory {
+public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFactory {
 
-    private static final PageFrameReducer REDUCER = AsyncGroupByRecordCursorFactory::aggregate;
-    private final AsyncGroupByAtom atom;
+    private static final PageFrameReducer REDUCER = AsyncGroupByNotKeyedRecordCursorFactory::aggregate;
+    private final AsyncGroupByNotKeyedAtom atom;
     private final RecordCursorFactory base;
     private final SCSequence collectSubSeq = new SCSequence();
-    private final AsyncGroupByRecordCursor cursor;
-    private final PageFrameSequence<AsyncGroupByAtom> frameSequence;
+    private final AsyncGroupByNotKeyedRecordCursor cursor;
+    private final PageFrameSequence<AsyncGroupByNotKeyedAtom> frameSequence;
     private final ObjList<GroupByFunction> groupByFunctions;
     private final ObjList<Function> recordFunctions;
     private final int workerCount;
 
-    public AsyncGroupByRecordCursorFactory(
+    public AsyncGroupByNotKeyedRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
             @NotNull CairoConfiguration configuration,
             @NotNull MessageBus messageBus,
             @NotNull RecordCursorFactory base,
             @NotNull RecordMetadata groupByMetadata,
-            @Transient @NotNull ListColumnFilter listColumnFilter,
-            @Transient @NotNull ColumnTypes keyTypes,
-            @Transient @NotNull ColumnTypes valueTypes,
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
+            int valueCount,
             @Nullable Function filter,
             @NotNull PageFrameReduceTaskFactory reduceTaskFactory,
             @Nullable ObjList<Function> perWorkerFilters,
@@ -81,23 +77,21 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
     ) {
         super(groupByMetadata);
         try {
-            assert !(base instanceof AsyncGroupByRecordCursorFactory);
+            assert !(base instanceof AsyncGroupByNotKeyedRecordCursorFactory);
             this.base = base;
             this.groupByFunctions = groupByFunctions;
             this.recordFunctions = recordFunctions;
-            this.atom = new AsyncGroupByAtom(
+            this.atom = new AsyncGroupByNotKeyedAtom(
                     asm,
                     configuration,
-                    base.getMetadata(),
-                    listColumnFilter,
                     groupByFunctions,
+                    valueCount,
                     filter,
                     perWorkerFilters,
                     workerCount
             );
-            this.frameSequence = new PageFrameSequence<>(configuration, messageBus, REDUCER, reduceTaskFactory, PageFrameReduceTask.TYPE_GROUP_BY);
-            frameSequence.setGroupByTypes(keyTypes, valueTypes);
-            this.cursor = new AsyncGroupByRecordCursor(configuration, keyTypes, valueTypes, groupByFunctions, recordFunctions);
+            this.frameSequence = new PageFrameSequence<>(configuration, messageBus, REDUCER, reduceTaskFactory, PageFrameReduceTask.TYPE_GROUP_BY_NOT_KEYED);
+            this.cursor = new AsyncGroupByNotKeyedRecordCursor(groupByFunctions, recordFunctions, valueCount);
             this.workerCount = workerCount;
         } catch (Throwable e) {
             Misc.freeObjList(recordFunctions);
@@ -106,7 +100,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
     }
 
     @Override
-    public PageFrameSequence<AsyncGroupByAtom> execute(SqlExecutionContext executionContext, SCSequence collectSubSeq, int order) throws SqlException {
+    public PageFrameSequence<AsyncGroupByNotKeyedAtom> execute(SqlExecutionContext executionContext, SCSequence collectSubSeq, int order) throws SqlException {
         return frameSequence.of(base, executionContext, collectSubSeq, atom, order);
     }
 
@@ -129,14 +123,13 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
-        return true;
+        return false;
     }
 
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Async Group By");
         sink.meta("workers").val(workerCount);
-        sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(recordFunctions, getMetadata()));
         sink.optAttr("values", groupByFunctions, true);
         sink.attr("filter").val(atom);
         sink.child(base);
@@ -154,13 +147,12 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             @NotNull SqlExecutionCircuitBreaker circuitBreaker,
             @Nullable PageFrameSequence<?> stealingFrameSequence
     ) {
-        final Map map = task.getGroupByMap();
+        final SimpleMapValue value = task.getGroupByValue();
         final long frameRowCount = task.getFrameRowCount();
-        final AsyncGroupByAtom atom = task.getFrameSequence(AsyncGroupByAtom.class).getAtom();
+        final AsyncGroupByNotKeyedAtom atom = task.getFrameSequence(AsyncGroupByNotKeyedAtom.class).getAtom();
         final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater();
-        final RecordSink mapSink = atom.getMapSink();
 
-        map.clear();
+        value.reset(atom.getValueCount());
 
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.acquire(workerId, owner, circuitBreaker);
@@ -172,9 +164,6 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
                     continue;
                 }
 
-                final MapKey key = map.withKey();
-                mapSink.copy(record, key);
-                MapValue value = key.createValue();
                 if (value.isNew()) {
                     functionUpdater.updateNew(value, record);
                 } else {

@@ -43,8 +43,9 @@ public class GroupByTest extends AbstractCairoTest {
             String query1 = "select l,s from t group by l,s";
             assertPlan(
                     query1,
-                    "GroupBy vectorized: false\n" +
+                    "Async Group By workers: 1\n" +
                             "  keys: [l,s]\n" +
+                            "  filter: null\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: t\n"
@@ -57,8 +58,9 @@ public class GroupByTest extends AbstractCairoTest {
                     query2,
                     "VirtualRecord\n" +
                             "  functions: [l,s]\n" +
-                            "    GroupBy vectorized: false\n" +
+                            "    Async Group By workers: 1\n" +
                             "      keys: [l,s]\n" +
+                            "      filter: null\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: t\n"
@@ -308,9 +310,10 @@ public class GroupByTest extends AbstractCairoTest {
                     query,
                     "VirtualRecord\n" +
                             "  functions: [x,avg,avg+min,x+10,avg1,avg1+10]\n" +
-                            "    GroupBy vectorized: false\n" +
+                            "    Async Group By workers: 1\n" +
                             "      keys: [x]\n" +
                             "      values: [avg(y),min(y),avg(x)]\n" +
+                            "      filter: null\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: t\n"
@@ -336,9 +339,10 @@ public class GroupByTest extends AbstractCairoTest {
                     query,
                     "VirtualRecord\n" +
                             "  functions: [x,avg,:bv::string]\n" +
-                            "    GroupBy vectorized: false\n" +
+                            "    Async Group By workers: 1\n" +
                             "      keys: [x]\n" +
                             "      values: [avg(y)]\n" +
+                            "      filter: null\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: t\n"
@@ -358,9 +362,10 @@ public class GroupByTest extends AbstractCairoTest {
                     query,
                     "VirtualRecord\n" +
                             "  functions: [x*10,x+avg,min]\n" +
-                            "    GroupBy vectorized: false\n" +
+                            "    Async Group By workers: 1\n" +
                             "      keys: [x]\n" +
                             "      values: [avg(y),min(y)]\n" +
+                            "      filter: null\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: t\n"
@@ -887,9 +892,10 @@ public class GroupByTest extends AbstractCairoTest {
             String query = "select s, max, max(l) from t group by s, max";
             assertPlan(
                     query,
-                    "GroupBy vectorized: false\n" +
+                    "Async Group By workers: 1\n" +
                             "  keys: [s,max]\n" +
                             "  values: [max(l)]\n" +
+                            "  filter: null\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: t\n"
@@ -1081,8 +1087,9 @@ public class GroupByTest extends AbstractCairoTest {
                     query,
                     "VirtualRecord\n" +
                             "  functions: [l,s,rnd_int(0,1,0)/10]\n" +
-                            "    GroupBy vectorized: false\n" +
+                            "    Async Group By workers: 1\n" +
                             "      keys: [l,s]\n" +
+                            "      filter: null\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: t\n"
