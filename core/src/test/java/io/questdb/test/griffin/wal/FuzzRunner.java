@@ -27,7 +27,6 @@ package io.questdb.test.griffin.wal;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.TableMetadata;
-import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
@@ -344,15 +343,15 @@ public class FuzzRunner {
 
     public ObjList<FuzzTransaction> generateSet(
             Rnd rnd,
-            TableRecordMetadata sequencerMetadata,
-            TableRecordMetadata readerMetadata,
+            TableMetadata sequencerMetadata,
+            TableMetadata tableMetadata,
             long start,
             long end,
             String tableName
     ) {
         return FuzzTransactionGenerator.generateSet(
                 sequencerMetadata,
-                readerMetadata,
+                tableMetadata,
                 rnd,
                 start,
                 end,
@@ -384,9 +383,9 @@ public class FuzzRunner {
 
     public ObjList<FuzzTransaction> generateTransactions(String tableName, Rnd rnd, long start, long end) {
         TableToken tableToken = engine.verifyTableName(tableName);
-        try (TableMetadata sequencerMetadata = engine.getSequencerMetadata(tableToken)) {
-            try (TableMetadata readerMetadata = engine.getTableReaderMetadata(tableToken)) {
-                return generateSet(rnd, sequencerMetadata, readerMetadata, start, end, tableName);
+        try (TableMetadata sequencerMetadata = engine.getLegacyMetadata(tableToken)) {
+            try (TableMetadata tableMetadata = engine.getTableMetadata(tableToken)) {
+                return generateSet(rnd, sequencerMetadata, tableMetadata, start, end, tableName);
             }
         }
     }

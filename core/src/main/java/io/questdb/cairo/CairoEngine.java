@@ -534,6 +534,9 @@ public class CairoEngine implements Closeable, WriterSource {
      * @return sequence metadata instance
      */
     public TableMetadata getSequencerMetadata(TableToken tableToken, long desiredVersion) {
+
+        assert tableToken.isWal();
+
         verifyTableToken(tableToken);
 
         try {

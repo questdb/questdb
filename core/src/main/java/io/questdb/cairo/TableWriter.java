@@ -30,10 +30,7 @@ import io.questdb.Metrics;
 import io.questdb.cairo.frm.Frame;
 import io.questdb.cairo.frm.FrameAlgebra;
 import io.questdb.cairo.frm.file.PartitionFrameFactory;
-import io.questdb.cairo.sql.AsyncWriterCommand;
-import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.sql.TableRecordMetadata;
-import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.NullMapWriter;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
@@ -1385,7 +1382,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public TableRecordMetadata getMetadata() {
+    public TableMetadata getMetadata() {
         return metadata;
     }
 
@@ -3754,7 +3751,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void finishMetaSwapUpdate() {
         finishMetadataSwap();
         bumpMetadataVersion();
-        metadata.setTableVersion();
         clearTodoLog();
     }
 
