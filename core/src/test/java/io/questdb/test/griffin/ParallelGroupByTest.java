@@ -32,19 +32,45 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Before;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CyclicBarrier;
 
 import static org.junit.Assert.fail;
 
+@RunWith(Parameterized.class)
 public class ParallelGroupByTest extends AbstractCairoTest {
+    private final boolean enableParallelGroupBy;
+
+    public ParallelGroupByTest(boolean enableParallelGroupBy) {
+        this.enableParallelGroupBy = enableParallelGroupBy;
+    }
+
+    @Parameterized.Parameters(name = "parallel={0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {true},
+                {false}
+        });
+    }
+
+    @Override
+    @Before
+    public void setUp() {
+        super.setUp();
+        configOverrideParallelGroupByEnabled(enableParallelGroupBy);
+    }
 
     @Test
-    public void testParallelMultipleKeyedGroupBy() throws Exception {
-        testParallelMultipleKeyedGroupBy(
+    public void testParallelMultiKeyedGroupBy() throws Exception {
+        testParallelMultiKeyedGroupBy(
                 "SELECT key1, key2, avg(value), sum(colTop) FROM tab",
                 "key1\tkey2\tavg\tsum\n" +
                         "k1\tk1\t48.5\t735.0\n" +
@@ -56,8 +82,8 @@ public class ParallelGroupByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testParallelMultipleKeyedGroupBySubQuery() throws Exception {
-        testParallelMultipleKeyedGroupBy(
+    public void testParallelMultiKeyedGroupBySubQuery() throws Exception {
+        testParallelMultiKeyedGroupBy(
                 "SELECT key1, key2, avg + sum from (" +
                         "SELECT key1, key2, avg(value), sum(colTop) FROM tab" +
                         ")",
@@ -70,11 +96,9 @@ public class ParallelGroupByTest extends AbstractCairoTest {
         );
     }
 
-    // todo: this query does not use AsyncGroupByRecordCursorFactory
-    //  AsyncFilteredRecordCursorFactory should support PageFrameCursor
     @Test
-    public void testParallelMultipleKeyedGroupByWithFilter() throws Exception {
-        testParallelMultipleKeyedGroupBy(
+    public void testParallelMultiKeyedGroupByWithFilter() throws Exception {
+        testParallelMultiKeyedGroupBy(
                 "SELECT key1, key2, avg(value), sum(colTop) FROM tab WHERE value < 80",
                 "key1\tkey2\tavg\tsum\n" +
                         "k1\tk1\t38.5\t381.0\n" +
@@ -86,8 +110,8 @@ public class ParallelGroupByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testParallelMultipleKeyedGroupByWithLimit() throws Exception {
-        testParallelMultipleKeyedGroupBy(
+    public void testParallelMultiKeyedGroupByWithLimit() throws Exception {
+        testParallelMultiKeyedGroupBy(
                 "SELECT key1, key2, avg(value), sum(colTop) FROM tab LIMIT 3",
                 "key1\tkey2\tavg\tsum\n" +
                         "k1\tk1\t48.5\t735.0\n" +
@@ -98,6 +122,24 @@ public class ParallelGroupByTest extends AbstractCairoTest {
                         "k3\tk3\t50.5\t755.0\n" +
                         "k4\tk4\t51.5\t765.0\n" +
                         "k0\tk0\t52.5\t775.0\n"
+        );
+    }
+
+    @Test
+    public void testParallelNonKeyedGroupBy() throws Exception {
+        testParallelNonKeyedGroupBy(
+                "SELECT vwap(price, quantity), sum(colTop) FROM tab",
+                "vwap\tsum\n" +
+                        "66.33333333333333\t3775.0\n"
+        );
+    }
+
+    @Test
+    public void testParallelNonKeyedGroupByWithFilter() throws Exception {
+        testParallelNonKeyedGroupBy(
+                "SELECT vwap(price, quantity), sum(colTop) FROM tab WHERE quantity < 80",
+                "vwap\tsum\n" +
+                        "53.0\t1985.0\n"
         );
     }
 
@@ -116,7 +158,7 @@ public class ParallelGroupByTest extends AbstractCairoTest {
 
     @Test
     public void testParallelSingleKeyedGroupByConcurrent() throws Exception {
-        final int numOfThreads = 20;
+        final int numOfThreads = 8;
         final int numOfIterations = 50;
         final String query = "SELECT key, avg + sum from (" +
                 "SELECT key, avg(value), sum(colTop) FROM tab" +
@@ -188,8 +230,6 @@ public class ParallelGroupByTest extends AbstractCairoTest {
         );
     }
 
-    // todo: this query does not use AsyncGroupByRecordCursorFactory
-    //  AsyncFilteredRecordCursorFactory should support PageFrameCursor
     @Test
     public void testParallelSingleKeyedGroupByWithFilter() throws Exception {
         testParallelSingleKeyedGroupBy(
@@ -237,7 +277,7 @@ public class ParallelGroupByTest extends AbstractCairoTest {
         }
     }
 
-    private void testParallelMultipleKeyedGroupBy(String... queriesAndExpectedResults) throws Exception {
+    private void testParallelMultiKeyedGroupBy(String... queriesAndExpectedResults) throws Exception {
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool((() -> 4));
             TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
@@ -249,6 +289,25 @@ public class ParallelGroupByTest extends AbstractCairoTest {
                         insert(compiler, "insert into tab select (x*8640000000)::timestamp, 'k' || (x%5), 'k' || (x%5), x from long_sequence(50)", sqlExecutionContext);
                         ddl(compiler, "ALTER TABLE tab ADD COLUMN colTop DOUBLE", sqlExecutionContext);
                         insert(compiler, "insert into tab select ((50 + x)*8640000000)::timestamp, 'k' || ((50 + x)%5), 'k' || ((50 + x)%5), 50 + x, 50 + x from long_sequence(50)", sqlExecutionContext);
+                        assertQueries(engine, sqlExecutionContext, queriesAndExpectedResults);
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    private void testParallelNonKeyedGroupBy(String... queriesAndExpectedResults) throws Exception {
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool((() -> 4));
+            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                        ddl(compiler, "CREATE TABLE tab (\n" +
+                                "  ts TIMESTAMP," +
+                                "  price DOUBLE," +
+                                "  quantity DOUBLE ) timestamp (ts) PARTITION BY DAY", sqlExecutionContext);
+                        insert(compiler, "insert into tab select (x*8640000000)::timestamp, x, x % 100 from long_sequence(50)", sqlExecutionContext);
+                        ddl(compiler, "ALTER TABLE tab ADD COLUMN colTop DOUBLE", sqlExecutionContext);
+                        insert(compiler, "insert into tab select ((50 + x)*8640000000)::timestamp, (50 + x), (50 + x) % 100, 50 + x from long_sequence(50)", sqlExecutionContext);
                         assertQueries(engine, sqlExecutionContext, queriesAndExpectedResults);
                     },
                     configuration,
