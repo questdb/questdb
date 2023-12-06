@@ -383,7 +383,7 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
                     Assert.assertNull(serverMain.getEngine().getTableTokenIfExists("drop"));
                     Assert.assertNotNull(serverMain.getEngine().getTableTokenIfExists("good"));
 
-                    serverMain.waitWalTxnApplied("good", 1);
+                    serverMain.waitWalTxnApplied("good");
                     serverMain.assertSql("select count from good", "count\n" +
                             "3\n");
 
