@@ -587,7 +587,7 @@ public class CairoEngine implements Closeable, WriterSource {
      * This is explicitly "table" metadata. For legacy (non-WAL) tables, this metadata
      * is the same as writer metadata. For new WAL tables, table metadata could be "old",
      * as in not all WAL transactions has reached the table yet. In scenarios where
-     * table modification is made and positively confirmed immediately after via metadata, {@link #getSequencerMetadata(TableToken, long))}
+     * table modification is made and positively confirmed immediately after via metadata, {@link #getSequencerMetadata(TableToken, long)}
      * must be used instead.
      *
      * Metadata provided by this method is good enough for the read-only queries.
