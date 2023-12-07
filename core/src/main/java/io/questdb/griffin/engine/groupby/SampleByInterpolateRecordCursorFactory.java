@@ -195,6 +195,11 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         return base.usesCompiledFilter();
     }
 
+    @Override
+    public boolean usesIndex() {
+        return base.usesIndex();
+    }
+
     private void freeYData() {
         if (yData != 0) {
             Unsafe.free(yData, yDataSize, MemoryTag.NATIVE_FUNC_RSS);

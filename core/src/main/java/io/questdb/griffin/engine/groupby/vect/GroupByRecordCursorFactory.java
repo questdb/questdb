@@ -195,6 +195,11 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         return base.usesCompiledFilter();
     }
 
+    @Override
+    public boolean usesIndex() {
+        return base.usesIndex();
+    }
+
     private static void addOffsets(
             IntList columnSkewIndex,
             @Transient ObjList<VectorAggregateFunction> vafList,

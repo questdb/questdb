@@ -223,6 +223,11 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
         return base.usesCompiledFilter();
     }
 
+    @Override
+    public boolean usesIndex() {
+        return base.usesIndex();
+    }
+
     private void addSortKeys(PlanSink sink, IntList list) {
         for (int i = 0, n = list.size(); i < n; i++) {
             int colIdx = list.get(i);

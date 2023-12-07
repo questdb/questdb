@@ -109,6 +109,11 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
         return base.usesCompiledFilter();
     }
 
+    @Override
+    public boolean usesIndex() {
+        return base.usesIndex();
+    }
+
     static int getRunWhatsLeft(
             Sequence subSeq,
             RingQueue<VectorAggregateTask> queue,

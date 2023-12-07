@@ -3258,11 +3258,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (enableParallelGroupBy && GroupByUtils.supportParallelism(groupByFunctions)) {
                 supportsParallelism = factory.supportPageFrameCursor();
                 // Try to steal the filter from the nested model, if possible.
-                if (!supportsParallelism
-                        && nested.getSelectModelType() == QueryModel.SELECT_MODEL_NONE
-                        && nested.getNestedModel() == null
-                        && nestedFilterExpr != null
-                        && nested.getWhereClause() == null) {
+                if (
+                        !supportsParallelism
+                                && !factory.usesIndex()
+                                && nested.getSelectModelType() == QueryModel.SELECT_MODEL_NONE
+                                && nested.getNestedModel() == null
+                                && nestedFilterExpr != null
+                                && nested.getWhereClause() == null
+                ) {
                     RecordCursorFactory candidateFactory = generateSubQuery(model, executionContext);
                     if (candidateFactory.supportPageFrameCursor()) {
                         Misc.free(factory);
@@ -4264,8 +4267,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             } else {
                 for (int i = 0; i < latestByColumnCount; i++) {
                     int idx = listColumnFilterA.getColumnIndexFactored(i);
-                    if (!ColumnType.isSymbol(myMeta.getColumnType(idx)) ||
-                            !myMeta.isColumnIndexed(idx)) {
+                    if (!ColumnType.isSymbol(myMeta.getColumnType(idx)) || !myMeta.isColumnIndexed(idx)) {
                         throw SqlException.$(whereClauseParser.getWithinPosition(), "WITHIN clause requires LATEST BY using only indexed symbol columns");
                     }
                 }
@@ -4430,9 +4432,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // - query index with a single value or
                 // - query index with multiple values but use table order with forward scan (heap row cursor factory doesn't support backward scan)
                 // it doesn't matter if we hit one or more partitions
-                if (!orderByKeyColumn
-                        && isOrderByDesignatedTimestampOnly(model)
-                ) {
+                if (!orderByKeyColumn && isOrderByDesignatedTimestampOnly(model)) {
                     int orderByDirection = getOrderByDirectionOrDefault(model, 0);
                     if (nKeyValues == 1 || (nKeyValues > 1 && orderByDirection == ORDER_DIRECTION_ASCENDING)) {
                         orderByTimestamp = true;
@@ -4493,7 +4493,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                         if (filter == null) {
                             // This special case factory can later be disassembled to framing and index
-                            // cursors in Sample By processing
+                            // cursors in SAMPLE BY processing
                             return new DeferredSingleSymbolFilterDataFrameRecordCursorFactory(
                                     configuration,
                                     keyColumnIndex,
@@ -4539,9 +4539,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             indexDirection,
                             columnIndexes
                     );
-                } else if (
-                        nKeyExcludedValues > 0
-                ) {
+                } else if (nKeyExcludedValues > 0) {
                     if (reader.getSymbolMapReader(keyColumnIndex).getSymbolCount() < configuration.getMaxSymbolNotEqualsCount()) {
                         Function filter = compileFilter(intrinsicModel, myMeta, executionContext);
                         if (filter != null && filter.isConstant()) {

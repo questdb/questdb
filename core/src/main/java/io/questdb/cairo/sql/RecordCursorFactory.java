@@ -199,7 +199,17 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         throw new UnsupportedOperationException("Unsupported for: " + getClass());
     }
 
+    /**
+     * Returns true if the factory uses a {@link io.questdb.jit.CompiledFilter}.
+     */
     default boolean usesCompiledFilter() {
+        return false;
+    }
+
+    /**
+     * Returns true if the factory uses index-based access.
+     */
+    default boolean usesIndex() {
         return false;
     }
 }

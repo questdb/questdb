@@ -147,6 +147,11 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         return base.usesCompiledFilter();
     }
 
+    @Override
+    public boolean usesIndex() {
+        return base.usesIndex();
+    }
+
     private static void aggregate(
             int workerId,
             @NotNull PageAddressCacheRecord record,

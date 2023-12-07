@@ -65,6 +65,11 @@ public abstract class AbstractSampleByRecordCursorFactory extends AbstractRecord
     }
 
     @Override
+    public boolean usesIndex() {
+        return base.usesIndex();
+    }
+
+    @Override
     protected void _close() {
         Misc.freeObjList(recordFunctions);
         Misc.free(base);

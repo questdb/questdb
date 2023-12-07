@@ -109,6 +109,11 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
     }
 
     @Override
+    public boolean usesIndex() {
+        return base.usesIndex();
+    }
+
+    @Override
     protected void _close() {
         Misc.freeObjList(groupByFunctions);
         Misc.free(base);
