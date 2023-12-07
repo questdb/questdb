@@ -37,7 +37,6 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.IOContext;
 import io.questdb.network.IODispatcher;
-import io.questdb.network.NetworkFacade;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectUtf8Sequence;
@@ -48,7 +47,6 @@ import org.jetbrains.annotations.NotNull;
 public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext> {
     private static final Log LOG = LogFactory.getLog(LineTcpConnectionContext.class);
     private static final long QUEUE_FULL_LOG_HYSTERESIS_IN_MS = 10_000;
-    protected final NetworkFacade nf;
     private final Authenticator authenticator;
     private final DirectUtf8String byteCharSequence = new DirectUtf8String();
     private final long checkIdleInterval;
@@ -60,17 +58,18 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     private final MillisecondClock milliClock;
     private final LineTcpParser parser;
     private final LineTcpMeasurementScheduler scheduler;
+    private final SecurityContextFactory securityContextFactory;
     private final Utf8StringObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf8 = new Utf8StringObjHashMap<>();
-    protected boolean peerDisconnected;
-    protected long recvBufEnd;
-    protected long recvBufPos;
-    protected long recvBufStart;
-    protected long recvBufStartOfMeasurement;
-    protected SecurityContext securityContext = DenyAllSecurityContext.INSTANCE;
     private boolean goodMeasurement;
     private long lastQueueFullLogMillis = 0;
     private long nextCheckIdleTime;
     private long nextCommitTime;
+    private boolean peerDisconnected;
+    private long recvBufEnd;
+    private long recvBufPos;
+    private long recvBufStart;
+    private long recvBufStartOfMeasurement;
+    private SecurityContext securityContext = DenyAllSecurityContext.INSTANCE;
 
     public LineTcpConnectionContext(LineTcpReceiverConfiguration configuration, LineTcpMeasurementScheduler scheduler, Metrics metrics) {
         super(
@@ -80,13 +79,13 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                 metrics.line().connectionCountGauge()
         );
         this.configuration = configuration;
-        nf = configuration.getNetworkFacade();
         disconnectOnError = configuration.getDisconnectOnError();
         this.scheduler = scheduler;
         this.metrics = metrics;
         this.milliClock = configuration.getMillisecondClock();
         parser = new LineTcpParser(configuration.isStringAsTagSupported(), configuration.isSymbolAsFieldSupported());
-        this.authenticator = configuration.getFactoryProvider().getLineAuthenticatorFactory().getLineTCPAuthenticator();
+        authenticator = configuration.getFactoryProvider().getLineAuthenticatorFactory().getLineTCPAuthenticator();
+        securityContextFactory = configuration.getFactoryProvider().getSecurityContextFactory();
         clear();
         this.checkIdleInterval = configuration.getMaintenanceInterval();
         this.commitInterval = configuration.getCommitInterval();
@@ -122,6 +121,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
             tud.close();
             tableUpdateDetailsUtf8.remove(tableNameUtf8);
         }
+        securityContext.clear();
     }
 
     @Override
@@ -217,7 +217,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         if (authenticator.isAuthenticated() && securityContext == DenyAllSecurityContext.INSTANCE) {
             // when security context has not been set by anything else (subclass) we assume
             // this is an authenticated, anonymous user
-            securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(
+            securityContext = securityContextFactory.getInstance(
                     null,
                     SecurityContext.AUTH_TYPE_NONE,
                     SecurityContextFactory.ILP
@@ -262,7 +262,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                 case Authenticator.OK:
                     assert authenticator.isAuthenticated();
                     assert securityContext == DenyAllSecurityContext.INSTANCE;
-                    securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(
+                    securityContext = securityContextFactory.getInstance(
                             authenticator.getPrincipal(),
                             authenticator.getAuthType(),
                             SecurityContextFactory.ILP
@@ -347,10 +347,6 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         return false;
     }
 
-    protected SecurityContext getSecurityContext() {
-        return securityContext;
-    }
-
     protected final IOContextResult parseMeasurements(NetworkIOJob netIoJob) {
         while (true) {
             try {
@@ -358,7 +354,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                 switch (rc) {
                     case MEASUREMENT_COMPLETE: {
                         if (goodMeasurement) {
-                            if (scheduler.scheduleEvent(getSecurityContext(), netIoJob, this, parser)) {
+                            if (scheduler.scheduleEvent(securityContext, netIoJob, this, parser)) {
                                 // Waiting for writer threads to drain queue, request callback as soon as possible
                                 if (checkQueueFullLogHysteresis()) {
                                     LOG.debug().$('[').$(getFd()).$("] queue full").$();

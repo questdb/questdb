@@ -100,7 +100,8 @@ public class CopyFactory extends AbstractRecordCursorFactory {
 
                 long copyID = copyContext.assignActiveImportId(executionContext.getSecurityContext());
                 task.of(
-                        executionContext.getSecurityContext(),
+                        // have to clone security context for the task, security context objects are reused
+                        executionContext.getSecurityContext().copy(),
                         copyID,
                         tableName,
                         fileName,

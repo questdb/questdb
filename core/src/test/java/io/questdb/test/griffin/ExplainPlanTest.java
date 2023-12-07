@@ -1395,6 +1395,34 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExplainWindowFunctionWithCharConstantFrameBounds() throws Exception {
+        assertMemoryLeak(()->{
+            ddl("create table tab ( key int, value double, ts timestamp) timestamp(ts)");
+
+            assertPlan("select avg(value) over (PARTITION BY key ORDER BY ts RANGE BETWEEN '1' MINUTES PRECEDING AND CURRENT ROW) from tab",
+                    "Window\n" +
+                            "  functions: [avg(value) over (partition by [key] range between 60000000 preceding and current row)]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n");
+
+            assertPlan("select avg(value) over (PARTITION BY key ORDER BY ts RANGE BETWEEN '4' MINUTES PRECEDING AND '3' MINUTES PRECEDING) from tab",
+                    "Window\n" +
+                            "  functions: [avg(value) over (partition by [key] range between 240000000 preceding and 180000000 preceding)]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n");
+
+            assertPlan("select avg(value) over (PARTITION BY key ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND '10' MINUTES PRECEDING) from tab",
+                    "Window\n" +
+                            "  functions: [avg(value) over (partition by [key] range between unbounded preceding and 600000000 preceding)]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n");
+        });
+    }
+
+    @Test
     public void testExplainWithJsonFormat1() throws Exception {
         assertQuery("QUERY PLAN\n" +
                 "[\n" +
