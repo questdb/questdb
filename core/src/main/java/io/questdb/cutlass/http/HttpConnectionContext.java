@@ -67,7 +67,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         LOG.info().$("Retry is requested after successful writer allocation. Retry will be re-scheduled [thread=").$(Thread.currentThread().getId()).I$();
         throw RetryOperationException.INSTANCE;
     };
-    private final SecurityContextFactory securityContextFactory;
     private final AssociativeCache<RecordCursorFactory> selectCache;
     private int nCompletedRequests;
     private boolean pendingRetry = false;
@@ -108,7 +107,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.recvBufferSize = contextConfiguration.getRecvBufferSize();
         this.multipartIdleSpinCount = contextConfiguration.getMultipartIdleSpinCount();
         this.dumpNetworkTraffic = contextConfiguration.getDumpNetworkTraffic();
-        this.securityContextFactory = contextConfiguration.getFactoryProvider().getSecurityContextFactory();
         // This is default behaviour until the security context is overridden with correct principal.
         this.securityContext = DenyAllSecurityContext.INSTANCE;
         this.metrics = metrics;
@@ -168,7 +166,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.recvBuffer = Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
         this.responseSink.close();
         this.receivedBytes = 0;
-        this.securityContext.clear();
         this.securityContext = DenyAllSecurityContext.INSTANCE;
         this.authenticator.close();
         Misc.free(selectCache);
@@ -321,7 +318,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.retryAttemptAttributes.lastRunTimestamp = 0;
         this.retryAttemptAttributes.attempt = 0;
         this.receivedBytes = 0;
-        this.securityContext.clear();
         this.securityContext = DenyAllSecurityContext.INSTANCE;
         this.authenticator.clear();
         clearSuspendEvent();
@@ -424,17 +420,12 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             if (!authenticator.authenticate(headerParser)) {
                 return false;
             }
-            try {
-                securityContext = securityContextFactory.getInstance(
-                        authenticator.getPrincipal(),
-                        authenticator.getAuthType(),
-                        SecurityContextFactory.HTTP
-                );
-                securityContext.authorizeHttp();
-            } catch (CairoException e) {
-                // todo: handle this separately from auth failure
-                return false;
-            }
+            securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(
+                    authenticator.getPrincipal(),
+                    authenticator.getAuthType(),
+                    SecurityContextFactory.HTTP
+            );
+            securityContext.authorizeHttp();
         }
         return true;
     }

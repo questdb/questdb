@@ -26,7 +26,6 @@ package org.questdb;
 
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.SqlCompilerImpl;
@@ -59,7 +58,7 @@ public class TableReaderReloadBenchmark {
         try (CairoEngine engine = new CairoEngine(configuration)) {
             SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
                     .with(
-                            AllowAllSecurityContext.INSTANCE,
+                            configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
                             null,
                             null,
                             -1,
