@@ -138,7 +138,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         sink.meta("workers").val(workerCount);
         sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(recordFunctions, getMetadata()));
         sink.optAttr("values", groupByFunctions, true);
-        sink.attr("filter").val(atom);
+        sink.optAttr("filter", atom, true);
         sink.child(base);
     }
 

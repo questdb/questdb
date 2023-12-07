@@ -200,7 +200,6 @@ public class GroupByUtils {
 
                     recordFunctions.add(fun);
                     recordFunctionPositions.add(node.position);
-
                 } else {
                     // set this function to null, cursor will replace it with an instance class
                     // timestamp function returns value of class member which makes it impossible
@@ -229,9 +228,8 @@ public class GroupByUtils {
                     );
                 }
                 inferredKeyColumnCount++;
-
             } else {
-                // add group-by function as a record function as well
+                // add group-by function as a record function as well,
                 // so it can produce column values
                 final GroupByFunction groupByFunction = groupByFunctions.getQuick(valueColumnIndex);
                 recordFunctions.add(groupByFunction);

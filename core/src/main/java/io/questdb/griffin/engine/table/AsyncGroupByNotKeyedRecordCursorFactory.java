@@ -131,7 +131,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         sink.type("Async Group By");
         sink.meta("workers").val(workerCount);
         sink.optAttr("values", groupByFunctions, true);
-        sink.attr("filter").val(atom);
+        sink.optAttr("filter", atom, true);
         sink.child(base);
     }
 

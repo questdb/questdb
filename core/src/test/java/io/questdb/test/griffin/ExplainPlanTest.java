@@ -1632,14 +1632,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "and timestamp > dateadd('m', -30, now())) " +
                         "timestamp(x))",
                 "SelectedRecord\n" +
-                        "    GroupBy vectorized: false\n" +
+                        "    Async Group By workers: 1\n" +
                         "      values: [last(timestamp),last(price)]\n" +
-                        "        Async JIT Filter workers: 1\n" +
-                        "          filter: symbol='BTC-USD'\n" +
-                        "            DataFrame\n" +
-                        "                Row forward scan\n" +
-                        "                Interval forward scan on: trades\n" +
-                        "                  intervals: [(\"1969-12-31T23:30:00.000001Z\",\"MAX\")]\n"
+                        "      filter: (symbol='BTC-USD' and dateadd('m',-30,now())<timestamp)\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: trades\n"
         );
     }
 
@@ -2609,7 +2607,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select first(gb), last(gb), first(gs), last(gs), first(gi), last(gi), first(gl), last(gl) from a where i > 42",
                 "Async Group By workers: 1\n" +
                         "  values: [first(gb),last(gb),first(gs),last(gs),first(gi),last(gi),first(gl),last(gl)]\n" +
-                        "  filter: 42<first2\n" +
+                        "  filter: 42<i\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
@@ -2678,7 +2676,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select max(i) from a where i < 10",
                 "Async Group By workers: 1\n" +
                         "  values: [max(i)]\n" +
-                        "  filter: max<10\n" +
+                        "  filter: i<10\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"

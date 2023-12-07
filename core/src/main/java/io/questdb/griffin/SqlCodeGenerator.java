@@ -3262,6 +3262,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         !supportsParallelism
                                 && !factory.usesIndex()
                                 && nested.getSelectModelType() == QueryModel.SELECT_MODEL_NONE
+                                && nested.getLatestByType() == LATEST_BY_NONE
                                 && nested.getNestedModel() == null
                                 && nestedFilterExpr != null
                                 && nested.getWhereClause() == null
