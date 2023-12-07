@@ -56,8 +56,12 @@ public class IlpHttpUtils {
 
     @NotNull
     public static InfluxDB getConnection(ServerMain serverMain) {
-        int httpPort = serverMain.getConfiguration().getHttpServerConfiguration().getDispatcherConfiguration().getBindPort();
+        int httpPort = getHttpPort(serverMain);
         final String serverURL = "http://127.0.0.1:" + httpPort, username = "root", password = "root";
         return InfluxDBFactory.connect(serverURL, username, password);
+    }
+
+    public static int getHttpPort(ServerMain serverMain) {
+        return serverMain.getConfiguration().getHttpServerConfiguration().getDispatcherConfiguration().getBindPort();
     }
 }

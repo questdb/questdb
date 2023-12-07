@@ -441,45 +441,47 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             int read,
             boolean newRequest
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
-        if (newRequest) {
-            processor.onHeadersReady(this);
-            totalReceived -= headerEnd - recvBuffer;
-        } else {
-            read = socket.recv(recvBuffer, recvBufferSize);
-        }
-
-        processor.resumeRecv(this);
-        if (read > 0) {
-            HttpMultipartContentListener contentProcessor = (HttpMultipartContentListener) processor;
-            long lo = newRequest ? headerEnd : recvBuffer;
-            contentProcessor.onChunk(lo, recvBuffer + read);
-            totalReceived += read;
-
-            if (totalReceived == contentLength) {
-                try {
-                    processor.onRequestComplete(this);
-                    if (configuration.getServerKeepAlive()) {
-                        return true;
-                    } else {
-                        dispatcher.disconnect(this, DISCONNECT_REASON_KEEPALIVE_OFF_RECV);
-                        processor.onConnectionClosed(this);
-                        return false;
-                    }
-                } finally {
-                    reset();
-                }
+        while (true) {
+            if (newRequest) {
+                processor.onHeadersReady(this);
+                totalReceived -= headerEnd - recvBuffer;
+            } else {
+                read = socket.recv(recvBuffer, recvBufferSize);
             }
-            return true;
-        } else if (read == 0) {
-            // Schedule for read
-            dispatcher.registerChannel(this, IOOperation.READ);
-            return false;
-        } else {
-            // client disconnected
-            processor.onConnectionClosed(this);
-            dispatcher.disconnect(this, DISCONNECT_REASON_KICKED_OUT_AT_RECV);
-            reset();
-            return false;
+
+            processor.resumeRecv(this);
+            if (read > 0) {
+                HttpMultipartContentListener contentProcessor = (HttpMultipartContentListener) processor;
+                long lo = newRequest ? headerEnd : recvBuffer;
+                contentProcessor.onChunk(lo, recvBuffer + read);
+                totalReceived += read;
+
+                if (totalReceived == contentLength) {
+                    try {
+                        processor.onRequestComplete(this);
+                        if (configuration.getServerKeepAlive()) {
+                            return true;
+                        } else {
+                            dispatcher.disconnect(this, DISCONNECT_REASON_KEEPALIVE_OFF_RECV);
+                            processor.onConnectionClosed(this);
+                            return false;
+                        }
+                    } finally {
+                        reset();
+                    }
+                }
+                newRequest = false;
+            } else if (read == 0) {
+                // Schedule for read
+                dispatcher.registerChannel(this, IOOperation.READ);
+                return false;
+            } else {
+                // client disconnected
+                processor.onConnectionClosed(this);
+                dispatcher.disconnect(this, DISCONNECT_REASON_KICKED_OUT_AT_RECV);
+                reset();
+                return false;
+            }
         }
     }
 

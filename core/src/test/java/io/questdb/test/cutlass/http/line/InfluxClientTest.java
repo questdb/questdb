@@ -43,6 +43,7 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static io.questdb.PropertyKey.HTTP_SERVER_KEEP_ALIVE;
 import static io.questdb.test.cutlass.http.line.IlpHttpUtils.*;
 
 public class InfluxClientTest extends AbstractBootstrapTest {
@@ -236,6 +237,27 @@ public class InfluxClientTest extends AbstractBootstrapTest {
                 serverMain.waitWalTxnApplied(tableName, threads * 2);
                 serverMain.assertSql("SELECT count() FROM " + tableName, "count\n" + count * threads + "\n");
                 serverMain.assertSql("SELECT sum(water_level) FROM " + tableName, "sum\n" + (count * (count - 1) / 2) * threads + "\n");
+            }
+        });
+    }
+
+    @Test
+    public void testInsertWithIlpHttpServerKeepAliveOff() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048",
+                    PropertyKey.HTTP_SERVER_KEEP_ALIVE.getEnvVarName(), "false"
+            )) {
+                serverMain.start();
+
+                String tableName = "h2o_feet";
+                int count = 9250;
+
+                sendIlp(tableName, count, serverMain);
+
+                serverMain.waitWalTxnApplied(tableName, 2);
+                serverMain.assertSql("SELECT count() FROM h2o_feet", "count\n" + count + "\n");
+                serverMain.assertSql("SELECT sum(water_level) FROM h2o_feet", "sum\n" + (count * (count - 1) / 2) + "\n");
             }
         });
     }

@@ -26,10 +26,16 @@ package io.questdb.test.cutlass.http.line;
 
 import io.questdb.Bootstrap;
 import io.questdb.DefaultBootstrapConfiguration;
+import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.pool.PoolListener;
+import io.questdb.cutlass.http.client.HttpClient;
+import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractBootstrapTest;
@@ -37,6 +43,7 @@ import io.questdb.test.TestServerMain;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.influxdb.InfluxDB;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -48,6 +55,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.cairo.wal.WalUtils.EVENT_INDEX_FILE_NAME;
 import static io.questdb.test.cutlass.http.line.IlpHttpUtils.*;
+import static io.questdb.test.tools.TestUtils.assertEventually;
 
 public class LineHttpFailureTests extends AbstractBootstrapTest {
     @Before
@@ -137,6 +145,59 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
 
                     // Retry is ok
                     assertRequestOk(influxDB, points, "m1,tag1=value1 f1=1i,x=12i");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testClientDisconnectsMidRequest() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                serverMain.start();
+
+
+                try (HttpClient httpClient = HttpClientFactory.newInstance(new DefaultHttpClientConfiguration())) {
+                    // Bombard server with partial content requests
+                    String line = "line,sym1=123 field1=123i 1234567890000000000\n";
+                    AtomicInteger walWriterTaken = countWalWriterTakenFromPool(serverMain);
+
+                    for (int i = 0; i < 10; i++) {
+                        HttpClient.Request request = httpClient.newRequest();
+                        request.POST()
+                                .url("/write ")
+                                .withContent()
+                                .putAscii(line)
+                                .putAscii(line)
+                                .sendPartialContent("localhost", getHttpPort(serverMain), line.length() + 20, 1000);
+                        Os.sleep(5);
+                        httpClient.disconnect();
+                    }
+
+                    assertEventually(() -> {
+                        // Table is create but no line should be committed
+                        TableToken tt = serverMain.getEngine().getTableTokenIfExists("line");
+                        Assert.assertNotNull(tt);
+                        Assert.assertEquals(-1, getSeqTxn(serverMain, tt));
+
+                        // Assert no Wal Writers are left in ILP http TUD cache
+                        Assert.assertEquals(0, walWriterTaken.get());
+                    });
+
+
+                    // Send good line, full request
+                    HttpClient.ResponseHeaders response = httpClient.newRequest().POST()
+                            .url("/write ")
+                            .withContent()
+                            .putAscii(line)
+                            .send("localhost", getHttpPort(serverMain));
+
+                    response.await();
+                    TestUtils.assertEquals("204", response.getStatusCode());
+
+                    serverMain.waitWalTxnApplied("line", 1);
+                    serverMain.assertSql("select * from line", "sym1\tfield1\ttimestamp\n" +
+                            "123\t123\t2009-02-13T23:31:30.000000Z\n");
                 }
             }
         });
@@ -392,5 +453,28 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
 
             }
         });
+    }
+
+    @NotNull
+    private static AtomicInteger countWalWriterTakenFromPool(TestServerMain serverMain) {
+        AtomicInteger walWriterTaken = new AtomicInteger();
+
+        serverMain.getEngine().setPoolListener((factoryType, thread, tableToken, event, segment, position) -> {
+            if (factoryType == PoolListener.SRC_WAL_WRITER && tableToken != null && tableToken.getTableName().equals("line")) {
+                if (event == PoolListener.EV_GET || event == PoolListener.EV_CREATE) {
+                    walWriterTaken.incrementAndGet();
+                    new Exception("GET").printStackTrace(System.out);
+                }
+                if (event == PoolListener.EV_RETURN) {
+                    walWriterTaken.decrementAndGet();
+                    new Exception("RETURN").printStackTrace(System.out);
+                }
+            }
+        });
+        return walWriterTaken;
+    }
+
+    private long getSeqTxn(TestServerMain serverMain, TableToken tt) {
+        return serverMain.getEngine().getTableSequencerAPI().getTxnTracker(tt).getSeqTxn();
     }
 }
