@@ -7918,6 +7918,17 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                     "metric\tsum\n" +
                             "cpu\t175\n"
             );
+
+            TestUtils.assertSql(
+                    engine,
+                    sqlExecutionContext,
+                    "select concat(metric, ' metric'), sum(value) from x \n" +
+                            "where node in ('node1', 'node2') and metric in ('cpu') \n" +
+                            "latest on ts partition by node",
+                    sink,
+                    "concat\tsum\n" +
+                            "cpu metric\t175\n"
+            );
         });
     }
 
