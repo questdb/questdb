@@ -368,6 +368,11 @@ public class FirstValueDoubleWindowFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public double getDouble(Record rec) {
+            return firstValue;
+        }
+
+        @Override
         public String getName() {
             return NAME;
         }
@@ -382,7 +387,6 @@ public class FirstValueDoubleWindowFunctionFactory implements FunctionFactory {
             computeNext(record);
             Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), firstValue);
         }
-
     }
 
     // Handles first_value() over (partition by x order by ts range between y preceding and [z preceding | current row])

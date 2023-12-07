@@ -275,24 +275,24 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
             boolean recompileStale = true;
             for (int retries = 0; recompileStale; retries++) {
-                try {
-                    batchCallback.preCompile(this);
-                    clear(); // we don't use normal compile here because we can't reset existing lexer
+                batchCallback.preCompile(this);
+                clear(); // we don't use normal compile here because we can't reset existing lexer
 
-                    final CharSequence currentQuery;
-                    try {
-                        compileInner(executionContext, query, false);
-                    } finally {
-                        currentQuery = query.subSequence(position, goToQueryEnd());
-                        // try to log query even if exception is thrown
-                        logQuery(currentQuery, executionContext);
-                    }
-                    // We've to move lexer because some query handlers don't consume all tokens (e.g. SET )
-                    // some code in postCompile might need full text of current query
+                final CharSequence currentQuery;
+                try {
+                    compileInner(executionContext, query, false);
+                } finally {
+                    currentQuery = query.subSequence(position, goToQueryEnd());
+                    // try to log query even if exception is thrown
+                    logQuery(currentQuery, executionContext);
+                }
+                // We've to move lexer because some query handlers don't consume all tokens (e.g. SET )
+                // some code in postCompile might need full text of current query
+                try {
                     batchCallback.postCompile(this, compiledQuery, currentQuery);
                     recompileStale = false;
                 } catch (TableReferenceOutOfDateException e) {
-                    if (retries == TableReferenceOutOfDateException.MAX_RETRY_ATTEMPS) {
+                    if (retries == TableReferenceOutOfDateException.MAX_RETRY_ATTEMPTS) {
                         throw e;
                     }
                     LOG.info().$(e.getFlyweightMessage()).$();
@@ -1431,11 +1431,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         lexer.unparseLast();
         codeGenerator.clear();
 
-        final ExecutionModel executionModel = compileExecutionModel(executionContext);
+        ExecutionModel executionModel = compileExecutionModel(executionContext);
         switch (executionModel.getModelType()) {
             case ExecutionModel.QUERY:
                 LOG.info().$("plan [q=`").$((QueryModel) executionModel).$("`, fd=").$(executionContext.getRequestFd()).$(']').$();
-                compiledQuery.of(generate((QueryModel) executionModel, executionContext));
+                compiledQuery.of(generateWithRetries((QueryModel) executionModel, executionContext));
                 break;
             case ExecutionModel.CREATE_TABLE:
                 createTableWithRetries(executionModel, executionContext);
@@ -2771,6 +2771,27 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     protected RecordCursorFactory generateFactory(QueryModel selectQueryModel, SqlExecutionContext executionContext) throws SqlException {
         return codeGenerator.generate(selectQueryModel, executionContext);
+    }
+
+    RecordCursorFactory generateWithRetries(
+            @Transient QueryModel initialQueryModel,
+            @Transient SqlExecutionContext executionContext
+    ) throws SqlException {
+        QueryModel queryModel = initialQueryModel;
+        int remainingRetries = TableReferenceOutOfDateException.MAX_RETRY_ATTEMPTS;
+        for (; ; ) {
+            try {
+                return generateFactory(queryModel, executionContext);
+            } catch (TableReferenceOutOfDateException e) {
+                if (--remainingRetries < 0) {
+                    throw SqlException.$(0, e.getFlyweightMessage());
+                }
+                LOG.info().$("retrying plan [q=`").$(queryModel).$("`, fd=").$(executionContext.getRequestFd()).$(']').$();
+                clear();
+                lexer.restart();
+                queryModel = (QueryModel) compileExecutionModel(executionContext);
+            }
+        }
     }
 
     protected final void logQuery(CharSequence currentQuery, SqlExecutionContext executionContext) {

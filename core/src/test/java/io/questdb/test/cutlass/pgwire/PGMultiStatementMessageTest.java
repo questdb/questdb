@@ -24,12 +24,14 @@
 
 package io.questdb.test.cutlass.pgwire;
 
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.SuspendEvent;
 import io.questdb.std.Misc;
+import io.questdb.std.Os;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Ignore;
@@ -40,6 +42,9 @@ import org.postgresql.util.PSQLException;
 import java.io.Closeable;
 import java.sql.*;
 import java.util.Arrays;
+import java.util.concurrent.BrokenBarrierException;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -49,6 +54,59 @@ import static org.junit.Assert.*;
  * Class contains tests of PostgreSQL simple query statements containing multiple commands separated by ';'
  */
 public class PGMultiStatementMessageTest extends BasePGTest {
+
+    @Test
+    public void testRestartDueToStaleCompilationDoesNotDuplicate() throws Exception {
+        engine.ddl("create table x (ts timestamp, i int) timestamp(ts) partition by day wal", sqlExecutionContext);
+
+        CyclicBarrier barrier = new CyclicBarrier(2);
+        long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        new Thread(() -> {
+            try {
+                while (System.nanoTime() < deadlineNanos && barrier.getNumberWaiting() == 0) {
+                    engine.ddl("alter table x add column distraction int", sqlExecutionContext);
+                    Os.sleep(1); // give compiler a chance to compile and execute
+                    if (barrier.getNumberWaiting() != 0) {
+                        break;
+                    }
+                    engine.ddl("alter table x drop column distraction", sqlExecutionContext);
+                    Os.sleep(1);
+                }
+            } catch (SqlException e) {
+                throw new RuntimeException(e);
+            } finally {
+                try {
+                    barrier.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    e.printStackTrace();
+                } catch (BrokenBarrierException e) {
+                    e.printStackTrace();
+                }
+            }
+        }).start();
+
+        // the SQL includes INSERT can later test that we don't get duplicate rows
+        // when SQL execution is re-started
+        try (PGTestSetup test = new PGTestSetup()) {
+            Statement statement = test.statement;
+            for (int i = 0; i < 1000; i++) {
+                statement.execute(
+                        "INSERT INTO x (ts, i) VALUES(now(), 1); " +
+                                "SELECT * FROM x; ");
+            }
+        } finally {
+            barrier.await();
+        }
+        drainWalQueue();
+        try (RecordCursorFactory factory = select("select count() from x", sqlExecutionContext)) {
+            assertCursor("count\n" +
+                            "1000\n",
+                    factory,
+                    false, false, true
+            );
+        }
+    }
 
     // https://github.com/questdb/questdb/issues/1777
     // all of these commands are no-op (at the moment)

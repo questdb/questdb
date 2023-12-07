@@ -22,15 +22,26 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.security;
+package io.questdb.test.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.SecurityContext;
-import io.questdb.std.Transient;
+import io.questdb.test.AbstractCairoTest;
+import org.junit.Test;
 
-public interface SecurityContextFactory {
-    int HTTP = 0;
-    int ILP = 2;
-    int PGWIRE = 1;
+public class PgExtensionFunctionFactoryTest extends AbstractCairoTest {
 
-    SecurityContext getInstance(@Transient CharSequence principal, byte authType, int interfaceId);
+    @Test
+    public void testPgExtensionFunction() throws Exception {
+        assertMemoryLeak(() -> assertQuery("oid\textname\textowner\textnamespace\textrelocatable\textversion\textconfig\textcondition\n" +
+                        "1\tquestdb\t1\t1\tfalse\t[DEVELOPMENT]\t\t\n",
+                "select * from pg_extension",
+                null, false, true));
+    }
+
+    @Test
+    public void testPrefixedPgExtensionFunction() throws Exception {
+        assertMemoryLeak(() -> assertQuery("oid\textname\textowner\textnamespace\textrelocatable\textversion\textconfig\textcondition\n" +
+                        "1\tquestdb\t1\t1\tfalse\t[DEVELOPMENT]\t\t\n",
+                "select * from pg_catalog.pg_extension",
+                null, false, true));
+    }
 }
