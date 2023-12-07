@@ -29,7 +29,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitFailedException;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cutlass.http.ConnectionAware;
-import io.questdb.cutlass.http.HttpResponseHeader;
 import io.questdb.cutlass.line.tcp.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -57,7 +56,6 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
     private long errorId;
     private int fd = -1;
     private int line = 0;
-    private boolean plainTextErrors;
     private long recvBufEnd;
     private long recvBufPos;
     private long recvBufStartOfMeasurement;
@@ -116,23 +114,13 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         }
     }
 
-    public void formatPlainTextErrorHeader(HttpResponseHeader header) {
-        header.putAscii("questdb-error-code: ").putAscii(currentStatus.codeStr).putEOL();
-        header.putAscii("questdb-error-id: ").putAscii(ERROR_ID).put('-').put(errorId).putEOL();
-        if (errorLine > -1) {
-            header.putAscii("questdb-error-line: ").put(errorLine).putEOL();
-        }
-    }
-
-    public void formatPlainTextErrorMessage(Utf8Sink sink) {
-        sink.putAscii("failed to parse line protocol: ");
-        sink.put(error);
-    }
-
-    public void formatJsonError(Utf8Sink sink) {
+    public void formatError(Utf8Sink sink) {
         sink.putAscii("{\"code\":\"").putAscii(currentStatus.codeStr);
         sink.putAscii("\",\"message\":\"").putAscii("failed to parse line protocol: ");
-        sink.put(error);  // TODO: escape JSON string
+        if (errorLine > -1) {
+            sink.putAscii("errors encountered on line(s):");
+        }
+        sink.put(error);
         if (errorLine > -1) {
             sink.putAscii("\",\"line\":").put(errorLine);
         }
@@ -147,10 +135,9 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         return currentStatus == Status.OK;
     }
 
-    public void of(int fd, byte timestampPrecision, boolean plainTextErrors) {
+    public void of(int fd, byte timestampPrecision) {
         this.fd = fd;
         this.appender.setTimestampAdapter(timestampPrecision);
-        this.plainTextErrors = plainTextErrors;
     }
 
     @Override
@@ -183,10 +170,6 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
                 return;
             }
         }
-    }
-
-    public boolean respondingWithPlainTextErrors() {
-        return plainTextErrors;
     }
 
     private static String generateErrorId() {

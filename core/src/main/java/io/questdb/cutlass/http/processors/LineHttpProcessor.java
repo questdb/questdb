@@ -30,7 +30,8 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.std.str.*;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.Utf8String;
 
 import static io.questdb.cutlass.line.tcp.LineTcpParser.*;
 
@@ -38,7 +39,6 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
     public static final Utf8String URL_PARAM_PRECISION = new Utf8String("precision");
     private static final Log LOG = LogFactory.getLog(StaticContentProcessor.class);
     private static final LocalValue<LineHttpProcessorState> LV = new LocalValue<>();
-    private static final Utf8String QUESTDB_ERROR_CONTENT_TYPE = new Utf8String("questdb-error-content-type");
     private final LineHttpProcessorConfiguration configuration;
     private final CairoEngine engine;
     private final int recvBufferSize;
@@ -100,8 +100,7 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
                 throw HttpException.instance("unsupported precision in URL query string [precision=").put(precision).put(']');
             }
         }
-        final boolean plainTextErrors = Utf8s.equalsAscii("text/plain", context.getRequestHeader().getHeader(QUESTDB_ERROR_CONTENT_TYPE));
-        state.of(context.getFd(), timestampPrecision, plainTextErrors);
+        state.of(context.getFd(), timestampPrecision);
     }
 
     @Override
@@ -148,17 +147,9 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
 
     private void sendError(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
         HttpChunkedResponseSocket r = context.getChunkedResponseSocket();
-        if (state.respondingWithPlainTextErrors()) {
-            r.status(state.getHttpResponseCode(), "text/plain");
-            final HttpResponseHeader header = context.getResponseHeader();
-            state.formatPlainTextErrorHeader(header);
-            r.sendHeader();
-            state.formatPlainTextErrorMessage(r);
-        } else {
-            r.status(state.getHttpResponseCode(), "application/json");
-            r.sendHeader();
-            state.formatJsonError(r);
-        }
+        r.status(state.getHttpResponseCode(), "text/plain");
+        r.sendHeader();
+        state.formatError(r);
         r.sendChunk(true);
     }
 }
