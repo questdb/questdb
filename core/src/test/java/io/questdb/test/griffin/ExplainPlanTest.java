@@ -1629,7 +1629,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "((select last(timestamp) as x, last(price) as btcusd " +
                         "from trades " +
                         "where symbol = 'BTC-USD' " +
-                        "and timestamp > dateadd('m', -30, now()) ) " +
+                        "and timestamp > dateadd('m', -30, now())) " +
                         "timestamp(x))",
                 "SelectedRecord\n" +
                         "    GroupBy vectorized: false\n" +
@@ -2676,13 +2676,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( i int, d double)",
                 "select max(i) from a where i < 10",
-                "GroupBy vectorized: false\n" +
+                "Async Group By workers: 1\n" +
                         "  values: [max(i)]\n" +
-                        "    Async JIT Filter workers: 1\n" +
-                        "      filter: i<10\n" +
-                        "        DataFrame\n" +
-                        "            Row forward scan\n" +
-                        "            Frame forward scan on: a\n"
+                        "  filter: max<10\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
         );
     }
 

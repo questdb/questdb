@@ -60,16 +60,17 @@ public class NoopGroupByTest extends AbstractCairoTest {
 
     @Test
     public void testNoopGroupByBindVariable() throws Exception {
-        ddl("create table y(id int, ref int, val double)");
+        ddl("create table y (id int, ref int, val double)");
         engine.releaseAllWriters();
         assertException(
                 "select x.id, x.ref, y.ref, sum(val) from x join y on (id) group by x.id, :var, y.ref",
                 "create table x (id int, ref int, ref3 int)",
-                73, "literal expected"
+                73,
+                "literal expected"
         );
     }
 
-    //with where clause
+    // with where clause
     @Test
     public void testNoopGroupByFailureWhenUsing1KeyInSelectStatementBut2InGroupBy() throws Exception {
         ddl("create table x ( " +
@@ -87,14 +88,13 @@ public class NoopGroupByTest extends AbstractCairoTest {
                 query,
                 "VirtualRecord\n" +
                         "  functions: [sym1,avgBid]\n" +
-                        "    GroupBy vectorized: false\n" +
+                        "    Async Group By workers: 1\n" +
                         "      keys: [sym1,sym2]\n" +
                         "      values: [avg(bid)]\n" +
-                        "        Async Filter workers: 1\n" +
-                        "          filter: sym1 in [AA,BB]\n" +
-                        "            DataFrame\n" +
-                        "                Row forward scan\n" +
-                        "                Frame forward scan on: x\n"
+                        "      filter: sym1 in [AA,BB]\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: x\n"
         );
         assertQuery("sym1\tavgBid\n", query, null, true, false);
     }
@@ -244,7 +244,12 @@ public class NoopGroupByTest extends AbstractCairoTest {
             compile("create table x (id int, ref int, ref3 int)");
             compile("create table y(id int, ref int, val double)");
             engine.releaseAllWriters();
-            assertQuery("z\tsum\n", "select 'x' z, sum(val) from x join y on (id) group by 'x'", null, true);
+            assertQuery(
+                    "z\tsum\n",
+                    "select 'x' z, sum(val) from x join y on (id) group by 'x'",
+                    null,
+                    true
+            );
         });
     }
 
@@ -269,7 +274,8 @@ public class NoopGroupByTest extends AbstractCairoTest {
         assertException(
                 "select x.id, x.ref, y.ref, sum(val) from x join y on (id) group by x.id, x.ref3, y.ref",
                 "create table x (id int, ref int, ref3 int)",
-                13, "column must appear in GROUP BY clause or aggregate function"
+                13,
+                "column must appear in GROUP BY clause or aggregate function"
         );
     }
 
@@ -362,7 +368,6 @@ public class NoopGroupByTest extends AbstractCairoTest {
     public void testNoopGroupByValidColumnNameWithHourFunctionAndAliasedTable() throws Exception {
         assertQuery(
                 "hour\tavgBid\n",
-                //select hour(pickup_datetime), sum(passenger_count) from trips group by hour(pickup_datetime);
                 "select hour(a.ts), avg(bid) avgBid from x a group by hour(a.ts) order by hour",
                 "create table x (\n" +
                         "    sym1 symbol,\n" +
@@ -417,7 +422,7 @@ public class NoopGroupByTest extends AbstractCairoTest {
         );
     }
 
-    @Test//sym1 is aliased as ccy at stage later than group by
+    @Test // sym1 is aliased as ccy at stage later than group by
     public void testNoopGroupByWhenUsingAliasedColumnAndAliasedTable() throws Exception {
         assertException("select sym1 as ccy, avg(bid) avgBid from x a where sym1 in ('A', 'B' ) group by a.ccy",
                 "create table x (\n" +

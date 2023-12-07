@@ -1211,13 +1211,12 @@ public class GroupByTest extends AbstractCairoTest {
                         "      keys: ref0\n" +
                         "        VirtualRecord\n" +
                         "          functions: [created]\n" +
-                        "            GroupBy vectorized: false\n" +
+                        "            Async Group By workers: 1\n" +
                         "              keys: [created]\n" +
-                        "                Async JIT Filter workers: 1\n" +
-                        "                  filter: created!=null\n" +
-                        "                    DataFrame\n" +
-                        "                        Row forward scan\n" +
-                        "                        Frame forward scan on: tab\n"
+                        "              filter: created!=null\n" +
+                        "                DataFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: tab\n"
         );
 
         assertQuery("ref0\n" +
@@ -1248,13 +1247,12 @@ public class GroupByTest extends AbstractCairoTest {
                         "      keys: ref0\n" +
                         "        VirtualRecord\n" +
                         "          functions: [dateadd('h',1,created)]\n" +
-                        "            GroupBy vectorized: false\n" +
+                        "            Async Group By workers: 1\n" +
                         "              keys: [created]\n" +
-                        "                Async JIT Filter workers: 1\n" +
-                        "                  filter: created!=null\n" +
-                        "                    DataFrame\n" +
-                        "                        Row forward scan\n" +
-                        "                        Frame forward scan on: tab\n"
+                        "              filter: created!=null\n" +
+                        "                DataFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: tab\n"
         );
 
         assertQuery("ref0\n" +
@@ -1283,13 +1281,12 @@ public class GroupByTest extends AbstractCairoTest {
                         "  keys: [created]\n" +
                         "    Distinct\n" +
                         "      keys: created\n" +
-                        "        GroupBy vectorized: false\n" +
+                        "        Async Group By workers: 1\n" +
                         "          keys: [created]\n" +
-                        "            Async JIT Filter workers: 1\n" +
-                        "              filter: created!=null\n" +
-                        "                DataFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: tab\n"
+                        "          filter: created!=null\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: tab\n"
         );
 
         assertQuery("created\n" +

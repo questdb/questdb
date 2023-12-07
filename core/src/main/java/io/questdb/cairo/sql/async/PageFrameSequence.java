@@ -337,7 +337,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         sqlExecutionContext = executionContext;
         startTime = clock.getTicks();
         circuitBreakerFd = executionContext.getCircuitBreaker().getFd();
-        this.uninterruptible = executionContext.isUninterruptible();
+        uninterruptible = executionContext.isUninterruptible();
 
         initRecord(executionContext.getCircuitBreaker());
 
