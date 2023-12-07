@@ -40,7 +40,7 @@ public class GroupByTest extends AbstractCairoTest {
                     "    union all " +
                     "    select 1, 'a' )");
 
-            String query1 = "select l,s from t group by l,s";
+            String query1 = "select l, s from t group by l,s";
             assertPlan(
                     query1,
                     "Async Group By workers: 1\n" +
@@ -52,8 +52,8 @@ public class GroupByTest extends AbstractCairoTest {
             );
             assertQuery("l\ts\n1\ta\n", query1, null, true, true);
 
-            String query2 = "select l as l1,s as s1 from t group by l,s";
-            //virtual model must be used here to change aliases
+            String query2 = "select l as l1, s as s1 from t group by l,s";
+            // virtual model must be used here to change aliases
             assertPlan(
                     query2,
                     "VirtualRecord\n" +
@@ -235,8 +235,14 @@ public class GroupByTest extends AbstractCairoTest {
                             "                Frame forward scan on: t\n"
             );
 
-            assertQuery("column\tcount\n" +
-                    "2\t2\n", query, null, true, true);
+            assertQuery(
+                    "column\tcount\n" +
+                            "2\t2\n",
+                    query,
+                    null,
+                    true,
+                    true
+            );
         });
     }
 
@@ -262,8 +268,14 @@ public class GroupByTest extends AbstractCairoTest {
                             "            Frame forward scan on: t\n"
             );
 
-            assertQuery("case\tcount\n" +
-                    "1\t2\n", query, null, true, true);
+            assertQuery(
+                    "case\tcount\n" +
+                            "1\t2\n",
+                    query,
+                    null,
+                    true,
+                    true
+            );
         });
     }
 
@@ -291,12 +303,18 @@ public class GroupByTest extends AbstractCairoTest {
                             "                Frame forward scan on: t\n"
             );
 
-            assertQuery("case\tcount\n" +
-                    "1\t2\n", query, null, true, true);
+            assertQuery(
+                    "case\tcount\n" +
+                            "1\t2\n",
+                    query,
+                    null,
+                    true,
+                    true
+            );
         });
     }
 
-    @Test//expressions based on group by clause expressions should go to outer model 
+    @Test // expressions based on group by clause expressions should go to outer model
     public void test2GroupByWithNonAggregateExpressionsOnKeyColumns4() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t (x long, y long);");
@@ -318,8 +336,14 @@ public class GroupByTest extends AbstractCairoTest {
                             "            Row forward scan\n" +
                             "            Frame forward scan on: t\n"
             );
-            assertQuery("x\tavg\tcolumn\tcolumn1\tavg1\tcolumn2\n" +
-                    "1\t11.5\t22.5\t11\t1.0\t11.0\n", query, null, true, true);
+            assertQuery(
+                    "x\tavg\tcolumn\tcolumn1\tavg1\tcolumn2\n" +
+                            "1\t11.5\t22.5\t11\t1.0\t11.0\n",
+                    query,
+                    null,
+                    true,
+                    true
+            );
         });
     }
 
@@ -347,8 +371,14 @@ public class GroupByTest extends AbstractCairoTest {
                             "            Row forward scan\n" +
                             "            Frame forward scan on: t\n"
             );
-            assertQuery("x\tavg\t:bv\n" +
-                    "1\t11.5\tx\n", query, null, true, true);
+            assertQuery(
+                    "x\tavg\t:bv\n" +
+                            "1\t11.5\tx\n",
+                    query,
+                    null,
+                    true,
+                    true
+            );
         });
     }
 
@@ -370,8 +400,14 @@ public class GroupByTest extends AbstractCairoTest {
                             "            Row forward scan\n" +
                             "            Frame forward scan on: t\n"
             );
-            assertQuery("column\tcolumn1\tmin\n" +
-                    "10\t12.5\t11\n", query, null, true, true);
+            assertQuery(
+                    "column\tcolumn1\tmin\n" +
+                            "10\t12.5\t11\n",
+                    query,
+                    null,
+                    true,
+                    true
+            );
         });
     }
 
@@ -394,8 +430,14 @@ public class GroupByTest extends AbstractCairoTest {
                             "                Row forward scan\n" +
                             "                Frame forward scan on: t\n"
             );
-            assertQuery("column\tcolumn1\tmin\n" +
-                    "10\t12.5\t11\n", query, null, true, true);
+            assertQuery(
+                    "column\tcolumn1\tmin\n" +
+                            "10\t12.5\t11\n",
+                    query,
+                    null,
+                    true,
+                    true
+            );
         });
     }
 
@@ -437,10 +479,16 @@ public class GroupByTest extends AbstractCairoTest {
                             "            Row forward scan\n" +
                             "            Frame forward scan on: dat\n"
             );
-            assertQuery("date_report\tcount\n" +
-                    "1970-01-01T00:00:00.000000Z\t3\n" +
-                    "1970-01-02T00:00:00.000000Z\t4\n" +
-                    "1970-01-03T00:00:00.000000Z\t3\n", query, null, true, true);
+            assertQuery(
+                    "date_report\tcount\n" +
+                            "1970-01-01T00:00:00.000000Z\t3\n" +
+                            "1970-01-02T00:00:00.000000Z\t4\n" +
+                            "1970-01-03T00:00:00.000000Z\t3\n",
+                    query,
+                    null,
+                    true,
+                    true
+            );
         });
     }
 
@@ -450,7 +498,7 @@ public class GroupByTest extends AbstractCairoTest {
             compile("create table dat as ( select cast(86400000000*(x%3) as timestamp) as date_report from long_sequence(10))");
             String query = "select ordr.date_report, count(*) " +
                     "from dat ordr " +
-                    "group by date_report " +//no alias used here
+                    "group by date_report " + // no alias used here
                     "order by ordr.date_report";
             assertPlan(
                     query,
@@ -463,10 +511,16 @@ public class GroupByTest extends AbstractCairoTest {
                             "            Row forward scan\n" +
                             "            Frame forward scan on: dat\n"
             );
-            assertQuery("date_report\tcount\n" +
-                    "1970-01-01T00:00:00.000000Z\t3\n" +
-                    "1970-01-02T00:00:00.000000Z\t4\n" +
-                    "1970-01-03T00:00:00.000000Z\t3\n", query, null, true, true);
+            assertQuery(
+                    "date_report\tcount\n" +
+                            "1970-01-01T00:00:00.000000Z\t3\n" +
+                            "1970-01-02T00:00:00.000000Z\t4\n" +
+                            "1970-01-03T00:00:00.000000Z\t3\n",
+                    query,
+                    null,
+                    true,
+                    true
+            );
         });
     }
 
@@ -490,10 +544,16 @@ public class GroupByTest extends AbstractCairoTest {
                             "            Row forward scan\n" +
                             "            Frame forward scan on: dat\n"
             );
-            assertQuery("date_report\tcount\n" +
-                    "1970-01-01T00:00:00.000000Z\t3\n" +
-                    "1970-01-02T00:00:00.000000Z\t4\n" +
-                    "1970-01-03T00:00:00.000000Z\t3\n", query, null, true, true);
+            assertQuery(
+                    "date_report\tcount\n" +
+                            "1970-01-01T00:00:00.000000Z\t3\n" +
+                            "1970-01-02T00:00:00.000000Z\t4\n" +
+                            "1970-01-03T00:00:00.000000Z\t3\n",
+                    query,
+                    null,
+                    true,
+                    true
+            );
         });
     }
 
@@ -505,6 +565,7 @@ public class GroupByTest extends AbstractCairoTest {
                     "from dat ordr " +
                     "group by date_report, ordr.date_report " +
                     "order by ordr.date_report";
+
             assertPlan(
                     query,
                     "Sort light\n" +
@@ -518,10 +579,17 @@ public class GroupByTest extends AbstractCairoTest {
                             "                Row forward scan\n" +
                             "                Frame forward scan on: dat\n"
             );
-            assertQuery("date_report\tdate_report1\tcount\n" +
-                    "1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z\t3\n" +
-                    "1970-01-02T00:00:00.000000Z\t1970-01-02T00:00:00.000000Z\t4\n" +
-                    "1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z\t3\n", query, null, true, true);
+
+            assertQuery(
+                    "date_report\tdate_report1\tcount\n" +
+                            "1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z\t3\n" +
+                            "1970-01-02T00:00:00.000000Z\t1970-01-02T00:00:00.000000Z\t4\n" +
+                            "1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z\t3\n",
+                    query,
+                    null,
+                    true,
+                    true
+            );
         });
     }
 
@@ -534,6 +602,7 @@ public class GroupByTest extends AbstractCairoTest {
                     "from dat ordr " +
                     "group by dateadd('d', -1, date_report), ordr.date_report " +
                     "order by ordr.date_report";
+
             assertPlan(
                     query,
                     "Sort light\n" +
@@ -549,10 +618,17 @@ public class GroupByTest extends AbstractCairoTest {
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: dat\n"
             );
-            assertQuery("date_report\tminusday\tplusday\tconcat\tcount\n" +
-                    "1970-01-01T00:00:00.000000Z\t1969-12-31T00:00:00.000000Z\t1970-01-02T00:00:00.000000Z\t103\t3\n" +
-                    "1970-01-02T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z\t1864000000003\t4\n" +
-                    "1970-01-03T00:00:00.000000Z\t1970-01-02T00:00:00.000000Z\t1970-01-04T00:00:00.000000Z\t11728000000003\t3\n", query, null, true, true);
+
+            assertQuery(
+                    "date_report\tminusday\tplusday\tconcat\tcount\n" +
+                            "1970-01-01T00:00:00.000000Z\t1969-12-31T00:00:00.000000Z\t1970-01-02T00:00:00.000000Z\t103\t3\n" +
+                            "1970-01-02T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z\t1864000000003\t4\n" +
+                            "1970-01-03T00:00:00.000000Z\t1970-01-02T00:00:00.000000Z\t1970-01-04T00:00:00.000000Z\t11728000000003\t3\n",
+                    query,
+                    null,
+                    true,
+                    true
+            );
         });
     }
 
@@ -579,10 +655,17 @@ public class GroupByTest extends AbstractCairoTest {
                             "                Row forward scan\n" +
                             "                Frame forward scan on: dat\n"
             );
-            assertQuery("date_report\tdt\tplusday\tminusday\tcount\n" +
-                    "1970-01-01T00:00:00.000000Z\t01.01.1970\t1970-01-02T00:00:00.000000Z\t1969-12-31T00:00:00.000000Z\t3\n" +
-                    "1970-01-02T00:00:00.000000Z\t02.01.1970\t1970-01-03T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z\t4\n" +
-                    "1970-01-03T00:00:00.000000Z\t03.01.1970\t1970-01-04T00:00:00.000000Z\t1970-01-02T00:00:00.000000Z\t3\n", query, null, true, true);
+
+            assertQuery(
+                    "date_report\tdt\tplusday\tminusday\tcount\n" +
+                            "1970-01-01T00:00:00.000000Z\t01.01.1970\t1970-01-02T00:00:00.000000Z\t1969-12-31T00:00:00.000000Z\t3\n" +
+                            "1970-01-02T00:00:00.000000Z\t02.01.1970\t1970-01-03T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z\t4\n" +
+                            "1970-01-03T00:00:00.000000Z\t03.01.1970\t1970-01-04T00:00:00.000000Z\t1970-01-02T00:00:00.000000Z\t3\n",
+                    query,
+                    null,
+                    true,
+                    true
+            );
         });
     }
 
@@ -623,10 +706,17 @@ public class GroupByTest extends AbstractCairoTest {
                             "                            Row forward scan\n" +
                             "                            Frame forward scan on: det\n"
             );
-            assertQuery("date_report\tdt\tplusday\tmin\tcount\tminminusday\n" +
-                    "1970-01-11T00:00:00.000000Z\t11.01.1970\t1970-01-12T00:00:00.000000Z\t3\t3\t1969-12-31T00:00:00.000000Z\n" +
-                    "1970-01-12T00:00:00.000000Z\t12.01.1970\t1970-01-13T00:00:00.000000Z\t1\t4\t1970-01-01T00:00:00.000000Z\n" +
-                    "1970-01-13T00:00:00.000000Z\t13.01.1970\t1970-01-14T00:00:00.000000Z\t2\t3\t1970-01-02T00:00:00.000000Z\n", query, null, true, true);
+
+            assertQuery(
+                    "date_report\tdt\tplusday\tmin\tcount\tminminusday\n" +
+                            "1970-01-11T00:00:00.000000Z\t11.01.1970\t1970-01-12T00:00:00.000000Z\t3\t3\t1969-12-31T00:00:00.000000Z\n" +
+                            "1970-01-12T00:00:00.000000Z\t12.01.1970\t1970-01-13T00:00:00.000000Z\t1\t4\t1970-01-01T00:00:00.000000Z\n" +
+                            "1970-01-13T00:00:00.000000Z\t13.01.1970\t1970-01-14T00:00:00.000000Z\t2\t3\t1970-01-02T00:00:00.000000Z\n",
+                    query,
+                    null,
+                    true,
+                    true
+            );
         });
     }
 
@@ -662,25 +752,33 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByAliasInDifferentOrder1() throws Exception {
-        assertQuery("k1\tk2\tcount\n" +
+        assertQuery(
+                "k1\tk2\tcount\n" +
                         "0\t2\t3\n" +
                         "0\t0\t2\n" +
                         "1\t1\t3\n" +
                         "1\t3\t2\n",
                 "select key1 as k1, key2 as k2, count(*) from t group by k2, k1 order by 1",
-                "create table t as ( select x%2 key1, x%4 key2, x as value from long_sequence(10)); ", null, true, true
+                "create table t as ( select x%2 key1, x%4 key2, x as value from long_sequence(10)); ",
+                null,
+                true,
+                true
         );
     }
 
     @Test
     public void testGroupByAliasInDifferentOrder2() throws Exception {
-        assertQuery("k1\tk2\tcount\n" +
+        assertQuery(
+                "k1\tk2\tcount\n" +
                         "1\t2\t3\n" +
                         "1\t0\t2\n" +
                         "2\t1\t3\n" +
                         "2\t3\t2\n",
                 "select key1+1 as k1, key2 as k2, count(*) from t group by k2, k1 order by 1",
-                "create table t as ( select x%2 key1, x%4 key2, x as value from long_sequence(10)); ", null, true, true
+                "create table t as ( select x%2 key1, x%4 key2, x as value from long_sequence(10));",
+                null,
+                true,
+                true
         );
     }
 
@@ -714,93 +812,129 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByColumnIdx1() throws Exception {
-        assertQuery("key\tcount\n" +
+        assertQuery(
+                "key\tcount\n" +
                         "0\t50\n" +
                         "1\t50\n",
                 "select key, count(*) from t group by 1 order by 1",
-                "create table t as ( select x%2 as key, x as value from long_sequence(100))", null, true, true
+                "create table t as ( select x%2 as key, x as value from long_sequence(100))",
+                null,
+                true,
+                true
         );
     }
 
     @Test
     public void testGroupByColumnIdx2() throws Exception {
-        assertQuery("key\tcount\n" +
+        assertQuery(
+                "key\tcount\n" +
                         "0\t50\n" +
                         "1\t50\n",
                 "select key, count(*) from t group by 1, 1 order by 1",
-                "create table t as ( select x%2 as key, x as value from long_sequence(100)); ", null, true, true
+                "create table t as ( select x%2 as key, x as value from long_sequence(100));",
+                null,
+                true,
+                true
         );
     }
 
     @Test
     public void testGroupByColumnIdx3() throws Exception {
-        assertQuery("key\tcount\n" +
+        assertQuery(
+                "key\tcount\n" +
                         "0\t50\n" +
                         "1\t50\n",
                 "select key, count(*) from t group by key, 1 order by 1",
-                "create table t as ( select x%2 as key, x as value from long_sequence(100)); ", null, true, true
+                "create table t as ( select x%2 as key, x as value from long_sequence(100));",
+                null,
+                true,
+                true
         );
     }
 
     @Test
     public void testGroupByColumnIdx4() throws Exception {
-        assertQuery("column\tcount\n" +
+        assertQuery(
+                "column\tcount\n" +
                         "1\t50\n" +
                         "2\t50\n",
                 "select key+1, count(*) from t group by key, 1 order by key+1",
-                "create table t as ( select x%2 as key, x as value from long_sequence(100)); ", null, true, true
+                "create table t as ( select x%2 as key, x as value from long_sequence(100));",
+                null,
+                true,
+                true
         );
     }
 
     @Test
     public void testGroupByColumnIdx5() throws Exception {
-        assertQuery("z\tcount\n" +
+        assertQuery(
+                "z\tcount\n" +
                         "1\t50\n" +
                         "2\t50\n",
                 "select key+1 as z, count(*) from t group by key, 1 order by z",
-                "create table t as ( select x%2 as key, x as value from long_sequence(100)); ", null, true, true
+                "create table t as ( select x%2 as key, x as value from long_sequence(100));",
+                null,
+                true,
+                true
         );
     }
 
     @Test
     public void testGroupByColumnIdx6() throws Exception {
-        assertQuery("column\tcount\n" +
+        assertQuery(
+                "column\tcount\n" +
                         "1\t50\n" +
                         "2\t50\n",
                 "select key+1, count(*) from t group by key, 1 order by 1",
-                "create table t as ( select x%2 as key, x as value from long_sequence(100)); ", null, true, true
+                "create table t as ( select x%2 as key, x as value from long_sequence(100));",
+                null,
+                true,
+                true
         );
     }
 
     @Test
     public void testGroupByColumnIdx7() throws Exception {
-        assertQuery("column\tcount\n" +
+        assertQuery(
+                "column\tcount\n" +
                         "2\t50\n" +
                         "1\t50\n",
                 "select key+1, count(*) from t group by key, 1 order by key+3 desc",
-                "create table t as ( select x%2 as key, x as value from long_sequence(100)); ", null, true, true
+                "create table t as ( select x%2 as key, x as value from long_sequence(100));",
+                null,
+                true,
+                true
         );
     }
 
     @Test
     public void testGroupByColumnIdx8() throws Exception {
-        assertQuery("column\tkey\tkey1\tcount\n" +
+        assertQuery(
+                "column\tkey\tkey1\tcount\n" +
                         "1\t0\t0\t50\n" +
                         "2\t1\t1\t50\n",
                 "select key+1, key, key, count(*) from t group by key order by 1,2,3 desc",
-                "create table t as ( select x%2 as key, x as value from long_sequence(100)); ", null, true, true
+                "create table t as ( select x%2 as key, x as value from long_sequence(100));",
+                null,
+                true,
+                true
         );
     }
 
     @Test
     public void testGroupByDuplicateColumn() throws Exception {
-        assertQuery("k1\tk2\tcount\n" +
+        assertQuery(
+                "k1\tk2\tcount\n" +
                         "0\t0\t2\n" +
                         "0\t2\t3\n" +
                         "1\t1\t3\n" +
                         "1\t3\t2\n",
                 "select key1 as k1, key2 as k2, count(*) from t group by k2, k1, k2 order by 1, 2",
-                "create table t as ( select x%2 key1, x%4 key2, x as value from long_sequence(10)); ", null, true, true
+                "create table t as ( select x%2 key1, x%4 key2, x as value from long_sequence(10));",
+                null,
+                true,
+                true
         );
     }
 
@@ -826,8 +960,13 @@ public class GroupByTest extends AbstractCairoTest {
                             "                Frame forward scan on: t\n"
             );
 
-            assertQuery("l\ts\tcolumn\n" +
-                    "1\ta\t2\n", query, null, true, true);
+            assertQuery(
+                    "l\ts\tcolumn\n" +
+                            "1\ta\t2\n",
+                    query,
+                    null,
+                    true,
+                    true);
         });
     }
 
@@ -901,9 +1040,15 @@ public class GroupByTest extends AbstractCairoTest {
                             "        Frame forward scan on: t\n"
             );
 
-            assertQuery("s\tmax\tmax1\n" +
-                    "a\t-1\t1\n" +
-                    "a\t-2\t1\n", query, null, true, true);
+            assertQuery(
+                    "s\tmax\tmax1\n" +
+                            "a\t-1\t1\n" +
+                            "a\t-2\t1\n",
+                    query,
+                    null,
+                    true,
+                    true
+            );
         });
     }
 
@@ -918,9 +1063,15 @@ public class GroupByTest extends AbstractCairoTest {
                     "join t2 on t1.y = t2.y  " +
                     "group by t1.x, t2.x";
 
-            assertQuery("x\tmax\tx1\n" +
-                    "1\t1\t1\n" +
-                    "2\t0\t2\n", query, null, true, true);
+            assertQuery(
+                    "x\tmax\tx1\n" +
+                            "1\t1\t1\n" +
+                            "2\t0\t2\n",
+                    query,
+                    null,
+                    true,
+                    true
+            );
         });
     }
 
@@ -951,9 +1102,15 @@ public class GroupByTest extends AbstractCairoTest {
                     "                        Row forward scan\n" +
                     "                        Frame forward scan on: t2\n");
 
-            assertQuery("x\tmax\tcase\n" +
-                    "1\t1\t10\n" +
-                    "2\t0\t200\n", query, null, true, true);
+            assertQuery(
+                    "x\tmax\tcase\n" +
+                            "1\t1\t10\n" +
+                            "2\t0\t200\n",
+                    query,
+                    null,
+                    true,
+                    true
+            );
         });
     }
 
@@ -986,9 +1143,15 @@ public class GroupByTest extends AbstractCairoTest {
                     "                            Row forward scan\n" +
                     "                            Frame forward scan on: t2\n");
 
-            assertQuery("x\tmax\tcase\n" +
-                    "1\t1\t20\n" +
-                    "2\t0\t60\n", query, null, true, true);
+            assertQuery(
+                    "x\tmax\tcase\n" +
+                            "1\t1\t20\n" +
+                            "2\t0\t60\n",
+                    query,
+                    null,
+                    true,
+                    true
+            );
         });
     }
 
@@ -1021,9 +1184,15 @@ public class GroupByTest extends AbstractCairoTest {
                     "                            Row forward scan\n" +
                     "                            Frame forward scan on: t2\n");
 
-            assertQuery("x\tmax\tcolumn\n" +
-                    "1\t1\t1677715200000001\n" +
-                    "2\t0\t1677801600000002\n", query, null, true, true);
+            assertQuery(
+                    "x\tmax\tcolumn\n" +
+                            "1\t1\t1677715200000001\n" +
+                            "2\t0\t1677801600000002\n",
+                    query,
+                    null,
+                    true,
+                    true
+            );
         });
     }
 
@@ -1056,21 +1225,31 @@ public class GroupByTest extends AbstractCairoTest {
                     "                            Row forward scan\n" +
                     "                            Frame forward scan on: t2\n");
 
-            assertQuery("x\tmax\tdateadd\n" +
-                    "1\t1\t2023-03-02T00:00:01.000000Z\n" +
-                    "2\t0\t2023-03-03T00:00:00.000000Z\n", query, null, true, true);
+            assertQuery(
+                    "x\tmax\tdateadd\n" +
+                            "1\t1\t2023-03-02T00:00:01.000000Z\n" +
+                            "2\t0\t2023-03-03T00:00:00.000000Z\n",
+                    query,
+                    null,
+                    true,
+                    true
+            );
         });
     }
 
     @Test
     public void testGroupByWithDuplicateSelectColumn() throws Exception {
-        assertQuery("k1\tkey2\tkey21\tcount\n" +
+        assertQuery(
+                "k1\tkey2\tkey21\tcount\n" +
                         "0\t0\t0\t2\n" +
                         "0\t2\t2\t3\n" +
                         "1\t1\t1\t3\n" +
                         "1\t3\t3\t2\n",
                 "select key1 as k1, key2, key2, count(*) from t group by key2, k1 order by 1, 2",
-                "create table t as ( select x%2 key1, x%4 key2, x as value from long_sequence(10)); ", null, true, true
+                "create table t as ( select x%2 key1, x%4 key2, x as value from long_sequence(10));",
+                null,
+                true,
+                true
         );
     }
 
@@ -1094,8 +1273,113 @@ public class GroupByTest extends AbstractCairoTest {
                             "            Row forward scan\n" +
                             "            Frame forward scan on: t\n"
             );
-            assertQuery("l\ts\tcolumn\n" +
-                    "1\ta\t0\n", query, null, true, true);
+            assertQuery(
+                    "l\ts\tcolumn\n" +
+                            "1\ta\t0\n",
+                    query,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testLatestByImplicitGroupBy1() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t (s1 symbol, s2 symbol, l long, ts timestamp) timestamp(ts) partition by day;");
+            insert(
+                    "insert into t values " +
+                            "('a', 'c', 11, '2021-11-17T17:35:01.000000Z')," +
+                            "('a', 'd', 12, '2021-11-17T17:35:02.000000Z')," +
+                            "('b', 'd', 13, '2021-11-17T17:35:01.000000Z')," +
+                            "('b', 'c', 14, '2021-11-17T17:35:02.000000Z');"
+            );
+            String query = "select s2, sum(l) from t where s2 in ('c') latest on ts partition by s1";
+            assertPlan(
+                    query,
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [s2]\n" +
+                            "  values: [sum(l)]\n" +
+                            "    LatestByDeferredListValuesFiltered\n" +
+                            "      filter: s2 in [c]\n" +
+                            "        Frame backward scan on: t\n"
+            );
+            assertQuery(
+                    "s2\tsum\n" +
+                            "c\t25\n",
+                    query,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testLatestByImplicitGroupBy2() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t (s1 symbol index, s2 symbol index, l long, ts timestamp) timestamp(ts) partition by day;");
+            insert(
+                    "insert into t values " +
+                            "('a', 'c', 11, '2021-11-17T17:35:01.000000Z')," +
+                            "('a', 'd', 12, '2021-11-17T17:35:02.000000Z')," +
+                            "('b', 'd', 13, '2021-11-17T17:35:01.000000Z')," +
+                            "('b', 'c', 14, '2021-11-17T17:35:02.000000Z');"
+            );
+            String query = "select s2, sum(l) from t where s2 in ('c', 'd') latest on ts partition by s1";
+            assertPlan(
+                    query,
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [s2]\n" +
+                            "  values: [sum(l)]\n" +
+                            "    LatestByDeferredListValuesFiltered\n" +
+                            "      filter: s2 in [c,d]\n" +
+                            "        Frame backward scan on: t\n"
+            );
+            assertQuery(
+                    "s2\tsum\n" +
+                            "c\t14\n" +
+                            "d\t12\n",
+                    query,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testLatestByImplicitGroupBy3() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t (s1 symbol index, s2 symbol index, l long, ts timestamp) timestamp(ts) partition by day;");
+            insert(
+                    "insert into t values " +
+                            "('a', 'c', 11, '2021-11-17T17:35:01.000000Z')," +
+                            "('a', 'd', 12, '2021-11-17T17:35:02.000000Z')," +
+                            "('b', 'd', 13, '2021-11-17T17:35:01.000000Z')," +
+                            "('b', 'c', 14, '2021-11-17T17:35:02.000000Z');"
+            );
+            String query = "select concat('_', s2, '_'), sum(l) from t where s2 in ('d') latest on ts partition by s1";
+            assertPlan(
+                    query,
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [concat]\n" +
+                            "  values: [sum(l)]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [concat(['_',s2,'_']),l]\n" +
+                            "        LatestByDeferredListValuesFiltered\n" +
+                            "          filter: s2 in [d]\n" +
+                            "            Frame backward scan on: t\n"
+            );
+            assertQuery(
+                    "concat\tsum\n" +
+                            "_d_\t25\n",
+                    query,
+                    null,
+                    true,
+                    true
+            );
         });
     }
 
@@ -1142,51 +1426,75 @@ public class GroupByTest extends AbstractCairoTest {
         ddl("create table data ( dts timestamp, s symbol ) timestamp(dts);");
         insert("insert into data values ('2023-05-29T15:29:59.000000Z', 'USD')");
 
-        //single table 
-        assertQuery("ref0\n2023-05-29T15:30:00.000000Z\n",
+        // single table
+        assertQuery(
+                "ref0\n2023-05-29T15:30:00.000000Z\n",
                 "SELECT ts AS ref0 " +
                         "FROM tst " +
                         "GROUP BY ts " +
-                        "ORDER BY ts", "", true, true
+                        "ORDER BY ts",
+                "",
+                true,
+                true
         );
 
-        assertQuery("ref0\n2023-05-29T15:30:00.000000Z\n",
+        assertQuery(
+                "ref0\n2023-05-29T15:30:00.000000Z\n",
                 "SELECT tst.ts AS ref0 " +
                         "FROM tst " +
                         "GROUP BY tst.ts " +
-                        "ORDER BY tst.ts", "", true, true
+                        "ORDER BY tst.ts",
+                "",
+                true,
+                true
         );
 
-        assertQuery("ref0\n2023-05-29T15:30:00.000000Z\n",
+        assertQuery(
+                "ref0\n2023-05-29T15:30:00.000000Z\n",
                 "SELECT tst.ts AS ref0 " +
                         "FROM tst " +
                         "GROUP BY ts " +
-                        "ORDER BY tst.ts", "", true, true
+                        "ORDER BY tst.ts",
+                "",
+                true,
+                true
         );
 
-        assertQuery("ref0\n2023-05-29T15:30:00.000000Z\n",
+        assertQuery(
+                "ref0\n2023-05-29T15:30:00.000000Z\n",
                 "SELECT ts AS ref0 " +
                         "FROM tst " +
                         "GROUP BY tst.ts " +
-                        "ORDER BY ts", "", true, true
+                        "ORDER BY ts",
+                "",
+                true,
+                true
         );
 
-        //joins
+        // joins
         for (String join : Arrays.asList("LT JOIN data ", "ASOF JOIN data ", "LEFT JOIN data on (tst.ts > data.dts) ", "INNER JOIN data on (tst.ts > data.dts) ", "CROSS JOIN data ")) {
-            assertQuery("ref0\tdts\n2023-05-29T15:30:00.000000Z\t2023-05-29T15:29:59.000000Z\n",
+            assertQuery(
+                    "ref0\tdts\n2023-05-29T15:30:00.000000Z\t2023-05-29T15:29:59.000000Z\n",
                     "SELECT ts AS ref0, dts " +
                             "FROM tst " +
                             join +
                             "GROUP BY tst.ts, data.dts " +
-                            "ORDER BY ts", "", true, true
+                            "ORDER BY ts",
+                    "",
+                    true,
+                    true
             );
 
-            assertQuery("ref0\tdts\n2023-05-29T15:30:00.000000Z\t2023-05-29T15:29:59.000000Z\n",
+            assertQuery(
+                    "ref0\tdts\n2023-05-29T15:30:00.000000Z\t2023-05-29T15:29:59.000000Z\n",
                     "SELECT ts AS ref0, dts " +
                             "FROM tst " +
                             join +
                             "GROUP BY ts, data.dts " +
-                            "ORDER BY tst.ts", "", true, true
+                            "ORDER BY tst.ts",
+                    "",
+                    true,
+                    true
             );
         }
     }
@@ -1219,11 +1527,15 @@ public class GroupByTest extends AbstractCairoTest {
                         "                    Frame forward scan on: tab\n"
         );
 
-        assertQuery("ref0\n" +
+        assertQuery(
+                "ref0\n" +
                         "1970-01-01T00:00:00.000001Z\n" +
                         "1970-01-01T00:00:00.000002Z\n" +
                         "1970-01-01T00:00:00.000003Z\n",
-                query, null, true, false
+                query,
+                null,
+                true,
+                false
         );
     }
 
@@ -1255,11 +1567,15 @@ public class GroupByTest extends AbstractCairoTest {
                         "                    Frame forward scan on: tab\n"
         );
 
-        assertQuery("ref0\n" +
+        assertQuery(
+                "ref0\n" +
                         "1970-01-01T01:00:00.000001Z\n" +
                         "1970-01-01T01:00:00.000002Z\n" +
                         "1970-01-01T01:00:00.000003Z\n",
-                query, null, true, false
+                query,
+                null,
+                true,
+                false
         );
     }
 
@@ -1289,11 +1605,15 @@ public class GroupByTest extends AbstractCairoTest {
                         "                Frame forward scan on: tab\n"
         );
 
-        assertQuery("created\n" +
+        assertQuery(
+                "created\n" +
                         "1970-01-01T00:00:00.000001Z\n" +
                         "1970-01-01T00:00:00.000002Z\n" +
                         "1970-01-01T00:00:00.000003Z\n",
-                query, null, true, false
+                query,
+                null,
+                true,
+                false
         );
     }
 
@@ -1320,9 +1640,15 @@ public class GroupByTest extends AbstractCairoTest {
                     "            DataFrame\n" +
                     "                Row forward scan\n" +
                     "                Frame forward scan on: x\n");
-            assertQuery("sym\thour\tavgBid\n" +
-                    "A\t0\t0.4922298136511458\n" +
-                    "B\t0\t0.4796420804429589\n", query, null, true, true);
+            assertQuery(
+                    "sym\thour\tavgBid\n" +
+                            "A\t0\t0.4922298136511458\n" +
+                            "B\t0\t0.4796420804429589\n",
+                    query,
+                    null,
+                    true,
+                    true
+            );
         });
     }
 
@@ -1344,7 +1670,6 @@ public class GroupByTest extends AbstractCairoTest {
             );
             Assert.fail();
         } catch (SqlException sqle) {
-            //sqle.printStackTrace();
             Assert.assertEquals(errorMessage, sqle.getMessage());
         }
     }
