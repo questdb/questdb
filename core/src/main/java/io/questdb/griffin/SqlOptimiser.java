@@ -28,6 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.catalogue.*;
+import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.griffin.engine.functions.table.AllTablesFunctionFactory;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
@@ -1862,7 +1863,14 @@ public class SqlOptimiser implements Mutable {
             }
 
             try {
-                long value = loFunc.getLong(null);
+                long value;
+                if (!(loFunc instanceof CharConstant)) {
+                    value = loFunc.getLong(null);
+                } else {
+                    long tmp = (byte) (loFunc.getChar(null) - '0');
+                    value = tmp > -1 && tmp < 10 ? tmp : Numbers.LONG_NaN;
+                }
+
                 if (value < 0) {
                     throw SqlException.$(expr.position, "non-negative integer expression expected");
                 }
