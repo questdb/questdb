@@ -338,7 +338,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     @Override
     public void clear() {
         super.clear();
-        sqlExecutionContext.getSecurityContext().clear();
 
         freeBuffers();
         completed = true;
@@ -465,10 +464,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 throw PeerIsSlowToWriteException.INSTANCE;
             }
             handleAuthentication();
-        } catch (PeerIsSlowToReadException | PeerIsSlowToWriteException e) {
-            throw e;
-        } catch (PeerDisconnectedException e) {
-            sqlExecutionContext.getSecurityContext().clear();
+        } catch (PeerDisconnectedException | PeerIsSlowToReadException | PeerIsSlowToWriteException e) {
+            // BAU, not error metric
             throw e;
         } catch (Throwable th) {
             metrics.pgWire().getErrorCounter().inc();
@@ -540,11 +537,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             if (e.isEntityDisabled()) {
                 throw PeerDisconnectedException.INSTANCE;
             }
-        } catch (PeerIsSlowToReadException | PeerIsSlowToWriteException | QueryPausedException |
-                 BadProtocolException e) {
-            throw e;
-        } catch (PeerDisconnectedException e) {
-            sqlExecutionContext.getSecurityContext().clear();
+        } catch (PeerDisconnectedException | PeerIsSlowToReadException | PeerIsSlowToWriteException |
+                 QueryPausedException | BadProtocolException e) {
             throw e;
         } catch (Throwable th) {
             handleException(-1, th.getMessage(), true, -1, true);
@@ -1715,18 +1709,16 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         try {
             r = authenticator.handleIO();
             if (r == Authenticator.OK) {
+                SecurityContext securityContext = securityContextFactory.getInstance(
+                        authenticator.getPrincipal(),
+                        authenticator.getAuthType(),
+                        SecurityContextFactory.PGWIRE
+                );
                 try {
-                    final SecurityContext securityContext = securityContextFactory.getInstance(
-                            authenticator.getPrincipal(),
-                            authenticator.getAuthType(),
-                            SecurityContextFactory.PGWIRE
-                    );
-                    sqlExecutionContext.with(securityContext, bindVariableService, rnd, getFd(), circuitBreaker);
                     securityContext.authorizePGWire();
+                    sqlExecutionContext.with(securityContext, bindVariableService, rnd, getFd(), circuitBreaker);
                     r = authenticator.loginOK();
                 } catch (CairoException e) {
-                    LOG.error().$("failed to authenticate [error=").$(e.getFlyweightMessage()).I$();
-                    // todo: handle this separately from auth failure
                     r = authenticator.denyAccess();
                 }
             }

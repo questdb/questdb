@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.SqlJitMode;
-import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -67,7 +66,7 @@ public class SqlJitCompilerBenchmark {
         try (CairoEngine engine = new CairoEngine(configuration)) {
             SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
                     .with(
-                            AllowAllSecurityContext.INSTANCE,
+                            configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
                             null,
                             null,
                             -1,

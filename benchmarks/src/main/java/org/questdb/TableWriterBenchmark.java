@@ -26,7 +26,6 @@ package org.questdb;
 
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -165,7 +164,7 @@ public class TableWriterBenchmark {
         try (CairoEngine engine = new CairoEngine(configuration)) {
             SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
                     .with(
-                            AllowAllSecurityContext.INSTANCE,
+                            configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
                             null,
                             null,
                             -1,
