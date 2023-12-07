@@ -48,6 +48,7 @@ import org.junit.*;
 
 import java.io.File;
 import java.util.Arrays;
+import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
@@ -5221,6 +5222,40 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "create table xCHAR as (select '1'::char c union all select null::char )",
                 null, true, false
         );
+    }
+
+    @Test
+    public void testSelectConcurrentDDL() throws Exception {
+        engine.ddl("create table x (a int, b int, c int)", sqlExecutionContext);
+
+        CyclicBarrier barrier = new CyclicBarrier(2);
+        new Thread(() -> {
+            try {
+                while (barrier.getNumberWaiting() == 0) {
+                    ddl("alter table x add column d int", sqlExecutionContext);
+                    ddl("alter table x drop column d", sqlExecutionContext);
+                }
+            } catch (SqlException e) {
+                e.printStackTrace();
+            } finally {
+                try {
+                    barrier.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    e.printStackTrace();
+                } catch (BrokenBarrierException e) {
+                    e.printStackTrace();
+                }
+            }
+        }).start();
+
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            for (int i = 0; i < 20_000; i++) {
+                Misc.freeIfCloseable(compiler.compile("select * from x", sqlExecutionContext).getRecordCursorFactory());
+            }
+        } finally {
+            barrier.await();
+        }
     }
 
     @Test

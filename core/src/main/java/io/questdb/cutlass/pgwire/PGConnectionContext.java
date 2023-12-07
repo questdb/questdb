@@ -1492,12 +1492,12 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 }
                 prepareCommandComplete(true);
                 return;
-            } catch (TableReferenceOutOfDateException | WriterOutOfDateException ex) {
-                if (!recompileStale || retries == TableReferenceOutOfDateException.MAX_RETRY_ATTEMPS) {
+            } catch (TableReferenceOutOfDateException ex) {
+                if (!recompileStale || retries == TableReferenceOutOfDateException.MAX_RETRY_ATTEMPTS) {
                     if (transactionState == IN_TRANSACTION) {
                         transactionState = ERROR_TRANSACTION;
                     }
-                    throw ex;
+                    throw SqlException.$(0, ex.getFlyweightMessage());
                 }
                 LOG.info().$(ex.getFlyweightMessage()).$();
                 Misc.free(typesAndInsert);
@@ -1555,11 +1555,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 }
                 prepareCommandComplete(true);
             } catch (TableReferenceOutOfDateException e) {
-                if (retries == TableReferenceOutOfDateException.MAX_RETRY_ATTEMPS) {
+                if (retries == TableReferenceOutOfDateException.MAX_RETRY_ATTEMPTS) {
                     if (transactionState == IN_TRANSACTION) {
                         transactionState = ERROR_TRANSACTION;
                     }
-                    throw e;
+                    throw SqlException.$(0, e.getFlyweightMessage());
                 }
                 LOG.info().$(e.getFlyweightMessage()).$();
                 typesAndUpdate = Misc.free(typesAndUpdate);
@@ -2795,8 +2795,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     // cache random if it was replaced
                     rnd = sqlExecutionContext.getRandom();
                 } catch (TableReferenceOutOfDateException e) {
-                    if (retries == TableReferenceOutOfDateException.MAX_RETRY_ATTEMPS) {
-                        throw e;
+                    if (retries == TableReferenceOutOfDateException.MAX_RETRY_ATTEMPTS) {
+                        throw SqlException.$(0, e.getFlyweightMessage());
                     }
                     LOG.info().$(e.getFlyweightMessage()).$();
                     freeFactory();
