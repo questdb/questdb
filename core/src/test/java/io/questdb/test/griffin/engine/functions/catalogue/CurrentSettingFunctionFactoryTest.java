@@ -22,15 +22,27 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.security;
+package io.questdb.test.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.SecurityContext;
-import io.questdb.std.Transient;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.catalogue.Constants;
+import io.questdb.griffin.engine.functions.catalogue.CurrentSettingFunctionFactory;
+import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
+import org.junit.Test;
 
-public interface SecurityContextFactory {
-    int HTTP = 0;
-    int ILP = 2;
-    int PGWIRE = 1;
+public class CurrentSettingFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
-    SecurityContext getInstance(@Transient CharSequence principal, byte authType, int interfaceId);
+    @Test
+    public void test() throws SqlException {
+        call("").andAssert("");
+        call((String) null).andAssert("");
+        call("eee").andAssert("");
+        call(CurrentSettingFunctionFactory.SERVER_VERSION_NUM).andAssert(Constants.PG_COMPATIBLE_VERSION_NUM_CONSTANT.getStr(null));
+    }
+
+    @Override
+    protected FunctionFactory getFunctionFactory() {
+        return new CurrentSettingFunctionFactory();
+    }
 }

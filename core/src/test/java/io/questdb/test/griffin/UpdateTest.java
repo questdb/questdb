@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.security.ReadOnlySecurityContext;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.*;
@@ -596,7 +597,7 @@ public class UpdateTest extends AbstractCairoTest {
                 public Rnd getAsyncRandom() {
                     throw new RuntimeException("test error");
                 }
-            }.with(engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(), null);
+            }.with(AllowAllSecurityContext.INSTANCE, null);
 
             testUpdateAsyncMode(tableWriter -> {
                     }, "[43] test error",
@@ -2516,7 +2517,7 @@ public class UpdateTest extends AbstractCairoTest {
                     "select distinct symCol from up order by symCol",
                     null,
                     true,
-                    true
+                    false
             );
 
             assertSql(

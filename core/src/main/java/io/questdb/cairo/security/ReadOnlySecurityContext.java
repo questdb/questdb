@@ -187,6 +187,11 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
+    public SecurityContext copy() {
+        return this;
+    }
+
+    @Override
     public CharSequence getPrincipal() {
         return Constants.USER_NAME;
     }

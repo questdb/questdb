@@ -22,15 +22,12 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.security;
+package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.SecurityContext;
-import io.questdb.std.Transient;
+public class PrefixedPgExtensionFunctionFactory extends PgExtensionFunctionFactory {
 
-public interface SecurityContextFactory {
-    int HTTP = 0;
-    int ILP = 2;
-    int PGWIRE = 1;
-
-    SecurityContext getInstance(@Transient CharSequence principal, byte authType, int interfaceId);
+    @Override
+    public String getSignature() {
+        return "pg_catalog.pg_extension()";
+    }
 }

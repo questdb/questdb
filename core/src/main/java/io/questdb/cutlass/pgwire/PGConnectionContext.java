@@ -339,6 +339,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     @Override
     public void clear() {
         super.clear();
+        sqlExecutionContext.getSecurityContext().clear();
 
         freeBuffers();
         completed = true;
@@ -465,8 +466,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 throw PeerIsSlowToWriteException.INSTANCE;
             }
             handleAuthentication();
-        } catch (PeerDisconnectedException | PeerIsSlowToReadException | PeerIsSlowToWriteException e) {
-            // BAU, not error metric
+        } catch (PeerIsSlowToReadException | PeerIsSlowToWriteException e) {
+            throw e;
+        } catch (PeerDisconnectedException e) {
+            sqlExecutionContext.getSecurityContext().clear();
             throw e;
         } catch (Throwable th) {
             metrics.pgWire().getErrorCounter().inc();
@@ -538,8 +541,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             if (e.isEntityDisabled()) {
                 throw PeerDisconnectedException.INSTANCE;
             }
-        } catch (PeerDisconnectedException | PeerIsSlowToReadException | PeerIsSlowToWriteException |
-                 QueryPausedException | BadProtocolException e) {
+        } catch (PeerIsSlowToReadException | PeerIsSlowToWriteException | QueryPausedException |
+                 BadProtocolException e) {
+            throw e;
+        } catch (PeerDisconnectedException e) {
+            sqlExecutionContext.getSecurityContext().clear();
             throw e;
         } catch (Throwable th) {
             handleException(-1, th.getMessage(), true, -1, true);
@@ -1493,12 +1499,12 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 }
                 prepareCommandComplete(true);
                 return;
-            } catch (TableReferenceOutOfDateException | WriterOutOfDateException ex) {
-                if (!recompileStale || retries == TableReferenceOutOfDateException.MAX_RETRY_ATTEMPS) {
+            } catch (TableReferenceOutOfDateException ex) {
+                if (!recompileStale || retries == TableReferenceOutOfDateException.MAX_RETRY_ATTEMPTS) {
                     if (transactionState == IN_TRANSACTION) {
                         transactionState = ERROR_TRANSACTION;
                     }
-                    throw ex;
+                    throw SqlException.$(0, ex.getFlyweightMessage());
                 }
                 LOG.info().$(ex.getFlyweightMessage()).$();
                 Misc.free(typesAndInsert);
@@ -1556,11 +1562,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 }
                 prepareCommandComplete(true);
             } catch (TableReferenceOutOfDateException e) {
-                if (retries == TableReferenceOutOfDateException.MAX_RETRY_ATTEMPS) {
+                if (retries == TableReferenceOutOfDateException.MAX_RETRY_ATTEMPTS) {
                     if (transactionState == IN_TRANSACTION) {
                         transactionState = ERROR_TRANSACTION;
                     }
-                    throw e;
+                    throw SqlException.$(0, e.getFlyweightMessage());
                 }
                 LOG.info().$(e.getFlyweightMessage()).$();
                 typesAndUpdate = Misc.free(typesAndUpdate);
@@ -1710,16 +1716,18 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         try {
             r = authenticator.handleIO();
             if (r == Authenticator.OK) {
-                SecurityContext securityContext = securityContextFactory.getInstance(
-                        authenticator.getPrincipal(),
-                        authenticator.getAuthType(),
-                        SecurityContextFactory.PGWIRE
-                );
                 try {
-                    securityContext.authorizePGWire();
+                    final SecurityContext securityContext = securityContextFactory.getInstance(
+                            authenticator.getPrincipal(),
+                            authenticator.getAuthType(),
+                            SecurityContextFactory.PGWIRE
+                    );
                     sqlExecutionContext.with(securityContext, bindVariableService, rnd, getFd(), circuitBreaker);
+                    securityContext.authorizePGWire();
                     r = authenticator.loginOK();
                 } catch (CairoException e) {
+                    LOG.error().$("failed to authenticate [error=").$(e.getFlyweightMessage()).I$();
+                    // todo: handle this separately from auth failure
                     r = authenticator.denyAccess();
                 }
             }
@@ -2796,8 +2804,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     // cache random if it was replaced
                     rnd = sqlExecutionContext.getRandom();
                 } catch (TableReferenceOutOfDateException e) {
-                    if (retries == TableReferenceOutOfDateException.MAX_RETRY_ATTEMPS) {
-                        throw e;
+                    if (retries == TableReferenceOutOfDateException.MAX_RETRY_ATTEMPTS) {
+                        throw SqlException.$(0, e.getFlyweightMessage());
                     }
                     LOG.info().$(e.getFlyweightMessage()).$();
                     freeFactory();

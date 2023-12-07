@@ -81,9 +81,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final int SHOW_COLUMNS = 2;
     public static final int SHOW_DATE_STYLE = 9;
     public static final int SHOW_MAX_IDENTIFIER_LENGTH = 6;
+    public static final int SHOW_PARAMETERS = 11;
     public static final int SHOW_PARTITIONS = 3;
     public static final int SHOW_SEARCH_PATH = 8;
-    public static final int SHOW_PARAMETERS = 11;
     public static final int SHOW_SERVER_VERSION = 12;
     public static final int SHOW_STANDARD_CONFORMING_STRINGS = 7;
     public static final int SHOW_TABLES = 1;
@@ -334,14 +334,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
      * If this is a SELECT DISTINCT then we don't push since the parent model contains the necessary columns.
      */
     public boolean allowsNestedColumnsChange() {
-        QueryModel union = this;
-        while (union != null) {
-            if (union.getSelectModelType() == QueryModel.SELECT_MODEL_DISTINCT) {
-                return false;
-            }
-            union = union.getUnionModel();
-        }
-        return true;
+        return this.getSelectModelType() != QueryModel.SELECT_MODEL_DISTINCT;
     }
 
     @Override

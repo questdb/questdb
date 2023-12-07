@@ -183,6 +183,7 @@ function start {
     -XX:+UnlockExperimentalVMOptions
     -XX:+AlwaysPreTouch
     -XX:+UseParallelGC
+    ${JVM_PREPEND}
     "
 
     if [ "$(uname)" == "Darwin" ]; then

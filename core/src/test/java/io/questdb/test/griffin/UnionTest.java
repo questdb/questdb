@@ -635,7 +635,7 @@ public class UnionTest extends AbstractCairoTest {
         });
     }
 
-    //select distinct sym from a union all b
+    // select distinct sym from a union all b
     @Test
     public void testUnionAllOfSymbol() throws Exception {
         assertMemoryLeak(() -> {
@@ -681,12 +681,12 @@ public class UnionTest extends AbstractCairoTest {
             ); // produces PLANE PLANE BICYCLE SCOOTER SCOOTER SCOOTER SCOOTER
 
             try (RecordCursorFactory factory = select("select distinct t from x union all y order by t")) {
-                assertCursor(expected2, factory, true, true);
+                assertCursor(expected2, factory, true, false);
             }
         });
     }
 
-    //select distinct sym from a union all b
+    // select distinct sym from a union all b
     @Test
     public void testUnionAllOfSymbolFor3Tables() throws Exception {
         assertMemoryLeak(() -> {
@@ -762,7 +762,7 @@ public class UnionTest extends AbstractCairoTest {
                                     ")"
                     )
             ) {
-                assertCursor(expected2, factory, false, true);
+                assertCursor(expected2, factory, false, false);
             }
         });
     }
@@ -932,7 +932,7 @@ public class UnionTest extends AbstractCairoTest {
                                     ")  order by 1"
                     )
             ) {
-                assertCursor(expected2, factory, true, true);
+                assertCursor(expected2, factory, true, false);
             }
         });
     }

@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.*;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.*;
@@ -56,6 +57,10 @@ public interface CairoConfiguration {
     }
 
     boolean enableTestFactories();
+
+    default SecurityContext getAllowAllSecurityContext() {
+        return AllowAllSecurityContext.INSTANCE;
+    }
 
     /**
      * All effective configuration values are seen by the server instance.
@@ -205,8 +210,6 @@ public interface CairoConfiguration {
     int getMaxSymbolNotEqualsCount();
 
     int getMaxUncommittedRows();
-
-    int getWalMaxSegmentFileDescriptorsCache();
 
     int getMetadataPoolCapacity();
 
@@ -390,8 +393,6 @@ public interface CairoConfiguration {
 
     int getSqlJitPageAddressCacheThreshold();
 
-    int getSqlJitRowsThreshold();
-
     int getSqlJoinContextPoolCapacity();
 
     int getSqlJoinMetadataMaxResizes();
@@ -492,6 +493,8 @@ public interface CairoConfiguration {
     long getWalMaxLagSize();
 
     int getWalMaxLagTxnCount();
+
+    int getWalMaxSegmentFileDescriptorsCache();
 
     long getWalPurgeInterval();
 

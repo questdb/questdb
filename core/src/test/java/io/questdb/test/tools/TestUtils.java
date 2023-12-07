@@ -28,6 +28,7 @@ import io.questdb.Bootstrap;
 import io.questdb.Metrics;
 import io.questdb.ServerMain;
 import io.questdb.cairo.*;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
@@ -988,17 +989,17 @@ public final class TestUtils {
     }
 
     public static SqlExecutionContext createSqlExecutionCtx(CairoEngine engine) {
-        return new SqlExecutionContextImpl(engine, 1).with(engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(), null);
+        return new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE, null);
     }
 
     public static SqlExecutionContext createSqlExecutionCtx(CairoEngine engine, BindVariableService bindVariableService) {
         SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1);
-        ctx.with(engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(), bindVariableService);
+        ctx.with(AllowAllSecurityContext.INSTANCE, bindVariableService);
         return ctx;
     }
 
     public static SqlExecutionContextImpl createSqlExecutionCtx(CairoEngine engine, int workerCount) {
-        return new SqlExecutionContextImpl(engine, workerCount).with(engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(), null);
+        return new SqlExecutionContextImpl(engine, workerCount).with(AllowAllSecurityContext.INSTANCE, null);
     }
 
     public static void createTestPath(CharSequence root) {

@@ -25,6 +25,7 @@
 package io.questdb;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -49,11 +50,7 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
 
         try (final SqlCompiler compiler = engine.getSqlCompiler()) {
             final SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
-            sqlExecutionContext.with(
-                    engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(),
-                    null,
-                    null
-            );
+            sqlExecutionContext.with(AllowAllSecurityContext.INSTANCE, null, null);
 
             telemetry.init(engine, compiler, sqlExecutionContext);
             telemetryWal.init(engine, compiler, sqlExecutionContext);

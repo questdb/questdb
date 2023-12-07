@@ -35,23 +35,21 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.groupby.vect.CountVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.GroupByRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunction;
-import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
-public class DistinctKeyRecordCursorFactory extends AbstractRecordCursorFactory {
+public class DistinctIntKeyRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final TableColumnMetadata COUNT_COLUMN_META = new TableColumnMetadata("count", ColumnType.LONG);
 
     private final GroupByRecordCursorFactory baseAggregatorFactory;
 
-    public DistinctKeyRecordCursorFactory(
+    public DistinctIntKeyRecordCursorFactory(
             CairoConfiguration configuration,
             RecordCursorFactory base,
             RecordMetadata metadata,
             @Transient ArrayColumnTypes columnTypes,
             @Transient ObjList<VectorAggregateFunction> vafList,
-            int workerCount,
-            @Transient IntList symbolTableSkewIndex
+            int workerCount
     ) {
         super(metadata);
 
@@ -67,9 +65,6 @@ public class DistinctKeyRecordCursorFactory extends AbstractRecordCursorFactory 
         countFunction.pushValueTypes(columnTypes);
         vafList.add(countFunction);
 
-        symbolTableSkewIndex.clear();
-        symbolTableSkewIndex.add(0);
-
         baseAggregatorFactory = new GroupByRecordCursorFactory(
                 configuration,
                 base,
@@ -79,7 +74,7 @@ public class DistinctKeyRecordCursorFactory extends AbstractRecordCursorFactory 
                 vafList,
                 0,
                 0,
-                symbolTableSkewIndex
+                null
         );
     }
 
