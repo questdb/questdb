@@ -33,6 +33,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
+import org.junit.BeforeClass;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -47,6 +48,10 @@ import static org.junit.Assert.fail;
 
 @RunWith(Parameterized.class)
 public class ParallelGroupByTest extends AbstractCairoTest {
+    private static final int PAGE_FRAME_COUNT = 4; // also used to set queue size, so must be a power of 2
+    private static final int PAGE_FRAME_MAX_ROWS = 100;
+    private static final int ROW_COUNT = PAGE_FRAME_COUNT * PAGE_FRAME_MAX_ROWS;
+
     private final boolean enableParallelGroupBy;
 
     public ParallelGroupByTest(boolean enableParallelGroupBy) {
@@ -61,6 +66,17 @@ public class ParallelGroupByTest extends AbstractCairoTest {
         });
     }
 
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        pageFrameMaxRows = PAGE_FRAME_MAX_ROWS;
+        // We intentionally use small values for shard count and reduce
+        // queue capacity to exhibit various edge cases.
+        pageFrameReduceShardCount = 2;
+        pageFrameReduceQueueCapacity = PAGE_FRAME_COUNT;
+
+        AbstractCairoTest.setUpStatic();
+    }
+
     @Override
     @Before
     public void setUp() {
@@ -69,15 +85,42 @@ public class ParallelGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNonKeyedGroupByEmptyTable() throws Exception {
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool((() -> 4));
+            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                        ddl(
+                                compiler,
+                                "CREATE TABLE tab (" +
+                                        "  ts TIMESTAMP," +
+                                        "  price DOUBLE," +
+                                        "  quantity LONG) timestamp (ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        assertQueries(
+                                engine,
+                                sqlExecutionContext,
+                                "select vwap(price, quantity) from tab",
+                                "vwap\n" +
+                                        "NaN\n"
+                        );
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
     public void testParallelMultiKeyedGroupBy() throws Exception {
         testParallelMultiKeyedGroupBy(
                 "SELECT key1, key2, avg(value), sum(colTop) FROM tab",
                 "key1\tkey2\tavg\tsum\n" +
-                        "k1\tk1\t48.5\t735.0\n" +
-                        "k2\tk2\t49.5\t745.0\n" +
-                        "k3\tk3\t50.5\t755.0\n" +
-                        "k4\tk4\t51.5\t765.0\n" +
-                        "k0\tk0\t52.5\t775.0\n"
+                        "k1\tk1\t223.5\t19880.0\n" +
+                        "k2\tk2\t224.5\t19960.0\n" +
+                        "k3\tk3\t225.5\t20040.0\n" +
+                        "k4\tk4\t226.5\t20120.0\n" +
+                        "k0\tk0\t227.5\t20200.0\n"
         );
     }
 
@@ -85,14 +128,14 @@ public class ParallelGroupByTest extends AbstractCairoTest {
     public void testParallelMultiKeyedGroupBySubQuery() throws Exception {
         testParallelMultiKeyedGroupBy(
                 "SELECT key1, key2, avg + sum from (" +
-                        "SELECT key1, key2, avg(value), sum(colTop) FROM tab" +
+                        "  SELECT key1, key2, avg(value), sum(colTop) FROM tab" +
                         ")",
                 "key1\tkey2\tcolumn\n" +
-                        "k1\tk1\t783.5\n" +
-                        "k2\tk2\t794.5\n" +
-                        "k3\tk3\t805.5\n" +
-                        "k4\tk4\t816.5\n" +
-                        "k0\tk0\t827.5\n"
+                        "k1\tk1\t20103.5\n" +
+                        "k2\tk2\t20184.5\n" +
+                        "k3\tk3\t20265.5\n" +
+                        "k4\tk4\t20346.5\n" +
+                        "k0\tk0\t20427.5\n"
         );
     }
 
@@ -101,11 +144,11 @@ public class ParallelGroupByTest extends AbstractCairoTest {
         testParallelMultiKeyedGroupBy(
                 "SELECT key1, key2, avg(value), sum(colTop) FROM tab WHERE value < 80",
                 "key1\tkey2\tavg\tsum\n" +
-                        "k1\tk1\t38.5\t381.0\n" +
-                        "k2\tk2\t39.5\t387.0\n" +
-                        "k3\tk3\t40.5\t393.0\n" +
-                        "k4\tk4\t41.5\t399.0\n" +
-                        "k0\tk0\t40.0\t325.0\n"
+                        "k1\tk1\t45.31818181818182\t381.0\n" +
+                        "k2\tk2\t46.31818181818182\t387.0\n" +
+                        "k3\tk3\t47.31818181818182\t393.0\n" +
+                        "k4\tk4\t48.31818181818182\t399.0\n" +
+                        "k0\tk0\t46.25\t325.0\n"
         );
     }
 
@@ -114,14 +157,14 @@ public class ParallelGroupByTest extends AbstractCairoTest {
         testParallelMultiKeyedGroupBy(
                 "SELECT key1, key2, avg(value), sum(colTop) FROM tab LIMIT 3",
                 "key1\tkey2\tavg\tsum\n" +
-                        "k1\tk1\t48.5\t735.0\n" +
-                        "k2\tk2\t49.5\t745.0\n" +
-                        "k3\tk3\t50.5\t755.0\n",
+                        "k1\tk1\t223.5\t19880.0\n" +
+                        "k2\tk2\t224.5\t19960.0\n" +
+                        "k3\tk3\t225.5\t20040.0\n",
                 "SELECT key1, key2, avg(value), sum(colTop) FROM tab LIMIT -3",
                 "key1\tkey2\tavg\tsum\n" +
-                        "k3\tk3\t50.5\t755.0\n" +
-                        "k4\tk4\t51.5\t765.0\n" +
-                        "k0\tk0\t52.5\t775.0\n"
+                        "k3\tk3\t225.5\t20040.0\n" +
+                        "k4\tk4\t226.5\t20120.0\n" +
+                        "k0\tk0\t227.5\t20200.0\n"
         );
     }
 
@@ -131,11 +174,11 @@ public class ParallelGroupByTest extends AbstractCairoTest {
                 "SELECT avg(v), sum(ct), k1, k2 " +
                         "FROM (SELECT value v, colTop ct, key2 k2, key1 k1 FROM tab WHERE value < 80)",
                 "avg\tsum\tk1\tk2\n" +
-                        "38.5\t381.0\tk1\tk1\n" +
-                        "39.5\t387.0\tk2\tk2\n" +
-                        "40.5\t393.0\tk3\tk3\n" +
-                        "41.5\t399.0\tk4\tk4\n" +
-                        "40.0\t325.0\tk0\tk0\n"
+                        "45.31818181818182\t381.0\tk1\tk1\n" +
+                        "46.31818181818182\t387.0\tk2\tk2\n" +
+                        "47.31818181818182\t393.0\tk3\tk3\n" +
+                        "48.31818181818182\t399.0\tk4\tk4\n" +
+                        "46.25\t325.0\tk0\tk0\n"
         );
     }
 
@@ -144,8 +187,74 @@ public class ParallelGroupByTest extends AbstractCairoTest {
         testParallelNonKeyedGroupBy(
                 "SELECT vwap(price, quantity), sum(colTop) FROM tab",
                 "vwap\tsum\n" +
-                        "66.33333333333333\t3775.0\n"
+                        "289.3066666666667\t100200.0\n"
         );
+    }
+
+    @Test
+    public void testParallelNonKeyedGroupByConcurrent() throws Exception {
+        final int numOfThreads = 8;
+        final int numOfIterations = 50;
+        final String query = "SELECT avg(value), sum(colTop) FROM tab";
+        final String expected = "avg\tsum\n" +
+                "225.5\t100200.0\n";
+
+        final ConcurrentHashMap<Integer, Throwable> errors = new ConcurrentHashMap<>();
+        final WorkerPool pool = new WorkerPool((() -> 4));
+        TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                    ddl(
+                            compiler,
+                            "CREATE TABLE tab (" +
+                                    "  ts TIMESTAMP," +
+                                    "  value DOUBLE) timestamp (ts) PARTITION BY DAY",
+                            sqlExecutionContext
+                    );
+                    insert(
+                            compiler,
+                            "insert into tab select (x * 864000000)::timestamp, x from long_sequence(" + ROW_COUNT + ")",
+                            sqlExecutionContext
+                    );
+                    ddl(compiler, "ALTER TABLE tab ADD COLUMN colTop DOUBLE", sqlExecutionContext);
+                    insert(
+                            compiler,
+                            "insert into tab " +
+                                    "select ((50 + x) * 864000000)::timestamp, 50 + x, 50 + x " +
+                                    "from long_sequence(" + ROW_COUNT + ")",
+                            sqlExecutionContext
+                    );
+
+                    final CyclicBarrier barrier = new CyclicBarrier(numOfThreads);
+                    final SOCountDownLatch haltLatch = new SOCountDownLatch(numOfThreads);
+
+                    for (int i = 0; i < numOfThreads; i++) {
+                        final int threadId = i;
+                        new Thread(() -> {
+                            final StringSink sink = new StringSink();
+                            TestUtils.await(barrier);
+                            try {
+                                for (int j = 0; j < numOfIterations; j++) {
+                                    assertQueries(engine, sqlExecutionContext, sink, query, expected);
+                                }
+                            } catch (Throwable e) {
+                                e.printStackTrace();
+                                errors.put(threadId, e);
+                            } finally {
+                                haltLatch.countDown();
+                            }
+                        }).start();
+                    }
+                    haltLatch.await();
+                },
+                configuration,
+                LOG
+        );
+
+        if (!errors.isEmpty()) {
+            for (Map.Entry<Integer, Throwable> entry : errors.entrySet()) {
+                LOG.error().$("Error in thread [id=").$(entry.getKey()).$("] ").$(entry.getValue()).$();
+            }
+            fail("Error in threads");
+        }
     }
 
     @Test
@@ -153,7 +262,7 @@ public class ParallelGroupByTest extends AbstractCairoTest {
         testParallelNonKeyedGroupBy(
                 "SELECT vwap(price, quantity), sum(colTop) FROM tab WHERE quantity < 80",
                 "vwap\tsum\n" +
-                        "53.0\t1985.0\n"
+                        "185.23063683304647\t1885.0\n"
         );
     }
 
@@ -163,20 +272,7 @@ public class ParallelGroupByTest extends AbstractCairoTest {
                 "SELECT vwap(p, q), sum(ct) " +
                         "FROM (SELECT colTop ct, quantity q, price p FROM tab WHERE quantity < 80)",
                 "vwap\tsum\n" +
-                        "53.0\t1985.0\n"
-        );
-    }
-
-    @Test
-    public void testParallelSingleKeyedGroupBy() throws Exception {
-        testParallelSingleKeyedGroupBy(
-                "SELECT key, avg(value), sum(colTop) FROM tab",
-                "key\tavg\tsum\n" +
-                        "k1\t48.5\t735.0\n" +
-                        "k2\t49.5\t745.0\n" +
-                        "k3\t50.5\t755.0\n" +
-                        "k4\t51.5\t765.0\n" +
-                        "k0\t52.5\t775.0\n"
+                        "185.23063683304647\t1885.0\n"
         );
     }
 
@@ -185,25 +281,39 @@ public class ParallelGroupByTest extends AbstractCairoTest {
         final int numOfThreads = 8;
         final int numOfIterations = 50;
         final String query = "SELECT key, avg + sum from (" +
-                "SELECT key, avg(value), sum(colTop) FROM tab" +
+                "  SELECT key, avg(value), sum(colTop) FROM tab" +
                 ")";
         final String expected = "key\tcolumn\n" +
-                "k1\t783.5\n" +
-                "k2\t794.5\n" +
-                "k3\t805.5\n" +
-                "k4\t816.5\n" +
-                "k0\t827.5\n";
+                "k1\t20103.5\n" +
+                "k2\t20184.5\n" +
+                "k3\t20265.5\n" +
+                "k4\t20346.5\n" +
+                "k0\t20427.5\n";
 
         final ConcurrentHashMap<Integer, Throwable> errors = new ConcurrentHashMap<>();
         final WorkerPool pool = new WorkerPool((() -> 4));
         TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
-                    ddl(compiler, "CREATE TABLE tab (\n" +
-                            "  ts TIMESTAMP," +
-                            "  key STRING," +
-                            "  value DOUBLE ) timestamp (ts) PARTITION BY DAY", sqlExecutionContext);
-                    insert(compiler, "insert into tab select (x*8640000000)::timestamp, 'k' || (x%5), x from long_sequence(50)", sqlExecutionContext);
+                    ddl(
+                            compiler,
+                            "CREATE TABLE tab (" +
+                                    "  ts TIMESTAMP," +
+                                    "  key STRING," +
+                                    "  value DOUBLE) timestamp (ts) PARTITION BY DAY",
+                            sqlExecutionContext
+                    );
+                    insert(
+                            compiler,
+                            "insert into tab select (x * 864000000)::timestamp, 'k' || (x % 5), x from long_sequence(" + ROW_COUNT + ")",
+                            sqlExecutionContext
+                    );
                     ddl(compiler, "ALTER TABLE tab ADD COLUMN colTop DOUBLE", sqlExecutionContext);
-                    insert(compiler, "insert into tab select ((50 + x)*8640000000)::timestamp, 'k' || ((50 + x)%5), 50 + x, 50 + x from long_sequence(50)", sqlExecutionContext);
+                    insert(
+                            compiler,
+                            "insert into tab " +
+                                    "select ((50 + x) * 864000000)::timestamp, 'k' || ((50 + x) % 5), 50 + x, 50 + x " +
+                                    "from long_sequence(" + ROW_COUNT + ")",
+                            sqlExecutionContext
+                    );
 
                     final CyclicBarrier barrier = new CyclicBarrier(numOfThreads);
                     final SOCountDownLatch haltLatch = new SOCountDownLatch(numOfThreads);
@@ -241,60 +351,170 @@ public class ParallelGroupByTest extends AbstractCairoTest {
 
     @Test
     public void testParallelSingleKeyedGroupBySubQuery() throws Exception {
-        testParallelSingleKeyedGroupBy(
+        testParallelStringKeyedGroupBy(
                 "SELECT key, avg + sum from (" +
                         "SELECT key, avg(value), sum(colTop) FROM tab" +
                         ")",
                 "key\tcolumn\n" +
-                        "k1\t783.5\n" +
-                        "k2\t794.5\n" +
-                        "k3\t805.5\n" +
-                        "k4\t816.5\n" +
-                        "k0\t827.5\n"
+                        "k1\t20103.5\n" +
+                        "k2\t20184.5\n" +
+                        "k3\t20265.5\n" +
+                        "k4\t20346.5\n" +
+                        "k0\t20427.5\n"
         );
     }
 
     @Test
     public void testParallelSingleKeyedGroupByWithFilter() throws Exception {
-        testParallelSingleKeyedGroupBy(
+        testParallelStringKeyedGroupBy(
                 "SELECT key, avg(value), sum(colTop) FROM tab WHERE value < 80",
                 "key\tavg\tsum\n" +
-                        "k1\t38.5\t381.0\n" +
-                        "k2\t39.5\t387.0\n" +
-                        "k3\t40.5\t393.0\n" +
-                        "k4\t41.5\t399.0\n" +
-                        "k0\t40.0\t325.0\n"
+                        "k1\t45.31818181818182\t381.0\n" +
+                        "k2\t46.31818181818182\t387.0\n" +
+                        "k3\t47.31818181818182\t393.0\n" +
+                        "k4\t48.31818181818182\t399.0\n" +
+                        "k0\t46.25\t325.0\n"
         );
     }
 
     @Test
-    public void testParallelSingleKeyedGroupByWithLimit() throws Exception {
-        testParallelSingleKeyedGroupBy(
+    public void testParallelStringKeyedGroupBy() throws Exception {
+        testParallelStringKeyedGroupBy(
+                "SELECT key, avg(value), sum(colTop) FROM tab",
+                "key\tavg\tsum\n" +
+                        "k1\t223.5\t19880.0\n" +
+                        "k2\t224.5\t19960.0\n" +
+                        "k3\t225.5\t20040.0\n" +
+                        "k4\t226.5\t20120.0\n" +
+                        "k0\t227.5\t20200.0\n"
+        );
+    }
+
+    @Test
+    public void testParallelStringKeyedGroupByWithLimit() throws Exception {
+        testParallelStringKeyedGroupBy(
                 "SELECT key, avg(value), sum(colTop) FROM tab LIMIT 3",
                 "key\tavg\tsum\n" +
-                        "k1\t48.5\t735.0\n" +
-                        "k2\t49.5\t745.0\n" +
-                        "k3\t50.5\t755.0\n",
+                        "k1\t223.5\t19880.0\n" +
+                        "k2\t224.5\t19960.0\n" +
+                        "k3\t225.5\t20040.0\n",
                 "SELECT key, avg(value), sum(colTop) FROM tab LIMIT -3",
                 "key\tavg\tsum\n" +
-                        "k3\t50.5\t755.0\n" +
-                        "k4\t51.5\t765.0\n" +
-                        "k0\t52.5\t775.0\n"
+                        "k3\t225.5\t20040.0\n" +
+                        "k4\t226.5\t20120.0\n" +
+                        "k0\t227.5\t20200.0\n"
         );
     }
 
     @Test
-    public void testParallelSingleKeyedGroupByWithNestedFilter() throws Exception {
-        testParallelSingleKeyedGroupBy(
+    public void testParallelStringKeyedGroupByWithNestedFilter() throws Exception {
+        testParallelStringKeyedGroupBy(
                 "SELECT avg(v), k, sum(ct) " +
                         "FROM (SELECT colTop ct, value v, key k FROM tab WHERE value < 80)",
                 "avg\tk\tsum\n" +
-                        "38.5\tk1\t381.0\n" +
-                        "39.5\tk2\t387.0\n" +
-                        "40.5\tk3\t393.0\n" +
-                        "41.5\tk4\t399.0\n" +
-                        "40.0\tk0\t325.0\n"
+                        "45.31818181818182\tk1\t381.0\n" +
+                        "46.31818181818182\tk2\t387.0\n" +
+                        "47.31818181818182\tk3\t393.0\n" +
+                        "48.31818181818182\tk4\t399.0\n" +
+                        "46.25\tk0\t325.0\n"
         );
+    }
+
+    @Test
+    public void testParallelSymbolKeyedGroupBy() throws Exception {
+        testParallelSymbolKeyedGroupBy(
+                "SELECT key, vwap(price, quantity), sum(colTop) FROM tab",
+                "key\tvwap\tsum\n" +
+                        "k1\t285.9440715883669\t19880.0\n" +
+                        "k2\t286.6659242761693\t19960.0\n" +
+                        "k3\t287.390243902439\t20040.0\n" +
+                        "k4\t288.1169977924945\t20120.0\n" +
+                        "k0\t288.84615384615387\t20200.0\n"
+        );
+    }
+
+    @Test
+    public void testParallelSymbolKeyedGroupBySubQuery() throws Exception {
+        testParallelSymbolKeyedGroupBy(
+                "SELECT key, vwap + sum from (" +
+                        "SELECT key, vwap(price, quantity), sum(colTop) FROM tab" +
+                        ")",
+                "key\tcolumn\n" +
+                        "k1\t20165.94407158837\n" +
+                        "k2\t20246.66592427617\n" +
+                        "k3\t20327.39024390244\n" +
+                        "k4\t20408.116997792495\n" +
+                        "k0\t20488.846153846152\n"
+        );
+    }
+
+    @Test
+    public void testParallelSymbolKeyedGroupByWithFilter() throws Exception {
+        testParallelSymbolKeyedGroupBy(
+                "SELECT key, vwap(price, quantity), sum(colTop) FROM tab WHERE quantity < 80",
+                "key\tvwap\tsum\n" +
+                        "k1\t57.01805416248746\t381.0\n" +
+                        "k2\t57.76545632973504\t387.0\n" +
+                        "k3\t58.52353506243996\t393.0\n" +
+                        "k4\t59.29162746942615\t399.0\n" +
+                        "k0\t56.62162162162162\t325.0\n"
+        );
+    }
+
+    @Test
+    public void testParallelSymbolKeyedGroupByWithLimit() throws Exception {
+        testParallelSymbolKeyedGroupBy(
+                "SELECT key, vwap(price, quantity), sum(colTop) FROM tab LIMIT 3",
+                "key\tvwap\tsum\n" +
+                        "k1\t285.9440715883669\t19880.0\n" +
+                        "k2\t286.6659242761693\t19960.0\n" +
+                        "k3\t287.390243902439\t20040.0\n",
+                "SELECT key, vwap(price, quantity), sum(colTop) FROM tab LIMIT -3",
+                "key\tvwap\tsum\n" +
+                        "k3\t287.390243902439\t20040.0\n" +
+                        "k4\t288.1169977924945\t20120.0\n" +
+                        "k0\t288.84615384615387\t20200.0\n"
+        );
+    }
+
+    @Test
+    public void testParallelSymbolKeyedGroupByWithNestedFilter() throws Exception {
+        testParallelSymbolKeyedGroupBy(
+                "SELECT vwap(p, q), k, sum(ct) " +
+                        "FROM (SELECT colTop ct, price p, quantity q, key k FROM tab WHERE quantity < 80)",
+                "vwap\tk\tsum\n" +
+                        "57.01805416248746\tk1\t381.0\n" +
+                        "57.76545632973504\tk2\t387.0\n" +
+                        "58.52353506243996\tk3\t393.0\n" +
+                        "59.29162746942615\tk4\t399.0\n" +
+                        "56.62162162162162\tk0\t325.0\n"
+        );
+    }
+
+    @Test
+    public void testStringKeyedGroupByEmptyTable() throws Exception {
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool((() -> 4));
+            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                        ddl(
+                                compiler,
+                                "CREATE TABLE tab (" +
+                                        "  ts TIMESTAMP," +
+                                        "  key STRING," +
+                                        "  value DOUBLE) timestamp (ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        assertQueries(
+                                engine,
+                                sqlExecutionContext,
+                                "select key, sum(value) from tab",
+                                "key\tsum\n"
+                        );
+                    },
+                    configuration,
+                    LOG
+            );
+        });
     }
 
     private static void assertQueries(CairoEngine engine, SqlExecutionContext sqlExecutionContext, String... queriesAndExpectedResults) throws SqlException {
@@ -319,14 +539,28 @@ public class ParallelGroupByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool((() -> 4));
             TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
-                        ddl(compiler, "CREATE TABLE tab (\n" +
-                                "  ts TIMESTAMP," +
-                                "  key1 SYMBOL," +
-                                "  key2 SYMBOL," +
-                                "  value DOUBLE ) timestamp (ts) PARTITION BY DAY", sqlExecutionContext);
-                        insert(compiler, "insert into tab select (x*8640000000)::timestamp, 'k' || (x%5), 'k' || (x%5), x from long_sequence(50)", sqlExecutionContext);
+                        ddl(
+                                compiler,
+                                "CREATE TABLE tab (\n" +
+                                        "  ts TIMESTAMP," +
+                                        "  key1 SYMBOL," +
+                                        "  key2 SYMBOL," +
+                                        "  value DOUBLE) timestamp (ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        insert(
+                                compiler,
+                                "insert into tab select (x * 864000000)::timestamp, 'k' || (x % 5), 'k' || (x % 5), x from long_sequence(" + ROW_COUNT + ")",
+                                sqlExecutionContext
+                        );
                         ddl(compiler, "ALTER TABLE tab ADD COLUMN colTop DOUBLE", sqlExecutionContext);
-                        insert(compiler, "insert into tab select ((50 + x)*8640000000)::timestamp, 'k' || ((50 + x)%5), 'k' || ((50 + x)%5), 50 + x, 50 + x from long_sequence(50)", sqlExecutionContext);
+                        insert(
+                                compiler,
+                                "insert into tab " +
+                                        "select ((50 + x) * 864000000)::timestamp, 'k' || ((50 + x) % 5), 'k' || ((50 + x) % 5), 50 + x, 50 + x " +
+                                        "from long_sequence(" + ROW_COUNT + ")",
+                                sqlExecutionContext
+                        );
                         assertQueries(engine, sqlExecutionContext, queriesAndExpectedResults);
                     },
                     configuration,
@@ -339,13 +573,27 @@ public class ParallelGroupByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool((() -> 4));
             TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
-                        ddl(compiler, "CREATE TABLE tab (\n" +
-                                "  ts TIMESTAMP," +
-                                "  price DOUBLE," +
-                                "  quantity DOUBLE ) timestamp (ts) PARTITION BY DAY", sqlExecutionContext);
-                        insert(compiler, "insert into tab select (x*8640000000)::timestamp, x, x % 100 from long_sequence(50)", sqlExecutionContext);
+                        ddl(
+                                compiler,
+                                "CREATE TABLE tab (" +
+                                        "  ts TIMESTAMP," +
+                                        "  price DOUBLE," +
+                                        "  quantity DOUBLE) timestamp (ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        insert(
+                                compiler,
+                                "insert into tab select (x * 864000000)::timestamp, x, x % 100 from long_sequence(" + ROW_COUNT + ")",
+                                sqlExecutionContext
+                        );
                         ddl(compiler, "ALTER TABLE tab ADD COLUMN colTop DOUBLE", sqlExecutionContext);
-                        insert(compiler, "insert into tab select ((50 + x)*8640000000)::timestamp, (50 + x), (50 + x) % 100, 50 + x from long_sequence(50)", sqlExecutionContext);
+                        insert(
+                                compiler,
+                                "insert into tab " +
+                                        "select ((50 + x) * 864000000)::timestamp, 50 + x, 50 + x, 50 + x " +
+                                        "from long_sequence(" + ROW_COUNT + ")",
+                                sqlExecutionContext
+                        );
                         assertQueries(engine, sqlExecutionContext, queriesAndExpectedResults);
                     },
                     configuration,
@@ -354,17 +602,66 @@ public class ParallelGroupByTest extends AbstractCairoTest {
         });
     }
 
-    private void testParallelSingleKeyedGroupBy(String... queriesAndExpectedResults) throws Exception {
+    private void testParallelStringKeyedGroupBy(String... queriesAndExpectedResults) throws Exception {
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool((() -> 4));
             TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
-                        ddl(compiler, "CREATE TABLE tab (\n" +
-                                "  ts TIMESTAMP," +
-                                "  key STRING," +
-                                "  value DOUBLE ) timestamp (ts) PARTITION BY DAY", sqlExecutionContext);
-                        insert(compiler, "insert into tab select (x*8640000000)::timestamp, 'k' || (x%5), x from long_sequence(50)", sqlExecutionContext);
+                        ddl(
+                                compiler,
+                                "CREATE TABLE tab (" +
+                                        "  ts TIMESTAMP," +
+                                        "  key STRING," +
+                                        "  value DOUBLE) timestamp (ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        insert(
+                                compiler,
+                                "insert into tab select (x * 864000000)::timestamp, 'k' || (x % 5), x from long_sequence(" + ROW_COUNT + ")",
+                                sqlExecutionContext
+                        );
                         ddl(compiler, "ALTER TABLE tab ADD COLUMN colTop DOUBLE", sqlExecutionContext);
-                        insert(compiler, "insert into tab select ((50 + x)*8640000000)::timestamp, 'k' || ((50 + x)%5), 50 + x, 50 + x from long_sequence(50)", sqlExecutionContext);
+                        insert(
+                                compiler,
+                                "insert into tab " +
+                                        "select ((50 + x) * 864000000)::timestamp, 'k' || ((50 + x) % 5), 50 + x, 50 + x " +
+                                        "from long_sequence(" + ROW_COUNT + ")",
+                                sqlExecutionContext
+                        );
+                        assertQueries(engine, sqlExecutionContext, queriesAndExpectedResults);
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    private void testParallelSymbolKeyedGroupBy(String... queriesAndExpectedResults) throws Exception {
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool((() -> 4));
+            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                        ddl(
+                                compiler,
+                                "CREATE TABLE tab (" +
+                                        "  ts TIMESTAMP," +
+                                        "  key SYMBOL," +
+                                        "  price DOUBLE," +
+                                        "  quantity LONG) timestamp (ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        insert(
+                                compiler,
+                                "insert into tab select (x * 864000000)::timestamp, 'k' || (x % 5), x, x from long_sequence(" + ROW_COUNT + ")",
+                                sqlExecutionContext
+                        );
+                        ddl(compiler, "ALTER TABLE tab ADD COLUMN colTop DOUBLE", sqlExecutionContext);
+                        insert(
+                                compiler,
+                                "insert into tab " +
+                                        "select ((50 + x) * 864000000)::timestamp, " +
+                                        "  'k' || ((50 + x) % 5), 50 + x, 50 + x, 50 + x " +
+                                        "from long_sequence(" + ROW_COUNT + ")",
+                                sqlExecutionContext
+                        );
                         assertQueries(engine, sqlExecutionContext, queriesAndExpectedResults);
                     },
                     configuration,

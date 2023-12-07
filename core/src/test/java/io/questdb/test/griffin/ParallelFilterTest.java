@@ -28,7 +28,10 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
-import io.questdb.griffin.*;
+import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.jit.JitUtil;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
@@ -46,7 +49,7 @@ import org.junit.*;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class AsyncOffloadTest extends AbstractCairoTest {
+public class ParallelFilterTest extends AbstractCairoTest {
 
     private static final int PAGE_FRAME_COUNT = 4; // also used to set queue size, so must be a power of 2
     private static final int PAGE_FRAME_MAX_ROWS = 100;
