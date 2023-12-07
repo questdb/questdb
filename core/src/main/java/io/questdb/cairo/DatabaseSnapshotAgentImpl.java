@@ -177,7 +177,7 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent {
 
                     path.trimTo(snapshotDbLen).$();
                     try (
-                            ShowTablesCursorFactory factory = new ShowTablesCursorFactory(configuration, AllTablesFunctionFactory.METADATA, AllTablesFunctionFactory.SIGNATURE);
+                            ShowTablesCursorFactory factory = new ShowTablesCursorFactory(configuration, AllTablesFunctionFactory.METADATA, AllTablesFunctionFactory.SIGNATURE, true);
                             RecordCursor cursor = factory.getCursor(executionContext);
                             MemoryCMARW mem = Vm.getCMARWInstance()
                     ) {
@@ -324,8 +324,8 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent {
             }
 
             LOG.info()
-                    .$("starting snapshot recovery [currentId=`").$(currentInstanceId)
-                    .$("`, previousId=`").$(snapshotInstanceId)
+                    .$("starting snapshot recovery [currentId=").$(currentInstanceId)
+                    .$(", previousId=").$(snapshotInstanceId)
                     .I$();
 
             // OK, we need to recover from the snapshot.
