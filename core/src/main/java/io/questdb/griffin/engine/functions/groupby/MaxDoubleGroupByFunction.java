@@ -77,14 +77,14 @@ public class MaxDoubleGroupByFunction extends DoubleFunction implements GroupByF
     }
 
     @Override
-    public void merge(MapValue destMapValue, MapValue srcMapValue) {
-        double srcMax = srcMapValue.getDouble(valueIndex);
-        if (destMapValue.isNew()) {
-            destMapValue.putDouble(valueIndex, srcMax);
+    public void merge(MapValue destValue, MapValue srcValue) {
+        double srcMax = srcValue.getDouble(valueIndex);
+        if (destValue.isNew()) {
+            destValue.putDouble(valueIndex, srcMax);
         } else {
-            double destMax = destMapValue.getDouble(valueIndex);
+            double destMax = destValue.getDouble(valueIndex);
             if (srcMax > destMax || Double.isNaN(destMax)) {
-                destMapValue.putDouble(valueIndex, srcMax);
+                destValue.putDouble(valueIndex, srcMax);
             }
         }
     }

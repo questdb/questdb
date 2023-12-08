@@ -82,7 +82,7 @@ public interface GroupByFunction extends Function, Mutable {
     }
 
     // used in parallel GROUP BY to merge partial results
-    default void merge(MapValue destMapValue, MapValue srcMapValue) {
+    default void merge(MapValue destValue, MapValue srcValue) {
         throw new UnsupportedOperationException();
     }
 

@@ -45,8 +45,8 @@ public class LastIPv4GroupByFunction extends FirstIPv4GroupByFunction {
     }
 
     @Override
-    public void merge(MapValue destMapValue, MapValue srcMapValue) {
-        int srcLast = srcMapValue.getInt(valueIndex);
-        destMapValue.putInt(valueIndex, srcLast);
+    public void merge(MapValue destValue, MapValue srcValue) {
+        int srcLast = srcValue.getInt(valueIndex);
+        destValue.putInt(valueIndex, srcLast);
     }
 }

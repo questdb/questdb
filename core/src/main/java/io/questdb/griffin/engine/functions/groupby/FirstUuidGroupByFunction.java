@@ -78,11 +78,11 @@ public class FirstUuidGroupByFunction extends UuidFunction implements GroupByFun
     }
 
     @Override
-    public void merge(MapValue destMapValue, MapValue srcMapValue) {
-        if (destMapValue.isNew()) {
-            long srcFirstLo = srcMapValue.getLong128Lo(valueIndex);
-            long srcFirstHi = srcMapValue.getLong128Hi(valueIndex);
-            destMapValue.putLong128(valueIndex, srcFirstLo, srcFirstHi);
+    public void merge(MapValue destValue, MapValue srcValue) {
+        if (destValue.isNew()) {
+            long srcFirstLo = srcValue.getLong128Lo(valueIndex);
+            long srcFirstHi = srcValue.getLong128Hi(valueIndex);
+            destValue.putLong128(valueIndex, srcFirstLo, srcFirstHi);
         }
     }
 

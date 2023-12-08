@@ -48,10 +48,10 @@ public class LastNotNullFloatGroupByFunction extends FirstFloatGroupByFunction {
     }
 
     @Override
-    public void merge(MapValue destMapValue, MapValue srcMapValue) {
-        float srcLast = srcMapValue.getFloat(valueIndex);
+    public void merge(MapValue destValue, MapValue srcValue) {
+        float srcLast = srcValue.getFloat(valueIndex);
         if (!Float.isNaN(srcLast)) {
-            destMapValue.putFloat(valueIndex, srcLast);
+            destValue.putFloat(valueIndex, srcLast);
         }
     }
 }

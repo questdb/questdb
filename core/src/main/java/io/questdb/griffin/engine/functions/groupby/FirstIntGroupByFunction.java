@@ -79,10 +79,10 @@ public class FirstIntGroupByFunction extends IntFunction implements GroupByFunct
     }
 
     @Override
-    public void merge(MapValue destMapValue, MapValue srcMapValue) {
-        if (destMapValue.isNew()) {
-            int srcFirst = srcMapValue.getInt(valueIndex);
-            destMapValue.putInt(valueIndex, srcFirst);
+    public void merge(MapValue destValue, MapValue srcValue) {
+        if (destValue.isNew()) {
+            int srcFirst = srcValue.getInt(valueIndex);
+            destValue.putInt(valueIndex, srcFirst);
         }
     }
 

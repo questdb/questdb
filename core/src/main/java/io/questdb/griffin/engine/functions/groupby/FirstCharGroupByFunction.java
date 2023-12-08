@@ -73,10 +73,10 @@ public class FirstCharGroupByFunction extends CharFunction implements GroupByFun
     }
 
     @Override
-    public void merge(MapValue destMapValue, MapValue srcMapValue) {
-        if (destMapValue.isNew()) {
-            char srcFirst = srcMapValue.getChar(valueIndex);
-            destMapValue.putChar(valueIndex, srcFirst);
+    public void merge(MapValue destValue, MapValue srcValue) {
+        if (destValue.isNew()) {
+            char srcFirst = srcValue.getChar(valueIndex);
+            destValue.putChar(valueIndex, srcFirst);
         }
     }
 

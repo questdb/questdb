@@ -74,10 +74,10 @@ public class FirstTimestampGroupByFunction extends TimestampFunction implements 
     }
 
     @Override
-    public void merge(MapValue destMapValue, MapValue srcMapValue) {
-        if (destMapValue.isNew()) {
-            long srcFirst = srcMapValue.getLong(valueIndex);
-            destMapValue.putLong(valueIndex, srcFirst);
+    public void merge(MapValue destValue, MapValue srcValue) {
+        if (destValue.isNew()) {
+            long srcFirst = srcValue.getTimestamp(valueIndex);
+            destValue.putLong(valueIndex, srcFirst);
         }
     }
 

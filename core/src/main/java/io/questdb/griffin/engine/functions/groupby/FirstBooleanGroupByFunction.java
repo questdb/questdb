@@ -73,10 +73,10 @@ public class FirstBooleanGroupByFunction extends BooleanFunction implements Grou
     }
 
     @Override
-    public void merge(MapValue destMapValue, MapValue srcMapValue) {
-        if (destMapValue.isNew()) {
-            boolean srcFirst = srcMapValue.getBool(valueIndex);
-            destMapValue.putBool(valueIndex, srcFirst);
+    public void merge(MapValue destValue, MapValue srcValue) {
+        if (destValue.isNew()) {
+            boolean srcFirst = srcValue.getBool(valueIndex);
+            destValue.putBool(valueIndex, srcFirst);
         }
     }
 

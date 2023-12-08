@@ -46,8 +46,8 @@ public class LastShortGroupByFunction extends FirstShortGroupByFunction {
     }
 
     @Override
-    public void merge(MapValue destMapValue, MapValue srcMapValue) {
-        short srcLast = srcMapValue.getShort(valueIndex);
-        destMapValue.putShort(valueIndex, srcLast);
+    public void merge(MapValue destValue, MapValue srcValue) {
+        short srcLast = srcValue.getShort(valueIndex);
+        destValue.putShort(valueIndex, srcLast);
     }
 }

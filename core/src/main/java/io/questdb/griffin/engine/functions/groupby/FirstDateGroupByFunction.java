@@ -74,10 +74,10 @@ public class FirstDateGroupByFunction extends DateFunction implements GroupByFun
     }
 
     @Override
-    public void merge(MapValue destMapValue, MapValue srcMapValue) {
-        if (destMapValue.isNew()) {
-            long srcFirst = srcMapValue.getLong(valueIndex);
-            destMapValue.putLong(valueIndex, srcFirst);
+    public void merge(MapValue destValue, MapValue srcValue) {
+        if (destValue.isNew()) {
+            long srcFirst = srcValue.getLong(valueIndex);
+            destValue.putLong(valueIndex, srcFirst);
         }
     }
 

@@ -83,14 +83,14 @@ public class MinIPv4GroupByFunction extends IPv4Function implements GroupByFunct
     }
 
     @Override
-    public void merge(MapValue destMapValue, MapValue srcMapValue) {
-        long srcMin = Numbers.ipv4ToLong(srcMapValue.getIPv4(valueIndex));
-        if (destMapValue.isNew()) {
-            destMapValue.putInt(valueIndex, (int) srcMin);
+    public void merge(MapValue destValue, MapValue srcValue) {
+        long srcMin = Numbers.ipv4ToLong(srcValue.getIPv4(valueIndex));
+        if (destValue.isNew()) {
+            destValue.putInt(valueIndex, (int) srcMin);
         } else {
-            long destMin = Numbers.ipv4ToLong(destMapValue.getIPv4(valueIndex));
+            long destMin = Numbers.ipv4ToLong(destValue.getIPv4(valueIndex));
             if (srcMin != Numbers.IPv4_NULL && (srcMin < destMin || destMin == Numbers.IPv4_NULL)) {
-                destMapValue.putInt(valueIndex, (int) srcMin);
+                destValue.putInt(valueIndex, (int) srcMin);
             }
         }
     }

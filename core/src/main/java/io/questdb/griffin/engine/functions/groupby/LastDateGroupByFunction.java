@@ -46,8 +46,8 @@ public class LastDateGroupByFunction extends FirstDateGroupByFunction {
     }
 
     @Override
-    public void merge(MapValue destMapValue, MapValue srcMapValue) {
-        long srcLast = srcMapValue.getLong(valueIndex);
-        destMapValue.putLong(valueIndex, srcLast);
+    public void merge(MapValue destValue, MapValue srcValue) {
+        long srcLast = srcValue.getLong(valueIndex);
+        destValue.putLong(valueIndex, srcLast);
     }
 }

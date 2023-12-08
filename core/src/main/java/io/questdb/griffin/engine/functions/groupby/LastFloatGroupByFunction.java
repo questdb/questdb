@@ -46,8 +46,8 @@ public class LastFloatGroupByFunction extends FirstFloatGroupByFunction {
     }
 
     @Override
-    public void merge(MapValue destMapValue, MapValue srcMapValue) {
-        float srcLast = srcMapValue.getFloat(valueIndex);
-        destMapValue.putFloat(valueIndex, srcLast);
+    public void merge(MapValue destValue, MapValue srcValue) {
+        float srcLast = srcValue.getFloat(valueIndex);
+        destValue.putFloat(valueIndex, srcLast);
     }
 }

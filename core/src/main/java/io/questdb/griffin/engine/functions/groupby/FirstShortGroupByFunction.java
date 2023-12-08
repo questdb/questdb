@@ -73,10 +73,10 @@ public class FirstShortGroupByFunction extends ShortFunction implements GroupByF
     }
 
     @Override
-    public void merge(MapValue destMapValue, MapValue srcMapValue) {
-        if (destMapValue.isNew()) {
-            short srcFirst = srcMapValue.getShort(valueIndex);
-            destMapValue.putShort(valueIndex, srcFirst);
+    public void merge(MapValue destValue, MapValue srcValue) {
+        if (destValue.isNew()) {
+            short srcFirst = srcValue.getShort(valueIndex);
+            destValue.putShort(valueIndex, srcFirst);
         }
     }
 

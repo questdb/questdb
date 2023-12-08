@@ -85,21 +85,8 @@ public class FirstSymbolGroupByFunction extends SymbolFunction implements GroupB
     }
 
     @Override
-    public boolean isParallelismSupported() {
-        return arg.isReadThreadSafe();
-    }
-
-    @Override
     public boolean isSymbolTableStatic() {
         return arg.isSymbolTableStatic();
-    }
-
-    @Override
-    public void merge(MapValue destMapValue, MapValue srcMapValue) {
-        if (destMapValue.isNew()) {
-            int srcFirst = srcMapValue.getInt(valueIndex);
-            destMapValue.putInt(valueIndex, srcFirst);
-        }
     }
 
     @Override

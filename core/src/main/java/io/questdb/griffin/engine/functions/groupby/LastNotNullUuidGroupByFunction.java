@@ -48,11 +48,11 @@ public class LastNotNullUuidGroupByFunction extends FirstUuidGroupByFunction {
     }
 
     @Override
-    public void merge(MapValue destMapValue, MapValue srcMapValue) {
-        long srcLastLo = srcMapValue.getLong128Lo(valueIndex);
-        long srcLastHi = srcMapValue.getLong128Hi(valueIndex);
+    public void merge(MapValue destValue, MapValue srcValue) {
+        long srcLastLo = srcValue.getLong128Lo(valueIndex);
+        long srcLastHi = srcValue.getLong128Hi(valueIndex);
         if (!Uuid.isNull(srcLastLo, srcLastHi)) {
-            destMapValue.putLong128(valueIndex, srcLastLo, srcLastHi);
+            destValue.putLong128(valueIndex, srcLastLo, srcLastHi);
         }
     }
 }

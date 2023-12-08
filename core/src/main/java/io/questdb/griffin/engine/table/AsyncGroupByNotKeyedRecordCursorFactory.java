@@ -157,7 +157,9 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         final AsyncGroupByNotKeyedAtom atom = task.getFrameSequence(AsyncGroupByNotKeyedAtom.class).getAtom();
         final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater();
 
-        value.reset(atom.getValueCount());
+        value.setCapacity(atom.getValueCount());
+        functionUpdater.updateEmpty(value);
+        value.resetNewFlag();
 
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.acquire(workerId, owner, circuitBreaker);

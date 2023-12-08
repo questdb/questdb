@@ -74,10 +74,10 @@ public class FirstGeoHashGroupByFunctionByte extends GeoByteFunction implements 
     }
 
     @Override
-    public void merge(MapValue destMapValue, MapValue srcMapValue) {
-        if (destMapValue.isNew()) {
-            byte srcFirst = srcMapValue.getByte(valueIndex);
-            destMapValue.putByte(valueIndex, srcFirst);
+    public void merge(MapValue destValue, MapValue srcValue) {
+        if (destValue.isNew()) {
+            byte srcFirst = srcValue.getGeoByte(valueIndex);
+            destValue.putByte(valueIndex, srcFirst);
         }
     }
 

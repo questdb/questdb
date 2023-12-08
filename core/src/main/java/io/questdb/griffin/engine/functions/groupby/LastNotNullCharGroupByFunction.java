@@ -49,10 +49,10 @@ public class LastNotNullCharGroupByFunction extends FirstCharGroupByFunction {
     }
 
     @Override
-    public void merge(MapValue destMapValue, MapValue srcMapValue) {
-        char srcLast = srcMapValue.getChar(valueIndex);
+    public void merge(MapValue destValue, MapValue srcValue) {
+        char srcLast = srcValue.getChar(valueIndex);
         if (srcLast != CharConstant.ZERO.getChar(null)) {
-            destMapValue.putChar(valueIndex, srcLast);
+            destValue.putChar(valueIndex, srcLast);
         }
     }
 }

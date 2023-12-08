@@ -65,9 +65,9 @@ public class LastGeoHashGroupByFunctionFactory implements FunctionFactory {
                     }
 
                     @Override
-                    public void merge(MapValue destMapValue, MapValue srcMapValue) {
-                        byte srcLast = srcMapValue.getByte(valueIndex);
-                        destMapValue.putByte(valueIndex, srcLast);
+                    public void merge(MapValue destValue, MapValue srcValue) {
+                        byte srcLast = srcValue.getByte(valueIndex);
+                        destValue.putByte(valueIndex, srcLast);
                     }
                 };
             case ColumnType.GEOSHORT:
@@ -83,9 +83,9 @@ public class LastGeoHashGroupByFunctionFactory implements FunctionFactory {
                     }
 
                     @Override
-                    public void merge(MapValue destMapValue, MapValue srcMapValue) {
-                        short srcLast = srcMapValue.getShort(valueIndex);
-                        destMapValue.putShort(valueIndex, srcLast);
+                    public void merge(MapValue destValue, MapValue srcValue) {
+                        short srcLast = srcValue.getShort(valueIndex);
+                        destValue.putShort(valueIndex, srcLast);
                     }
                 };
             case ColumnType.GEOINT:
@@ -101,9 +101,9 @@ public class LastGeoHashGroupByFunctionFactory implements FunctionFactory {
                     }
 
                     @Override
-                    public void merge(MapValue destMapValue, MapValue srcMapValue) {
-                        int srcLast = srcMapValue.getInt(valueIndex);
-                        destMapValue.putInt(valueIndex, srcLast);
+                    public void merge(MapValue destValue, MapValue srcValue) {
+                        int srcLast = srcValue.getInt(valueIndex);
+                        destValue.putInt(valueIndex, srcLast);
                     }
                 };
             default:
@@ -119,9 +119,9 @@ public class LastGeoHashGroupByFunctionFactory implements FunctionFactory {
                     }
 
                     @Override
-                    public void merge(MapValue destMapValue, MapValue srcMapValue) {
-                        long srcLast = srcMapValue.getLong(valueIndex);
-                        destMapValue.putLong(valueIndex, srcLast);
+                    public void merge(MapValue destValue, MapValue srcValue) {
+                        long srcLast = srcValue.getLong(valueIndex);
+                        destValue.putLong(valueIndex, srcLast);
                     }
                 };
         }

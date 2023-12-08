@@ -46,4 +46,12 @@ public class FirstNotNullFloatGroupByFunction extends FirstFloatGroupByFunction 
     public String getName() {
         return "first_not_null";
     }
+
+    @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        if (destValue.isNew() || Float.isNaN(destValue.getFloat(valueIndex))) {
+            float srcFirst = srcValue.getFloat(valueIndex);
+            destValue.putFloat(valueIndex, srcFirst);
+        }
+    }
 }

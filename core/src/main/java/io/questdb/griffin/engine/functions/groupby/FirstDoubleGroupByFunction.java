@@ -73,10 +73,10 @@ public class FirstDoubleGroupByFunction extends DoubleFunction implements GroupB
     }
 
     @Override
-    public void merge(MapValue destMapValue, MapValue srcMapValue) {
-        if (destMapValue.isNew()) {
-            double srcFirst = srcMapValue.getDouble(valueIndex);
-            destMapValue.putDouble(valueIndex, srcFirst);
+    public void merge(MapValue destValue, MapValue srcValue) {
+        if (destValue.isNew()) {
+            double srcFirst = srcValue.getDouble(valueIndex);
+            destValue.putDouble(valueIndex, srcFirst);
         }
     }
 

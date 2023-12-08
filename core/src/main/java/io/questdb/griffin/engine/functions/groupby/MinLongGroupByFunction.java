@@ -78,14 +78,14 @@ public class MinLongGroupByFunction extends LongFunction implements GroupByFunct
     }
 
     @Override
-    public void merge(MapValue destMapValue, MapValue srcMapValue) {
-        long srcMin = srcMapValue.getLong(valueIndex);
-        if (destMapValue.isNew()) {
-            destMapValue.putLong(valueIndex, srcMin);
+    public void merge(MapValue destValue, MapValue srcValue) {
+        long srcMin = srcValue.getLong(valueIndex);
+        if (destValue.isNew()) {
+            destValue.putLong(valueIndex, srcMin);
         } else {
-            long destMin = destMapValue.getLong(valueIndex);
+            long destMin = destValue.getLong(valueIndex);
             if (srcMin != Numbers.LONG_NaN && (srcMin < destMin || destMin == Numbers.LONG_NaN)) {
-                destMapValue.putLong(valueIndex, srcMin);
+                destValue.putLong(valueIndex, srcMin);
             }
         }
     }

@@ -79,10 +79,10 @@ public class FirstGeoHashGroupByFunctionShort extends GeoByteFunction implements
     }
 
     @Override
-    public void merge(MapValue destMapValue, MapValue srcMapValue) {
-        if (destMapValue.isNew()) {
-            short srcFirst = srcMapValue.getShort(valueIndex);
-            destMapValue.putShort(valueIndex, srcFirst);
+    public void merge(MapValue destValue, MapValue srcValue) {
+        if (destValue.isNew()) {
+            short srcFirst = srcValue.getGeoShort(valueIndex);
+            destValue.putShort(valueIndex, srcFirst);
         }
     }
 

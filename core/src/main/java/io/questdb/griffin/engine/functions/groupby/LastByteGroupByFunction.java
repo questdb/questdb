@@ -46,8 +46,8 @@ public class LastByteGroupByFunction extends FirstByteGroupByFunction {
     }
 
     @Override
-    public void merge(MapValue destMapValue, MapValue srcMapValue) {
-        byte srcLast = srcMapValue.getByte(valueIndex);
-        destMapValue.putByte(valueIndex, srcLast);
+    public void merge(MapValue destValue, MapValue srcValue) {
+        byte srcLast = srcValue.getByte(valueIndex);
+        destValue.putByte(valueIndex, srcLast);
     }
 }

@@ -280,14 +280,17 @@ public class SimpleMapValue implements MapValue {
         isNew = false;
     }
 
-    public void reset(int columnCount) {
+    public void resetNewFlag() {
+        isNew = true;
+    }
+
+    public void setCapacity(int columnCount) {
         int requiredCapacity = 4 * columnCount;
         if (values.length < requiredCapacity) {
             values = new long[requiredCapacity];
         } else {
             Arrays.fill(values, 0);
         }
-        isNew = true;
     }
 
     @Override

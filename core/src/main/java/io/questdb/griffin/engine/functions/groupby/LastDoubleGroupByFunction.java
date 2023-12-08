@@ -46,8 +46,8 @@ public class LastDoubleGroupByFunction extends FirstDoubleGroupByFunction {
     }
 
     @Override
-    public void merge(MapValue destMapValue, MapValue srcMapValue) {
-        double srcLast = srcMapValue.getDouble(valueIndex);
-        destMapValue.putDouble(valueIndex, srcLast);
+    public void merge(MapValue destValue, MapValue srcValue) {
+        double srcLast = srcValue.getDouble(valueIndex);
+        destValue.putDouble(valueIndex, srcLast);
     }
 }

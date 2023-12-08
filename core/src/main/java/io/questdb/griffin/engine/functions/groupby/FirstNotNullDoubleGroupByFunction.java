@@ -46,4 +46,12 @@ public class FirstNotNullDoubleGroupByFunction extends FirstDoubleGroupByFunctio
     public String getName() {
         return "first_not_null";
     }
+
+    @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        if (destValue.isNew() || Double.isNaN(destValue.getDouble(valueIndex))) {
+            double srcFirst = srcValue.getDouble(valueIndex);
+            destValue.putDouble(valueIndex, srcFirst);
+        }
+    }
 }

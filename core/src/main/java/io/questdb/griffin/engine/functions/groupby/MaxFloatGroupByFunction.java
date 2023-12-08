@@ -51,7 +51,7 @@ public class MaxFloatGroupByFunction extends FloatFunction implements GroupByFun
     public void computeNext(MapValue mapValue, Record record) {
         float max = mapValue.getFloat(valueIndex);
         float next = arg.getFloat(record);
-        if (next > max) {
+        if (next > max || Float.isNaN(max)) {
             mapValue.putFloat(valueIndex, next);
         }
     }
@@ -77,14 +77,14 @@ public class MaxFloatGroupByFunction extends FloatFunction implements GroupByFun
     }
 
     @Override
-    public void merge(MapValue destMapValue, MapValue srcMapValue) {
-        float srcMax = srcMapValue.getFloat(valueIndex);
-        if (destMapValue.isNew()) {
-            destMapValue.putFloat(valueIndex, srcMax);
+    public void merge(MapValue destValue, MapValue srcValue) {
+        float srcMax = srcValue.getFloat(valueIndex);
+        if (destValue.isNew()) {
+            destValue.putFloat(valueIndex, srcMax);
         } else {
-            float destMax = destMapValue.getFloat(valueIndex);
+            float destMax = destValue.getFloat(valueIndex);
             if (srcMax > destMax || Float.isNaN(destMax)) {
-                destMapValue.putFloat(valueIndex, srcMax);
+                destValue.putFloat(valueIndex, srcMax);
             }
         }
     }

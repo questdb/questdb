@@ -47,12 +47,4 @@ public class LastNotNullSymbolGroupByFunction extends FirstSymbolGroupByFunction
     public String getName() {
         return "last_not_null";
     }
-
-    @Override
-    public void merge(MapValue destMapValue, MapValue srcMapValue) {
-        int srcLast = srcMapValue.getInt(valueIndex);
-        if (srcLast != SymbolTable.VALUE_IS_NULL) {
-            destMapValue.putInt(valueIndex, srcLast);
-        }
-    }
 }

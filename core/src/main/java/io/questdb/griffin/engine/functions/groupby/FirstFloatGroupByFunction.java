@@ -73,10 +73,10 @@ public class FirstFloatGroupByFunction extends FloatFunction implements GroupByF
     }
 
     @Override
-    public void merge(MapValue destMapValue, MapValue srcMapValue) {
-        if (destMapValue.isNew()) {
-            float srcFirst = srcMapValue.getFloat(valueIndex);
-            destMapValue.putFloat(valueIndex, srcFirst);
+    public void merge(MapValue destValue, MapValue srcValue) {
+        if (destValue.isNew()) {
+            float srcFirst = srcValue.getFloat(valueIndex);
+            destValue.putFloat(valueIndex, srcFirst);
         }
     }
 

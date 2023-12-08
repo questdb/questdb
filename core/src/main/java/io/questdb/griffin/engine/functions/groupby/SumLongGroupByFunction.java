@@ -90,15 +90,15 @@ public class SumLongGroupByFunction extends LongFunction implements GroupByFunct
     }
 
     @Override
-    public void merge(MapValue destMapValue, MapValue srcMapValue) {
-        long srcSum = srcMapValue.getLong(valueIndex);
-        long srcCount = srcMapValue.getLong(valueIndex + 1);
-        if (destMapValue.isNew()) {
-            destMapValue.putLong(valueIndex, srcSum);
-            destMapValue.putLong(valueIndex + 1, srcCount);
+    public void merge(MapValue destValue, MapValue srcValue) {
+        long srcSum = srcValue.getLong(valueIndex);
+        long srcCount = srcValue.getLong(valueIndex + 1);
+        if (destValue.isNew()) {
+            destValue.putLong(valueIndex, srcSum);
+            destValue.putLong(valueIndex + 1, srcCount);
         } else {
-            destMapValue.addLong(valueIndex, srcSum);
-            destMapValue.addLong(valueIndex + 1, srcCount);
+            destValue.addLong(valueIndex, srcSum);
+            destValue.addLong(valueIndex + 1, srcCount);
         }
     }
 

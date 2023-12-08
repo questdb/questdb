@@ -84,14 +84,14 @@ public class MaxIPv4GroupByFunction extends IPv4Function implements GroupByFunct
     }
 
     @Override
-    public void merge(MapValue destMapValue, MapValue srcMapValue) {
-        long srcMax = Numbers.ipv4ToLong(srcMapValue.getIPv4(valueIndex));
-        if (destMapValue.isNew()) {
-            destMapValue.putInt(valueIndex, (int) srcMax);
+    public void merge(MapValue destValue, MapValue srcValue) {
+        long srcMax = Numbers.ipv4ToLong(srcValue.getIPv4(valueIndex));
+        if (destValue.isNew()) {
+            destValue.putInt(valueIndex, (int) srcMax);
         } else {
-            long destMax = Numbers.ipv4ToLong(destMapValue.getIPv4(valueIndex));
+            long destMax = Numbers.ipv4ToLong(destValue.getIPv4(valueIndex));
             if (srcMax > destMax) {
-                destMapValue.putInt(valueIndex, (int) srcMax);
+                destValue.putInt(valueIndex, (int) srcMax);
             }
         }
     }

@@ -90,17 +90,17 @@ public class AvgDoubleGroupByFunction extends DoubleFunction implements GroupByF
     }
 
     @Override
-    public void merge(MapValue destMapValue, MapValue srcMapValue) {
-        double srcSum = srcMapValue.getDouble(valueIndex);
-        long srcCount = srcMapValue.getLong(valueIndex + 1);
-        if (destMapValue.isNew()) {
-            destMapValue.putDouble(valueIndex, srcSum);
-            destMapValue.putLong(valueIndex + 1, srcCount);
+    public void merge(MapValue destValue, MapValue srcValue) {
+        double srcSum = srcValue.getDouble(valueIndex);
+        long srcCount = srcValue.getLong(valueIndex + 1);
+        if (destValue.isNew()) {
+            destValue.putDouble(valueIndex, srcSum);
+            destValue.putLong(valueIndex + 1, srcCount);
         } else {
-            double destSum = destMapValue.getDouble(valueIndex);
-            long destCount = destMapValue.getLong(valueIndex + 1);
-            destMapValue.putDouble(valueIndex, destSum + srcSum);
-            destMapValue.putLong(valueIndex + 1, destCount + srcCount);
+            double destSum = destValue.getDouble(valueIndex);
+            long destCount = destValue.getLong(valueIndex + 1);
+            destValue.putDouble(valueIndex, destSum + srcSum);
+            destValue.putLong(valueIndex + 1, destCount + srcCount);
         }
     }
 

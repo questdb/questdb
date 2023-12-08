@@ -69,10 +69,10 @@ public class LastNotNullIPv4GroupByFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void merge(MapValue destMapValue, MapValue srcMapValue) {
-            int srcLast = srcMapValue.getInt(valueIndex);
+        public void merge(MapValue destValue, MapValue srcValue) {
+            int srcLast = srcValue.getInt(valueIndex);
             if (srcLast != Numbers.IPv4_NULL) {
-                destMapValue.putInt(valueIndex, srcLast);
+                destValue.putInt(valueIndex, srcLast);
             }
         }
     }

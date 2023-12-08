@@ -105,18 +105,18 @@ public class VwapDoubleGroupByFunction extends DoubleFunction implements GroupBy
     }
 
     @Override
-    public void merge(MapValue destMapValue, MapValue srcMapValue) {
-        double srcVwap = srcMapValue.getDouble(valueIndex);
-        double srcNotional = srcMapValue.getDouble(valueIndex + 1);
-        double srcVolume = srcMapValue.getDouble(valueIndex + 2);
-        if (destMapValue.isNew()) {
-            destMapValue.putDouble(valueIndex, srcVwap);
-            destMapValue.putDouble(valueIndex + 1, srcNotional);
-            destMapValue.putDouble(valueIndex + 2, srcVolume);
+    public void merge(MapValue destValue, MapValue srcValue) {
+        double srcVwap = srcValue.getDouble(valueIndex);
+        double srcNotional = srcValue.getDouble(valueIndex + 1);
+        double srcVolume = srcValue.getDouble(valueIndex + 2);
+        if (destValue.isNew()) {
+            destValue.putDouble(valueIndex, srcVwap);
+            destValue.putDouble(valueIndex + 1, srcNotional);
+            destValue.putDouble(valueIndex + 2, srcVolume);
         } else if (Numbers.isFinite(srcNotional) && Numbers.isFinite(srcVolume) && srcVolume > 0.0d) {
-            destMapValue.addDouble(valueIndex + 1, srcNotional);
-            destMapValue.addDouble(valueIndex + 2, srcVolume);
-            destMapValue.putDouble(valueIndex, destMapValue.getDouble(valueIndex + 1) / destMapValue.getDouble(valueIndex + 2));
+            destValue.addDouble(valueIndex + 1, srcNotional);
+            destValue.addDouble(valueIndex + 2, srcVolume);
+            destValue.putDouble(valueIndex, destValue.getDouble(valueIndex + 1) / destValue.getDouble(valueIndex + 2));
         }
     }
 

@@ -48,10 +48,10 @@ public class LastNotNullDoubleGroupByFunction extends FirstDoubleGroupByFunction
     }
 
     @Override
-    public void merge(MapValue destMapValue, MapValue srcMapValue) {
-        double srcLast = srcMapValue.getDouble(valueIndex);
+    public void merge(MapValue destValue, MapValue srcValue) {
+        double srcLast = srcValue.getDouble(valueIndex);
         if (!Double.isNaN(srcLast)) {
-            destMapValue.putDouble(valueIndex, srcLast);
+            destValue.putDouble(valueIndex, srcLast);
         }
     }
 }

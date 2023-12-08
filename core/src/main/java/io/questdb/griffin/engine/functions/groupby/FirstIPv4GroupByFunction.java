@@ -40,7 +40,6 @@ public class FirstIPv4GroupByFunction extends IPv4Function implements GroupByFun
     protected int valueIndex;
 
     public FirstIPv4GroupByFunction(@NotNull Function arg) {
-        super();
         this.arg = arg;
     }
 
@@ -79,10 +78,10 @@ public class FirstIPv4GroupByFunction extends IPv4Function implements GroupByFun
     }
 
     @Override
-    public void merge(MapValue destMapValue, MapValue srcMapValue) {
-        if (destMapValue.isNew()) {
-            int srcFirst = srcMapValue.getInt(valueIndex);
-            destMapValue.putInt(valueIndex, srcFirst);
+    public void merge(MapValue destValue, MapValue srcValue) {
+        if (destValue.isNew()) {
+            int srcFirst = srcValue.getIPv4(valueIndex);
+            destValue.putInt(valueIndex, srcFirst);
         }
     }
 

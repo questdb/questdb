@@ -78,14 +78,14 @@ public class MinDateGroupByFunction extends DateFunction implements GroupByFunct
     }
 
     @Override
-    public void merge(MapValue destMapValue, MapValue srcMapValue) {
-        long srcMin = srcMapValue.getDate(valueIndex);
-        if (destMapValue.isNew()) {
-            destMapValue.putDate(valueIndex, srcMin);
+    public void merge(MapValue destValue, MapValue srcValue) {
+        long srcMin = srcValue.getDate(valueIndex);
+        if (destValue.isNew()) {
+            destValue.putDate(valueIndex, srcMin);
         } else {
-            long destMin = destMapValue.getDate(valueIndex);
+            long destMin = destValue.getDate(valueIndex);
             if (srcMin != Numbers.LONG_NaN && (srcMin < destMin || destMin == Numbers.LONG_NaN)) {
-                destMapValue.putDate(valueIndex, srcMin);
+                destValue.putDate(valueIndex, srcMin);
             }
         }
     }

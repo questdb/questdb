@@ -49,10 +49,10 @@ public class LastNotNullDateGroupByFunction extends FirstDateGroupByFunction {
     }
 
     @Override
-    public void merge(MapValue destMapValue, MapValue srcMapValue) {
-        long srcLast = srcMapValue.getLong(valueIndex);
+    public void merge(MapValue destValue, MapValue srcValue) {
+        long srcLast = srcValue.getLong(valueIndex);
         if (srcLast != Numbers.LONG_NaN) {
-            destMapValue.putLong(valueIndex, srcLast);
+            destValue.putLong(valueIndex, srcLast);
         }
     }
 }

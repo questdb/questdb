@@ -84,10 +84,10 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
         }
 
         @Override
-        public void merge(MapValue destMapValue, MapValue srcMapValue) {
-            byte srcLast = srcMapValue.getByte(valueIndex);
+        public void merge(MapValue destValue, MapValue srcValue) {
+            byte srcLast = srcValue.getByte(valueIndex);
             if (srcLast != GeoHashes.BYTE_NULL) {
-                destMapValue.putByte(valueIndex, srcLast);
+                destValue.putByte(valueIndex, srcLast);
             }
         }
     }
@@ -110,10 +110,10 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
         }
 
         @Override
-        public void merge(MapValue destMapValue, MapValue srcMapValue) {
-            int srcLast = srcMapValue.getInt(valueIndex);
+        public void merge(MapValue destValue, MapValue srcValue) {
+            int srcLast = srcValue.getInt(valueIndex);
             if (srcLast != GeoHashes.INT_NULL) {
-                destMapValue.putInt(valueIndex, srcLast);
+                destValue.putInt(valueIndex, srcLast);
             }
         }
     }
@@ -136,10 +136,10 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
         }
 
         @Override
-        public void merge(MapValue destMapValue, MapValue srcMapValue) {
-            long srcLast = srcMapValue.getLong(valueIndex);
+        public void merge(MapValue destValue, MapValue srcValue) {
+            long srcLast = srcValue.getLong(valueIndex);
             if (srcLast != GeoHashes.NULL) {
-                destMapValue.putLong(valueIndex, srcLast);
+                destValue.putLong(valueIndex, srcLast);
             }
         }
     }
@@ -162,10 +162,10 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
         }
 
         @Override
-        public void merge(MapValue destMapValue, MapValue srcMapValue) {
-            short srcLast = srcMapValue.getShort(valueIndex);
+        public void merge(MapValue destValue, MapValue srcValue) {
+            short srcLast = srcValue.getShort(valueIndex);
             if (srcLast != GeoHashes.SHORT_NULL) {
-                destMapValue.putShort(valueIndex, srcLast);
+                destValue.putShort(valueIndex, srcLast);
             }
         }
     }

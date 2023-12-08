@@ -137,6 +137,9 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
             frameLimit = frameSequence.getFrameCount() - 1;
         }
 
+        frameSequence.getAtom().getFunctionUpdater().updateEmpty(dataValue);
+        dataValue.resetNewFlag();
+
         int frameIndex = -1;
         boolean allFramesActive = true;
         try {
@@ -189,11 +192,6 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
             throwTimeoutException();
         }
 
-        // Init value with empty values if we got no data.
-        if (dataValue.isNew()) {
-            frameSequence.getAtom().getFunctionUpdater().updateEmpty(dataValue);
-        }
-
         isValueBuilt = true;
     }
 
@@ -207,7 +205,7 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
         }
         this.frameSequence = frameSequence;
         Function.init(groupByFunctions, frameSequence.getSymbolTableSource(), executionContext);
-        dataValue.reset(valueCount);
+        dataValue.setCapacity(valueCount);
         isValueBuilt = false;
         frameLimit = -1;
         toTop();
