@@ -147,19 +147,19 @@ public class AggregateTest extends AbstractCairoTest {
     public void testCountAggregationsWithTypes() throws Exception {
         String[] aggregateFunctions = {"count"};
         TypeVal[] aggregateColTypes = {
-                new TypeVal(ColumnType.INT, "0:LONG", "1:LONG", (r, i) -> r.putInt(i, 1)),
-                new TypeVal(ColumnType.LONG, "0:LONG", "1:LONG", (r, i) -> r.putLong(i, 1)),
-                new TypeVal(ColumnType.FLOAT, "0:LONG", "1:LONG", (r, i) -> r.putFloat(i, 1)),
-                new TypeVal(ColumnType.DOUBLE, "0:LONG", "1:LONG", (r, i) -> r.putFloat(i, 1)),
-                new TypeVal(ColumnType.STRING, "0:LONG", "1:LONG", (r, i) -> r.putStr(i, "abc")),
-                new TypeVal(ColumnType.SYMBOL, "0:LONG", "1:LONG", (r, i) -> r.putSym(i, "abc")),
-                new TypeVal(ColumnType.LONG256, "0:LONG", "1:LONG", (r, i) -> r.putLong256(i, 1, 1, 1, 1)),
-                new TypeVal(ColumnType.IPv4, "0:LONG", "1:LONG", (r, i) -> r.putInt(i, 1)),
-                new TypeVal(ColumnType.UUID, "0:LONG", "1:LONG", (r, i) -> r.putLong128(i, 1, 1)),
-                new TypeVal(ColumnType.getGeoHashTypeWithBits(3), "0:LONG", "1:LONG", (r, i) -> r.putGeoHash(i, 1)),
-                new TypeVal(ColumnType.getGeoHashTypeWithBits(10), "0:LONG", "1:LONG", (r, i) -> r.putGeoHash(i, 1)),
-                new TypeVal(ColumnType.getGeoHashTypeWithBits(20), "0:LONG", "1:LONG", (r, i) -> r.putGeoHash(i, 1)),
-                new TypeVal(ColumnType.getGeoHashTypeWithBits(60), "0:LONG", "1:LONG", (r, i) -> r.putGeoHash(i, 1))
+                new TypeVal(ColumnType.INT, "0:LONG", "1:LONG"),
+                new TypeVal(ColumnType.LONG, "0:LONG", "1:LONG"),
+                new TypeVal(ColumnType.FLOAT, "0:LONG", "1:LONG"),
+                new TypeVal(ColumnType.DOUBLE, "0:LONG", "1:LONG"),
+                new TypeVal(ColumnType.STRING, "0:LONG", "1:LONG"),
+                new TypeVal(ColumnType.SYMBOL, "0:LONG", "1:LONG"),
+                new TypeVal(ColumnType.LONG256, "0:LONG", "1:LONG"),
+                new TypeVal(ColumnType.IPv4, "0:LONG", "1:LONG"),
+                new TypeVal(ColumnType.UUID, "0:LONG", "1:LONG"),
+                new TypeVal(ColumnType.getGeoHashTypeWithBits(3), "0:LONG", "1:LONG"),
+                new TypeVal(ColumnType.getGeoHashTypeWithBits(10), "0:LONG", "1:LONG"),
+                new TypeVal(ColumnType.getGeoHashTypeWithBits(20), "0:LONG", "1:LONG"),
+                new TypeVal(ColumnType.getGeoHashTypeWithBits(60), "0:LONG", "1:LONG")
         };
 
         testAggregations(aggregateFunctions, aggregateColTypes);
@@ -186,13 +186,13 @@ public class AggregateTest extends AbstractCairoTest {
     public void testCountDistinctAggregationsWithTypes() throws Exception {
         String[] aggregateFunctions = {"count_distinct"};
         TypeVal[] aggregateColTypes = {
-                new TypeVal(ColumnType.INT, "0:LONG", "1:LONG", (r, i) -> r.putInt(i, 1)),
-                new TypeVal(ColumnType.LONG, "0:LONG", "1:LONG", (r, i) -> r.putLong(i, 1)),
-                new TypeVal(ColumnType.STRING, "0:LONG", "1:LONG", (r, i) -> r.putStr(i, "abc")),
-                new TypeVal(ColumnType.SYMBOL, "0:LONG", "1:LONG", (r, i) -> r.putSym(i, "abc")),
-                new TypeVal(ColumnType.LONG256, "0:LONG", "1:LONG", (r, i) -> r.putLong256(i, 1, 1, 1, 1)),
-                new TypeVal(ColumnType.IPv4, "0:LONG", "1:LONG", (r, i) -> r.putInt(i, 1)),
-                new TypeVal(ColumnType.UUID, "0:LONG", "1:LONG", (r, i) -> r.putLong128(i, 1, 1))
+                new TypeVal(ColumnType.INT, "0:LONG", "1:LONG"),
+                new TypeVal(ColumnType.LONG, "0:LONG", "1:LONG"),
+                new TypeVal(ColumnType.STRING, "0:LONG", "1:LONG"),
+                new TypeVal(ColumnType.SYMBOL, "0:LONG", "1:LONG"),
+                new TypeVal(ColumnType.LONG256, "0:LONG", "1:LONG"),
+                new TypeVal(ColumnType.IPv4, "0:LONG", "1:LONG"),
+                new TypeVal(ColumnType.UUID, "0:LONG", "1:LONG")
         };
 
         testAggregations(aggregateFunctions, aggregateColTypes);
@@ -202,22 +202,23 @@ public class AggregateTest extends AbstractCairoTest {
     public void testFirstAggregationsWithTypes() throws Exception {
         String[] aggregateFunctions = {"first"};
         TypeVal[] aggregateColTypes = {
-                new TypeVal(ColumnType.SYMBOL, ":SYMBOL", ":SYMBOL", (r, i) -> r.putSym(i, "abc")),
-                new TypeVal(ColumnType.BYTE, "0:BYTE", "0:BYTE", (r, i) -> r.putByte(i, (byte) 1)),
-                new TypeVal(ColumnType.CHAR, ":CHAR", ":CHAR", (r, i) -> r.putChar(i, 'a')),
-                new TypeVal(ColumnType.SHORT, "0:SHORT", "0:SHORT", (r, i) -> r.putShort(i, (short) 1)),
-                new TypeVal(ColumnType.INT, "NaN:INT", "NaN:INT", (r, i) -> r.putInt(i, 1)),
-                new TypeVal(ColumnType.LONG, "NaN:LONG", "NaN:LONG", (r, i) -> r.putLong(i, 1)),
-                new TypeVal(ColumnType.DATE, ":DATE", ":DATE", (r, i) -> r.putDate(i, 1)),
-                new TypeVal(ColumnType.TIMESTAMP, ":TIMESTAMP", ":TIMESTAMP", (r, i) -> r.putTimestamp(i, 1)),
-                new TypeVal(ColumnType.FLOAT, "NaN:FLOAT", "NaN:FLOAT", (r, i) -> r.putFloat(i, 1)),
-                new TypeVal(ColumnType.DOUBLE, "NaN:DOUBLE", "NaN:DOUBLE", (r, i) -> r.putDouble(i, 1)),
-                new TypeVal(ColumnType.IPv4, ":IPv4", ":IPv4", (r, i) -> r.putInt(i, 1)),
-                new TypeVal(ColumnType.UUID, ":UUID", ":UUID", (r, i) -> r.putUuid(i, "550e8400-e29b-41d4-a716-446655440000")),
-                new TypeVal(ColumnType.getGeoHashTypeWithBits(3), ":GEOHASH(3b)", ":GEOHASH(3b)", (r, i) -> r.putGeoHash(i, 1)),
-                new TypeVal(ColumnType.getGeoHashTypeWithBits(10), ":GEOHASH(2c)", ":GEOHASH(2c)", (r, i) -> r.putGeoHash(i, 1)),
-                new TypeVal(ColumnType.getGeoHashTypeWithBits(20), ":GEOHASH(4c)", ":GEOHASH(4c)", (r, i) -> r.putGeoHash(i, 1)),
-                new TypeVal(ColumnType.getGeoHashTypeWithBits(60), ":GEOHASH(12c)", ":GEOHASH(12c)", (r, i) -> r.putGeoHash(i, 1))
+                new TypeVal(ColumnType.SYMBOL, ":SYMBOL", ":SYMBOL"),
+                new TypeVal(ColumnType.BOOLEAN, "false:BOOLEAN", "false:BOOLEAN"),
+                new TypeVal(ColumnType.BYTE, "0:BYTE", "0:BYTE"),
+                new TypeVal(ColumnType.CHAR, ":CHAR", ":CHAR"),
+                new TypeVal(ColumnType.SHORT, "0:SHORT", "0:SHORT"),
+                new TypeVal(ColumnType.INT, "NaN:INT", "NaN:INT"),
+                new TypeVal(ColumnType.LONG, "NaN:LONG", "NaN:LONG"),
+                new TypeVal(ColumnType.DATE, ":DATE", ":DATE"),
+                new TypeVal(ColumnType.TIMESTAMP, ":TIMESTAMP", ":TIMESTAMP"),
+                new TypeVal(ColumnType.FLOAT, "NaN:FLOAT", "NaN:FLOAT"),
+                new TypeVal(ColumnType.DOUBLE, "NaN:DOUBLE", "NaN:DOUBLE"),
+                new TypeVal(ColumnType.IPv4, ":IPv4", ":IPv4"),
+                new TypeVal(ColumnType.UUID, ":UUID", ":UUID"),
+                new TypeVal(ColumnType.getGeoHashTypeWithBits(3), ":GEOHASH(3b)", ":GEOHASH(3b)"),
+                new TypeVal(ColumnType.getGeoHashTypeWithBits(10), ":GEOHASH(2c)", ":GEOHASH(2c)"),
+                new TypeVal(ColumnType.getGeoHashTypeWithBits(20), ":GEOHASH(4c)", ":GEOHASH(4c)"),
+                new TypeVal(ColumnType.getGeoHashTypeWithBits(60), ":GEOHASH(12c)", ":GEOHASH(12c)")
         };
 
         testAggregations(aggregateFunctions, aggregateColTypes);
@@ -226,10 +227,7 @@ public class AggregateTest extends AbstractCairoTest {
     @Test
     public void testFirstLastAggregationsNotSupported() {
         String[] aggregateFunctions = {"first"};
-        TypeVal[] aggregateColTypes = {
-                new TypeVal(ColumnType.BINARY, ":BINARY", ":BINARY", (r, i) -> {
-                })
-        };
+        TypeVal[] aggregateColTypes = {new TypeVal(ColumnType.BINARY, ":BINARY", ":BINARY")};
 
         try {
             testAggregations(aggregateFunctions, aggregateColTypes);
@@ -243,20 +241,20 @@ public class AggregateTest extends AbstractCairoTest {
     public void testFirstLastNotNullAggregationsWithTypes() throws Exception {
         String[] aggregateFunctions = {"first_not_null", "last_not_null"};
         TypeVal[] aggregateColTypes = {
-                new TypeVal(ColumnType.SYMBOL, ":SYMBOL", "abc:SYMBOL", (r, i) -> r.putSym(i, "abc")),
-                new TypeVal(ColumnType.CHAR, ":CHAR", "a:CHAR", (r, i) -> r.putChar(i, 'a')),
-                new TypeVal(ColumnType.INT, "NaN:INT", "1:INT", (r, i) -> r.putInt(i, 1)),
-                new TypeVal(ColumnType.LONG, "NaN:LONG", "1:LONG", (r, i) -> r.putLong(i, 1)),
-                new TypeVal(ColumnType.DATE, ":DATE", "1970-01-01T00:00:00.001Z:DATE", (r, i) -> r.putDate(i, 1)),
-                new TypeVal(ColumnType.TIMESTAMP, ":TIMESTAMP", "1970-01-01T00:00:00.000001Z:TIMESTAMP", (r, i) -> r.putTimestamp(i, 1)),
-                new TypeVal(ColumnType.FLOAT, "NaN:FLOAT", "1.0000:FLOAT", (r, i) -> r.putFloat(i, 1)),
-                new TypeVal(ColumnType.DOUBLE, "NaN:DOUBLE", "1.0:DOUBLE", (r, i) -> r.putDouble(i, 1)),
-                new TypeVal(ColumnType.IPv4, ":IPv4", "0.0.0.1:IPv4", (r, i) -> r.putInt(i, 1)),
-                new TypeVal(ColumnType.UUID, ":UUID", "550e8400-e29b-41d4-a716-446655440000:UUID", (r, i) -> r.putUuid(i, "550e8400-e29b-41d4-a716-446655440000")),
-                new TypeVal(ColumnType.getGeoHashTypeWithBits(3), ":GEOHASH(3b)", "001:GEOHASH(3b)", (r, i) -> r.putGeoHash(i, 1)),
-                new TypeVal(ColumnType.getGeoHashTypeWithBits(10), ":GEOHASH(2c)", "01:GEOHASH(2c)", (r, i) -> r.putGeoHash(i, 1)),
-                new TypeVal(ColumnType.getGeoHashTypeWithBits(20), ":GEOHASH(4c)", "0001:GEOHASH(4c)", (r, i) -> r.putGeoHash(i, 1)),
-                new TypeVal(ColumnType.getGeoHashTypeWithBits(60), ":GEOHASH(12c)", "000000000001:GEOHASH(12c)", (r, i) -> r.putGeoHash(i, 1))
+                new TypeVal(ColumnType.SYMBOL, ":SYMBOL", "abc:SYMBOL"),
+                new TypeVal(ColumnType.CHAR, ":CHAR", "a:CHAR"),
+                new TypeVal(ColumnType.INT, "NaN:INT", "1:INT"),
+                new TypeVal(ColumnType.LONG, "NaN:LONG", "1:LONG"),
+                new TypeVal(ColumnType.DATE, ":DATE", "1970-01-01T00:00:00.001Z:DATE"),
+                new TypeVal(ColumnType.TIMESTAMP, ":TIMESTAMP", "1970-01-01T00:00:00.000001Z:TIMESTAMP"),
+                new TypeVal(ColumnType.FLOAT, "NaN:FLOAT", "1.0000:FLOAT"),
+                new TypeVal(ColumnType.DOUBLE, "NaN:DOUBLE", "1.0:DOUBLE"),
+                new TypeVal(ColumnType.IPv4, ":IPv4", "0.0.0.1:IPv4"),
+                new TypeVal(ColumnType.UUID, ":UUID", "00000000-0000-0001-0000-000000000001:UUID"),
+                new TypeVal(ColumnType.getGeoHashTypeWithBits(3), ":GEOHASH(3b)", "001:GEOHASH(3b)"),
+                new TypeVal(ColumnType.getGeoHashTypeWithBits(10), ":GEOHASH(2c)", "01:GEOHASH(2c)"),
+                new TypeVal(ColumnType.getGeoHashTypeWithBits(20), ":GEOHASH(4c)", "0001:GEOHASH(4c)"),
+                new TypeVal(ColumnType.getGeoHashTypeWithBits(60), ":GEOHASH(12c)", "000000000001:GEOHASH(12c)")
         };
 
         testAggregations(aggregateFunctions, aggregateColTypes);
@@ -1244,22 +1242,23 @@ public class AggregateTest extends AbstractCairoTest {
     public void testLastAggregationsWithTypes() throws Exception {
         String[] aggregateFunctions = {"last"};
         TypeVal[] aggregateColTypes = {
-                new TypeVal(ColumnType.SYMBOL, ":SYMBOL", "abc:SYMBOL", (r, i) -> r.putSym(i, "abc")),
-                new TypeVal(ColumnType.BYTE, "0:BYTE", "1:BYTE", (r, i) -> r.putByte(i, (byte) 1)),
-                new TypeVal(ColumnType.CHAR, ":CHAR", "a:CHAR", (r, i) -> r.putChar(i, 'a')),
-                new TypeVal(ColumnType.SHORT, "0:SHORT", "1:SHORT", (r, i) -> r.putShort(i, (short) 1)),
-                new TypeVal(ColumnType.INT, "NaN:INT", "1:INT", (r, i) -> r.putInt(i, 1)),
-                new TypeVal(ColumnType.LONG, "NaN:LONG", "1:LONG", (r, i) -> r.putLong(i, 1)),
-                new TypeVal(ColumnType.DATE, ":DATE", "1970-01-01T00:00:00.001Z:DATE", (r, i) -> r.putDate(i, 1)),
-                new TypeVal(ColumnType.TIMESTAMP, ":TIMESTAMP", "1970-01-01T00:00:00.000001Z:TIMESTAMP", (r, i) -> r.putTimestamp(i, 1)),
-                new TypeVal(ColumnType.FLOAT, "NaN:FLOAT", "1.0000:FLOAT", (r, i) -> r.putFloat(i, 1)),
-                new TypeVal(ColumnType.DOUBLE, "NaN:DOUBLE", "1.0:DOUBLE", (r, i) -> r.putDouble(i, 1)),
-                new TypeVal(ColumnType.IPv4, ":IPv4", "0.0.0.1:IPv4", (r, i) -> r.putInt(i, 1)),
-                new TypeVal(ColumnType.UUID, ":UUID", "550e8400-e29b-41d4-a716-446655440000:UUID", (r, i) -> r.putUuid(i, "550e8400-e29b-41d4-a716-446655440000")),
-                new TypeVal(ColumnType.getGeoHashTypeWithBits(3), ":GEOHASH(3b)", "001:GEOHASH(3b)", (r, i) -> r.putGeoHash(i, 1)),
-                new TypeVal(ColumnType.getGeoHashTypeWithBits(10), ":GEOHASH(2c)", "01:GEOHASH(2c)", (r, i) -> r.putGeoHash(i, 1)),
-                new TypeVal(ColumnType.getGeoHashTypeWithBits(20), ":GEOHASH(4c)", "0001:GEOHASH(4c)", (r, i) -> r.putGeoHash(i, 1)),
-                new TypeVal(ColumnType.getGeoHashTypeWithBits(60), ":GEOHASH(12c)", "000000000001:GEOHASH(12c)", (r, i) -> r.putGeoHash(i, 1))
+                new TypeVal(ColumnType.SYMBOL, ":SYMBOL", "abc:SYMBOL"),
+                new TypeVal(ColumnType.BOOLEAN, "false:BOOLEAN", "true:BOOLEAN"),
+                new TypeVal(ColumnType.BYTE, "0:BYTE", "1:BYTE"),
+                new TypeVal(ColumnType.CHAR, ":CHAR", "a:CHAR"),
+                new TypeVal(ColumnType.SHORT, "0:SHORT", "1:SHORT"),
+                new TypeVal(ColumnType.INT, "NaN:INT", "1:INT"),
+                new TypeVal(ColumnType.LONG, "NaN:LONG", "1:LONG"),
+                new TypeVal(ColumnType.DATE, ":DATE", "1970-01-01T00:00:00.001Z:DATE"),
+                new TypeVal(ColumnType.TIMESTAMP, ":TIMESTAMP", "1970-01-01T00:00:00.000001Z:TIMESTAMP"),
+                new TypeVal(ColumnType.FLOAT, "NaN:FLOAT", "1.0000:FLOAT"),
+                new TypeVal(ColumnType.DOUBLE, "NaN:DOUBLE", "1.0:DOUBLE"),
+                new TypeVal(ColumnType.IPv4, ":IPv4", "0.0.0.1:IPv4"),
+                new TypeVal(ColumnType.UUID, ":UUID", "00000000-0000-0001-0000-000000000001:UUID"),
+                new TypeVal(ColumnType.getGeoHashTypeWithBits(3), ":GEOHASH(3b)", "001:GEOHASH(3b)"),
+                new TypeVal(ColumnType.getGeoHashTypeWithBits(10), ":GEOHASH(2c)", "01:GEOHASH(2c)"),
+                new TypeVal(ColumnType.getGeoHashTypeWithBits(20), ":GEOHASH(4c)", "0001:GEOHASH(4c)"),
+                new TypeVal(ColumnType.getGeoHashTypeWithBits(60), ":GEOHASH(12c)", "000000000001:GEOHASH(12c)")
         };
 
         testAggregations(aggregateFunctions, aggregateColTypes);
@@ -1269,16 +1268,16 @@ public class AggregateTest extends AbstractCairoTest {
     public void testMaxAggregationsWithTypes() throws Exception {
         String[] aggregateFunctions = {"max"};
         TypeVal[] aggregateColTypes = {
-                new TypeVal(ColumnType.BYTE, "0:INT", "1:INT", (r, i) -> r.putByte(i, (byte) 1)),
-                new TypeVal(ColumnType.CHAR, ":CHAR", "a:CHAR", (r, i) -> r.putChar(i, 'a')),
-                new TypeVal(ColumnType.SHORT, "0:INT", "1:INT", (r, i) -> r.putShort(i, (short) 1)),
-                new TypeVal(ColumnType.INT, "NaN:INT", "1:INT", (r, i) -> r.putInt(i, 1)),
-                new TypeVal(ColumnType.LONG, "NaN:LONG", "1:LONG", (r, i) -> r.putLong(i, 1)),
-                new TypeVal(ColumnType.DATE, ":DATE", "1970-01-01T00:00:00.001Z:DATE", (r, i) -> r.putDate(i, 1)),
-                new TypeVal(ColumnType.TIMESTAMP, ":TIMESTAMP", "1970-01-01T00:00:00.000001Z:TIMESTAMP", (r, i) -> r.putTimestamp(i, 1)),
-                new TypeVal(ColumnType.FLOAT, "NaN:FLOAT", "1.0000:FLOAT", (r, i) -> r.putFloat(i, 1)),
-                new TypeVal(ColumnType.DOUBLE, "NaN:DOUBLE", "1.0:DOUBLE", (r, i) -> r.putDouble(i, 1)),
-                new TypeVal(ColumnType.IPv4, ":IPv4", "0.0.0.1:IPv4", (r, i) -> r.putInt(i, 1))
+                new TypeVal(ColumnType.BYTE, "0:INT", "1:INT"),
+                new TypeVal(ColumnType.CHAR, ":CHAR", "a:CHAR"),
+                new TypeVal(ColumnType.SHORT, "0:INT", "1:INT"),
+                new TypeVal(ColumnType.INT, "NaN:INT", "1:INT"),
+                new TypeVal(ColumnType.LONG, "NaN:LONG", "1:LONG"),
+                new TypeVal(ColumnType.DATE, ":DATE", "1970-01-01T00:00:00.001Z:DATE"),
+                new TypeVal(ColumnType.TIMESTAMP, ":TIMESTAMP", "1970-01-01T00:00:00.000001Z:TIMESTAMP"),
+                new TypeVal(ColumnType.FLOAT, "NaN:FLOAT", "1.0000:FLOAT"),
+                new TypeVal(ColumnType.DOUBLE, "NaN:DOUBLE", "1.0:DOUBLE"),
+                new TypeVal(ColumnType.IPv4, ":IPv4", "0.0.0.1:IPv4")
         };
 
         testAggregations(aggregateFunctions, aggregateColTypes);
@@ -1288,16 +1287,16 @@ public class AggregateTest extends AbstractCairoTest {
     public void testMinAggregationsWithTypes() throws Exception {
         String[] aggregateFunctions = {"min"};
         TypeVal[] aggregateColTypes = {
-                new TypeVal(ColumnType.BYTE, "0:INT", "0:INT", (r, i) -> r.putByte(i, (byte) 1)),
-                new TypeVal(ColumnType.CHAR, ":CHAR", ":CHAR", (r, i) -> r.putChar(i, 'a')),
-                new TypeVal(ColumnType.SHORT, "0:INT", "0:INT", (r, i) -> r.putShort(i, (short) 1)),
-                new TypeVal(ColumnType.INT, "NaN:INT", "1:INT", (r, i) -> r.putInt(i, 1)),
-                new TypeVal(ColumnType.LONG, "NaN:LONG", "1:LONG", (r, i) -> r.putLong(i, 1)),
-                new TypeVal(ColumnType.DATE, ":DATE", "1970-01-01T00:00:00.001Z:DATE", (r, i) -> r.putDate(i, 1)),
-                new TypeVal(ColumnType.TIMESTAMP, ":TIMESTAMP", "1970-01-01T00:00:00.000001Z:TIMESTAMP", (r, i) -> r.putTimestamp(i, 1)),
-                new TypeVal(ColumnType.FLOAT, "NaN:FLOAT", "1.0000:FLOAT", (r, i) -> r.putFloat(i, 1)),
-                new TypeVal(ColumnType.DOUBLE, "NaN:DOUBLE", "1.0:DOUBLE", (r, i) -> r.putDouble(i, 1)),
-                new TypeVal(ColumnType.IPv4, ":IPv4", "0.0.0.1:IPv4", (r, i) -> r.putInt(i, 1))
+                new TypeVal(ColumnType.BYTE, "0:INT", "0:INT"),
+                new TypeVal(ColumnType.CHAR, ":CHAR", ":CHAR"),
+                new TypeVal(ColumnType.SHORT, "0:INT", "0:INT"),
+                new TypeVal(ColumnType.INT, "NaN:INT", "1:INT"),
+                new TypeVal(ColumnType.LONG, "NaN:LONG", "1:LONG"),
+                new TypeVal(ColumnType.DATE, ":DATE", "1970-01-01T00:00:00.001Z:DATE"),
+                new TypeVal(ColumnType.TIMESTAMP, ":TIMESTAMP", "1970-01-01T00:00:00.000001Z:TIMESTAMP"),
+                new TypeVal(ColumnType.FLOAT, "NaN:FLOAT", "1.0000:FLOAT"),
+                new TypeVal(ColumnType.DOUBLE, "NaN:DOUBLE", "1.0:DOUBLE"),
+                new TypeVal(ColumnType.IPv4, ":IPv4", "0.0.0.1:IPv4")
         };
 
         testAggregations(aggregateFunctions, aggregateColTypes);
@@ -1656,13 +1655,13 @@ public class AggregateTest extends AbstractCairoTest {
     public void testSumAggregationsWithTypes() throws Exception {
         String[] aggregateFunctions = {"sum"};
         TypeVal[] aggregateColTypes = {
-                new TypeVal(ColumnType.BYTE, "0:LONG", "1:LONG", (r, i) -> r.putByte(i, (byte) 1)),
-                new TypeVal(ColumnType.SHORT, "0:LONG", "1:LONG", (r, i) -> r.putShort(i, (short) 1)),
-                new TypeVal(ColumnType.INT, "NaN:LONG", "1:LONG", (r, i) -> r.putInt(i, 1)),
-                new TypeVal(ColumnType.LONG, "NaN:LONG", "1:LONG", (r, i) -> r.putLong(i, 1)),
-                new TypeVal(ColumnType.FLOAT, "NaN:FLOAT", "1.0000:FLOAT", (r, i) -> r.putFloat(i, 1)),
-                new TypeVal(ColumnType.DOUBLE, "NaN:DOUBLE", "1.0:DOUBLE", (r, i) -> r.putDouble(i, 1)),
-                new TypeVal(ColumnType.LONG256, ":LONG256", "0x01000000000000000100000000000000010000000000000001:LONG256", (r, i) -> r.putLong256(i, 1, 1, 1, 1))
+                new TypeVal(ColumnType.BYTE, "0:LONG", "1:LONG"),
+                new TypeVal(ColumnType.SHORT, "0:LONG", "1:LONG"),
+                new TypeVal(ColumnType.INT, "NaN:LONG", "1:LONG"),
+                new TypeVal(ColumnType.LONG, "NaN:LONG", "1:LONG"),
+                new TypeVal(ColumnType.FLOAT, "NaN:FLOAT", "1.0000:FLOAT"),
+                new TypeVal(ColumnType.DOUBLE, "NaN:DOUBLE", "1.0:DOUBLE"),
+                new TypeVal(ColumnType.LONG256, ":LONG256", "0x01000000000000000100000000000000010000000000000001:LONG256")
         };
 
         testAggregations(aggregateFunctions, aggregateColTypes);
@@ -2099,7 +2098,54 @@ public class AggregateTest extends AbstractCairoTest {
             TableWriter.Row row = writer.newRow();
             for (int i = 0; i < aggregateColTypes.length; i++) {
                 TypeVal colType = aggregateColTypes[i];
-                colType.rowWriter.write(row, i);
+                switch (ColumnType.tagOf(colType.columnType)) {
+                    case ColumnType.STRING:
+                        row.putStr(i, "abc");
+                        break;
+                    case ColumnType.SYMBOL:
+                        row.putSym(i, "abc");
+                        break;
+                    case ColumnType.CHAR:
+                        row.putChar(i, 'a');
+                        break;
+                    case ColumnType.BOOLEAN:
+                        row.putBool(i, true);
+                        break;
+                    case ColumnType.FLOAT:
+                        row.putFloat(i, 1);
+                        break;
+                    case ColumnType.DOUBLE:
+                        row.putDouble(i, 1);
+                        break;
+                    case ColumnType.BYTE:
+                    case ColumnType.GEOBYTE:
+                        row.putByte(i, (byte) 1);
+                        break;
+                    case ColumnType.SHORT:
+                    case ColumnType.GEOSHORT:
+                        row.putShort(i, (short) 1);
+                        break;
+                    case ColumnType.INT:
+                    case ColumnType.GEOINT:
+                    case ColumnType.IPv4:
+                        row.putInt(i, 1);
+                        break;
+                    case ColumnType.LONG:
+                    case ColumnType.GEOLONG:
+                    case ColumnType.TIMESTAMP:
+                    case ColumnType.DATE:
+                        row.putLong(i, 1);
+                        break;
+                    case ColumnType.LONG128:
+                    case ColumnType.UUID:
+                        row.putLong128(i, 1, 1);
+                        break;
+                    case ColumnType.LONG256:
+                        row.putLong256(i, 1, 1, 1, 1);
+                        break;
+                    default:
+                        throw new IllegalArgumentException("Unsupported column type: " + colType.columnType);
+                }
             }
             row.append();
             writer.commit();
@@ -2137,23 +2183,17 @@ public class AggregateTest extends AbstractCairoTest {
         }
     }
 
-    private interface RowWriter {
-        void write(TableWriter.Row r, int columnIndex);
-    }
-
     private static class TypeVal {
         public final String colName;
         public final int columnType;
         public final String emptyValue;
         public final String funcArg;
         public final String nonEmptyValue;
-        public final RowWriter rowWriter;
 
-        public TypeVal(int columnType, String emptyValue, String nonEmptyValue, RowWriter rowWriter) {
+        public TypeVal(int columnType, String emptyValue, String nonEmptyValue) {
             this.columnType = columnType;
             this.emptyValue = emptyValue;
             this.nonEmptyValue = nonEmptyValue;
-            this.rowWriter = rowWriter;
             colName = getColumnName(columnType);
             funcArg = colName;
         }
