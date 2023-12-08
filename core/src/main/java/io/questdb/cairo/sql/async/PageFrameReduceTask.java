@@ -132,8 +132,7 @@ public class PageFrameReduceTask implements Closeable {
         if (type == TYPE_FILTER) {
             filteredRows.clear();
         } else if (type == TYPE_GROUP_BY) {
-            groupByMap.setTypes(frameSequence.getGroupByKeyTypes(), frameSequence.getGroupByValueTypes());
-            groupByMap.clear();
+            groupByMap.resetTypes(frameSequence.getGroupByKeyTypes(), frameSequence.getGroupByValueTypes());
         }
     }
 

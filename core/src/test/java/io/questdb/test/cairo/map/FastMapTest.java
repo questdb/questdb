@@ -1105,6 +1105,72 @@ public class FastMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testResetTypesCalledMultipleTimes() {
+        try (FastMap map = new FastMap(1024, null, null, 64, 0.8, 24)) {
+            ArrayColumnTypes keyTypes = new ArrayColumnTypes();
+            keyTypes.add(ColumnType.INT);
+
+            ArrayColumnTypes valueTypes = new ArrayColumnTypes();
+            valueTypes.add(ColumnType.LONG);
+
+            map.resetTypes(keyTypes, valueTypes);
+
+            final int N = 1000;
+            for (int i = 0; i < N; i++) {
+                MapKey key = map.withKey();
+                key.putInt(i);
+
+                MapValue value = key.createValue();
+                Assert.assertTrue(value.isNew());
+                value.putLong(0, i + 1);
+            }
+
+            Assert.assertEquals(N, map.size());
+
+            for (int i = 0; i < N; i++) {
+                MapKey key = map.withKey();
+                key.putInt(i);
+
+                MapValue value = key.findValue();
+                Assert.assertFalse(value.isNew());
+                Assert.assertEquals(i + 1, value.getLong(0));
+            }
+
+            // Now clear the map and change the types.
+            // We expect the map to be usable with new types.
+
+            keyTypes = new ArrayColumnTypes();
+            keyTypes.add(ColumnType.STRING);
+
+            valueTypes = new ArrayColumnTypes();
+            valueTypes.add(ColumnType.INT);
+
+            map.resetTypes(keyTypes, valueTypes);
+
+            final int M = 1001;
+            for (int i = 0; i < M; i++) {
+                MapKey key = map.withKey();
+                key.putStr(String.valueOf(i));
+
+                MapValue value = key.createValue();
+                Assert.assertTrue(value.isNew());
+                value.putInt(0, i + 1);
+            }
+
+            Assert.assertEquals(M, map.size());
+
+            for (int i = 0; i < M; i++) {
+                MapKey key = map.withKey();
+                key.putStr(String.valueOf(i));
+
+                MapValue value = key.findValue();
+                Assert.assertFalse(value.isNew());
+                Assert.assertEquals(i + 1, value.getInt(0));
+            }
+        }
+    }
+
+    @Test
     public void testRowIdAccess() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             ColumnTypes types = new SingleColumnType(ColumnType.INT);
@@ -1144,73 +1210,6 @@ public class FastMapTest extends AbstractCairoTest {
                 }
             }
         });
-    }
-
-    @Test
-    public void testSetTypesCalledMultipleTimes() {
-        try (FastMap map = new FastMap(1024, null, null, 64, 0.8, 24)) {
-            ArrayColumnTypes keyTypes = new ArrayColumnTypes();
-            keyTypes.add(ColumnType.INT);
-
-            ArrayColumnTypes valueTypes = new ArrayColumnTypes();
-            valueTypes.add(ColumnType.LONG);
-
-            map.setTypes(keyTypes, valueTypes);
-
-            final int N = 1000;
-            for (int i = 0; i < N; i++) {
-                MapKey key = map.withKey();
-                key.putInt(i);
-
-                MapValue value = key.createValue();
-                Assert.assertTrue(value.isNew());
-                value.putLong(0, i + 1);
-            }
-
-            Assert.assertEquals(N, map.size());
-
-            for (int i = 0; i < N; i++) {
-                MapKey key = map.withKey();
-                key.putInt(i);
-
-                MapValue value = key.findValue();
-                Assert.assertFalse(value.isNew());
-                Assert.assertEquals(i + 1, value.getLong(0));
-            }
-
-            // Now clear the map and change the types.
-            // We expect the map to be usable with new types.
-
-            keyTypes = new ArrayColumnTypes();
-            keyTypes.add(ColumnType.STRING);
-
-            valueTypes = new ArrayColumnTypes();
-            valueTypes.add(ColumnType.INT);
-
-            map.clear();
-            map.setTypes(keyTypes, valueTypes);
-
-            final int M = 1001;
-            for (int i = 0; i < M; i++) {
-                MapKey key = map.withKey();
-                key.putStr(String.valueOf(i));
-
-                MapValue value = key.createValue();
-                Assert.assertTrue(value.isNew());
-                value.putInt(0, i + 1);
-            }
-
-            Assert.assertEquals(M, map.size());
-
-            for (int i = 0; i < M; i++) {
-                MapKey key = map.withKey();
-                key.putStr(String.valueOf(i));
-
-                MapValue value = key.findValue();
-                Assert.assertFalse(value.isNew());
-                Assert.assertEquals(i + 1, value.getInt(0));
-            }
-        }
     }
 
     @Test

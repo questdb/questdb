@@ -32,6 +32,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -82,6 +83,107 @@ public class ParallelGroupByTest extends AbstractCairoTest {
     public void setUp() {
         super.setUp();
         configOverrideParallelGroupByEnabled(enableParallelGroupBy);
+    }
+
+    @Test
+    public void testGroupByOverJoin() throws Exception {
+        // Parallel GROUP BY shouldn't kick in on this query, yet we want
+        // to make sure the result correctness.
+        Assume.assumeTrue(enableParallelGroupBy);
+        assertMemoryLeak(() -> {
+            ddl(
+                    "CREATE TABLE t (\n" +
+                            "  created timestamp,\n" +
+                            "  event short,\n" +
+                            "  origin short\n" +
+                            ") TIMESTAMP(created) PARTITION BY DAY;"
+            );
+            insert("INSERT INTO t VALUES ('2023-09-21T10:00:00.000000Z', 1, 1);");
+            insert("INSERT INTO t VALUES ('2023-09-21T11:00:00.000000Z', 1, 1);");
+
+            assertQuery(
+                    "count\n" +
+                            "2\n",
+                    "SELECT count(1)\n" +
+                            "FROM t as T1 JOIN t as T2 ON T1.created = T2.created\n" +
+                            "WHERE T1.event = 1.0",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testGroupByOverLatestBy() throws Exception {
+        // Parallel GROUP BY shouldn't kick in on this query, yet we want
+        // to make sure the result correctness.
+        Assume.assumeTrue(enableParallelGroupBy);
+        assertMemoryLeak(() -> {
+            ddl(
+                    "CREATE TABLE t (\n" +
+                            "  created timestamp,\n" +
+                            "  event symbol,\n" +
+                            "  origin symbol\n" +
+                            ") TIMESTAMP(created) PARTITION BY DAY;"
+            );
+            insert("INSERT INTO t VALUES ('2023-09-21T10:00:00.000000Z', 'a', 'c');");
+            insert("INSERT INTO t VALUES ('2023-09-21T10:00:01.000000Z', 'a', 'c');");
+            insert("INSERT INTO t VALUES ('2023-09-21T10:00:02.000000Z', 'a', 'd');");
+            insert("INSERT INTO t VALUES ('2023-09-21T10:00:00.000000Z', 'b', 'c');");
+            insert("INSERT INTO t VALUES ('2023-09-21T10:00:01.000000Z', 'b', 'c');");
+
+            assertQuery(
+                    "count\n" +
+                            "2\n",
+                    "SELECT count()\n" +
+                            "FROM t\n" +
+                            "WHERE origin = 'c'\n" +
+                            "LATEST ON created PARTITION BY event",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testGroupByOverUnion() throws Exception {
+        // Parallel GROUP BY shouldn't kick in on this query, yet we want
+        // to make sure the result correctness.
+        Assume.assumeTrue(enableParallelGroupBy);
+        assertMemoryLeak(() -> {
+            ddl(
+                    "CREATE TABLE t1 (\n" +
+                            "  created timestamp,\n" +
+                            "  event short,\n" +
+                            "  origin short\n" +
+                            ") TIMESTAMP(created) PARTITION BY DAY;"
+            );
+            insert("INSERT INTO t1 VALUES ('2023-09-21T10:00:00.000000Z', 1, 1);");
+            insert("INSERT INTO t1 VALUES ('2023-09-21T10:00:01.000000Z', 2, 2);");
+
+            ddl(
+                    "CREATE TABLE t2 (\n" +
+                            "  created timestamp,\n" +
+                            "  event short,\n" +
+                            "  origin short\n" +
+                            ") TIMESTAMP(created) PARTITION BY DAY;"
+            );
+            insert("INSERT INTO t2 VALUES ('2023-09-21T10:00:02.000000Z', 3, 1);");
+            insert("INSERT INTO t2 VALUES ('2023-09-21T10:00:00.000000Z', 4, 2);");
+
+            assertQuery(
+                    "event\tcount\n" +
+                            "1\t1\n" +
+                            "3\t1\n",
+                    "SELECT event, count()\n" +
+                            "FROM (t1 UNION t2) WHERE origin = 1",
+                    null,
+                    true,
+                    true
+            );
+        });
     }
 
     @Test

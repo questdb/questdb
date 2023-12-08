@@ -3258,9 +3258,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (enableParallelGroupBy && GroupByUtils.supportParallelism(groupByFunctions)) {
                 supportsParallelism = factory.supportPageFrameCursor();
                 // Try to steal the filter from the nested model, if possible.
+                // We aim for simple cases such as select key, avg(value) from t where value > 0
                 if (
                         !supportsParallelism
-                                && !factory.usesIndex()
+                                && !factory.usesIndex() // favor index-based access
                                 && nested.getSelectModelType() == QueryModel.SELECT_MODEL_NONE
                                 && nested.getNestedModel() == null
                                 && nested.getLatestByType() == LATEST_BY_NONE // no latest by

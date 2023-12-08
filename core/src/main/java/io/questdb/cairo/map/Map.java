@@ -41,11 +41,12 @@ public interface Map extends Mutable, Closeable, Reopenable {
 
     MapRecord getRecord();
 
-    void restoreInitialCapacity();
-
-    default void setTypes(@NotNull ColumnTypes keyTypes, @Nullable ColumnTypes valueTypes) {
+    // Calls clear() implicitly.
+    default void resetTypes(@NotNull ColumnTypes keyTypes, @Nullable ColumnTypes valueTypes) {
         throw new UnsupportedOperationException();
     }
+
+    void restoreInitialCapacity();
 
     long size();
 
