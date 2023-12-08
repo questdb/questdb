@@ -103,6 +103,7 @@ public class Services {
         HttpServer.HttpRequestProcessorBuilder ilpWriteProcessorBuilder = () -> new LineHttpProcessor(
                 cairoEngine,
                 configuration.getHttpContextConfiguration().getRecvBufferSize(),
+                configuration.getHttpContextConfiguration().getSendBufferSize(),
                 configuration.getLineHttpProcessorConfiguration()
         );
 

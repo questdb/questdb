@@ -29,6 +29,7 @@ import io.questdb.ServerMain;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
@@ -43,7 +44,6 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
-import static io.questdb.PropertyKey.HTTP_SERVER_KEEP_ALIVE;
 import static io.questdb.test.cutlass.http.line.IlpHttpUtils.*;
 
 public class InfluxClientTest extends AbstractBootstrapTest {
@@ -69,27 +69,27 @@ public class InfluxClientTest extends AbstractBootstrapTest {
 
                     assertRequestErrorContains(influxDB, points, "ex_tbl b\\\"c=1024 1233456\n", "{" +
                             "\"code\":\"invalid\"," +
-                            "\"message\":\"failed to parse line protocol: errors encountered on line(s):\\n" +
+                            "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
                             "error in line 1: table: ex_tbl; invalid column name: b\\\"c\",\"line\":1,\"errorId\":");
 
                     assertRequestErrorContains(influxDB, points, "ex_tbl b=1024 1233456\n", "{" +
                             "\"code\":\"invalid\"," +
-                            "\"message\":\"failed to parse line protocol: errors encountered on line(s):\\n" +
+                            "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
                             "error in line 1: table: ex_tbl, column: b; cast error from protocol type: FLOAT to column type: BYTE\",\"line\":1,\"errorId\":");
 
                     assertRequestErrorContains(influxDB, points, "ex_tbl b=1024i 1233456\n", "{" +
                             "\"code\":\"invalid\"," +
-                            "\"message\":\"failed to parse line protocol: errors encountered on line(s):\\n" +
+                            "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
                             "error in line 1: table: ex_tbl, column: b; line protocol value: 1024 is out bounds of column type: BYTE\",\"line\":1,\"errorId\":");
 
                     assertRequestErrorContains(influxDB, points, "ex_tbl i=1024.2 1233456\n", "{" +
                             "\"code\":\"invalid\"," +
-                            "\"message\":\"failed to parse line protocol: errors encountered on line(s):\\n" +
+                            "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
                             "error in line 1: table: ex_tbl, column: i; cast error from protocol type: FLOAT to column type: INT\",\"line\":1,\"errorId\":");
 
                     assertRequestErrorContains(influxDB, points, "ex_tbl str=1024.2 1233456\n", "{" +
                             "\"code\":\"invalid\"," +
-                            "\"message\":\"failed to parse line protocol: errors encountered on line(s):\\n" +
+                            "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
                             "error in line 1: table: ex_tbl, column: str; cast error from protocol type: FLOAT to column type: STRING\",\"line\":1,\"errorId\":");
                 }
             }
@@ -111,18 +111,70 @@ public class InfluxClientTest extends AbstractBootstrapTest {
                     List<String> points = new ArrayList<>();
                     assertRequestErrorContains(influxDB, points, "badPo\"int,a3=2 1233456\n", "{" +
                             "\"code\":\"invalid\"," +
-                            "\"message\":\"failed to parse line protocol: errors encountered on line(s):\\n" +
+                            "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
                             "error in line 1: table: badPo\\\"int; invalid table name\",\"line\":1,\"errorId\":");
 
                     assertRequestErrorContains(influxDB, points, "badPoint,bad\"symbol=2 1233456\n", "{" +
                             "\"code\":\"invalid\"," +
-                            "\"message\":\"failed to parse line protocol: errors encountered on line(s):\\n" +
+                            "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
                             "error in line 1: table: badPoint; invalid column name: bad\\\"symbol\",\"line\":1,\"errorId\":");
+
+                    assertRequestErrorContains(influxDB, points, "badPoint,symbol=2 bad\\\\column=1 1233456\n", "{" +
+                            "\"code\":\"invalid\"," +
+                            "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\nerror in line 1: table: badPoint; invalid column name: bad\\\\" +
+                            "\",\"line\":1,\"errorId\":");
+
+                    assertRequestErrorContains(influxDB, points, "badPoint,symbol=2 bad/column=1 1233456\n", "{" +
+                            "\"code\":\"invalid\"," +
+                            "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\nerror in line 1: table: badPoint; invalid column name: bad/" +
+                            "\",\"line\":1,\"errorId\":");
+
+                    assertRequestErrorContains(influxDB, points, "badPoint,symbol=2 colu+mn=1 1233456\n", "{" +
+                            "\"code\":\"invalid\"," +
+                            "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\nerror in line 1: table: badPoint; invalid column name: colu+mn" +
+                            "\",\"line\":1,\"errorId\":");
+
+                    assertRequestErrorContains(influxDB, points, "badPoint,sym+bol=2 column=1 1233456\n", "{" +
+                            "\"code\":\"invalid\"," +
+                            "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\nerror in line 1: table: badPoint; invalid column name: sym+bol" +
+                            "\",\"line\":1,\"errorId\":");
 
                     assertRequestErrorContains(influxDB, points, "wal_not_here a=1,b=1 1233456\n", "{" +
                             "\"code\":\"invalid\"," +
-                            "\"message\":\"failed to parse line protocol: errors encountered on line(s):\\n" +
+                            "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
                             "error in line 1: table: wal_not_here; cannot insert in non-WAL table\",\"line\":1,\"errorId\":");
+
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testErrorDoesNotFitResponseBuffer() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "4096",
+                    PropertyKey.HTTP_SEND_BUFFER_SIZE.getEnvVarName(), "512"
+            )) {
+                serverMain.start();
+                serverMain.compile("create table wal_not_here(b byte, s short, f float, d double, str string, sym symbol, tss timestamp, " +
+                        "i int, l long, ip ipv4, g geohash(4c), ts timestamp)");
+
+                try (final InfluxDB influxDB = IlpHttpUtils.getConnection(serverMain)) {
+
+                    List<String> points = new ArrayList<>();
+
+                    StringSink sink = new StringSink();
+                    for (int i = 0; i < 1024; i++) {
+                        sink.put("a");
+                    }
+                    sink.put(" f=123 1233456\n");
+
+                    points.add(sink.toString());
+                    assertRequestErrorContains(influxDB, points, sink.toString(),
+                            "{\"code\":\"invalid\",\"message\":\"failed to parse line protocol:errors encountered on line(s):\\nerror in line 1: table: aaaa",
+                            "\"line\":1,\"errorId\":\""
+                    );
 
                 }
             }
@@ -289,7 +341,7 @@ public class InfluxClientTest extends AbstractBootstrapTest {
                             "very_long_field=92827791");
 
                     assertRequestErrorContains(influxDB, points, "{\"code\":\"request too large\"," +
-                            "\"message\":\"failed to parse line protocol: errors encountered on line(s):unable to read data: ILP line does not fit QuestDB ILP buffer size\"," +
+                            "\"message\":\"failed to parse line protocol:errors encountered on line(s):unable to read data: ILP line does not fit QuestDB ILP buffer size\"," +
                             "\"line\":1,\"errorId\":");
 
                     // Fail on second line
@@ -309,7 +361,7 @@ public class InfluxClientTest extends AbstractBootstrapTest {
                             "very_long_field=92827791");
 
                     assertRequestErrorContains(influxDB, points, "{\"code\":\"request too large\"," +
-                            "\"message\":\"failed to parse line protocol: errors encountered on line(s):unable to read data: ILP line does not fit QuestDB ILP buffer size\"," +
+                            "\"message\":\"failed to parse line protocol:errors encountered on line(s):unable to read data: ILP line does not fit QuestDB ILP buffer size\"," +
                             "\"line\":2,\"errorId\":");
                 }
             }
@@ -329,57 +381,57 @@ public class InfluxClientTest extends AbstractBootstrapTest {
                     points.add("good_point,sym=a str=\"abdc\",num=1 1233456\n");
                     assertRequestErrorContains(influxDB, points, "badPoint a3 1233456\n", "{" +
                             "\"code\":\"invalid\"," +
-                            "\"message\":\"failed to parse line protocol: errors encountered on line(s):\\n" +
+                            "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
                             "error in line 2: Could not parse entire line. Field value is missing: a3\"," +
                             "\"line\":2,\"errorId\":");
 
                     assertRequestErrorContains(influxDB, points, "badPoint,bad,symbol=2 1233456\n", "{" +
                             "\"code\":\"invalid\"," +
-                            "\"message\":\"failed to parse line protocol: errors encountered on line(s):\\n" +
-                            "error in line 1: Could not parse entire line. Tag value is missing: bad\",\"line\":1,\"errorId\":");
+                            "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
+                            "error in line 1: Could not parse entire line. Symbol value is missing: bad\",\"line\":1,\"errorId\":");
 
                     assertRequestErrorContains(influxDB, points, "good_point, nonasciibadꠇ,field=2 1233456\n", "{" +
                             "\"code\":\"invalid\"," +
-                            "\"message\":\"failed to parse line protocol: errors encountered on line(s):\\n" +
+                            "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
                             "error in line 1: Could not parse entire line. Field value is missing: nonasciibadꠇ\",\"line\":1,\"errorId\":");
 
                     assertRequestErrorContains(influxDB, points, "good_point, nonjson\\\"bad,field=2 1233456\n", "{" +
                             "\"code\":\"invalid\"," +
-                            "\"message\":\"failed to parse line protocol: errors encountered on line(s):\\n" +
+                            "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
                             "error in line 1: Could not parse entire line. Field value is missing: nonjson\\\"bad\",\"line\":1,\"errorId\":");
 
                     assertRequestErrorContains(influxDB, points, "good_point, bad,field=2 1233456\n", "{" +
                             "\"code\":\"invalid\"," +
-                            "\"message\":\"failed to parse line protocol: errors encountered on line(s):\\n" +
+                            "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
                             "error in line 1: Could not parse entire line. Field value is missing: bad\",\"line\":1,\"errorId\":");
 
                     assertRequestErrorContains(influxDB, points, "badPoint,a3 1233456\n", "{" +
                             "\"code\":\"invalid\"," +
-                            "\"message\":\"failed to parse line protocol: errors encountered on line(s):\\n" +
-                            "error in line 1: Could not parse entire line. Tag value is missing: a3\"," +
+                            "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
+                            "error in line 1: Could not parse entire line. Symbol value is missing: a3\"," +
                             "\"line\":1" +
                             ",\"errorId\":");
 
                     assertRequestErrorContains(influxDB, points, "badPoint,a3=4 1233456ab\n", "{" +
                             "\"code\":\"invalid\"," +
-                            "\"message\":\"failed to parse line protocol: errors encountered on line(s):\\n" +
+                            "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
                             "error in line 1: Could not parse timestamp: 1233456ab\"," +
                             "\"line\":1" +
                             ",\"errorId\":");
 
                     assertRequestErrorContains(influxDB, points, "badPoint d=1024.2 123345689909909898798\n", "{" +
                             "\"code\":\"invalid\"," +
-                            "\"message\":\"failed to parse line protocol: errors encountered on line(s):\\n" +
+                            "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
                             "error in line 1: Could not parse timestamp: 123345689909909898798\",\"line\":1,\"errorId\":");
 
                     assertRequestErrorContains(influxDB, points, "badPoint d=10a24.2", "{" +
                             "\"code\":\"invalid\"," +
-                            "\"message\":\"failed to parse line protocol: errors encountered on line(s):\\n" +
+                            "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
                             "error in line 1: Could not parse entire line, field value is invalid. Field: d; value: 10a24.2\",\"line\":1,\"errorId\":");
 
                     assertRequestErrorContains(influxDB, points, "badPoint,tag1=\"asdf\" d=1024.2", "{" +
                             "\"code\":\"invalid\"," +
-                            "\"message\":\"failed to parse line protocol: errors encountered on line(s):\\n" +
+                            "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
                             "error in line 1: Could not parse entire line, tag value is invalid. Tag: tag1; value: \\\"asdf\\\"\",\"line\":1,\"errorId\":");
                 }
 
@@ -428,12 +480,12 @@ public class InfluxClientTest extends AbstractBootstrapTest {
                     List<String> points = new ArrayList<>();
                     assertRequestErrorContains(influxDB, points, "ex_tbl,a3=2 1222233456\n", "{" +
                             "\"code\":\"invalid\"," +
-                            "\"message\":\"failed to parse line protocol: errors encountered on line(s):\\n" +
+                            "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
                             "error in line 1: table: ex_tbl, column: a3 does not exist, creating new columns is disabled\",\"line\":1,\"errorId\":");
 
                     assertRequestErrorContains(influxDB, points, "ex_tbl2, d=2 1222233456\n", "{" +
                             "\"code\":\"invalid\"," +
-                            "\"message\":\"failed to parse line protocol: errors encountered on line(s):\\n" +
+                            "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
                             "error in line 1: table: ex_tbl2; table does not exist, cannot create table, creating new columns is disabled\",\"line\":1,\"errorId\":");
 
                 }
@@ -458,12 +510,12 @@ public class InfluxClientTest extends AbstractBootstrapTest {
                     List<String> points = new ArrayList<>();
                     assertRequestErrorContains(influxDB, points, "ex_tbl,a3=2 1222233456\n", "{" +
                             "\"code\":\"invalid\"," +
-                            "\"message\":\"failed to parse line protocol: errors encountered on line(s):\\n" +
+                            "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
                             "error in line 1: table: ex_tbl, column: a3 does not exist, creating new columns is disabled\",\"line\":1,\"errorId\":");
 
                     assertRequestErrorContains(influxDB, points, "ex_tbl2, d=2 1222233456\n", "{" +
                             "\"code\":\"invalid\"," +
-                            "\"message\":\"failed to parse line protocol: errors encountered on line(s):\\n" +
+                            "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
                             "error in line 1: table: ex_tbl2; table does not exist, creating new tables is disabled\",\"line\":1,\"errorId\":");
 
                 }

@@ -44,6 +44,8 @@ public interface LineHttpProcessorConfiguration {
 
     LineTcpTimestampAdapter getTimestampAdapter();
 
+    boolean isEnabled();
+
     boolean isStringAsTagSupported();
 
     boolean isStringToCharCastAllowed();

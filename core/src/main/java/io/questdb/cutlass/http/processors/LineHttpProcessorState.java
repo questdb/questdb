@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitFailedException;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cutlass.http.ConnectionAware;
+import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.line.tcp.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -47,6 +48,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
     private final IlpWalAppender appender;
     private final StringSink error = new StringSink();
     private final IlpTudCache ilpTudCache;
+    private final int maxResponseErrorMessageLength;
     private final LineTcpParser parser;
     private final int recvBufSize;
     private final WeakClosableObjectPool<SymbolCache> symbolCachePool;
@@ -60,9 +62,14 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
     private long recvBufPos;
     private long recvBufStartOfMeasurement;
 
-    public LineHttpProcessorState(int recvBufSize, CairoEngine engine, LineHttpProcessorConfiguration configuration) {
+    public LineHttpProcessorState(int recvBufSize, int maxResponseContentLength, CairoEngine engine, LineHttpProcessorConfiguration configuration) {
         assert recvBufSize > 0;
         this.recvBufSize = recvBufSize;
+
+        assert HttpServerConfiguration.MIN_SEND_BUFFER_SIZE > 100;
+        // Response is measured in bytes some error messages can have non-ascii characters
+        // approximate 1.5 bytes per character
+        this.maxResponseErrorMessageLength = (int) ((maxResponseContentLength - 100) / 1.5);
         this.recvBufPos = this.buffer = Unsafe.malloc(recvBufSize, MemoryTag.NATIVE_HTTP_CONN);
         this.recvBufEnd = this.recvBufPos + recvBufSize;
         this.parser = new LineTcpParser(configuration.isStringAsTagSupported(), configuration.isSymbolAsFieldSupported());
@@ -116,11 +123,12 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
 
     public void formatError(Utf8Sink sink) {
         sink.putAscii("{\"code\":\"").putAscii(currentStatus.codeStr);
-        sink.putAscii("\",\"message\":\"").putAscii("failed to parse line protocol: ");
+        sink.putAscii("\",\"message\":\"");
         if (errorLine > -1) {
+            sink.putAscii("failed to parse line protocol:");
             sink.putAscii("errors encountered on line(s):");
         }
-        sink.put(error);
+        sink.put(error, 0, Math.min(error.length(), maxResponseErrorMessageLength));
         if (errorLine > -1) {
             sink.putAscii("\",\"line\":").put(errorLine);
         }
@@ -222,6 +230,10 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         return lo + copyLen;
     }
 
+    private long getErrorLogLineHi(LineTcpParser parser) {
+        return Math.min(parser.getBufferAddress() + 1, recvBufPos);
+    }
+
     private Status handleCommitError(Throwable ex) {
         errorId = ERROR_COUNT.incrementAndGet();
         LOG.critical()
@@ -253,7 +265,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
                 error.put(": Could not parse entire line. Field value is missing: ").put(parser.getLastEntityName());
                 break;
             case MISSING_TAG_VALUE:
-                error.put(": Could not parse entire line. Tag value is missing: ").put(parser.getLastEntityName());
+                error.put(": Could not parse entire line. Symbol value is missing: ").put(parser.getLastEntityName());
                 break;
             case INVALID_TIMESTAMP:
                 error.put(": Could not parse timestamp: ").put(parser.getErrorTimestampValue());
@@ -265,6 +277,10 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
             case INVALID_TAG_VALUE:
                 error.put(": Could not parse entire line, tag value is invalid. Tag: ")
                         .put(parser.getLastEntityName()).put("; value: ").put(parser.getErrorFieldValue());
+                break;
+            case INVALID_COLUMN_NAME:
+                error.put(": table: ").put(parser.getMeasurementName()).put("; invalid column name: ")
+                        .put(parser.getLastEntityName());
                 break;
             default:
                 error.put(": ").put(String.valueOf(parser.getErrorCode()));
@@ -296,7 +312,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
                 .$('[').$(fd).$("] could not process line data [table=").$(parser.getMeasurementName())
                 .$(", errorId=").$(ERROR_ID).$('-').$(errorId)
                 .$(", errno=").$(ex.getErrno())
-                .$(", mangledLine=`").$utf8(recvBufStartOfMeasurement == 0 ? buffer : recvBufStartOfMeasurement, parser.getBufferAddress()).$('`')
+                .$(", mangledLine=`").$utf8(recvBufStartOfMeasurement == 0 ? buffer : recvBufStartOfMeasurement, getErrorLogLineHi(parser)).$('`')
                 .$(", ex=").$(ex.getFlyweightMessage())
                 .I$();
 
@@ -311,7 +327,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         errorId = ERROR_COUNT.incrementAndGet();
         LOG.critical()
                 .$('[').$(fd).$("] could not process line data [table=").$(parser.getMeasurementName())
-                .$(", mangledLine=`").$utf8(recvBufStartOfMeasurement == 0 ? buffer : recvBufStartOfMeasurement, parser.getBufferAddress()).$('`')
+                .$(", mangledLine=`").$utf8(recvBufStartOfMeasurement == 0 ? buffer : recvBufStartOfMeasurement, getErrorLogLineHi(parser)).$('`')
                 .$(", errorId=").$(ERROR_ID).$('-').$(errorId)
                 .$(", ex=").$(ex.getMessage())
                 .I$();

@@ -27,12 +27,14 @@ package io.questdb.test.cutlass.http.line;
 import io.questdb.Bootstrap;
 import io.questdb.DefaultBootstrapConfiguration;
 import io.questdb.DefaultHttpClientConfiguration;
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Os;
@@ -95,7 +97,7 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
                     assertRequestOk(influxDB, points, "m1,tag1=value1 f1=1i,y=12i");
 
                     assertRequestErrorContains(influxDB, points, "m1,tag1=value1 f1=1i,x=12i",
-                            "failed to parse line protocol: errors encountered on line(s):write error: m1, errno: ",
+                            "errors encountered on line(s):write error: m1, errno: ",
                             ",\"errorId\":",
                             ", error: could not open read-write"
                     );
@@ -137,8 +139,7 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
                     assertRequestOk(influxDB, points, "m1,tag1=value1 f1=1i,y=12i");
 
                     assertRequestErrorContains(influxDB, points, "m1,tag1=value1 f1=1i,x=12i",
-                            "{\"code\":\"internal error\",\"message\":\"failed to parse line protocol: " +
-                                    "errors encountered on line(s):write error: m1, error: java.lang.OutOfMemoryError\"," +
+                            "{\"code\":\"internal error\",\"message\":\"failed to parse line protocol:errors encountered on line(s):write error: m1, error: java.lang.OutOfMemoryError\"," +
                                     "\"line\":1,\"errorId\"",
                             ",\"errorId\":"
                     );
@@ -146,6 +147,135 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
                     // Retry is ok
                     assertRequestOk(influxDB, points, "m1,tag1=value1 f1=1i,x=12i");
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testClientDisconnectedBeforeCommitted() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            AtomicReference<HttpClient> httpClientRef = new AtomicReference<>();
+            SOCountDownLatch ping = new SOCountDownLatch(1);
+            SOCountDownLatch pong = new SOCountDownLatch(1);
+            final FilesFacade filesFacade = new TestFilesFacadeImpl() {
+                @Override
+                public int openRW(LPSZ name, long opts) {
+                    if (Utf8s.endsWithAscii(name, "field1.d")) {
+                        ping.await();
+                        httpClientRef.get().disconnect();
+                        pong.countDown();
+                    }
+                    int fd = super.openRW(name, opts);
+                    return fd;
+                }
+            };
+
+            final Bootstrap bootstrap = new Bootstrap(new DefaultBootstrapConfiguration() {
+                @Override
+                public FilesFacade getFilesFacade() {
+                    return filesFacade;
+                }
+            }, TestUtils.getServerMainArgs(root));
+
+            try (final TestServerMain serverMain = new TestServerMain(bootstrap)) {
+                serverMain.start();
+                AtomicInteger walWriterTaken = countWalWriterTakenFromPool(serverMain);
+
+                try (HttpClient httpClient = HttpClientFactory.newInstance(new DefaultHttpClientConfiguration())) {
+                    httpClientRef.set(httpClient);
+                    String line = "line,sym1=123 field1=123i 1234567890000000000\n";
+
+                    for (int i = 0; i < 10; i++) {
+                        HttpClient.Request request = httpClient.newRequest();
+                        request.POST()
+                                .url("/write ")
+                                .withContent()
+                                .putAscii(line)
+                                .putAscii(line)
+                                .send("localhost", getHttpPort(serverMain));
+                        ping.countDown();
+                        pong.await();
+                    }
+                }
+
+                assertEventually(() -> {
+                    // Table is create but no line should be committed
+                    TableToken tt = serverMain.getEngine().getTableTokenIfExists("line");
+                    Assert.assertNotNull(tt);
+                    Assert.assertEquals(-1, getSeqTxn(serverMain, tt));
+
+                    // Assert no Wal Writers are left in ILP http TUD cache
+                    Assert.assertEquals(0, walWriterTaken.get());
+                });
+            }
+        });
+    }
+
+    @Test
+    public void testClientDisconnectedDuringCommit() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            AtomicReference<HttpClient> httpClientRef = new AtomicReference<>();
+            SOCountDownLatch ping = new SOCountDownLatch(1);
+            SOCountDownLatch pong = new SOCountDownLatch(1);
+            AtomicInteger counter = new AtomicInteger(2);
+            final FilesFacade filesFacade = new TestFilesFacadeImpl() {
+
+                @Override
+                public long append(int fd, long buf, int len) {
+                    if (fd == this.fd && counter.decrementAndGet() == 0) {
+                        ping.await();
+                        httpClientRef.get().disconnect();
+                        pong.countDown();
+                        // The longer is the sleep the more likely
+                        // the disconnect happens during sending the response. But it also makes the test slower.
+                        Os.sleep(10);
+                    }
+                    return Files.append(fd, buf, len);
+                }
+
+                @Override
+                public int openRW(LPSZ name, long opts) {
+                    int fd = super.openRW(name, opts);
+                    if (Utf8s.endsWithAscii(name, Files.SEPARATOR + EVENT_INDEX_FILE_NAME)
+                            && Utf8s.containsAscii(name, "second_table")) {
+                        this.fd = fd;
+                    }
+                    return fd;
+                }
+            };
+
+            final Bootstrap bootstrap = new Bootstrap(new DefaultBootstrapConfiguration() {
+                @Override
+                public FilesFacade getFilesFacade() {
+                    return filesFacade;
+                }
+            }, TestUtils.getServerMainArgs(root));
+
+            try (final TestServerMain serverMain = new TestServerMain(bootstrap)) {
+                serverMain.start();
+                AtomicInteger walWriterTaken = countWalWriterTakenFromPool(serverMain);
+
+                for (int i = 0; i < 10; i++) {
+                    counter.set(2);
+                    try (HttpClient httpClient = HttpClientFactory.newInstance(new DefaultHttpClientConfiguration())) {
+                        httpClientRef.set(httpClient);
+
+                        HttpClient.Request request = httpClient.newRequest();
+                        request.POST()
+                                .url("/write ")
+                                .withContent()
+                                .putAscii("first_table,ok=true allgood=true\n")
+                                .putAscii("second_table,ok=true allgood=true\n")
+                                .sendPartialContent("localhost", getHttpPort(serverMain), 5000, 10000);
+                        ping.countDown();
+                        pong.await();
+                    }
+                }
+
+                assertEventually(() -> {
+                    // Assert no Wal Writers are left in ILP http TUD cache
+                    Assert.assertEquals(0, walWriterTaken.get());
+                });
             }
         });
     }
@@ -243,7 +373,7 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
                     points.add("first_table,ok=true allgood=true\n");
                     points.add("second_table,ok=true allgood=true\n");
                     assertRequestErrorContains(influxDB, points, "failed_table,tag1=value1 f1=1i,y=12i",
-                            "{\"code\":\"internal error\",\"message\":\"failed to parse line protocol: commit error for table: failed_table, errno: 24, error: test error,\"errorId\":");
+                            "{\"code\":\"internal error\",\"message\":\"commit error for table: failed_table, errno: 24, error: test error,\"errorId\":");
 
                     // Retry is ok
                     assertRequestOk(influxDB, points, "failed_table,tag1=value1 f1=1i,y=12i,x=12i");
@@ -378,7 +508,7 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
                     // This will trigger commit and the commit will fail
                     points.add("drop,tag1=value1 f1=1i,y=12i");
                     assertRequestErrorContains(influxDB, points, "drop,tag1=value1 f1=1i,y=12i,z=45",
-                            "{\"code\":\"internal error\",\"message\":\"failed to parse line protocol: commit error for table: drop, error: java.lang.UnsupportedOperationException,\"errorId\":");
+                            "{\"code\":\"internal error\",\"message\":\"commit error for table: drop, error: java.lang.UnsupportedOperationException,\"errorId\":");
 
 
                     // Retry is ok

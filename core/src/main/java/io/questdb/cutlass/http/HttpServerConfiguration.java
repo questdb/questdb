@@ -32,6 +32,7 @@ import io.questdb.mp.WorkerPoolConfiguration;
 
 public interface HttpServerConfiguration extends WorkerPoolConfiguration, HttpMinServerConfiguration {
     String DEFAULT_PROCESSOR_URL = "*";
+    int MIN_SEND_BUFFER_SIZE = 128;
 
     JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration();
 

@@ -441,46 +441,68 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             int read,
             boolean newRequest
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
+        HttpMultipartContentListener contentProcessor = (HttpMultipartContentListener) processor;
+        if (!newRequest) {
+            processor.resumeRecv(this);
+        }
+
         while (true) {
+            long lo;
             if (newRequest) {
                 processor.onHeadersReady(this);
                 totalReceived -= headerEnd - recvBuffer;
+                lo = headerEnd;
+                newRequest = false;
             } else {
                 read = socket.recv(recvBuffer, recvBufferSize);
+                lo = recvBuffer;
             }
 
-            processor.resumeRecv(this);
             if (read > 0) {
-                HttpMultipartContentListener contentProcessor = (HttpMultipartContentListener) processor;
-                long lo = newRequest ? headerEnd : recvBuffer;
+                if (totalReceived + read > contentLength) {
+                    // HTTP protocol violation
+                    // client sent more data than it promised in Content-Length header
+                    // we will disconnect client and roll back
+                    return disconnectIlpHttp(processor, DISCONNECT_REASON_KICKED_OUT_AT_EXTRA_BYTES);
+                }
+
                 contentProcessor.onChunk(lo, recvBuffer + read);
                 totalReceived += read;
 
                 if (totalReceived == contentLength) {
+                    // we have received all content, commit
                     try {
+                        // check that client has not disconnected
+                        read = socket.recv(recvBuffer, recvBufferSize);
+                        if (read < 0) {
+                            // client disconnected, don't commit, rollback instead
+                            return disconnectIlpHttp(processor, DISCONNECT_REASON_KICKED_OUT_AT_RECV);
+                        } else if (read > 0) {
+                            // HTTP protocol violation
+                            // client sent more data than it promised in Content-Length header
+                            // we will disconnect client and roll back
+                            return disconnectIlpHttp(processor, DISCONNECT_REASON_KICKED_OUT_AT_EXTRA_BYTES);
+                        }
+
                         processor.onRequestComplete(this);
                         if (configuration.getServerKeepAlive()) {
                             return true;
                         } else {
-                            dispatcher.disconnect(this, DISCONNECT_REASON_KEEPALIVE_OFF_RECV);
-                            processor.onConnectionClosed(this);
-                            return false;
+                            return disconnectIlpHttp(processor, DISCONNECT_REASON_KEEPALIVE_OFF_RECV);
                         }
+                    } catch (PeerDisconnectedException e) {
+                        return disconnectIlpHttp(processor, DISCONNECT_REASON_KICKED_OUT_AT_SEND);
                     } finally {
                         reset();
                     }
                 }
-                newRequest = false;
             } else if (read == 0) {
                 // Schedule for read
                 dispatcher.registerChannel(this, IOOperation.READ);
                 return false;
             } else {
                 // client disconnected
-                processor.onConnectionClosed(this);
-                dispatcher.disconnect(this, DISCONNECT_REASON_KICKED_OUT_AT_RECV);
-                reset();
-                return false;
+                return disconnectIlpHttp(processor, DISCONNECT_REASON_KICKED_OUT_AT_RECV);
             }
         }
     }
@@ -630,6 +652,13 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             }
         }
         return keepGoing;
+    }
+
+    private boolean disconnectIlpHttp(HttpRequestProcessor processor, int disconnectReasonKickedOutAtRecv) {
+        processor.onConnectionClosed(this);
+        reset();
+        dispatcher.disconnect(this, disconnectReasonKickedOutAtRecv);
+        return false;
     }
 
     private void dumpBuffer(long buffer, int size) {

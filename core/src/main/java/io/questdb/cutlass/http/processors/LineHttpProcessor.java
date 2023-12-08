@@ -25,6 +25,7 @@
 package io.questdb.cutlass.http.processors;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoError;
 import io.questdb.cutlass.http.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -41,12 +42,14 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
     private static final LocalValue<LineHttpProcessorState> LV = new LocalValue<>();
     private final LineHttpProcessorConfiguration configuration;
     private final CairoEngine engine;
+    private final int maxResponseContentLength;
     private final int recvBufferSize;
     LineHttpProcessorState state;
 
-    public LineHttpProcessor(CairoEngine engine, int recvBufferSize, LineHttpProcessorConfiguration configuration) {
+    public LineHttpProcessor(CairoEngine engine, int recvBufferSize, int maxResponseContentLength, LineHttpProcessorConfiguration configuration) {
         this.engine = engine;
         this.recvBufferSize = recvBufferSize;
+        this.maxResponseContentLength = maxResponseContentLength;
         this.configuration = configuration;
     }
 
@@ -75,7 +78,7 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
     public void onHeadersReady(HttpConnectionContext context) {
         state = LV.get(context);
         if (state == null) {
-            state = new LineHttpProcessorState(recvBufferSize, engine, configuration);
+            state = new LineHttpProcessorState(recvBufferSize, maxResponseContentLength, engine, configuration);
             LV.set(context, state);
         } else {
             state.clear();
@@ -112,9 +115,7 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
     }
 
     @Override
-    public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        state = LV.get(context);
-
+    public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException {
         try {
             HttpChunkedResponseSocket r = context.getChunkedResponseSocket();
             state.onMessageComplete();
@@ -130,6 +131,10 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
             } else {
                 sendError(context);
             }
+        } catch (PeerIsSlowToReadException e) {
+            LOG.critical().put("ILP HTTP response did not fit socket buffer, response cannot " +
+                    " be delivered [fd=").put(context.getFd()).put(", responseCode=").put(state.getHttpResponseCode()).$();
+            throw new CairoError(e);
         } finally {
             state.clear();
         }

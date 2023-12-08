@@ -282,6 +282,11 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
         }
 
         @Override
+        public boolean isEnabled() {
+            return true;
+        }
+
+        @Override
         public boolean isStringAsTagSupported() {
             return lineHttpProcessorConfiguration.isSymbolAsFieldSupported();
         }

@@ -254,7 +254,7 @@ public class LineTcpParser {
                     bufAt++;
                     b = Unsafe.getUnsafe().getByte(bufAt);
                     if (b == '\\' && (entityHandler != ENTITY_HANDLER_VALUE)) {
-                        return getError();
+                        return getError(bufHi);
                     }
                     hasNonAscii |= b < 0;
                     appendByte = true;
@@ -280,7 +280,7 @@ public class LineTcpParser {
                         bufAt += 1;
                         break;
                     } else if (isQuotedFieldValue) {
-                        return getError();
+                        return getError(bufHi);
                     } else if (entityLo == bufAt) {
                         tagStartsWithQuote = true;
                     }
@@ -292,11 +292,11 @@ public class LineTcpParser {
 
                 case '\0':
                     LOG.info().$("could not parse [byte=\\0]").$();
-                    return getError();
+                    return getError(bufHi);
                 case '/':
                     if (entityHandler != ENTITY_HANDLER_VALUE) {
                         LOG.info().$("could not parse [byte=/]").$();
-                        return getError();
+                        return getError(bufHi);
                     }
                     appendByte = true;
                     nextValueCanBeOpenQuote = false;
@@ -524,9 +524,15 @@ public class LineTcpParser {
         }
     }
 
-    private ParseResult getError() {
+    private ParseResult getError(long bufHi) {
         switch (entityHandler) {
             case ENTITY_HANDLER_NAME:
+                // For error logging.
+                if (bufAt > entityLo && bufAt < bufHi) {
+                    currentEntity = popEntity();
+                    nEntities++;
+                    currentEntity.setName(Math.min(bufAt + 1, bufHi));
+                }
                 errorCode = ErrorCode.INVALID_COLUMN_NAME;
                 break;
             case ENTITY_HANDLER_TABLE:
@@ -769,6 +775,10 @@ public class LineTcpParser {
 
         private void setName() {
             name.of(entityLo, bufAt - nEscapedChars);
+        }
+
+        private void setName(long hi) {
+            name.of(entityLo, hi - nEscapedChars);
         }
 
         private boolean setValueAndUnit() {
