@@ -109,7 +109,7 @@ public class VwapDoubleGroupByFunction extends DoubleFunction implements GroupBy
         double srcVwap = srcValue.getDouble(valueIndex);
         double srcNotional = srcValue.getDouble(valueIndex + 1);
         double srcVolume = srcValue.getDouble(valueIndex + 2);
-        if (destValue.isNew() || Double.isNaN(destValue.getDouble(valueIndex))) {
+        if (destValue.isNew()) {
             destValue.putDouble(valueIndex, srcVwap);
             destValue.putDouble(valueIndex + 1, srcNotional);
             destValue.putDouble(valueIndex + 2, srcVolume);

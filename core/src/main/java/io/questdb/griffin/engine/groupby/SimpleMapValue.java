@@ -35,7 +35,7 @@ public class SimpleMapValue implements MapValue {
     private static final int DEFAULT_CAPACITY = 16;
 
     private final Long256Impl long256 = new Long256Impl();
-    private boolean isNew = true;
+    private boolean isNew;
     private long[] values;
 
     public SimpleMapValue() {
@@ -92,7 +92,6 @@ public class SimpleMapValue implements MapValue {
     public void copy(SimpleMapValue other) {
         assert values.length >= other.values.length;
         System.arraycopy(other.values, 0, values, 0, other.values.length);
-        isNew = other.isNew;
     }
 
     @Override
@@ -205,49 +204,41 @@ public class SimpleMapValue implements MapValue {
     @Override
     public void putBool(int index, boolean value) {
         values[4 * index] = value ? 0 : 1;
-        isNew = false;
     }
 
     @Override
     public void putByte(int index, byte value) {
         values[4 * index] = value;
-        isNew = false;
     }
 
     @Override
     public void putChar(int index, char value) {
         values[4 * index] = value;
-        isNew = false;
     }
 
     @Override
     public void putDate(int index, long value) {
         values[4 * index] = value;
-        isNew = false;
     }
 
     @Override
     public void putDouble(int index, double value) {
         values[4 * index] = Double.doubleToLongBits(value);
-        isNew = false;
     }
 
     @Override
     public void putFloat(int index, float value) {
         values[4 * index] = Float.floatToIntBits(value);
-        isNew = false;
     }
 
     @Override
     public void putInt(int index, int value) {
         values[4 * index] = value;
-        isNew = false;
     }
 
     @Override
     public void putLong(int index, long value) {
         values[4 * index] = value;
-        isNew = false;
     }
 
     @Override
@@ -255,7 +246,6 @@ public class SimpleMapValue implements MapValue {
         final int idx = 4 * index;
         values[idx] = lo;
         values[idx + 1] = hi;
-        isNew = false;
     }
 
     @Override
@@ -265,23 +255,16 @@ public class SimpleMapValue implements MapValue {
         values[idx + 1] = value.getLong1();
         values[idx + 2] = value.getLong2();
         values[idx + 3] = value.getLong3();
-        isNew = false;
     }
 
     @Override
     public void putShort(int index, short value) {
         values[4 * index] = value;
-        isNew = false;
     }
 
     @Override
     public void putTimestamp(int index, long value) {
         values[4 * index] = value;
-        isNew = false;
-    }
-
-    public void resetNewFlag() {
-        isNew = true;
     }
 
     public void setCapacity(int columnCount) {
@@ -296,5 +279,9 @@ public class SimpleMapValue implements MapValue {
     @Override
     public void setMapRecordHere() {
         throw new UnsupportedOperationException();
+    }
+
+    public void setNew(boolean isNew) {
+        this.isNew = isNew;
     }
 }

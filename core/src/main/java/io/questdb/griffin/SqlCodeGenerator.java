@@ -3301,7 +3301,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 throw e;
             }
 
-            // TODO(puzpuzpuz): consider non-thread-safe functions used as keys, e.g. select regexp_replace(k, ...) k, max(v) v from x
             if (supportsParallelism) {
                 if (keyTypes.getColumnCount() == 0) {
                     return new AsyncGroupByNotKeyedRecordCursorFactory(

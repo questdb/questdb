@@ -108,7 +108,7 @@ public class SumLong256GroupByFunction extends Long256Function implements GroupB
     public void merge(MapValue destValue, MapValue srcValue) {
         Long256 srcSum = srcValue.getLong256A(valueIndex);
         long srcCount = srcValue.getLong(valueIndex + 1);
-        if (destValue.isNew() || destValue.getLong256A(valueIndex).equals(Long256Impl.NULL_LONG256)) {
+        if (destValue.isNew()) {
             destValue.putLong256(valueIndex, srcSum);
             destValue.putLong(valueIndex + 1, srcCount);
         } else {
