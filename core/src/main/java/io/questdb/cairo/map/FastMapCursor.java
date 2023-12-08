@@ -30,26 +30,19 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.Unsafe;
 
 public final class FastMapCursor implements RecordCursor {
-    // Set to -1 when key-value pair is var-size.
-    private final int keyValueSize;
     private final FastMap map;
-    private final FastMapRecord recordA;
-    private final MapRecord recordB;
     private long address;
     private int count;
+    // Set to -1 when key-value pair is var-size.
+    private int keyValueSize;
     private long limit;
+    private FastMapRecord recordA;
+    private MapRecord recordB;
     private int remaining;
     private long topAddress;
 
-    FastMapCursor(FastMapRecord record, FastMap map) {
-        this.recordA = record;
-        this.recordB = record.clone();
+    FastMapCursor(FastMap map) {
         this.map = map;
-        if (map.keySize() != -1) {
-            keyValueSize = map.keySize() + map.valueSize();
-        } else {
-            keyValueSize = -1;
-        }
     }
 
     @Override
@@ -119,5 +112,15 @@ public final class FastMapCursor implements RecordCursor {
         this.limit = limit;
         this.remaining = this.count = count;
         return this;
+    }
+
+    void setRecord(FastMapRecord record) {
+        this.recordA = record;
+        this.recordB = record.clone();
+        if (map.keySize() != -1) {
+            keyValueSize = map.keySize() + map.valueSize();
+        } else {
+            keyValueSize = -1;
+        }
     }
 }
