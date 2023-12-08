@@ -157,15 +157,16 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
                     tables.put(tableName, new TableData(tableName));
                 }
 
-                int httpPort = serverMain.getConfiguration().getHttpServerConfiguration().getDispatcherConfiguration().getBindPort();
                 try {
-                    ingest(httpPort);
+                    ingest(IlpHttpUtils.getHttpPort(serverMain));
 
                     for (int i = 0; i < numOfTables; i++) {
                         final String tableName = getTableName(i);
-                        serverMain.waitWalTxnApplied(tableName);
                         final TableData table = tables.get(tableName);
-                        assertTable(serverMain, table, tableName);
+                        if (table.size() > 0) {
+                            serverMain.waitWalTxnApplied(tableName);
+                            assertTable(serverMain, table, tableName);
+                        }
                     }
                 } catch (Exception e) {
                     getLog().error().$(e).$();
@@ -427,6 +428,7 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
         new Thread(() -> {
             final String serverURL = "http://127.0.0.1:" + port, username = "root", password = "root";
             try (InfluxDB client = InfluxDBFactory.connect(serverURL, username, password)) {
+                client.setLogLevel(InfluxDB.LogLevel.BASIC);
 
                 try {
                     List<String> points = new ArrayList<>();
