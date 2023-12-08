@@ -44,7 +44,6 @@ import org.jetbrains.annotations.Nullable;
  * The last accessed key column offset is cached to speed up sequential access.
  */
 final class FastMapRecord implements MapRecord {
-    private final ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
     private final FastMapValue value;
     private DirectBinarySequence[] bs;
     private DirectString[] csA;
@@ -53,7 +52,7 @@ final class FastMapRecord implements MapRecord {
     private Long256Impl[] keyLong256A;
     private Long256Impl[] keyLong256B;
     private int keySize;
-    private ColumnTypes keyTypes;
+    private ArrayColumnTypes keyTypes = new ArrayColumnTypes();
     private int lastKeyIndex = -1;
     private int lastKeyOffset = -1;
     private long limit;
@@ -73,7 +72,7 @@ final class FastMapRecord implements MapRecord {
     private FastMapRecord(
             int keySize,
             int[] valueOffsets,
-            ColumnTypes keyTypes,
+            ArrayColumnTypes keyTypes,
             int splitIndex,
             DirectString[] csA,
             DirectString[] csB,
@@ -424,63 +423,58 @@ final class FastMapRecord implements MapRecord {
             nColumns = keyTypes.getColumnCount();
         }
 
-        DirectString[] csA = null;
-        DirectString[] csB = null;
-        DirectBinarySequence[] bs = null;
-        Long256Impl[] long256A = null;
-        Long256Impl[] long256B = null;
-
-        keyTypesCopy.clear();
+        this.keyTypes.clear();
         for (int i = 0, n = keyTypes.getColumnCount(); i < n; i++) {
             final int columnType = keyTypes.getColumnType(i);
-            keyTypesCopy.add(columnType);
+            this.keyTypes.add(columnType);
             switch (ColumnType.tagOf(columnType)) {
                 case ColumnType.STRING:
-                    if (csA == null) {
+                    if (csA == null || nColumns > csA.length) {
                         csA = new DirectString[nColumns];
                         csB = new DirectString[nColumns];
                     }
-                    csA[i + keyIndexOffset] = new DirectString();
-                    csB[i + keyIndexOffset] = new DirectString();
+                    if (csA[i + keyIndexOffset] == null) {
+                        csA[i + keyIndexOffset] = new DirectString();
+                        csB[i + keyIndexOffset] = new DirectString();
+                    }
                     break;
                 case ColumnType.BINARY:
-                    if (bs == null) {
+                    if (bs == null || nColumns > bs.length) {
                         bs = new DirectBinarySequence[nColumns];
                     }
-                    bs[i + keyIndexOffset] = new DirectBinarySequence();
+                    if (bs[i + keyIndexOffset] == null) {
+                        bs[i + keyIndexOffset] = new DirectBinarySequence();
+                    }
                     break;
                 case ColumnType.LONG256:
-                    if (long256A == null) {
-                        long256A = new Long256Impl[nColumns];
-                        long256B = new Long256Impl[nColumns];
+                    if (keyLong256A == null || nColumns > keyLong256A.length) {
+                        keyLong256A = new Long256Impl[nColumns];
+                        keyLong256B = new Long256Impl[nColumns];
                     }
-                    long256A[i + keyIndexOffset] = new Long256Impl();
-                    long256B[i + keyIndexOffset] = new Long256Impl();
+                    if (keyLong256A[i + keyIndexOffset] == null) {
+                        keyLong256A[i + keyIndexOffset] = new Long256Impl();
+                        keyLong256B[i + keyIndexOffset] = new Long256Impl();
+                    }
                     break;
                 default:
                     break;
             }
         }
-        this.keyTypes = keyTypesCopy;
 
         if (valueTypes != null) {
             for (int i = 0, n = valueTypes.getColumnCount(); i < n; i++) {
                 if (ColumnType.tagOf(valueTypes.getColumnType(i)) == ColumnType.LONG256) {
-                    if (long256A == null) {
-                        long256A = new Long256Impl[nColumns];
-                        long256B = new Long256Impl[nColumns];
+                    if (keyLong256A == null || nColumns > keyLong256A.length) {
+                        keyLong256A = new Long256Impl[nColumns];
+                        keyLong256B = new Long256Impl[nColumns];
                     }
-                    long256A[i] = new Long256Impl();
-                    long256B[i] = new Long256Impl();
+                    if (keyLong256A[i] == null) {
+                        keyLong256A[i] = new Long256Impl();
+                        keyLong256B[i] = new Long256Impl();
+                    }
                 }
             }
         }
-
-        this.csA = csA;
-        this.csB = csB;
-        this.bs = bs;
-        this.keyLong256A = long256A;
-        this.keyLong256B = long256B;
     }
 
     void of(long address, long limit) {

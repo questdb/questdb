@@ -616,7 +616,7 @@ public class FastMapTest extends AbstractCairoTest {
 
         try (
                 FastMap mapA = new FastMap(1024, keyTypes, valueTypes, 64, 0.8, 24);
-                FastMap mapB = new FastMap(1024, keyTypes, valueTypes, 64, 0.8, 24);
+                FastMap mapB = new FastMap(1024, keyTypes, valueTypes, 64, 0.8, 24)
         ) {
             final int N = 100000;
             for (int i = 0; i < N; i++) {
@@ -666,7 +666,7 @@ public class FastMapTest extends AbstractCairoTest {
 
         try (
                 FastMap mapA = new FastMap(1024, keyTypes, valueTypes, 64, 0.8, 24);
-                FastMap mapB = new FastMap(1024, keyTypes, valueTypes, 64, 0.8, 24);
+                FastMap mapB = new FastMap(1024, keyTypes, valueTypes, 64, 0.8, 24)
         ) {
             final int N = 100000;
             for (int i = 0; i < N; i++) {
@@ -1166,6 +1166,45 @@ public class FastMapTest extends AbstractCairoTest {
                 MapValue value = key.findValue();
                 Assert.assertFalse(value.isNew());
                 Assert.assertEquals(i + 1, value.getInt(0));
+            }
+
+            // Now clear the map and change the types again.
+            // We expect the map to be usable with new types.
+
+            keyTypes = new ArrayColumnTypes();
+            keyTypes.add(ColumnType.STRING);
+            keyTypes.add(ColumnType.STRING);
+
+            valueTypes = new ArrayColumnTypes();
+            valueTypes.add(ColumnType.LONG256);
+
+            map.resetTypes(keyTypes, valueTypes);
+
+            final int Q = 1005;
+            for (int i = 0; i < Q; i++) {
+                MapKey key = map.withKey();
+                key.putStr(String.valueOf(i));
+                key.putStr(String.valueOf(i));
+
+                MapValue value = key.createValue();
+                Assert.assertTrue(value.isNew());
+                final Long256 long256 = new Long256Impl();
+                long256.setAll(i, i, i, i);
+                value.putLong256(0, long256);
+            }
+
+            Assert.assertEquals(Q, map.size());
+
+            for (int i = 0; i < Q; i++) {
+                MapKey key = map.withKey();
+                key.putStr(String.valueOf(i));
+                key.putStr(String.valueOf(i));
+
+                MapValue value = key.findValue();
+                Assert.assertFalse(value.isNew());
+                final Long256 long256 = new Long256Impl();
+                long256.setAll(i, i, i, i);
+                Assert.assertEquals(long256, value.getLong256A(0));
             }
         }
     }
