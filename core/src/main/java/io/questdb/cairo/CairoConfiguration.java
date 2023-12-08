@@ -211,8 +211,6 @@ public interface CairoConfiguration {
 
     int getMaxUncommittedRows();
 
-    int getWalMaxSegmentFileDescriptorsCache();
-
     int getMetadataPoolCapacity();
 
     @NotNull
@@ -395,8 +393,6 @@ public interface CairoConfiguration {
 
     int getSqlJitPageAddressCacheThreshold();
 
-    int getSqlJitRowsThreshold();
-
     int getSqlJoinContextPoolCapacity();
 
     int getSqlJoinMetadataMaxResizes();
@@ -497,6 +493,8 @@ public interface CairoConfiguration {
     long getWalMaxLagSize();
 
     int getWalMaxLagTxnCount();
+
+    int getWalMaxSegmentFileDescriptorsCache();
 
     long getWalPurgeInterval();
 

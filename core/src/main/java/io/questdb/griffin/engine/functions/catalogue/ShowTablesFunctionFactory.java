@@ -82,19 +82,25 @@ public class ShowTablesFunctionFactory implements FunctionFactory {
         public static final String TABLE_NAME_COLUMN_NAME = "table_name";
         public static final TableColumnMetadata TABLE_NAME_COLUMN_META = new TableColumnMetadata(TABLE_NAME_COLUMN_NAME, ColumnType.STRING);
         private final TableListRecordCursor cursor = new TableListRecordCursor();
-        private final boolean hideTelemetryTables;
+        private final boolean hideTelemetryTables; // ignored when showAllTables is set to true
+        private final boolean showAllTables;
         private final CharSequence sysTablePrefix;
         private final CharSequence tempPendingRenameTablePrefix;
         private final String toPlan;
         private CairoEngine engine;
         private TableToken tableToken;
 
-        public ShowTablesCursorFactory(CairoConfiguration configuration, RecordMetadata metadata, String toPlan) {
+        public ShowTablesCursorFactory(CairoConfiguration configuration, RecordMetadata metadata, String toPlan, boolean showAllTables) {
             super(metadata);
             tempPendingRenameTablePrefix = configuration.getTempRenamePendingTablePrefix();
             sysTablePrefix = configuration.getSystemTableNamePrefix();
             hideTelemetryTables = configuration.getTelemetryConfiguration().hideTables();
             this.toPlan = toPlan;
+            this.showAllTables = showAllTables;
+        }
+
+        public ShowTablesCursorFactory(CairoConfiguration configuration, RecordMetadata metadata, String toPlan) {
+            this(configuration, metadata, toPlan, false);
         }
 
         public ShowTablesCursorFactory(CairoConfiguration configuration) {
@@ -232,10 +238,16 @@ public class ShowTablesFunctionFactory implements FunctionFactory {
                 }
 
                 private boolean open(TableToken tableToken) {
-                    if (hideTelemetryTables && (Chars.equals(tableToken.getTableName(), TelemetryTask.TABLE_NAME)
-                            || Chars.equals(tableToken.getTableName(), TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME)
-                            || Chars.startsWith(tableToken.getTableName(), sysTablePrefix))) {
-                        return false;
+                    if (!showAllTables) {
+                        // sys table
+                        if (Chars.startsWith(tableToken.getTableName(), sysTablePrefix)) {
+                            return false;
+                        }
+                        // telemetry table
+                        if (hideTelemetryTables && (Chars.equals(tableToken.getTableName(), TelemetryTask.TABLE_NAME)
+                                || Chars.equals(tableToken.getTableName(), TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME))) {
+                            return false;
+                        }
                     }
 
                     if (getMetadata() == METADATA) {

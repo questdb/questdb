@@ -46,14 +46,14 @@ public final class MemoryTag {
     public static final int NATIVE_CB3 = 30;
     public static final int NATIVE_CB4 = 31;
     public static final int NATIVE_CB5 = 32;
+    public static final int NATIVE_CIRCULAR_BUFFER = 56;
     public static final int NATIVE_COMPACT_MAP = 8;
     public static final int NATIVE_DEFAULT = 1;
     public static final int NATIVE_DIRECT_BYTE_SINK = 54;
-    public static final int NATIVE_CIRCULAR_BUFFER = 56;
     public static final int NATIVE_DIRECT_CHAR_SINK = 51;
     public static final int NATIVE_DIRECT_UTF8_SINK = 55;
     public static final int NATIVE_FAST_MAP = 9;
-    public static final int NATIVE_FAST_MAP_LONG_LIST = 10;
+    public static final int NATIVE_FAST_MAP_INT_LIST = 10;
     public static final int NATIVE_FUNC_RSS = 50;
     public static final int NATIVE_HTTP_CONN = 11;
     public static final int NATIVE_ILP_RSS = 46;
@@ -100,7 +100,7 @@ public final class MemoryTag {
         tagNameMap.extendAndSet(MMAP_TABLE_READER, "MMAP_TABLE_READER");
         tagNameMap.extendAndSet(NATIVE_COMPACT_MAP, "NATIVE_COMPACT_MAP");
         tagNameMap.extendAndSet(NATIVE_FAST_MAP, "NATIVE_FAST_MAP");
-        tagNameMap.extendAndSet(NATIVE_FAST_MAP_LONG_LIST, "NATIVE_FAST_MAP_LONG_LIST");
+        tagNameMap.extendAndSet(NATIVE_FAST_MAP_INT_LIST, "NATIVE_FAST_MAP_INT_LIST");
         tagNameMap.extendAndSet(NATIVE_HTTP_CONN, "NATIVE_HTTP_CONN");
         tagNameMap.extendAndSet(NATIVE_PGW_CONN, "NATIVE_PGW_CONN");
         tagNameMap.extendAndSet(MMAP_INDEX_READER, "MMAP_INDEX_READER");
