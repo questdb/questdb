@@ -1396,7 +1396,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testExplainWindowFunctionWithCharConstantFrameBounds() throws Exception {
-        assertMemoryLeak(()->{
+        assertMemoryLeak(() -> {
             ddl("create table tab ( key int, value double, ts timestamp) timestamp(ts)");
 
             assertPlan("select avg(value) over (PARTITION BY key ORDER BY ts RANGE BETWEEN '1' MINUTES PRECEDING AND CURRENT ROW) from tab",
@@ -1699,117 +1699,107 @@ public class ExplainPlanTest extends AbstractCairoTest {
             );
 
             assertPlan("select s, count() from trips where s is not null",
-                    "GroupBy vectorized: false\n" +
+                    "Async Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
-                            "    Async JIT Filter workers: 1\n" +
-                            "      filter: s is not null\n" +
-                            "        DataFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: trips\n"
+                            "  filter: s is not null\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trips\n"
             );
 
             assertPlan("select s, count() from trips where s is not null and s != 'A1000'",
-                    "GroupBy vectorized: false\n" +
+                    "Async Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
-                            "    Async JIT Filter workers: 1\n" +
-                            "      filter: (s is not null and s!='A1000')\n" +
-                            "        DataFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: trips\n"
+                            "  filter: (s is not null and s!='A1000')\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trips\n"
             );
 
             bindVariableService.clear();
             bindVariableService.setStr("s1", "A100");
             assertPlan("select s, count() from trips where s is not null and s != :s1",
-                    "GroupBy vectorized: false\n" +
+                    "Async Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
-                            "    Async JIT Filter workers: 1\n" +
-                            "      filter: (s is not null and s!=:s1::string)\n" +
-                            "        DataFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: trips\n"
+                            "  filter: (s is not null and s!=:s1::string)\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trips\n"
             );
 
             assertPlan("select s, count() from trips where s is not null and l != 0",
-                    "GroupBy vectorized: false\n" +
+                    "Async Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
-                            "    Async JIT Filter workers: 1\n" +
-                            "      filter: (l!=0 and s is not null)\n" +
-                            "        DataFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: trips\n"
+                            "  filter: (s is not null and l!=0)\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trips\n"
             );
 
             assertPlan("select s, count() from trips where s is not null or l != 0",
-                    "GroupBy vectorized: false\n" +
+                    "Async Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
-                            "    Async JIT Filter workers: 1\n" +
-                            "      filter: (s is not null or l!=0)\n" +
-                            "        DataFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: trips\n"
+                            "  filter: (s is not null or l!=0)\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trips\n"
             );
 
             assertPlan("select s, count() from trips where l != 0 and s is not null",
-                    "GroupBy vectorized: false\n" +
+                    "Async Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
-                            "    Async JIT Filter workers: 1\n" +
-                            "      filter: (l!=0 and s is not null)\n" +
-                            "        DataFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: trips\n"
+                            "  filter: (l!=0 and s is not null)\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trips\n"
             );
 
             assertPlan("select s, count() from trips where l != 0 or s is not null",
-                    "GroupBy vectorized: false\n" +
+                    "Async Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
-                            "    Async JIT Filter workers: 1\n" +
-                            "      filter: (l!=0 or s is not null)\n" +
-                            "        DataFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: trips\n"
+                            "  filter: (l!=0 or s is not null)\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trips\n"
             );
 
             assertPlan("select s, count() from trips where l > 100 or l != 0 and s is not null",
-                    "GroupBy vectorized: false\n" +
+                    "Async Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
-                            "    Async JIT Filter workers: 1\n" +
-                            "      filter: ((100<l or l!=0) and s is not null)\n" +
-                            "        DataFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: trips\n"
+                            "  filter: ((100<l or l!=0) and s is not null)\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trips\n"
             );
 
             assertPlan("select s, count() from trips where l > 100 or l != 0 and s not in (null, 'A1000', 'A2000')",
-                    "GroupBy vectorized: false\n" +
+                    "Async Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
-                            "    Async Filter workers: 1\n" +
-                            "      filter: ((100<l or l!=0) and not (s in [null,A1000,A2000]))\n" +
-                            "        DataFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: trips\n"
+                            "  filter: ((100<l or l!=0) and not (s in [null,A1000,A2000]))\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trips\n"
             );
 
             bindVariableService.clear();
             bindVariableService.setStr("s1", "A500");
             assertPlan("select s, count() from trips where l > 100 or l != 0 and s not in (null, 'A1000', :s1)",
-                    "GroupBy vectorized: false\n" +
+                    "Async Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
-                            "    Async Filter workers: 1\n" +
-                            "      filter: ((100<l or l!=0) and not (s in [null,A1000] or s in [:s1::string]))\n" +
-                            "        DataFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: trips\n"
+                            "  filter: ((100<l or l!=0) and not (s in [null,A1000] or s in [:s1::string]))\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trips\n"
             );
         });
     }
@@ -1822,14 +1812,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "timestamp(ts) partition by month");
 
             assertPlan("select s, count() from trips where s is not null",
-                    "GroupBy vectorized: false\n" +
+                    "Async Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
-                            "    Async JIT Filter workers: 1\n" +
-                            "      filter: s is not null\n" +
-                            "        DataFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: trips\n"
+                            "  filter: s is not null\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trips\n"
             );
 
             insert("insert into trips " +
@@ -1843,108 +1832,98 @@ public class ExplainPlanTest extends AbstractCairoTest {
             );
 
             assertPlan("select s, count() from trips where s is not null",
-                    "GroupBy vectorized: false\n" +
+                    "Async Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
-                            "    Async JIT Filter workers: 1\n" +
-                            "      filter: s is not null\n" +
-                            "        DataFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: trips\n"
+                            "  filter: s is not null\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trips\n"
             );
 
             assertPlan("select s, count() from trips where s is not null and s != 'A1000'",
-                    "GroupBy vectorized: false\n" +
+                    "Async Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
-                            "    Async JIT Filter workers: 1\n" +
-                            "      filter: (s is not null and s!='A1000')\n" +
-                            "        DataFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: trips\n"
+                            "  filter: (s is not null and s!='A1000')\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trips\n"
             );
 
             bindVariableService.clear();
             bindVariableService.setStr("s1", "A100");
             assertPlan("select s, count() from trips where s is not null and s != :s1",
-                    "GroupBy vectorized: false\n" +
+                    "Async Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
-                            "    Async JIT Filter workers: 1\n" +
-                            "      filter: (s is not null and s!=:s1::string)\n" +
-                            "        DataFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: trips\n"
+                            "  filter: (s is not null and s!=:s1::string)\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trips\n"
             );
 
             assertPlan("select s, count() from trips where s is not null and l != 0",
-                    "GroupBy vectorized: false\n" +
+                    "Async Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
-                            "    Async JIT Filter workers: 1\n" +
-                            "      filter: (s is not null and l!=0)\n" +
-                            "        DataFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: trips\n"
+                            "  filter: (s is not null and l!=0)\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trips\n"
             );
 
             assertPlan("select s, count() from trips where s is not null or l != 0",
-                    "GroupBy vectorized: false\n" +
+                    "Async Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
-                            "    Async JIT Filter workers: 1\n" +
-                            "      filter: (s is not null or l!=0)\n" +
-                            "        DataFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: trips\n"
+                            "  filter: (s is not null or l!=0)\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trips\n"
             );
 
             assertPlan("select s, count() from trips where l != 0 and s is not null",
-                    "GroupBy vectorized: false\n" +
+                    "Async Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
-                            "    Async JIT Filter workers: 1\n" +
-                            "      filter: (l!=0 and s is not null)\n" +
-                            "        DataFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: trips\n"
+                            "  filter: (l!=0 and s is not null)\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trips\n"
             );
 
             assertPlan("select s, count() from trips where l != 0 or s is not null",
-                    "GroupBy vectorized: false\n" +
+                    "Async Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
-                            "    Async JIT Filter workers: 1\n" +
-                            "      filter: (l!=0 or s is not null)\n" +
-                            "        DataFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: trips\n"
+                            "  filter: (l!=0 or s is not null)\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trips\n"
             );
 
             assertPlan("select s, count() from trips where l > 100 or l != 0 and s is not null",
-                    "GroupBy vectorized: false\n" +
+                    "Async Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
-                            "    Async JIT Filter workers: 1\n" +
-                            "      filter: ((100<l or l!=0) and s is not null)\n" +
-                            "        DataFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: trips\n"
+                            "  filter: ((100<l or l!=0) and s is not null)\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trips\n"
             );
 
             bindVariableService.clear();
             bindVariableService.setStr("s1", "A500");
             assertPlan("select s, count() from trips where l > 100 or l != 0 and s not in (null, 'A1000', :s1)",
-                    "GroupBy vectorized: false\n" +
+                    "Async Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
-                            "    Async Filter workers: 1\n" +
-                            "      filter: ((100<l or l!=0) and not (s in [null,A1000] or s in [:s1::string]))\n" +
-                            "        DataFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: trips\n"
+                            "  filter: ((100<l or l!=0) and not (s in [null,A1000] or s in [:s1::string]))\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trips\n"
             );
-
         });
     }
 
@@ -2824,14 +2803,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long)",
                 "select x, count(*) from di where y = 5 group by x limit 10",
                 "Limit lo: 10\n" +
-                        "    GroupBy vectorized: false\n" +
+                        "    Async Group By workers: 1\n" +
                         "      keys: [x]\n" +
                         "      values: [count(*)]\n" +
-                        "        Async JIT Filter workers: 1\n" +
-                        "          filter: y=5\n" +
-                        "            DataFrame\n" +
-                        "                Row forward scan\n" +
-                        "                Frame forward scan on: di\n"
+                        "      filter: y=5\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n"
         );
     }
 
@@ -2841,14 +2819,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long)",
                 "select x, count(*) from di where y = 5 group by x limit -10",
                 "Limit lo: -10\n" +
-                        "    GroupBy vectorized: false\n" +
+                        "    Async Group By workers: 1\n" +
                         "      keys: [x]\n" +
                         "      values: [count(*)]\n" +
-                        "        Async JIT Filter workers: 1\n" +
-                        "          filter: y=5\n" +
-                        "            DataFrame\n" +
-                        "                Row forward scan\n" +
-                        "                Frame forward scan on: di\n"
+                        "      filter: y=5\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n"
         );
     }
 
@@ -2858,14 +2835,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long)",
                 "select x, count(*) from di where abs(y) = 5 group by x limit 10",
                 "Limit lo: 10\n" +
-                        "    GroupBy vectorized: false\n" +
+                        "    Async Group By workers: 1\n" +
                         "      keys: [x]\n" +
                         "      values: [count(*)]\n" +
-                        "        Async Filter workers: 1\n" +
-                        "          filter: abs(y)=5\n" +
-                        "            DataFrame\n" +
-                        "                Row forward scan\n" +
-                        "                Frame forward scan on: di\n"
+                        "      filter: abs(y)=5\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n"
         );
     }
 
@@ -2875,14 +2851,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long)",
                 "select x, count(*) from di where abs(y) = 5 group by x limit -10",
                 "Limit lo: -10\n" +
-                        "    GroupBy vectorized: false\n" +
+                        "    Async Group By workers: 1\n" +
                         "      keys: [x]\n" +
                         "      values: [count(*)]\n" +
-                        "        Async Filter workers: 1\n" +
-                        "          filter: abs(y)=5\n" +
-                        "            DataFrame\n" +
-                        "                Row forward scan\n" +
-                        "                Frame forward scan on: di\n"
+                        "      filter: abs(y)=5\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n"
         );
     }
 
@@ -2892,14 +2867,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long)",
                 "select x, count(*) from di where abs(y) = 5 group by x limit 10, 20",
                 "Limit lo: 10 hi: 20\n" +
-                        "    GroupBy vectorized: false\n" +
+                        "    Async Group By workers: 1\n" +
                         "      keys: [x]\n" +
                         "      values: [count(*)]\n" +
-                        "        Async Filter workers: 1\n" +
-                        "          filter: abs(y)=5\n" +
-                        "            DataFrame\n" +
-                        "                Row forward scan\n" +
-                        "                Frame forward scan on: di\n"
+                        "      filter: abs(y)=5\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n"
         );
     }
 
@@ -2907,17 +2881,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testGroupByWithLimit8() throws Exception {
         assertPlan(
                 "create table di (x int, y long, ts timestamp) timestamp(ts)",
-                "select ts, count(*) from di where y=5 group by ts  order by ts desc limit 10",
+                "select ts, count(*) from di where y = 5 group by ts order by ts desc limit 10",
                 "Sort light lo: 10\n" +
                         "  keys: [ts desc]\n" +
-                        "    GroupBy vectorized: false\n" +
+                        "    Async Group By workers: 1\n" +
                         "      keys: [ts]\n" +
                         "      values: [count(*)]\n" +
-                        "        Async JIT Filter workers: 1\n" +
-                        "          filter: y=5\n" +
-                        "            DataFrame\n" +
-                        "                Row forward scan\n" +
-                        "                Frame forward scan on: di\n"
+                        "      filter: y=5\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n"
         );
     }
 

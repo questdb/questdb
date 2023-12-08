@@ -122,6 +122,11 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
         sink.child(dataFrameCursorFactory);
     }
 
+    @Override
+    public boolean usesIndex() {
+        return true;
+    }
+
     private static int compareStrFunctions(FunctionBasedRowCursorFactory a, FunctionBasedRowCursorFactory b) {
         return Chars.compare(a.getFunction().getStr(null), b.getFunction().getStrB(null));
     }

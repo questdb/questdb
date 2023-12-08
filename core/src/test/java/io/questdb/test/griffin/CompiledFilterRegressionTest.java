@@ -298,7 +298,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
 
     @Test
     public void testGroupBy() throws Exception {
-        final String query = "select sum(price)/count() from x where price > 0";
+        final String query = "select sum(price)/count(sym) from x where price > 0";
         final String ddl = "create table x as " +
                 "(select rnd_symbol('ABB','HBC','DXR') sym, \n" +
                 " rnd_double() price, \n" +
@@ -586,7 +586,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // At the moment, there is no way for users to disable null checks in the
         // JIT compiler output. Yet, we want to test this part of the compiler.
         if (notNull) {
-  //          compiler.setEnableJitNullChecks(false);
+            //          compiler.setEnableJitNullChecks(false);
 
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_FORCE_SCALAR);
             runJitQuery(query);

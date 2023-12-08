@@ -472,9 +472,10 @@ public class GroupByTest extends AbstractCairoTest {
                     query,
                     "Sort light\n" +
                             "  keys: [date_report]\n" +
-                            "    GroupBy vectorized: false\n" +
+                            "    Async Group By workers: 1\n" +
                             "      keys: [date_report]\n" +
                             "      values: [count(*)]\n" +
+                            "      filter: null\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: dat\n"
@@ -504,9 +505,10 @@ public class GroupByTest extends AbstractCairoTest {
                     query,
                     "Sort light\n" +
                             "  keys: [date_report]\n" +
-                            "    GroupBy vectorized: false\n" +
+                            "    Async Group By workers: 1\n" +
                             "      keys: [date_report]\n" +
                             "      values: [count(*)]\n" +
+                            "      filter: null\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: dat\n"
@@ -537,9 +539,10 @@ public class GroupByTest extends AbstractCairoTest {
                     query,
                     "Sort light\n" +
                             "  keys: [date_report]\n" +
-                            "    GroupBy vectorized: false\n" +
+                            "    Async Group By workers: 1\n" +
                             "      keys: [date_report]\n" +
                             "      values: [count(*)]\n" +
+                            "      filter: null\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: dat\n"
@@ -572,9 +575,10 @@ public class GroupByTest extends AbstractCairoTest {
                             "  keys: [date_report1]\n" +
                             "    VirtualRecord\n" +
                             "      functions: [date_report,date_report,count]\n" +
-                            "        GroupBy vectorized: false\n" +
+                            "        Async Group By workers: 1\n" +
                             "          keys: [date_report]\n" +
                             "          values: [count(*)]\n" +
+                            "          filter: null\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: dat\n"
@@ -648,9 +652,10 @@ public class GroupByTest extends AbstractCairoTest {
                             "  keys: [date_report]\n" +
                             "    VirtualRecord\n" +
                             "      functions: [date_report,to_str(date_report),dateadd('d',1,date_report),dateadd('d',-1,date_report),count]\n" +
-                            "        GroupBy vectorized: false\n" +
+                            "        Async Group By workers: 1\n" +
                             "          keys: [date_report]\n" +
                             "          values: [count(*)]\n" +
+                            "          filter: null\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: dat\n"

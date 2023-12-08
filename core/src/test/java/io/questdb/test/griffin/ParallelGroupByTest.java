@@ -367,26 +367,26 @@ public class ParallelGroupByTest extends AbstractCairoTest {
     @Test
     public void testParallelSingleKeyedGroupByWithFilter() throws Exception {
         testParallelStringKeyedGroupBy(
-                "SELECT key, avg(value), sum(colTop) FROM tab WHERE value < 80",
-                "key\tavg\tsum\n" +
-                        "k1\t45.31818181818182\t381.0\n" +
-                        "k2\t46.31818181818182\t387.0\n" +
-                        "k3\t47.31818181818182\t393.0\n" +
-                        "k4\t48.31818181818182\t399.0\n" +
-                        "k0\t46.25\t325.0\n"
+                "SELECT key, avg(value), sum(colTop), count() FROM tab WHERE value < 80",
+                "key\tavg\tsum\tcount\n" +
+                        "k1\t45.31818181818182\t381.0\t22\n" +
+                        "k2\t46.31818181818182\t387.0\t22\n" +
+                        "k3\t47.31818181818182\t393.0\t22\n" +
+                        "k4\t48.31818181818182\t399.0\t22\n" +
+                        "k0\t46.25\t325.0\t20\n"
         );
     }
 
     @Test
     public void testParallelStringKeyedGroupBy() throws Exception {
         testParallelStringKeyedGroupBy(
-                "SELECT key, avg(value), sum(colTop) FROM tab",
-                "key\tavg\tsum\n" +
-                        "k1\t223.5\t19880.0\n" +
-                        "k2\t224.5\t19960.0\n" +
-                        "k3\t225.5\t20040.0\n" +
-                        "k4\t226.5\t20120.0\n" +
-                        "k0\t227.5\t20200.0\n"
+                "SELECT key, avg(value), sum(colTop), count() FROM tab",
+                "key\tavg\tsum\tcount\n" +
+                        "k1\t223.5\t19880.0\t160\n" +
+                        "k2\t224.5\t19960.0\t160\n" +
+                        "k3\t225.5\t20040.0\t160\n" +
+                        "k4\t226.5\t20120.0\t160\n" +
+                        "k0\t227.5\t20200.0\t160\n"
         );
     }
 

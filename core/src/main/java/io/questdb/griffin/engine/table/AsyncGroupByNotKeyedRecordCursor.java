@@ -138,7 +138,7 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
         }
 
         frameSequence.getAtom().getFunctionUpdater().updateEmpty(dataValue);
-        dataValue.resetNewFlag();
+        dataValue.setNew(true);
 
         int frameIndex = -1;
         boolean allFramesActive = true;
@@ -166,6 +166,7 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
                         for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
                             groupByFunctions.getQuick(i).merge(dataValue, srcValue);
                         }
+                        dataValue.setNew(false);
                     }
 
                     frameSequence.collect(cursor, false);

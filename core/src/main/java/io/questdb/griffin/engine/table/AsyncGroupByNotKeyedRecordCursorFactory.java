@@ -159,7 +159,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
 
         value.setCapacity(atom.getValueCount());
         functionUpdater.updateEmpty(value);
-        value.resetNewFlag();
+        value.setNew(true);
 
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.acquire(workerId, owner, circuitBreaker);
@@ -173,6 +173,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
 
                 if (value.isNew()) {
                     functionUpdater.updateNew(value, record);
+                    value.setNew(false);
                 } else {
                     functionUpdater.updateExisting(value, record);
                 }
