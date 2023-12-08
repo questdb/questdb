@@ -89,7 +89,7 @@ public class MaxIntGroupByFunction extends IntFunction implements GroupByFunctio
             destValue.putInt(valueIndex, srcMax);
         } else {
             int destMax = destValue.getInt(valueIndex);
-            if (srcMax > destMax) {
+            if (srcMax > destMax || destMax == Numbers.INT_NaN) {
                 destValue.putInt(valueIndex, srcMax);
             }
         }

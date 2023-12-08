@@ -90,7 +90,7 @@ public class MaxIPv4GroupByFunction extends IPv4Function implements GroupByFunct
             destValue.putInt(valueIndex, (int) srcMax);
         } else {
             long destMax = Numbers.ipv4ToLong(destValue.getIPv4(valueIndex));
-            if (srcMax > destMax) {
+            if (srcMax > destMax || destMax == Numbers.IPv4_NULL) {
                 destValue.putInt(valueIndex, (int) srcMax);
             }
         }

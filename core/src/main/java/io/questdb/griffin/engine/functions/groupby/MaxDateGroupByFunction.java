@@ -84,7 +84,7 @@ public class MaxDateGroupByFunction extends DateFunction implements GroupByFunct
             destValue.putDate(valueIndex, srcMax);
         } else {
             long destMax = destValue.getDate(valueIndex);
-            if (srcMax > destMax) {
+            if (srcMax > destMax || destMax == Numbers.LONG_NaN) {
                 destValue.putDate(valueIndex, srcMax);
             }
         }

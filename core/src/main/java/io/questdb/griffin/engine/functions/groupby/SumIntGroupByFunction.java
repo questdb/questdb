@@ -93,7 +93,7 @@ public class SumIntGroupByFunction extends LongFunction implements GroupByFuncti
     public void merge(MapValue destValue, MapValue srcValue) {
         long srcSum = srcValue.getLong(valueIndex);
         long srcCount = srcValue.getLong(valueIndex + 1);
-        if (destValue.isNew()) {
+        if (destValue.isNew() || destValue.getLong(valueIndex) == Numbers.LONG_NaN) {
             destValue.putLong(valueIndex, srcSum);
             destValue.putLong(valueIndex + 1, srcCount);
         } else {

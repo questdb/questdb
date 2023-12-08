@@ -93,7 +93,7 @@ public class AvgDoubleGroupByFunction extends DoubleFunction implements GroupByF
     public void merge(MapValue destValue, MapValue srcValue) {
         double srcSum = srcValue.getDouble(valueIndex);
         long srcCount = srcValue.getLong(valueIndex + 1);
-        if (destValue.isNew()) {
+        if (destValue.isNew() || Double.isNaN(destValue.getDouble(valueIndex))) {
             destValue.putDouble(valueIndex, srcSum);
             destValue.putLong(valueIndex + 1, srcCount);
         } else {

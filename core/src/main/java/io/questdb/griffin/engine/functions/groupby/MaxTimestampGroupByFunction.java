@@ -84,7 +84,7 @@ public class MaxTimestampGroupByFunction extends TimestampFunction implements Gr
             destValue.putLong(valueIndex, srcMax);
         } else {
             long destMax = destValue.getLong(valueIndex);
-            if (srcMax > destMax) {
+            if (srcMax > destMax || destMax == Numbers.LONG_NaN) {
                 destValue.putLong(valueIndex, srcMax);
             }
         }

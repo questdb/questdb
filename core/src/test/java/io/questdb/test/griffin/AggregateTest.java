@@ -144,6 +144,28 @@ public class AggregateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCountAggregationsWithTypes() throws Exception {
+        String[] aggregateFunctions = {"count"};
+        TypeVal[] aggregateColTypes = {
+                new TypeVal(ColumnType.INT, "0:LONG", "1:LONG", (r, i) -> r.putInt(i, 1)),
+                new TypeVal(ColumnType.LONG, "0:LONG", "1:LONG", (r, i) -> r.putLong(i, 1)),
+                new TypeVal(ColumnType.FLOAT, "0:LONG", "1:LONG", (r, i) -> r.putFloat(i, 1)),
+                new TypeVal(ColumnType.DOUBLE, "0:LONG", "1:LONG", (r, i) -> r.putFloat(i, 1)),
+                new TypeVal(ColumnType.STRING, "0:LONG", "1:LONG", (r, i) -> r.putStr(i, "abc")),
+                new TypeVal(ColumnType.SYMBOL, "0:LONG", "1:LONG", (r, i) -> r.putSym(i, "abc")),
+                new TypeVal(ColumnType.LONG256, "0:LONG", "1:LONG", (r, i) -> r.putLong256(i, 1, 1, 1, 1)),
+                new TypeVal(ColumnType.IPv4, "0:LONG", "1:LONG", (r, i) -> r.putInt(i, 1)),
+                new TypeVal(ColumnType.UUID, "0:LONG", "1:LONG", (r, i) -> r.putLong128(i, 1, 1)),
+                new TypeVal(ColumnType.getGeoHashTypeWithBits(3), "0:LONG", "1:LONG", (r, i) -> r.putGeoHash(i, 1)),
+                new TypeVal(ColumnType.getGeoHashTypeWithBits(10), "0:LONG", "1:LONG", (r, i) -> r.putGeoHash(i, 1)),
+                new TypeVal(ColumnType.getGeoHashTypeWithBits(20), "0:LONG", "1:LONG", (r, i) -> r.putGeoHash(i, 1)),
+                new TypeVal(ColumnType.getGeoHashTypeWithBits(60), "0:LONG", "1:LONG", (r, i) -> r.putGeoHash(i, 1))
+        };
+
+        testAggregations(aggregateFunctions, aggregateColTypes);
+    }
+
+    @Test
     public void testCountCaseInsensitive() throws Exception {
         try (TableModel tt1 = new TableModel(configuration, "tt1", PartitionBy.DAY)) {
             tt1.col("tts", ColumnType.LONG).timestamp("ts")
@@ -177,7 +199,7 @@ public class AggregateTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFirstAggregations() throws Exception {
+    public void testFirstAggregationsWithTypes() throws Exception {
         String[] aggregateFunctions = {"first"};
         TypeVal[] aggregateColTypes = {
                 new TypeVal(ColumnType.SYMBOL, ":SYMBOL", ":SYMBOL", (r, i) -> r.putSym(i, "abc")),
@@ -218,7 +240,7 @@ public class AggregateTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFirstLastNotNullAggregations() throws Exception {
+    public void testFirstLastNotNullAggregationsWithTypes() throws Exception {
         String[] aggregateFunctions = {"first_not_null", "last_not_null"};
         TypeVal[] aggregateColTypes = {
                 new TypeVal(ColumnType.SYMBOL, ":SYMBOL", "abc:SYMBOL", (r, i) -> r.putSym(i, "abc")),
@@ -1219,7 +1241,7 @@ public class AggregateTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testLastAggregations() throws Exception {
+    public void testLastAggregationsWithTypes() throws Exception {
         String[] aggregateFunctions = {"last"};
         TypeVal[] aggregateColTypes = {
                 new TypeVal(ColumnType.SYMBOL, ":SYMBOL", "abc:SYMBOL", (r, i) -> r.putSym(i, "abc")),
@@ -1244,7 +1266,7 @@ public class AggregateTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMaxAggregations() throws Exception {
+    public void testMaxAggregationsWithTypes() throws Exception {
         String[] aggregateFunctions = {"max"};
         TypeVal[] aggregateColTypes = {
                 new TypeVal(ColumnType.BYTE, "0:INT", "1:INT", (r, i) -> r.putByte(i, (byte) 1)),
@@ -1263,7 +1285,7 @@ public class AggregateTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMinAggregations() throws Exception {
+    public void testMinAggregationsWithTypes() throws Exception {
         String[] aggregateFunctions = {"min"};
         TypeVal[] aggregateColTypes = {
                 new TypeVal(ColumnType.BYTE, "0:INT", "0:INT", (r, i) -> r.putByte(i, (byte) 1)),
@@ -1631,7 +1653,7 @@ public class AggregateTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSumAggregations() throws Exception {
+    public void testSumAggregationsWithTypes() throws Exception {
         String[] aggregateFunctions = {"sum"};
         TypeVal[] aggregateColTypes = {
                 new TypeVal(ColumnType.BYTE, "0:LONG", "1:LONG", (r, i) -> r.putByte(i, (byte) 1)),
