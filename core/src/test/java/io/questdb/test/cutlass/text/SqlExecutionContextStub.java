@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.SecurityContext;
-import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.VirtualRecord;
@@ -108,7 +107,7 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
 
     @Override
     public @NotNull SecurityContext getSecurityContext() {
-        return AllowAllSecurityContext.INSTANCE;
+        return engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext();
     }
 
     @Override
