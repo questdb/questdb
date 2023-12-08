@@ -261,7 +261,6 @@ public class FastMap implements Map, Reopenable {
         }
     }
 
-    // TODO(puzpuzpuz): get rid of redundant allocations
     @Override
     public void setTypes(@NotNull ColumnTypes keyTypes, @Nullable ColumnTypes valueTypes) {
         final int keyColumnCount = keyTypes.getColumnCount();
