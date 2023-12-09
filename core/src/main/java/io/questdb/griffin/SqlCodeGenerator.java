@@ -3252,8 +3252,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 throw e;
             }
 
-            boolean supportsParallelism = false;
             Function nestedFilter = null;
+            boolean supportsParallelism = false;
             final boolean enableParallelGroupBy = configuration.isSqlParallelGroupByEnabled();
             if (enableParallelGroupBy && GroupByUtils.supportParallelism(groupByFunctions)) {
                 supportsParallelism = factory.supportPageFrameCursor();
@@ -3269,14 +3269,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 && nestedFilterExpr != null
                                 && nested.getWhereClause() == null // filtered factories "steal" the filter
                 ) {
-                    RecordCursorFactory candidateFactory = generateSubQuery(model, executionContext);
-                    if (candidateFactory.supportPageFrameCursor()) {
-                        Misc.free(factory);
-                        factory = candidateFactory;
-                        nestedFilter = compileBooleanFilter(nestedFilterExpr, factory.getMetadata(), executionContext);
-                        supportsParallelism = true;
-                    } else {
-                        Misc.free(candidateFactory);
+                    try {
+                        RecordCursorFactory candidateFactory = generateSubQuery(model, executionContext);
+                        if (candidateFactory.supportPageFrameCursor()) {
+                            Misc.free(factory);
+                            factory = candidateFactory;
+                            nestedFilter = compileBooleanFilter(nestedFilterExpr, factory.getMetadata(), executionContext);
+                            supportsParallelism = true;
+                        } else {
+                            Misc.free(candidateFactory);
+                        }
+                    } catch (Throwable e) {
+                        Misc.freeObjList(groupByFunctions);
+                        throw e;
                     }
                 }
             }
@@ -3300,6 +3305,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 );
             } catch (Throwable e) {
                 Misc.freeObjList(recordFunctions);
+                Misc.free(nestedFilter);
                 throw e;
             }
 
