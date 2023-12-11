@@ -771,7 +771,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     busyRecv = consumeMultipart(socket, processor, headerEnd, read, newRequest, rescheduleContext);
                 } else if (contentLength > -1 && multipartProcessor) {
                     busyRecv = consumeContent(contentLength, socket, processor, headerEnd, read, newRequest);
-                } else if (!multipartRequest && multipartProcessor) {
+                } else if (multipartProcessor) {
                     // bad request - regular request for processor that expects multipart
                     busyRecv = rejectRequest("Bad request. Multipart POST expected.");
                 } else {

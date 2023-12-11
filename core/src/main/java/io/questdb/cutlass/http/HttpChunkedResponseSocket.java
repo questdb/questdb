@@ -37,8 +37,6 @@ public interface HttpChunkedResponseSocket extends Utf8Sink {
 
     boolean resetToBookmark();
 
-    void send() throws PeerDisconnectedException, PeerIsSlowToReadException;
-
     void sendChunk(boolean done) throws PeerDisconnectedException, PeerIsSlowToReadException;
 
     void sendHeader() throws PeerDisconnectedException, PeerIsSlowToReadException;

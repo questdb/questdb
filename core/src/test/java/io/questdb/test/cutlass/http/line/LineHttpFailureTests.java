@@ -48,6 +48,7 @@ import org.influxdb.InfluxDB;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.ArrayList;
@@ -373,7 +374,8 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
                     points.add("first_table,ok=true allgood=true\n");
                     points.add("second_table,ok=true allgood=true\n");
                     assertRequestErrorContains(influxDB, points, "failed_table,tag1=value1 f1=1i,y=12i",
-                            "{\"code\":\"internal error\",\"message\":\"commit error for table: failed_table, errno: 24, error: test error,\"errorId\":");
+                            "{\"code\":\"internal error\",\"message\":\"commit error for table: failed_table, errno: 24, error: test error,\"errorId\":"
+                    );
 
                     // Retry is ok
                     assertRequestOk(influxDB, points, "failed_table,tag1=value1 f1=1i,y=12i,x=12i");
@@ -467,6 +469,31 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
     }
 
     @Test
+    @Ignore
+    public void testGzipNotSupported() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                serverMain.start();
+
+                final List<String> points = new ArrayList<>();
+                try (final InfluxDB influxDB = IlpHttpUtils.getConnection(serverMain)) {
+                    assertRequestOk(influxDB, points, "m1,tag1=value1 f1=1i,y=12i");
+
+                    influxDB.enableGzip();
+                    assertRequestErrorContains(influxDB, points, "m1,tag1=value1 f1=1i,x=12i",
+                            "415",
+                            "gzip encoding not supported"
+                    );
+
+                    influxDB.disableGzip();
+                    // Retry is ok
+                    assertRequestOk(influxDB, points, "m1,tag1=value1 f1=1i,x=12i");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testTableCommitFailedWhileColumnIsAdded() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final FilesFacade filesFacade = new TestFilesFacadeImpl() {
@@ -508,7 +535,8 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
                     // This will trigger commit and the commit will fail
                     points.add("drop,tag1=value1 f1=1i,y=12i");
                     assertRequestErrorContains(influxDB, points, "drop,tag1=value1 f1=1i,y=12i,z=45",
-                            "{\"code\":\"internal error\",\"message\":\"commit error for table: drop, error: java.lang.UnsupportedOperationException,\"errorId\":");
+                            "{\"code\":\"internal error\",\"message\":\"commit error for table: drop, error: java.lang.UnsupportedOperationException,\"errorId\":"
+                    );
 
 
                     // Retry is ok

@@ -104,19 +104,33 @@ public class HttpServer implements Closeable {
             WorkerPool workerPool,
             int sharedWorkerCount,
             HttpRequestProcessorBuilder jsonQueryProcessorBuilder,
-            HttpRequestProcessorBuilder ilpWriteProcessorBuilder
+            HttpRequestProcessorBuilder ilpWriteProcessorBuilderV2
     ) {
-        server.bind(new HttpRequestProcessorFactory() {
-            @Override
-            public String getUrl() {
-                return "/write";
-            }
+        if (configuration.getLineHttpProcessorConfiguration().isEnabled()) {
+            server.bind(new HttpRequestProcessorFactory() {
+                @Override
+                public String getUrl() {
+                    return "/write";
+                }
 
-            @Override
-            public HttpRequestProcessor newInstance() {
-                return ilpWriteProcessorBuilder.newInstance();
-            }
-        });
+                @Override
+                public HttpRequestProcessor newInstance() {
+                    return ilpWriteProcessorBuilderV2.newInstance();
+                }
+            });
+
+            server.bind(new HttpRequestProcessorFactory() {
+                @Override
+                public String getUrl() {
+                    return "/api/v2/write";
+                }
+
+                @Override
+                public HttpRequestProcessor newInstance() {
+                    return ilpWriteProcessorBuilderV2.newInstance();
+                }
+            });
+        }
 
         server.bind(new HttpRequestProcessorFactory() {
             @Override

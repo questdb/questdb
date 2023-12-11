@@ -27,6 +27,7 @@ package io.questdb.cutlass.http.processors;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitFailedException;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cutlass.http.ConnectionAware;
 import io.questdb.cutlass.http.HttpServerConfiguration;
@@ -57,6 +58,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
     private Status currentStatus = Status.OK;
     private long errorId;
     private int fd = -1;
+    private SecurityContext securityContext;
     private int line = 0;
     private long recvBufEnd;
     private long recvBufPos;
@@ -143,8 +145,9 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         return currentStatus == Status.OK;
     }
 
-    public void of(int fd, byte timestampPrecision) {
+    public void of(int fd, byte timestampPrecision, SecurityContext securityContext) {
         this.fd = fd;
+        this.securityContext = securityContext;
         this.appender.setTimestampAdapter(timestampPrecision);
     }
 
@@ -185,7 +188,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
     }
 
     private Status appendMeasurement() throws IlpTudCache.TableCreateException {
-        WalTableUpdateDetails tud = this.ilpTudCache.getTableUpdateDetails(AllowAllSecurityContext.INSTANCE, parser, symbolCachePool);
+        WalTableUpdateDetails tud = this.ilpTudCache.getTableUpdateDetails(securityContext, parser, symbolCachePool);
         try {
             appender.appendToWal(AllowAllSecurityContext.INSTANCE, parser, tud);
             return Status.OK;
@@ -320,7 +323,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
                 .put(", errno: ").put(ex.getErrno())
                 .put(", error: ").put(ex.getFlyweightMessage());
         errorLine = line + 1;
-        return Status.INTERNAL_ERROR;
+        return ex.isAuthorizationError() ? Status.SECURITY_ERROR : Status.INTERNAL_ERROR;
     }
 
     private Status handleUnknownParseError(Throwable ex) {
@@ -408,6 +411,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         NEEDS_REED("invalid", 400),
         PARSE_ERROR("invalid", 400),
         APPEND_ERROR("invalid", 400),
+        SECURITY_ERROR("unauthorised", 403),
         INTERNAL_ERROR("internal error", 500),
         MESSAGE_TOO_LARGE("request too large", 413),
         COLUMN_ADD_ERROR("invalid", 400);

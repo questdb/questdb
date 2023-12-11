@@ -32,14 +32,17 @@ import io.questdb.log.LogFactory;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8s;
 
 import static io.questdb.cutlass.line.tcp.LineTcpParser.*;
 
 public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartContentListener {
-    public static final Utf8String URL_PARAM_PRECISION = new Utf8String("precision");
+    private static final Utf8String CONTENT_ENCODING = new Utf8String("Content-Encoding");
     private static final Log LOG = LogFactory.getLog(StaticContentProcessor.class);
     private static final LocalValue<LineHttpProcessorState> LV = new LocalValue<>();
+    private static final Utf8String URL_PARAM_PRECISION = new Utf8String("precision");
     private final LineHttpProcessorConfiguration configuration;
     private final CairoEngine engine;
     private final int maxResponseContentLength;
@@ -83,11 +86,27 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
         } else {
             state.clear();
         }
+        // Encoding
+        Utf8Sequence encoding = context.getRequestHeader().getHeader(CONTENT_ENCODING);
+        if (encoding != null && Utf8s.endsWithAscii(encoding, "gzip")) {
+            LOG.error().$("gzip encoding not supported [fd=").put(context.getFd()).I$();
+            try {
+                HttpChunkedResponseSocket r = context.getChunkedResponseSocket();
+                r.status(415, "text/plain");
+                r.sendHeader();
+                r.putAscii("gzip encoding not supported");
+                r.sendChunk(true);
+                throw HttpException.instance("gzip encoding not supported [fd=").put(context.getFd()).put(']');
+            } catch (PeerDisconnectedException | PeerIsSlowToReadException e) {
+                throw HttpException.instance("could not send simple response 415 to sender [fd=").put(context.getFd()).put(']');
+            }
+        }
+
         byte timestampPrecision = ENTITY_UNIT_NANO;
         DirectUtf8Sequence precision = context.getRequestHeader().getUrlParam(URL_PARAM_PRECISION);
         if (precision != null) {
             int len = precision.size();
-            if (len == 1 && precision.byteAt(0) == 'n') {
+            if ((len == 1 && precision.byteAt(0) == 'n') || (len == 2 && precision.byteAt(0) == 'n' && precision.byteAt(1) == 's')) {
                 timestampPrecision = ENTITY_UNIT_NANO;
             } else if (len == 1 && precision.byteAt(0) == 'u') {
                 timestampPrecision = ENTITY_UNIT_MICRO;
@@ -103,7 +122,7 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
                 throw HttpException.instance("unsupported precision in URL query string [precision=").put(precision).put(']');
             }
         }
-        state.of(context.getFd(), timestampPrecision);
+        state.of(context.getFd(), timestampPrecision, context.getSecurityContext());
     }
 
     @Override
@@ -117,7 +136,6 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
     @Override
     public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException {
         try {
-            HttpChunkedResponseSocket r = context.getChunkedResponseSocket();
             state.onMessageComplete();
             if (state.isOk()) {
                 state.commit();
@@ -125,9 +143,7 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
 
             // Check state again, commit may have failed
             if (state.isOk()) {
-                r.status(204, "text/plain"); // OK, no content
-                r.sendHeader();
-                r.send();
+                context.simpleResponse().sendStatus(204);
             } else {
                 sendError(context);
             }
@@ -138,11 +154,6 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
         } finally {
             state.clear();
         }
-    }
-
-    @Override
-    public boolean requiresAuthentication() {
-        return false;
     }
 
     @Override
