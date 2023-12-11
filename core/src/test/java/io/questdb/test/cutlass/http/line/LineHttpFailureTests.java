@@ -27,7 +27,6 @@ package io.questdb.test.cutlass.http.line;
 import io.questdb.Bootstrap;
 import io.questdb.DefaultBootstrapConfiguration;
 import io.questdb.DefaultHttpClientConfiguration;
-import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.pool.PoolListener;
@@ -48,7 +47,6 @@ import org.influxdb.InfluxDB;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.ArrayList;
@@ -153,6 +151,31 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testChunkedEncoding() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                serverMain.start();
+                String line = "line,sym1=123 field1=123i 1234567890000000000\n";
+
+                try (HttpClient httpClient = HttpClientFactory.newInstance(new DefaultHttpClientConfiguration())) {
+                    HttpClient.Request request = httpClient.newRequest();
+                    try (HttpClient.ResponseHeaders resp = request.POST()
+                            .url("/write ")
+                            .header("Transfer-Encoding", "chunked")
+                            .withContent()
+                            .putAscii(line)
+                            .putAscii(line)
+                            .send("localhost", getHttpPort(serverMain))) {
+
+                        resp.await();
+                        TestUtils.assertEquals("411", resp.getStatusCode());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testClientDisconnectedBeforeCommitted() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             AtomicReference<HttpClient> httpClientRef = new AtomicReference<>();
@@ -166,8 +189,7 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
                         httpClientRef.get().disconnect();
                         pong.countDown();
                     }
-                    int fd = super.openRW(name, opts);
-                    return fd;
+                    return super.openRW(name, opts);
                 }
             };
 
@@ -317,14 +339,15 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
 
 
                     // Send good line, full request
-                    HttpClient.ResponseHeaders response = httpClient.newRequest().POST()
+                    try (HttpClient.ResponseHeaders response = httpClient.newRequest().POST()
                             .url("/write ")
                             .withContent()
                             .putAscii(line)
-                            .send("localhost", getHttpPort(serverMain));
+                            .send("localhost", getHttpPort(serverMain))) {
 
-                    response.await();
-                    TestUtils.assertEquals("204", response.getStatusCode());
+                        response.await();
+                        TestUtils.assertEquals("204", response.getStatusCode());
+                    }
 
                     serverMain.waitWalTxnApplied("line", 1);
                     serverMain.assertSql("select * from line", "sym1\tfield1\ttimestamp\n" +
@@ -469,25 +492,58 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
     }
 
     @Test
-    @Ignore
-    public void testGzipNotSupported() throws Exception {
+    public void testGzipChunkedNotSupported() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
                 serverMain.start();
 
                 final List<String> points = new ArrayList<>();
                 try (final InfluxDB influxDB = IlpHttpUtils.getConnection(serverMain)) {
-                    assertRequestOk(influxDB, points, "m1,tag1=value1 f1=1i,y=12i");
-
+                    influxDB.setLogLevel(InfluxDB.LogLevel.BASIC);
                     influxDB.enableGzip();
                     assertRequestErrorContains(influxDB, points, "m1,tag1=value1 f1=1i,x=12i",
-                            "415",
-                            "gzip encoding not supported"
+                            "gzip encoding is not supported"
                     );
 
+                    //   Retry is ok
                     influxDB.disableGzip();
-                    // Retry is ok
                     assertRequestOk(influxDB, points, "m1,tag1=value1 f1=1i,x=12i");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPutAndGetAreNotSupported() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                serverMain.start();
+                String line = "line,sym1=123 field1=123i 1234567890000000000\n";
+
+                try (HttpClient httpClient = HttpClientFactory.newInstance(new DefaultHttpClientConfiguration())) {
+                    HttpClient.Request request = httpClient.newRequest();
+                    HttpClient.ResponseHeaders resp = request.PUT()
+                            .url("/write ")
+                            .withContent()
+                            .putAscii(line)
+                            .putAscii(line)
+                            .send("localhost", getHttpPort(serverMain));
+
+                    resp.await();
+                    TestUtils.assertEquals("404", resp.getStatusCode());
+                }
+
+                try (HttpClient httpClient = HttpClientFactory.newInstance(new DefaultHttpClientConfiguration())) {
+                    HttpClient.Request request = httpClient.newRequest();
+                    var resp = request.GET()
+                            .url("/api/v2/write ")
+                            .withContent()
+                            .putAscii(line)
+                            .putAscii(line)
+                            .send("localhost", getHttpPort(serverMain));
+
+                    resp.await();
+                    TestUtils.assertEquals("404", resp.getStatusCode());
                 }
             }
         });

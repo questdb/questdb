@@ -79,27 +79,20 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
     }
 
     public void onHeadersReady(HttpConnectionContext context) {
-        state = LV.get(context);
-        if (state == null) {
-            state = new LineHttpProcessorState(recvBufferSize, maxResponseContentLength, engine, configuration);
-            LV.set(context, state);
-        } else {
-            state.clear();
+        // Method
+        if (!Utf8s.equalsNcAscii("POST", context.getRequestHeader().getMethod())) {
+            LOG.info().$("method not supported, rejected with 404 [url=")
+                    .$(context.getRequestHeader().getUrl())
+                    .$(", method=").$(context.getRequestHeader().getMethod())
+                    .I$();
+            reject(context, 404, "Not Found");
         }
+
         // Encoding
         Utf8Sequence encoding = context.getRequestHeader().getHeader(CONTENT_ENCODING);
         if (encoding != null && Utf8s.endsWithAscii(encoding, "gzip")) {
-            LOG.error().$("gzip encoding not supported [fd=").put(context.getFd()).I$();
-            try {
-                HttpChunkedResponseSocket r = context.getChunkedResponseSocket();
-                r.status(415, "text/plain");
-                r.sendHeader();
-                r.putAscii("gzip encoding not supported");
-                r.sendChunk(true);
-                throw HttpException.instance("gzip encoding not supported [fd=").put(context.getFd()).put(']');
-            } catch (PeerDisconnectedException | PeerIsSlowToReadException e) {
-                throw HttpException.instance("could not send simple response 415 to sender [fd=").put(context.getFd()).put(']');
-            }
+            LOG.error().$("gzip encoding is not supported [fd=").put(context.getFd()).I$();
+            reject(context, 415, "gzip encoding is not supported");
         }
 
         byte timestampPrecision = ENTITY_UNIT_NANO;
@@ -121,6 +114,14 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
             } else {
                 throw HttpException.instance("unsupported precision in URL query string [precision=").put(precision).put(']');
             }
+        }
+
+        state = LV.get(context);
+        if (state == null) {
+            state = new LineHttpProcessorState(recvBufferSize, maxResponseContentLength, engine, configuration);
+            LV.set(context, state);
+        } else {
+            state.clear();
         }
         state.of(context.getFd(), timestampPrecision, context.getSecurityContext());
     }
@@ -159,6 +160,19 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
     @Override
     public void resumeRecv(HttpConnectionContext context) {
         state = LV.get(context);
+    }
+
+    private static void reject(HttpConnectionContext context, int status, String errorText) {
+        try {
+            HttpChunkedResponseSocket r = context.getChunkedResponseSocket();
+            r.status(status, "text/plain");
+            r.sendHeader();
+            r.putAscii(errorText);
+            r.sendChunk(true);
+            throw HttpException.instance(errorText).put(" [fd=").put(context.getFd()).put(']');
+        } catch (PeerDisconnectedException | PeerIsSlowToReadException e) {
+            throw HttpException.instance("could not send simple response 415 to sender [fd=").put(context.getFd()).put(']');
+        }
     }
 
     private void sendError(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {

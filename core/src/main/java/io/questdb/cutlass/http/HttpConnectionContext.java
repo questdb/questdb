@@ -43,6 +43,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cutlass.http.HttpConstants.HEADER_CONTENT_ACCEPT_ENCODING;
+import static io.questdb.cutlass.http.HttpConstants.HEADER_TRANSFER_ENCODING;
 import static io.questdb.network.IODispatcher.*;
 
 public class HttpConnectionContext extends IOContext<HttpConnectionContext> implements Locality, Retry {
@@ -433,6 +434,30 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return true;
     }
 
+    private boolean consumeChunked(HttpRequestProcessor processor, boolean newRequest) {
+        if (newRequest) {
+            processor.onHeadersReady(this);
+        }
+
+        try {
+            if (!newRequest) {
+                processor.resumeRecv(this);
+            }
+            LOG.error().$("received chunked request, chunked requests not supported [url=").$(getRequestHeader().getUrl()).I$();
+            // TODO: parse chunks and call processor.onChunk(lo, hi)
+            HttpChunkedResponseSocket r = getChunkedResponseSocket();
+            r.status(411, "text/plain");
+            r.sendHeader();
+            r.putAscii("chunked requests are not supported");
+            r.sendChunk(true);
+            throw HttpException.instance("chunked requests are not supported [fd=").put(getFd()).put(']');
+        } catch (PeerDisconnectedException e) {
+        } catch (PeerIsSlowToReadException e) {
+            throw HttpException.instance("chunked requests are not supported [fd=").put(getFd()).put(']');
+        }
+        return false;
+    }
+
     private boolean consumeContent(
             int contentLength,
             Socket socket,
@@ -463,7 +488,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     // HTTP protocol violation
                     // client sent more data than it promised in Content-Length header
                     // we will disconnect client and roll back
-                    return disconnectIlpHttp(processor, DISCONNECT_REASON_KICKED_OUT_AT_EXTRA_BYTES);
+                    return disconnectHttp(processor, DISCONNECT_REASON_KICKED_OUT_AT_EXTRA_BYTES);
                 }
 
                 contentProcessor.onChunk(lo, recvBuffer + read);
@@ -476,22 +501,22 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                         read = socket.recv(recvBuffer, recvBufferSize);
                         if (read < 0) {
                             // client disconnected, don't commit, rollback instead
-                            return disconnectIlpHttp(processor, DISCONNECT_REASON_KICKED_OUT_AT_RECV);
+                            return disconnectHttp(processor, DISCONNECT_REASON_KICKED_OUT_AT_RECV);
                         } else if (read > 0) {
                             // HTTP protocol violation
                             // client sent more data than it promised in Content-Length header
                             // we will disconnect client and roll back
-                            return disconnectIlpHttp(processor, DISCONNECT_REASON_KICKED_OUT_AT_EXTRA_BYTES);
+                            return disconnectHttp(processor, DISCONNECT_REASON_KICKED_OUT_AT_EXTRA_BYTES);
                         }
 
                         processor.onRequestComplete(this);
                         if (configuration.getServerKeepAlive()) {
                             return true;
                         } else {
-                            return disconnectIlpHttp(processor, DISCONNECT_REASON_KEEPALIVE_OFF_RECV);
+                            return disconnectHttp(processor, DISCONNECT_REASON_KEEPALIVE_OFF_RECV);
                         }
                     } catch (PeerDisconnectedException e) {
-                        return disconnectIlpHttp(processor, DISCONNECT_REASON_KICKED_OUT_AT_SEND);
+                        return disconnectHttp(processor, DISCONNECT_REASON_KICKED_OUT_AT_SEND);
                     } finally {
                         reset();
                     }
@@ -502,7 +527,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 return false;
             } else {
                 // client disconnected
-                return disconnectIlpHttp(processor, DISCONNECT_REASON_KICKED_OUT_AT_RECV);
+                return disconnectHttp(processor, DISCONNECT_REASON_KICKED_OUT_AT_RECV);
             }
         }
     }
@@ -654,7 +679,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return keepGoing;
     }
 
-    private boolean disconnectIlpHttp(HttpRequestProcessor processor, int disconnectReasonKickedOutAtRecv) {
+    private boolean disconnectHttp(HttpRequestProcessor processor, int disconnectReasonKickedOutAtRecv) {
         processor.onConnectionClosed(this);
         reset();
         dispatcher.disconnect(this, disconnectReasonKickedOutAtRecv);
@@ -744,8 +769,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 throw HttpException.instance("missing URL");
             }
             HttpRequestProcessor processor = getHttpRequestProcessor(selector);
-
             int contentLength = headerParser.getContentLength();
+            final boolean chunked = Utf8s.equalsNcAscii("chunked", headerParser.getHeader(HEADER_TRANSFER_ENCODING));
             final boolean multipartRequest = Utf8s.equalsNcAscii("multipart/form-data", headerParser.getContentType());
             final boolean multipartProcessor = processor instanceof HttpMultipartContentListener;
 
@@ -764,7 +789,9 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     }
                 }
 
-                if (multipartRequest && !multipartProcessor) {
+                if (chunked) {
+                    busyRecv = consumeChunked(processor, newRequest);
+                } else if (multipartRequest && !multipartProcessor) {
                     // bad request - multipart request for processor that doesn't expect multipart
                     busyRecv = rejectRequest("Bad request. Non-multipart GET expected.");
                 } else if (multipartProcessor && multipartRequest) {

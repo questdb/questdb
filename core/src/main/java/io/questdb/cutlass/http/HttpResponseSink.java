@@ -300,7 +300,6 @@ public class HttpResponseSink implements Closeable, Mutable {
 
     private class ChunkBuffer implements Utf8Sink, Closeable, Mutable, Reopenable {
         private static final String EOF_CHUNK = "\r\n00\r\n\r\n";
-        private static final String EOF_CHUNK_NO_CONTENT = "\r\n";
         private static final int MAX_CHUNK_HEADER_SIZE = 12;
         private final long bufSize;
         private long _rptr;
@@ -801,6 +800,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         httpStatusMap.put(401, "Unauthorized");
         httpStatusMap.put(403, "Forbidden");
         httpStatusMap.put(404, "Not Found");
+        httpStatusMap.put(411, "Length Required");
         httpStatusMap.put(413, "Content Too Large");
         httpStatusMap.put(415, "Bad request");
         httpStatusMap.put(416, "Request range not satisfiable");

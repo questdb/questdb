@@ -35,6 +35,7 @@ public final class HttpConstants {
     public static final char COOKIE_VALUE_SEPARATOR = '=';
 
     public static final Utf8String HEADER_CONTENT_ACCEPT_ENCODING = new Utf8String("Accept-Encoding");
+
     public static final Utf8String HEADER_CONTENT_DISPOSITION = new Utf8String("Content-Disposition");
     public static final Utf8String HEADER_CONTENT_LENGTH = new Utf8String("Content-Length");
     public static final Utf8String HEADER_CONTENT_TYPE = new Utf8String("Content-Type");

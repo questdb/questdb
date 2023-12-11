@@ -194,6 +194,12 @@ public abstract class HttpClient implements QuietCloseable {
             return put("POST ");
         }
 
+        public Request PUT() {
+            assert state == STATE_REQUEST;
+            state = STATE_URL;
+            return put("PUT ");
+        }
+
         public Request authBasic(CharSequence username, CharSequence password) {
             beforeHeader();
             putAsciiInternal("Authorization: Basic ");
