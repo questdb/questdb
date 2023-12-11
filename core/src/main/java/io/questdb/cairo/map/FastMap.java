@@ -333,9 +333,6 @@ public class FastMap implements Map, Reopenable {
         kPos = (kPos + 7) & ~0x7;
         setOffset(offsets, index, keyWriter.startAddress - heapStart);
         setHashCode(offsets, index, hashCode);
-        if (--free == 0) {
-            rehash();
-        }
         size++;
         return valueOf(keyWriter.startAddress, keyWriter.appendAddress, true, value);
     }
