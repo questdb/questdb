@@ -535,7 +535,7 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
 
                 try (HttpClient httpClient = HttpClientFactory.newInstance(new DefaultHttpClientConfiguration())) {
                     HttpClient.Request request = httpClient.newRequest();
-                    var resp = request.GET()
+                    HttpClient.ResponseHeaders resp = request.GET()
                             .url("/api/v2/write ")
                             .withContent()
                             .putAscii(line)

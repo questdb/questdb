@@ -401,6 +401,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int jsonQueryConnectionCheckFrequency;
     private int jsonQueryDoubleScale;
     private int jsonQueryFloatScale;
+    private final CharSequence lineHttpPingVersion;
     private long lineTcpCommitIntervalDefault;
     private double lineTcpCommitIntervalFraction;
     private int lineTcpConnectionPoolInitialCapacity;
@@ -1078,6 +1079,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             this.lineTcpEnabled = getBoolean(properties, env, PropertyKey.LINE_TCP_ENABLED, true);
             this.lineHttpEnabled = getBoolean(properties, env, PropertyKey.LINE_HTTP_ENABLED, true);
+            this.lineHttpPingVersion = getString(properties, env, PropertyKey.LINE_HTTP_PING_VERSION, "v2.7.4");
             if (lineTcpEnabled || lineHttpEnabled) {
                 // obsolete
                 lineTcpNetConnectionLimit = getInt(properties, env, PropertyKey.LINE_TCP_NET_ACTIVE_CONNECTION_LIMIT, 256);
@@ -3283,6 +3285,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getDefaultPartitionBy() {
             return lineTcpDefaultPartitionBy;
+        }
+
+        @Override
+        public CharSequence getInfluxPingVersion() {
+            return lineHttpPingVersion;
         }
 
         @Override

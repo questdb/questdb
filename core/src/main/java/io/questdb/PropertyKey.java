@@ -289,6 +289,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     LINE_UDP_TIMESTAMP("line.udp.timestamp"),
     LINE_TCP_ENABLED("line.tcp.enabled"),
     LINE_HTTP_ENABLED("line.http.enabled"),
+    LINE_HTTP_PING_VERSION("line.http.ping.version"),
     LINE_TCP_NET_ACTIVE_CONNECTION_LIMIT("line.tcp.net.active.connection.limit"),
     LINE_TCP_NET_CONNECTION_LIMIT("line.tcp.net.connection.limit"),
     LINE_TCP_NET_CONNECTION_HINT("line.tcp.net.connection.hint"),
@@ -436,7 +437,6 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_O3_PARTITION_SPLIT_MIN_SIZE("cairo.o3.partition.split.min.size"),
     DEBUG_WAL_PURGE_WAIT_BEFORE_DELETE("debug.wal.purge.wait.before.delete"),
     WRITER_MEMORY_LIMIT("cairo.writer.memory.limit");
-
     private static final Map<String, PropertyKey> nameMapping;
     private final String envVarName;
     private final String propertyPath;

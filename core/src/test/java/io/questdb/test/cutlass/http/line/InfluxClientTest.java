@@ -36,6 +36,8 @@ import io.questdb.test.tools.TestUtils;
 import org.influxdb.InfluxDB;
 import org.influxdb.dto.BatchPoints;
 import org.influxdb.dto.Point;
+import org.influxdb.dto.Pong;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -176,6 +178,24 @@ public class InfluxClientTest extends AbstractBootstrapTest {
                             "\"line\":1,\"errorId\":\""
                     );
 
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPing() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.LINE_HTTP_PING_VERSION.getEnvVarName(), "v2.2.2"
+            )) {
+                serverMain.start();
+
+                try (final InfluxDB influxDB = IlpHttpUtils.getConnection(serverMain)) {
+                    influxDB.setLogLevel(InfluxDB.LogLevel.FULL);
+                    Pong pong = influxDB.ping();
+                    Assert.assertTrue(pong.isGood());
+                    Assert.assertEquals(pong.getVersion(), "v2.2.2");
                 }
             }
         });

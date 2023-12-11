@@ -95,13 +95,15 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
             reject(context, 415, "gzip encoding is not supported");
         }
 
-        byte timestampPrecision = ENTITY_UNIT_NANO;
+        byte timestampPrecision;
         DirectUtf8Sequence precision = context.getRequestHeader().getUrlParam(URL_PARAM_PRECISION);
         if (precision != null) {
             int len = precision.size();
             if ((len == 1 && precision.byteAt(0) == 'n') || (len == 2 && precision.byteAt(0) == 'n' && precision.byteAt(1) == 's')) {
+                // V2 influx client sends "n" and V3 sends "ns"
                 timestampPrecision = ENTITY_UNIT_NANO;
-            } else if (len == 1 && precision.byteAt(0) == 'u') {
+            } else if ((len == 1 && precision.byteAt(0) == 'u') || (len == 2 && precision.byteAt(0) == 'u' && precision.byteAt(1) == 's')) {
+                // V2 influx client sends "u" and V3 sends "us"
                 timestampPrecision = ENTITY_UNIT_MICRO;
             } else if (len == 2 && precision.byteAt(0) == 'm' && precision.byteAt(1) == 's') {
                 timestampPrecision = ENTITY_UNIT_MILLI;
@@ -112,8 +114,15 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
             } else if (len == 1 && precision.byteAt(0) == 'h') {
                 timestampPrecision = ENTITY_UNIT_HOUR;
             } else {
-                throw HttpException.instance("unsupported precision in URL query string [precision=").put(precision).put(']');
+                LOG.info().$("unsupported precision [url=")
+                        .$(context.getRequestHeader().getUrl())
+                        .$(", precision=").$(precision)
+                        .I$();
+                reject(context, 400, "unsupported precision");
+                return;
             }
+        } else {
+            timestampPrecision = ENTITY_UNIT_NANO;
         }
 
         state = LV.get(context);
@@ -171,7 +180,7 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
             r.sendChunk(true);
             throw HttpException.instance(errorText).put(" [fd=").put(context.getFd()).put(']');
         } catch (PeerDisconnectedException | PeerIsSlowToReadException e) {
-            throw HttpException.instance("could not send simple response 415 to sender [fd=").put(context.getFd()).put(']');
+            throw HttpException.instance("could not send response ").put(status).put(" to sender [fd=").put(context.getFd()).put(']');
         }
     }
 

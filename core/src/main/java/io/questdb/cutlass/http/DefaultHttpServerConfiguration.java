@@ -267,6 +267,11 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
         }
 
         @Override
+        public CharSequence getInfluxPingVersion() {
+            return "v2.7.4";
+        }
+
+        @Override
         public MicrosecondClock getMicrosecondClock() {
             return lineHttpProcessorConfiguration.getMicrosecondClock();
         }

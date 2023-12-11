@@ -26,10 +26,7 @@ package io.questdb.cutlass.http;
 
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cutlass.http.processors.StaticContentProcessor;
-import io.questdb.cutlass.http.processors.TableStatusCheckProcessor;
-import io.questdb.cutlass.http.processors.TextImportProcessor;
-import io.questdb.cutlass.http.processors.TextQueryProcessor;
+import io.questdb.cutlass.http.processors.*;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.*;
@@ -128,6 +125,21 @@ public class HttpServer implements Closeable {
                 @Override
                 public HttpRequestProcessor newInstance() {
                     return ilpWriteProcessorBuilderV2.newInstance();
+                }
+            });
+
+            LineHttpPingProcessor pingProcessor = new LineHttpPingProcessor(
+                    configuration.getLineHttpProcessorConfiguration().getInfluxPingVersion()
+            );
+            server.bind(new HttpRequestProcessorFactory() {
+                @Override
+                public String getUrl() {
+                    return "/ping";
+                }
+
+                @Override
+                public HttpRequestProcessor newInstance() {
+                    return pingProcessor;
                 }
             });
         }

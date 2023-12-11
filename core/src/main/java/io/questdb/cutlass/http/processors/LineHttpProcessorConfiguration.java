@@ -38,6 +38,8 @@ public interface LineHttpProcessorConfiguration {
 
     int getDefaultPartitionBy();
 
+    CharSequence getInfluxPingVersion();
+
     MicrosecondClock getMicrosecondClock();
 
     long getSymbolCacheWaitUsBeforeReload();
