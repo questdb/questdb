@@ -340,15 +340,59 @@ public class FastMap implements Map, Reopenable {
         return valueOf(keyWriter.startAddress, keyWriter.appendAddress, true, value);
     }
 
-    private FastMapValue probe0(BaseKey keyWriter, int index, int hashCode, int keySize, FastMapValue value) {
-        long offset;
-        while ((offset = getOffset(offsets, index = (++index & mask))) > -1) {
-            if (hashCode == getHashCode(offsets, index) && keyWriter.eq(offset)) {
-                long startAddress = heapStart + offset;
-                return valueOf(startAddress, startAddress + keyOffset + keySize, false, value);
+    private int getProbeSequenceLength(int hash, int actualIndex) {
+        int idealIndex = hash & mask;
+        int distance = actualIndex - idealIndex;
+
+        // Adjust for wrap-around: If distance is negative, add keyCapacity, otherwise add 0.
+        distance += (keyCapacity & -(distance >>> 31));
+        return distance;
+    }
+
+    private void startEvacuationFrom(DirectIntList offsets, long relocatedOffset, int relocatedHash, int index, int probeSeqLen) {
+        long candidateVictim;
+        while ((candidateVictim = getOffset(offsets, index = (++index & mask))) > -1) {
+            probeSeqLen++;
+            int victimEntryHashCode = getHashCode(offsets, index);
+            int victimProbeSeqLen = getProbeSequenceLength(victimEntryHashCode, index);
+            if (victimProbeSeqLen < probeSeqLen) {
+                setOffset(offsets, index, relocatedOffset);
+                setHashCode(offsets, index, relocatedHash);
+                relocatedOffset = candidateVictim;
+                relocatedHash = victimEntryHashCode;
+                probeSeqLen = victimProbeSeqLen;
             }
         }
-        return asNew(keyWriter, index, hashCode, value);
+        setOffset(offsets, index, relocatedOffset);
+        setHashCode(offsets, index, relocatedHash);
+    }
+
+    private FastMapValue probeReadWrite(BaseKey keyWriter, int index, int hashCode, int keySize, FastMapValue value) {
+        long candidateOffset;
+        int currentSeqLen = 1;
+        while ((candidateOffset = getOffset(offsets, index = (++index & mask))) > -1) {
+            int candidateHashCode = getHashCode(offsets, index);
+            if (hashCode == candidateHashCode && keyWriter.eq(candidateOffset)) {
+                long startAddress = heapStart + candidateOffset;
+                return valueOf(startAddress, startAddress + keyOffset + keySize, false, value);
+            } else {
+                int candidateSeqLen = getProbeSequenceLength(candidateHashCode, index);
+                if (candidateSeqLen < currentSeqLen) {
+                    FastMapValue newVal = asNew(keyWriter, index, hashCode, value);
+                    startEvacuationFrom(offsets, candidateOffset, candidateHashCode, index, candidateSeqLen);
+                    if (--free == 0) {
+                        rehash();
+                    }
+                    return newVal;
+                }
+                currentSeqLen++;
+            }
+        }
+        FastMapValue newValue = asNew(keyWriter, index, hashCode, value);
+        if (--free == 0) {
+            rehash();
+        }
+        return newValue;
     }
 
     private FastMapValue probeReadOnly(BaseKey keyWriter, int index, int hashCode, int keySize, FastMapValue value) {
@@ -376,7 +420,21 @@ public class FastMap implements Map, Reopenable {
             }
             int hashCode = getHashCode(offsets, i);
             int index = hashCode & mask;
-            while (getOffset(newOffsets, index) > -1) {
+            int probeSeqLen = 0;
+
+            for (; ; ) {
+                long candidateOffset = getOffset(newOffsets, index);
+                if (candidateOffset < 0) {
+                    break;
+                }
+
+                int candidateHashCode = getHashCode(newOffsets, index);
+                int candidateProbeSeqLen = getProbeSequenceLength(candidateHashCode, index);
+                if (candidateProbeSeqLen < probeSeqLen) {
+                    startEvacuationFrom(newOffsets, candidateOffset, candidateHashCode, index, candidateProbeSeqLen);
+                    break;
+                }
+                probeSeqLen++;
                 index = (index + 1) & mask;
             }
             setOffset(newOffsets, index, offset);
@@ -489,12 +547,16 @@ public class FastMap implements Map, Reopenable {
             long offset = getOffset(offsets, index);
 
             if (offset < 0) {
-                return asNew(this, index, hashCode, value);
+                FastMapValue newValue = asNew(this, index, hashCode, value);
+                if (--free == 0) {
+                    rehash();
+                }
+                return newValue;
             } else if (hashCode == getHashCode(offsets, index) && eq(offset)) {
                 long startAddress = heapStart + offset;
                 return valueOf(startAddress, startAddress + keyOffset + keySize, false, value);
             } else {
-                return probe0(this, index, hashCode, keySize, value);
+                return probeReadWrite(this, index, hashCode, keySize, value);
             }
         }
 
