@@ -22,35 +22,31 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.test.griffin.engine.functions.str;
 
-import io.questdb.std.FlyweightMessageContainer;
-import io.questdb.std.ThreadLocal;
-import io.questdb.std.str.StringSink;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.str.QuoteIdentFunctionFactory;
+import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
+import org.junit.Test;
 
-public class WriterOutOfDateException extends RuntimeException implements FlyweightMessageContainer {
+public class QuoteIdentFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
-    private static final ThreadLocal<WriterOutOfDateException> tlException = new ThreadLocal<>(WriterOutOfDateException::new);
+    @Test
+    public void test() throws SqlException {
+        call("").andAssert("");
+        call((String) null).andAssert(null);
+        call("test").andAssert("test");
+        call("TEST").andAssert("TEST");
 
-    private final StringSink message = new StringSink();
-
-    public static WriterOutOfDateException of(CharSequence outdatedTableName) {
-        WriterOutOfDateException ex = tlException.get();
-        // This is to have correct stack trace in local debugging with -ea option
-        assert (ex = new WriterOutOfDateException()) != null;
-        ex.message.clear();
-        ex.message.put("['").put(outdatedTableName).put("']");
-        return ex;
-    }
-
-
-    @Override
-    public CharSequence getFlyweightMessage() {
-        return message;
+        call("a b").andAssert("\"a b\"");
+        call("a\tb").andAssert("\"a\tb\"");
+        call("a^b").andAssert("\"a^b\"");
+        call("a\"b").andAssert("\"a\"\"b\"");
     }
 
     @Override
-    public String getMessage() {
-        return message.toString();
+    protected FunctionFactory getFunctionFactory() {
+        return new QuoteIdentFunctionFactory();
     }
 }

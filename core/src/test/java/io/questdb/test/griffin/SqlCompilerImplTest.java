@@ -48,6 +48,7 @@ import org.junit.*;
 
 import java.io.File;
 import java.util.Arrays;
+import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
@@ -5224,6 +5225,40 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSelectConcurrentDDL() throws Exception {
+        engine.ddl("create table x (a int, b int, c int)", sqlExecutionContext);
+
+        CyclicBarrier barrier = new CyclicBarrier(2);
+        new Thread(() -> {
+            try {
+                while (barrier.getNumberWaiting() == 0) {
+                    ddl("alter table x add column d int", sqlExecutionContext);
+                    ddl("alter table x drop column d", sqlExecutionContext);
+                }
+            } catch (SqlException e) {
+                e.printStackTrace();
+            } finally {
+                try {
+                    barrier.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    e.printStackTrace();
+                } catch (BrokenBarrierException e) {
+                    e.printStackTrace();
+                }
+            }
+        }).start();
+
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            for (int i = 0; i < 20_000; i++) {
+                Misc.freeIfCloseable(compiler.compile("select * from x", sqlExecutionContext).getRecordCursorFactory());
+            }
+        } finally {
+            barrier.await();
+        }
+    }
+
+    @Test
     public void testSelectDateInListContainingNull() throws Exception {
         assertQuery("c\n1970-01-01T00:00:00.001Z\n\n",
                 "select * from x where c in (cast(1 as date), cast(null as date))",
@@ -5604,6 +5639,46 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnionAllWithFirstSubQueryUsingDistinct() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table ict ( event int );");
+            insert("insert into ict select x::int from long_sequence(1000)");
+
+            assertWithReorder(
+                    "avg\n" +
+                            "500.5\n",
+                    "union",
+                    "select avg(event) from ict ",
+                    "select distinct avg(event) from ict"
+            );
+
+            assertWithReorder(
+                    "avg\n" +
+                            "500.5\n" +
+                            "500.5\n",
+                    "union all",
+                    "select avg(event) from ict ",
+                    "select distinct avg(event) from ict"
+            );
+
+            assertWithReorder(
+                    "avg\n" +
+                            "500.5\n",
+                    "intersect",
+                    "select avg(event) from ict ",
+                    "select distinct avg(event) from ict"
+            );
+
+            assertWithReorder(
+                    "avg\n",
+                    "except",
+                    "select avg(event) from ict ",
+                    "select distinct avg(event) from ict"
+            );
+        });
+    }
+
+    @Test
     public void testUseExtensionPoints() {
         try (SqlCompilerWrapper compiler = new SqlCompilerWrapper(engine)) {
 
@@ -5928,6 +6003,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     }
                 }
         );
+    }
+
+    private void assertWithReorder(String expected, String setOperation, String... subqueries) throws SqlException {
+        assertSql(expected, subqueries[0] + " " + setOperation + " " + subqueries[1]);
+        assertSql(expected, subqueries[1] + " " + setOperation + " " + subqueries[0]);
     }
 
     private void selectDoubleInListWithBindVariable() throws Exception {

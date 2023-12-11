@@ -666,6 +666,13 @@ open module io.questdb {
 //                  floor()
             io.questdb.griffin.engine.functions.math.FloorDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.math.FloorFloatFunctionFactory,
+//                  sign()
+            io.questdb.griffin.engine.functions.math.SignByteFunctionFactory,
+            io.questdb.griffin.engine.functions.math.SignDoubleFunctionFactory,
+            io.questdb.griffin.engine.functions.math.SignFloatFunctionFactory,
+            io.questdb.griffin.engine.functions.math.SignIntFunctionFactory,
+            io.questdb.griffin.engine.functions.math.SignLongFunctionFactory,
+            io.questdb.griffin.engine.functions.math.SignShortFunctionFactory,
 //                  case conditional statement
             io.questdb.griffin.engine.functions.conditional.CaseFunctionFactory,
             io.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory,
@@ -683,6 +690,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.catalogue.PrefixedPgRolesFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.InformationSchemaFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.InformationSchemaColumnsFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.InformationSchemaTablesFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedPgTypeFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedPgDescriptionFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedPgNamespaceFunctionFactory,
@@ -697,11 +705,14 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.catalogue.PrefixedCurrentDatabaseFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.CurrentSchemasFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedCurrentSchemasFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.CurrentSettingFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.CurrentSchemaFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedCurrentSchemaFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.CurrentUserFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.CursorDereferenceFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PgDescriptionFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.PgExtensionFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.PrefixedPgExtensionFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PgInheritsFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedPgInheritsFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.SessionUserFunctionFactory,
@@ -798,6 +809,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.str.SizePrettyFunctionFactory,
             // substring
             io.questdb.griffin.engine.functions.str.SubStringFunctionFactory,
+            io.questdb.griffin.engine.functions.str.QuoteIdentFunctionFactory,
 
             // trim
             io.questdb.griffin.engine.functions.str.TrimFunctionFactory,
