@@ -24,7 +24,9 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.std.ObjList;
 
 public class TestSink implements RecordSink {
     @Override
@@ -32,5 +34,10 @@ public class TestSink implements RecordSink {
         w.putLong(r.getLong(1));
         w.skip(4);
         w.putInt(r.getInt(2));
+    }
+
+    @Override
+    public void setFunctions(ObjList<Function> keyFunctions) {
+        // no-op
     }
 }

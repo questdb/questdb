@@ -50,9 +50,12 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Plannable {
 
     private final Function filter;
     private final GroupByFunctionsUpdater functionUpdater;
+    private final ObjList<Function> keyFunctions;
     private final RecordSink mapSink;
     private final ObjList<Function> perWorkerFilters;
+    private final ObjList<ObjList<Function>> perWorkerKeyFunctions;
     private final PerWorkerLocks perWorkerLocks;
+    private final ObjList<RecordSink> perWorkerMapSinks;
 
     public AsyncGroupByAtom(
             @Transient @NotNull BytecodeAssembler asm,
@@ -60,20 +63,35 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Plannable {
             @Transient @NotNull ColumnTypes columnTypes,
             @Transient @NotNull ListColumnFilter listColumnFilter,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
+            @NotNull ObjList<Function> keyFunctions,
+            @Nullable ObjList<ObjList<Function>> perWorkerKeyFunctions,
             @Nullable Function filter,
             @Nullable ObjList<Function> perWorkerFilters,
             int workerCount
     ) {
         assert perWorkerFilters == null || perWorkerFilters.size() == workerCount;
+        assert perWorkerKeyFunctions == null || perWorkerKeyFunctions.size() == workerCount;
+
         this.filter = filter;
         this.perWorkerFilters = perWorkerFilters;
+        this.keyFunctions = keyFunctions;
+        this.perWorkerKeyFunctions = perWorkerKeyFunctions;
         functionUpdater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
-        if (perWorkerFilters != null) {
+        if (perWorkerFilters != null || perWorkerKeyFunctions != null) {
             perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
         } else {
             perWorkerLocks = null;
         }
-        mapSink = RecordSinkFactory.getInstance(asm, columnTypes, listColumnFilter, false);
+        mapSink = RecordSinkFactory.getInstance(asm, columnTypes, listColumnFilter, keyFunctions, false);
+        if (perWorkerKeyFunctions != null) {
+            perWorkerMapSinks = new ObjList<>(workerCount);
+            for (int i = 0, n = perWorkerKeyFunctions.size(); i < n; i++) {
+                RecordSink sink = RecordSinkFactory.getInstance(asm, columnTypes, listColumnFilter, perWorkerKeyFunctions.getQuick(i), false);
+                perWorkerMapSinks.extendAndSet(i, sink);
+            }
+        } else {
+            perWorkerMapSinks = null;
+        }
     }
 
     public int acquire(int workerId, boolean owner, SqlExecutionCircuitBreaker circuitBreaker) {
@@ -90,25 +108,31 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Plannable {
     @Override
     public void close() {
         Misc.free(filter);
+        Misc.freeObjList(keyFunctions);
         Misc.freeObjList(perWorkerFilters);
+        if (perWorkerKeyFunctions != null) {
+            for (int i = 0, n = perWorkerKeyFunctions.size(); i < n; i++) {
+                Misc.freeObjList(perWorkerKeyFunctions.getQuick(i));
+            }
+        }
     }
 
     public Function getFilter(int slotId) {
-        if (slotId == -1) {
+        if (slotId == -1 || perWorkerFilters == null) {
             return filter;
         }
-        if (perWorkerFilters != null) {
-            return perWorkerFilters.getQuick(slotId);
-        }
-        return null;
+        return perWorkerFilters.getQuick(slotId);
     }
 
     public GroupByFunctionsUpdater getFunctionUpdater() {
         return functionUpdater;
     }
 
-    public RecordSink getMapSink() {
-        return mapSink;
+    public RecordSink getMapSink(int slotId) {
+        if (slotId == -1 || perWorkerMapSinks == null) {
+            return mapSink;
+        }
+        return perWorkerMapSinks.getQuick(slotId);
     }
 
     @Override
@@ -116,11 +140,28 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Plannable {
         if (filter != null) {
             filter.init(symbolTableSource, executionContext);
         }
+
         if (perWorkerFilters != null) {
             final boolean current = executionContext.getCloneSymbolTables();
             executionContext.setCloneSymbolTables(true);
             try {
                 Function.init(perWorkerFilters, symbolTableSource, executionContext);
+            } finally {
+                executionContext.setCloneSymbolTables(current);
+            }
+        }
+
+        if (keyFunctions != null) {
+            Function.init(keyFunctions, symbolTableSource, executionContext);
+        }
+
+        if (perWorkerKeyFunctions != null) {
+            final boolean current = executionContext.getCloneSymbolTables();
+            executionContext.setCloneSymbolTables(true);
+            try {
+                for (int i = 0, n = perWorkerKeyFunctions.size(); i < n; i++) {
+                    Function.init(perWorkerKeyFunctions.getQuick(i), symbolTableSource, executionContext);
+                }
             } finally {
                 executionContext.setCloneSymbolTables(current);
             }
@@ -139,11 +180,11 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Plannable {
         }
     }
 
-    public void release(int filterId) {
+    public void release(int slotId) {
         if (perWorkerLocks == null) {
             return;
         }
-        perWorkerLocks.releaseSlot(filterId);
+        perWorkerLocks.releaseSlot(slotId);
     }
 
     @Override

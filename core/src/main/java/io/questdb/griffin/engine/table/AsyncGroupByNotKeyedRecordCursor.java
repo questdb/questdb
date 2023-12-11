@@ -47,7 +47,6 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
     private final SimpleMapValue dataValue; // used to accumulate all partial results
     private final ObjList<GroupByFunction> groupByFunctions;
     private final VirtualRecord recordA;
-    private final ObjList<Function> recordFunctions;
     private final int valueCount;
     private int frameLimit;
     private PageFrameSequence<AsyncGroupByNotKeyedAtom> frameSequence;
@@ -55,16 +54,11 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
     private boolean isValueBuilt;
     private int recordsRemaining = 1;
 
-    public AsyncGroupByNotKeyedRecordCursor(
-            ObjList<GroupByFunction> groupByFunctions,
-            ObjList<Function> recordFunctions,
-            int valueCount
-    ) {
+    public AsyncGroupByNotKeyedRecordCursor(ObjList<GroupByFunction> groupByFunctions, int valueCount) {
         this.groupByFunctions = groupByFunctions;
-        this.recordFunctions = recordFunctions;
         this.valueCount = valueCount;
         this.dataValue = new SimpleMapValue(valueCount);
-        this.recordA = new VirtualRecord(recordFunctions);
+        this.recordA = new VirtualRecord(groupByFunctions);
         recordA.of(dataValue);
         this.isOpen = true;
     }
@@ -104,7 +98,7 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
 
     @Override
     public SymbolTable getSymbolTable(int columnIndex) {
-        return (SymbolTable) recordFunctions.getQuick(columnIndex);
+        return (SymbolTable) groupByFunctions.getQuick(columnIndex);
     }
 
     @Override
@@ -117,7 +111,7 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
 
     @Override
     public SymbolTable newSymbolTable(int columnIndex) {
-        return ((SymbolFunction) recordFunctions.getQuick(columnIndex)).newSymbolTable();
+        return ((SymbolFunction) groupByFunctions.getQuick(columnIndex)).newSymbolTable();
     }
 
     @Override
@@ -128,7 +122,7 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
     @Override
     public void toTop() {
         recordsRemaining = 1;
-        GroupByUtils.toTop(recordFunctions);
+        GroupByUtils.toTop(groupByFunctions);
     }
 
     private void buildValue() {

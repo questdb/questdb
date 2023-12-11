@@ -46,6 +46,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     protected final RecordCursorFactory base;
     private final GroupByRecordCursor cursor;
     private final ObjList<GroupByFunction> groupByFunctions;
+    private final ObjList<Function> keyFunctions;
     // this sink is used to copy recordKeyMap keys to dataMap
     private final RecordSink mapSink;
     private final ObjList<Function> recordFunctions;
@@ -59,19 +60,22 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             @Transient @NotNull ArrayColumnTypes valueTypes,
             RecordMetadata groupByMetadata,
             ObjList<GroupByFunction> groupByFunctions,
+            ObjList<Function> keyFunctions,
             ObjList<Function> recordFunctions
     ) {
         super(groupByMetadata);
         try {
             // sink will be storing record columns to map key
-            this.mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter, false);
+            this.mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter, keyFunctions, false);
             this.base = base;
             this.groupByFunctions = groupByFunctions;
+            this.keyFunctions = keyFunctions;
             this.recordFunctions = recordFunctions;
             final GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
             this.cursor = new GroupByRecordCursor(recordFunctions, updater, keyTypes, valueTypes, configuration);
         } catch (Throwable e) {
             Misc.freeObjList(recordFunctions);
+            Misc.freeObjList(keyFunctions);
             throw e;
         }
     }
@@ -97,11 +101,10 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
-        final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
         try {
             // init all record functions for this cursor, in case functions require metadata and/or symbol tables
             Function.init(recordFunctions, baseCursor, executionContext);
-            cursor.of(baseCursor, circuitBreaker);
+            cursor.of(baseCursor, executionContext);
             return cursor;
         } catch (Throwable e) {
             baseCursor.close();
@@ -136,6 +139,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     protected void _close() {
         Misc.freeObjList(recordFunctions);
+        Misc.freeObjList(keyFunctions);
         Misc.free(base);
         Misc.free(cursor);
     }
@@ -186,13 +190,14 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             return super.hasNext();
         }
 
-        public void of(RecordCursor managedCursor, SqlExecutionCircuitBreaker circuitBreaker) {
+        public void of(RecordCursor managedCursor, SqlExecutionContext executionContext) throws SqlException {
             if (!isOpen) {
                 isOpen = true;
                 dataMap.reopen();
             }
-            this.circuitBreaker = circuitBreaker;
+            this.circuitBreaker = executionContext.getCircuitBreaker();
             this.managedCursor = managedCursor;
+            Function.init(keyFunctions, managedCursor, executionContext);
             isDataMapBuilt = false;
         }
 

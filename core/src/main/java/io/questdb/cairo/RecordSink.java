@@ -24,9 +24,12 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.std.ObjList;
 
-@FunctionalInterface
 public interface RecordSink {
     void copy(Record r, RecordSinkSPI w);
+
+    void setFunctions(ObjList<Function> keyFunctions);
 }

@@ -42,6 +42,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayDeque;
 
+import static io.questdb.griffin.SqlKeywords.isHourKeyword;
 import static io.questdb.griffin.model.ExpressionNode.*;
 
 public class SqlOptimiser implements Mutable {
@@ -1028,7 +1029,7 @@ public class SqlOptimiser implements Mutable {
         return SqlUtil.createColumnAlias(characterStore, node.token, Chars.indexOf(node.token, '.'), model.getAliasToColumnMap());
     }
 
-    //use only if input is a column literal !
+    // use only if input is a column literal!
     private QueryColumn createGroupByColumn(
             CharSequence columnName,
             ExpressionNode columnAst,
@@ -1150,7 +1151,7 @@ public class SqlOptimiser implements Mutable {
         if (distinctModel != null) {
             if (sameAlias) {
                 distinctModel.addBottomUpColumn(outerColumn);
-            } else {//we've to use alias from outer model
+            } else { // we've to use alias from outer model
                 QueryColumn distinctColumn = nextColumn(outerColumn.getAlias());
                 distinctColumn = ensureAliasUniqueness(distinctModel, distinctColumn);
                 distinctModel.addBottomUpColumn(distinctColumn);
@@ -2245,6 +2246,13 @@ public class SqlOptimiser implements Mutable {
         return r;
     }
 
+    private void mergeInnerVirtualModel(QueryModel innerModel, QueryModel groupByModel) {
+        for (int i = 0, n = innerModel.getBottomUpColumns().size(); i < n; i++) {
+            QueryColumn qc = innerModel.getBottomUpColumns().getQuick(i);
+            groupByModel.mergeInnerColumn(qc);
+        }
+    }
+
     private JoinContext moveClauses(QueryModel parent, JoinContext from, JoinContext to, IntList positions) {
         int p = 0;
         int m = positions.size();
@@ -2854,7 +2862,7 @@ public class SqlOptimiser implements Mutable {
 
             if (orderChanges) {
                 // Set artificial limit to trigger LimitRCF use, so that parent models don't use the followedOrderByAdvice flag and skip necessary sort
-                // Currently the only way to delinate order by advice is through use of factory that returns false for followedOrderByAdvice().
+                // Currently the only way to delineate order by advice is through use of factory that returns false for followedOrderByAdvice().
                 // TODO: factories should provide order metadata to enable better sort-skipping
                 model.setLimit(expressionNodePool.next().of(CONSTANT, "" + Long.MAX_VALUE, Integer.MIN_VALUE, 0), null);
             }
@@ -3451,7 +3459,7 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    //Rewrite:
+    // Rewrite:
     // sum(x*10) into sum(x) * 10, etc.
     // sum(x+10) into sum(x) + count(x)*10
     // sum(x-10) into sum(x) - count(x)*10
@@ -3477,7 +3485,7 @@ public class SqlOptimiser implements Mutable {
                     op.rhs = agg;
                     return op;
                 }
-            } else if (Chars.equals(op.token, '+') || Chars.equals(op.token, '-')) {//sum(x+10) == sum(x)+count(x)*10 , sum(x-10) == sum(x)-count(x)*10
+            } else if (Chars.equals(op.token, '+') || Chars.equals(op.token, '-')) { // sum(x+10) == sum(x)+count(x)*10 , sum(x-10) == sum(x)-count(x)*10
                 if (isIntegerConstant(op.rhs)) {
                     return pushOperationOutsideAgg(agg, op, op.lhs, op.rhs, model);
                 } else if (isIntegerConstant(op.lhs)) {
@@ -3489,8 +3497,8 @@ public class SqlOptimiser implements Mutable {
         return agg;
     }
 
-    //push aggregate function calls to group by model, replace key column expressions with group by aliases
-    //raise error if raw column usage doesn't match one of expressions on group by list
+    // push aggregate function calls to group by model, replace key column expressions with group by aliases
+    // raise error if raw column usage doesn't match one of expressions on group by list
     private ExpressionNode rewriteGroupBySelectExpression(
             final @Transient ExpressionNode topLevelNode,
             QueryModel groupByModel,
@@ -4256,11 +4264,11 @@ public class SqlOptimiser implements Mutable {
                 // select count(*) from t group by 12+3 returns empty result
                 // if we removed 12+3 then we'd affect result
                 else if (!(isEffectivelyConstantExpression(node) && i > 0)) {
-                    //add expression
-                    //if group by element is an expression then we've to use inner model to compute it
+                    // add expression
+                    // if group by element is an expression then we've to use inner model to compute it
                     useInnerModel = true;
 
-                    //expressions in GROUP BY clause should be pushed to inner model
+                    // expressions in GROUP BY clause should be pushed to inner model
                     CharSequence innerAlias = createColumnAlias(node.token, innerVirtualModel, true);
                     QueryColumn qc = queryColumnPool.next().of(innerAlias, node);
                     innerVirtualModel.addBottomUpColumn(qc);
@@ -4328,10 +4336,11 @@ public class SqlOptimiser implements Mutable {
                             useOuterModel = true;
                         }
                     } else {
-                        //groupByModel is populated in createSelectColumn
-                        //groupByModel must be used as it is the only model that is populated with duplicate column names in createSelectColumn
-                        //The below if-statement will only evaluate to true when using wildcards in a join with duplicate column names
-                        //Because the other column aliases are not known at the time qc's alias gets set, we must wait until this point (when we know the other column aliases) to alter it if a duplicate has occurred
+                        // groupByModel is populated in createSelectColumn.
+                        // groupByModel must be used as it is the only model that is populated with duplicate column names in createSelectColumn.
+                        // The below if-statement will only evaluate to true when using wildcards in a join with duplicate column names.
+                        // Because the other column aliases are not known at the time qc's alias gets set, we must wait until this point
+                        // (when we know the other column aliases) to alter it if a duplicate has occurred.
                         if (groupByModel.getAliasToColumnMap().contains(qc.getAlias())) {
                             CharSequence newAlias = createColumnAlias(qc.getAst(), groupByModel);
                             qc.setAlias(newAlias);
@@ -4467,7 +4476,7 @@ public class SqlOptimiser implements Mutable {
                 // we emit aggregation function into group-by model and leave the rest in outer model
                 final int beforeSplit = groupByModel.getBottomUpColumns().size();
                 if (checkForAggregates(qc.getAst())) {
-                    //push aggregates and literals outside aggregate functions
+                    // push aggregates and literals outside aggregate functions
                     emitAggregatesAndLiterals(qc.getAst(), groupByModel, translatingModel, innerVirtualModel, baseModel, groupByNodes, groupByAliases);
                     emitCursors(qc.getAst(), cursorModel, innerVirtualModel, translatingModel, baseModel, sqlExecutionContext, sqlParserCallback);
                     qc = ensureAliasUniqueness(outerVirtualModel, qc);
@@ -4547,12 +4556,35 @@ public class SqlOptimiser implements Mutable {
         if (useInnerModel) {
             final ObjList<QueryColumn> innerColumns = innerVirtualModel.getBottomUpColumns();
             useInnerModel = false;
+            boolean columnsAndFunctionsOnly = true;
+            // hour(column) is the only function key in supported by Rosti, so we need to detect it
+            int hourFunctionKeyCount = 0;
+            int totalFunctionKeyCount = 0;
             for (int i = 0, k = innerColumns.size(); i < k; i++) {
                 QueryColumn qc = innerColumns.getQuick(i);
                 if (qc.getAst().type != LITERAL) {
                     useInnerModel = true;
-                    break;
                 }
+                if (qc.getAst().type != LITERAL && qc.getAst().type != FUNCTION && qc.getAst().type != OPERATION) {
+                    columnsAndFunctionsOnly = false;
+                }
+                if (qc.getAst().type == FUNCTION
+                        && isHourKeyword(qc.getAst().token) && qc.getAst().paramCount == 1 && qc.getAst().rhs.type == LITERAL) {
+                    hourFunctionKeyCount++;
+                }
+                if (qc.getAst().type == FUNCTION || qc.getAst().type == OPERATION) {
+                    totalFunctionKeyCount++;
+                }
+            }
+            boolean singleHourFunctionKey = totalFunctionKeyCount == 1 && hourFunctionKeyCount == 1;
+            if (useInnerModel
+                    && useGroupByModel && groupByModel.getSampleBy() == null
+                    && columnsAndFunctionsOnly && !singleHourFunctionKey
+                    && SqlUtil.isPlainSelect(baseModel)) {
+                // we can "steal" all keys from inner model in case of group-by
+                // this is necessary in case of further parallel execution
+                mergeInnerVirtualModel(innerVirtualModel, groupByModel);
+                useInnerModel = false;
             }
         }
 

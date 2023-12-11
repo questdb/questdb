@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.groupby;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.NotNull;
 
 public class GroupByFunctionsUpdaterFactory {
     private static final int FIELD_POOL_OFFSET = 3;
@@ -53,14 +54,13 @@ public class GroupByFunctionsUpdaterFactory {
      */
     public static GroupByFunctionsUpdater getInstance(
             BytecodeAssembler asm,
-            ObjList<GroupByFunction> groupByFunctions
+            @NotNull ObjList<GroupByFunction> groupByFunctions
     ) {
         asm.init(GroupByFunctionsUpdater.class);
         asm.setupPool();
         final int thisClassIndex = asm.poolClass(asm.poolUtf8("io/questdb/griffin/engine/groupby/GroupByFunctionsUpdaterAsm"));
         final int superclassIndex = asm.poolClass(Object.class);
         int interfaceClassIndex = asm.poolClass(GroupByFunctionsUpdater.class);
-
 
         final int superIndex = asm.poolMethod(superclassIndex, "<init>", "()V");
 
@@ -110,7 +110,7 @@ public class GroupByFunctionsUpdaterFactory {
         generateUpdateNew(asm, functionSize, firstFieldIndex, computeFirstIndex, updateNewIndex, updateNewSigIndex);
         generateUpdateExisting(asm, functionSize, firstFieldIndex, computeNextIndex, updateExistingIndex, updateExistingSigIndex);
         generateUpdateEmpty(asm, functionSize, firstFieldIndex, setEmptyIndex, updateEmptyIndex, updateEmptySigIndex);
-        generateSetFunction(asm, functionSize, firstFieldIndex, setFunctionsIndex, setFunctionsSigIndex, getIndex);
+        generateSetFunctions(asm, functionSize, firstFieldIndex, setFunctionsIndex, setFunctionsSigIndex, getIndex);
 
         // class attribute count
         asm.putShort(0);
@@ -121,7 +121,7 @@ public class GroupByFunctionsUpdaterFactory {
         return updater;
     }
 
-    private static void generateSetFunction(BytecodeAssembler asm, int functionSize, int firstFieldIndex, int setFunctionsIndex, int setFunctionsSigIndex, int getIndex) {
+    private static void generateSetFunctions(BytecodeAssembler asm, int functionSize, int firstFieldIndex, int setFunctionsIndex, int setFunctionsSigIndex, int getIndex) {
         asm.startMethod(setFunctionsIndex, setFunctionsSigIndex, 3, 3);
         for (int i = 0; i < functionSize; i++) {
             asm.aload(0);

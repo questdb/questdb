@@ -58,7 +58,6 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
     private final AsyncGroupByNotKeyedRecordCursor cursor;
     private final PageFrameSequence<AsyncGroupByNotKeyedAtom> frameSequence;
     private final ObjList<GroupByFunction> groupByFunctions;
-    private final ObjList<Function> recordFunctions;
     private final int workerCount;
 
     public AsyncGroupByNotKeyedRecordCursorFactory(
@@ -68,7 +67,6 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
             @NotNull RecordCursorFactory base,
             @NotNull RecordMetadata groupByMetadata,
             ObjList<GroupByFunction> groupByFunctions,
-            ObjList<Function> recordFunctions,
             int valueCount,
             @Nullable Function filter,
             @NotNull PageFrameReduceTaskFactory reduceTaskFactory,
@@ -77,10 +75,8 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
     ) {
         super(groupByMetadata);
         try {
-            assert !(base instanceof AsyncGroupByNotKeyedRecordCursorFactory);
             this.base = base;
             this.groupByFunctions = groupByFunctions;
-            this.recordFunctions = recordFunctions;
             this.atom = new AsyncGroupByNotKeyedAtom(
                     asm,
                     configuration,
@@ -91,10 +87,10 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
                     workerCount
             );
             this.frameSequence = new PageFrameSequence<>(configuration, messageBus, REDUCER, reduceTaskFactory, PageFrameReduceTask.TYPE_GROUP_BY_NOT_KEYED);
-            this.cursor = new AsyncGroupByNotKeyedRecordCursor(groupByFunctions, recordFunctions, valueCount);
+            this.cursor = new AsyncGroupByNotKeyedRecordCursor(groupByFunctions, valueCount);
             this.workerCount = workerCount;
         } catch (Throwable e) {
-            Misc.freeObjList(recordFunctions);
+            Misc.freeObjList(groupByFunctions);
             throw e;
         }
     }
@@ -187,8 +183,8 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
     protected void _close() {
         Misc.free(base);
         Misc.free(cursor);
-        Misc.freeObjList(recordFunctions);
-        Misc.free(atom);
+        Misc.freeObjList(groupByFunctions);
+        Misc.free(atom); // frees filter
         Misc.free(frameSequence);
     }
 }

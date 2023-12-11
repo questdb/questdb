@@ -40,6 +40,11 @@ public class ArrayColumnTypes implements ColumnTypes, Mutable {
         return this;
     }
 
+    public ArrayColumnTypes addAll(ArrayColumnTypes that) {
+        types.addAll(that.types);
+        return this;
+    }
+
     public void clear() {
         types.clear();
     }

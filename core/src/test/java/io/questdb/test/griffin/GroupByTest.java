@@ -225,14 +225,13 @@ public class GroupByTest extends AbstractCairoTest {
                     query,
                     "VirtualRecord\n" +
                             "  functions: [column,count]\n" +
-                            "    GroupBy vectorized: false\n" +
+                            "    Async Group By workers: 1\n" +
                             "      keys: [column]\n" +
                             "      values: [count(*)]\n" +
-                            "        VirtualRecord\n" +
-                            "          functions: [x+1]\n" +
-                            "            DataFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: t\n"
+                            "      filter: null\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: t\n"
             );
 
             assertQuery(
@@ -258,14 +257,13 @@ public class GroupByTest extends AbstractCairoTest {
 
             assertPlan(
                     query,
-                    "GroupBy vectorized: false\n" +
+                    "Async Group By workers: 1\n" +
                             "  keys: [case]\n" +
                             "  values: [count(*)]\n" +
-                            "    VirtualRecord\n" +
-                            "      functions: [case([x<0,-1,x=0,0,1])]\n" +
-                            "        DataFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: t\n"
+                            "  filter: null\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: t\n"
             );
 
             assertQuery(
@@ -293,14 +291,13 @@ public class GroupByTest extends AbstractCairoTest {
                     query,
                     "VirtualRecord\n" +
                             "  functions: [case([column<0,-1,column=0,0,1]),count]\n" +
-                            "    GroupBy vectorized: false\n" +
+                            "    Async Group By workers: 1\n" +
                             "      keys: [column]\n" +
                             "      values: [count(*)]\n" +
-                            "        VirtualRecord\n" +
-                            "          functions: [x+1]\n" +
-                            "            DataFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: t\n"
+                            "      filter: null\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: t\n"
             );
 
             assertQuery(
@@ -421,14 +418,13 @@ public class GroupByTest extends AbstractCairoTest {
                     query,
                     "VirtualRecord\n" +
                             "  functions: [column,x+avg,min]\n" +
-                            "    GroupBy vectorized: false\n" +
+                            "    Async Group By workers: 1\n" +
                             "      keys: [column,x]\n" +
                             "      values: [avg(y),min(y)]\n" +
-                            "        VirtualRecord\n" +
-                            "          functions: [x*10,y,x]\n" +
-                            "            DataFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: t\n"
+                            "      filter: null\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: t\n"
             );
             assertQuery(
                     "column\tcolumn1\tmin\n" +
@@ -613,14 +609,13 @@ public class GroupByTest extends AbstractCairoTest {
                             "  keys: [date_report]\n" +
                             "    VirtualRecord\n" +
                             "      functions: [date_report,dateadd,dateadd('d',1,date_report),concat(['1',date_report,'3']),count]\n" +
-                            "        GroupBy vectorized: false\n" +
+                            "        Async Group By workers: 1\n" +
                             "          keys: [date_report,dateadd]\n" +
                             "          values: [count(*)]\n" +
-                            "            VirtualRecord\n" +
-                            "              functions: [date_report,dateadd('d',-1,date_report)]\n" +
-                            "                DataFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: dat\n"
+                            "          filter: null\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: dat\n"
             );
 
             assertQuery(
@@ -956,13 +951,12 @@ public class GroupByTest extends AbstractCairoTest {
                     query,
                     "VirtualRecord\n" +
                             "  functions: [l,s,column]\n" +
-                            "    GroupBy vectorized: false\n" +
+                            "    Async Group By workers: 1\n" +
                             "      keys: [l,s,column,column1]\n" +
-                            "        VirtualRecord\n" +
-                            "          functions: [l,s,l+1,l+2]\n" +
-                            "            DataFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: t\n"
+                            "      filter: null\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: t\n"
             );
 
             assertQuery(

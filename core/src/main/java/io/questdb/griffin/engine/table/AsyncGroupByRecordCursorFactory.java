@@ -60,7 +60,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
     private final AsyncGroupByRecordCursor cursor;
     private final PageFrameSequence<AsyncGroupByAtom> frameSequence;
     private final ObjList<GroupByFunction> groupByFunctions;
-    private final ObjList<Function> recordFunctions;
+    private final ObjList<Function> recordFunctions; // includes groupByFunctions
     private final int workerCount;
 
     public AsyncGroupByRecordCursorFactory(
@@ -72,8 +72,10 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             @Transient @NotNull ListColumnFilter listColumnFilter,
             @Transient @NotNull ColumnTypes keyTypes,
             @Transient @NotNull ColumnTypes valueTypes,
-            ObjList<GroupByFunction> groupByFunctions,
-            ObjList<Function> recordFunctions,
+            @NotNull ObjList<GroupByFunction> groupByFunctions,
+            @NotNull ObjList<Function> keyFunctions,
+            @Nullable ObjList<ObjList<Function>> perWorkerKeyFunctions,
+            @NotNull ObjList<Function> recordFunctions,
             @Nullable Function filter,
             @NotNull PageFrameReduceTaskFactory reduceTaskFactory,
             @Nullable ObjList<Function> perWorkerFilters,
@@ -81,7 +83,6 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
     ) {
         super(groupByMetadata);
         try {
-            assert !(base instanceof AsyncGroupByRecordCursorFactory);
             this.base = base;
             this.groupByFunctions = groupByFunctions;
             this.recordFunctions = recordFunctions;
@@ -91,6 +92,8 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
                     base.getMetadata(),
                     listColumnFilter,
                     groupByFunctions,
+                    keyFunctions,
+                    perWorkerKeyFunctions,
                     filter,
                     perWorkerFilters,
                     workerCount
@@ -101,6 +104,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             this.workerCount = workerCount;
         } catch (Throwable e) {
             Misc.freeObjList(recordFunctions);
+            Misc.freeObjList(keyFunctions);
             throw e;
         }
     }
@@ -163,13 +167,13 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         final long frameRowCount = task.getFrameRowCount();
         final AsyncGroupByAtom atom = task.getFrameSequence(AsyncGroupByAtom.class).getAtom();
         final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater();
-        final RecordSink mapSink = atom.getMapSink();
 
         map.clear();
 
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.acquire(workerId, owner, circuitBreaker);
         final Function filter = atom.getFilter(slotId);
+        final RecordSink mapSink = atom.getMapSink(slotId);
         try {
             for (long r = 0; r < frameRowCount; r++) {
                 record.setRowIndex(r);
@@ -196,7 +200,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         Misc.free(base);
         Misc.free(cursor);
         Misc.freeObjList(recordFunctions);
-        Misc.free(atom);
+        Misc.free(atom); // frees filter, keyFunctions and perWorkerKeyFunctions
         Misc.free(frameSequence);
     }
 }

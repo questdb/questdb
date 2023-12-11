@@ -22,7 +22,6 @@
  *
  ******************************************************************************/
 
-
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.ColumnType;
@@ -2321,7 +2320,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test // only none, single int|symbol key cases are vectorized
     public void testGroupByBoolean() throws Exception {
         assertPlan(
-                "create table a ( l long, b boolean)",
+                "create table a (l long, b boolean)",
                 "select b, min(l)  from a group by b",
                 "Async Group By workers: 1\n" +
                         "  keys: [b]\n" +
@@ -2336,23 +2335,22 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testGroupByBooleanFunction() throws Exception {
         assertPlan(
-                "create table a ( l long, b1 boolean, b2 boolean)",
+                "create table a (l long, b1 boolean, b2 boolean)",
                 "select b1||b2, min(l) from a group by b1||b2",
-                "GroupBy vectorized: false\n" +
+                "Async Group By workers: 1\n" +
                         "  keys: [concat]\n" +
                         "  values: [min(l)]\n" +
-                        "    VirtualRecord\n" +
-                        "      functions: [concat([b1,b2]),l]\n" +
-                        "        DataFrame\n" +
-                        "            Row forward scan\n" +
-                        "            Frame forward scan on: a\n"
+                        "  filter: null\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
         );
     }
 
     @Test // only none, single int|symbol key cases are vectorized
     public void testGroupByBooleanWithFilter() throws Exception {
         assertPlan(
-                "create table a ( l long, b boolean)",
+                "create table a (l long, b boolean)",
                 "select b, min(l)  from a where b = true group by b",
                 "Async Group By workers: 1\n" +
                         "  keys: [b]\n" +
@@ -2367,7 +2365,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test // only none, single int|symbol key cases are vectorized
     public void testGroupByDouble() throws Exception {
         assertPlan(
-                "create table a ( l long, d double)",
+                "create table a (l long, d double)",
                 "select d, min(l) from a group by d",
                 "Async Group By workers: 1\n" +
                         "  keys: [d]\n" +
@@ -2382,7 +2380,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test // only none, single int|symbol key cases are vectorized
     public void testGroupByFloat() throws Exception {
         assertPlan(
-                "create table a ( l long, f float)",
+                "create table a (l long, f float)",
                 "select f, min(l) from a group by f",
                 "Async Group By workers: 1\n" +
                         "  keys: [f]\n" +
@@ -2397,7 +2395,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test //special case
     public void testGroupByHour() throws Exception {
         assertPlan(
-                "create table a ( ts timestamp, d double)",
+                "create table a (ts timestamp, d double)",
                 "select hour(ts), min(d) from a group by hour(ts)",
                 "GroupBy vectorized: true workers: 1\n" +
                         "  keys: [ts]\n" +
@@ -2411,7 +2409,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testGroupByInt1() throws Exception {
         assertPlan(
-                "create table a ( i int, d double)",
+                "create table a (i int, d double)",
                 "select min(d), i from a group by i",
                 "VirtualRecord\n" +
                         "  functions: [min,i]\n" +
@@ -2424,11 +2422,29 @@ public class ExplainPlanTest extends AbstractCairoTest {
         );
     }
 
-    @Test//repeated group by keys get merged at group by level
+    @Test // repeated group by keys get merged at group by level
     public void testGroupByInt2() throws Exception {
-        assertPlan("create table a ( i int, d double)", "select i, i, min(d) from a group by i, i",
+        assertPlan(
+                "create table a (i int, d double)",
+                "select i, i, min(d) from a group by i, i",
                 "VirtualRecord\n" +
                         "  functions: [i,i,min]\n" +
+                        "    GroupBy vectorized: true workers: 1\n" +
+                        "      keys: [i]\n" +
+                        "      values: [min(d)]\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: a\n"
+        );
+    }
+
+    @Test
+    public void testGroupByIntOperation() throws Exception {
+        assertPlan(
+                "create table a (i int, d double)",
+                "select min(d), i * 42 from a group by i",
+                "VirtualRecord\n" +
+                        "  functions: [min,i*42]\n" +
                         "    GroupBy vectorized: true workers: 1\n" +
                         "      keys: [i]\n" +
                         "      values: [min(d)]\n" +
@@ -2732,6 +2748,84 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "        DataFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n"
+        );
+    }
+
+    @Test
+    public void testGroupByStringFunction() throws Exception {
+        assertPlan(
+                "create table a (l long, s1 string, s2 string)",
+                "select s1||s2 s, avg(l) a from a",
+                "Async Group By workers: 1\n" +
+                        "  keys: [s]\n" +
+                        "  values: [avg(l)]\n" +
+                        "  filter: null\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+    }
+
+    @Test
+    public void testGroupByStringFunctionWithFilter() throws Exception {
+        assertPlan(
+                "create table a (l long, s1 string, s2 string)",
+                "select s1||s2 s, avg(l) a from a where l > 42",
+                "Async Group By workers: 1\n" +
+                        "  keys: [s]\n" +
+                        "  values: [avg(l)]\n" +
+                        "  filter: 42<l\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+    }
+
+    @Test
+    public void testGroupBySymbol() throws Exception {
+        assertPlan(
+                "create table a (l long, s symbol)",
+                "select s, avg(l) a from a",
+                "GroupBy vectorized: true workers: 1\n" +
+                        "  keys: [s]\n" +
+                        "  values: [avg(l)]\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+    }
+
+    @Test
+    public void testGroupBySymbolFunction() throws Exception {
+        assertPlan(
+                "create table a (l long, s string)",
+                "select s::symbol, avg(l) a from a",
+                "Async Group By workers: 1\n" +
+                        "  keys: [cast]\n" +
+                        "  values: [avg(l)]\n" +
+                        "  filter: null\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+    }
+
+    @Test
+    public void testGroupBySymbolWithSubQueryFilter() throws Exception {
+        assertPlan(
+                "create table a (l long, s symbol)",
+                "select s, avg(l) a from a where s in (select s from a where s = 'key')",
+                "Async Group By workers: 1\n" +
+                        "  keys: [s]\n" +
+                        "  values: [avg(l)]\n" +
+                        "  filter: s in cursor \n" +
+                        "    Filter filter: s='key'\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: a\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
         );
     }
 

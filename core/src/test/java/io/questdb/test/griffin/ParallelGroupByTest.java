@@ -214,6 +214,118 @@ public class ParallelGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelFunctionKeyedExplicitGroupBy() throws Exception {
+        testParallelSymbolKeyedGroupBy(
+                "SELECT day_of_week(ts) day, key, vwap(price, quantity), sum(colTop) FROM tab GROUP BY day, key ORDER BY day",
+                "day\tkey\tvwap\tsum\n" +
+                        "1\tk0\t423.57142857142856\t4675.0\n" +
+                        "1\tk1\t423.987012987013\t4235.0\n" +
+                        "1\tk2\t424.98586572438165\t4245.0\n" +
+                        "1\tk3\t425.9847238542891\t4255.0\n" +
+                        "1\tk4\t426.9835873388042\t4265.0\n" +
+                        "4\tk1\t70.23753665689149\t735.0\n" +
+                        "4\tk2\t71.00576368876081\t745.0\n" +
+                        "4\tk3\t71.78186968838527\t755.0\n" +
+                        "4\tk4\t72.56545961002786\t765.0\n" +
+                        "4\tk0\t70.07692307692308\t675.0\n" +
+                        "5\tk0\t153.135593220339\t2950.0\n" +
+                        "5\tk1\t154.0976430976431\t2970.0\n" +
+                        "5\tk2\t155.06020066889633\t2990.0\n" +
+                        "5\tk3\t156.02325581395348\t3010.0\n" +
+                        "5\tk4\t156.98679867986797\t3030.0\n" +
+                        "6\tk0\t250.85858585858585\t4950.0\n" +
+                        "6\tk1\t251.8450704225352\t4970.0\n" +
+                        "6\tk2\t252.8316633266533\t4990.0\n" +
+                        "6\tk3\t253.8183632734531\t5010.0\n" +
+                        "6\tk4\t254.8051689860835\t5030.0\n" +
+                        "7\tk0\t349.89208633093523\t6950.0\n" +
+                        "7\tk1\t350.8852223816356\t6970.0\n" +
+                        "7\tk2\t351.87839771101574\t6990.0\n" +
+                        "7\tk3\t352.8716119828816\t7010.0\n" +
+                        "7\tk4\t353.86486486486484\t7030.0\n"
+        );
+    }
+
+    @Test
+    public void testParallelFunctionKeyedGroupByMultipleKeys() throws Exception {
+        testParallelSymbolKeyedGroupBy(
+                "SELECT vwap(price, quantity), day_of_week(ts) day, sum(colTop), concat(key, 'abc')::symbol key FROM tab ORDER BY day, key",
+                "vwap\tday\tsum\tkey\n" +
+                        "423.57142857142856\t1\t4675.0\tk0abc\n" +
+                        "423.987012987013\t1\t4235.0\tk1abc\n" +
+                        "424.98586572438165\t1\t4245.0\tk2abc\n" +
+                        "425.9847238542891\t1\t4255.0\tk3abc\n" +
+                        "426.9835873388042\t1\t4265.0\tk4abc\n" +
+                        "70.07692307692308\t4\t675.0\tk0abc\n" +
+                        "70.23753665689149\t4\t735.0\tk1abc\n" +
+                        "71.00576368876081\t4\t745.0\tk2abc\n" +
+                        "71.78186968838527\t4\t755.0\tk3abc\n" +
+                        "72.56545961002786\t4\t765.0\tk4abc\n" +
+                        "153.135593220339\t5\t2950.0\tk0abc\n" +
+                        "154.0976430976431\t5\t2970.0\tk1abc\n" +
+                        "155.06020066889633\t5\t2990.0\tk2abc\n" +
+                        "156.02325581395348\t5\t3010.0\tk3abc\n" +
+                        "156.98679867986797\t5\t3030.0\tk4abc\n" +
+                        "250.85858585858585\t6\t4950.0\tk0abc\n" +
+                        "251.8450704225352\t6\t4970.0\tk1abc\n" +
+                        "252.8316633266533\t6\t4990.0\tk2abc\n" +
+                        "253.8183632734531\t6\t5010.0\tk3abc\n" +
+                        "254.8051689860835\t6\t5030.0\tk4abc\n" +
+                        "349.89208633093523\t7\t6950.0\tk0abc\n" +
+                        "350.8852223816356\t7\t6970.0\tk1abc\n" +
+                        "351.87839771101574\t7\t6990.0\tk2abc\n" +
+                        "352.8716119828816\t7\t7010.0\tk3abc\n" +
+                        "353.86486486486484\t7\t7030.0\tk4abc\n"
+        );
+    }
+
+    @Test
+    public void testParallelFunctionKeyedGroupByThreadSafe() throws Exception {
+        testParallelSymbolKeyedGroupBy(
+                "SELECT day_of_week(ts) day, key, vwap(price, quantity), sum(colTop) FROM tab ORDER BY day",
+                "day\tkey\tvwap\tsum\n" +
+                        "1\tk0\t423.57142857142856\t4675.0\n" +
+                        "1\tk1\t423.987012987013\t4235.0\n" +
+                        "1\tk2\t424.98586572438165\t4245.0\n" +
+                        "1\tk3\t425.9847238542891\t4255.0\n" +
+                        "1\tk4\t426.9835873388042\t4265.0\n" +
+                        "4\tk1\t70.23753665689149\t735.0\n" +
+                        "4\tk2\t71.00576368876081\t745.0\n" +
+                        "4\tk3\t71.78186968838527\t755.0\n" +
+                        "4\tk4\t72.56545961002786\t765.0\n" +
+                        "4\tk0\t70.07692307692308\t675.0\n" +
+                        "5\tk0\t153.135593220339\t2950.0\n" +
+                        "5\tk1\t154.0976430976431\t2970.0\n" +
+                        "5\tk2\t155.06020066889633\t2990.0\n" +
+                        "5\tk3\t156.02325581395348\t3010.0\n" +
+                        "5\tk4\t156.98679867986797\t3030.0\n" +
+                        "6\tk0\t250.85858585858585\t4950.0\n" +
+                        "6\tk1\t251.8450704225352\t4970.0\n" +
+                        "6\tk2\t252.8316633266533\t4990.0\n" +
+                        "6\tk3\t253.8183632734531\t5010.0\n" +
+                        "6\tk4\t254.8051689860835\t5030.0\n" +
+                        "7\tk0\t349.89208633093523\t6950.0\n" +
+                        "7\tk1\t350.8852223816356\t6970.0\n" +
+                        "7\tk2\t351.87839771101574\t6990.0\n" +
+                        "7\tk3\t352.8716119828816\t7010.0\n" +
+                        "7\tk4\t353.86486486486484\t7030.0\n"
+        );
+    }
+
+    @Test
+    public void testParallelFunctionKeyedGroupByThreadUnsafe() throws Exception {
+        testParallelSymbolKeyedGroupBy(
+                "SELECT concat(key, 'abc')::symbol key, vwap(price, quantity), sum(colTop) FROM tab ORDER BY key",
+                "key\tvwap\tsum\n" +
+                        "k0abc\t288.84615384615387\t20200.0\n" +
+                        "k1abc\t285.9440715883669\t19880.0\n" +
+                        "k2abc\t286.6659242761693\t19960.0\n" +
+                        "k3abc\t287.390243902439\t20040.0\n" +
+                        "k4abc\t288.1169977924945\t20120.0\n"
+        );
+    }
+
+    @Test
     public void testParallelMultiKeyedGroupBy() throws Exception {
         testParallelMultiKeyedGroupBy(
                 "SELECT key1, key2, avg(value), sum(colTop) FROM tab",
@@ -379,6 +491,16 @@ public class ParallelGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelOperationKeyedGroupBy() throws Exception {
+        testParallelSymbolKeyedGroupBy(
+                "SELECT ((key is not null) and (colTop is not null)) key, sum(colTop) FROM tab",
+                "key\tsum\n" +
+                        "false\tNaN\n" +
+                        "true\t100200.0\n"
+        );
+    }
+
+    @Test
     public void testParallelSingleKeyedGroupByConcurrent() throws Exception {
         final int numOfThreads = 8;
         final int numOfIterations = 50;
@@ -532,6 +654,16 @@ public class ParallelGroupByTest extends AbstractCairoTest {
                         "k3\t287.390243902439\t20040.0\n" +
                         "k4\t288.1169977924945\t20120.0\n" +
                         "k0\t288.84615384615387\t20200.0\n"
+        );
+    }
+
+    @Test
+    public void testParallelSymbolKeyedGroupByFilterWithSubQuery() throws Exception {
+        testParallelSymbolKeyedGroupBy(
+                "SELECT key, vwap(price, quantity), sum(colTop) FROM tab where key in (select key from tab where key in ('k1','k3'))",
+                "key\tvwap\tsum\n" +
+                        "k1\t285.9440715883669\t19880.0\n" +
+                        "k3\t287.390243902439\t20040.0\n"
         );
     }
 
