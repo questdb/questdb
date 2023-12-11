@@ -429,9 +429,9 @@ public class FastMap implements Map, Reopenable {
                 }
 
                 int candidateHashCode = getHashCode(newOffsets, index);
-                int candidateProbeSeqLen = getProbeSequenceLength(candidateHashCode, index);
-                if (candidateProbeSeqLen < probeSeqLen) {
-                    startEvacuationFrom(newOffsets, candidateOffset, candidateHashCode, index, candidateProbeSeqLen);
+                int candidateSeqLen = getProbeSequenceLength(candidateHashCode, index);
+                if (candidateSeqLen < probeSeqLen) {
+                    startEvacuationFrom(newOffsets, candidateOffset, candidateHashCode, index, candidateSeqLen);
                     break;
                 }
                 probeSeqLen++;
