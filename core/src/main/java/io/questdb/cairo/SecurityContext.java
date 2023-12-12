@@ -115,13 +115,6 @@ public interface SecurityContext {
     }
 
     /**
-     * Returns authentication type that led to the context creation.
-     */
-    default byte getAuthType() {
-        return AUTH_TYPE_NONE;
-    }
-
-    /**
      * User account used for permission checks, i.e. the session user account
      * or the service account defined by an executed ASSUME statement.
      */

@@ -116,8 +116,8 @@ public class CleartextPasswordPgWireAuthenticator implements Authenticator {
     }
 
     @Override
-    public int denyAccess() throws AuthenticatorException {
-        prepareWrongUsernamePasswordResponse("Access denied");
+    public int denyAccess(CharSequence message) throws AuthenticatorException {
+        prepareErrorResponse(message);
         state = State.WRITE_AND_AUTH_FAILURE;
         return handleIO();
     }
@@ -277,6 +277,19 @@ public class CleartextPasswordPgWireAuthenticator implements Authenticator {
         responseSink.putInt(circuitBreaker.getSecret());
     }
 
+    private void prepareErrorResponse(CharSequence errorMessage) {
+        sink.put(MESSAGE_TYPE_ERROR_RESPONSE);
+        long addr = sink.skip();
+        sink.put('C');
+        sink.encodeUtf8Z("00000");
+        sink.put('M');
+        sink.encodeUtf8Z(errorMessage);
+        sink.put('S');
+        sink.encodeUtf8Z("ERROR");
+        sink.put((char) 0);
+        sink.putLen(addr);
+    }
+
     private void prepareGssResponse() {
         sink.put('N');
     }
@@ -316,19 +329,6 @@ public class CleartextPasswordPgWireAuthenticator implements Authenticator {
 
     private void prepareSslResponse() {
         sink.put('N');
-    }
-
-    private void prepareWrongUsernamePasswordResponse(String errorMessage) {
-        sink.put(MESSAGE_TYPE_ERROR_RESPONSE);
-        long addr = sink.skip();
-        sink.put('C');
-        sink.encodeUtf8Z("00000");
-        sink.put('M');
-        sink.encodeUtf8Z(errorMessage);
-        sink.put('S');
-        sink.encodeUtf8Z("ERROR");
-        sink.put((char) 0);
-        sink.putLen(addr);
     }
 
     private void processCancelMessage() {
@@ -409,7 +409,7 @@ public class CleartextPasswordPgWireAuthenticator implements Authenticator {
             state = State.AUTH_SUCCESS;
         } else {
             LOG.info().$("bad password for user [user=").$(username).$(']').$();
-            prepareWrongUsernamePasswordResponse("invalid username/password");
+            prepareErrorResponse("invalid username/password");
             state = State.WRITE_AND_AUTH_FAILURE;
         }
         return Authenticator.OK;
