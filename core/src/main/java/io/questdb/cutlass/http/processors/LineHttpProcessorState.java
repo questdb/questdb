@@ -58,11 +58,12 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
     private Status currentStatus = Status.OK;
     private long errorId;
     private int fd = -1;
-    private SecurityContext securityContext;
     private int line = 0;
     private long recvBufEnd;
     private long recvBufPos;
     private long recvBufStartOfMeasurement;
+    private SecurityContext securityContext;
+    private SendStatus sendStatus = SendStatus.NONE;
 
     public LineHttpProcessorState(int recvBufSize, int maxResponseContentLength, CairoEngine engine, LineHttpProcessorConfiguration configuration) {
         assert recvBufSize > 0;
@@ -104,6 +105,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         errorLine = 0;
         line = 0;
         recvBufStartOfMeasurement = 0;
+        sendStatus = SendStatus.NONE;
     }
 
     @Override
@@ -139,6 +141,10 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
 
     public int getHttpResponseCode() {
         return currentStatus.responseCode;
+    }
+
+    public SendStatus getSendStatus() {
+        return sendStatus;
     }
 
     public boolean isOk() {
@@ -181,6 +187,15 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
                 return;
             }
         }
+    }
+
+    public void reject(Status status, String errorText) {
+        currentStatus = status;
+        error.put(errorText);
+    }
+
+    public void setSendStatus(SendStatus sendStatus) {
+        this.sendStatus = sendStatus;
     }
 
     private static String generateErrorId() {
@@ -408,13 +423,17 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
 
     public enum Status {
         OK(null, 204),
+        ENCODING_NOT_SUPPORTED("not supported", 415),
+        PRECISION_NOT_SUPPORTED("not supported", 400),
         NEEDS_REED("invalid", 400),
         PARSE_ERROR("invalid", 400),
         APPEND_ERROR("invalid", 400),
+        METHOD_NOT_SUPPORTED("invalid", 404),
         SECURITY_ERROR("unauthorised", 403),
         INTERNAL_ERROR("internal error", 500),
         MESSAGE_TOO_LARGE("request too large", 413),
-        COLUMN_ADD_ERROR("invalid", 400);
+        COLUMN_ADD_ERROR("invalid", 400),
+        COMMITTED(null, 204);
 
         private final String codeStr;
         private final int responseCode;

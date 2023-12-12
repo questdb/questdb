@@ -54,6 +54,7 @@ public class HttpResponseSink implements Closeable, Mutable {
     private final boolean connectionCloseHeader;
     private final boolean cookiesEnabled;
     private final boolean dumpNetworkTraffic;
+    private final int forceSendFragmentationChunkSize;
     private final HttpResponseHeaderImpl headerImpl;
     private final String httpVersion;
     private final NetworkFacade nf;
@@ -82,6 +83,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         this.httpVersion = configuration.getHttpVersion();
         this.connectionCloseHeader = !configuration.getServerKeepAlive();
         this.cookiesEnabled = configuration.areCookiesEnabled();
+        this.forceSendFragmentationChunkSize = configuration.getForceSendFragmentationChunkSize();
     }
 
     @Override
@@ -254,7 +256,8 @@ public class HttpResponseSink implements Closeable, Mutable {
     }
 
     private void sendBuffer(ChunkBuffer sendBuf) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        int nSend = (int) sendBuf.getReadNAvailable();
+        int available = (int) sendBuf.getReadNAvailable();
+        int nSend = Math.min(forceSendFragmentationChunkSize, available);
         while (nSend > 0) {
             int n = socket.send(sendBuf.getReadAddress(), nSend);
             if (n < 0) {
@@ -268,11 +271,15 @@ public class HttpResponseSink implements Closeable, Mutable {
             if (n == 0) {
                 // test how many times we tried to send before parking up
                 throw PeerIsSlowToReadException.INSTANCE;
-            } else {
+            } else if (available <= forceSendFragmentationChunkSize) {
                 dumpBuffer(sendBuf.getReadAddress(), n);
                 sendBuf.onRead(n);
                 nSend -= n;
                 totalBytesSent += n;
+            } else {
+                // This branch is for tests only
+                sendBuf.onRead(n);
+                throw PeerIsSlowToReadException.INSTANCE;
             }
         }
         assert sendBuf.getReadNAvailable() == 0;

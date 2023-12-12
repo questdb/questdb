@@ -166,6 +166,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String keepAliveHeader;
     private final int latestByQueueCapacity;
     private final boolean lineHttpEnabled;
+    private final CharSequence lineHttpPingVersion;
     private final LineHttpProcessorConfiguration lineHttpProcessorConfiguration = new PropLineHttpProcessorConfiguration();
     private final String lineTcpAuthDB;
     private final boolean lineTcpEnabled;
@@ -401,7 +402,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int jsonQueryConnectionCheckFrequency;
     private int jsonQueryDoubleScale;
     private int jsonQueryFloatScale;
-    private final CharSequence lineHttpPingVersion;
     private long lineTcpCommitIntervalDefault;
     private double lineTcpCommitIntervalFraction;
     private int lineTcpConnectionPoolInitialCapacity;
@@ -828,8 +828,8 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.pgNamesStatementPoolCapacity = getInt(properties, env, PropertyKey.PG_NAMED_STATEMENT_POOL_CAPACITY, 32);
                 this.pgPendingWritersCacheCapacity = getInt(properties, env, PropertyKey.PG_PENDING_WRITERS_CACHE_CAPACITY, 16);
 
-                this.forceSendFragmentationChunkSize = getInt(properties, env, PropertyKey.PG_DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE, Integer.MAX_VALUE);
-                this.forceRecvFragmentationChunkSize = getInt(properties, env, PropertyKey.PG_DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE, Integer.MAX_VALUE);
+                this.forceSendFragmentationChunkSize = getInt(properties, env, PropertyKey.DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE, Integer.MAX_VALUE);
+                this.forceRecvFragmentationChunkSize = getInt(properties, env, PropertyKey.DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE, Integer.MAX_VALUE);
             }
 
             int walApplyWorkers = 2;
@@ -2830,6 +2830,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public FactoryProvider getFactoryProvider() {
             return factoryProvider;
+        }
+
+        @Override
+        public int getForceSendFragmentationChunkSize() {
+            return forceSendFragmentationChunkSize;
         }
 
         @Override

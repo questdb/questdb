@@ -68,6 +68,11 @@ public class DefaultHttpContextConfiguration implements HttpContextConfiguration
     }
 
     @Override
+    public int getForceSendFragmentationChunkSize() {
+        return Integer.MAX_VALUE;
+    }
+
+    @Override
     public String getHttpVersion() {
         // trailing space is important
         return "HTTP/1.1 ";

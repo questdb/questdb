@@ -510,6 +510,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                         }
 
                         processor.onRequestComplete(this);
+                        reset();
                         if (configuration.getServerKeepAlive()) {
                             return true;
                         } else {
@@ -517,8 +518,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                         }
                     } catch (PeerDisconnectedException e) {
                         return disconnectHttp(processor, DISCONNECT_REASON_KICKED_OUT_AT_SEND);
-                    } finally {
-                        reset();
                     }
                 }
             } else if (read == 0) {

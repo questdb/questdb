@@ -22,45 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http;
+package io.questdb.cutlass.http.processors;
 
-import io.questdb.FactoryProvider;
-import io.questdb.network.NetworkFacade;
-import io.questdb.std.datetime.millitime.MillisecondClock;
-
-public interface HttpContextConfiguration {
-
-    boolean allowDeflateBeforeSend();
-
-    boolean areCookiesEnabled();
-
-    MillisecondClock getClock();
-
-    int getConnectionPoolInitialCapacity();
-
-    int getConnectionStringPoolCapacity();
-
-    boolean getDumpNetworkTraffic();
-
-    FactoryProvider getFactoryProvider();
-
-    int getForceSendFragmentationChunkSize();
-
-    String getHttpVersion();
-
-    int getMultipartHeaderBufferSize();
-
-    long getMultipartIdleSpinCount();
-
-    NetworkFacade getNetworkFacade();
-
-    int getRecvBufferSize();
-
-    int getRequestHeaderBufferSize();
-
-    int getSendBufferSize();
-
-    boolean getServerKeepAlive();
-
-    boolean readOnlySecurityContext();
+public enum SendStatus {
+    NONE,
+    HEADER,
+    CONTENT
 }

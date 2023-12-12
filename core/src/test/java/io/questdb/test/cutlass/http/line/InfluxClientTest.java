@@ -184,24 +184,6 @@ public class InfluxClientTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testPing() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.LINE_HTTP_PING_VERSION.getEnvVarName(), "v2.2.2"
-            )) {
-                serverMain.start();
-
-                try (final InfluxDB influxDB = IlpHttpUtils.getConnection(serverMain)) {
-                    influxDB.setLogLevel(InfluxDB.LogLevel.FULL);
-                    Pong pong = influxDB.ping();
-                    Assert.assertTrue(pong.isGood());
-                    Assert.assertEquals(pong.getVersion(), "v2.2.2");
-                }
-            }
-        });
-    }
-
-    @Test
     public void testInsertWithIlpHttp() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
@@ -338,7 +320,8 @@ public class InfluxClientTest extends AbstractBootstrapTest {
     public void testLineDoesNotFitBuffer() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "512"
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "512",
+                    PropertyKey.DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), "15"
             )) {
                 serverMain.start();
                 serverMain.compile("create table wal_not_here(b byte, s short, f float, d double, str string, sym symbol, tss timestamp, " +
@@ -480,6 +463,24 @@ public class InfluxClientTest extends AbstractBootstrapTest {
                 }
                 serverMain.waitWalTxnApplied("m1");
                 serverMain.assertSql("SELECT count() FROM m1", "count\n2\n");
+            }
+        });
+    }
+
+    @Test
+    public void testPing() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.LINE_HTTP_PING_VERSION.getEnvVarName(), "v2.2.2"
+            )) {
+                serverMain.start();
+
+                try (final InfluxDB influxDB = IlpHttpUtils.getConnection(serverMain)) {
+                    influxDB.setLogLevel(InfluxDB.LogLevel.FULL);
+                    Pong pong = influxDB.ping();
+                    Assert.assertTrue(pong.isGood());
+                    Assert.assertEquals(pong.getVersion(), "v2.2.2");
+                }
             }
         });
     }

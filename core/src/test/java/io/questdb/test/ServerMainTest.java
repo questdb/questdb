@@ -419,7 +419,9 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "circuit.breaker.buffer.size\tQDB_CIRCUIT_BREAKER_BUFFER_SIZE\t64\tdefault\tfalse\tfalse\n" +
                                     "circuit.breaker.throttle\tQDB_CIRCUIT_BREAKER_THROTTLE\t2000000\tdefault\tfalse\tfalse\n" +
                                     "config.validation.strict\tQDB_CONFIG_VALIDATION_STRICT\tfalse\tdefault\tfalse\tfalse\n" +
+                                    "debug.force.recv.fragmentation.chunk.size\tQDB_DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE\t2147483647\tdefault\tfalse\tfalse\n" +
                                     "debug.wal.purge.wait.before.delete\tQDB_DEBUG_WAL_PURGE_WAIT_BEFORE_DELETE\t0\tdefault\tfalse\tfalse\n" +
+                                    "debug.force.send.fragmentation.chunk.size\tQDB_DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE\t2147483647\tdefault\tfalse\tfalse\n" +
                                     "http.allow.deflate.before.send\tQDB_HTTP_ALLOW_DEFLATE_BEFORE_SEND\tfalse\tdefault\tfalse\tfalse\n" +
                                     "http.bind.to\tQDB_HTTP_BIND_TO\t0.0.0.0:9010\tconf\tfalse\tfalse\n" +
                                     "http.busy.retry.exponential.wait.multiplier\tQDB_HTTP_BUSY_RETRY_EXPONENTIAL_WAIT_MULTIPLIER\t2.0\tdefault\tfalse\tfalse\n" +
@@ -565,8 +567,6 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "pg.connection.pool.capacity\tQDB_PG_CONNECTION_POOL_CAPACITY\t4\tdefault\tfalse\tfalse\n" +
                                     "pg.daemon.pool\tQDB_PG_DAEMON_POOL\ttrue\tdefault\tfalse\tfalse\n" +
                                     "pg.date.locale\tQDB_PG_DATE_LOCALE\ten\tdefault\tfalse\tfalse\n" +
-                                    "pg.debug.force.recv.fragmentation.chunk.size\tQDB_PG_DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE\t2147483647\tdefault\tfalse\tfalse\n" +
-                                    "pg.debug.force.send.fragmentation.chunk.size\tQDB_PG_DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE\t2147483647\tdefault\tfalse\tfalse\n" +
                                     "pg.enabled\tQDB_PG_ENABLED\ttrue\tconf\tfalse\tfalse\n" +
                                     "pg.halt.on.error\tQDB_PG_HALT_ON_ERROR\tfalse\tdefault\tfalse\tfalse\n" +
                                     "pg.insert.cache.block.count\tQDB_PG_INSERT_CACHE_BLOCK_COUNT\t4\tdefault\tfalse\tfalse\n" +
@@ -632,8 +632,12 @@ public class ServerMainTest extends AbstractBootstrapTest {
                         }
                     }
 
-                    assertTrue("Missing properties: " + missingProps, missingProps.isEmpty());
-                    assertTrue("Extra properties: " + actualProps, actualProps.isEmpty());
+                    assertTrue(
+                            "Missing properties: " + missingProps
+                                    + "\n"
+                                    + "Extra properties: " + actualProps,
+                            missingProps.isEmpty() && actualProps.isEmpty()
+                    );
                 }
             }
         });

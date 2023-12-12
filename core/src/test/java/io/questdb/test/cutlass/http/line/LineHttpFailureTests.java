@@ -54,6 +54,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static io.questdb.PropertyKey.DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE;
 import static io.questdb.cairo.wal.WalUtils.EVENT_INDEX_FILE_NAME;
 import static io.questdb.test.cutlass.http.line.IlpHttpUtils.*;
 import static io.questdb.test.tools.TestUtils.assertEventually;
@@ -502,7 +503,7 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
                     influxDB.setLogLevel(InfluxDB.LogLevel.BASIC);
                     influxDB.enableGzip();
                     assertRequestErrorContains(influxDB, points, "m1,tag1=value1 f1=1i,x=12i",
-                            "gzip encoding is not supported"
+                            "chunked requests are not supported"
                     );
 
                     //   Retry is ok
@@ -516,7 +517,9 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
     @Test
     public void testPutAndGetAreNotSupported() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), "5"
+            )) {
                 serverMain.start();
                 String line = "line,sym1=123 field1=123i 1234567890000000000\n";
 
@@ -544,6 +547,29 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
 
                     resp.await();
                     TestUtils.assertEquals("404", resp.getStatusCode());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSlowPeerHeaderErrors() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), "20"
+            )) {
+                serverMain.start();
+                try (HttpClient httpClient = HttpClientFactory.newInstance(new DefaultHttpClientConfiguration())) {
+                    HttpClient.Request request = httpClient.newRequest();
+                    try (HttpClient.ResponseHeaders resp = request.POST()
+                            .url("/write?precision=ml ")
+                            .withContent()
+                            .putAscii("m1,tag1=value1 f1=1i,x=12i")
+                            .send("localhost", getHttpPort(serverMain))) {
+
+                        resp.await();
+                        TestUtils.assertEquals("400", resp.getStatusCode());
+                    }
                 }
             }
         });
@@ -665,6 +691,30 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
                     assertRequestOk(influxDB, points, "drop,tag1=value1 f1=1i,y=12i");
                 }
 
+            }
+        });
+    }
+
+    @Test
+    public void testUnsupportedPrecision() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                serverMain.start();
+                String line = "line,sym1=123 field1=123i 1234567890000000000\n";
+
+                try (HttpClient httpClient = HttpClientFactory.newInstance(new DefaultHttpClientConfiguration())) {
+                    HttpClient.Request request = httpClient.newRequest();
+                    try (HttpClient.ResponseHeaders resp = request.POST()
+                            .url("/write?precision=ml ")
+                            .withContent()
+                            .putAscii(line)
+                            .putAscii(line)
+                            .send("localhost", getHttpPort(serverMain))) {
+
+                        resp.await();
+                        TestUtils.assertEquals("400", resp.getStatusCode());
+                    }
+                }
             }
         });
     }
