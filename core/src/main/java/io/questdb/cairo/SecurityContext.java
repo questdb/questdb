@@ -101,9 +101,10 @@ public interface SecurityContext {
 
     /**
      * Should throw an exception if:
-     * - logged in as a user and the user has been disabled,
-     * - logged in as a service account and the service account has been disabled,
+     * - logged in as a user and the user has been disabled, or it has no permissions to connect via the endpoint used,
+     * - logged in as a service account and the service account has been disabled, or it has no permissions to connect via the endpoint used,
      * - logged in as a user, then assumed a service account and either the user or the service account has been disabled,
+     * or either the user or the service account has no permissions to connect via the endpoint used,
      * or access to the service account has been revoked from the user
      */
     void checkEntityEnabled();
