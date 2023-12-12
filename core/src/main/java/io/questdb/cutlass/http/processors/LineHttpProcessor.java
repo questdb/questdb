@@ -59,15 +59,6 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
     }
 
     @Override
-    public void failRequest(HttpConnectionContext context, HttpException exception) {
-        LOG.info().$("rolling back, client disconnected [fd=").$(context.getFd()).I$();
-        state = LV.get(context);
-        if (state != null) {
-            state.onDisconnected();
-        }
-    }
-
-    @Override
     public void onChunk(long lo, long hi) {
         this.state.parse(lo, hi);
     }
@@ -90,17 +81,18 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
         }
 
         // Method
-        if (!Utf8s.equalsNcAscii("POST", context.getRequestHeader().getMethod())) {
+        HttpRequestHeader requestHeader = context.getRequestHeader();
+        if (!Utf8s.equalsNcAscii("POST", requestHeader.getMethod())) {
             LOG.info().$("method not supported, rejected with 404 [url=")
-                    .$(context.getRequestHeader().getUrl())
-                    .$(", method=").$(context.getRequestHeader().getMethod())
+                    .$(requestHeader.getUrl())
+                    .$(", method=").$(requestHeader.getMethod())
                     .I$();
             state.reject(METHOD_NOT_SUPPORTED, "Not Found");
             return;
         }
 
         // Encoding
-        Utf8Sequence encoding = context.getRequestHeader().getHeader(CONTENT_ENCODING);
+        Utf8Sequence encoding = requestHeader.getHeader(CONTENT_ENCODING);
         if (encoding != null && Utf8s.endsWithAscii(encoding, "gzip")) {
             LOG.error().$("gzip encoding is not supported [fd=").put(context.getFd()).I$();
             state.reject(ENCODING_NOT_SUPPORTED, "Not Found");
@@ -108,7 +100,7 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
         }
 
         byte timestampPrecision;
-        DirectUtf8Sequence precision = context.getRequestHeader().getUrlParam(URL_PARAM_PRECISION);
+        DirectUtf8Sequence precision = requestHeader.getUrlParam(URL_PARAM_PRECISION);
         if (precision != null) {
             int len = precision.size();
             if ((len == 1 && precision.byteAt(0) == 'n') || (len == 2 && precision.byteAt(0) == 'n' && precision.byteAt(1) == 's')) {
@@ -127,7 +119,7 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
                 timestampPrecision = ENTITY_UNIT_HOUR;
             } else {
                 LOG.info().$("unsupported precision [url=")
-                        .$(context.getRequestHeader().getUrl())
+                        .$(requestHeader.getUrl())
                         .$(", precision=").$(precision)
                         .I$();
                 state.reject(PRECISION_NOT_SUPPORTED, "unsupported precision");

@@ -496,28 +496,24 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
                 if (totalReceived == contentLength) {
                     // we have received all content, commit
-                    try {
-                        // check that client has not disconnected
-                        read = socket.recv(recvBuffer, recvBufferSize);
-                        if (read < 0) {
-                            // client disconnected, don't commit, rollback instead
-                            return disconnectHttp(processor, DISCONNECT_REASON_KICKED_OUT_AT_RECV);
-                        } else if (read > 0) {
-                            // HTTP protocol violation
-                            // client sent more data than it promised in Content-Length header
-                            // we will disconnect client and roll back
-                            return disconnectHttp(processor, DISCONNECT_REASON_KICKED_OUT_AT_EXTRA_BYTES);
-                        }
+                    // check that client has not disconnected
+                    read = socket.recv(recvBuffer, recvBufferSize);
+                    if (read < 0) {
+                        // client disconnected, don't commit, rollback instead
+                        return disconnectHttp(processor, DISCONNECT_REASON_KICKED_OUT_AT_RECV);
+                    } else if (read > 0) {
+                        // HTTP protocol violation
+                        // client sent more data than it promised in Content-Length header
+                        // we will disconnect client and roll back
+                        return disconnectHttp(processor, DISCONNECT_REASON_KICKED_OUT_AT_EXTRA_BYTES);
+                    }
 
-                        processor.onRequestComplete(this);
-                        reset();
-                        if (configuration.getServerKeepAlive()) {
-                            return true;
-                        } else {
-                            return disconnectHttp(processor, DISCONNECT_REASON_KEEPALIVE_OFF_RECV);
-                        }
-                    } catch (PeerDisconnectedException e) {
-                        return disconnectHttp(processor, DISCONNECT_REASON_KICKED_OUT_AT_SEND);
+                    processor.onRequestComplete(this);
+                    reset();
+                    if (configuration.getServerKeepAlive()) {
+                        return true;
+                    } else {
+                        return disconnectHttp(processor, DISCONNECT_REASON_KEEPALIVE_OFF_RECV);
                     }
                 }
             } else if (read == 0) {
@@ -770,7 +766,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             HttpRequestProcessor processor = getHttpRequestProcessor(selector);
             int contentLength = headerParser.getContentLength();
             final boolean chunked = Utf8s.equalsNcAscii("chunked", headerParser.getHeader(HEADER_TRANSFER_ENCODING));
-            final boolean multipartRequest = Utf8s.equalsNcAscii("multipart/form-data", headerParser.getContentType());
+            final boolean multipartRequest = Utf8s.equalsNcAscii("multipart/form-data", headerParser.getContentType())
+                    || Utf8s.equalsNcAscii("multipart/mixed", headerParser.getContentType());
             final boolean multipartProcessor = processor instanceof HttpMultipartContentListener;
 
             if (configuration.allowDeflateBeforeSend() && Utf8s.containsAscii(headerParser.getHeader(HEADER_CONTENT_ACCEPT_ENCODING), "gzip")) {
