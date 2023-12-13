@@ -425,27 +425,27 @@ public class CairoEngine implements Closeable, WriterSource {
         return ffCache;
     }
 
-    public MessageBus getMessageBus() {
-        return messageBus;
-    }
-
     public TableMetadata getLegacyMetadata(TableToken tableToken) {
         return getLegacyMetadata(tableToken, TableUtils.ANY_TABLE_VERSION);
     }
 
-        /**
-         * Retrieves up-to-date table metadata regardless of table type.
-         *
-         * @param tableToken table token
-         * @param desiredVersion version of table metadata used previously if consistent metadata reads are required
-         * @return returns {@link io.questdb.cairo.wal.seq.SequencerMetadata} for WAL tables and {@link TableMetadata}
-         * for non-WAL, which would be metadata of the {@link TableReader}
-         */
+    /**
+     * Retrieves up-to-date table metadata regardless of table type.
+     *
+     * @param tableToken     table token
+     * @param desiredVersion version of table metadata used previously if consistent metadata reads are required
+     * @return returns {@link io.questdb.cairo.wal.seq.SequencerMetadata} for WAL tables and {@link TableMetadata}
+     * for non-WAL, which would be metadata of the {@link TableReader}
+     */
     public TableMetadata getLegacyMetadata(TableToken tableToken, long desiredVersion) {
         if (!tableToken.isWal()) {
             return getTableMetadata(tableToken, desiredVersion);
         }
         return getSequencerMetadata(tableToken, desiredVersion);
+    }
+
+    public MessageBus getMessageBus() {
+        return messageBus;
     }
 
     public Metrics getMetrics() {
@@ -524,12 +524,12 @@ public class CairoEngine implements Closeable, WriterSource {
      * Table metadata as seen by the table sequencer. This is the most up-to-date table
      * metadata, and it can be used to positively confirm column metadata changes immediately after
      * making them.
-     *
+     * <p>
      * However, this metadata cannot confirm all the changes, one of which is "dedup" flag on a table.
      * This is a shortcoming and to confirm the "dedup" flag {{@link #getTableMetadata(TableToken, long)}} should
      * be polled instead. We expect to fix issues like this one in the near future.
      *
-     * @param tableToken table token
+     * @param tableToken     table token
      * @param desiredVersion version of table metadata used previously if consistent metadata reads are required
      * @return sequence metadata instance
      */
@@ -589,10 +589,10 @@ public class CairoEngine implements Closeable, WriterSource {
      * as in not all WAL transactions has reached the table yet. In scenarios where
      * table modification is made and positively confirmed immediately after via metadata, {@link #getSequencerMetadata(TableToken, long)}
      * must be used instead.
-     *
+     * <p>
      * Metadata provided by this method is good enough for the read-only queries.
      *
-     * @param tableToken table token
+     * @param tableToken     table token
      * @param desiredVersion version of table metadata used previously if consistent metadata reads are required
      * @return pooled metadata instance
      */
@@ -1319,7 +1319,7 @@ public class CairoEngine implements Closeable, WriterSource {
         if (desiredVersion != TableUtils.ANY_TABLE_VERSION && metadata.getMetadataVersion() != desiredVersion) {
             final TableReferenceOutOfDateException ex = TableReferenceOutOfDateException.of(
                     tableToken,
-                    metadata.getTableId(),
+                    tableToken.getTableId(),
                     metadata.getTableId(),
                     desiredVersion,
                     metadata.getMetadataVersion()
