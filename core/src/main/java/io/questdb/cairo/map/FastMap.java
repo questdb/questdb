@@ -59,8 +59,12 @@ import org.jetbrains.annotations.TestOnly;
  * the address of a key-value pair in the key memory compressed to an int. Key-value pair addresses are
  * 8 byte aligned, so a FastMap is capable of holding up to 32GB of data.
  * <p>
- * The offset list is used as a hash table with linear probing. So, a table resize allocates a new
- * offset list and copies offsets there while the key memory stays as is.
+ * The offset list is used as an open addressing hash map with Robin Hood probing. We don't store Probe Sequence Length
+ * (PSL) in the offset list even that's typically done in Robin Hood hashing. Instead, we calculate PSL on the fly
+ * since we store hash codes in the offset list, and it's cheap to calculate PSL from the hash code and the current
+ * index.
+ * <p>
+ * So, a table resize allocates a new offset list and copies offsets there while the key memory stays as is.
  * <p>
  * Key-value pairs stored in the key memory may have the following layout:
  * <pre>
