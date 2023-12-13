@@ -673,16 +673,16 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     return rejectUnauthenticatedRequest();
                 }
 
-                try {
-                    securityContext.checkEntityEnabled();
-                } catch (CairoException e) {
-                    return rejectForbiddenRequest(e.getFlyweightMessage());
-                }
-
                 if (configuration.areCookiesEnabled()) {
                     if (!processor.processCookies(this, securityContext)) {
                         return false;
                     }
+                }
+
+                try {
+                    securityContext.checkEntityEnabled();
+                } catch (CairoException e) {
+                    return rejectForbiddenRequest(e.getFlyweightMessage());
                 }
 
                 if (multipartRequest && !multipartProcessor) {
