@@ -24,6 +24,13 @@
 
 package io.questdb.test.cutlass.http.line;
 
+import io.questdb.DefaultHttpClientConfiguration;
+import io.questdb.ServerMain;
+import io.questdb.cairo.TableToken;
+import io.questdb.cutlass.http.client.HttpClient;
+import io.questdb.cutlass.http.client.HttpClientFactory;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
@@ -40,6 +47,8 @@ import org.junit.Test;
 
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 
 import static io.questdb.PropertyKey.*;
 import static io.questdb.test.cutlass.http.line.IlpHttpUtils.getHttpPort;
@@ -54,7 +63,7 @@ public class LineRawHttpTest extends AbstractBootstrapTest {
 
     @Test
     public void testChunkedDataIlpUploadNoKeepAlive() throws Exception {
-        var rnd = TestUtils.generateRandom(LOG);
+        Rnd rnd = TestUtils.generateRandom(LOG);
         TestUtils.assertMemoryLeak(() -> {
             int fragmentation = 1 + rnd.nextInt(5);
             LOG.info().$("=== fragmentation=").$(fragmentation).$();
@@ -97,8 +106,54 @@ public class LineRawHttpTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testChunkedUpperCaseChunkSize() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+            )) {
+                serverMain.start();
+
+                Rnd rnd = TestUtils.generateRandom(LOG);
+
+                int totalCount = 0;
+                try (HttpClient httpClient = HttpClientFactory.newInstance(new DefaultHttpClientConfiguration())) {
+                    String line = "line,sym1=123 field1=123i 1234567890000000000\n";
+
+                    for (int r = 0; r < 3; r++) {
+                        int count = 1 + rnd.nextInt(100);
+                        HttpClient.Request request = httpClient.newRequest();
+                        request.POST()
+                                .url("/write ")
+                                .withChunkedContent();
+
+                        String hexChunkLen = Integer.toHexString(line.length() * count);
+                        if (rnd.nextBoolean()) {
+                            hexChunkLen = hexChunkLen.toUpperCase();
+                        } else {
+                            hexChunkLen = hexChunkLen.toLowerCase();
+                        }
+                        request.putAscii(hexChunkLen).putEOL();
+
+                        for (int i = 0; i < count; i++) {
+                            request.putAscii(line);
+                        }
+
+                        request.putEOL().putAscii("0").putEOL().putEOL();
+                        HttpClient.ResponseHeaders resp = request.send("localhost", getHttpPort(serverMain), 5000);
+                        resp.await();
+                        totalCount += count;
+                    }
+                }
+
+                serverMain.waitWalTxnApplied("line");
+                serverMain.assertSql("select count() from line", "count\n" +
+                        totalCount + "\n");
+            }
+        });
+    }
+
+    @Test
     public void testFuzzChunkedDataIlpUpload() throws Exception {
-        var rnd = TestUtils.generateRandom(LOG);
+        Rnd rnd = TestUtils.generateRandom(LOG);
         TestUtils.assertMemoryLeak(() -> {
             int fragmentation = 1 + rnd.nextInt(5);
             LOG.info().$("=== fragmentation=").$(fragmentation).$();

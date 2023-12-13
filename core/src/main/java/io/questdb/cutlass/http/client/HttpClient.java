@@ -360,6 +360,8 @@ public abstract class HttpClient implements QuietCloseable {
             beforeHeader();
 
             header("Transfer-Encoding", "chunked");
+            putEOL();
+
             contentLengthHeaderReserved = 0;
             contentStart = ptr;
             state = STATE_CONTENT;

@@ -40,7 +40,7 @@ public class ChunkedContentParser implements Mutable {
 
     public long handleRecv(long lo, long hi, HttpMultipartContentListener listener)
             throws PeerIsSlowToReadException, ServerDisconnectException, PeerDisconnectedException {
-        
+
         while (lo < hi) {
             if (chunkSize == 0 || chunkSize == -1) {
                 lo = parseChunkLength(lo, hi, chunkSize == -1);
@@ -89,10 +89,12 @@ public class ChunkedContentParser implements Mutable {
                 chunkSize = chunkSize * 16 + (b - '0');
             } else if (b >= 'a' && b <= 'f') {
                 chunkSize = chunkSize * 16 + (b - 'a' + 10);
+            } else if (b >= 'A' && b <= 'F') {
+                chunkSize = chunkSize * 16 + (b - 'A' + 10);
             } else if (b == '\r' && hi - lo < 1) {
                 // Not enough buffer to parse \r\n
                 break;
-            } else if (isEol(lo - 1, hi)) {
+            } else if (isEol(lo - 1, hi) && lo > startLo + 1) {
                 // parsed OK
                 this.chunkSize = chunkSize;
                 return lo + 1;

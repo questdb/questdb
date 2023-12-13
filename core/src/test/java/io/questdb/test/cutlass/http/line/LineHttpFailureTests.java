@@ -38,6 +38,7 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Os;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractBootstrapTest;
@@ -210,6 +211,58 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
                         }
                     }
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testChunkedRedundantBytes() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+            )) {
+                serverMain.start();
+
+                Rnd rnd = TestUtils.generateRandom(LOG);
+
+                try (HttpClient httpClient = HttpClientFactory.newInstance(new DefaultHttpClientConfiguration())) {
+                    String line = "line,sym1=123 field1=123i 1234567890000000000\n";
+
+                    int count = 1 + rnd.nextInt(100);
+                    HttpClient.Request request = httpClient.newRequest();
+                    request.POST()
+                            .url("/write ")
+                            .withChunkedContent();
+
+                    String hexChunkLen = Integer.toHexString(line.length() * count);
+                    if (rnd.nextBoolean()) {
+                        hexChunkLen = hexChunkLen.toUpperCase();
+                    } else {
+                        hexChunkLen = hexChunkLen.toLowerCase();
+                    }
+                    request.putAscii(hexChunkLen).putEOL();
+
+                    for (int i = 0; i < count; i++) {
+                        request.putAscii(line);
+                    }
+
+                    request.putEOL().putAscii("0").putEOL().putEOL();
+
+                    // This is not allowed
+                    request.putEOL();
+
+                    HttpClient.ResponseHeaders resp = request.send("localhost", getHttpPort(serverMain), 5000);
+
+                    try {
+                        resp.await();
+                        Assert.fail();
+                    } catch (HttpClientException e) {
+                        TestUtils.assertContains(e.getMessage(), "peer disconnect");
+                    }
+                }
+
+                serverMain.waitWalTxnApplied("line");
+                serverMain.assertSql("select count() from line", "count\n" +
+                        "0\n");
             }
         });
     }
