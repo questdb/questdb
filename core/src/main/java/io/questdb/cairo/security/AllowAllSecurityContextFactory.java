@@ -33,7 +33,7 @@ public class AllowAllSecurityContextFactory implements SecurityContextFactory {
     }
 
     @Override
-    public SecurityContext getInstance(CharSequence principal, byte authType, int interfaceId) {
+    public SecurityContext getInstance(CharSequence principal, byte authType, byte interfaceId) {
         return AllowAllSecurityContext.INSTANCE;
     }
 }

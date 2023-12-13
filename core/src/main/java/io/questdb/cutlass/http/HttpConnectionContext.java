@@ -44,6 +44,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cutlass.http.HttpConstants.HEADER_CONTENT_ACCEPT_ENCODING;
 import static io.questdb.network.IODispatcher.*;
+import static java.net.HttpURLConnection.*;
 
 public class HttpConnectionContext extends IOContext<HttpConnectionContext> implements Locality, Retry {
     private static final Log LOG = LogFactory.getLog(HttpConnectionContext.class);
@@ -425,7 +426,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     authenticator.getAuthType(),
                     SecurityContextFactory.HTTP
             );
-            securityContext.authorizeHttp();
         }
         return true;
     }
@@ -679,6 +679,12 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     }
                 }
 
+                try {
+                    securityContext.checkEntityEnabled();
+                } catch (CairoException e) {
+                    return rejectForbiddenRequest(e.getFlyweightMessage());
+                }
+
                 if (multipartRequest && !multipartProcessor) {
                     // bad request - multipart request for processor that doesn't expect multipart
                     busyRecv = rejectRequest("Bad request. Non-multipart GET expected.");
@@ -802,14 +808,18 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return false;
     }
 
+    private boolean rejectForbiddenRequest(CharSequence userMessage) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        return rejectRequest(HTTP_FORBIDDEN, userMessage, null, null);
+    }
+
     private boolean rejectRequest(CharSequence userMessage) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        return rejectRequest(404, userMessage, null, null);
+        return rejectRequest(HTTP_NOT_FOUND, userMessage, null, null);
     }
 
     private boolean rejectUnauthenticatedRequest() throws PeerDisconnectedException, PeerIsSlowToReadException {
         reset();
         LOG.error().$("rejecting unauthenticated request [fd=").$(getFd()).I$();
-        simpleResponse().sendStatusWithHeader(401, "WWW-Authenticate: Basic realm=\"questdb\", charset=\"UTF-8\"");
+        simpleResponse().sendStatusWithHeader(HTTP_UNAUTHORIZED, "WWW-Authenticate: Basic realm=\"questdb\", charset=\"UTF-8\"");
         dispatcher.registerChannel(this, IOOperation.READ);
         return false;
     }
