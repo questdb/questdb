@@ -44,6 +44,8 @@ public interface HttpContextConfiguration {
 
     FactoryProvider getFactoryProvider();
 
+    int getForceRecvFragmentationChunkSize();
+
     int getForceSendFragmentationChunkSize();
 
     String getHttpVersion();

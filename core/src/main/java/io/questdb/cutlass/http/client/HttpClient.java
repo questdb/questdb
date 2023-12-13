@@ -82,6 +82,7 @@ public abstract class HttpClient implements QuietCloseable {
     public Request newRequest() {
         ptr = bufLo;
         contentStart = -1;
+        request.contentLengthHeaderReserved = 0;
         request.state = Request.STATE_REQUEST;
         return request;
     }
@@ -355,11 +356,21 @@ public abstract class HttpClient implements QuietCloseable {
             return put(url);
         }
 
+        public Request withChunkedContent() {
+            beforeHeader();
+
+            header("Transfer-Encoding", "chunked");
+            contentLengthHeaderReserved = 0;
+            contentStart = ptr;
+            state = STATE_CONTENT;
+            return this;
+        }
+
         public Request withContent() {
             beforeHeader();
 
             putAscii(HEADER_CONTENT_LENGTH);
-            contentLengthHeaderReserved = ((int) Math.log10(bufferSize) + 1) + 2; // length + 2 x EOL
+            contentLengthHeaderReserved = ((int) Math.log10(bufferSize) + 1) + 4; // length + 2 x EOL
             ensureCapacity(contentLengthHeaderReserved);
             ptr += contentLengthHeaderReserved;
             contentStart = ptr;
@@ -546,24 +557,29 @@ public abstract class HttpClient implements QuietCloseable {
             }
         }
 
-        @NotNull
-        private Request sendHeaderAndContent(int maxContentLen, int timeout) {
+        private void sendHeaderAndContent(int maxContentLen, int timeout) {
             final int contentLength = (int) (ptr - contentStart);
 
             // Add content bytes into the header.
-            long hi = ptr;
-            ptr = contentStart - contentLengthHeaderReserved;
-            put(contentLength);
-            eol();
-            eol();
-            long headerHi = ptr;
-            assert headerHi < contentStart;
-            ptr = hi;
+            final long hi = ptr;
+            final long headerHi;
+            if (contentLengthHeaderReserved > 0) {
+                ptr = contentStart - contentLengthHeaderReserved;
+                put(contentLength);
+                eol();
+                eol();
+                headerHi = ptr;
+                assert headerHi < contentStart;
+                ptr = hi;
+            } else {
+                headerHi = contentStart;
+            }
+
             // Send header.
             doSend(bufLo, headerHi, timeout);
+
             // Send content.
             doSend(contentStart, contentStart + Math.min(hi - contentStart, maxContentLen), timeout);
-            return this;
         }
     }
 

@@ -32,6 +32,7 @@ open module io.questdb.test {
     requires static java.management;
     requires influxdb.java;
     requires okhttp3;
+    requires okio;
 
     uses io.questdb.griffin.FunctionFactory;
 

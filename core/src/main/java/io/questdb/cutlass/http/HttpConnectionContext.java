@@ -49,10 +49,12 @@ import static io.questdb.network.IODispatcher.*;
 public class HttpConnectionContext extends IOContext<HttpConnectionContext> implements Locality, Retry {
     private static final Log LOG = LogFactory.getLog(HttpConnectionContext.class);
     private final HttpAuthenticator authenticator;
+    private final ChunkedContentParser chunkedContentParser = new ChunkedContentParser();
     private final HttpContextConfiguration configuration;
     private final HttpCookieHandler cookieHandler;
     private final ObjectPool<DirectUtf8String> csPool;
     private final boolean dumpNetworkTraffic;
+    private final int forceFragmentationReceiveChunkSize;
     private final HttpHeaderParser headerParser;
     private final LocalValueMap localValueMap = new LocalValueMap();
     private final Metrics metrics;
@@ -73,6 +75,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private boolean pendingRetry = false;
     private int receivedBytes;
     private long recvBuffer;
+    private long recvPos;
     private HttpRequestProcessor resumeProcessor = null;
     private SecurityContext securityContext;
     private SuspendEvent suspendEvent;
@@ -113,6 +116,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.securityContext = DenyAllSecurityContext.INSTANCE;
         this.metrics = metrics;
         this.authenticator = contextConfiguration.getFactoryProvider().getHttpAuthenticatorFactory().getHttpAuthenticator();
+        this.forceFragmentationReceiveChunkSize = configuration.getHttpContextConfiguration().getForceRecvFragmentationChunkSize();
 
         if (configuration instanceof HttpServerConfiguration) {
             final HttpServerConfiguration serverConfiguration = (HttpServerConfiguration) configuration;
@@ -324,6 +328,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.securityContext = DenyAllSecurityContext.INSTANCE;
         this.authenticator.clear();
         this.totalReceived = 0;
+        this.chunkedContentParser.clear();
+        this.recvPos = recvBuffer;
         clearSuspendEvent();
     }
 
@@ -434,28 +440,64 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return true;
     }
 
-    private boolean consumeChunked(HttpRequestProcessor processor, boolean newRequest) {
-        if (newRequest) {
-            processor.onHeadersReady(this);
+    private boolean consumeChunked(HttpRequestProcessor processor, long headerEnd, long read, boolean newRequest) throws PeerIsSlowToReadException, ServerDisconnectException, PeerDisconnectedException, QueryPausedException {
+        HttpMultipartContentListener contentProcessor = (HttpMultipartContentListener) processor;
+        if (!newRequest) {
+            processor.resumeRecv(this);
         }
 
-        try {
-            if (!newRequest) {
-                processor.resumeRecv(this);
+        while (true) {
+            long lo, hi;
+            int bufferLenLeft = (int) (recvBuffer + recvBufferSize - recvPos);
+            if (newRequest) {
+                processor.onHeadersReady(this);
+                totalReceived -= headerEnd - recvBuffer;
+                lo = headerEnd;
+                hi = recvBuffer + read;
+                newRequest = false;
+            } else {
+                read = socket.recv(recvPos, Math.min(forceFragmentationReceiveChunkSize, bufferLenLeft));
+                lo = recvBuffer;
+                hi = recvPos + read;
             }
-            LOG.error().$("received chunked request, chunked requests not supported [url=").$(getRequestHeader().getUrl()).I$();
-            // TODO: parse chunks and call processor.onChunk(lo, hi)
-            HttpChunkedResponseSocket r = getChunkedResponseSocket();
-            r.status(411, "text/plain");
-            r.sendHeader();
-            r.putAscii("chunked requests are not supported");
-            r.sendChunk(true);
-            throw HttpException.instance("chunked requests are not supported [fd=").put(getFd()).put(']');
-        } catch (PeerDisconnectedException e) {
-        } catch (PeerIsSlowToReadException e) {
-            throw HttpException.instance("chunked requests are not supported [fd=").put(getFd()).put(']');
+
+            if (read > 0) {
+                lo = chunkedContentParser.handleRecv(lo, hi, contentProcessor);
+                if (lo == Long.MAX_VALUE) {
+                    // done
+                    processor.onRequestComplete(this);
+                    reset();
+                    if (configuration.getServerKeepAlive()) {
+                        return true;
+                    } else {
+                        return disconnectHttp(processor, DISCONNECT_REASON_KEEPALIVE_OFF_RECV);
+                    }
+                } else if (lo == Long.MIN_VALUE) {
+                    // protocol violation
+                    LOG.error().$("cannot parse chunk length, chunked protocol violation, disconnecting [fd=").$(getFd()).I$();
+                    return disconnectHttp(processor, DISCONNECT_REASON_KICKED_OUT_AT_EXTRA_BYTES);
+                } else if (lo != hi) {
+                    lo = -lo;
+                    assert lo >= recvBuffer && lo <= hi && lo < recvBuffer + recvBufferSize;
+                    if (lo != recvBuffer) {
+                        // Compact recv buffer
+                        Vect.memmove(recvBuffer, lo, hi - lo);
+                    }
+                    recvPos = recvBuffer + (hi - lo);
+                } else {
+                    recvPos = recvBuffer;
+                }
+            }
+
+            if (read == 0 || read == forceFragmentationReceiveChunkSize) {
+                // Schedule for read
+                dispatcher.registerChannel(this, IOOperation.READ);
+                return false;
+            } else if (read < 0) {
+                // client disconnected
+                return disconnectHttp(processor, DISCONNECT_REASON_KICKED_OUT_AT_RECV);
+            }
         }
-        return false;
     }
 
     private boolean consumeContent(
@@ -786,7 +828,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 }
 
                 if (chunked) {
-                    busyRecv = consumeChunked(processor, newRequest);
+                    busyRecv = consumeChunked(processor, headerEnd, read, newRequest);
                 } else if (multipartRequest && !multipartProcessor) {
                     // bad request - multipart request for processor that doesn't expect multipart
                     busyRecv = rejectRequest("Bad request. Non-multipart GET expected.");

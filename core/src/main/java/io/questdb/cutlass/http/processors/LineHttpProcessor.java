@@ -37,6 +37,7 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 
+import static io.questdb.cutlass.http.HttpConstants.CONTENT_TYPE_JSON;
 import static io.questdb.cutlass.http.processors.LineHttpProcessorState.Status.*;
 import static io.questdb.cutlass.line.tcp.LineTcpParser.*;
 
@@ -83,19 +84,14 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
         // Method
         HttpRequestHeader requestHeader = context.getRequestHeader();
         if (!Utf8s.equalsNcAscii("POST", requestHeader.getMethod())) {
-            LOG.info().$("method not supported, rejected with 404 [url=")
-                    .$(requestHeader.getUrl())
-                    .$(", method=").$(requestHeader.getMethod())
-                    .I$();
-            state.reject(METHOD_NOT_SUPPORTED, "Not Found");
+            state.reject(METHOD_NOT_SUPPORTED, "Not Found", context.getFd());
             return;
         }
 
         // Encoding
         Utf8Sequence encoding = requestHeader.getHeader(CONTENT_ENCODING);
         if (encoding != null && Utf8s.endsWithAscii(encoding, "gzip")) {
-            LOG.error().$("gzip encoding is not supported [fd=").put(context.getFd()).I$();
-            state.reject(ENCODING_NOT_SUPPORTED, "Not Found");
+            state.reject(ENCODING_NOT_SUPPORTED, "gzip encoding is not supported", context.getFd());
             return;
         }
 
@@ -122,7 +118,7 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
                         .$(requestHeader.getUrl())
                         .$(", precision=").$(precision)
                         .I$();
-                state.reject(PRECISION_NOT_SUPPORTED, "unsupported precision");
+                state.reject(PRECISION_NOT_SUPPORTED, "unsupported precision", context.getFd());
                 return;
             }
         } else {
@@ -168,9 +164,8 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
             HttpConnectionContext context
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
         state = LV.get(context);
-        if (state == null) {
-            return;
-        }
+        assert state != null;
+        
         switch (state.getSendStatus()) {
             case HEADER:
                 context.resumeResponseSend();
@@ -197,7 +192,7 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
 
     private void sendErrorHeader(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
         HttpChunkedResponseSocket r = context.getChunkedResponseSocket();
-        r.status(state.getHttpResponseCode(), "text/plain");
+        r.status(state.getHttpResponseCode(), CONTENT_TYPE_JSON);
         r.sendHeader();
     }
 }

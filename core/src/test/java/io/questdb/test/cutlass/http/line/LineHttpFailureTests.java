@@ -31,6 +31,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cutlass.http.client.HttpClient;
+import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.mp.SOCountDownLatch;
@@ -152,7 +153,40 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testChunkedEncoding() throws Exception {
+    public void testChunkedDisconnect() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+            )) {
+                serverMain.start();
+
+                final List<String> points = new ArrayList<>();
+                try (HttpClient httpClient = HttpClientFactory.newInstance(new DefaultHttpClientConfiguration())) {
+                    String line = "line,sym1=123 field1=123i 1234567890000000000\n";
+
+                    for (int i = 0; i < 10; i++) {
+                        HttpClient.Request request = httpClient.newRequest();
+                        request.POST()
+                                .url("/write ")
+                                .withChunkedContent()
+                                .putAscii("\r\n")
+                                .putAscii("\r\n")
+                                .putAscii("500\r\n")
+                                .putAscii(line)
+                                .putAscii(line)
+                                .sendPartialContent("localhost", getHttpPort(serverMain), 1000, 5000);
+                        Os.sleep(5);
+                        httpClient.disconnect();
+                    }
+
+                    TableToken tt = serverMain.getEngine().getTableTokenIfExists("line");
+                    Assert.assertNull(tt);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testChunkedEncodingMalformed() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
                 serverMain.start();
@@ -168,8 +202,12 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
                             .putAscii(line)
                             .send("localhost", getHttpPort(serverMain))) {
 
-                        resp.await();
-                        TestUtils.assertEquals("411", resp.getStatusCode());
+                        try {
+                            resp.await();
+                            Assert.fail();
+                        } catch (HttpClientException e) {
+                            TestUtils.assertContains(e.getMessage(), "peer disconnect");
+                        }
                     }
                 }
             }
@@ -398,7 +436,7 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
                     points.add("first_table,ok=true allgood=true\n");
                     points.add("second_table,ok=true allgood=true\n");
                     assertRequestErrorContains(influxDB, points, "failed_table,tag1=value1 f1=1i,y=12i",
-                            "{\"code\":\"internal error\",\"message\":\"commit error for table: failed_table, errno: 24, error: test error,\"errorId\":"
+                            "{\"code\":\"internal error\",\"message\":\"commit error for table: failed_table, errno: 24, error: test error\",\"errorId\":"
                     );
 
                     // Retry is ok
@@ -493,7 +531,7 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testGzipChunkedNotSupported() throws Exception {
+    public void testGzipNotSupported() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
                 serverMain.start();
@@ -503,7 +541,7 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
                     influxDB.setLogLevel(InfluxDB.LogLevel.BASIC);
                     influxDB.enableGzip();
                     assertRequestErrorContains(influxDB, points, "m1,tag1=value1 f1=1i,x=12i",
-                            "chunked requests are not supported"
+                            "\"message\":\"gzip encoding is not supported\","
                     );
 
                     //   Retry is ok
@@ -617,7 +655,7 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
                     // This will trigger commit and the commit will fail
                     points.add("drop,tag1=value1 f1=1i,y=12i");
                     assertRequestErrorContains(influxDB, points, "drop,tag1=value1 f1=1i,y=12i,z=45",
-                            "{\"code\":\"internal error\",\"message\":\"commit error for table: drop, error: java.lang.UnsupportedOperationException,\"errorId\":"
+                            "{\"code\":\"internal error\",\"message\":\"commit error for table: drop, error: java.lang.UnsupportedOperationException\",\"errorId\":"
                     );
 
 

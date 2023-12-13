@@ -2833,6 +2833,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getForceRecvFragmentationChunkSize() {
+            return forceRecvFragmentationChunkSize;
+        }
+
+        @Override
         public int getForceSendFragmentationChunkSize() {
             return forceSendFragmentationChunkSize;
         }

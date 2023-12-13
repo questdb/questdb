@@ -135,6 +135,8 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         sink.put(error, 0, Math.min(error.length(), maxResponseErrorMessageLength));
         if (errorLine > -1) {
             sink.putAscii("\",\"line\":").put(errorLine);
+        } else {
+            sink.putAscii('\"');
         }
         sink.putAscii(",\"errorId\":\"").putAscii(ERROR_ID).put('-').put(errorId).putAscii("\"").putAscii('}');
     }
@@ -189,9 +191,11 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         }
     }
 
-    public void reject(Status status, String errorText) {
+    public void reject(Status status, String errorText, int fd) {
         currentStatus = status;
         error.put(errorText);
+        this.fd = fd;
+        logError();
     }
 
     public void setSendStatus(SendStatus sendStatus) {
@@ -361,9 +365,17 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         LOG.info().$("parse error [errorId=").$(ERROR_ID).$('-').$(errorId)
                 .$(", table=").$(parser.getMeasurementName())
                 .$(", line=").$(errorLine)
-                .$(error.subSequence(errorPos, error.length()))
+                .$(", error=").$(error.subSequence(errorPos, error.length()))
                 .$(", fd=").$(fd)
                 .$(", mangledLine=`").$utf8(recvBufStartOfMeasurement == 0 ? buffer : recvBufStartOfMeasurement, parser.getBufferAddress()).$('`')
+                .I$();
+    }
+
+    private void logError() {
+        errorId = ERROR_COUNT.incrementAndGet();
+        LOG.info().$("parse error [errorId=").$(ERROR_ID).$('-').$(errorId)
+                .$(", error=").$(error)
+                .$(", fd=").$(fd)
                 .I$();
     }
 

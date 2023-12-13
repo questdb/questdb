@@ -29,12 +29,19 @@ import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import okhttp3.*;
+import okio.BufferedSink;
+import org.influxdb.InfluxDB;
+import org.influxdb.InfluxDBFactory;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
 
-import static io.questdb.PropertyKey.DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE;
+import java.io.IOException;
+
+import static io.questdb.PropertyKey.*;
 import static io.questdb.test.cutlass.http.line.IlpHttpUtils.getHttpPort;
 
 public class LineRawHttpTest extends AbstractBootstrapTest {
@@ -43,6 +50,93 @@ public class LineRawHttpTest extends AbstractBootstrapTest {
         super.setUp();
         TestUtils.unchecked(() -> createDummyConfiguration());
         dbPath.parent().$();
+    }
+
+    @Test
+    public void testChunkedDataIlpUploadNoKeepAlive() throws Exception {
+        var rnd = TestUtils.generateRandom(LOG);
+        TestUtils.assertMemoryLeak(() -> {
+            int fragmentation = 1 + rnd.nextInt(5);
+            LOG.info().$("=== fragmentation=").$(fragmentation).$();
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), String.valueOf(fragmentation),
+                    HTTP_SERVER_KEEP_ALIVE.getEnvVarName(), "false"
+            )) {
+                int httpPort = getHttpPort(serverMain);
+                final String serverURL = "http://127.0.0.1:" + httpPort, username = "root", password = "root";
+
+                OkHttpClient.Builder builder = new OkHttpClient
+                        .Builder()
+                        .addInterceptor(chain -> {
+                            // This forces OkHttp to send data in chunks
+                            // because the body length is unknown
+                            Request originalRequest = chain.request();
+                            RequestBody body = originalRequest.body();
+                            Request newRequest = originalRequest.newBuilder()
+                                    .method(originalRequest.method(), chunkedBody(body)).build();
+                            return chain.proceed(newRequest);
+                        });
+
+                int totalCount = 0;
+                int requests = 1 + rnd.nextInt(4);
+                for (int i = 0; i < requests; i++) {
+                    try (final InfluxDB influxDB = InfluxDBFactory.connect(serverURL, username, password, builder)) {
+                        int lineCount = 100 + rnd.nextInt(2000);
+                        influxDB.setDatabase("m1");
+                        influxDB.write(createLines(lineCount));
+                        totalCount += lineCount;
+                    }
+                }
+
+                serverMain.waitWalTxnApplied("m1");
+
+                serverMain.assertSql("select count() from m1", "count\n" +
+                        totalCount + "\n");
+            }
+        });
+    }
+
+    @Test
+    public void testFuzzChunkedDataIlpUpload() throws Exception {
+        var rnd = TestUtils.generateRandom(LOG);
+        TestUtils.assertMemoryLeak(() -> {
+            int fragmentation = 1 + rnd.nextInt(5);
+            LOG.info().$("=== fragmentation=").$(fragmentation).$();
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), String.valueOf(fragmentation)
+            )) {
+                int httpPort = getHttpPort(serverMain);
+                final String serverURL = "http://127.0.0.1:" + httpPort, username = "root", password = "root";
+
+                OkHttpClient.Builder builder = new OkHttpClient
+                        .Builder()
+                        .addInterceptor(chain -> {
+                            // This forces OkHttp to send data in chunks
+                            // because the body length is unknown
+                            Request originalRequest = chain.request();
+                            RequestBody body = originalRequest.body();
+                            Request newRequest = originalRequest.newBuilder()
+                                    .method(originalRequest.method(), chunkedBody(body)).build();
+                            return chain.proceed(newRequest);
+                        });
+
+                int totalCount = 0;
+                int requests = 1 + rnd.nextInt(4);
+                for (int i = 0; i < requests; i++) {
+                    try (final InfluxDB influxDB = InfluxDBFactory.connect(serverURL, username, password, builder)) {
+                        int lineCount = 100 + rnd.nextInt(2000);
+                        influxDB.setDatabase("m1");
+                        influxDB.write(createLines(lineCount));
+                        totalCount += lineCount;
+                    }
+                }
+
+                serverMain.waitWalTxnApplied("m1");
+
+                serverMain.assertSql("select count() from m1", "count\n" +
+                        totalCount + "\n");
+            }
+        });
     }
 
     @Test
@@ -107,6 +201,26 @@ public class LineRawHttpTest extends AbstractBootstrapTest {
         });
     }
 
+    private RequestBody chunkedBody(final RequestBody body) {
+        return new RequestBody() {
+            @Override
+            public long contentLength() {
+                // Forces OkHttp to send data in chunks
+                return -1;
+            }
+
+            @Nullable
+            @Override
+            public MediaType contentType() {
+                return body.contentType();
+            }
+
+            @Override
+            public void writeTo(@NotNull BufferedSink bufferedSink) throws IOException {
+                body.writeTo(bufferedSink);
+            }
+        };
+    }
 
     private String createLines(int lineCount) {
         StringSink sink = new StringSink();
