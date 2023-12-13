@@ -35,38 +35,37 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 import io.questdb.std.Rows;
 import io.questdb.std.Unsafe;
-
-import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ANY;
+import io.questdb.std.str.DirectUtf8StringZ;
 
 public class DuckDBRecordCursorFactory implements RecordCursorFactory {
-    private final DuckDBConnection connection;
-    private final DuckDBPreparedStatement statement;
+    private final long statement;
     private final RecordCursorImpl cursor;
     private final DuckDBPageFrameCursor pageFrameCursor;
     private final RecordMetadata metadata;
 
-    public DuckDBRecordCursorFactory(DuckDBPreparedStatement statement, DuckDBConnection connection) {
-        this.connection = connection;
-        this.statement = statement;
+    public DuckDBRecordCursorFactory(long stmt) {
+        this.statement = stmt;
         this.cursor = new RecordCursorImpl();
         this.pageFrameCursor = new DuckDBPageFrameCursor();
-        this.metadata = buildMetadata(statement);
+        DirectUtf8StringZ utf8String = new DirectUtf8StringZ();
+        this.metadata = buildMetadata(statement, utf8String);
     }
 
-    private static RecordMetadata buildMetadata(DuckDBPreparedStatement statement) {
-        final int columnCount = (int) statement.getColumnCount();
+    private static RecordMetadata buildMetadata(long statement, DirectUtf8StringZ utf8String) {
+        final int columnCount = (int)DuckDB.preparedGetColumnCount(statement);
         if (columnCount == 0) {
             return null;
         }
 
         GenericRecordMetadata metadata = new GenericRecordMetadata();
         for (int i = 0; i < columnCount; i++) {
-            int type = statement.getColumnLogicalType(i);
+            int type = DuckDB.decodeLogicalTypeId(DuckDB.preparedGetColumnTypes(statement, i));
             int questType = DuckDB.getQdbColumnType(type);
             if (questType == ColumnType.TIMESTAMP) {
                 metadata.setTimestampIndex(i);
             }
-            metadata.add(new TableColumnMetadata(statement.getColumnName(i).toString(), questType));
+            long name = DuckDB.preparedGetColumnName(statement, i);
+            metadata.add(new TableColumnMetadata(utf8String.of(name).toString(), questType));
         }
         return metadata;
     }
@@ -74,13 +73,18 @@ public class DuckDBRecordCursorFactory implements RecordCursorFactory {
     @Override
     public void close() {
         Misc.free(cursor);
-        Misc.free(statement);
-        Misc.free(connection);
+        DuckDB.preparedDestroy(statement);
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        pageFrameCursor.of(statement);
+        long result = DuckDB.preparedExecute(statement);
+        long err = DuckDB.resultGetError(result);
+        if (err != 0) {
+            DirectUtf8StringZ utf8String = new DirectUtf8StringZ();
+            throw SqlException.$(1, utf8String.of(err).toString());
+        }
+        pageFrameCursor.of(result);
         cursor.of(pageFrameCursor);
         return cursor;
     }

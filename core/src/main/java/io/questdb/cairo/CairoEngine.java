@@ -35,7 +35,6 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.*;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cutlass.text.CopyContext;
-import io.questdb.duckdb.DuckDBInstance;
 import io.questdb.griffin.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -87,7 +86,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final AtomicLong unpublishedWalTxnCount = new AtomicLong(1);
     private final WalWriterPool walWriterPool;
     private final WriterPool writerPool;
-    private final DuckDBInstance duckDBInstance;
+    private final DuckDBConnectionPool duckDBConnectionPool;
     private @NotNull DdlListener ddlListener = DefaultDdlListener.INSTANCE;
     private @NotNull WalDirectoryPolicy walDirectoryPolicy = DefaultWalDirectoryPolicy.INSTANCE;
     private @NotNull WalListener walListener = DefaultWalListener.INSTANCE;
@@ -114,6 +113,7 @@ public class CairoEngine implements Closeable, WriterSource {
         this.readerPool = new ReaderPool(configuration, messageBus);
         this.metadataPool = new MetadataPool(configuration, this);
         this.walWriterPool = new WalWriterPool(configuration, this);
+        this.duckDBConnectionPool = new DuckDBConnectionPool(configuration);
         this.engineMaintenanceJob = new EngineMaintenanceJob(configuration);
         this.telemetry = new Telemetry<>(TelemetryTask.TELEMETRY, configuration);
         this.telemetryWal = new Telemetry<>(TelemetryWalTask.WAL_TELEMETRY, configuration);
@@ -154,17 +154,6 @@ public class CairoEngine implements Closeable, WriterSource {
         }
 
         this.sqlCompilerPool = new SqlCompilerPool(this);
-
-        try {
-            duckDBInstance = new DuckDBInstance(); // TODO: configuration
-        } catch (Throwable e) {
-            close();
-            throw e;
-        }
-    }
-
-    public DuckDBInstance getDuckDBInstance() {
-        return duckDBInstance;
     }
 
     public static void compile(SqlCompiler compiler, CharSequence sql, SqlExecutionContext sqlExecutionContext) throws SqlException {
@@ -264,6 +253,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
     @Override
     public void close() {
+        Misc.free(duckDBConnectionPool);
         Misc.free(sqlCompilerPool);
         Misc.free(writerPool);
         Misc.free(readerPool);
@@ -1102,6 +1092,10 @@ public class CairoEngine implements Closeable, WriterSource {
         if (!tt.equals(tableToken)) {
             throw TableReferenceOutOfDateException.of(tableToken, tableToken.getTableId(), tt.getTableId(), tt.getTableId(), -1);
         }
+    }
+
+    public DuckDBConnectionPool.Connection getDuckDBConnection() {
+        return duckDBConnectionPool.get();
     }
 
     private static void drop0(@Nullable SCSequence eventSubSeq, CompiledQuery cq) throws SqlException {

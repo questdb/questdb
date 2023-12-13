@@ -24,11 +24,6 @@
 
 package io.questdb.test.duckdb;
 
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.sql.PageFrame;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.duckdb.*;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
@@ -39,83 +34,360 @@ import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+
 public class DuckDBTest extends AbstractCairoTest {
-//    @Test
-//    public void testCreate() {
-//        long db = DuckDB.databaseOpen(0, 0);
-//        Assert.assertNotEquals(0, db);
-//        long conn = DuckDB.databaseConnect(db);
-//        Assert.assertNotEquals(0, conn);
-//
-//        DirectUtf8Sequence n = new GcUtf8String("CREATE TABLE integers(i INTEGER)");
-//        DirectUtf8Sequence i = new GcUtf8String("INSERT INTO integers VALUES (1), (2), (3), (4), (5)");
-//        DirectUtf8Sequence s = new GcUtf8String("SELECT MAX(i), MIN(i) FROM integers");
-//
-//        DuckDB.connectionExec(conn, n.ptr(), n.size());
-//        DuckDB.connectionExec(conn, i.ptr(), i.size());
-//        long result = DuckDB.connectionQuery(conn, s.ptr(), s.size());
-//        Assert.assertNotEquals(0, result);
-//
-//        Assert.assertEquals(2, DuckDB.resultColumnCount(result));
-//        Assert.assertEquals(1, DuckDB.resultRowCount(result));
-//
-//        long chunkCount = DuckDB.resultDataChunkCount(result);
-//        Assert.assertEquals(1, chunkCount);
-//
-//        long chunk = DuckDB.resultGetDataChunk(result, 0);
-//        Assert.assertNotEquals(0, chunk);
-//
-//        long columnCount = DuckDB.dataChunkGetColumnCount(chunk);
-//        Assert.assertEquals(2, columnCount);
-//
-//        DirectUtf8StringZ name = new DirectUtf8StringZ();
-//
-//        int columnType0 = DuckDB.resultColumnType(result, 0);
-//        Assert.assertEquals(DuckDB.DUCKDB_TYPE_INTEGER, columnType0);
-//        name.of(DuckDB.resultColumnName(result, 0));
-//        Assert.assertEquals("max(i)", name.toString());
-//
-//        int columnType1 = DuckDB.resultColumnType(result, 1);
-//        Assert.assertEquals(DuckDB.DUCKDB_TYPE_INTEGER, columnType1);
-//        name.of(DuckDB.resultColumnName(result, 1));
-//        Assert.assertEquals("min(i)", name.toString());
-//
-//        long chunkSize = DuckDB.dataChunkGetSize(chunk);
-//        Assert.assertEquals(1, chunkSize);
-//
-//        long v1 = DuckDB.dataChunkGetVector(chunk, 0);
-//        Assert.assertNotEquals(0, v1);
-//        Assert.assertEquals(DuckDB.DUCKDB_TYPE_INTEGER, DuckDB.vectorGetColumnType(v1));
-//
-//        long data1 = DuckDB.vectorGetData(v1);
-//        Assert.assertNotEquals(0, data1);
-//        for (int j = 0; j < chunkSize; j++) {
-//            int v = Unsafe.getUnsafe().getInt(data1 + j * 4L);
-//            Assert.assertEquals(5, v);
-//        }
-//
-//        long nulls = DuckDB.vectorGetValidity(v1);
-//        Assert.assertTrue(DuckDB.validityRowIsValid(nulls, 0));
-//
-//        long v2 = DuckDB.dataChunkGetVector(chunk, 1);
-//        Assert.assertNotEquals(0, v2);
-//        Assert.assertEquals(DuckDB.DUCKDB_TYPE_INTEGER, DuckDB.vectorGetColumnType(v2));
-//
-//        long data2 = DuckDB.vectorGetData(v2);
-//        for (int j = 0; j < chunkSize; j++) {
-//            int v = Unsafe.getUnsafe().getInt(data2 + j * 4L);
-//            Assert.assertEquals(1, v);
-//        }
-//
-//        long nulls2 = DuckDB.vectorGetValidity(v2);
-//        Assert.assertTrue(DuckDB.validityRowIsValid(nulls2, 0));
-//
-//        DuckDB.dataChunkDestroy(chunk);
-//        DuckDB.resultDestroy(result);
-//        DuckDB.connectionDisconnect(conn);
-//        DuckDB.databaseClose(db);
-//    }
-//
+    public static void checkText(long message, CharSequence expected) {
+        if (message != 0) {
+            DirectUtf8StringZ txt = new DirectUtf8StringZ();
+            txt.of(message);
+            Assert.assertEquals(expected.toString(), txt.toString());
+        } else {
+            Assert.fail("Expected: " + expected);
+        }
+    }
+
+    public static int setConfigOption(long config, CharSequence name, CharSequence option) {
+        DirectUtf8Sequence name8 = new GcUtf8String(name.toString());
+        DirectUtf8Sequence option8 = new GcUtf8String(option.toString());
+        return DuckDB.configSet(config, name8.ptr(), name8.size(), option8.ptr(), option8.size());
+    }
+
+    public static long queryNoFail(long conn, CharSequence query) {
+        DirectUtf8Sequence utf8Sequence = new GcUtf8String(query.toString());
+        final long res = DuckDB.connectionQuery(conn, utf8Sequence.ptr(), utf8Sequence.size());
+        Assert.assertNotEquals(0, res); // result of error
+        final long err = DuckDB.resultGetError(res);
+        if (err != 0) {
+            DirectUtf8StringZ error = new DirectUtf8StringZ();
+            error.of(err);
+            Assert.fail("Query failed with message: " + error);
+        }
+        return res;
+    }
+
+    public static long prepareNoFail(long conn, CharSequence stmt) {
+        DirectUtf8Sequence utf8Sequence = new GcUtf8String(stmt.toString());
+        final long res = DuckDB.connectionPrepare(conn, utf8Sequence.ptr(), utf8Sequence.size());
+        Assert.assertNotEquals(0, res); // result of error
+        final long err = DuckDB.preparedGetError(res);
+        if (err != 0) {
+            DirectUtf8StringZ error = new DirectUtf8StringZ();
+            error.of(err);
+            Assert.fail("Prepared Statement failed with message: " + error);
+        }
+        return res;
+    }
+
+    public static long executeNoFail(long stmt) {
+        final long res = DuckDB.preparedExecute(stmt);
+        if (res == 0) {
+            DirectUtf8StringZ error = new DirectUtf8StringZ();
+            error.of(DuckDB.errorMessage());
+            Assert.fail("Prepared Statement execute failed [error=" + DuckDB.errorType() + ", message=" + error + "]");
+        }
+        final long err = DuckDB.resultGetError(res);
+        Assert.assertEquals(0, err);
+        return res;
+    }
+
+    @Test
+    public void testConnectionLifetime() {
+        final long db = DuckDB.databaseOpen(0, 0);
+        Assert.assertNotEquals(0, db);
+        final long conn = DuckDB.databaseConnect(db);
+        Assert.assertNotEquals(0, conn);
+        DuckDB.databaseClose(db);
+
+        final long createStmt = prepareNoFail(conn, "CREATE TABLE integers(i INTEGER)");
+        DuckDB.resultDestroy(executeNoFail(createStmt));
+        DuckDB.preparedDestroy(createStmt);
+
+        final long insertStmt1 = prepareNoFail(conn, "INSERT INTO integers VALUES (1), (2), (3), (4), (5)");
+        final long insertStmt2 = prepareNoFail(conn, "INSERT INTO integers VALUES (6), (7), (8), (9), (10)");
+        final long selectStmt = prepareNoFail(conn, "SELECT * FROM integers");
+
+        DuckDB.connectionDisconnect(conn);
+
+        DuckDB.resultDestroy(executeNoFail(insertStmt1));
+        DuckDB.resultDestroy(executeNoFail(insertStmt1));
+        DuckDB.resultDestroy(executeNoFail(insertStmt2));
+        DuckDB.preparedDestroy(insertStmt1);
+        DuckDB.preparedDestroy(insertStmt2);
+
+        final long selectResult = executeNoFail(selectStmt);
+        DuckDB.preparedDestroy(selectStmt);
+
+        long materialized = DuckDB.resultGetMaterialized(selectResult);
+        long rows = DuckDB.resultRowCount(materialized);
+        Assert.assertEquals(15, rows);
+        DuckDB.resultDestroy(selectResult);
+        DuckDB.resultDestroy(materialized);
+    }
+
+    @Test
+    public void testConfig() {
+        final long configPtr = DuckDB.configCreate();
+        Assert.assertNotEquals(0, configPtr);
+
+        Assert.assertEquals(1, setConfigOption(configPtr, "user", "questdb"));
+        Assert.assertEquals(0, setConfigOption(configPtr, "user1", "questdb")); // unknown option
+        Assert.assertEquals(-1, setConfigOption(configPtr, "access_mode", "all"));
+        Assert.assertEquals(DuckDB.ERROR_TYPE_INVALID_INPUT, DuckDB.errorType());
+
+        checkText(DuckDB.errorMessage(), "Invalid Input Error: Unrecognized parameter for option ACCESS_MODE \"all\". Expected READ_ONLY or READ_WRITE.");
+        DuckDB.configDestroy(configPtr);
+    }
+
+    @Test
+    public void testCreateInsertQueryTable() {
+        final long db = DuckDB.databaseOpen(0, 0);
+        Assert.assertNotEquals(0, db);
+        final long conn = DuckDB.databaseConnect(db);
+        Assert.assertNotEquals(0, conn);
+
+        final long createStmt = prepareNoFail(conn, "CREATE TABLE integers(i INTEGER)");
+        checkText(DuckDB.preparedGetQueryText(createStmt), "CREATE TABLE integers(i INTEGER)");
+
+        // test properties
+        final long properties = DuckDB.preparedGetStatementProperties(createStmt);
+        Assert.assertEquals(DuckDB.STMT_TYPE_CREATE_STATEMENT, DuckDB.decodeStatementType(properties));
+        Assert.assertEquals(DuckDB.STMT_RETURN_TYPE_NOTHING, DuckDB.decodeStatementReturnType(properties));
+        Assert.assertEquals(0, DuckDB.decodeStatementParameterCount(properties));
+
+        final long res = executeNoFail(createStmt);
+        Assert.assertEquals(DuckDB.QUERY_MATERIALIZED_RESULT, DuckDB.resultGetQueryResultType(res));
+
+        final long rowCount = DuckDB.resultRowCount(res);
+        Assert.assertEquals(0, rowCount);
+
+        final long insertStmt = prepareNoFail(conn, "INSERT INTO integers VALUES (1), (2), (3), (4), (5)");
+        final long insProperties = DuckDB.preparedGetStatementProperties(insertStmt);
+        Assert.assertEquals(DuckDB.STMT_TYPE_INSERT_STATEMENT, DuckDB.decodeStatementType(insProperties));
+        Assert.assertEquals(DuckDB.STMT_RETURN_TYPE_CHANGED_ROWS, DuckDB.decodeStatementReturnType(insProperties));
+        Assert.assertEquals(0, DuckDB.decodeStatementParameterCount(insProperties));
+
+        final long insRes = executeNoFail(insertStmt);
+        Assert.assertEquals(DuckDB.QUERY_MATERIALIZED_RESULT, DuckDB.resultGetQueryResultType(insRes));
+
+        final long selectStmt = prepareNoFail(conn, "SELECT MAX(i), MIN(i) FROM integers");
+        final long selProperties = DuckDB.preparedGetStatementProperties(selectStmt);
+        Assert.assertEquals(DuckDB.STMT_TYPE_SELECT_STATEMENT, DuckDB.decodeStatementType(selProperties));
+        Assert.assertEquals(DuckDB.STMT_RETURN_TYPE_QUERY_RESULT, DuckDB.decodeStatementReturnType(selProperties));
+        Assert.assertEquals(0, DuckDB.decodeStatementParameterCount(selProperties));
+
+        final long columnCount = DuckDB.preparedGetColumnCount(selectStmt);
+        Assert.assertEquals(2, columnCount);
+
+        final long colTypes1 = DuckDB.preparedGetColumnTypes(selectStmt, 0);
+        Assert.assertEquals(DuckDB.COLUMN_TYPE_INTEGER, DuckDB.decodeLogicalTypeId(colTypes1));
+
+        final long colTypes2 = DuckDB.preparedGetColumnTypes(selectStmt, 0);
+        Assert.assertEquals(DuckDB.COLUMN_TYPE_INTEGER, DuckDB.decodeLogicalTypeId(colTypes2));
+
+        checkText(DuckDB.preparedGetColumnName(selectStmt, 0), "max(i)");
+        checkText(DuckDB.preparedGetColumnName(selectStmt, 1), "min(i)");
+
+        final long selRes = executeNoFail(selectStmt);
+        Assert.assertEquals(DuckDB.QUERY_STREAM_RESULT, DuckDB.resultGetQueryResultType(selRes));
+
+        while (true) {
+            long chunk = DuckDB.resultFetchChunk(selRes);
+            if (chunk == 0) {
+                break;
+            }
+            long rows = DuckDB.dataChunkGetSize(chunk);
+            Assert.assertEquals(1, rows);
+            long cols = DuckDB.dataChunkGetColumnCount(chunk);
+            Assert.assertEquals(2, cols);
+
+            // check max column
+            long maxVec = DuckDB.dataChunkGetVector(chunk, 0);
+            Assert.assertNotEquals(0, maxVec);
+            Assert.assertEquals(DuckDB.COLUMN_TYPE_INTEGER, DuckDB.decodeLogicalTypeId(DuckDB.vectorGetColumnTypes(maxVec)));
+            Assert.assertTrue(DuckDB.validityRowIsValid(DuckDB.vectorGetValidity(maxVec), 0));
+            long maxData = DuckDB.vectorGetData(maxVec);
+            Assert.assertNotEquals(0, maxData);
+            Assert.assertEquals(5, Unsafe.getUnsafe().getInt(maxData));
+
+            // check min column
+            long minVec = DuckDB.dataChunkGetVector(chunk, 1);
+            Assert.assertNotEquals(0, minVec);
+            Assert.assertEquals(DuckDB.COLUMN_TYPE_INTEGER, DuckDB.decodeLogicalTypeId(DuckDB.vectorGetColumnTypes(minVec)));
+            Assert.assertTrue(DuckDB.validityRowIsValid(DuckDB.vectorGetValidity(minVec), 1));
+            long minData = DuckDB.vectorGetData(minVec);
+            Assert.assertNotEquals(0, minData);
+            Assert.assertEquals(1, Unsafe.getUnsafe().getInt(minData));
+
+            DuckDB.dataChunkDestroy(chunk);
+        }
+
+        DuckDB.preparedDestroy(createStmt);
+        DuckDB.preparedDestroy(insertStmt);
+        DuckDB.preparedDestroy(selectStmt);
+
+        DuckDB.connectionDisconnect(conn);
+        DuckDB.databaseClose(db);
+    }
+
+    @Test
+    public void testMaterializedQueryResult() {
+        final long db = DuckDB.databaseOpen(0, 0);
+        final long conn = DuckDB.databaseConnect(db);
+
+        long rows = 20992;
+        long chunks = rows / 2048 + 1;
+        DuckDB.resultDestroy(queryNoFail(conn, "CREATE TABLE integers AS select generate_series i from generate_series(1,"+rows+");"));
+
+        final long materialized = queryNoFail(conn, "SELECT i FROM integers");
+        Assert.assertEquals(DuckDB.QUERY_MATERIALIZED_RESULT, DuckDB.resultGetQueryResultType(materialized));
+        Assert.assertEquals(rows, DuckDB.resultRowCount(materialized));
+        Assert.assertEquals(1, DuckDB.resultColumnCount(materialized));
+        Assert.assertEquals(DuckDB.COLUMN_TYPE_BIGINT, DuckDB.decodeLogicalTypeId(DuckDB.resultColumnTypes(materialized, 0)));
+        checkText(DuckDB.resultColumnName(materialized, 0), "i");
+        Assert.assertEquals(chunks, DuckDB.resultDataChunkCount(materialized));
+
+        long sequence = 1;
+        // scan materialized result twice
+        getResultData(chunks, materialized, sequence);
+        sequence = getResultData(chunks, materialized, sequence);
+
+        Assert.assertEquals(sequence, rows + 1);
+        DuckDB.resultDestroy(materialized);
+
+        DuckDB.connectionDisconnect(conn);
+        DuckDB.databaseClose(db);
+    }
+
+    private static long getResultData(long chunks, long materialized, long sequence) {
+        for (int chunkIdx = 0; chunkIdx < chunks; chunkIdx++) {
+            final long chunk = DuckDB.resultGetDataChunk(materialized, chunkIdx);
+            Assert.assertNotEquals(0, chunk);
+
+            long column = DuckDB.dataChunkGetVector(chunk, 0);
+            Assert.assertNotEquals(0, column);
+            Assert.assertEquals(DuckDB.COLUMN_TYPE_BIGINT, DuckDB.decodeLogicalTypeId(DuckDB.vectorGetColumnTypes(column)));
+            Assert.assertTrue(DuckDB.validityRowIsValid(DuckDB.vectorGetValidity(column), 0));
+            long data = DuckDB.vectorGetData(column);
+            Assert.assertNotEquals(0, data);
+            long chunkSize = DuckDB.dataChunkGetSize(chunk);
+            for (int j = 0; j < chunkSize; j++) {
+                Assert.assertEquals(sequence++, Unsafe.getUnsafe().getLong(data + j * 8L));
+            }
+            DuckDB.dataChunkDestroy(chunk);
+        }
+        return sequence;
+    }
+
+    @Test
+    public void testStreamingQueryResult() {
+        final long db = DuckDB.databaseOpen(0, 0);
+        final long conn = DuckDB.databaseConnect(db);
+
+        long rows = 20992;
+        long chunks = rows / 2048 + 1;
+        DuckDB.resultDestroy(queryNoFail(conn, "CREATE TABLE integers AS select generate_series i from generate_series(1,"+rows+");"));
+
+        final long streaming = prepareNoFail(conn, "SELECT i FROM integers");
+        Assert.assertEquals(DuckDB.COLUMN_TYPE_BIGINT, DuckDB.decodeLogicalTypeId(DuckDB.preparedGetColumnTypes(streaming, 0)));
+        Assert.assertEquals(1, DuckDB.preparedGetColumnCount(streaming));
+        checkText(DuckDB.preparedGetColumnName(streaming, 0), "i");
+
+        final long streamingResult = executeNoFail(streaming);
+        DuckDB.preparedDestroy(streaming);
+
+        Assert.assertEquals(DuckDB.QUERY_STREAM_RESULT, DuckDB.resultGetQueryResultType(streamingResult));
+        Assert.assertEquals(DuckDB.COLUMN_TYPE_BIGINT, DuckDB.decodeLogicalTypeId(DuckDB.resultColumnTypes(streamingResult, 0)));
+        long sequence = 1;
+        long chunkCount = 0;
+        while (true) {
+            final long chunk = DuckDB.resultFetchChunk(streamingResult);
+            if (chunk == 0) {
+                break;
+            }
+            Assert.assertNotEquals(0, chunk);
+
+            chunkCount++;
+            long column = DuckDB.dataChunkGetVector(chunk, 0);
+            Assert.assertNotEquals(0, column);
+            Assert.assertEquals(DuckDB.COLUMN_TYPE_BIGINT, DuckDB.decodeLogicalTypeId(DuckDB.vectorGetColumnTypes(column)));
+            Assert.assertTrue(DuckDB.validityRowIsValid(DuckDB.vectorGetValidity(column), 0));
+            long data = DuckDB.vectorGetData(column);
+            Assert.assertNotEquals(0, data);
+            long chunkSize = DuckDB.dataChunkGetSize(chunk);
+            for (int j = 0; j < chunkSize; j++) {
+                Assert.assertEquals(sequence++, Unsafe.getUnsafe().getLong(data + j * 8L));
+            }
+            DuckDB.dataChunkDestroy(chunk);
+        }
+
+        Assert.assertEquals(chunks, chunkCount);
+        Assert.assertEquals(sequence, rows + 1);
+        DuckDB.resultDestroy(streamingResult);
+
+        DuckDB.connectionDisconnect(conn);
+        DuckDB.databaseClose(db);
+    }
+
+    @Test
+    public void concurrentSequenceRead() throws InterruptedException {
+        final long db = DuckDB.databaseOpen(0, 0);
+        final long conn = DuckDB.databaseConnect(db);
+
+        final int threads = 4;
+        final int iters = 100;
+        DuckDB.resultDestroy(queryNoFail(conn, "CREATE SEQUENCE seq;"));
+        List<Long> serial = new ArrayList<>(threads * iters);
+        List<Long> concurrent = Collections.synchronizedList(new ArrayList<>(threads * iters));
+
+        for (int i = 0; i < threads; i++) {
+            updateCollection(iters, conn, serial);
+        }
+
+        DuckDB.resultDestroy(queryNoFail(conn, "DROP SEQUENCE seq;"));
+        DuckDB.resultDestroy(queryNoFail(conn, "CREATE SEQUENCE seq;"));
+
+        Thread[] ts = new Thread[threads];
+        for (int i = 0; i < threads; i++) {
+            Thread th = new Thread(() -> {
+                long conn1 = DuckDB.databaseConnect(db);
+                updateCollection(iters, conn1, concurrent);
+                DuckDB.connectionDisconnect(conn1);
+            });
+            th.start();
+            ts[i] = th;
+        }
+
+        for (Thread t : ts) {
+            t.join();
+        }
+
+        concurrent.sort(Long::compareTo);
+        Assert.assertEquals(serial.size(), concurrent.size());
+        for (int i = 0; i < serial.size(); i++) {
+            Assert.assertEquals(serial.get(i), concurrent.get(i));
+        }
+
+        DuckDB.connectionDisconnect(conn);
+        DuckDB.databaseClose(db);
+    }
+
+    private static void updateCollection(int iters, long conn, List<Long> longs) {
+        for (int j = 0; j < iters; j++) {
+            long res = queryNoFail(conn, "SELECT nextval('seq')");
+            long chunk = DuckDB.resultGetDataChunk(res, 0);
+            Assert.assertNotEquals(0, chunk);
+            long column = DuckDB.dataChunkGetVector(chunk, 0);
+            Assert.assertNotEquals(0, column);
+            long data = DuckDB.vectorGetData(column);
+            Assert.assertNotEquals(0, data);
+            longs.add(Unsafe.getUnsafe().getLong(data));
+            DuckDB.dataChunkDestroy(chunk);
+        }
+    }
+
 //    @Test
 //    public void testSimple() throws Exception {
 //        assertMemoryLeak(
@@ -180,152 +452,43 @@ public class DuckDBTest extends AbstractCairoTest {
 //            }
 //        );
 //    }
-//
-//
-//    //    public static native long connectionPrepare(long connection, long query_ptr, long query_size);
-//    //    public static native long preparedExecute(long stmt);
-//    //    public static native void preparedDestroy(long stmt);
-//    //    public static native long preparedGetError(long stmt);
-//    //    public static native long preparedGetQueryText(long stmt);
-//    //    public static native int preparedGetStatementType(long stmt);
-//    //    public static native int preparedGetStatementReturnType(long stmt);
-//    //    public static native boolean preparedAllowStreamResult(long stmt);
-//    //    public static native long preparedParameterCount(long stmt);
-//    //    public static native long preparedGetColumnCount(long stmt);
-//    //    public static native int preparedGetColumnLogicalType(long stmt, long col);
-//    //    public static native int preparedGetColumnPhysicalType(long stmt, long col);
-//    //    public static native long preparedGetColumnName(long stmt, long col);
-//    //    public static native long resultGetError(long result);
-//    //    public static native long resultFetchChunk(long result);
+
 //    @Test
-//    public void testPreparedStatement() throws Exception {
+//    public void testFactory() throws Exception {
 //        assertMemoryLeak(
 //            () -> {
+//                long rows = 10000;
 //                try (DuckDBInstance ddb = new DuckDBInstance()) {
-//                    try (DuckDBConnection connection = ddb.getConnection()) {
-//                        long rows = 20992;
-//                        long chunks = rows / 2048 + 1;
-//                        DirectUtf8Sequence n = new GcUtf8String("CREATE TABLE integers AS select generate_series i from generate_series(1," + rows + ");");
-//                        DuckDBResult createRes = new DuckDBResult();
-//                        boolean b = connection.query(n, createRes);
-//                        if (!b) {
-//                            DirectUtf8StringZ error = new DirectUtf8StringZ();
-//                            createRes.getError(error);
-//                        }
-//                        Assert.assertTrue(b);
-//
-//                        DirectUtf8Sequence q = new GcUtf8String("SELECT i FROM integers");
-//                        long stmt = connection.prepare(q);
-//                        Assert.assertNotEquals(0, stmt);
-//                        DirectUtf8StringZ str = new DirectUtf8StringZ();
-//                        long error = DuckDB.preparedGetError(stmt);
-////                        str.of(error);
-////                        Assert.assertEquals("", str.toString());
-//                        long queryText = DuckDB.preparedGetQueryText(stmt);
-//                        str.of(queryText);
-//                        Assert.assertEquals(q.toString(), str.toString());
-//                        int statementType = DuckDB.preparedGetStatementType(stmt);
-////                        Assert.assertEquals(DuckDB.DUCKDB_STATEMENT_TYPE_SELECT, statementType);
-//                        int statementReturnType = DuckDB.preparedGetStatementReturnType(stmt);
-////                        Assert.assertEquals(DuckDB.DUCKDB_STATEMENT_TYPE_SELECT, statementReturnType);
-//                        boolean allowStreamResult = DuckDB.preparedAllowStreamResult(stmt);
-//                        Assert.assertTrue(allowStreamResult);
-//                        long parameterCount = DuckDB.preparedParameterCount(stmt);
-//                        Assert.assertEquals(0, parameterCount);
-//                        long columnCount = DuckDB.preparedGetColumnCount(stmt);
-//                        Assert.assertEquals(1, columnCount);
-//                        int columnLogicalType = DuckDB.preparedGetColumnLogicalType(stmt, 0);
-////                        Assert.assertEquals(DuckDB.DUCKDB_TYPE_INTEGER, columnLogicalType);
-//                        int columnPhysicalType = DuckDB.preparedGetColumnPhysicalType(stmt, 0);
-////                        Assert.assertEquals(DuckDB.DUCKDB_TYPE_INTEGER, columnPhysicalType);
-//                        long columnName = DuckDB.preparedGetColumnName(stmt, 0);
-//                        str.of(columnName);
-//                        Assert.assertEquals("i", str.toString());
-//                        long res = DuckDB.preparedExecute(stmt);
-//                        Assert.assertNotEquals(0, res);
-//
-//                        long counter = 1;
-//                        while (true) {
-//                            long chunk = DuckDB.resultFetchChunk(res);
-//                            if (chunk == 0) {
-//                                break;
-//                            }
-//                            long chunkSize = DuckDB.dataChunkGetSize(chunk);
-//                            long v1 = DuckDB.dataChunkGetVector(chunk, 0);
-//                            Assert.assertNotEquals(0, v1);
-//                            long ct = DuckDB.vectorGetColumnType(v1);
-//                            long data1 = DuckDB.vectorGetData(v1);
-//                            Assert.assertNotEquals(0, data1);
-//                            for (int j = 0; j < chunkSize; j++) {
-//                                long v = Unsafe.getUnsafe().getLong(data1 + j * 8L);
-//                                Assert.assertEquals(counter++, v);
-//                            }
-//                            long nulls = DuckDB.vectorGetValidity(v1);
-//                            Assert.assertTrue(DuckDB.validityRowIsValid(nulls, 0));
-//                            DuckDB.dataChunkDestroy(chunk);
-//                        }
-//
-//                        DuckDB.preparedDestroy(stmt);
+//                    DuckDBConnection connection = ddb.getConnection();
+//                    DirectUtf8Sequence n = new GcUtf8String("CREATE TABLE integers AS select generate_series i from generate_series(10," + rows + ");");
+//                    DuckDBResult createRes = new DuckDBResult();
+//                    boolean b = connection.query(n, createRes);
+//                    if (!b) {
+//                        DirectUtf8StringZ err = createRes.getErrorText();
 //                    }
-//                }
-//            });
+//                    Assert.assertTrue(b);
+//                    DirectUtf8Sequence q = new GcUtf8String("SELECT i, i - 1 as j FROM integers");
+//                    long stmt = connection.prepare(q);
+//                    Assert.assertNotEquals(0, stmt);
+//                    DuckDBPreparedStatement ps = new DuckDBPreparedStatement(stmt);
+//                    DuckDBRecordCursorFactory factory = new DuckDBRecordCursorFactory(ps, connection);
+//                    RecordMetadata metadata = factory.getMetadata();
+//                    Assert.assertEquals(2, metadata.getColumnCount());
+//                    RecordCursor cursor = factory.getCursor(sqlExecutionContext);
+//                    Record record = cursor.getRecord();
+//                    long counter = 1;
+//                    while (cursor.hasNext()) {
+//                        long v1 = record.getLong(0);
+//                        long v2 = record.getLong(1);
+//                        System.err.println(v1 + " " + v2);
+////                                Assert.assertEquals(counter++, v);
+//                    }
+//                    cursor.close();
+//                    factory.close();
+//                }}
+//        );
 //    }
-
-    @Test
-    public void testFactory() throws Exception {
-        assertMemoryLeak(
-            () -> {
-                long rows = 10000;
-                try (DuckDBInstance ddb = new DuckDBInstance()) {
-                    DuckDBConnection connection = ddb.getConnection();
-                    DirectUtf8Sequence n = new GcUtf8String("CREATE TABLE integers AS select generate_series i from generate_series(10," + rows + ");");
-                    DuckDBResult createRes = new DuckDBResult();
-                    boolean b = connection.query(n, createRes);
-                    if (!b) {
-                        DirectUtf8StringZ err = createRes.getErrorText();
-                    }
-                    Assert.assertTrue(b);
-                    DirectUtf8Sequence q = new GcUtf8String("SELECT i, i - 1 as j FROM integers");
-                    long stmt = connection.prepare(q);
-                    Assert.assertNotEquals(0, stmt);
-                    DuckDBPreparedStatement ps = new DuckDBPreparedStatement(stmt);
-                    DuckDBRecordCursorFactory factory = new DuckDBRecordCursorFactory(ps, connection);
-                    RecordMetadata metadata = factory.getMetadata();
-                    Assert.assertEquals(2, metadata.getColumnCount());
-                    RecordCursor cursor = factory.getCursor(sqlExecutionContext);
-                    Record record = cursor.getRecord();
-                    long counter = 1;
-                    while (cursor.hasNext()) {
-                        long v1 = record.getLong(0);
-                        long v2 = record.getLong(1);
-                        System.err.println(v1 + " " + v2);
-//                                Assert.assertEquals(counter++, v);
-                    }
-                    cursor.close();
-                    factory.close();
-                }}
-        );
-    }
-
-    @Test
-    public void testLongCursor() throws Exception {
-        assertQuery(
-                "",
-                "select * from quack('SELECT i, i - 1 as j FROM integers')",
-                "create table x as " +
-                        "(" +
-                        "  select" +
-                        "    rnd_long(0, 100, 0) a," +
-                        "    timestamp_sequence(0, 10000) k" +
-                        "  from long_sequence(3000)" +
-                        ") timestamp(k)",
-                null,
-                false,
-                false
-        );
-
-    }
-
+//
     static {
         Os.init();
     }

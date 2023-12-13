@@ -35,21 +35,25 @@ import io.questdb.std.Rows;
 import org.jetbrains.annotations.Nullable;
 
 public class DuckDBPageFrameCursor implements PageFrameCursor {
-    private final DuckDBPageFrame frame = new DuckDBPageFrame();
-    private DuckDBDataChunk chunk;
-    private DuckDBResult dataset;
+    private final PageFrameImpl frame = new PageFrameImpl();
+    private long chunk;
+    private long queryResult;
     private int chunkIndex;
 
-    public void of(DuckDBPreparedStatement statement) {
-        dataset = statement.execute();
+    // this owns queryResult and is responsible for its destruction
+    public void of(long queryResult) {
+        if (this.queryResult != 0) {
+            DuckDB.resultDestroy(this.queryResult);
+        }
+        this.queryResult = queryResult;
     }
 
     @Override
     public void close() {
-        if (chunk != null) {
-            chunk.close();
+        if (chunk != 0) {
+            DuckDB.dataChunkDestroy(chunk);
         }
-        dataset.close();
+        DuckDB.resultDestroy(queryResult);
     }
 
     @Override
@@ -69,8 +73,11 @@ public class DuckDBPageFrameCursor implements PageFrameCursor {
 
     @Override
     public @Nullable PageFrame next() {
-        chunk = dataset.fetchChunk();
-        if (chunk != null) {
+        if (chunk != 0) {
+            DuckDB.dataChunkDestroy(chunk);
+        }
+        chunk = DuckDB.resultFetchChunk(queryResult);
+        if (chunk != 0) {
             chunkIndex++;
             return frame;
         }
@@ -87,7 +94,7 @@ public class DuckDBPageFrameCursor implements PageFrameCursor {
         chunkIndex = 0;
     }
 
-    private class DuckDBPageFrame implements PageFrame {
+    private class PageFrameImpl implements PageFrame {
         @Override
         public BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction) {
             return null;
@@ -95,8 +102,10 @@ public class DuckDBPageFrameCursor implements PageFrameCursor {
 
         @Override
         public int getColumnShiftBits(int columnIndex) {
-            int type = chunk.getColumnType(columnIndex);
-            return Numbers.msb(ColumnType.sizeOf(type));
+            long duckTypes = DuckDB.resultColumnTypes(queryResult, columnIndex);
+            int logicalTypeId = DuckDB.decodeLogicalTypeId(duckTypes);
+            int questType = DuckDB.getQdbColumnType(logicalTypeId);
+            return Numbers.msb(ColumnType.sizeOf(questType));
         }
 
         @Override
@@ -106,17 +115,18 @@ public class DuckDBPageFrameCursor implements PageFrameCursor {
 
         @Override
         public long getPageAddress(int columnIndex) {
-            return chunk.getColumnDataAddr(columnIndex);
+            long vec = DuckDB.dataChunkGetVector(chunk, columnIndex);
+            return DuckDB.vectorGetData(vec);
         }
 
         @Override
         public long getPageSize(int columnIndex) {
-            return chunk.getRowCount() << getColumnShiftBits(columnIndex);
+            return DuckDB.dataChunkGetSize(chunk) << getColumnShiftBits(columnIndex);
         }
 
         @Override
         public long getPartitionHi() {
-            return chunk.getRowCount();
+            return DuckDB.dataChunkGetSize(chunk);
         }
 
         @Override

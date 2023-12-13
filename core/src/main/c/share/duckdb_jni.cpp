@@ -3,259 +3,217 @@
 #include "duckdb_jni.h"
 #include <duckdb.hpp>
 
-inline void throw_java_exception(JNIEnv * env, const char* type, const char* message) {
-    jclass ex_class = env->FindClass(type);
-    if (ex_class) {
-        env->ThrowNew(ex_class, message);
-    }
+thread_local duckdb::PreservedError duckdb_error;
+
+uint64_t pack_duckdb_types(duckdb::PhysicalType physical_type, duckdb::LogicalTypeId logical_type) {
+    return (uint64_t) physical_type << 32 | (uint64_t) logical_type;
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_duckdb_DuckDB_errorType(JNIEnv *, jclass) {
+    return duckdb_error ? (jint) duckdb_error.Type() : -1;
+}
+
+JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_errorMessage(JNIEnv *, jclass) {
+    return duckdb_error ? (jlong) duckdb_error.Message().c_str() : 0;
 }
 
 // Database API
 
-JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_databaseOpen(JNIEnv * env, jclass cs, jlong path_ptr, jlong path_size) {
+JNIEXPORT jlong JNICALL
+Java_io_questdb_duckdb_DuckDB_databaseOpen(JNIEnv *env, jclass cs, jlong path_ptr, jlong path_size) {
     return Java_io_questdb_duckdb_DuckDB_databaseOpenExt(env, cs, path_ptr, path_size, 0);
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_databaseOpenExt(JNIEnv * env, jclass, jlong path_ptr, jlong path_size, jlong config_ptr) {
-    std::string path((const char *) path_ptr, path_size);
+JNIEXPORT jlong JNICALL
+Java_io_questdb_duckdb_DuckDB_databaseOpenExt(JNIEnv *, jclass, jlong path_ptr, jlong path_size, jlong config_ptr) {
     try {
-        auto config = (duckdb::DBConfig *) config_ptr;
-        auto db = new duckdb::DuckDB(path.c_str(), config);
-        return (jlong) db;
-    } catch (std::exception &ex) {
-        throw_java_exception(env, "java/lang/Exception", ex.what());
-        return 0;
+        std::string path((const char *) path_ptr, path_size);
+        return (jlong) new duckdb::DuckDB(path.c_str(), (duckdb::DBConfig *) config_ptr);
+    } catch (const duckdb::Exception &ex) {
+        duckdb_error = duckdb::PreservedError(ex);
+    } catch (const std::exception &ex) {
+        duckdb_error = duckdb::PreservedError(ex);
     } catch (...) {
-        throw_java_exception(env, "java/lang/Exception", "Unknown error");
-        return 0;
+        duckdb_error = duckdb::PreservedError("Unknown error in databaseOpenExt");
     }
+    return (jlong) nullptr;
 }
 
-JNIEXPORT void JNICALL Java_io_questdb_duckdb_DuckDB_databaseClose(JNIEnv*, jclass, jlong db) {
-    auto database = (duckdb::DuckDB *) db;
-    delete database;
+JNIEXPORT void JNICALL Java_io_questdb_duckdb_DuckDB_databaseClose(JNIEnv *, jclass, jlong db) {
+            D_ASSERT(db > 0);
+    delete (duckdb::DuckDB *) db;
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_databaseConnect(JNIEnv * env, jclass, jlong db) {
-    auto database = (duckdb::DuckDB *) db;
-    if (!database) {
-        return 0;
-    }
-
-    duckdb::Connection *connection;
+JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_databaseConnect(JNIEnv *, jclass, jlong db) {
+            D_ASSERT(db > 0);
     try {
-        connection = new duckdb::Connection(*database);
-    } catch (std::exception &ex) {
-        throw_java_exception(env, "java/lang/Exception", ex.what());
+        return (jlong) new duckdb::Connection(*(duckdb::DuckDB *) db);
+    } catch (const duckdb::Exception &ex) {
+        duckdb_error = duckdb::PreservedError(ex);
+    } catch (const std::exception &ex) {
+        duckdb_error = duckdb::PreservedError(ex);
     } catch (...) {
-        throw_java_exception(env, "java/lang/Exception", "Unknown error");
+        duckdb_error = duckdb::PreservedError("Unknown error in databaseConnect");
     }
-
-    return (jlong) connection;
+    return (jlong) nullptr;
 }
 
 // Connection API
 
-JNIEXPORT void JNICALL Java_io_questdb_duckdb_DuckDB_connectionInterrupt(JNIEnv*, jclass, jlong connection) {
-    auto conn = (duckdb::Connection *) connection;
-    if (conn) {
-        conn->Interrupt();
-    }
+JNIEXPORT void JNICALL Java_io_questdb_duckdb_DuckDB_connectionInterrupt(JNIEnv *, jclass, jlong connection) {
+            D_ASSERT(connection > 0);
+    ((duckdb::Connection *) connection)->Interrupt();
 }
 
-JNIEXPORT void JNICALL Java_io_questdb_duckdb_DuckDB_connectionDisconnect(JNIEnv*, jclass, jlong connection) {
-    auto conn = (duckdb::Connection *) connection;
-    delete conn;
+JNIEXPORT void JNICALL Java_io_questdb_duckdb_DuckDB_connectionDisconnect(JNIEnv *, jclass, jlong connection) {
+            D_ASSERT(connection > 0);
+    delete (duckdb::Connection *) connection;
 }
 
-// returns materialized result
-JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_connectionQuery(JNIEnv*, jclass, jlong connection, jlong query_ptr, jlong query_size) {
-    if (!connection || !query_ptr || query_size <= 0) {
-       return 0;
-    }
+// returns materialized result or PreservedError wrapped in
+JNIEXPORT jlong JNICALL
+Java_io_questdb_duckdb_DuckDB_connectionQuery(JNIEnv *, jclass, jlong connection, jlong query_ptr, jlong query_size) {
+            D_ASSERT(connection > 0);
+            D_ASSERT(query_ptr > 0);
+            D_ASSERT(query_size > 0);
 
     std::string query((const char *) query_ptr, query_size);
-    auto conn = (duckdb::Connection *) connection;
-    auto res = conn->Query(query);
-    return (jlong) res.release();
+    return (jlong) ((duckdb::Connection *) connection)->Query(query).release();
 }
 
 // Configuration API
 
-JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_configCreate(JNIEnv *env, jclass) {
-    duckdb::DBConfig *config = nullptr;
+JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_configCreate(JNIEnv *, jclass) {
     try {
-        config = new duckdb::DBConfig();
-    } catch (std::exception &ex) {
-        throw_java_exception(env, "java/lang/Exception", ex.what());
+        return (jlong) new duckdb::DBConfig();
+    } catch (const duckdb::Exception &ex) {
+        duckdb_error = duckdb::PreservedError(ex);
+    } catch (const std::exception &ex) {
+        duckdb_error = duckdb::PreservedError(ex);
     } catch (...) {
-        throw_java_exception(env, "java/lang/Exception", "Unknown error");
+        duckdb_error = duckdb::PreservedError("Unknown error in configCreate");
     }
-
-    return (jlong) config;
+    return (jlong) nullptr;
 }
 
-JNIEXPORT jboolean JNICALL Java_io_questdb_duckdb_DuckDB_configSet(JNIEnv * env, jclass, jlong config, jlong name_ptr, jlong name_size, jlong option_ptr, jlong option_size) {
-    auto cfg = (duckdb::DBConfig *) config;
-    if (!cfg || !name_ptr || !option_ptr || name_size <= 0 || option_size <= 0 ) {
-        return false;
-    }
+JNIEXPORT jint JNICALL
+Java_io_questdb_duckdb_DuckDB_configSet(JNIEnv *, jclass, jlong config, jlong name_ptr, jlong name_size,
+                                        jlong option_ptr, jlong option_size) {
+
+            D_ASSERT(config > 0);
+            D_ASSERT(name_ptr > 0);
+            D_ASSERT(name_size > 0);
+            D_ASSERT(option_ptr > 0);
+            D_ASSERT(option_size > 0);
 
     std::string name((const char *) name_ptr, name_size);
     std::string option((const char *) option_ptr, option_size);
 
     auto cfg_option = duckdb::DBConfig::GetOptionByName(name);
     if (!cfg_option) {
-        return false;
+        return 0;
     }
-
     try {
-        cfg->SetOption(*cfg_option, duckdb::Value(option));
-    } catch (std::exception &ex) {
-        throw_java_exception(env, "java/lang/Exception", ex.what());
+        ((duckdb::DBConfig *) config)->SetOption(*cfg_option, duckdb::Value(option));
+        return 1;
+    } catch (const duckdb::Exception &ex) {
+        duckdb_error = duckdb::PreservedError(ex);
+    } catch (const std::exception &ex) {
+        duckdb_error = duckdb::PreservedError(ex);
     } catch (...) {
-        throw_java_exception(env, "java/lang/Exception", "Unknown error");
+        duckdb_error = duckdb::PreservedError("Unknown error in configSet");
     }
-
-    return true;
+    return -1;
 }
 
-JNIEXPORT void JNICALL Java_io_questdb_duckdb_DuckDB_configDestroy(JNIEnv*, jclass, jlong config) {
-    auto cfg = (duckdb::DBConfig *) config;
-    delete cfg;
+JNIEXPORT void JNICALL Java_io_questdb_duckdb_DuckDB_configDestroy(JNIEnv *, jclass, jlong config) {
+            D_ASSERT(config > 0);
+    delete (duckdb::DBConfig *) config;
 }
 
 // Prepared Statement API
 
-JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_connectionPrepare(JNIEnv*, jclass, jlong connection, jlong query_ptr, jlong query_size) {
-	if (!connection || !query_ptr || query_size <= 0) {
-		return 0;
-	}
+JNIEXPORT jlong JNICALL
+Java_io_questdb_duckdb_DuckDB_connectionPrepare(JNIEnv *, jclass, jlong connection, jlong query_ptr, jlong query_size) {
+            D_ASSERT(connection > 0);
+            D_ASSERT(query_ptr > 0);
+            D_ASSERT(query_size > 0);
 
     std::string query((const char *) query_ptr, query_size);
-    auto conn = (duckdb::Connection *) connection;
-	auto statement = conn->Prepare(query);
-	return (jlong) statement.release();
+    return (jlong) ((duckdb::Connection *) connection)->Prepare(query).release();
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_preparedExecute(JNIEnv*, jclass, jlong stmt) {
-    auto statement = (duckdb::PreparedStatement *) stmt;
-    if (!statement || statement->HasError()) {
-        return 0;
+JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_preparedExecute(JNIEnv *, jclass, jlong stmt) {
+            D_ASSERT(stmt > 0);
+    try {
+        return (jlong) ((duckdb::PreparedStatement *) stmt)->Execute().release();
+    } catch (const duckdb::Exception &ex) {
+        duckdb_error = duckdb::PreservedError(ex);
+    } catch (const std::exception &ex) {
+        duckdb_error = duckdb::PreservedError(ex);
+    } catch (...) {
+        duckdb_error = duckdb::PreservedError("Unknown error in preparedExecute");
     }
-
-    auto res = statement->Execute();
-    return (jlong) res.release();
+    return (jlong) nullptr;
 }
 
-JNIEXPORT void JNICALL Java_io_questdb_duckdb_DuckDB_preparedDestroy(JNIEnv*, jclass, jlong stmt) {
+JNIEXPORT void JNICALL Java_io_questdb_duckdb_DuckDB_preparedDestroy(JNIEnv *, jclass, jlong stmt) {
+            D_ASSERT(stmt > 0);
+    delete (duckdb::PreparedStatement *) stmt;
+}
+
+JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_preparedGetError(JNIEnv *, jclass, jlong stmt) {
+            D_ASSERT(stmt > 0);
     auto statement = (duckdb::PreparedStatement *) stmt;
-    delete statement;
+    return statement->HasError() ? (jlong) statement->GetError().c_str() : (jlong) nullptr;
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_preparedGetError(JNIEnv*, jclass, jlong stmt) {
-    if (!stmt) {
-        return 0;
-    }
+JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_preparedGetQueryText(JNIEnv *, jclass, jlong stmt) {
+            D_ASSERT(stmt > 0);
+    return (jlong) ((duckdb::PreparedStatement *) stmt)->query.c_str();
+}
 
+JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_preparedGetStatementProperties(JNIEnv *, jclass, jlong stmt) {
+            D_ASSERT(stmt > 0);
     auto statement = (duckdb::PreparedStatement *) stmt;
-    return (jlong) statement->GetError().c_str();
+    uint64_t properties = 0;
+    auto statement_properties = statement->GetStatementProperties();
+
+    properties |= (uint64_t) statement->GetStatementType(); // 8 bits
+    properties |= (uint64_t) statement_properties.return_type << 8; // 8 bits
+    properties |= (uint64_t) ((uint16_t) statement->GetStatementProperties().parameter_count) << 16; // 16 bits
+    properties |= (uint64_t) statement_properties.IsReadOnly() << 32; // 1 bit
+    properties |= (uint64_t) statement_properties.requires_valid_transaction << 33; // 1 bit
+    properties |= (uint64_t) statement_properties.allow_stream_result << 34; // 1 bit
+    properties |= (uint64_t) statement_properties.bound_all_parameters << 35; // 1 bit
+
+    return (jlong) properties;
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_preparedGetQueryText(JNIEnv*, jclass, jlong stmt) {
-    if (!stmt) {
-        return 0;
-    }
+JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_preparedGetColumnCount(JNIEnv *, jclass, jlong stmt) {
+            D_ASSERT(stmt > 0);
+    return (jlong) ((duckdb::PreparedStatement *) stmt)->ColumnCount();
+}
 
+JNIEXPORT jlong JNICALL
+Java_io_questdb_duckdb_DuckDB_preparedGetColumnTypes(JNIEnv *, jclass, jlong stmt, jlong col) {
+            D_ASSERT(stmt > 0);
     auto statement = (duckdb::PreparedStatement *) stmt;
-    return (jlong) statement->query.c_str();
-}
-
-JNIEXPORT jint JNICALL Java_io_questdb_duckdb_DuckDB_preparedGetStatementType(JNIEnv*, jclass, jlong stmt) {
-    if (!stmt) {
-        return (jint) duckdb::StatementType::INVALID_STATEMENT;
-    }
-
-    auto statement = (duckdb::PreparedStatement *) stmt;
-    return (jint) statement->GetStatementType();
-}
-
-JNIEXPORT jint JNICALL Java_io_questdb_duckdb_DuckDB_preparedGetStatementReturnType(JNIEnv*, jclass, jlong stmt) {
-    if (!stmt) {
-        return (jint) duckdb::StatementReturnType::NOTHING;
-    }
-
-    auto statement = (duckdb::PreparedStatement *) stmt;
-    return (jint) statement->GetStatementProperties().return_type;
-}
-
-JNIEXPORT jboolean JNICALL Java_io_questdb_duckdb_DuckDB_preparedAllowStreamResult(JNIEnv*, jclass, jlong stmt) {
-    if (!stmt) {
-        return false;
-    }
-
-    auto statement = (duckdb::PreparedStatement *) stmt;
-    return statement->GetStatementProperties().allow_stream_result;
-}
-
-JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_preparedParameterCount(JNIEnv*, jclass, jlong stmt) {
-    if (!stmt) {
-        return 0;
-    }
-
-    auto statement = (duckdb::PreparedStatement *) stmt;
-    return (jlong) statement->GetStatementProperties().parameter_count;
-}
-
-JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_preparedGetColumnCount(JNIEnv*, jclass, jlong stmt) {
-    if (!stmt) {
-        return 0;
-    }
-
-    auto statement = (duckdb::PreparedStatement *) stmt;
-    return (jlong) statement->ColumnCount();
-}
-
-inline const duckdb::LogicalType* get_type(duckdb::PreparedStatement* stmt, jlong col) {
-    if (!stmt) {
-        return nullptr;
-    }
-
-    auto &types = stmt->GetTypes();
+    auto &types = statement->GetTypes();
     if (col < 0 || col >= types.size()) {
-        return nullptr;
+        return (jlong) pack_duckdb_types(duckdb::PhysicalType::INVALID, duckdb::LogicalTypeId::INVALID);
     }
 
-    return &types[col];
+    auto type = &types[col];
+    return (jlong) pack_duckdb_types(type->InternalType(), type->id());
 }
 
-JNIEXPORT jint JNICALL Java_io_questdb_duckdb_DuckDB_preparedGetColumnLogicalType(JNIEnv*, jclass, jlong stmt, jlong col) {
-    auto type = get_type((duckdb::PreparedStatement *) stmt, col);
-    if (!type) {
-        return (jint) duckdb::LogicalTypeId::INVALID;
-    }
-
-    return (jint) type->id();
-}
-
-JNIEXPORT jint JNICALL Java_io_questdb_duckdb_DuckDB_preparedGetColumnPhysicalType(JNIEnv*, jclass, jlong stmt, jlong col) {
-    auto type = get_type((duckdb::PreparedStatement *)stmt, col);
-    if (!type) {
-        return (jint) duckdb::PhysicalType::INVALID;
-    }
-
-    return (jint) type->InternalType();
-}
-
-JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_preparedGetColumnName(JNIEnv*, jclass, jlong stmt, jlong col) {
-    if (!stmt) {
-        return 0;
-    }
-
+JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_preparedGetColumnName(JNIEnv *, jclass, jlong stmt, jlong col) {
+            D_ASSERT(stmt > 0);
     auto statement = (duckdb::PreparedStatement *) stmt;
     auto &names = statement->GetNames();
     if (col < 0 || col >= names.size()) {
-        return 0;
+        return (jlong) nullptr;
     }
 
     return (jlong) names[col].c_str();
@@ -263,120 +221,87 @@ JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_preparedGetColumnName(JNIE
 
 // Result API
 
-JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_resultGetError(JNIEnv*, jclass, jlong result) {
-    auto res = (duckdb::QueryResult*)result;
-    if (res && res->HasError()) {
-        return (jlong) res->GetError().c_str();
-    }
-
-    return 0;
+JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_resultGetError(JNIEnv *, jclass, jlong result) {
+            D_ASSERT(result > 0);
+    auto res = (duckdb::QueryResult *) result;
+    return res->HasError() ? (jlong) res->GetError().c_str() : (jlong) nullptr;
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_resultFetchChunk(JNIEnv*, jclass, jlong result) {
-    auto res = (duckdb::QueryResult*)result;
-    if (!res || res->HasError()) {
-        return 0;
-    }
-    duckdb::unique_ptr<duckdb::DataChunk> chunk = nullptr;
+JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_resultFetchChunk(JNIEnv *, jclass, jlong result) {
+            D_ASSERT(result > 0);
+    duckdb::unique_ptr<duckdb::DataChunk> chunk;
     duckdb::PreservedError error;
-    if (!res->TryFetch(chunk, error)) {
-        return 0; // TODO: throw java exception
+    if (!((duckdb::QueryResult *) result)->TryFetch(chunk, error)) {
+        duckdb_error = error;
+        return (jlong) nullptr;
     }
     return (jlong) chunk.release();
 }
 
-JNIEXPORT void JNICALL Java_io_questdb_duckdb_DuckDB_resultDestroy(JNIEnv*, jclass, jlong result) {
-    if (result) {
-        auto res = (duckdb::QueryResult *) result;
-        delete res;
-    }
+JNIEXPORT void JNICALL Java_io_questdb_duckdb_DuckDB_resultDestroy(JNIEnv *, jclass, jlong result) {
+            D_ASSERT(result > 0);
+    delete ((duckdb::QueryResult *) result);
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_resultColumnName(JNIEnv*, jclass, jlong result, jlong col) {
+JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_resultColumnName(JNIEnv *, jclass, jlong result, jlong col) {
+            D_ASSERT(result > 0);
     auto res = (duckdb::QueryResult *) result;
-    if (!res || col < 0 || col >= res->ColumnCount() ) {
-        return 0;
+    if (!res || col < 0 || col >= res->ColumnCount()) {
+        return (jlong) nullptr;
     }
-
     return (jlong) res->names[col].c_str();
 }
 
-JNIEXPORT jint JNICALL Java_io_questdb_duckdb_DuckDB_resultColumnPhysicalType(JNIEnv*, jclass, jlong result, jlong col) {
+JNIEXPORT jlong JNICALL
+Java_io_questdb_duckdb_DuckDB_resultColumnTypes(JNIEnv *, jclass, jlong result, jlong col) {
+            D_ASSERT(result > 0);
     auto res = (duckdb::QueryResult *) result;
-    if (!res || col < 0 || col >= res->ColumnCount() ) {
-        return (jint) duckdb::PhysicalType::INVALID;
+    if (!res || col < 0 || col >= res->ColumnCount()) {
+        return (jlong) pack_duckdb_types(duckdb::PhysicalType::INVALID, duckdb::LogicalTypeId::INVALID);
     }
-
-    return (jint) res->types[col].InternalType();
+    return (jlong) pack_duckdb_types(res->types[col].InternalType(), res->types[col].id());
 }
 
-JNIEXPORT jint JNICALL Java_io_questdb_duckdb_DuckDB_resultColumnLogicalType(JNIEnv*, jclass, jlong result, jlong col) {
-    auto res = (duckdb::QueryResult *) result;
-    if (!res || col < 0 || col >= res->ColumnCount() ) {
-        return (jint) duckdb::LogicalTypeId::INVALID;
-    }
-
-    return (jint) res->types[col].id();
-}
-
-JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_resultColumnCount(JNIEnv*, jclass, jlong result) {
-    if (!result) {
-        return 0;
-    }
-
-    auto res = (duckdb::QueryResult *) result;
-    return (jlong) res->ColumnCount();
+JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_resultColumnCount(JNIEnv *, jclass, jlong result) {
+            D_ASSERT(result > 0);
+    return (jlong) ((duckdb::QueryResult *) result)->ColumnCount();
 }
 
 // get the materialized result out of streaming result
-JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_resultGetMaterialized(JNIEnv*, jclass, jlong result) {
+JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_resultGetMaterialized(JNIEnv *, jclass, jlong result) {
+            D_ASSERT(result > 0);
     auto res = (duckdb::QueryResult *) result;
     if (res && res->type == duckdb::QueryResultType::STREAM_RESULT) {
-        auto stream = (duckdb::StreamQueryResult *) res;
-        auto materialized = stream->Materialize();
-        return (jlong) materialized.release();
+        return (jlong) ((duckdb::StreamQueryResult *) res)->Materialize().release();
     }
-
-    return 0;
+    return (jlong) nullptr;
 }
 
 // return the valid row count of the result only in case of materialized result
-JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_resultRowCount(JNIEnv*, jclass, jlong result) {
+JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_resultRowCount(JNIEnv *, jclass, jlong result) {
+            D_ASSERT(result > 0);
     auto res = (duckdb::QueryResult *) result;
     if (res && res->type == duckdb::QueryResultType::MATERIALIZED_RESULT) {
         return (jlong) ((duckdb::MaterializedQueryResult *) res)->RowCount();
     }
-
     return 0;
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_resultError(JNIEnv*, jclass, jlong result) {
-    if (!result) {
-        return 0;
-    }
-
-    auto res = (duckdb::QueryResult *) result;
-    return (jlong) (!res->HasError() ? nullptr : res->GetError().c_str());
-}
-
-// return -1 in case of error
-JNIEXPORT jint JNICALL Java_io_questdb_duckdb_DuckDB_resultGetQueryResultType(JNIEnv*, jclass, jlong result) {
-    if (!result) {
-        return -1;
-    }
-
-    auto res = (duckdb::QueryResult*)result;
-    return (jint) res->type;
+JNIEXPORT jint JNICALL Java_io_questdb_duckdb_DuckDB_resultGetQueryResultType(JNIEnv *, jclass, jlong result) {
+            D_ASSERT(result > 0);
+    return (jint) ((duckdb::QueryResult *) result)->type;
 }
 
 // return the valid chunk only in case of materialized result
-JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_resultGetDataChunk(JNIEnv*, jclass, jlong result, jlong chunk_index) {
+JNIEXPORT jlong JNICALL
+Java_io_questdb_duckdb_DuckDB_resultGetDataChunk(JNIEnv *, jclass, jlong result, jlong chunk_index) {
+            D_ASSERT(result > 0);
     auto res = (duckdb::QueryResult *) result;
     if (res && res->type == duckdb::QueryResultType::MATERIALIZED_RESULT) {
         auto materialized = (duckdb::MaterializedQueryResult *) res;
         auto &collection = materialized->Collection();
         if (chunk_index < 0 || chunk_index >= collection.ChunkCount()) {
-            return 0;
+            return (jlong) nullptr;
         }
 
         auto chunk = new duckdb::DataChunk();
@@ -388,85 +313,56 @@ JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_resultGetDataChunk(JNIEnv*
 }
 
 // return the valid chunk count of the result only in case of materialized result
-JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_resultDataChunkCount(JNIEnv*, jclass, jlong result) {
+JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_resultDataChunkCount(JNIEnv *, jclass, jlong result) {
+            D_ASSERT(result > 0);
     auto res = (duckdb::QueryResult *) result;
     if (res && res->type == duckdb::QueryResultType::MATERIALIZED_RESULT) {
         return (jlong) ((duckdb::MaterializedQueryResult *) res)->Collection().ChunkCount();
     }
-
     return 0;
 }
 
 // Data Chunk API
 
-JNIEXPORT void JNICALL Java_io_questdb_duckdb_DuckDB_dataChunkDestroy(JNIEnv*, jclass, jlong chunk) {
-    if (chunk) {
-        auto data_chunk = (duckdb::DataChunk *) chunk;
-        delete data_chunk;
-    }
+JNIEXPORT void JNICALL Java_io_questdb_duckdb_DuckDB_dataChunkDestroy(JNIEnv *, jclass, jlong chunk) {
+            D_ASSERT(chunk > 0);
+    delete (duckdb::DataChunk *) chunk;
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_dataChunkGetColumnCount(JNIEnv*, jclass, jlong chunk) {
-    if (!chunk) {
-        return 0;
-    }
-
-    auto data_chunk = (duckdb::DataChunk *) chunk;
-    return (jlong) data_chunk->ColumnCount();
+JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_dataChunkGetColumnCount(JNIEnv *, jclass, jlong chunk) {
+            D_ASSERT(chunk > 0);
+    return (jlong) ((duckdb::DataChunk *) chunk)->ColumnCount();
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_dataChunkGetVector(JNIEnv*, jclass, jlong chunk, jlong col_idx) {
+JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_dataChunkGetVector(JNIEnv *, jclass, jlong chunk, jlong col_idx) {
+            D_ASSERT(chunk > 0);
     auto data_chunk = (duckdb::DataChunk *) chunk;
-    if (!data_chunk || col_idx < 0 || col_idx >= data_chunk->ColumnCount() ) {
-        return 0;
+    if (col_idx < 0 || col_idx >= data_chunk->ColumnCount()) {
+        return (jlong) nullptr;
     }
 
     return (jlong) &data_chunk->data[col_idx];
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_dataChunkGetSize(JNIEnv*, jclass, jlong chunk) {
-    if (!chunk) {
-        return 0;
-    }
-
-    auto data_chunk = (duckdb::DataChunk *) chunk;
-    return (jlong) data_chunk->size();
+JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_dataChunkGetSize(JNIEnv *, jclass, jlong chunk) {
+            D_ASSERT(chunk > 0);
+    return (jlong) ((duckdb::DataChunk *) chunk)->size();
 }
 
 // Vector API
 
-JNIEXPORT jint JNICALL Java_io_questdb_duckdb_DuckDB_vectorGetColumnLogicalType(JNIEnv*, jclass, jlong vector) {
-    if (!vector) {
-        return (jint) duckdb::LogicalTypeId::INVALID;
-    }
-
-    auto vec = (duckdb::Vector *) vector;
-    return (jint) vec->GetType().id();
+JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_vectorGetColumnTypes(JNIEnv *, jclass, jlong vector) {
+            D_ASSERT(vector > 0);
+    auto type = ((duckdb::Vector *) vector)->GetType();
+    return (jlong) pack_duckdb_types(type.InternalType(), type.id());
 }
 
-JNIEXPORT jint JNICALL Java_io_questdb_duckdb_DuckDB_vectorGetColumnPhysicalType(JNIEnv*, jclass, jlong vector) {
-    if (!vector) {
-        return (jint) duckdb::PhysicalType::INVALID;
-    }
-
-    auto vec = (duckdb::Vector *) vector;
-    return (jint) vec->GetType().InternalType();
+JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_vectorGetData(JNIEnv *, jclass, jlong vector) {
+            D_ASSERT(vector > 0);
+    return (jlong) duckdb::FlatVector::GetData(*(duckdb::Vector *) vector);
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_vectorGetData(JNIEnv*, jclass, jlong vector) {
-    if (!vector) {
-        return 0;
-    }
-
-    auto vec = (duckdb::Vector *) vector;
-    return (jlong) duckdb::FlatVector::GetData(*vec);
-}
-
-JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_vectorGetValidity(JNIEnv*, jclass, jlong vector) {
-    if (!vector) {
-        return 0;
-    }
-
-    auto vec = (duckdb::Vector *) vector;
-    return (jlong) duckdb::FlatVector::Validity(*vec).GetData();
+JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_vectorGetValidity(JNIEnv *, jclass, jlong vector) {
+            D_ASSERT(vector > 0);
+    return (jlong) duckdb::FlatVector::Validity(*(duckdb::Vector *) vector).GetData();
 }
