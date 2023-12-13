@@ -2535,6 +2535,7 @@ public class SqlOptimiser implements Mutable {
         int status = executionContext.getTableStatus(path, tableToken);
 
         if (status == TableUtils.TABLE_DOES_NOT_EXIST) {
+            // TODO: check quack prefix here?
             try {
                 model.getTableNameExpr().type = ExpressionNode.FUNCTION;
                 parseFunctionAndEnumerateColumns(model, executionContext, sqlParserCallback);

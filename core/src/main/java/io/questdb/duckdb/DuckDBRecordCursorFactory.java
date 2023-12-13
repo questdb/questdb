@@ -47,16 +47,16 @@ public class DuckDBRecordCursorFactory implements RecordCursorFactory {
         this.statement = stmt;
         this.cursor = new RecordCursorImpl();
         this.pageFrameCursor = new DuckDBPageFrameCursor();
-        DirectUtf8StringZ utf8String = new DirectUtf8StringZ();
-        this.metadata = buildMetadata(statement, utf8String);
+        this.metadata = buildMetadata(statement);
     }
 
-    private static RecordMetadata buildMetadata(long statement, DirectUtf8StringZ utf8String) {
+    private static RecordMetadata buildMetadata(long statement) {
         final int columnCount = (int)DuckDB.preparedGetColumnCount(statement);
         if (columnCount == 0) {
             return null;
         }
 
+        DirectUtf8StringZ utf8String = new DirectUtf8StringZ();
         GenericRecordMetadata metadata = new GenericRecordMetadata();
         for (int i = 0; i < columnCount; i++) {
             int type = DuckDB.decodeLogicalTypeId(DuckDB.preparedGetColumnTypes(statement, i));
@@ -67,24 +67,20 @@ public class DuckDBRecordCursorFactory implements RecordCursorFactory {
             long name = DuckDB.preparedGetColumnName(statement, i);
             metadata.add(new TableColumnMetadata(utf8String.of(name).toString(), questType));
         }
+
         return metadata;
     }
 
     @Override
     public void close() {
         Misc.free(cursor);
+        Misc.free(pageFrameCursor);
         DuckDB.preparedDestroy(statement);
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        long result = DuckDB.preparedExecute(statement);
-        long err = DuckDB.resultGetError(result);
-        if (err != 0) {
-            DirectUtf8StringZ utf8String = new DirectUtf8StringZ();
-            throw SqlException.$(1, utf8String.of(err).toString());
-        }
-        pageFrameCursor.of(result);
+        pageFrameCursor.of(statement);
         cursor.of(pageFrameCursor);
         return cursor;
     }
@@ -105,13 +101,14 @@ public class DuckDBRecordCursorFactory implements RecordCursorFactory {
         private PageFrame currentPageFrame;
 
         public void of(PageFrameCursor pageFrameCursor) {
+            assert pageFrameCursor != null;
             this.pageFrameCursor = pageFrameCursor;
             this.currentPageFrame = pageFrameCursor.next();
+            this.record.setPageRowIndex(-1);
         }
 
         @Override
         public void close() {
-            Misc.free(pageFrameCursor);
         }
 
         @Override
@@ -145,17 +142,17 @@ public class DuckDBRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         public void recordAt(Record record, long atRowId) {
-
+            throw new UnsupportedOperationException();
         }
 
         @Override
         public long size() {
-            return -1;
+            return -1L;
         }
 
         @Override
         public void toTop() {
-            pageFrameCursor.toTop();
+            pageFrameCursor.toTop(); // reevaluate query !!!
             currentPageFrame = pageFrameCursor.next();
         }
 

@@ -30,33 +30,46 @@ import io.questdb.cairo.EmptySymbolMapReader;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rows;
+import io.questdb.std.str.DirectUtf8StringZ;
 import org.jetbrains.annotations.Nullable;
 
 public class DuckDBPageFrameCursor implements PageFrameCursor {
     private final PageFrameImpl frame = new PageFrameImpl();
-    private long chunk;
-    private long queryResult;
-    private int chunkIndex;
+    private long preparedStmt;
+    private long queryResultPtr;
+    private long currentDataChunk;
+    private int currentDataChunkIndex;
+    private boolean exhausted;
 
-    // this owns queryResult and is responsible for its destruction
-    public void of(long queryResult) {
-        if (this.queryResult != 0) {
-            DuckDB.resultDestroy(this.queryResult);
+    public void of(long preparedStmt) throws SqlException {
+        assert preparedStmt != 0;
+        this.preparedStmt = preparedStmt;
+        this.close();
+        // this owns queryResult and is responsible for its destruction
+        this.queryResultPtr = DuckDB.preparedExecute(preparedStmt);
+        this.exhausted = false;
+        long err = DuckDB.resultGetError(this.queryResultPtr);
+        if (err != 0) {
+            DirectUtf8StringZ utf8String = new DirectUtf8StringZ();
+            throw SqlException.$(1, utf8String.of(err).toString());
         }
-        this.queryResult = queryResult;
     }
 
     @Override
     public void close() {
-        if (chunk != 0) {
-            DuckDB.dataChunkDestroy(chunk);
+        if (currentDataChunk != 0) {
+            DuckDB.dataChunkDestroy(currentDataChunk);
         }
-        if (queryResult != 0) {
-            DuckDB.resultDestroy(queryResult);
-            queryResult = 0;
+        if (queryResultPtr != 0) {
+            DuckDB.resultDestroy(queryResultPtr);
         }
+
+        queryResultPtr = 0;
+        currentDataChunk = 0;
+        currentDataChunkIndex = -1;
     }
 
     @Override
@@ -71,17 +84,19 @@ public class DuckDBPageFrameCursor implements PageFrameCursor {
 
     @Override
     public long getUpdateRowId(long rowIndex) {
-        return Rows.toRowID(chunkIndex, rowIndex);
+        return Rows.toRowID(currentDataChunkIndex, rowIndex);
     }
 
     @Override
     public @Nullable PageFrame next() {
-        if (chunk != 0) {
-            DuckDB.dataChunkDestroy(chunk);
+        exhausted = true; // dirty hack to prevent toTop to re-execute query
+        // release previous chunk
+        if (currentDataChunk != 0) {
+            DuckDB.dataChunkDestroy(currentDataChunk);
         }
-        chunk = DuckDB.resultFetchChunk(queryResult);
-        if (chunk != 0) {
-            chunkIndex++;
+        currentDataChunk = DuckDB.resultFetchChunk(queryResultPtr);
+        if (currentDataChunk != 0) {
+            currentDataChunkIndex++;
             return frame;
         }
         return null;
@@ -94,7 +109,11 @@ public class DuckDBPageFrameCursor implements PageFrameCursor {
 
     @Override
     public void toTop() {
-        chunkIndex = 0;
+        if (exhausted) {
+            this.close();
+            this.queryResultPtr = DuckDB.preparedExecute(preparedStmt); // TODO: how to report error ??
+            this.exhausted = false;
+        }
     }
 
     private class PageFrameImpl implements PageFrame {
@@ -105,7 +124,7 @@ public class DuckDBPageFrameCursor implements PageFrameCursor {
 
         @Override
         public int getColumnShiftBits(int columnIndex) {
-            long duckTypes = DuckDB.resultColumnTypes(queryResult, columnIndex);
+            long duckTypes = DuckDB.resultColumnTypes(queryResultPtr, columnIndex);
             int logicalTypeId = DuckDB.decodeLogicalTypeId(duckTypes);
             int questType = DuckDB.getQdbColumnType(logicalTypeId);
             return Numbers.msb(ColumnType.sizeOf(questType));
@@ -118,23 +137,23 @@ public class DuckDBPageFrameCursor implements PageFrameCursor {
 
         @Override
         public long getPageAddress(int columnIndex) {
-            long vec = DuckDB.dataChunkGetVector(chunk, columnIndex);
+            long vec = DuckDB.dataChunkGetVector(currentDataChunk, columnIndex);
             return DuckDB.vectorGetData(vec);
         }
 
         @Override
         public long getPageSize(int columnIndex) {
-            return DuckDB.dataChunkGetSize(chunk) << getColumnShiftBits(columnIndex);
+            return DuckDB.dataChunkGetSize(currentDataChunk) << getColumnShiftBits(columnIndex);
         }
 
         @Override
         public long getPartitionHi() {
-            return DuckDB.dataChunkGetSize(chunk);
+            return DuckDB.dataChunkGetSize(currentDataChunk);
         }
 
         @Override
         public int getPartitionIndex() {
-            return chunkIndex;
+            return currentDataChunkIndex;
         }
 
         @Override
