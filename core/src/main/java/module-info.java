@@ -666,6 +666,13 @@ open module io.questdb {
 //                  floor()
             io.questdb.griffin.engine.functions.math.FloorDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.math.FloorFloatFunctionFactory,
+//                  sign()
+            io.questdb.griffin.engine.functions.math.SignByteFunctionFactory,
+            io.questdb.griffin.engine.functions.math.SignDoubleFunctionFactory,
+            io.questdb.griffin.engine.functions.math.SignFloatFunctionFactory,
+            io.questdb.griffin.engine.functions.math.SignIntFunctionFactory,
+            io.questdb.griffin.engine.functions.math.SignLongFunctionFactory,
+            io.questdb.griffin.engine.functions.math.SignShortFunctionFactory,
 //                  case conditional statement
             io.questdb.griffin.engine.functions.conditional.CaseFunctionFactory,
             io.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory,

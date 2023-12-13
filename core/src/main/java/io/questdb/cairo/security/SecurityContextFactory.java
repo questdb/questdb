@@ -33,4 +33,8 @@ public interface SecurityContextFactory {
     int PGWIRE = 1;
 
     SecurityContext getInstance(@Transient CharSequence principal, byte authType, int interfaceId);
+
+    default SecurityContext getRootContext() {
+        return AllowAllSecurityContext.INSTANCE;
+    }
 }

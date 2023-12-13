@@ -26,13 +26,10 @@ package io.questdb;
 
 import io.questdb.cairo.DefaultWalJobFactory;
 import io.questdb.cairo.WalJobFactory;
-import io.questdb.cairo.security.ReadOnlySecurityContextFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cutlass.auth.LineAuthenticatorFactory;
 import io.questdb.cutlass.http.*;
-import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.PgWireAuthenticatorFactory;
-import io.questdb.cutlass.pgwire.ReadOnlyUsersAwareSecurityContextFactory;
 import io.questdb.network.PlainSocketFactory;
 import io.questdb.network.SocketFactory;
 import io.questdb.std.Misc;
@@ -49,7 +46,7 @@ public class FactoryProviderImpl implements FactoryProvider {
 
     public FactoryProviderImpl(ServerConfiguration configuration) {
         this.lineAuthenticatorFactory = ServerMain.getLineAuthenticatorFactory(configuration);
-        this.securityContextFactory = getSecurityContextFactory(configuration);
+        this.securityContextFactory = ServerMain.getSecurityContextFactory(configuration);
         this.readOnlyUserPasswordSink = new DirectUtf8Sink(4);
         this.defaultUserPasswordSink = new DirectUtf8Sink(4);
         this.pgWireAuthenticatorFactory = ServerMain.getPgWireAuthenticatorFactory(configuration, defaultUserPasswordSink, readOnlyUserPasswordSink);
@@ -114,20 +111,5 @@ public class FactoryProviderImpl implements FactoryProvider {
     @Override
     public @NotNull WalJobFactory getWalJobFactory() {
         return defaultWalJobFactory;
-    }
-
-    private static SecurityContextFactory getSecurityContextFactory(ServerConfiguration configuration) {
-        boolean readOnlyInstance = configuration.getCairoConfiguration().isReadOnlyInstance();
-        if (readOnlyInstance) {
-            return ReadOnlySecurityContextFactory.INSTANCE;
-        } else {
-            PGWireConfiguration pgWireConfiguration = configuration.getPGWireConfiguration();
-            HttpContextConfiguration httpContextConfiguration = configuration.getHttpServerConfiguration().getHttpContextConfiguration();
-            boolean pgWireReadOnlyContext = pgWireConfiguration.readOnlySecurityContext();
-            boolean pgWireReadOnlyUserEnabled = pgWireConfiguration.isReadOnlyUserEnabled();
-            String pgWireReadOnlyUsername = pgWireReadOnlyUserEnabled ? pgWireConfiguration.getReadOnlyUsername() : null;
-            boolean httpReadOnly = httpContextConfiguration.readOnlySecurityContext();
-            return new ReadOnlyUsersAwareSecurityContextFactory(pgWireReadOnlyContext, pgWireReadOnlyUsername, httpReadOnly);
-        }
     }
 }

@@ -132,7 +132,7 @@ results using the `cpu-only` use case with 6 to 16 workers on 32 CPUs and 64GB R
 
 - [QuestDB documentation:](https://questdb.io/docs/introduction/) understand how to run and configure QuestDB.
 - [Tutorials:](https://questdb.io/tutorial/) learn what's possible with QuestDB step by step.
-- [Product roadmap:](https://github.com/questdb/questdb/projects) check out our plan for upcoming releases.
+- [Product roadmap:](https://github.com/orgs/questdb/projects/1/views/5) check out our plan for upcoming releases.
 
 ### ❓ Get support
 
