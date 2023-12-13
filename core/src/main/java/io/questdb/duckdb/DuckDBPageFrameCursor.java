@@ -53,7 +53,10 @@ public class DuckDBPageFrameCursor implements PageFrameCursor {
         if (chunk != 0) {
             DuckDB.dataChunkDestroy(chunk);
         }
-        DuckDB.resultDestroy(queryResult);
+        if (queryResult != 0) {
+            DuckDB.resultDestroy(queryResult);
+            queryResult = 0;
+        }
     }
 
     @Override
