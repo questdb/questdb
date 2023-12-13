@@ -269,7 +269,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                             SecurityContextFactory.ILP
                     );
                     try {
-                        securityContext.authorizeLineTcp();
+                        securityContext.checkEntityEnabled();
                     } catch (CairoException e) {
                         LOG.error().$('[').$(getFd()).$("] ").$(e.getFlyweightMessage()).$();
                         return IOContextResult.NEEDS_DISCONNECT;
