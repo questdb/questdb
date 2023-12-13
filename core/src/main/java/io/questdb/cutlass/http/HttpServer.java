@@ -103,7 +103,9 @@ public class HttpServer implements Closeable {
             HttpRequestProcessorBuilder jsonQueryProcessorBuilder,
             HttpRequestProcessorBuilder ilpWriteProcessorBuilderV2
     ) {
-        if (configuration.getLineHttpProcessorConfiguration().isEnabled()) {
+        // Disable ILP HTTP if the instance configured to be read-only for HTTP requests
+        if (configuration.getLineHttpProcessorConfiguration().isEnabled() &&
+                !configuration.getHttpContextConfiguration().readOnlySecurityContext()) {
             server.bind(new HttpRequestProcessorFactory() {
                 @Override
                 public String getUrl() {
