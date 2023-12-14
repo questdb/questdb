@@ -828,7 +828,12 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 }
 
                 if (chunked) {
-                    busyRecv = consumeChunked(processor, headerEnd, read, newRequest);
+                    if (multipartProcessor) {
+                        busyRecv = consumeChunked(processor, headerEnd, read, newRequest);
+                    } else {
+                        // bad request - regular request for processor that expects multipart
+                        busyRecv = rejectRequest("Bad request. Chunked requests are not supported by the handler.");
+                    }
                 } else if (multipartRequest && !multipartProcessor) {
                     // bad request - multipart request for processor that doesn't expect multipart
                     busyRecv = rejectRequest("Bad request. Non-multipart GET expected.");
