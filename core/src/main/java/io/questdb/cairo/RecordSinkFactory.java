@@ -344,6 +344,9 @@ public class RecordSinkFactory {
                 case ColumnType.LONG128:
                     // fall though
                 case ColumnType.UUID:
+                    // The below bytecode is an equivalent of the following Java code:
+                    //   w.putLong128(r.getLong128Lo(idx), r.getLong128Hi(idx)); // idx is the column index
+
                     int skewedIndex = getSkewedIndex(index, skewIndex);
                     asm.aload(2);
 
@@ -357,11 +360,19 @@ public class RecordSinkFactory {
 
                     asm.invokeInterface(wPutLong128, 4);
                     break;
+                case ColumnType.NULL:
+                    break; // ignore
                 default:
-                    break;
+                    throw new IllegalArgumentException("Unexpected column type: " + ColumnType.nameOf(type));
             }
         }
 
+        // Next, we write all function keys to the sink.
+        // The keys are stored in f1, f2, ..., fN fields.
+        // Generates bytecode equivalent of the following Java code:
+        //   w.putInt(f1.getInt(r));
+        //   w.putStr(f2.getStr(r));
+        //   ...
         for (int i = 0; i < functionSize; i++) {
             final Function func = keyFunctions.getQuick(i);
             final int type = func.getType();
@@ -530,6 +541,9 @@ public class RecordSinkFactory {
                 case ColumnType.LONG128:
                     // fall though
                 case ColumnType.UUID:
+                    // The below bytecode is an equivalent of the following Java code:
+                    //   w.putLong128(fN.getLong128Lo(r), fN.getLong128Hi(r)); // fN is the function key field
+
                     asm.aload(2);
 
                     asm.aload(0);
@@ -545,7 +559,7 @@ public class RecordSinkFactory {
                     asm.invokeInterface(wPutLong128, 4);
                     break;
                 default:
-                    break;
+                    throw new IllegalArgumentException("Unexpected function type: " + ColumnType.nameOf(type));
             }
         }
 
@@ -575,6 +589,17 @@ public class RecordSinkFactory {
         return sink;
     }
 
+    /**
+     * Sets function keys to the respective fields.
+     * Generates bytecode equivalent of the following Java code:
+     * <pre>
+     *  public void setFunctions(ObjList<Function> keyFunctions) {
+     *      this.f1 = keyFunctions.get(0);
+     *      this.f2 = keyFunctions.get(1);
+     *      // ...
+     *  }
+     * </pre>
+     */
     private static void generateSetFunctions(
             BytecodeAssembler asm,
             int functionSize,

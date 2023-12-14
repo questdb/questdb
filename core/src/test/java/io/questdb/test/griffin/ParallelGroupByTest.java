@@ -51,7 +51,7 @@ import static org.junit.Assert.fail;
 public class ParallelGroupByTest extends AbstractCairoTest {
     private static final int PAGE_FRAME_COUNT = 4; // also used to set queue size, so must be a power of 2
     private static final int PAGE_FRAME_MAX_ROWS = 100;
-    private static final int ROW_COUNT = PAGE_FRAME_COUNT * PAGE_FRAME_MAX_ROWS;
+    private static final int ROW_COUNT = 10 * PAGE_FRAME_COUNT * PAGE_FRAME_MAX_ROWS;
 
     private final boolean enableParallelGroupBy;
 
@@ -218,31 +218,41 @@ public class ParallelGroupByTest extends AbstractCairoTest {
         testParallelSymbolKeyedGroupBy(
                 "SELECT day_of_week(ts) day, key, vwap(price, quantity), sum(colTop) FROM tab GROUP BY day, key ORDER BY day",
                 "day\tkey\tvwap\tsum\n" +
-                        "1\tk0\t423.57142857142856\t4675.0\n" +
-                        "1\tk1\t423.987012987013\t4235.0\n" +
-                        "1\tk2\t424.98586572438165\t4245.0\n" +
-                        "1\tk3\t425.9847238542891\t4255.0\n" +
-                        "1\tk4\t426.9835873388042\t4265.0\n" +
-                        "4\tk1\t70.23753665689149\t735.0\n" +
-                        "4\tk2\t71.00576368876081\t745.0\n" +
-                        "4\tk3\t71.78186968838527\t755.0\n" +
-                        "4\tk4\t72.56545961002786\t765.0\n" +
-                        "4\tk0\t70.07692307692308\t675.0\n" +
-                        "5\tk0\t153.135593220339\t2950.0\n" +
-                        "5\tk1\t154.0976430976431\t2970.0\n" +
-                        "5\tk2\t155.06020066889633\t2990.0\n" +
-                        "5\tk3\t156.02325581395348\t3010.0\n" +
-                        "5\tk4\t156.98679867986797\t3030.0\n" +
-                        "6\tk0\t250.85858585858585\t4950.0\n" +
-                        "6\tk1\t251.8450704225352\t4970.0\n" +
-                        "6\tk2\t252.8316633266533\t4990.0\n" +
-                        "6\tk3\t253.8183632734531\t5010.0\n" +
-                        "6\tk4\t254.8051689860835\t5030.0\n" +
-                        "7\tk0\t349.89208633093523\t6950.0\n" +
-                        "7\tk1\t350.8852223816356\t6970.0\n" +
-                        "7\tk2\t351.87839771101574\t6990.0\n" +
-                        "7\tk3\t352.8716119828816\t7010.0\n" +
-                        "7\tk4\t353.86486486486484\t7030.0\n"
+                        "1\tk0\t2848.23852863102\t263700.0\n" +
+                        "1\tk1\t2848.94253657797\t263820.0\n" +
+                        "1\tk2\t2849.6468136697736\t263940.0\n" +
+                        "1\tk3\t2850.3513595394984\t264060.0\n" +
+                        "1\tk4\t2851.05617382088\t264180.0\n" +
+                        "2\tk0\t2624.4694763291645\t239025.0\n" +
+                        "2\tk1\t2598.96097084443\t235085.0\n" +
+                        "2\tk2\t2599.691650489951\t235195.0\n" +
+                        "2\tk3\t2600.4225929755667\t235305.0\n" +
+                        "2\tk4\t2601.153797916691\t235415.0\n" +
+                        "3\tk0\t2526.5384615384614\t204750.0\n" +
+                        "3\tk1\t2527.3046131315596\t204850.0\n" +
+                        "3\tk2\t2528.070992925104\t204950.0\n" +
+                        "3\tk3\t2528.8376005852233\t205050.0\n" +
+                        "3\tk4\t2529.6044357786986\t205150.0\n" +
+                        "4\tk1\t2595.0011126435716\t215585.0\n" +
+                        "4\tk2\t2595.617813662006\t215695.0\n" +
+                        "4\tk3\t2596.234922950459\t215805.0\n" +
+                        "4\tk4\t2596.8524398569757\t215915.0\n" +
+                        "4\tk0\t2594.679907219484\t215425.0\n" +
+                        "5\tk0\t2651.1220904699167\t227700.0\n" +
+                        "5\tk1\t2651.7251338776227\t227820.0\n" +
+                        "5\tk2\t2652.3285952443625\t227940.0\n" +
+                        "5\tk3\t2652.9324739103745\t228060.0\n" +
+                        "5\tk4\t2653.5367692172845\t228180.0\n" +
+                        "6\tk0\t2713.3938256153524\t239700.0\n" +
+                        "6\tk1\t2714.035610040864\t239820.0\n" +
+                        "6\tk2\t2714.6777527715262\t239940.0\n" +
+                        "6\tk3\t2715.3202532700157\t240060.0\n" +
+                        "6\tk4\t2715.9631110000832\t240180.0\n" +
+                        "7\tk0\t2779.263011521653\t251700.0\n" +
+                        "7\tk1\t2779.938130410611\t251820.0\n" +
+                        "7\tk2\t2780.6135587838376\t251940.0\n" +
+                        "7\tk3\t2781.2892961993175\t252060.0\n" +
+                        "7\tk4\t2781.9653422158776\t252180.0\n"
         );
     }
 
@@ -251,31 +261,41 @@ public class ParallelGroupByTest extends AbstractCairoTest {
         testParallelSymbolKeyedGroupBy(
                 "SELECT vwap(price, quantity), day_of_week(ts) day, sum(colTop), concat(key, 'abc')::symbol key FROM tab ORDER BY day, key",
                 "vwap\tday\tsum\tkey\n" +
-                        "423.57142857142856\t1\t4675.0\tk0abc\n" +
-                        "423.987012987013\t1\t4235.0\tk1abc\n" +
-                        "424.98586572438165\t1\t4245.0\tk2abc\n" +
-                        "425.9847238542891\t1\t4255.0\tk3abc\n" +
-                        "426.9835873388042\t1\t4265.0\tk4abc\n" +
-                        "70.07692307692308\t4\t675.0\tk0abc\n" +
-                        "70.23753665689149\t4\t735.0\tk1abc\n" +
-                        "71.00576368876081\t4\t745.0\tk2abc\n" +
-                        "71.78186968838527\t4\t755.0\tk3abc\n" +
-                        "72.56545961002786\t4\t765.0\tk4abc\n" +
-                        "153.135593220339\t5\t2950.0\tk0abc\n" +
-                        "154.0976430976431\t5\t2970.0\tk1abc\n" +
-                        "155.06020066889633\t5\t2990.0\tk2abc\n" +
-                        "156.02325581395348\t5\t3010.0\tk3abc\n" +
-                        "156.98679867986797\t5\t3030.0\tk4abc\n" +
-                        "250.85858585858585\t6\t4950.0\tk0abc\n" +
-                        "251.8450704225352\t6\t4970.0\tk1abc\n" +
-                        "252.8316633266533\t6\t4990.0\tk2abc\n" +
-                        "253.8183632734531\t6\t5010.0\tk3abc\n" +
-                        "254.8051689860835\t6\t5030.0\tk4abc\n" +
-                        "349.89208633093523\t7\t6950.0\tk0abc\n" +
-                        "350.8852223816356\t7\t6970.0\tk1abc\n" +
-                        "351.87839771101574\t7\t6990.0\tk2abc\n" +
-                        "352.8716119828816\t7\t7010.0\tk3abc\n" +
-                        "353.86486486486484\t7\t7030.0\tk4abc\n"
+                        "2848.23852863102\t1\t263700.0\tk0abc\n" +
+                        "2848.94253657797\t1\t263820.0\tk1abc\n" +
+                        "2849.6468136697736\t1\t263940.0\tk2abc\n" +
+                        "2850.3513595394984\t1\t264060.0\tk3abc\n" +
+                        "2851.05617382088\t1\t264180.0\tk4abc\n" +
+                        "2624.4694763291645\t2\t239025.0\tk0abc\n" +
+                        "2598.96097084443\t2\t235085.0\tk1abc\n" +
+                        "2599.691650489951\t2\t235195.0\tk2abc\n" +
+                        "2600.4225929755667\t2\t235305.0\tk3abc\n" +
+                        "2601.153797916691\t2\t235415.0\tk4abc\n" +
+                        "2526.5384615384614\t3\t204750.0\tk0abc\n" +
+                        "2527.3046131315596\t3\t204850.0\tk1abc\n" +
+                        "2528.070992925104\t3\t204950.0\tk2abc\n" +
+                        "2528.8376005852233\t3\t205050.0\tk3abc\n" +
+                        "2529.6044357786986\t3\t205150.0\tk4abc\n" +
+                        "2594.679907219484\t4\t215425.0\tk0abc\n" +
+                        "2595.0011126435716\t4\t215585.0\tk1abc\n" +
+                        "2595.617813662006\t4\t215695.0\tk2abc\n" +
+                        "2596.234922950459\t4\t215805.0\tk3abc\n" +
+                        "2596.8524398569757\t4\t215915.0\tk4abc\n" +
+                        "2651.1220904699167\t5\t227700.0\tk0abc\n" +
+                        "2651.7251338776227\t5\t227820.0\tk1abc\n" +
+                        "2652.3285952443625\t5\t227940.0\tk2abc\n" +
+                        "2652.9324739103745\t5\t228060.0\tk3abc\n" +
+                        "2653.5367692172845\t5\t228180.0\tk4abc\n" +
+                        "2713.3938256153524\t6\t239700.0\tk0abc\n" +
+                        "2714.035610040864\t6\t239820.0\tk1abc\n" +
+                        "2714.6777527715262\t6\t239940.0\tk2abc\n" +
+                        "2715.3202532700157\t6\t240060.0\tk3abc\n" +
+                        "2715.9631110000832\t6\t240180.0\tk4abc\n" +
+                        "2779.263011521653\t7\t251700.0\tk0abc\n" +
+                        "2779.938130410611\t7\t251820.0\tk1abc\n" +
+                        "2780.6135587838376\t7\t251940.0\tk2abc\n" +
+                        "2781.2892961993175\t7\t252060.0\tk3abc\n" +
+                        "2781.9653422158776\t7\t252180.0\tk4abc\n"
         );
     }
 
@@ -284,31 +304,41 @@ public class ParallelGroupByTest extends AbstractCairoTest {
         testParallelSymbolKeyedGroupBy(
                 "SELECT day_of_week(ts) day, key, vwap(price, quantity), sum(colTop) FROM tab ORDER BY day",
                 "day\tkey\tvwap\tsum\n" +
-                        "1\tk0\t423.57142857142856\t4675.0\n" +
-                        "1\tk1\t423.987012987013\t4235.0\n" +
-                        "1\tk2\t424.98586572438165\t4245.0\n" +
-                        "1\tk3\t425.9847238542891\t4255.0\n" +
-                        "1\tk4\t426.9835873388042\t4265.0\n" +
-                        "4\tk1\t70.23753665689149\t735.0\n" +
-                        "4\tk2\t71.00576368876081\t745.0\n" +
-                        "4\tk3\t71.78186968838527\t755.0\n" +
-                        "4\tk4\t72.56545961002786\t765.0\n" +
-                        "4\tk0\t70.07692307692308\t675.0\n" +
-                        "5\tk0\t153.135593220339\t2950.0\n" +
-                        "5\tk1\t154.0976430976431\t2970.0\n" +
-                        "5\tk2\t155.06020066889633\t2990.0\n" +
-                        "5\tk3\t156.02325581395348\t3010.0\n" +
-                        "5\tk4\t156.98679867986797\t3030.0\n" +
-                        "6\tk0\t250.85858585858585\t4950.0\n" +
-                        "6\tk1\t251.8450704225352\t4970.0\n" +
-                        "6\tk2\t252.8316633266533\t4990.0\n" +
-                        "6\tk3\t253.8183632734531\t5010.0\n" +
-                        "6\tk4\t254.8051689860835\t5030.0\n" +
-                        "7\tk0\t349.89208633093523\t6950.0\n" +
-                        "7\tk1\t350.8852223816356\t6970.0\n" +
-                        "7\tk2\t351.87839771101574\t6990.0\n" +
-                        "7\tk3\t352.8716119828816\t7010.0\n" +
-                        "7\tk4\t353.86486486486484\t7030.0\n"
+                        "1\tk0\t2848.23852863102\t263700.0\n" +
+                        "1\tk1\t2848.94253657797\t263820.0\n" +
+                        "1\tk2\t2849.6468136697736\t263940.0\n" +
+                        "1\tk3\t2850.3513595394984\t264060.0\n" +
+                        "1\tk4\t2851.05617382088\t264180.0\n" +
+                        "2\tk0\t2624.4694763291645\t239025.0\n" +
+                        "2\tk1\t2598.96097084443\t235085.0\n" +
+                        "2\tk2\t2599.691650489951\t235195.0\n" +
+                        "2\tk3\t2600.4225929755667\t235305.0\n" +
+                        "2\tk4\t2601.153797916691\t235415.0\n" +
+                        "3\tk0\t2526.5384615384614\t204750.0\n" +
+                        "3\tk1\t2527.3046131315596\t204850.0\n" +
+                        "3\tk2\t2528.070992925104\t204950.0\n" +
+                        "3\tk3\t2528.8376005852233\t205050.0\n" +
+                        "3\tk4\t2529.6044357786986\t205150.0\n" +
+                        "4\tk1\t2595.0011126435716\t215585.0\n" +
+                        "4\tk2\t2595.617813662006\t215695.0\n" +
+                        "4\tk3\t2596.234922950459\t215805.0\n" +
+                        "4\tk4\t2596.8524398569757\t215915.0\n" +
+                        "4\tk0\t2594.679907219484\t215425.0\n" +
+                        "5\tk0\t2651.1220904699167\t227700.0\n" +
+                        "5\tk1\t2651.7251338776227\t227820.0\n" +
+                        "5\tk2\t2652.3285952443625\t227940.0\n" +
+                        "5\tk3\t2652.9324739103745\t228060.0\n" +
+                        "5\tk4\t2653.5367692172845\t228180.0\n" +
+                        "6\tk0\t2713.3938256153524\t239700.0\n" +
+                        "6\tk1\t2714.035610040864\t239820.0\n" +
+                        "6\tk2\t2714.6777527715262\t239940.0\n" +
+                        "6\tk3\t2715.3202532700157\t240060.0\n" +
+                        "6\tk4\t2715.9631110000832\t240180.0\n" +
+                        "7\tk0\t2779.263011521653\t251700.0\n" +
+                        "7\tk1\t2779.938130410611\t251820.0\n" +
+                        "7\tk2\t2780.6135587838376\t251940.0\n" +
+                        "7\tk3\t2781.2892961993175\t252060.0\n" +
+                        "7\tk4\t2781.9653422158776\t252180.0\n"
         );
     }
 
@@ -317,11 +347,11 @@ public class ParallelGroupByTest extends AbstractCairoTest {
         testParallelSymbolKeyedGroupBy(
                 "SELECT concat(key, 'abc')::symbol key, vwap(price, quantity), sum(colTop) FROM tab ORDER BY key",
                 "key\tvwap\tsum\n" +
-                        "k0abc\t288.84615384615387\t20200.0\n" +
-                        "k1abc\t285.9440715883669\t19880.0\n" +
-                        "k2abc\t286.6659242761693\t19960.0\n" +
-                        "k3abc\t287.390243902439\t20040.0\n" +
-                        "k4abc\t288.1169977924945\t20120.0\n"
+                        "k0abc\t2685.431565967941\t1642000.0\n" +
+                        "k1abc\t2682.7321472695826\t1638800.0\n" +
+                        "k2abc\t2683.4065201284266\t1639600.0\n" +
+                        "k3abc\t2684.081214514935\t1640400.0\n" +
+                        "k4abc\t2684.756229953121\t1641200.0\n"
         );
     }
 
@@ -330,11 +360,11 @@ public class ParallelGroupByTest extends AbstractCairoTest {
         testParallelMultiKeyedGroupBy(
                 "SELECT key1, key2, avg(value), sum(colTop) FROM tab",
                 "key1\tkey2\tavg\tsum\n" +
-                        "k1\tk1\t223.5\t19880.0\n" +
-                        "k2\tk2\t224.5\t19960.0\n" +
-                        "k3\tk3\t225.5\t20040.0\n" +
-                        "k4\tk4\t226.5\t20120.0\n" +
-                        "k0\tk0\t227.5\t20200.0\n"
+                        "k1\tk1\t2023.5\t1638800.0\n" +
+                        "k2\tk2\t2024.5\t1639600.0\n" +
+                        "k3\tk3\t2025.5\t1640400.0\n" +
+                        "k4\tk4\t2026.5\t1641200.0\n" +
+                        "k0\tk0\t2027.5\t1642000.0\n"
         );
     }
 
@@ -345,11 +375,11 @@ public class ParallelGroupByTest extends AbstractCairoTest {
                         "  SELECT key1, key2, avg(value), sum(colTop) FROM tab" +
                         ")",
                 "key1\tkey2\tcolumn\n" +
-                        "k1\tk1\t20103.5\n" +
-                        "k2\tk2\t20184.5\n" +
-                        "k3\tk3\t20265.5\n" +
-                        "k4\tk4\t20346.5\n" +
-                        "k0\tk0\t20427.5\n"
+                        "k1\tk1\t1640823.5\n" +
+                        "k2\tk2\t1641624.5\n" +
+                        "k3\tk3\t1642425.5\n" +
+                        "k4\tk4\t1643226.5\n" +
+                        "k0\tk0\t1644027.5\n"
         );
     }
 
@@ -371,14 +401,14 @@ public class ParallelGroupByTest extends AbstractCairoTest {
         testParallelMultiKeyedGroupBy(
                 "SELECT key1, key2, avg(value), sum(colTop) FROM tab LIMIT 3",
                 "key1\tkey2\tavg\tsum\n" +
-                        "k1\tk1\t223.5\t19880.0\n" +
-                        "k2\tk2\t224.5\t19960.0\n" +
-                        "k3\tk3\t225.5\t20040.0\n",
+                        "k1\tk1\t2023.5\t1638800.0\n" +
+                        "k2\tk2\t2024.5\t1639600.0\n" +
+                        "k3\tk3\t2025.5\t1640400.0\n",
                 "SELECT key1, key2, avg(value), sum(colTop) FROM tab LIMIT -3",
                 "key1\tkey2\tavg\tsum\n" +
-                        "k3\tk3\t225.5\t20040.0\n" +
-                        "k4\tk4\t226.5\t20120.0\n" +
-                        "k0\tk0\t227.5\t20200.0\n"
+                        "k3\tk3\t2025.5\t1640400.0\n" +
+                        "k4\tk4\t2026.5\t1641200.0\n" +
+                        "k0\tk0\t2027.5\t1642000.0\n"
         );
     }
 
@@ -401,7 +431,7 @@ public class ParallelGroupByTest extends AbstractCairoTest {
         testParallelNonKeyedGroupBy(
                 "SELECT vwap(price, quantity), sum(colTop) FROM tab",
                 "vwap\tsum\n" +
-                        "289.3066666666667\t100200.0\n"
+                        "2684.615238095238\t8202000.0\n"
         );
     }
 
@@ -411,7 +441,7 @@ public class ParallelGroupByTest extends AbstractCairoTest {
         final int numOfIterations = 50;
         final String query = "SELECT avg(value), sum(colTop) FROM tab";
         final String expected = "avg\tsum\n" +
-                "225.5\t100200.0\n";
+                "2025.5\t8202000.0\n";
 
         final ConcurrentHashMap<Integer, Throwable> errors = new ConcurrentHashMap<>();
         final WorkerPool pool = new WorkerPool((() -> 4));
@@ -476,7 +506,7 @@ public class ParallelGroupByTest extends AbstractCairoTest {
         testParallelNonKeyedGroupBy(
                 "SELECT count(*) FROM tab GROUP BY 1+2",
                 "count\n" +
-                        "800\n"
+                        "8000\n"
         );
     }
 
@@ -486,7 +516,7 @@ public class ParallelGroupByTest extends AbstractCairoTest {
                 "SELECT vwap(p, q), sum(ct) " +
                         "FROM (SELECT colTop ct, quantity q, price p FROM tab WHERE quantity < 80)",
                 "vwap\tsum\n" +
-                        "185.23063683304647\t1885.0\n"
+                        "1974.5391511088592\t1885.0\n"
         );
     }
 
@@ -495,7 +525,7 @@ public class ParallelGroupByTest extends AbstractCairoTest {
         testParallelNonKeyedGroupBy(
                 "SELECT vwap(price, quantity), sum(colTop) FROM tab WHERE quantity < 80",
                 "vwap\tsum\n" +
-                        "185.23063683304647\t1885.0\n"
+                        "1974.5391511088592\t1885.0\n"
         );
     }
 
@@ -504,7 +534,7 @@ public class ParallelGroupByTest extends AbstractCairoTest {
         testParallelSymbolKeyedGroupBy(
                 "SELECT vwap(price, quantity), sum(colTop) FROM tab WHERE key = 'k1'",
                 "vwap\tsum\n" +
-                        "285.9440715883669\t19880.0\n"
+                        "2682.7321472695826\t1638800.0\n"
         );
     }
 
@@ -514,7 +544,7 @@ public class ParallelGroupByTest extends AbstractCairoTest {
                 "SELECT ((key is not null) and (colTop is not null)) key, sum(colTop) FROM tab",
                 "key\tsum\n" +
                         "false\tNaN\n" +
-                        "true\t100200.0\n"
+                        "true\t8202000.0\n"
         );
     }
 
@@ -526,11 +556,11 @@ public class ParallelGroupByTest extends AbstractCairoTest {
                 "  SELECT key, avg(value), sum(colTop) FROM tab" +
                 ")";
         final String expected = "key\tcolumn\n" +
-                "k1\t20103.5\n" +
-                "k2\t20184.5\n" +
-                "k3\t20265.5\n" +
-                "k4\t20346.5\n" +
-                "k0\t20427.5\n";
+                "k1\t1640823.5\n" +
+                "k2\t1641624.5\n" +
+                "k3\t1642425.5\n" +
+                "k4\t1643226.5\n" +
+                "k0\t1644027.5\n";
 
         final ConcurrentHashMap<Integer, Throwable> errors = new ConcurrentHashMap<>();
         final WorkerPool pool = new WorkerPool((() -> 4));
@@ -598,11 +628,11 @@ public class ParallelGroupByTest extends AbstractCairoTest {
                         "SELECT key, avg(value), sum(colTop) FROM tab" +
                         ")",
                 "key\tcolumn\n" +
-                        "k1\t20103.5\n" +
-                        "k2\t20184.5\n" +
-                        "k3\t20265.5\n" +
-                        "k4\t20346.5\n" +
-                        "k0\t20427.5\n"
+                        "k1\t1640823.5\n" +
+                        "k2\t1641624.5\n" +
+                        "k3\t1642425.5\n" +
+                        "k4\t1643226.5\n" +
+                        "k0\t1644027.5\n"
         );
     }
 
@@ -624,11 +654,11 @@ public class ParallelGroupByTest extends AbstractCairoTest {
         testParallelStringKeyedGroupBy(
                 "SELECT key, avg(value), sum(colTop), count() FROM tab",
                 "key\tavg\tsum\tcount\n" +
-                        "k1\t223.5\t19880.0\t160\n" +
-                        "k2\t224.5\t19960.0\t160\n" +
-                        "k3\t225.5\t20040.0\t160\n" +
-                        "k4\t226.5\t20120.0\t160\n" +
-                        "k0\t227.5\t20200.0\t160\n"
+                        "k1\t2023.5\t1638800.0\t1600\n" +
+                        "k2\t2024.5\t1639600.0\t1600\n" +
+                        "k3\t2025.5\t1640400.0\t1600\n" +
+                        "k4\t2026.5\t1641200.0\t1600\n" +
+                        "k0\t2027.5\t1642000.0\t1600\n"
         );
     }
 
@@ -637,14 +667,14 @@ public class ParallelGroupByTest extends AbstractCairoTest {
         testParallelStringKeyedGroupBy(
                 "SELECT key, avg(value), sum(colTop) FROM tab LIMIT 3",
                 "key\tavg\tsum\n" +
-                        "k1\t223.5\t19880.0\n" +
-                        "k2\t224.5\t19960.0\n" +
-                        "k3\t225.5\t20040.0\n",
+                        "k1\t2023.5\t1638800.0\n" +
+                        "k2\t2024.5\t1639600.0\n" +
+                        "k3\t2025.5\t1640400.0\n",
                 "SELECT key, avg(value), sum(colTop) FROM tab LIMIT -3",
                 "key\tavg\tsum\n" +
-                        "k3\t225.5\t20040.0\n" +
-                        "k4\t226.5\t20120.0\n" +
-                        "k0\t227.5\t20200.0\n"
+                        "k3\t2025.5\t1640400.0\n" +
+                        "k4\t2026.5\t1641200.0\n" +
+                        "k0\t2027.5\t1642000.0\n"
         );
     }
 
@@ -667,11 +697,11 @@ public class ParallelGroupByTest extends AbstractCairoTest {
         testParallelSymbolKeyedGroupBy(
                 "SELECT key, vwap(price, quantity), sum(colTop) FROM tab",
                 "key\tvwap\tsum\n" +
-                        "k1\t285.9440715883669\t19880.0\n" +
-                        "k2\t286.6659242761693\t19960.0\n" +
-                        "k3\t287.390243902439\t20040.0\n" +
-                        "k4\t288.1169977924945\t20120.0\n" +
-                        "k0\t288.84615384615387\t20200.0\n"
+                        "k1\t2682.7321472695826\t1638800.0\n" +
+                        "k2\t2683.4065201284266\t1639600.0\n" +
+                        "k3\t2684.081214514935\t1640400.0\n" +
+                        "k4\t2684.756229953121\t1641200.0\n" +
+                        "k0\t2685.431565967941\t1642000.0\n"
         );
     }
 
@@ -680,8 +710,8 @@ public class ParallelGroupByTest extends AbstractCairoTest {
         testParallelSymbolKeyedGroupBy(
                 "SELECT key, vwap(price, quantity), sum(colTop) FROM tab where key in (select key from tab where key in ('k1','k3'))",
                 "key\tvwap\tsum\n" +
-                        "k1\t285.9440715883669\t19880.0\n" +
-                        "k3\t287.390243902439\t20040.0\n"
+                        "k1\t2682.7321472695826\t1638800.0\n" +
+                        "k3\t2684.081214514935\t1640400.0\n"
         );
     }
 
@@ -692,11 +722,11 @@ public class ParallelGroupByTest extends AbstractCairoTest {
                         "SELECT key, vwap(price, quantity), sum(colTop) FROM tab" +
                         ")",
                 "key\tcolumn\n" +
-                        "k1\t20165.94407158837\n" +
-                        "k2\t20246.66592427617\n" +
-                        "k3\t20327.39024390244\n" +
-                        "k4\t20408.116997792495\n" +
-                        "k0\t20488.846153846152\n"
+                        "k1\t1641482.7321472696\n" +
+                        "k2\t1642283.4065201285\n" +
+                        "k3\t1643084.081214515\n" +
+                        "k4\t1643884.7562299531\n" +
+                        "k0\t1644685.4315659679\n"
         );
     }
 
@@ -705,14 +735,14 @@ public class ParallelGroupByTest extends AbstractCairoTest {
         testParallelSymbolKeyedGroupBy(
                 "SELECT key, vwap(price, quantity), sum(colTop) FROM tab LIMIT 3",
                 "key\tvwap\tsum\n" +
-                        "k1\t285.9440715883669\t19880.0\n" +
-                        "k2\t286.6659242761693\t19960.0\n" +
-                        "k3\t287.390243902439\t20040.0\n",
+                        "k1\t2682.7321472695826\t1638800.0\n" +
+                        "k2\t2683.4065201284266\t1639600.0\n" +
+                        "k3\t2684.081214514935\t1640400.0\n",
                 "SELECT key, vwap(price, quantity), sum(colTop) FROM tab LIMIT -3",
                 "key\tvwap\tsum\n" +
-                        "k3\t287.390243902439\t20040.0\n" +
-                        "k4\t288.1169977924945\t20120.0\n" +
-                        "k0\t288.84615384615387\t20200.0\n"
+                        "k3\t2684.081214514935\t1640400.0\n" +
+                        "k4\t2684.756229953121\t1641200.0\n" +
+                        "k0\t2685.431565967941\t1642000.0\n"
         );
     }
 
@@ -748,8 +778,8 @@ public class ParallelGroupByTest extends AbstractCairoTest {
         testParallelSymbolKeyedGroupBy(
                 "SELECT key, vwap(price, quantity), sum(colTop) FROM tab WHERE key in ('k1','k2')",
                 "key\tvwap\tsum\n" +
-                        "k1\t285.9440715883669\t19880.0\n" +
-                        "k2\t286.6659242761693\t19960.0\n"
+                        "k1\t2682.7321472695826\t1638800.0\n" +
+                        "k2\t2683.4065201284266\t1639600.0\n"
         );
     }
 
