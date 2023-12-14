@@ -136,6 +136,6 @@ public interface SecurityContext extends Mutable {
         return getPrincipal();
     }
 
-    default void init(@Transient CharSequence principal, byte authType) {
+    default void init(@Transient CharSequence principal, byte authType, long endpointPermission) {
     }
 }
