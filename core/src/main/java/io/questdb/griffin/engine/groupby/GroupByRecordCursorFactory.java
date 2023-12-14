@@ -65,17 +65,16 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     ) {
         super(groupByMetadata);
         try {
-            // sink will be storing record columns to map key
-            this.mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter, keyFunctions, false);
             this.base = base;
             this.groupByFunctions = groupByFunctions;
             this.keyFunctions = keyFunctions;
             this.recordFunctions = recordFunctions;
+            // sink will be storing record columns to map key
+            this.mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter, keyFunctions, false);
             final GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
             this.cursor = new GroupByRecordCursor(recordFunctions, updater, keyTypes, valueTypes, configuration);
         } catch (Throwable e) {
-            Misc.freeObjList(recordFunctions);
-            Misc.freeObjList(keyFunctions);
+            close();
             throw e;
         }
     }
@@ -138,7 +137,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     protected void _close() {
-        Misc.freeObjList(recordFunctions);
+        Misc.freeObjList(recordFunctions); // groupByFunctions are included in recordFunctions
         Misc.freeObjList(keyFunctions);
         Misc.free(base);
         Misc.free(cursor);

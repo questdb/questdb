@@ -2552,7 +2552,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             timestampIndex
                     );
                 } catch (Throwable e) {
-                    Misc.freeObjList(recordFunctions);
+                    Misc.freeObjList(recordFunctions); // groupByFunctions are included in recordFunctions
                     throw e;
                 }
 
@@ -2615,7 +2615,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         timestampIndex
                 );
             } catch (Throwable e) {
-                Misc.freeObjList(recordFunctions);
+                Misc.freeObjList(recordFunctions); // groupByFunctions are included in recordFunctions
                 throw e;
             }
 
@@ -3338,7 +3338,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         timestampIndex
                 );
             } catch (Throwable e) {
-                Misc.freeObjList(recordFunctions);
+                Misc.freeObjList(recordFunctions); // groupByFunctions are included in recordFunctions
                 Misc.freeObjList(keyFunctions);
                 throw e;
             }
@@ -3382,7 +3382,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             listColumnFilterA.addAll(listColumnFilterCopy);
                         }
                     } catch (Throwable e) {
-                        Misc.freeObjList(recordFunctions);
+                        Misc.freeObjList(recordFunctions); // groupByFunctions are included in recordFunctions
                         Misc.freeObjList(keyFunctions);
                         throw e;
                     }

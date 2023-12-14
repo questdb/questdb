@@ -198,7 +198,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
     protected void _close() {
         Misc.free(base);
         Misc.free(cursor);
-        Misc.freeObjList(recordFunctions);
+        Misc.freeObjList(recordFunctions); // groupByFunctions are included in recordFunctions
         Misc.free(atom); // frees filter, keyFunctions and perWorkerKeyFunctions
         Misc.free(frameSequence);
     }

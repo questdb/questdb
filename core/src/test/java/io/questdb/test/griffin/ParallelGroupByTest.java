@@ -472,6 +472,15 @@ public class ParallelGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelNonKeyedGroupByConstant() throws Exception {
+        testParallelNonKeyedGroupBy(
+                "SELECT count(*) FROM tab GROUP BY 1+2",
+                "vwap\tsum\n" +
+                        "289.3066666666667\t100200.0\n"
+        );
+    }
+
+    @Test
     public void testParallelNonKeyedGroupByWithFilter() throws Exception {
         testParallelNonKeyedGroupBy(
                 "SELECT vwap(price, quantity), sum(colTop) FROM tab WHERE quantity < 80",
