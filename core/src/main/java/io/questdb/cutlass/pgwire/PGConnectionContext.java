@@ -537,9 +537,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             handleException(-1, e.getFlyweightMessage(), false, -1, true);
         } catch (CairoException e) {
             handleException(e.getPosition(), e.getFlyweightMessage(), e.isCritical(), e.getErrno(), e.isInterruption());
-            if (e.isEntityDisabled()) {
-                throw PeerDisconnectedException.INSTANCE;
-            }
         } catch (PeerIsSlowToReadException | PeerIsSlowToWriteException | QueryPausedException |
                  BadProtocolException e) {
             throw e;
@@ -1722,12 +1719,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                             SecurityContextFactory.PGWIRE
                     );
                     sqlExecutionContext.with(securityContext, bindVariableService, rnd, getFd(), circuitBreaker);
-                    securityContext.authorizePGWire();
+                    securityContext.checkEntityEnabled();
                     r = authenticator.loginOK();
                 } catch (CairoException e) {
                     LOG.error().$("failed to authenticate [error=").$(e.getFlyweightMessage()).I$();
-                    // todo: handle this separately from auth failure
-                    r = authenticator.denyAccess();
+                    r = authenticator.denyAccess(e.getFlyweightMessage());
                 }
             }
         } catch (AuthenticatorException e) {
