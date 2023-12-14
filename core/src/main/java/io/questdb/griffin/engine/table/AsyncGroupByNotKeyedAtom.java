@@ -64,14 +64,19 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Planna
             int workerCount
     ) {
         assert perWorkerFilters == null || perWorkerFilters.size() == workerCount;
-        this.filter = filter;
-        this.perWorkerFilters = perWorkerFilters;
-        this.valueCount = valueCount;
-        functionUpdater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
-        if (perWorkerFilters != null) {
-            perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
-        } else {
-            perWorkerLocks = null;
+        try {
+            this.filter = filter;
+            this.perWorkerFilters = perWorkerFilters;
+            this.valueCount = valueCount;
+            functionUpdater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
+            if (perWorkerFilters != null) {
+                perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
+            } else {
+                perWorkerLocks = null;
+            }
+        } catch (Throwable e) {
+            close();
+            throw e;
         }
     }
 

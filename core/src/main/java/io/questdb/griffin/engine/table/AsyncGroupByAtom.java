@@ -71,26 +71,30 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Plannable {
     ) {
         assert perWorkerFilters == null || perWorkerFilters.size() == workerCount;
         assert perWorkerKeyFunctions == null || perWorkerKeyFunctions.size() == workerCount;
-
-        this.filter = filter;
-        this.perWorkerFilters = perWorkerFilters;
-        this.keyFunctions = keyFunctions;
-        this.perWorkerKeyFunctions = perWorkerKeyFunctions;
-        functionUpdater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
-        if (perWorkerFilters != null || perWorkerKeyFunctions != null) {
-            perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
-        } else {
-            perWorkerLocks = null;
-        }
-        mapSink = RecordSinkFactory.getInstance(asm, columnTypes, listColumnFilter, keyFunctions, false);
-        if (perWorkerKeyFunctions != null) {
-            perWorkerMapSinks = new ObjList<>(workerCount);
-            for (int i = 0, n = perWorkerKeyFunctions.size(); i < n; i++) {
-                RecordSink sink = RecordSinkFactory.getInstance(asm, columnTypes, listColumnFilter, perWorkerKeyFunctions.getQuick(i), false);
-                perWorkerMapSinks.extendAndSet(i, sink);
+        try {
+            this.filter = filter;
+            this.perWorkerFilters = perWorkerFilters;
+            this.keyFunctions = keyFunctions;
+            this.perWorkerKeyFunctions = perWorkerKeyFunctions;
+            functionUpdater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
+            if (perWorkerFilters != null || perWorkerKeyFunctions != null) {
+                perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
+            } else {
+                perWorkerLocks = null;
             }
-        } else {
-            perWorkerMapSinks = null;
+            mapSink = RecordSinkFactory.getInstance(asm, columnTypes, listColumnFilter, keyFunctions, false);
+            if (perWorkerKeyFunctions != null) {
+                perWorkerMapSinks = new ObjList<>(workerCount);
+                for (int i = 0, n = perWorkerKeyFunctions.size(); i < n; i++) {
+                    RecordSink sink = RecordSinkFactory.getInstance(asm, columnTypes, listColumnFilter, perWorkerKeyFunctions.getQuick(i), false);
+                    perWorkerMapSinks.extendAndSet(i, sink);
+                }
+            } else {
+                perWorkerMapSinks = null;
+            }
+        } catch (Throwable e) {
+            close();
+            throw e;
         }
     }
 
