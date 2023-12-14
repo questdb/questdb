@@ -475,17 +475,8 @@ public class ParallelGroupByTest extends AbstractCairoTest {
     public void testParallelNonKeyedGroupByConstant() throws Exception {
         testParallelNonKeyedGroupBy(
                 "SELECT count(*) FROM tab GROUP BY 1+2",
-                "vwap\tsum\n" +
-                        "289.3066666666667\t100200.0\n"
-        );
-    }
-
-    @Test
-    public void testParallelNonKeyedGroupByWithFilter() throws Exception {
-        testParallelNonKeyedGroupBy(
-                "SELECT vwap(price, quantity), sum(colTop) FROM tab WHERE quantity < 80",
-                "vwap\tsum\n" +
-                        "185.23063683304647\t1885.0\n"
+                "count\n" +
+                        "800\n"
         );
     }
 
@@ -496,6 +487,24 @@ public class ParallelGroupByTest extends AbstractCairoTest {
                         "FROM (SELECT colTop ct, quantity q, price p FROM tab WHERE quantity < 80)",
                 "vwap\tsum\n" +
                         "185.23063683304647\t1885.0\n"
+        );
+    }
+
+    @Test
+    public void testParallelNonKeyedGroupByWithReadThreadSafeFilter() throws Exception {
+        testParallelNonKeyedGroupBy(
+                "SELECT vwap(price, quantity), sum(colTop) FROM tab WHERE quantity < 80",
+                "vwap\tsum\n" +
+                        "185.23063683304647\t1885.0\n"
+        );
+    }
+
+    @Test
+    public void testParallelNonKeyedGroupByWithReadThreadUnsafeFilter() throws Exception {
+        testParallelSymbolKeyedGroupBy(
+                "SELECT vwap(price, quantity), sum(colTop) FROM tab WHERE key = 'k1'",
+                "vwap\tsum\n" +
+                        "285.9440715883669\t19880.0\n"
         );
     }
 
@@ -692,19 +701,6 @@ public class ParallelGroupByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testParallelSymbolKeyedGroupByWithFilter() throws Exception {
-        testParallelSymbolKeyedGroupBy(
-                "SELECT key, vwap(price, quantity), sum(colTop) FROM tab WHERE quantity < 80",
-                "key\tvwap\tsum\n" +
-                        "k1\t57.01805416248746\t381.0\n" +
-                        "k2\t57.76545632973504\t387.0\n" +
-                        "k3\t58.52353506243996\t393.0\n" +
-                        "k4\t59.29162746942615\t399.0\n" +
-                        "k0\t56.62162162162162\t325.0\n"
-        );
-    }
-
-    @Test
     public void testParallelSymbolKeyedGroupByWithLimit() throws Exception {
         testParallelSymbolKeyedGroupBy(
                 "SELECT key, vwap(price, quantity), sum(colTop) FROM tab LIMIT 3",
@@ -731,6 +727,29 @@ public class ParallelGroupByTest extends AbstractCairoTest {
                         "58.52353506243996\tk3\t393.0\n" +
                         "59.29162746942615\tk4\t399.0\n" +
                         "56.62162162162162\tk0\t325.0\n"
+        );
+    }
+
+    @Test
+    public void testParallelSymbolKeyedGroupByWithWithReadThreadSafeFilter() throws Exception {
+        testParallelSymbolKeyedGroupBy(
+                "SELECT key, vwap(price, quantity), sum(colTop) FROM tab WHERE quantity < 80",
+                "key\tvwap\tsum\n" +
+                        "k1\t57.01805416248746\t381.0\n" +
+                        "k2\t57.76545632973504\t387.0\n" +
+                        "k3\t58.52353506243996\t393.0\n" +
+                        "k4\t59.29162746942615\t399.0\n" +
+                        "k0\t56.62162162162162\t325.0\n"
+        );
+    }
+
+    @Test
+    public void testParallelSymbolKeyedGroupByWithWithReadThreadUnsafeFilter() throws Exception {
+        testParallelSymbolKeyedGroupBy(
+                "SELECT key, vwap(price, quantity), sum(colTop) FROM tab WHERE key in ('k1','k2')",
+                "key\tvwap\tsum\n" +
+                        "k1\t285.9440715883669\t19880.0\n" +
+                        "k2\t286.6659242761693\t19960.0\n"
         );
     }
 
