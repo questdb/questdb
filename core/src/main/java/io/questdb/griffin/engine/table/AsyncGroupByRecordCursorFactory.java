@@ -103,8 +103,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             this.cursor = new AsyncGroupByRecordCursor(configuration, keyTypes, valueTypes, groupByFunctions, recordFunctions);
             this.workerCount = workerCount;
         } catch (Throwable e) {
-            Misc.freeObjList(recordFunctions);
-            Misc.freeObjList(keyFunctions);
+            close();
             throw e;
         }
     }

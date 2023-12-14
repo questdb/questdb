@@ -90,7 +90,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
             this.cursor = new AsyncGroupByNotKeyedRecordCursor(groupByFunctions, valueCount);
             this.workerCount = workerCount;
         } catch (Throwable e) {
-            Misc.freeObjList(groupByFunctions);
+            close();
             throw e;
         }
     }
