@@ -54,6 +54,7 @@ public class HttpResponseSink implements Closeable, Mutable {
     private final boolean connectionCloseHeader;
     private final boolean cookiesEnabled;
     private final boolean dumpNetworkTraffic;
+    private final int forceSendFragmentationChunkSize;
     private final HttpResponseHeaderImpl headerImpl;
     private final String httpVersion;
     private final NetworkFacade nf;
@@ -82,6 +83,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         this.httpVersion = configuration.getHttpVersion();
         this.connectionCloseHeader = !configuration.getServerKeepAlive();
         this.cookiesEnabled = configuration.areCookiesEnabled();
+        this.forceSendFragmentationChunkSize = configuration.getForceSendFragmentationChunkSize();
     }
 
     @Override
@@ -254,7 +256,8 @@ public class HttpResponseSink implements Closeable, Mutable {
     }
 
     private void sendBuffer(ChunkBuffer sendBuf) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        int nSend = (int) sendBuf.getReadNAvailable();
+        int available = (int) sendBuf.getReadNAvailable();
+        int nSend = Math.min(forceSendFragmentationChunkSize, available);
         while (nSend > 0) {
             int n = socket.send(sendBuf.getReadAddress(), nSend);
             if (n < 0) {
@@ -268,11 +271,15 @@ public class HttpResponseSink implements Closeable, Mutable {
             if (n == 0) {
                 // test how many times we tried to send before parking up
                 throw PeerIsSlowToReadException.INSTANCE;
-            } else {
+            } else if (available <= forceSendFragmentationChunkSize) {
                 dumpBuffer(sendBuf.getReadAddress(), n);
                 sendBuf.onRead(n);
                 nSend -= n;
                 totalBytesSent += n;
+            } else {
+                // This branch is for tests only
+                sendBuf.onRead(n);
+                throw PeerIsSlowToReadException.INSTANCE;
             }
         }
         assert sendBuf.getReadNAvailable() == 0;
@@ -793,12 +800,16 @@ public class HttpResponseSink implements Closeable, Mutable {
 
     static {
         httpStatusMap.put(200, "OK");
+        httpStatusMap.put(204, "OK");
         httpStatusMap.put(206, "Partial content");
         httpStatusMap.put(304, "Not Modified");
         httpStatusMap.put(400, "Bad request");
         httpStatusMap.put(401, "Unauthorized");
         httpStatusMap.put(403, "Forbidden");
         httpStatusMap.put(404, "Not Found");
+        httpStatusMap.put(411, "Length Required");
+        httpStatusMap.put(413, "Content Too Large");
+        httpStatusMap.put(415, "Bad request");
         httpStatusMap.put(416, "Request range not satisfiable");
         httpStatusMap.put(431, "Headers too large");
         httpStatusMap.put(500, "Internal server error");

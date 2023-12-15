@@ -64,6 +64,15 @@ public class LocalValueMap implements Closeable, Mutable {
         }
     }
 
+    public void disconnect() {
+        for (int i = 0, n = table.length; i < n; i++) {
+            Entry e = table[i];
+            if (e != null && e.value instanceof ConnectionAware) {
+                ((ConnectionAware) e.value).onDisconnected();
+            }
+        }
+    }
+
     @SuppressWarnings("unchecked")
     public <T> T get(LocalValue<T> key) {
         int i = key.hashCode & (table.length - 1);

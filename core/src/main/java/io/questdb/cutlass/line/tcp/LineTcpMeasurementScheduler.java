@@ -28,10 +28,8 @@ import io.questdb.Telemetry;
 import io.questdb.TelemetryOrigin;
 import io.questdb.TelemetrySystemEvent;
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cutlass.line.LineTcpTimestampAdapter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -50,21 +48,17 @@ import java.io.Closeable;
 import java.util.Arrays;
 import java.util.concurrent.locks.ReadWriteLock;
 
-import static io.questdb.cutlass.line.tcp.LineTcpMeasurementEvent.*;
-import static io.questdb.cutlass.line.tcp.TableUpdateDetails.ThreadLocalDetails.COLUMN_NOT_FOUND;
-import static io.questdb.cutlass.line.tcp.TableUpdateDetails.ThreadLocalDetails.DUPLICATED_COLUMN;
-
 public class LineTcpMeasurementScheduler implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpMeasurementScheduler.class);
     private final ObjList<TableUpdateDetails>[] assignedTables;
     private final boolean autoCreateNewColumns;
     private final boolean autoCreateNewTables;
-    private final CairoConfiguration cairoConfiguration;
     private final LineTcpReceiverConfiguration configuration;
     private final MemoryMARW ddlMem = Vm.getMARWInstance();
     private final DefaultColumnTypes defaultColumnTypes;
     private final CairoEngine engine;
     private final LowerCaseCharSequenceObjHashMap<TableUpdateDetails> idleTableUpdateDetailsUtf16;
+    private final IlpWalAppender ilpWalAppender;
     private final long[] loadByWriterThread;
     private final NetworkIOJob[] netIoJobs;
     private final Path path = new Path();
@@ -86,7 +80,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
     ) {
         this.engine = engine;
         this.telemetry = engine.getTelemetry();
-        this.cairoConfiguration = engine.getConfiguration();
+        CairoConfiguration cairoConfiguration = engine.getConfiguration();
         this.configuration = lineConfiguration;
         MillisecondClock milliClock = cairoConfiguration.getMillisecondClock();
         this.defaultColumnTypes = new DefaultColumnTypes(lineConfiguration);
@@ -153,8 +147,15 @@ public class LineTcpMeasurementScheduler implements Closeable {
             writerWorkerPool.assign(i, lineTcpWriterJob);
             writerWorkerPool.freeOnExit(lineTcpWriterJob);
         }
-        this.tableStructureAdapter = new TableStructureAdapter(cairoConfiguration, defaultColumnTypes, configuration.getDefaultPartitionBy());
+        this.tableStructureAdapter = new TableStructureAdapter(cairoConfiguration, defaultColumnTypes, configuration.getDefaultPartitionBy(), cairoConfiguration.getWalEnabledDefault());
         writerIdleTimeout = lineConfiguration.getWriterIdleTimeout();
+        ilpWalAppender = new IlpWalAppender(
+                autoCreateNewColumns,
+                configuration.isStringToCharCastAllowed(),
+                configuration.getTimestampAdapter(),
+                cairoConfiguration.getMaxFileNameLength(),
+                configuration.getMicrosecondClock()
+        );
     }
 
     @Override
@@ -296,15 +297,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
 
         if (tud.isWal()) {
             try {
-                while (true) {
-                    try {
-                        appendToWal(securityContext, netIoJob, parser, tud);
-                        break;
-                    } catch (MetadataChangedException e) {
-                        // do another retry, metadata has changed while processing the line
-                        // and all the resolved column indexes have been invalidated
-                    }
-                }
+                ilpWalAppender.appendToWal(securityContext, parser, tud);
             } catch (CommitFailedException ex) {
                 if (ex.isTableDropped()) {
                     // table dropped, nothing to worry about
@@ -339,330 +332,6 @@ public class LineTcpMeasurementScheduler implements Closeable {
                 .$(", ex=").$(ex)
                 .I$();
         throw CairoException.critical(0).put("could not write ILP message to WAL [tableName=").put(measurementName).put(", error=").put(ex.getMessage()).put(']');
-    }
-
-    private void appendToWal(
-            SecurityContext securityContext,
-            NetworkIOJob netIoJob,
-            LineTcpParser parser,
-            TableUpdateDetails tud
-    ) throws CommitFailedException, MetadataChangedException {
-        final boolean stringToCharCastAllowed = configuration.isStringToCharCastAllowed();
-        final LineTcpTimestampAdapter timestampAdapter = configuration.getTimestampAdapter();
-        // pass 1: create all columns that do not exist
-        final TableUpdateDetails.ThreadLocalDetails ld = tud.getThreadLocalDetails(netIoJob.getWorkerId());
-        ld.resetStateIfNecessary();
-        ld.clearColumnTypes();
-
-        final TableWriterAPI writer = tud.getWriter();
-        assert writer.supportsMultipleWriters();
-        TableRecordMetadata metadata = writer.getMetadata();
-        long initialMetadataVersion = ld.getMetadataVersion();
-
-        long timestamp = parser.getTimestamp();
-        if (timestamp != LineTcpParser.NULL_TIMESTAMP) {
-            timestamp = timestampAdapter.getMicros(timestamp, parser.getTimestampUnit());
-        } else {
-            timestamp = configuration.getMicrosecondClock().getTicks();
-        }
-
-        final int entCount = parser.getEntityCount();
-        for (int i = 0; i < entCount; i++) {
-            final LineTcpParser.ProtoEntity ent = parser.getEntity(i);
-            int columnWriterIndex = ld.getColumnWriterIndex(ent.getName(), parser.hasNonAsciiChars(), metadata);
-
-            switch (columnWriterIndex) {
-                default:
-                    final int columnType = metadata.getColumnType(columnWriterIndex);
-                    if (columnType > -1) {
-                        if (columnWriterIndex == tud.getTimestampIndex()) {
-                            timestamp = timestampAdapter.getMicros(ent.getLongValue(), ent.getUnit());
-                            ld.addColumnType(DUPLICATED_COLUMN, ColumnType.UNDEFINED);
-                        } else {
-                            ld.addColumnType(columnWriterIndex, metadata.getColumnType(columnWriterIndex));
-                        }
-                        break;
-                    } else {
-                        // column has been deleted from the metadata, but it is in our utf8 cache
-                        ld.removeFromCaches(ent.getName(), parser.hasNonAsciiChars());
-                        // act as if we did not find this column and fall through
-                    }
-                case COLUMN_NOT_FOUND:
-                    final String columnNameUtf16 = ld.getColNameUtf16();
-                    if (autoCreateNewColumns && TableUtils.isValidColumnName(columnNameUtf16, cairoConfiguration.getMaxFileNameLength())) {
-                        columnWriterIndex = metadata.getColumnIndexQuiet(columnNameUtf16);
-                        if (columnWriterIndex < 0) {
-                            securityContext.authorizeAlterTableAddColumn(writer.getTableToken());
-                            tud.commit(false);
-                            try {
-                                writer.addColumn(columnNameUtf16, ld.getColumnType(ld.getColNameUtf8(), ent.getType()), securityContext);
-                                columnWriterIndex = metadata.getColumnIndexQuiet(columnNameUtf16);
-                            } catch (CairoException e) {
-                                columnWriterIndex = metadata.getColumnIndexQuiet(columnNameUtf16);
-                                if (columnWriterIndex < 0) {
-                                    // the column is still not there, something must be wrong
-                                    throw e;
-                                }
-                                // all good, someone added the column concurrently
-                            }
-                        }
-                        if (ld.getMetadataVersion() != initialMetadataVersion) {
-                            // Restart the whole line,
-                            // some columns can be deleted or renamed in tud.commit and ww.addColumn calls
-                            throw MetadataChangedException.INSTANCE;
-                        }
-                        ld.addColumnType(columnWriterIndex, metadata.getColumnType(columnWriterIndex));
-                    } else if (!autoCreateNewColumns) {
-                        throw newColumnsNotAllowed(tud, columnNameUtf16);
-                    } else {
-                        throw invalidColNameError(tud, columnNameUtf16);
-                    }
-                    break;
-                case DUPLICATED_COLUMN:
-                    // indicate to the second loop that writer index does not exist
-                    ld.addColumnType(DUPLICATED_COLUMN, ColumnType.UNDEFINED);
-                    break;
-            }
-        }
-
-        TableWriter.Row r = writer.newRow(timestamp);
-        try {
-            for (int i = 0; i < entCount; i++) {
-                int colTypeAndIndex = ld.getColumnType(i);
-                int colType = Numbers.decodeLowShort(colTypeAndIndex);
-                int columnIndex = Numbers.decodeHighShort(colTypeAndIndex);
-
-                if (columnIndex < 0) {
-                    continue;
-                }
-
-                final LineTcpParser.ProtoEntity ent = parser.getEntity(i);
-                switch (ent.getType()) {
-                    case LineTcpParser.ENTITY_TYPE_TAG: {
-                        if (ColumnType.tagOf(colType) == ColumnType.SYMBOL) {
-                            r.putSymUtf8(columnIndex, ent.getValue(), parser.hasNonAsciiChars());
-                        } else {
-                            throw castError("tag", i, colType, ent.getName());
-                        }
-                        break;
-                    }
-                    case LineTcpParser.ENTITY_TYPE_INTEGER: {
-                        switch (ColumnType.tagOf(colType)) {
-                            case ColumnType.LONG:
-                                r.putLong(columnIndex, ent.getLongValue());
-                                break;
-                            case ColumnType.INT: {
-                                final long entityValue = ent.getLongValue();
-                                if (entityValue >= Integer.MIN_VALUE && entityValue <= Integer.MAX_VALUE) {
-                                    r.putInt(columnIndex, (int) entityValue);
-                                } else if (entityValue == Numbers.LONG_NaN) {
-                                    r.putInt(columnIndex, Numbers.INT_NaN);
-                                } else {
-                                    throw boundsError(entityValue, i, ColumnType.INT);
-                                }
-                                break;
-                            }
-                            case ColumnType.SHORT: {
-                                final long entityValue = ent.getLongValue();
-                                if (entityValue >= Short.MIN_VALUE && entityValue <= Short.MAX_VALUE) {
-                                    r.putShort(columnIndex, (short) entityValue);
-                                } else if (entityValue == Numbers.LONG_NaN) {
-                                    r.putShort(columnIndex, (short) 0);
-                                } else {
-                                    throw boundsError(entityValue, i, ColumnType.SHORT);
-                                }
-                                break;
-                            }
-                            case ColumnType.BYTE: {
-                                final long entityValue = ent.getLongValue();
-                                if (entityValue >= Byte.MIN_VALUE && entityValue <= Byte.MAX_VALUE) {
-                                    r.putByte(columnIndex, (byte) entityValue);
-                                } else if (entityValue == Numbers.LONG_NaN) {
-                                    r.putByte(columnIndex, (byte) 0);
-                                } else {
-                                    throw boundsError(entityValue, i, ColumnType.BYTE);
-                                }
-                                break;
-                            }
-                            case ColumnType.TIMESTAMP:
-                                r.putTimestamp(columnIndex, ent.getLongValue());
-                                break;
-                            case ColumnType.DATE:
-                                r.putDate(columnIndex, ent.getLongValue());
-                                break;
-                            case ColumnType.DOUBLE:
-                                r.putDouble(columnIndex, ent.getLongValue());
-                                break;
-                            case ColumnType.FLOAT:
-                                r.putFloat(columnIndex, ent.getLongValue());
-                                break;
-                            case ColumnType.SYMBOL:
-                                r.putSymUtf8(columnIndex, ent.getValue(), parser.hasNonAsciiChars());
-                                break;
-                            default:
-                                throw castError("integer", i, colType, ent.getName());
-                        }
-                        break;
-                    }
-                    case LineTcpParser.ENTITY_TYPE_FLOAT: {
-                        switch (ColumnType.tagOf(colType)) {
-                            case ColumnType.DOUBLE:
-                                r.putDouble(columnIndex, ent.getFloatValue());
-                                break;
-                            case ColumnType.FLOAT:
-                                r.putFloat(columnIndex, (float) ent.getFloatValue());
-                                break;
-                            case ColumnType.SYMBOL:
-                                r.putSymUtf8(columnIndex, ent.getValue(), parser.hasNonAsciiChars());
-                                break;
-                            default:
-                                throw castError("float", i, colType, ent.getName());
-                        }
-                        break;
-                    }
-                    case LineTcpParser.ENTITY_TYPE_STRING: {
-                        final int geoHashBits = ColumnType.getGeoHashBits(colType);
-                        final DirectUtf8Sequence entityValue = ent.getValue();
-                        if (geoHashBits == 0) { // not geohash
-                            switch (ColumnType.tagOf(colType)) {
-                                case ColumnType.IPv4:
-                                    try {
-                                        int value = Numbers.parseIPv4Nl(entityValue);
-                                        r.putInt(columnIndex, value);
-                                    } catch (NumericException e) {
-                                        throw castError("string", i, colType, ent.getName());
-                                    }
-                                    break;
-                                case ColumnType.STRING:
-                                    r.putStrUtf8(columnIndex, entityValue, parser.hasNonAsciiChars());
-                                    break;
-                                case ColumnType.CHAR:
-                                    if (entityValue.size() == 1 && entityValue.byteAt(0) > -1) {
-                                        r.putChar(columnIndex, (char) entityValue.byteAt(0));
-                                    } else if (stringToCharCastAllowed) {
-                                        int encodedResult = Utf8s.utf8CharDecode(entityValue.lo(), entityValue.hi());
-                                        if (Numbers.decodeLowShort(encodedResult) > 0) {
-                                            r.putChar(columnIndex, (char) Numbers.decodeHighShort(encodedResult));
-                                        } else {
-                                            throw castError("string", i, colType, ent.getName());
-                                        }
-                                    } else {
-                                        throw castError("string", i, colType, ent.getName());
-                                    }
-                                    break;
-                                case ColumnType.SYMBOL:
-                                    r.putSymUtf8(columnIndex, entityValue, parser.hasNonAsciiChars());
-                                    break;
-                                case ColumnType.UUID:
-                                    r.putUuidUtf8(columnIndex, entityValue);
-                                    break;
-                                default:
-                                    throw castError("string", i, colType, ent.getName());
-                            }
-                        } else {
-                            long geoHash;
-                            try {
-                                DirectUtf8Sequence value = ent.getValue();
-                                geoHash = GeoHashes.fromStringTruncatingNl(value.lo(), value.hi(), geoHashBits);
-                            } catch (NumericException e) {
-                                geoHash = GeoHashes.NULL;
-                            }
-                            r.putGeoHash(columnIndex, geoHash);
-                        }
-                        break;
-                    }
-                    case LineTcpParser.ENTITY_TYPE_LONG256: {
-                        switch (ColumnType.tagOf(colType)) {
-                            case ColumnType.LONG256:
-                                r.putLong256Utf8(columnIndex, ent.getValue());
-                                break;
-                            case ColumnType.SYMBOL:
-                                r.putSymUtf8(columnIndex, ent.getValue(), parser.hasNonAsciiChars());
-                                break;
-                            default:
-                                throw castError("long256", i, colType, ent.getName());
-                        }
-                        break;
-                    }
-                    case LineTcpParser.ENTITY_TYPE_BOOLEAN: {
-                        switch (ColumnType.tagOf(colType)) {
-                            case ColumnType.BOOLEAN:
-                                r.putBool(columnIndex, ent.getBooleanValue());
-                                break;
-                            case ColumnType.BYTE:
-                                r.putByte(columnIndex, (byte) (ent.getBooleanValue() ? 1 : 0));
-                                break;
-                            case ColumnType.SHORT:
-                                r.putShort(columnIndex, (short) (ent.getBooleanValue() ? 1 : 0));
-                                break;
-                            case ColumnType.INT:
-                                r.putInt(columnIndex, ent.getBooleanValue() ? 1 : 0);
-                                break;
-                            case ColumnType.LONG:
-                                r.putLong(columnIndex, ent.getBooleanValue() ? 1 : 0);
-                                break;
-                            case ColumnType.FLOAT:
-                                r.putFloat(columnIndex, ent.getBooleanValue() ? 1 : 0);
-                                break;
-                            case ColumnType.DOUBLE:
-                                r.putDouble(columnIndex, ent.getBooleanValue() ? 1 : 0);
-                                break;
-                            case ColumnType.SYMBOL:
-                                r.putSymUtf8(columnIndex, ent.getValue(), parser.hasNonAsciiChars());
-                                break;
-                            default:
-                                throw castError("boolean", i, colType, ent.getName());
-                        }
-                        break;
-                    }
-                    case LineTcpParser.ENTITY_TYPE_TIMESTAMP: {
-                        switch (ColumnType.tagOf(colType)) {
-                            case ColumnType.TIMESTAMP:
-                                long timestampValue = LineTcpTimestampAdapter.TS_COLUMN_INSTANCE.getMicros(ent.getLongValue(), ent.getUnit());
-                                r.putTimestamp(columnIndex, timestampValue);
-                                break;
-                            case ColumnType.DATE:
-                                long dateValue = LineTcpTimestampAdapter.TS_COLUMN_INSTANCE.getMicros(ent.getLongValue(), ent.getUnit());
-                                r.putTimestamp(columnIndex, dateValue / 1000);
-                                break;
-                            case ColumnType.SYMBOL:
-                                r.putSymUtf8(columnIndex, ent.getValue(), parser.hasNonAsciiChars());
-                                break;
-                            default:
-                                throw castError("timestamp", i, colType, ent.getName());
-                        }
-                        break;
-                    }
-                    // parser would reject this condition based on config
-                    case LineTcpParser.ENTITY_TYPE_SYMBOL: {
-                        if (ColumnType.tagOf(colType) == ColumnType.SYMBOL) {
-                            r.putSymUtf8(columnIndex, ent.getValue(), parser.hasNonAsciiChars());
-                        } else {
-                            throw castError("symbol", i, colType, ent.getName());
-                        }
-                        break;
-                    }
-                    default:
-                        break; // unsupported types are ignored
-                }
-            }
-            r.append();
-            tud.commitIfMaxUncommittedRowsCountReached();
-        } catch (CommitFailedException commitFailedException) {
-            throw commitFailedException;
-        } catch (CairoException th) {
-            LOG.error().$("could not write line protocol measurement [tableName=").$(tud.getTableNameUtf16()).$(", message=").$(th.getFlyweightMessage()).I$();
-            if (r != null) {
-                r.cancel();
-            }
-            throw th;
-        } catch (Throwable th) {
-            LOG.error().$("could not write line protocol measurement [tableName=").$(tud.getTableNameUtf16()).$(", message=").$(th.getMessage()).$(th).I$();
-            if (r != null) {
-                r.cancel();
-            }
-            throw th;
-        }
     }
 
     private void closeLocals(LowerCaseCharSequenceObjHashMap<TableUpdateDetails> tudUtf16) {
@@ -763,15 +432,15 @@ public class LineTcpMeasurementScheduler implements Closeable {
                     TableToken tableToken = engine.getTableTokenIfExists(tableNameUtf16);
                     if (engine.isWalTable(tableToken)) {
                         // create WAL-oriented TUD and DON'T add it to the global cache
-                        tud = new TableUpdateDetails(
-                                configuration,
+                        tud = new WalTableUpdateDetails(
                                 engine,
                                 securityContext,
                                 engine.getWalWriter(tableToken),
-                                -1,
-                                netIoJobs,
                                 defaultColumnTypes,
-                                Utf8String.newInstance(tableNameUtf8)
+                                Utf8String.newInstance(tableNameUtf8),
+                                netIoJob.getSymbolCachePool(),
+                                configuration.getCommitInterval(),
+                                true
                         );
                         ctx.addTableUpdateDetails(Utf8String.newInstance(tableNameUtf8), tud);
                         return tud;

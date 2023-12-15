@@ -1005,7 +1005,7 @@ public class MemoryPARWImplTest {
 
     @Test
     public void testSmallEven() {
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(2, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(4, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             MemoryCARWImplTest.assertStrings(mem);
         }
     }

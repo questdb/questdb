@@ -46,6 +46,7 @@ public class TableUpdateDetails implements Closeable {
     private static final Log LOG = LogFactory.getLog(TableUpdateDetails.class);
     private static final DirectUtf8SymbolLookup NOT_FOUND_LOOKUP = value -> SymbolTable.VALUE_NOT_FOUND;
     private final long commitInterval;
+    private final boolean commitOnClose;
     private final DefaultColumnTypes defaultColumnTypes;
     private final int defaultMaxUncommittedRows;
     private final CairoEngine engine;
@@ -57,15 +58,16 @@ public class TableUpdateDetails implements Closeable {
     private final TableToken tableToken;
     private final int timestampIndex;
     private final long writerTickRowsCountMod;
+    protected TableWriterAPI writerAPI;
     private boolean assignedToJob = false;
     // Number of rows processed since the last reshuffle, this is an estimate because it is incremented by
     // multiple threads without synchronisation
     private long eventsProcessedSinceReshuffle = 0;
+    private boolean isDropped;
     private long lastMeasurementMillis = Long.MAX_VALUE;
     private MetadataService metadataService;
     private int networkIOOwnerCount = 0;
     private long nextCommitTime;
-    private TableWriterAPI writerAPI;
     private volatile boolean writerInError;
     private int writerThreadId;
 
@@ -99,11 +101,46 @@ public class TableUpdateDetails implements Closeable {
         for (int i = 0; i < n; i++) {
             //noinspection resource
             this.localDetailsArray[i] = new ThreadLocalDetails(
-                    configuration,
-                    netIoJobs[i].getUnusedSymbolCaches(),
+                    netIoJobs[i].getSymbolCachePool(),
                     writer.getMetadata().getColumnCount()
             );
         }
+        this.tableNameUtf8 = tableNameUtf8;
+        this.commitOnClose = true;
+    }
+
+    protected TableUpdateDetails(
+            CairoEngine engine,
+            @Nullable SecurityContext ownSecurityContext,
+            TableWriterAPI writer,
+            int writerThreadId,
+            DefaultColumnTypes defaultColumnTypes,
+            Utf8String tableNameUtf8,
+            Pool<SymbolCache> symbolCachePool,
+            long commitInterval,
+            boolean commitOnClose
+    ) {
+        this.writerThreadId = writerThreadId;
+        this.engine = engine;
+        this.ownSecurityContext = ownSecurityContext;
+        this.defaultColumnTypes = defaultColumnTypes;
+        this.commitOnClose = commitOnClose;
+        final CairoConfiguration cairoConfiguration = engine.getConfiguration();
+        this.millisecondClock = cairoConfiguration.getMillisecondClock();
+        this.writerTickRowsCountMod = cairoConfiguration.getWriterTickRowsCountMod();
+        this.defaultMaxUncommittedRows = cairoConfiguration.getMaxUncommittedRows();
+        this.writerAPI = writer;
+        this.timestampIndex = writer.getMetadata().getTimestampIndex();
+        this.tableToken = writer.getTableToken();
+        this.metadataService = writer.supportsMultipleWriters() ? null : (MetadataService) writer;
+        this.commitInterval = commitInterval;
+        this.nextCommitTime = millisecondClock.getTicks() + this.commitInterval;
+        this.localDetailsArray = new ThreadLocalDetails[]{
+                new ThreadLocalDetails(
+                        symbolCachePool,
+                        writer.getMetadata().getColumnCount()
+                )
+        };
         this.tableNameUtf8 = tableNameUtf8;
     }
 
@@ -138,8 +175,10 @@ public class TableUpdateDetails implements Closeable {
             closeLocals();
             if (writerAPI != null) {
                 try {
-                    authorizeCommit();
-                    writerAPI.commit();
+                    if (commitOnClose) {
+                        authorizeCommit();
+                        writerAPI.commit();
+                    }
                 } catch (CairoException ex) {
                     if (!ex.isTableDropped()) {
                         LOG.error().$("cannot commit writer transaction, rolling back before releasing it [table=").$(tableToken).$(",ex=").$((Throwable) ex).I$();
@@ -220,6 +259,10 @@ public class TableUpdateDetails implements Closeable {
         return assignedToJob;
     }
 
+    public boolean isDropped() {
+        return this.isDropped;
+    }
+
     public boolean isWal() {
         return writerThreadId == -1;
     }
@@ -240,8 +283,16 @@ public class TableUpdateDetails implements Closeable {
         }
     }
 
+    public void rollback() {
+        writerAPI.rollback();
+    }
+
     public void setAssignedToJob(boolean assignedToJob) {
         this.assignedToJob = assignedToJob;
+    }
+
+    public void setIsDropped() {
+        this.isDropped = true;
     }
 
     public void setWriterInError() {
@@ -373,13 +424,12 @@ public class TableUpdateDetails implements Closeable {
         // indexed by colIdx + 1, first value accounts for spurious, new cols (index -1)
         private final IntList columnTypeMeta = new IntList();
         private final IntList columnTypes = new IntList();
-        private final LineTcpReceiverConfiguration configuration;
         private final Path path = new Path();
         // tracking of processed columns by their index, duplicates will be ignored
         private final BoolList processedCols = new BoolList();
         private final ObjList<SymbolCache> symbolCacheByColumnIndex = new ObjList<>();
+        private final Pool<SymbolCache> symbolCachePool;
         private final StringSink tempSink = new StringSink();
-        private final ObjList<SymbolCache> unusedSymbolCaches;
         private boolean clean = true;
         private String colNameUtf16;
         private Utf8String colNameUtf8;
@@ -389,15 +439,13 @@ public class TableUpdateDetails implements Closeable {
         private TxReader txReader;
 
         ThreadLocalDetails(
-                LineTcpReceiverConfiguration lineTcpReceiverConfiguration,
-                ObjList<SymbolCache> unusedSymbolCaches,
+                Pool<SymbolCache> symbolCachePool,
                 int columnCount
         ) {
-            this.configuration = lineTcpReceiverConfiguration;
             // symbol caches are passed from the outside
             // to provide global lifecycle management for when ThreadLocalDetails cease to exist
             // the cache continue to live
-            this.unusedSymbolCaches = unusedSymbolCaches;
+            this.symbolCachePool = symbolCachePool;
             this.columnCount = columnCount;
             columnTypeMeta.add(0);
         }
@@ -421,14 +469,7 @@ public class TableUpdateDetails implements Closeable {
                 }
                 final CairoConfiguration cairoConfiguration = engine.getConfiguration();
                 path.of(cairoConfiguration.getRoot()).concat(tableToken);
-                SymbolCache symCache;
-                final int lastUnusedSymbolCacheIndex = unusedSymbolCaches.size() - 1;
-                if (lastUnusedSymbolCacheIndex > -1) {
-                    symCache = unusedSymbolCaches.get(lastUnusedSymbolCacheIndex);
-                    unusedSymbolCaches.remove(lastUnusedSymbolCacheIndex);
-                } else {
-                    symCache = new SymbolCache(configuration);
-                }
+                SymbolCache symCache = symbolCachePool.pop();
 
                 if (this.clean) {
                     if (this.txReader == null) {
@@ -544,7 +585,7 @@ public class TableUpdateDetails implements Closeable {
                 SymbolCache symCache = symbolCacheByColumnIndex.getQuick(n);
                 if (null != symCache) {
                     symCache.close();
-                    unusedSymbolCaches.add(symCache);
+                    symbolCachePool.push(symCache);
                 }
             }
             symbolCacheByColumnIndex.clear();
