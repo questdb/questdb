@@ -602,12 +602,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw SqlException.$(lexer.lastTokenPosition(), expectedTokenDescription).put(" expected");
             }
         } catch (CairoException e) {
-            if (e.isAuthorizationError()) {
-                LOG.info().$("could not alter table [table=").$(tableToken.getTableName()).$(", ex=").$(e.getFlyweightMessage()).$();
-            } else {
-                LOG.info().$("could not alter table [table=").$(tableToken.getTableName()).$(", ex=").$((Throwable) e).$();
+            LOG.info().$("could not alter table [table=").$(tableToken.getTableName())
+                    .$(", errno=").$(e.getErrno())
+                    .$(", ex=").$(e.getFlyweightMessage()).$();
+            if (e.getPosition() == 0) {
+                e.position(lexer.lastTokenPosition());
             }
-            e.position(lexer.lastTokenPosition());
             throw e;
         }
     }
@@ -1047,7 +1047,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             if (reader != null) {
                                 int affected = filterPartitions(function, functionPosition, reader, alterOperationBuilder);
                                 if (affected == 0) {
-                                    throw SqlException.$(functionPosition, "no partitions matched WHERE clause");
+                                    throw CairoException.partitionManipulationRecoverable().position(functionPosition)
+                                            .put("no partitions matched WHERE clause");
                                 }
                             }
                             compiledQuery.ofAlter(this.alterOperationBuilder.build());

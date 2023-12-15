@@ -34,6 +34,7 @@ import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.log.LogRecord;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.Job;
 import io.questdb.std.*;
@@ -448,7 +449,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     .put(", position=").put(ex.getPosition())
                     .put(", error=").put(ex.getFlyweightMessage());
         } catch (CairoException e) {
-            LOG.error().$("error applying SQL to wal table [table=")
+            LogRecord log = !e.isWALTolerable() ? LOG.error() : LOG.info();
+            log.$("error applying SQL to wal table [table=")
                     .utf8(tableWriter.getTableToken().getTableName()).$(", sql=").$(sql)
                     .$(", error=").$(e.getFlyweightMessage())
                     .$(", errno=").$(e.getErrno()).I$();
@@ -456,6 +458,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             if (!e.isWALTolerable()) {
                 throw e;
             } else {
+                // Mark as applied.
+                tableWriter.setSeqTxn(seqTxn);
                 return -1;
             }
         }
