@@ -273,12 +273,16 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         CairoException ex = tlException.get();
         // This is to have correct stack trace in local debugging with -ea option
         assert (ex = new CairoException()) != null;
-        ex.message.clear();
-        ex.errno = errno;
-        ex.cacheable = false;
-        ex.interruption = false;
-        ex.authorizationError = false;
-        ex.entityDisabled = false;
+        ex.clear(errno);
         return ex;
+    }
+
+    protected void clear(int errno) {
+        message.clear();
+        this.errno = errno;
+        cacheable = false;
+        interruption = false;
+        authorizationError = false;
+        entityDisabled = false;
     }
 }

@@ -52,7 +52,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
     public void testConvertLoop2() throws Exception {
         final String tableName = testName.getMethodName();
         TestUtils.assertMemoryLeak(() -> {
-            try (final ServerMain questdb = new TestServerMain(getServerMainArgs())) {
+            try (final ServerMain questdb = TestServerMain.createWithManualWalRun(getServerMainArgs())) {
                 questdb.start();
                 createTable(tableName, "WAL");
 
@@ -72,7 +72,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
             validateShutdown(tableName);
 
             // restart
-            try (final ServerMain questdb = new TestServerMain(getServerMainArgs())) {
+            try (final ServerMain questdb = TestServerMain.createWithManualWalRun(getServerMainArgs())) {
                 questdb.start();
 
                 final CairoEngine engine = questdb.getEngine();
@@ -86,7 +86,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
             validateShutdown(tableName);
 
             // restart
-            try (final ServerMain questdb = new TestServerMain(getServerMainArgs())) {
+            try (final ServerMain questdb = TestServerMain.createWithManualWalRun(getServerMainArgs())) {
                 questdb.start();
 
                 final CairoEngine engine = questdb.getEngine();
@@ -110,7 +110,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
     public void testNonPartitionedToWal() throws Exception {
         final String tableName = testName.getMethodName();
         TestUtils.assertMemoryLeak(() -> {
-            try (final ServerMain questdb = new TestServerMain(getServerMainArgs())) {
+            try (final ServerMain questdb = TestServerMain.createWithManualWalRun(getServerMainArgs())) {
                 questdb.start();
                 createNonPartitionedTable(tableName);
                 insertInto(tableName);
@@ -138,7 +138,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
     public void testNonWalToWal() throws Exception {
         final String tableName = testName.getMethodName();
         TestUtils.assertMemoryLeak(() -> {
-            try (final ServerMain questdb = new TestServerMain(getServerMainArgs())) {
+            try (final ServerMain questdb = TestServerMain.createWithManualWalRun(getServerMainArgs())) {
                 questdb.start();
                 createTable(tableName, "BYPASS WAL");
                 insertInto(tableName);
@@ -163,7 +163,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
             validateShutdown(tableName);
 
             // restart
-            try (final ServerMain questdb = new TestServerMain(getServerMainArgs())) {
+            try (final ServerMain questdb = TestServerMain.createWithManualWalRun(getServerMainArgs())) {
                 questdb.start();
 
                 final CairoEngine engine = questdb.getEngine();
@@ -184,7 +184,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
     public void testNonWalToWalWithDropTable() throws Exception {
         final String tableName = testName.getMethodName();
         TestUtils.assertMemoryLeak(() -> {
-            try (final ServerMain questdb = new TestServerMain(getServerMainArgs())) {
+            try (final ServerMain questdb = TestServerMain.createWithManualWalRun(getServerMainArgs())) {
                 questdb.start();
                 createTable(tableName, "BYPASS WAL");
                 insertInto(tableName);
@@ -212,7 +212,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
             validateShutdown(tableName);
 
             // restart
-            try (final ServerMain questdb = new TestServerMain(getServerMainArgs())) {
+            try (final ServerMain questdb = TestServerMain.createWithManualWalRun(getServerMainArgs())) {
                 questdb.start();
 
                 final CairoEngine engine = questdb.getEngine();
@@ -229,7 +229,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
     public void testNonWalToWalWithTxn() throws Exception {
         final String tableName = testName.getMethodName();
         TestUtils.assertMemoryLeak(() -> {
-            try (final ServerMain questdb = new TestServerMain(getServerMainArgs())) {
+            try (final ServerMain questdb = TestServerMain.createWithManualWalRun(getServerMainArgs())) {
                 questdb.start();
                 createTable(tableName, "BYPASS WAL");
 
@@ -255,7 +255,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
             validateShutdown(tableName);
 
             // restart
-            try (final ServerMain questdb = new TestServerMain(getServerMainArgs())) {
+            try (final ServerMain questdb = TestServerMain.createWithManualWalRun(getServerMainArgs())) {
                 questdb.start();
 
                 insertInto(tableName);
@@ -277,7 +277,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
     public void testSetType() throws Exception {
         final String tableName = testName.getMethodName();
         TestUtils.assertMemoryLeak(() -> {
-            try (final ServerMain questdb = new TestServerMain(getServerMainArgs())) {
+            try (final ServerMain questdb = TestServerMain.createWithManualWalRun(getServerMainArgs())) {
                 questdb.start();
                 createTable(tableName, "BYPASS WAL");
                 insertInto(tableName);
@@ -302,7 +302,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
             validateShutdown(tableName);
 
             // restart
-            try (final ServerMain questdb = new TestServerMain(getServerMainArgs())) {
+            try (final ServerMain questdb = TestServerMain.createWithManualWalRun(getServerMainArgs())) {
                 questdb.start();
 
                 final CairoEngine engine = questdb.getEngine();
@@ -333,7 +333,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
             validateShutdown(tableName);
 
             // restart
-            try (final ServerMain questdb = new TestServerMain(getServerMainArgs())) {
+            try (final ServerMain questdb = TestServerMain.createWithManualWalRun(getServerMainArgs())) {
                 questdb.start();
 
                 final CairoEngine engine = questdb.getEngine();
@@ -356,7 +356,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
             validateShutdown(tableName);
 
             // restart
-            try (final ServerMain questdb = new TestServerMain(getServerMainArgs())) {
+            try (final ServerMain questdb = TestServerMain.createWithManualWalRun(getServerMainArgs())) {
                 questdb.start();
 
                 final CairoEngine engine = questdb.getEngine();
@@ -375,7 +375,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
             validateShutdown(tableName);
 
             // restart
-            try (final ServerMain questdb = new TestServerMain(getServerMainArgs())) {
+            try (final ServerMain questdb = TestServerMain.createWithManualWalRun(getServerMainArgs())) {
                 questdb.start();
 
                 final CairoEngine engine = questdb.getEngine();
@@ -404,7 +404,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
     public void testWalToNonWal() throws Exception {
         final String tableName = testName.getMethodName();
         TestUtils.assertMemoryLeak(() -> {
-            try (final ServerMain questdb = new TestServerMain(getServerMainArgs())) {
+            try (final ServerMain questdb = TestServerMain.createWithManualWalRun(getServerMainArgs())) {
                 questdb.start();
                 createTable(tableName, "WAL");
 
@@ -433,7 +433,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
             validateShutdown(tableName);
 
             // restart
-            try (final ServerMain questdb = new TestServerMain(getServerMainArgs())) {
+            try (final ServerMain questdb = TestServerMain.createWithManualWalRun(getServerMainArgs())) {
                 questdb.start();
 
                 final CairoEngine engine = questdb.getEngine();
@@ -452,7 +452,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
     public void testWalToNonWalWithDropTable() throws Exception {
         final String tableName = testName.getMethodName();
         TestUtils.assertMemoryLeak(() -> {
-            try (final ServerMain questdb = new TestServerMain(getServerMainArgs())) {
+            try (final ServerMain questdb = TestServerMain.createWithManualWalRun(getServerMainArgs())) {
                 questdb.start();
                 createTable(tableName, "WAL");
 
@@ -485,7 +485,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
             validateShutdown(tableName);
 
             // restart
-            try (final ServerMain questdb = new TestServerMain(getServerMainArgs())) {
+            try (final ServerMain questdb = TestServerMain.createWithManualWalRun(getServerMainArgs())) {
                 questdb.start();
 
                 final CairoEngine engine = questdb.getEngine();

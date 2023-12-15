@@ -35,6 +35,7 @@ import io.questdb.cutlass.auth.AuthenticatorException;
 import io.questdb.cutlass.line.tcp.LineTcpParser.ParseResult;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.log.LogRecord;
 import io.questdb.network.IOContext;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.NetworkFacade;
@@ -396,7 +397,8 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                     }
                 }
             } catch (CairoException ex) {
-                LOG.error()
+                LogRecord error = ex.isCritical() ? LOG.critical() : LOG.error();
+                error
                         .$('[').$(getFd()).$("] could not process line data [table=").$(parser.getMeasurementName())
                         .$(", msg=").$(ex.getFlyweightMessage())
                         .$(", errno=").$(ex.getErrno())
