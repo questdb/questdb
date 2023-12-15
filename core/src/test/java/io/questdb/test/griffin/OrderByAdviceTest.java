@@ -184,7 +184,7 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                         "        timestamp_sequence(172800000000, 360000000) ts \n" +
                         "    from long_sequence(1000)) timestamp (ts)",
                 "column\n" +
-                        "0.48510032025339755\n",
+                        "0.48510032025339733\n",
                 false,
                 true,
                 false

@@ -44,11 +44,4 @@ public final class LastUuidGroupByFunction extends FirstUuidGroupByFunction {
     public String getName() {
         return "last";
     }
-
-    @Override
-    public void merge(MapValue destValue, MapValue srcValue) {
-        long srcLastLo = srcValue.getLong128Lo(valueIndex);
-        long srcLastHi = srcValue.getLong128Hi(valueIndex);
-        destValue.putLong128(valueIndex, srcLastLo, srcLastHi);
-    }
 }

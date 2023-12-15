@@ -31,15 +31,12 @@ import io.questdb.std.Unsafe;
 
 final class FastMapValue implements MapValue {
     private final Long256Impl long256 = new Long256Impl();
+    private final int[] valueOffsets;
     private long limit;
     private boolean newValue;
     private FastMapRecord record; // double-linked
     private long startAddress; // key-value pair start address
     private long valueAddress;
-    private int[] valueOffsets;
-
-    FastMapValue() {
-    }
 
     public FastMapValue(int[] valueOffsets) {
         this.valueOffsets = valueOffsets;
@@ -303,9 +300,5 @@ final class FastMapValue implements MapValue {
         this.limit = limit;
         this.newValue = newValue;
         return this;
-    }
-
-    void setValueOffsets(int[] valueOffsets) {
-        this.valueOffsets = valueOffsets;
     }
 }

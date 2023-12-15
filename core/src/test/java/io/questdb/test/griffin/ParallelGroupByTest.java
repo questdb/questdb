@@ -266,7 +266,8 @@ public class ParallelGroupByTest extends AbstractCairoTest {
     @Test
     public void testParallelFunctionKeyGroupByMultipleKeys() throws Exception {
         testParallelSymbolKeyGroupBy(
-                "SELECT vwap(price, quantity), day_of_week(ts) day, sum(colTop), concat(key, 'abc')::symbol key FROM tab ORDER BY day, key",
+                "SELECT vwap(price, quantity), day_of_week(ts) day, sum(colTop), concat(key, 'abc')::symbol key " +
+                        "FROM tab ORDER BY day, key",
                 "vwap\tday\tsum\tkey\n" +
                         "2848.23852863102\t1\t263700.0\tk0abc\n" +
                         "2848.94253657797\t1\t263820.0\tk1abc\n" +
@@ -365,13 +366,13 @@ public class ParallelGroupByTest extends AbstractCairoTest {
     @Test
     public void testParallelMultiKeyGroupBy() throws Exception {
         testParallelMultiKeyGroupBy(
-                "SELECT key1, key2, avg(value), sum(colTop) FROM tab",
+                "SELECT key1, key2, avg(value), sum(colTop) FROM tab ORDER BY key1, key2",
                 "key1\tkey2\tavg\tsum\n" +
+                        "k0\tk0\t2027.5\t1642000.0\n" +
                         "k1\tk1\t2023.5\t1638800.0\n" +
                         "k2\tk2\t2024.5\t1639600.0\n" +
                         "k3\tk3\t2025.5\t1640400.0\n" +
-                        "k4\tk4\t2026.5\t1641200.0\n" +
-                        "k0\tk0\t2027.5\t1642000.0\n"
+                        "k4\tk4\t2026.5\t1641200.0\n"
         );
     }
 
@@ -380,37 +381,37 @@ public class ParallelGroupByTest extends AbstractCairoTest {
         testParallelMultiKeyGroupBy(
                 "SELECT key1, key2, avg + sum from (" +
                         "  SELECT key1, key2, avg(value), sum(colTop) FROM tab" +
-                        ")",
+                        ") ORDER BY key1, key2",
                 "key1\tkey2\tcolumn\n" +
+                        "k0\tk0\t1644027.5\n" +
                         "k1\tk1\t1640823.5\n" +
                         "k2\tk2\t1641624.5\n" +
                         "k3\tk3\t1642425.5\n" +
-                        "k4\tk4\t1643226.5\n" +
-                        "k0\tk0\t1644027.5\n"
+                        "k4\tk4\t1643226.5\n"
         );
     }
 
     @Test
     public void testParallelMultiKeyGroupByWithFilter() throws Exception {
         testParallelMultiKeyGroupBy(
-                "SELECT key1, key2, avg(value), sum(colTop) FROM tab WHERE value < 80",
+                "SELECT key1, key2, avg(value), sum(colTop) FROM tab WHERE value < 80 ORDER BY key1, key2",
                 "key1\tkey2\tavg\tsum\n" +
+                        "k0\tk0\t46.25\t325.0\n" +
                         "k1\tk1\t45.31818181818182\t381.0\n" +
                         "k2\tk2\t46.31818181818182\t387.0\n" +
                         "k3\tk3\t47.31818181818182\t393.0\n" +
-                        "k4\tk4\t48.31818181818182\t399.0\n" +
-                        "k0\tk0\t46.25\t325.0\n"
+                        "k4\tk4\t48.31818181818182\t399.0\n"
         );
     }
 
     @Test
     public void testParallelMultiKeyGroupByWithLimit() throws Exception {
         testParallelMultiKeyGroupBy(
-                "SELECT key1, key2, avg(value), sum(colTop) FROM tab LIMIT 3",
+                "SELECT key1, key2, avg(value), sum(colTop) FROM tab ORDER BY key1, key2 LIMIT 3",
                 "key1\tkey2\tavg\tsum\n" +
+                        "k0\tk0\t2027.5\t1642000.0\n" +
                         "k1\tk1\t2023.5\t1638800.0\n" +
-                        "k2\tk2\t2024.5\t1639600.0\n" +
-                        "k3\tk3\t2025.5\t1640400.0\n",
+                        "k2\tk2\t2024.5\t1639600.0\n",
                 "SELECT key1, key2, avg(value), sum(colTop) FROM tab LIMIT -3",
                 "key1\tkey2\tavg\tsum\n" +
                         "k3\tk3\t2025.5\t1640400.0\n" +
@@ -423,13 +424,13 @@ public class ParallelGroupByTest extends AbstractCairoTest {
     public void testParallelMultiKeyGroupByWithNestedFilter() throws Exception {
         testParallelMultiKeyGroupBy(
                 "SELECT avg(v), sum(ct), k1, k2 " +
-                        "FROM (SELECT value v, colTop ct, key2 k2, key1 k1 FROM tab WHERE value < 80)",
+                        "FROM (SELECT value v, colTop ct, key2 k2, key1 k1 FROM tab WHERE value < 80) ORDER BY k1, k2",
                 "avg\tsum\tk1\tk2\n" +
+                        "46.25\t325.0\tk0\tk0\n" +
                         "45.31818181818182\t381.0\tk1\tk1\n" +
                         "46.31818181818182\t387.0\tk2\tk2\n" +
                         "47.31818181818182\t393.0\tk3\tk3\n" +
-                        "48.31818181818182\t399.0\tk4\tk4\n" +
-                        "46.25\t325.0\tk0\tk0\n"
+                        "48.31818181818182\t399.0\tk4\tk4\n"
         );
     }
 
@@ -558,7 +559,7 @@ public class ParallelGroupByTest extends AbstractCairoTest {
     @Test
     public void testParallelOperationKeyGroupBy() throws Exception {
         testParallelSymbolKeyGroupBy(
-                "SELECT ((key is not null) and (colTop is not null)) key, sum(colTop) FROM tab",
+                "SELECT ((key is not null) and (colTop is not null)) key, sum(colTop) FROM tab ORDER BY key",
                 "key\tsum\n" +
                         "false\tNaN\n" +
                         "true\t8202000.0\n"
@@ -571,13 +572,13 @@ public class ParallelGroupByTest extends AbstractCairoTest {
         final int numOfIterations = 50;
         final String query = "SELECT key, avg + sum from (" +
                 "  SELECT key, avg(value), sum(colTop) FROM tab" +
-                ")";
+                ") ORDER BY key";
         final String expected = "key\tcolumn\n" +
+                "k0\t1644027.5\n" +
                 "k1\t1640823.5\n" +
                 "k2\t1641624.5\n" +
                 "k3\t1642425.5\n" +
-                "k4\t1643226.5\n" +
-                "k0\t1644027.5\n";
+                "k4\t1643226.5\n";
 
         final ConcurrentHashMap<Integer, Throwable> errors = new ConcurrentHashMap<>();
         final WorkerPool pool = new WorkerPool((() -> 4));
@@ -642,7 +643,8 @@ public class ParallelGroupByTest extends AbstractCairoTest {
     public void testParallelSingleKeyGroupByFaultTolerance() throws Exception {
         testParallelGroupByFaultTolerance(
                 "select case when quantity > 100 then 'a lot' else 'a few' end, vwap(price, quantity) " +
-                        "from tab where npe();"
+                        "from tab " +
+                        "where npe();"
         );
     }
 
@@ -651,13 +653,13 @@ public class ParallelGroupByTest extends AbstractCairoTest {
         testParallelStringKeyGroupBy(
                 "SELECT key, avg + sum from (" +
                         "SELECT key, avg(value), sum(colTop) FROM tab" +
-                        ")",
+                        ") ORDER BY key",
                 "key\tcolumn\n" +
+                        "k0\t1644027.5\n" +
                         "k1\t1640823.5\n" +
                         "k2\t1641624.5\n" +
                         "k3\t1642425.5\n" +
-                        "k4\t1643226.5\n" +
-                        "k0\t1644027.5\n"
+                        "k4\t1643226.5\n"
         );
     }
 
@@ -669,42 +671,42 @@ public class ParallelGroupByTest extends AbstractCairoTest {
     @Test
     public void testParallelSingleKeyGroupByWithFilter() throws Exception {
         testParallelStringKeyGroupBy(
-                "SELECT key, avg(value), sum(colTop), count() FROM tab WHERE value < 80",
+                "SELECT key, avg(value), sum(colTop), count() FROM tab WHERE value < 80 ORDER BY key",
                 "key\tavg\tsum\tcount\n" +
+                        "k0\t46.25\t325.0\t20\n" +
                         "k1\t45.31818181818182\t381.0\t22\n" +
                         "k2\t46.31818181818182\t387.0\t22\n" +
                         "k3\t47.31818181818182\t393.0\t22\n" +
-                        "k4\t48.31818181818182\t399.0\t22\n" +
-                        "k0\t46.25\t325.0\t20\n"
+                        "k4\t48.31818181818182\t399.0\t22\n"
         );
     }
 
     @Test
     public void testParallelStringKeyGroupBy() throws Exception {
         testParallelStringKeyGroupBy(
-                "SELECT key, avg(value), sum(colTop), count() FROM tab",
+                "SELECT key, avg(value), sum(colTop), count() FROM tab ORDER BY key",
                 "key\tavg\tsum\tcount\n" +
+                        "k0\t2027.5\t1642000.0\t1600\n" +
                         "k1\t2023.5\t1638800.0\t1600\n" +
                         "k2\t2024.5\t1639600.0\t1600\n" +
                         "k3\t2025.5\t1640400.0\t1600\n" +
-                        "k4\t2026.5\t1641200.0\t1600\n" +
-                        "k0\t2027.5\t1642000.0\t1600\n"
+                        "k4\t2026.5\t1641200.0\t1600\n"
         );
     }
 
     @Test
     public void testParallelStringKeyGroupByWithLimit() throws Exception {
         testParallelStringKeyGroupBy(
-                "SELECT key, avg(value), sum(colTop) FROM tab LIMIT 3",
+                "SELECT key, avg(value), sum(colTop) FROM tab ORDER BY key LIMIT 3",
                 "key\tavg\tsum\n" +
+                        "k0\t2027.5\t1642000.0\n" +
                         "k1\t2023.5\t1638800.0\n" +
-                        "k2\t2024.5\t1639600.0\n" +
-                        "k3\t2025.5\t1640400.0\n",
-                "SELECT key, avg(value), sum(colTop) FROM tab LIMIT -3",
+                        "k2\t2024.5\t1639600.0\n",
+                "SELECT key, avg(value), sum(colTop) FROM tab ORDER BY key LIMIT -3",
                 "key\tavg\tsum\n" +
+                        "k2\t2024.5\t1639600.0\n" +
                         "k3\t2025.5\t1640400.0\n" +
-                        "k4\t2026.5\t1641200.0\n" +
-                        "k0\t2027.5\t1642000.0\n"
+                        "k4\t2026.5\t1641200.0\n"
         );
     }
 
@@ -712,33 +714,34 @@ public class ParallelGroupByTest extends AbstractCairoTest {
     public void testParallelStringKeyGroupByWithNestedFilter() throws Exception {
         testParallelStringKeyGroupBy(
                 "SELECT avg(v), k, sum(ct) " +
-                        "FROM (SELECT colTop ct, value v, key k FROM tab WHERE value < 80)",
+                        "FROM (SELECT colTop ct, value v, key k FROM tab WHERE value < 80) ORDER BY k",
                 "avg\tk\tsum\n" +
+                        "46.25\tk0\t325.0\n" +
                         "45.31818181818182\tk1\t381.0\n" +
                         "46.31818181818182\tk2\t387.0\n" +
                         "47.31818181818182\tk3\t393.0\n" +
-                        "48.31818181818182\tk4\t399.0\n" +
-                        "46.25\tk0\t325.0\n"
+                        "48.31818181818182\tk4\t399.0\n"
         );
     }
 
     @Test
     public void testParallelSymbolKeyGroupBy() throws Exception {
         testParallelSymbolKeyGroupBy(
-                "SELECT key, vwap(price, quantity), sum(colTop) FROM tab",
+                "SELECT key, vwap(price, quantity), sum(colTop) FROM tab ORDER BY key",
                 "key\tvwap\tsum\n" +
+                        "k0\t2685.431565967941\t1642000.0\n" +
                         "k1\t2682.7321472695826\t1638800.0\n" +
                         "k2\t2683.4065201284266\t1639600.0\n" +
                         "k3\t2684.081214514935\t1640400.0\n" +
-                        "k4\t2684.756229953121\t1641200.0\n" +
-                        "k0\t2685.431565967941\t1642000.0\n"
+                        "k4\t2684.756229953121\t1641200.0\n"
         );
     }
 
     @Test
     public void testParallelSymbolKeyGroupByFilterWithSubQuery() throws Exception {
         testParallelSymbolKeyGroupBy(
-                "SELECT key, vwap(price, quantity), sum(colTop) FROM tab where key in (select key from tab where key in ('k1','k3'))",
+                "SELECT key, vwap(price, quantity), sum(colTop) FROM tab " +
+                        "where key in (select key from tab where key in ('k1','k3')) ORDER BY key",
                 "key\tvwap\tsum\n" +
                         "k1\t2682.7321472695826\t1638800.0\n" +
                         "k3\t2684.081214514935\t1640400.0\n"
@@ -750,24 +753,24 @@ public class ParallelGroupByTest extends AbstractCairoTest {
         testParallelSymbolKeyGroupBy(
                 "SELECT key, vwap + sum from (" +
                         "SELECT key, vwap(price, quantity), sum(colTop) FROM tab" +
-                        ")",
+                        ") ORDER BY key",
                 "key\tcolumn\n" +
+                        "k0\t1644685.4315659679\n" +
                         "k1\t1641482.7321472696\n" +
                         "k2\t1642283.4065201285\n" +
                         "k3\t1643084.081214515\n" +
-                        "k4\t1643884.7562299531\n" +
-                        "k0\t1644685.4315659679\n"
+                        "k4\t1643884.7562299531\n"
         );
     }
 
     @Test
     public void testParallelSymbolKeyGroupByWithLimit() throws Exception {
         testParallelSymbolKeyGroupBy(
-                "SELECT key, vwap(price, quantity), sum(colTop) FROM tab LIMIT 3",
+                "SELECT key, vwap(price, quantity), sum(colTop) FROM tab ORDER BY key LIMIT 3",
                 "key\tvwap\tsum\n" +
+                        "k0\t2685.431565967941\t1642000.0\n" +
                         "k1\t2682.7321472695826\t1638800.0\n" +
-                        "k2\t2683.4065201284266\t1639600.0\n" +
-                        "k3\t2684.081214514935\t1640400.0\n",
+                        "k2\t2683.4065201284266\t1639600.0\n",
                 "SELECT key, vwap(price, quantity), sum(colTop) FROM tab LIMIT -3",
                 "key\tvwap\tsum\n" +
                         "k3\t2684.081214514935\t1640400.0\n" +
@@ -780,33 +783,33 @@ public class ParallelGroupByTest extends AbstractCairoTest {
     public void testParallelSymbolKeyGroupByWithNestedFilter() throws Exception {
         testParallelSymbolKeyGroupBy(
                 "SELECT vwap(p, q), k, sum(ct) " +
-                        "FROM (SELECT colTop ct, price p, quantity q, key k FROM tab WHERE quantity < 80)",
+                        "FROM (SELECT colTop ct, price p, quantity q, key k FROM tab WHERE quantity < 80) ORDER BY k",
                 "vwap\tk\tsum\n" +
+                        "56.62162162162162\tk0\t325.0\n" +
                         "57.01805416248746\tk1\t381.0\n" +
                         "57.76545632973504\tk2\t387.0\n" +
                         "58.52353506243996\tk3\t393.0\n" +
-                        "59.29162746942615\tk4\t399.0\n" +
-                        "56.62162162162162\tk0\t325.0\n"
+                        "59.29162746942615\tk4\t399.0\n"
         );
     }
 
     @Test
     public void testParallelSymbolKeyGroupByWithWithReadThreadSafeFilter() throws Exception {
         testParallelSymbolKeyGroupBy(
-                "SELECT key, vwap(price, quantity), sum(colTop) FROM tab WHERE quantity < 80",
+                "SELECT key, vwap(price, quantity), sum(colTop) FROM tab WHERE quantity < 80 ORDER BY key",
                 "key\tvwap\tsum\n" +
+                        "k0\t56.62162162162162\t325.0\n" +
                         "k1\t57.01805416248746\t381.0\n" +
                         "k2\t57.76545632973504\t387.0\n" +
                         "k3\t58.52353506243996\t393.0\n" +
-                        "k4\t59.29162746942615\t399.0\n" +
-                        "k0\t56.62162162162162\t325.0\n"
+                        "k4\t59.29162746942615\t399.0\n"
         );
     }
 
     @Test
     public void testParallelSymbolKeyGroupByWithWithReadThreadUnsafeFilter() throws Exception {
         testParallelSymbolKeyGroupBy(
-                "SELECT key, vwap(price, quantity), sum(colTop) FROM tab WHERE key in ('k1','k2')",
+                "SELECT key, vwap(price, quantity), sum(colTop) FROM tab WHERE key in ('k1','k2') ORDER BY key",
                 "key\tvwap\tsum\n" +
                         "k1\t2682.7321472695826\t1638800.0\n" +
                         "k2\t2683.4065201284266\t1639600.0\n"
@@ -829,7 +832,7 @@ public class ParallelGroupByTest extends AbstractCairoTest {
                         assertQueries(
                                 engine,
                                 sqlExecutionContext,
-                                "select key, sum(value) from tab",
+                                "select key, sum(value) from tab ORDER BY key",
                                 "key\tsum\n"
                         );
                     },

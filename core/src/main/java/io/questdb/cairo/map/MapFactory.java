@@ -74,7 +74,7 @@ public class MapFactory {
      */
     public static Map createMap(
             CairoConfiguration configuration,
-            @Transient @Nullable ColumnTypes keyTypes,
+            @Transient @NotNull ColumnTypes keyTypes,
             @Transient @Nullable ColumnTypes valueTypes
     ) {
         final int keyCapacity = configuration.getSqlSmallMapKeyCapacity();
@@ -92,7 +92,6 @@ public class MapFactory {
         }
 
         if (Chars.equalsLowerCaseAscii(mapType, "compact")) {
-            assert keyTypes != null;
             assert valueTypes != null;
             return new CompactMap(
                     pageSize,

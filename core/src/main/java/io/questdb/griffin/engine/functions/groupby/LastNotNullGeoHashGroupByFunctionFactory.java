@@ -82,14 +82,6 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
         public String getName() {
             return NAME;
         }
-
-        @Override
-        public void merge(MapValue destValue, MapValue srcValue) {
-            byte srcLast = srcValue.getByte(valueIndex);
-            if (srcLast != GeoHashes.BYTE_NULL) {
-                destValue.putByte(valueIndex, srcLast);
-            }
-        }
     }
 
     private static class LastNotNullGeoHashGroupByFunctionInt extends FirstGeoHashGroupByFunctionInt {
@@ -107,14 +99,6 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
         @Override
         public String getName() {
             return NAME;
-        }
-
-        @Override
-        public void merge(MapValue destValue, MapValue srcValue) {
-            int srcLast = srcValue.getInt(valueIndex);
-            if (srcLast != GeoHashes.INT_NULL) {
-                destValue.putInt(valueIndex, srcLast);
-            }
         }
     }
 
@@ -134,14 +118,6 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
         public String getName() {
             return NAME;
         }
-
-        @Override
-        public void merge(MapValue destValue, MapValue srcValue) {
-            long srcLast = srcValue.getLong(valueIndex);
-            if (srcLast != GeoHashes.NULL) {
-                destValue.putLong(valueIndex, srcLast);
-            }
-        }
     }
 
     private static class LastNotNullGeoHashGroupByFunctionShort extends FirstGeoHashGroupByFunctionShort {
@@ -159,14 +135,6 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
         @Override
         public String getName() {
             return NAME;
-        }
-
-        @Override
-        public void merge(MapValue destValue, MapValue srcValue) {
-            short srcLast = srcValue.getShort(valueIndex);
-            if (srcLast != GeoHashes.SHORT_NULL) {
-                destValue.putShort(valueIndex, srcLast);
-            }
         }
     }
 }

@@ -44,10 +44,8 @@ import io.questdb.std.Os;
 class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
 
     private static final Log LOG = LogFactory.getLog(AsyncGroupByNotKeyedRecordCursor.class);
-    private final SimpleMapValue dataValue; // used to accumulate all partial results
     private final ObjList<GroupByFunction> groupByFunctions;
     private final VirtualRecord recordA;
-    private final int valueCount;
     private int frameLimit;
     private PageFrameSequence<AsyncGroupByNotKeyedAtom> frameSequence;
     private boolean isOpen;
@@ -56,10 +54,7 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
 
     public AsyncGroupByNotKeyedRecordCursor(ObjList<GroupByFunction> groupByFunctions, int valueCount) {
         this.groupByFunctions = groupByFunctions;
-        this.valueCount = valueCount;
-        this.dataValue = new SimpleMapValue(valueCount);
         this.recordA = new VirtualRecord(groupByFunctions);
-        recordA.of(dataValue);
         this.isOpen = true;
     }
 
@@ -131,9 +126,6 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
             frameLimit = frameSequence.getFrameCount() - 1;
         }
 
-        frameSequence.getAtom().getFunctionUpdater().updateEmpty(dataValue);
-        dataValue.setNew(true);
-
         int frameIndex = -1;
         boolean allFramesActive = true;
         try {
@@ -154,14 +146,6 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
 
                     allFramesActive &= frameSequence.isActive();
                     frameIndex = task.getFrameIndex();
-
-                    final SimpleMapValue srcValue = task.getGroupByValue();
-                    if (!srcValue.isNew() && frameSequence.isActive()) {
-                        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
-                            groupByFunctions.getQuick(i).merge(dataValue, srcValue);
-                        }
-                        dataValue.setNew(false);
-                    }
 
                     frameSequence.collect(cursor, false);
                 } else if (cursor == -2) {
@@ -187,6 +171,18 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
             throwTimeoutException();
         }
 
+        // Merge the values.
+        final AsyncGroupByNotKeyedAtom atom = frameSequence.getAtom();
+        final SimpleMapValue dataValue = atom.getOwnerMapValue();
+        for (int i = 0, n = atom.getPerWorkerMapValues().size(); i < n; i++) {
+            final SimpleMapValue srcValue = atom.getPerWorkerMapValues().getQuick(i);
+            if (!srcValue.isNew()) {
+                for (int j = 0, m = groupByFunctions.size(); j < m; j++) {
+                    groupByFunctions.getQuick(j).merge(dataValue, srcValue);
+                }
+            }
+        }
+
         isValueBuilt = true;
     }
 
@@ -199,8 +195,8 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
             isOpen = true;
         }
         this.frameSequence = frameSequence;
+        recordA.of(frameSequence.getAtom().getOwnerMapValue());
         Function.init(groupByFunctions, frameSequence.getSymbolTableSource(), executionContext);
-        dataValue.setCapacity(valueCount);
         isValueBuilt = false;
         frameLimit = -1;
         toTop();

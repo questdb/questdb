@@ -46,13 +46,4 @@ public class LastNotNullUuidGroupByFunction extends FirstUuidGroupByFunction {
     public String getName() {
         return "last_not_null";
     }
-
-    @Override
-    public void merge(MapValue destValue, MapValue srcValue) {
-        long srcLastLo = srcValue.getLong128Lo(valueIndex);
-        long srcLastHi = srcValue.getLong128Hi(valueIndex);
-        if (!Uuid.isNull(srcLastLo, srcLastHi)) {
-            destValue.putLong128(valueIndex, srcLastLo, srcLastHi);
-        }
-    }
 }

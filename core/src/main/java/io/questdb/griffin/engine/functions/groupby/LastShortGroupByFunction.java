@@ -44,10 +44,4 @@ public class LastShortGroupByFunction extends FirstShortGroupByFunction {
     public String getName() {
         return "last";
     }
-
-    @Override
-    public void merge(MapValue destValue, MapValue srcValue) {
-        short srcLast = srcValue.getShort(valueIndex);
-        destValue.putShort(valueIndex, srcLast);
-    }
 }

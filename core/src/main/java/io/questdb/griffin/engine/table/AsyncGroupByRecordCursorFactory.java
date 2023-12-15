@@ -54,7 +54,6 @@ import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_DESC;
 public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     private static final PageFrameReducer REDUCER = AsyncGroupByRecordCursorFactory::aggregate;
-    private final AsyncGroupByAtom atom;
     private final RecordCursorFactory base;
     private final SCSequence collectSubSeq = new SCSequence();
     private final AsyncGroupByRecordCursor cursor;
@@ -86,10 +85,12 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             this.base = base;
             this.groupByFunctions = groupByFunctions;
             this.recordFunctions = recordFunctions;
-            this.atom = new AsyncGroupByAtom(
+            AsyncGroupByAtom atom = new AsyncGroupByAtom(
                     asm,
                     configuration,
                     base.getMetadata(),
+                    keyTypes,
+                    valueTypes,
                     listColumnFilter,
                     groupByFunctions,
                     keyFunctions,
@@ -98,9 +99,8 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
                     perWorkerFilters,
                     workerCount
             );
-            this.frameSequence = new PageFrameSequence<>(configuration, messageBus, REDUCER, reduceTaskFactory, PageFrameReduceTask.TYPE_GROUP_BY);
-            frameSequence.setGroupByTypes(keyTypes, valueTypes);
-            this.cursor = new AsyncGroupByRecordCursor(configuration, keyTypes, valueTypes, groupByFunctions, recordFunctions);
+            this.frameSequence = new PageFrameSequence<>(configuration, messageBus, atom, REDUCER, reduceTaskFactory, PageFrameReduceTask.TYPE_GROUP_BY);
+            this.cursor = new AsyncGroupByRecordCursor(groupByFunctions, recordFunctions);
             this.workerCount = workerCount;
         } catch (Throwable e) {
             close();
@@ -110,7 +110,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
 
     @Override
     public PageFrameSequence<AsyncGroupByAtom> execute(SqlExecutionContext executionContext, SCSequence collectSubSeq, int order) throws SqlException {
-        return frameSequence.of(base, executionContext, collectSubSeq, atom, order);
+        return frameSequence.of(base, executionContext, collectSubSeq, order);
     }
 
     @Override
@@ -141,7 +141,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         sink.meta("workers").val(workerCount);
         sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(recordFunctions, getMetadata()));
         sink.optAttr("values", groupByFunctions, true);
-        sink.optAttr("filter", atom, true);
+        sink.optAttr("filter", frameSequence.getAtom(), true);
         sink.child(base);
     }
 
@@ -162,15 +162,13 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             @NotNull SqlExecutionCircuitBreaker circuitBreaker,
             @Nullable PageFrameSequence<?> stealingFrameSequence
     ) {
-        final Map map = task.getGroupByMap();
         final long frameRowCount = task.getFrameRowCount();
         final AsyncGroupByAtom atom = task.getFrameSequence(AsyncGroupByAtom.class).getAtom();
         final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater();
 
-        map.clear();
-
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.acquire(workerId, owner, circuitBreaker);
+        final Map map = atom.getMap(slotId);
         final Function filter = atom.getFilter(slotId);
         final RecordSink mapSink = atom.getMapSink(slotId);
         try {
@@ -199,7 +197,6 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         Misc.free(base);
         Misc.free(cursor);
         Misc.freeObjList(recordFunctions); // groupByFunctions are included in recordFunctions
-        Misc.free(atom); // frees filter, keyFunctions and perWorkerKeyFunctions
         Misc.free(frameSequence);
     }
 }

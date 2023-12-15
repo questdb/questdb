@@ -69,19 +69,6 @@ public class FirstDateGroupByFunction extends DateFunction implements GroupByFun
     }
 
     @Override
-    public boolean isParallelismSupported() {
-        return arg.isReadThreadSafe();
-    }
-
-    @Override
-    public void merge(MapValue destValue, MapValue srcValue) {
-        if (destValue.isNew()) {
-            long srcFirst = srcValue.getLong(valueIndex);
-            destValue.putLong(valueIndex, srcFirst);
-        }
-    }
-
-    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.DATE);

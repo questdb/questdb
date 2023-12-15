@@ -55,7 +55,6 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     private final RecordCursorFactory base;
     private final SCSequence collectSubSeq = new SCSequence();
     private final AsyncFilteredRecordCursor cursor;
-    private final AsyncJitFilterAtom filterAtom;
     private final PageFrameSequence<AsyncJitFilterAtom> frameSequence;
     private final Function limitLoFunction;
     private final int limitLoPos;
@@ -97,7 +96,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                 preTouchColumnTypes.add(columnType);
             }
         }
-        this.filterAtom = new AsyncJitFilterAtom(
+        AsyncJitFilterAtom atom = new AsyncJitFilterAtom(
                 configuration,
                 filter,
                 perWorkerFilters,
@@ -106,7 +105,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                 bindVarFunctions,
                 preTouchColumnTypes
         );
-        this.frameSequence = new PageFrameSequence<>(configuration, messageBus, REDUCER, reduceTaskFactory, PageFrameReduceTask.TYPE_FILTER);
+        this.frameSequence = new PageFrameSequence<>(configuration, messageBus, atom, REDUCER, reduceTaskFactory, PageFrameReduceTask.TYPE_FILTER);
         this.limitLoFunction = limitLoFunction;
         this.limitLoPos = limitLoPos;
         this.maxNegativeLimit = configuration.getSqlMaxNegativeLimit();
@@ -115,7 +114,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
 
     @Override
     public PageFrameSequence<AsyncJitFilterAtom> execute(SqlExecutionContext executionContext, SCSequence collectSubSeq, int order) throws SqlException {
-        return frameSequence.of(base, executionContext, collectSubSeq, filterAtom, order);
+        return frameSequence.of(base, executionContext, collectSubSeq, order);
     }
 
     @Override
@@ -207,7 +206,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         if (rowsRemaining != Long.MAX_VALUE) {
             sink.attr("limit").val(rowsRemaining);
         }
-        sink.attr("filter").val(filterAtom);
+        sink.attr("filter").val(frameSequence.getAtom());
         sink.child(base, order);
     }
 
@@ -283,7 +282,6 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     @Override
     protected void _close() {
         Misc.free(base);
-        Misc.free(filterAtom);
         Misc.free(frameSequence);
         Misc.free(negativeLimitRows);
         cursor.freeRecords();

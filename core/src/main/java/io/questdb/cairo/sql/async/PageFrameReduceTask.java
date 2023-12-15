@@ -25,11 +25,8 @@
 package io.questdb.cairo.sql.async;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.map.Map;
-import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.sql.PageAddressCache;
 import io.questdb.cairo.sql.StatefulAtom;
-import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Misc;
@@ -47,9 +44,7 @@ public class PageFrameReduceTask implements Closeable {
     // Used to pass the list of column page frame addresses to a JIT-compiled filter.
     private final DirectLongList columns;
     private final StringSink errorMsg = new StringSink();
-    private final DirectLongList filteredRows;
-    private final Map groupByMap; // Used in keyed GROUP BY.
-    private final SimpleMapValue groupByValue = new SimpleMapValue(); // Used in non-keyed GROUP BY.
+    private final DirectLongList filteredRows; // Used for TYPE_FILTER.
     private final long pageFrameQueueCapacity;
     private int frameIndex = Integer.MAX_VALUE;
     private PageFrameSequence<?> frameSequence;
@@ -60,14 +55,12 @@ public class PageFrameReduceTask implements Closeable {
         this.filteredRows = new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), memoryTag);
         this.columns = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), memoryTag);
         this.pageFrameQueueCapacity = configuration.getPageFrameReduceQueueCapacity();
-        this.groupByMap = MapFactory.createMap(configuration, null, null);
     }
 
     @Override
     public void close() {
         Misc.free(filteredRows);
         Misc.free(columns);
-        Misc.free(groupByMap);
     }
 
     public DirectLongList getColumns() {
@@ -103,14 +96,6 @@ public class PageFrameReduceTask implements Closeable {
         return frameSequenceId;
     }
 
-    public Map getGroupByMap() {
-        return groupByMap;
-    }
-
-    public SimpleMapValue getGroupByValue() {
-        return groupByValue;
-    }
-
     public PageAddressCache getPageAddressCache() {
         return frameSequence.getPageAddressCache();
     }
@@ -131,15 +116,12 @@ public class PageFrameReduceTask implements Closeable {
         errorMsg.clear();
         if (type == TYPE_FILTER) {
             filteredRows.clear();
-        } else if (type == TYPE_GROUP_BY) {
-            groupByMap.resetTypes(frameSequence.getGroupByKeyTypes(), frameSequence.getGroupByValueTypes());
         }
     }
 
     public void resetCapacities() {
         filteredRows.resetCapacity();
         columns.resetCapacity();
-        groupByMap.restoreInitialCapacity();
     }
 
     public void setErrorMsg(Throwable th) {

@@ -46,12 +46,4 @@ public class FirstNotNullIntGroupByFunction extends FirstIntGroupByFunction {
     public String getName() {
         return "first_not_null";
     }
-
-    @Override
-    public void merge(MapValue destValue, MapValue srcValue) {
-        if (destValue.isNew() || destValue.getInt(valueIndex) == Numbers.INT_NaN) {
-            int srcFirst = srcValue.getInt(valueIndex);
-            destValue.putInt(valueIndex, srcFirst);
-        }
-    }
 }

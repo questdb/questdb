@@ -37,6 +37,7 @@ import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdaterFactory;
+import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -50,9 +51,10 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Planna
 
     private final Function filter;
     private final GroupByFunctionsUpdater functionUpdater;
+    private final SimpleMapValue mapValue;
     private final ObjList<Function> perWorkerFilters;
     private final PerWorkerLocks perWorkerLocks;
-    private final int valueCount;
+    private final ObjList<SimpleMapValue> perWorkerMapValues;
 
     public AsyncGroupByNotKeyedAtom(
             @Transient @NotNull BytecodeAssembler asm,
@@ -67,13 +69,14 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Planna
         try {
             this.filter = filter;
             this.perWorkerFilters = perWorkerFilters;
-            this.valueCount = valueCount;
             functionUpdater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
-            if (perWorkerFilters != null) {
-                perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
-            } else {
-                perWorkerLocks = null;
+            perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
+            mapValue = new SimpleMapValue(valueCount);
+            perWorkerMapValues = new ObjList<>(workerCount);
+            for (int i = 0; i < workerCount; i++) {
+                perWorkerMapValues.extendAndSet(i, new SimpleMapValue(valueCount));
             }
+            clear();
         } catch (Throwable e) {
             close();
             throw e;
@@ -81,14 +84,22 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Planna
     }
 
     public int acquire(int workerId, boolean owner, SqlExecutionCircuitBreaker circuitBreaker) {
-        if (perWorkerLocks == null) {
-            return -1;
-        }
         if (workerId == -1 && owner) {
             // Owner thread is free to use the original filter anytime.
             return -1;
         }
         return perWorkerLocks.acquireSlot(workerId, circuitBreaker);
+    }
+
+    @Override
+    public void clear() {
+        functionUpdater.updateEmpty(mapValue);
+        mapValue.setNew(true);
+        for (int i = 0, n = perWorkerMapValues.size(); i < n; i++) {
+            SimpleMapValue value = perWorkerMapValues.getQuick(i);
+            functionUpdater.updateEmpty(value);
+            value.setNew(true);
+        }
     }
 
     @Override
@@ -108,8 +119,21 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Planna
         return functionUpdater;
     }
 
-    public int getValueCount() {
-        return valueCount;
+    public SimpleMapValue getMapValue(int slotId) {
+        if (slotId == -1) {
+            return mapValue;
+        }
+        return perWorkerMapValues.getQuick(slotId);
+    }
+
+    // Thread-unsafe, should be used by query owner thread only.
+    public SimpleMapValue getOwnerMapValue() {
+        return mapValue;
+    }
+
+    // Thread-unsafe, should be used by query owner thread only.
+    public ObjList<SimpleMapValue> getPerWorkerMapValues() {
+        return perWorkerMapValues;
     }
 
     @Override
@@ -141,9 +165,7 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Planna
     }
 
     public void release(int filterId) {
-        if (perWorkerLocks != null) {
-            perWorkerLocks.releaseSlot(filterId);
-        }
+        perWorkerLocks.releaseSlot(filterId);
     }
 
     @Override

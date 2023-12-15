@@ -47,12 +47,4 @@ public class FirstNotNullCharGroupByFunction extends FirstCharGroupByFunction {
     public String getName() {
         return "first_not_null";
     }
-
-    @Override
-    public void merge(MapValue destValue, MapValue srcValue) {
-        if (destValue.isNew() || destValue.getChar(valueIndex) == CharConstant.ZERO.getChar(null)) {
-            char srcFirst = srcValue.getChar(valueIndex);
-            destValue.putChar(valueIndex, srcFirst);
-        }
-    }
 }

@@ -47,12 +47,4 @@ public class LastNotNullCharGroupByFunction extends FirstCharGroupByFunction {
     public String getName() {
         return "last_not_null";
     }
-
-    @Override
-    public void merge(MapValue destValue, MapValue srcValue) {
-        char srcLast = srcValue.getChar(valueIndex);
-        if (srcLast != CharConstant.ZERO.getChar(null)) {
-            destValue.putChar(valueIndex, srcLast);
-        }
-    }
 }

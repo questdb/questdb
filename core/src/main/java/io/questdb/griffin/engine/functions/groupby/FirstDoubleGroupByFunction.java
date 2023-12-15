@@ -68,19 +68,6 @@ public class FirstDoubleGroupByFunction extends DoubleFunction implements GroupB
     }
 
     @Override
-    public boolean isParallelismSupported() {
-        return arg.isReadThreadSafe();
-    }
-
-    @Override
-    public void merge(MapValue destValue, MapValue srcValue) {
-        if (destValue.isNew()) {
-            double srcFirst = srcValue.getDouble(valueIndex);
-            destValue.putDouble(valueIndex, srcFirst);
-        }
-    }
-
-    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.DOUBLE);

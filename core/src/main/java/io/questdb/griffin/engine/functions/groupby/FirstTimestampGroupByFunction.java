@@ -69,19 +69,6 @@ public class FirstTimestampGroupByFunction extends TimestampFunction implements 
     }
 
     @Override
-    public boolean isParallelismSupported() {
-        return arg.isReadThreadSafe();
-    }
-
-    @Override
-    public void merge(MapValue destValue, MapValue srcValue) {
-        if (destValue.isNew()) {
-            long srcFirst = srcValue.getTimestamp(valueIndex);
-            destValue.putLong(valueIndex, srcFirst);
-        }
-    }
-
-    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.TIMESTAMP);

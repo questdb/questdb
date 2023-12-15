@@ -74,13 +74,5 @@ public class FirstNotNullIPv4GroupByFunctionFactory implements FunctionFactory {
         public String getName() {
             return "first_not_null";
         }
-
-        @Override
-        public void merge(MapValue destValue, MapValue srcValue) {
-            if (destValue.isNew() || destValue.getIPv4(valueIndex) == Numbers.IPv4_NULL) {
-                int srcFirst = srcValue.getIPv4(valueIndex);
-                destValue.putInt(valueIndex, srcFirst);
-            }
-        }
     }
 }

@@ -52,7 +52,6 @@ import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_DESC;
 public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFactory {
 
     private static final PageFrameReducer REDUCER = AsyncGroupByNotKeyedRecordCursorFactory::aggregate;
-    private final AsyncGroupByNotKeyedAtom atom;
     private final RecordCursorFactory base;
     private final SCSequence collectSubSeq = new SCSequence();
     private final AsyncGroupByNotKeyedRecordCursor cursor;
@@ -77,7 +76,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         try {
             this.base = base;
             this.groupByFunctions = groupByFunctions;
-            this.atom = new AsyncGroupByNotKeyedAtom(
+            AsyncGroupByNotKeyedAtom atom = new AsyncGroupByNotKeyedAtom(
                     asm,
                     configuration,
                     groupByFunctions,
@@ -86,7 +85,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
                     perWorkerFilters,
                     workerCount
             );
-            this.frameSequence = new PageFrameSequence<>(configuration, messageBus, REDUCER, reduceTaskFactory, PageFrameReduceTask.TYPE_GROUP_BY_NOT_KEYED);
+            this.frameSequence = new PageFrameSequence<>(configuration, messageBus, atom, REDUCER, reduceTaskFactory, PageFrameReduceTask.TYPE_GROUP_BY_NOT_KEYED);
             this.cursor = new AsyncGroupByNotKeyedRecordCursor(groupByFunctions, valueCount);
             this.workerCount = workerCount;
         } catch (Throwable e) {
@@ -97,7 +96,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
 
     @Override
     public PageFrameSequence<AsyncGroupByNotKeyedAtom> execute(SqlExecutionContext executionContext, SCSequence collectSubSeq, int order) throws SqlException {
-        return frameSequence.of(base, executionContext, collectSubSeq, atom, order);
+        return frameSequence.of(base, executionContext, collectSubSeq, order);
     }
 
     @Override
@@ -127,7 +126,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         sink.type("Async Group By");
         sink.meta("workers").val(workerCount);
         sink.optAttr("values", groupByFunctions, true);
-        sink.optAttr("filter", atom, true);
+        sink.optAttr("filter", frameSequence.getAtom(), true);
         sink.child(base);
     }
 
@@ -148,17 +147,13 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
             @NotNull SqlExecutionCircuitBreaker circuitBreaker,
             @Nullable PageFrameSequence<?> stealingFrameSequence
     ) {
-        final SimpleMapValue value = task.getGroupByValue();
         final long frameRowCount = task.getFrameRowCount();
         final AsyncGroupByNotKeyedAtom atom = task.getFrameSequence(AsyncGroupByNotKeyedAtom.class).getAtom();
         final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater();
 
-        value.setCapacity(atom.getValueCount());
-        functionUpdater.updateEmpty(value);
-        value.setNew(true);
-
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.acquire(workerId, owner, circuitBreaker);
+        final SimpleMapValue value = atom.getMapValue(slotId);
         final Function filter = atom.getFilter(slotId);
         try {
             for (long r = 0; r < frameRowCount; r++) {
@@ -184,7 +179,6 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         Misc.free(base);
         Misc.free(cursor);
         Misc.freeObjList(groupByFunctions);
-        Misc.free(atom); // frees filter
         Misc.free(frameSequence);
     }
 }

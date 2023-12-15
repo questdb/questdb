@@ -29,18 +29,11 @@ import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Long256Util;
 
-import java.util.Arrays;
-
 public class SimpleMapValue implements MapValue {
-    private static final int DEFAULT_CAPACITY = 16;
 
     private final Long256Impl long256 = new Long256Impl();
+    private final long[] values;
     private boolean isNew;
-    private long[] values;
-
-    public SimpleMapValue() {
-        this(DEFAULT_CAPACITY);
-    }
 
     public SimpleMapValue(int columnCount) {
         this.values = new long[4 * columnCount];
@@ -265,15 +258,6 @@ public class SimpleMapValue implements MapValue {
     @Override
     public void putTimestamp(int index, long value) {
         values[4 * index] = value;
-    }
-
-    public void setCapacity(int columnCount) {
-        int requiredCapacity = 4 * columnCount;
-        if (values.length < requiredCapacity) {
-            values = new long[requiredCapacity];
-        } else {
-            Arrays.fill(values, 0);
-        }
     }
 
     @Override

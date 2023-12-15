@@ -63,12 +63,6 @@ public class LastGeoHashGroupByFunctionFactory implements FunctionFactory {
                     public String getName() {
                         return "last";
                     }
-
-                    @Override
-                    public void merge(MapValue destValue, MapValue srcValue) {
-                        byte srcLast = srcValue.getByte(valueIndex);
-                        destValue.putByte(valueIndex, srcLast);
-                    }
                 };
             case ColumnType.GEOSHORT:
                 return new FirstGeoHashGroupByFunctionShort(type, function) {
@@ -80,12 +74,6 @@ public class LastGeoHashGroupByFunctionFactory implements FunctionFactory {
                     @Override
                     public String getName() {
                         return "last";
-                    }
-
-                    @Override
-                    public void merge(MapValue destValue, MapValue srcValue) {
-                        short srcLast = srcValue.getShort(valueIndex);
-                        destValue.putShort(valueIndex, srcLast);
                     }
                 };
             case ColumnType.GEOINT:
@@ -99,12 +87,6 @@ public class LastGeoHashGroupByFunctionFactory implements FunctionFactory {
                     public String getName() {
                         return "last";
                     }
-
-                    @Override
-                    public void merge(MapValue destValue, MapValue srcValue) {
-                        int srcLast = srcValue.getInt(valueIndex);
-                        destValue.putInt(valueIndex, srcLast);
-                    }
                 };
             default:
                 return new FirstGeoHashGroupByFunctionLong(type, function) {
@@ -116,12 +98,6 @@ public class LastGeoHashGroupByFunctionFactory implements FunctionFactory {
                     @Override
                     public String getName() {
                         return "last";
-                    }
-
-                    @Override
-                    public void merge(MapValue destValue, MapValue srcValue) {
-                        long srcLast = srcValue.getLong(valueIndex);
-                        destValue.putLong(valueIndex, srcLast);
                     }
                 };
         }

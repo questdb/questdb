@@ -74,19 +74,6 @@ public class FirstIntGroupByFunction extends IntFunction implements GroupByFunct
     }
 
     @Override
-    public boolean isParallelismSupported() {
-        return arg.isReadThreadSafe();
-    }
-
-    @Override
-    public void merge(MapValue destValue, MapValue srcValue) {
-        if (destValue.isNew()) {
-            int srcFirst = srcValue.getInt(valueIndex);
-            destValue.putInt(valueIndex, srcFirst);
-        }
-    }
-
-    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.INT);

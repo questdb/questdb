@@ -46,12 +46,4 @@ public class LastNotNullIntGroupByFunction extends FirstIntGroupByFunction {
     public String getName() {
         return "last_not_null";
     }
-
-    @Override
-    public void merge(MapValue destValue, MapValue srcValue) {
-        int srcLast = srcValue.getInt(valueIndex);
-        if (srcLast != Numbers.INT_NaN) {
-            destValue.putInt(valueIndex, srcLast);
-        }
-    }
 }

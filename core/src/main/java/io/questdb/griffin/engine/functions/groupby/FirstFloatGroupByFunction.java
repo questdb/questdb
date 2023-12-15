@@ -68,19 +68,6 @@ public class FirstFloatGroupByFunction extends FloatFunction implements GroupByF
     }
 
     @Override
-    public boolean isParallelismSupported() {
-        return arg.isReadThreadSafe();
-    }
-
-    @Override
-    public void merge(MapValue destValue, MapValue srcValue) {
-        if (destValue.isNew()) {
-            float srcFirst = srcValue.getFloat(valueIndex);
-            destValue.putFloat(valueIndex, srcFirst);
-        }
-    }
-
-    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.FLOAT);

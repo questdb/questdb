@@ -69,19 +69,6 @@ public class FirstGeoHashGroupByFunctionByte extends GeoByteFunction implements 
     }
 
     @Override
-    public boolean isParallelismSupported() {
-        return arg.isReadThreadSafe();
-    }
-
-    @Override
-    public void merge(MapValue destValue, MapValue srcValue) {
-        if (destValue.isNew()) {
-            byte srcFirst = srcValue.getGeoByte(valueIndex);
-            destValue.putByte(valueIndex, srcFirst);
-        }
-    }
-
-    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.BYTE);

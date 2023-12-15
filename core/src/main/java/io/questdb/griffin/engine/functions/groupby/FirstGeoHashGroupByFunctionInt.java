@@ -74,19 +74,6 @@ class FirstGeoHashGroupByFunctionInt extends GeoByteFunction implements GroupByF
     }
 
     @Override
-    public boolean isParallelismSupported() {
-        return arg.isReadThreadSafe();
-    }
-
-    @Override
-    public void merge(MapValue destValue, MapValue srcValue) {
-        if (destValue.isNew()) {
-            int srcFirst = srcValue.getGeoInt(valueIndex);
-            destValue.putInt(valueIndex, srcFirst);
-        }
-    }
-
-    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.INT);

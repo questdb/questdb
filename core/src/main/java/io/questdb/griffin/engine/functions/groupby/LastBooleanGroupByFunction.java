@@ -44,10 +44,4 @@ public class LastBooleanGroupByFunction extends FirstBooleanGroupByFunction {
     public String getName() {
         return "last";
     }
-
-    @Override
-    public void merge(MapValue destValue, MapValue srcValue) {
-        boolean srcLast = srcValue.getBool(valueIndex);
-        destValue.putBool(valueIndex, srcLast);
-    }
 }

@@ -33,8 +33,6 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
-import java.util.Arrays;
-
 /**
  * FastMap is a general purpose off-heap hash table used to store intermediate data of join,
  * group by, sample by queries, but not only. It provides {@link MapKey} and {@link MapValue},
@@ -75,39 +73,37 @@ import java.util.Arrays;
  */
 public class FastMap implements Map, Reopenable {
 
-    private static final int INITIAL_ARRAY_LENGTH = 8;
     private static final long MAX_HEAP_SIZE = (Integer.toUnsignedLong(-1) - 1) << 3;
     private static final int MIN_INITIAL_CAPACITY = 128;
     private final FastMapCursor cursor;
     private final int heapMemoryTag;
     private final int initialKeyCapacity;
     private final int initialPageSize;
+    private final BaseKey key;
+    private final int keyOffset;
+    // Set to -1 when key is var-size.
+    private final int keySize;
     private final int listMemoryTag;
     private final double loadFactor;
     private final int maxResizes;
-    // Holds [compressed_offset, hash_code] pairs.
-    // Offsets are shifted by +1 (0 -> 1, 1 -> 2, etc.), so that we fill the memory with 0.
     private final FastMapRecord record;
     private final FastMapValue value;
     private final FastMapValue value2;
     private final FastMapValue value3;
+    private final int valueColumnCount;
+    private final int valueSize;
     private long capacity;
     private int free;
     private long heapLimit; // Heap memory limit pointer.
     private long heapStart; // Heap memory start pointer.
     private long kPos;      // Current key-value memory pointer (contains searched key / pending key-value pair).
-    private BaseKey key;
     private int keyCapacity;
-    private int keyOffset;
-    // Set to -1 when key is var-size.
-    private int keySize;
     private int mask;
     private int nResizes;
+    // Holds [compressed_offset, hash_code] pairs.
+    // Offsets are shifted by +1 (0 -> 1, 1 -> 2, etc.), so that we fill the memory with 0.
     private DirectIntList offsets;
     private int size = 0;
-    private int valueColumnCount;
-    private int[] valueOffsets = new int[INITIAL_ARRAY_LENGTH];
-    private int valueSize;
 
     public FastMap(
             int pageSize,
@@ -121,7 +117,7 @@ public class FastMap implements Map, Reopenable {
 
     public FastMap(
             int pageSize,
-            @Transient @Nullable ColumnTypes keyTypes,
+            @Transient @NotNull ColumnTypes keyTypes,
             @Transient @Nullable ColumnTypes valueTypes,
             int keyCapacity,
             double loadFactor,
@@ -133,7 +129,7 @@ public class FastMap implements Map, Reopenable {
 
     public FastMap(
             int pageSize,
-            @Transient @Nullable ColumnTypes keyTypes,
+            @Transient @NotNull ColumnTypes keyTypes,
             @Transient @Nullable ColumnTypes valueTypes,
             int keyCapacity,
             double loadFactor,
@@ -144,8 +140,8 @@ public class FastMap implements Map, Reopenable {
 
     FastMap(
             int pageSize,
-            @Transient @Nullable ColumnTypes keyTypes,
-            @Transient @Nullable ColumnTypes valueTypes,
+            @NotNull @Transient ColumnTypes keyTypes,
+            @Nullable @Transient ColumnTypes valueTypes,
             int keyCapacity,
             double loadFactor,
             int maxResizes,
@@ -172,18 +168,55 @@ public class FastMap implements Map, Reopenable {
         nResizes = 0;
         this.maxResizes = maxResizes;
 
-        Arrays.fill(valueOffsets, -1);
-
-        value = new FastMapValue();
-        value2 = new FastMapValue();
-        value3 = new FastMapValue();
-
-        record = new FastMapRecord(value);
-        cursor = new FastMapCursor(this);
-
-        if (keyTypes != null) {
-            setTypes(keyTypes, valueTypes);
+        final int keyColumnCount = keyTypes.getColumnCount();
+        int keySize = 0;
+        for (int i = 0; i < keyColumnCount; i++) {
+            final int columnType = keyTypes.getColumnType(i);
+            final int size = ColumnType.sizeOf(columnType);
+            if (size > 0) {
+                keySize += size;
+            } else {
+                keySize = -1;
+                break;
+            }
         }
+        this.keySize = keySize;
+
+        // Reserve 4 bytes for key length in case of var-size keys.
+        keyOffset = keySize != -1 ? 0 : 4;
+
+        int valueOffset = 0;
+        int[] valueOffsets = null;
+        int valueSize = 0;
+        if (valueTypes != null) {
+            valueColumnCount = valueTypes.getColumnCount();
+            valueOffsets = new int[valueColumnCount];
+
+            for (int i = 0; i < valueColumnCount; i++) {
+                valueOffsets[i] = valueOffset;
+                final int columnType = valueTypes.getColumnType(i);
+                final int size = ColumnType.sizeOf(columnType);
+                if (size <= 0) {
+                    close();
+                    throw CairoException.nonCritical().put("value type is not supported: ").put(ColumnType.nameOf(columnType));
+                }
+                valueOffset += size;
+                valueSize += size;
+            }
+        } else {
+            valueColumnCount = 0;
+        }
+        this.valueSize = valueSize;
+
+        value = new FastMapValue(valueOffsets);
+        value2 = new FastMapValue(valueOffsets);
+        value3 = new FastMapValue(valueOffsets);
+
+        record = new FastMapRecord(keySize, valueOffsets, value, keyTypes, valueTypes);
+
+        assert keySize + valueSize <= heapLimit - heapStart : "page size is too small to fit a single key";
+        cursor = new FastMapCursor(record, this);
+        key = keySize == -1 ? new VarSizeKey() : new FixedSizeKey();
     }
 
     @Override
@@ -242,12 +275,6 @@ public class FastMap implements Map, Reopenable {
             // handles both mem and offsets
             restoreInitialCapacity();
         }
-    }
-
-    @Override
-    public void resetTypes(@NotNull ColumnTypes keyTypes, @Nullable ColumnTypes valueTypes) {
-        setTypes(keyTypes, valueTypes);
-        clear();
     }
 
     @Override
@@ -391,59 +418,6 @@ public class FastMap implements Map, Reopenable {
         } else {
             throw LimitOverflowException.instance().put("limit of ").put(maxResizes).put(" resizes exceeded in FastMap");
         }
-    }
-
-    private void setTypes(@NotNull ColumnTypes keyTypes, @Nullable ColumnTypes valueTypes) {
-        final int keyColumnCount = keyTypes.getColumnCount();
-        int keySize = 0;
-        for (int i = 0; i < keyColumnCount; i++) {
-            final int columnType = keyTypes.getColumnType(i);
-            final int size = ColumnType.sizeOf(columnType);
-            if (size > 0) {
-                keySize += size;
-            } else {
-                keySize = -1;
-                break;
-            }
-        }
-        this.keySize = keySize;
-
-        // Reserve 4 bytes for key length in case of var-size keys.
-        keyOffset = keySize != -1 ? 0 : 4;
-
-        int valueSize = 0;
-        if (valueTypes != null) {
-            valueColumnCount = valueTypes.getColumnCount();
-            if (valueOffsets.length < valueColumnCount) {
-                valueOffsets = new int[valueColumnCount];
-            } else {
-                Arrays.fill(valueOffsets, -1);
-            }
-
-            for (int i = 0; i < valueColumnCount; i++) {
-                valueOffsets[i] = valueSize;
-                final int columnType = valueTypes.getColumnType(i);
-                final int size = ColumnType.sizeOf(columnType);
-                if (size <= 0) {
-                    close();
-                    throw CairoException.nonCritical().put("value type is not supported: ").put(ColumnType.nameOf(columnType));
-                }
-                valueSize += size;
-            }
-        } else {
-            valueColumnCount = 0;
-        }
-        this.valueSize = valueSize;
-
-        value.setValueOffsets(valueOffsets);
-        value2.setValueOffsets(valueOffsets);
-        value3.setValueOffsets(valueOffsets);
-
-        record.init(keySize, valueOffsets, keyTypes, valueTypes);
-
-        assert keySize + valueSize <= heapLimit - heapStart : "page size is too small to fit a single key";
-        cursor.setRecord(record);
-        key = keySize == -1 ? new VarSizeKey() : new FixedSizeKey();
     }
 
     private FastMapValue valueOf(long startAddress, long valueAddress, boolean newValue, FastMapValue value) {

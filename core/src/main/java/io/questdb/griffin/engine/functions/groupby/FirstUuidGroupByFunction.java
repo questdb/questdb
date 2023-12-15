@@ -73,20 +73,6 @@ public class FirstUuidGroupByFunction extends UuidFunction implements GroupByFun
     }
 
     @Override
-    public boolean isParallelismSupported() {
-        return arg.isReadThreadSafe();
-    }
-
-    @Override
-    public void merge(MapValue destValue, MapValue srcValue) {
-        if (destValue.isNew()) {
-            long srcFirstLo = srcValue.getLong128Lo(valueIndex);
-            long srcFirstHi = srcValue.getLong128Hi(valueIndex);
-            destValue.putLong128(valueIndex, srcFirstLo, srcFirstHi);
-        }
-    }
-
-    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.UUID);

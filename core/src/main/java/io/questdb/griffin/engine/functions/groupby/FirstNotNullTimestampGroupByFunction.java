@@ -46,12 +46,4 @@ public class FirstNotNullTimestampGroupByFunction extends FirstTimestampGroupByF
     public String getName() {
         return "first_not_null";
     }
-
-    @Override
-    public void merge(MapValue destValue, MapValue srcValue) {
-        if (destValue.isNew() || destValue.getTimestamp(valueIndex) == Numbers.LONG_NaN) {
-            long srcFirst = srcValue.getTimestamp(valueIndex);
-            destValue.putLong(valueIndex, srcFirst);
-        }
-    }
 }

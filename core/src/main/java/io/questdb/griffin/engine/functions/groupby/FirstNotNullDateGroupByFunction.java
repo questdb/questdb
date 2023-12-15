@@ -47,12 +47,4 @@ public class FirstNotNullDateGroupByFunction extends FirstDateGroupByFunction {
     public String getName() {
         return "first_not_null";
     }
-
-    @Override
-    public void merge(MapValue destValue, MapValue srcValue) {
-        if (destValue.isNew() || destValue.getDate(valueIndex) == Numbers.LONG_NaN) {
-            long srcFirst = srcValue.getDate(valueIndex);
-            destValue.putDate(valueIndex, srcFirst);
-        }
-    }
 }

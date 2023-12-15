@@ -47,12 +47,4 @@ public class FirstNotNullLongGroupByFunction extends FirstLongGroupByFunction {
     public String getName() {
         return "first_not_null";
     }
-
-    @Override
-    public void merge(MapValue destValue, MapValue srcValue) {
-        if (destValue.isNew() || destValue.getLong(valueIndex) == Numbers.LONG_NaN) {
-            long srcFirst = srcValue.getLong(valueIndex);
-            destValue.putLong(valueIndex, srcFirst);
-        }
-    }
 }

@@ -82,14 +82,6 @@ public class FirstNotNullGeoHashGroupByFunctionFactory implements FunctionFactor
         public String getName() {
             return NAME;
         }
-
-        @Override
-        public void merge(MapValue destValue, MapValue srcValue) {
-            if (destValue.isNew() || destValue.getGeoByte(valueIndex) == GeoHashes.BYTE_NULL) {
-                byte srcFirst = srcValue.getGeoByte(valueIndex);
-                destValue.putByte(valueIndex, srcFirst);
-            }
-        }
     }
 
     private static class FirstNotNullGeoHashGroupByFunctionInt extends FirstGeoHashGroupByFunctionInt {
@@ -107,14 +99,6 @@ public class FirstNotNullGeoHashGroupByFunctionFactory implements FunctionFactor
         @Override
         public String getName() {
             return NAME;
-        }
-
-        @Override
-        public void merge(MapValue destValue, MapValue srcValue) {
-            if (destValue.isNew() || destValue.getGeoInt(valueIndex) == GeoHashes.INT_NULL) {
-                int srcFirst = srcValue.getGeoInt(valueIndex);
-                destValue.putInt(valueIndex, srcFirst);
-            }
         }
     }
 
@@ -134,14 +118,6 @@ public class FirstNotNullGeoHashGroupByFunctionFactory implements FunctionFactor
         public String getName() {
             return NAME;
         }
-
-        @Override
-        public void merge(MapValue destValue, MapValue srcValue) {
-            if (destValue.isNew() || destValue.getGeoLong(valueIndex) == GeoHashes.NULL) {
-                long srcFirst = srcValue.getGeoLong(valueIndex);
-                destValue.putLong(valueIndex, srcFirst);
-            }
-        }
     }
 
     private static class FirstNotNullGeoHashGroupByFunctionShort extends FirstGeoHashGroupByFunctionShort {
@@ -159,14 +135,6 @@ public class FirstNotNullGeoHashGroupByFunctionFactory implements FunctionFactor
         @Override
         public String getName() {
             return NAME;
-        }
-
-        @Override
-        public void merge(MapValue destValue, MapValue srcValue) {
-            if (destValue.isNew() || destValue.getGeoShort(valueIndex) == GeoHashes.SHORT_NULL) {
-                short srcFirst = srcValue.getGeoShort(valueIndex);
-                destValue.putShort(valueIndex, srcFirst);
-            }
         }
     }
 }

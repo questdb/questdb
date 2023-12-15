@@ -24,10 +24,11 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnTypes;
-import io.questdb.cairo.map.*;
+import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.map.MapRecord;
+import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
@@ -42,13 +43,10 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
-import io.questdb.std.Transient;
-import org.jetbrains.annotations.NotNull;
 
 class AsyncGroupByRecordCursor implements RecordCursor {
 
     private static final Log LOG = LogFactory.getLog(AsyncGroupByRecordCursor.class);
-    private final Map dataMap; // used to accumulate all partial results
     private final ObjList<GroupByFunction> groupByFunctions;
     private final VirtualRecord recordA;
     private final VirtualRecord recordB;
@@ -60,9 +58,6 @@ class AsyncGroupByRecordCursor implements RecordCursor {
     private RecordCursor mapCursor;
 
     public AsyncGroupByRecordCursor(
-            CairoConfiguration configuration,
-            @Transient @NotNull ColumnTypes keyTypes,
-            @Transient @NotNull ColumnTypes valueTypes,
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions
     ) {
@@ -70,7 +65,6 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         this.recordFunctions = recordFunctions;
         this.recordA = new VirtualRecord(recordFunctions);
         this.recordB = new VirtualRecord(recordFunctions);
-        this.dataMap = MapFactory.createMap(configuration, keyTypes, valueTypes);
         this.isOpen = true;
     }
 
@@ -78,7 +72,6 @@ class AsyncGroupByRecordCursor implements RecordCursor {
     public void close() {
         if (isOpen) {
             isOpen = false;
-            Misc.free(dataMap);
             Misc.clearObjList(groupByFunctions);
             mapCursor = Misc.free(mapCursor);
 
@@ -174,22 +167,6 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                     allFramesActive &= frameSequence.isActive();
                     frameIndex = task.getFrameIndex();
 
-                    final Map srcMap = task.getGroupByMap();
-                    if (srcMap.size() > 0 && frameSequence.isActive()) {
-                        // Merge the maps.
-                        RecordCursor srcCursor = srcMap.getCursor();
-                        MapRecord srcRecord = srcMap.getRecord();
-                        while (srcCursor.hasNext()) {
-                            MapKey destKey = dataMap.withKey();
-                            srcRecord.copyKey(destKey);
-                            MapValue destValue = destKey.createValue();
-                            MapValue srcValue = srcRecord.getValue();
-                            for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
-                                groupByFunctions.getQuick(i).merge(destValue, srcValue);
-                            }
-                        }
-                    }
-
                     frameSequence.collect(cursor, false);
                 } else if (cursor == -2) {
                     break; // No frames to filter.
@@ -214,6 +191,26 @@ class AsyncGroupByRecordCursor implements RecordCursor {
             throwTimeoutException();
         }
 
+        // Merge the maps.
+        final AsyncGroupByAtom atom = frameSequence.getAtom();
+        final Map dataMap = atom.getOwnerMap();
+        for (int i = 0, n = atom.getPerWorkerMaps().size(); i < n; i++) {
+            final Map srcMap = atom.getPerWorkerMaps().getQuick(i);
+            if (srcMap.size() > 0) {
+                RecordCursor srcCursor = srcMap.getCursor();
+                MapRecord srcRecord = srcMap.getRecord();
+                while (srcCursor.hasNext()) {
+                    MapKey destKey = dataMap.withKey();
+                    srcRecord.copyKey(destKey);
+                    MapValue destValue = destKey.createValue();
+                    MapValue srcValue = srcRecord.getValue();
+                    for (int j = 0, m = groupByFunctions.size(); j < m; j++) {
+                        groupByFunctions.getQuick(j).merge(destValue, srcValue);
+                    }
+                }
+            }
+        }
+
         mapCursor = dataMap.getCursor();
         recordA.of(mapCursor.getRecord());
         recordB.of(mapCursor.getRecordB());
@@ -227,7 +224,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
     void of(PageFrameSequence<AsyncGroupByAtom> frameSequence, SqlExecutionContext executionContext) throws SqlException {
         if (!isOpen) {
             isOpen = true;
-            dataMap.reopen();
+            frameSequence.getAtom().reopen();
         }
         this.frameSequence = frameSequence;
         Function.init(recordFunctions, frameSequence.getSymbolTableSource(), executionContext);

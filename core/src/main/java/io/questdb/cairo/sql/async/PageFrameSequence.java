@@ -25,9 +25,7 @@
 package io.questdb.cairo.sql.async;
 
 import io.questdb.MessageBus;
-import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -39,7 +37,6 @@ import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
-import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -51,10 +48,9 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     private static final AtomicLong ID_SEQ = new AtomicLong();
     private static final long LOCAL_TASK_CURSOR = Long.MAX_VALUE;
     private static final Log LOG = LogFactory.getLog(PageFrameSequence.class);
+    private final T atom;
     private final MillisecondClock clock;
     private final LongList frameRowCounts = new LongList();
-    private final ArrayColumnTypes groupByKeyTypes;
-    private final ArrayColumnTypes groupByValueTypes;
     private final PageFrameReduceTaskFactory localTaskFactory;
     private final MessageBus messageBus;
     private final PageAddressCache pageAddressCache;
@@ -63,7 +59,6 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     private final byte taskType; // PageFrameReduceTask.TYPE_*
     private final AtomicBoolean valid = new AtomicBoolean(true);
     public volatile boolean done;
-    private T atom;
     private SqlExecutionCircuitBreaker circuitBreaker;
     private int circuitBreakerFd;
     private SCSequence collectSubSeq;
@@ -85,18 +80,18 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     public PageFrameSequence(
             CairoConfiguration configuration,
             MessageBus messageBus,
+            T atom,
             PageFrameReducer reducer,
             PageFrameReduceTaskFactory localTaskFactory,
             byte taskType
     ) {
         this.pageAddressCache = new PageAddressCache(configuration);
         this.messageBus = messageBus;
+        this.atom = atom;
         this.reducer = reducer;
         this.clock = configuration.getMillisecondClock();
         this.localTaskFactory = localTaskFactory;
         this.taskType = taskType;
-        this.groupByKeyTypes = taskType == PageFrameReduceTask.TYPE_GROUP_BY ? new ArrayColumnTypes() : null;
-        this.groupByValueTypes = taskType == PageFrameReduceTask.TYPE_GROUP_BY ? new ArrayColumnTypes() : null;
     }
 
     /**
@@ -168,6 +163,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         collectedFrameIndex = -1;
         readyToDispatch = false;
         pageAddressCache.clear();
+        atom.clear();
         pageFrameCursor = Misc.freeIfCloseable(pageFrameCursor);
         // collect sequence may not be set here when
         // factory is closed without using cursor
@@ -187,6 +183,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         record = Misc.free(record);
         circuitBreaker = Misc.freeIfCloseable(circuitBreaker);
         localTask = Misc.free(localTask);
+        Misc.free(atom);
     }
 
     public void collect(long cursor, boolean forceCollect) {
@@ -216,14 +213,6 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
 
     public long getFrameRowCount(int frameIndex) {
         return frameRowCounts.getQuick(frameIndex);
-    }
-
-    public ArrayColumnTypes getGroupByKeyTypes() {
-        return groupByKeyTypes;
-    }
-
-    public ArrayColumnTypes getGroupByValueTypes() {
-        return groupByValueTypes;
     }
 
     public long getId() {
@@ -331,7 +320,6 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             RecordCursorFactory base,
             SqlExecutionContext executionContext,
             SCSequence collectSubSeq,
-            T atom,
             int order
     ) throws SqlException {
         sqlExecutionContext = executionContext;
@@ -350,7 +338,6 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
 
             assert pageFrameCursor == null;
             pageFrameCursor = base.getPageFrameCursor(executionContext, order);
-            this.atom = atom;
             this.collectSubSeq = collectSubSeq;
             id = ID_SEQ.incrementAndGet();
             done = false;
@@ -388,20 +375,6 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         frameRowCounts.clear();
         assert !done;
         done = true;
-    }
-
-    public void setGroupByTypes(
-            @Transient @NotNull ColumnTypes keyTypes,
-            @Transient @NotNull ColumnTypes valueTypes
-    ) {
-        for (int i = 0, n = keyTypes.getColumnCount(); i < n; i++) {
-            final int columnType = keyTypes.getColumnType(i);
-            groupByKeyTypes.add(columnType);
-        }
-        for (int i = 0, n = valueTypes.getColumnCount(); i < n; i++) {
-            final int columnType = valueTypes.getColumnType(i);
-            groupByValueTypes.add(columnType);
-        }
     }
 
     /**

@@ -25,6 +25,8 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StatefulAtom;
@@ -46,21 +48,25 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
-public class AsyncGroupByAtom implements StatefulAtom, Closeable, Plannable {
+public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Plannable {
 
     private final Function filter;
     private final GroupByFunctionsUpdater functionUpdater;
     private final ObjList<Function> keyFunctions;
+    private final Map map;
     private final RecordSink mapSink;
     private final ObjList<Function> perWorkerFilters;
     private final ObjList<ObjList<Function>> perWorkerKeyFunctions;
     private final PerWorkerLocks perWorkerLocks;
     private final ObjList<RecordSink> perWorkerMapSinks;
+    private final ObjList<Map> perWorkerMaps;
 
     public AsyncGroupByAtom(
             @Transient @NotNull BytecodeAssembler asm,
             @NotNull CairoConfiguration configuration,
             @Transient @NotNull ColumnTypes columnTypes,
+            @Transient @NotNull ColumnTypes keyTypes,
+            @Transient @NotNull ColumnTypes valueTypes,
             @Transient @NotNull ListColumnFilter listColumnFilter,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
             @NotNull ObjList<Function> keyFunctions,
@@ -77,15 +83,16 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Plannable {
             this.keyFunctions = keyFunctions;
             this.perWorkerKeyFunctions = perWorkerKeyFunctions;
             functionUpdater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
-            if (perWorkerFilters != null || perWorkerKeyFunctions != null) {
-                perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
-            } else {
-                perWorkerLocks = null;
+            perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
+            map = MapFactory.createMap(configuration, keyTypes, valueTypes);
+            perWorkerMaps = new ObjList<>(workerCount);
+            for (int i = 0; i < workerCount; i++) {
+                perWorkerMaps.extendAndSet(i, MapFactory.createMap(configuration, keyTypes, valueTypes));
             }
             mapSink = RecordSinkFactory.getInstance(asm, columnTypes, listColumnFilter, keyFunctions, false);
             if (perWorkerKeyFunctions != null) {
                 perWorkerMapSinks = new ObjList<>(workerCount);
-                for (int i = 0, n = perWorkerKeyFunctions.size(); i < n; i++) {
+                for (int i = 0; i < workerCount; i++) {
                     RecordSink sink = RecordSinkFactory.getInstance(asm, columnTypes, listColumnFilter, perWorkerKeyFunctions.getQuick(i), false);
                     perWorkerMapSinks.extendAndSet(i, sink);
                 }
@@ -110,7 +117,18 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Plannable {
     }
 
     @Override
+    public void clear() {
+        map.close();
+        for (int i = 0, n = perWorkerMaps.size(); i < n; i++) {
+            Map m = perWorkerMaps.getQuick(i);
+            m.close();
+        }
+    }
+
+    @Override
     public void close() {
+        Misc.free(map);
+        Misc.freeObjList(perWorkerMaps);
         Misc.free(filter);
         Misc.freeObjList(keyFunctions);
         Misc.freeObjList(perWorkerFilters);
@@ -132,11 +150,28 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Plannable {
         return functionUpdater;
     }
 
+    public Map getMap(int slotId) {
+        if (slotId == -1) {
+            return map;
+        }
+        return perWorkerMaps.getQuick(slotId);
+    }
+
     public RecordSink getMapSink(int slotId) {
         if (slotId == -1 || perWorkerMapSinks == null) {
             return mapSink;
         }
         return perWorkerMapSinks.getQuick(slotId);
+    }
+
+    // Thread-unsafe, should be used by query owner thread only.
+    public Map getOwnerMap() {
+        return map;
+    }
+
+    // Thread-unsafe, should be used by query owner thread only.
+    public ObjList<Map> getPerWorkerMaps() {
+        return perWorkerMaps;
     }
 
     @Override
@@ -187,6 +222,15 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Plannable {
     public void release(int slotId) {
         if (perWorkerLocks != null) {
             perWorkerLocks.releaseSlot(slotId);
+        }
+    }
+
+    @Override
+    public void reopen() {
+        map.reopen();
+        for (int i = 0, n = perWorkerMaps.size(); i < n; i++) {
+            Map m = perWorkerMaps.getQuick(i);
+            m.reopen();
         }
     }
 
