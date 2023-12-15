@@ -185,10 +185,9 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Plannable {
     }
 
     public void release(int slotId) {
-        if (perWorkerLocks == null) {
-            return;
+        if (perWorkerLocks != null) {
+            perWorkerLocks.releaseSlot(slotId);
         }
-        perWorkerLocks.releaseSlot(slotId);
     }
 
     @Override

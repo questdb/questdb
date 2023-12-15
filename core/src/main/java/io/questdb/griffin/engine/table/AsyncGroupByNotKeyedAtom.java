@@ -98,13 +98,10 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Planna
     }
 
     public Function getFilter(int slotId) {
-        if (slotId == -1) {
+        if (slotId == -1 || perWorkerFilters == null) {
             return filter;
         }
-        if (perWorkerFilters != null) {
-            return perWorkerFilters.getQuick(slotId);
-        }
-        return null;
+        return perWorkerFilters.getQuick(slotId);
     }
 
     public GroupByFunctionsUpdater getFunctionUpdater() {
@@ -144,10 +141,9 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Planna
     }
 
     public void release(int filterId) {
-        if (perWorkerLocks == null) {
-            return;
+        if (perWorkerLocks != null) {
+            perWorkerLocks.releaseSlot(filterId);
         }
-        perWorkerLocks.releaseSlot(filterId);
     }
 
     @Override
