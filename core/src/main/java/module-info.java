@@ -165,6 +165,7 @@ open module io.questdb {
 
             //nullif
             io.questdb.griffin.engine.functions.conditional.NullIfCharFunctionFactory,
+            io.questdb.griffin.engine.functions.conditional.NullIfDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.conditional.NullIfIPv4FunctionFactory,
             io.questdb.griffin.engine.functions.conditional.NullIfIntFunctionFactory,
             io.questdb.griffin.engine.functions.conditional.NullIfLongFunctionFactory,
