@@ -202,4 +202,47 @@ public class NullIfFunctionFactoryTest extends AbstractCairoTest {
         );
     }
 
+    @Test
+    public void testDoubleNonConstant() throws Exception {
+        assertQuery(
+                "nullif\n" +
+                        "5.0\n" +
+                        "NaN\n" +
+                        "4.0\n",
+
+                "select nullif(five, four) from x \n" +
+                        "UNION \n" +
+                        "select nullif(five, five) from x \n" +
+                        "UNION \n" +
+                        "select nullif(four, five) from x \n",
+                "create table x as (" +
+                        "SELECT 5::double as five, 4::double as four" +
+                        ")",
+                null,
+                false,
+                false
+        );
+    }
+
+
+    @Test
+    public void testDoubleSimple() throws Exception {
+        assertQuery(
+                "double\tnullif\n" +
+                        "0.1\t0.1\n" +
+                        "0.2\t0.2\n" +
+                        "0.3\tNaN\n" +
+                        "0.4\t0.4\n" +
+                        "0.5\t0.5\n",
+                "select double,nullif(double,0.3) from x",
+                "create table x as (" +
+                        "select x / 10.0 as double\n" +
+                        "from long_sequence(5)" +
+                        ")",
+                null,
+                true,
+                true
+        );
+    }
+
 }

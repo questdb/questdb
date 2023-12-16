@@ -33,7 +33,7 @@ import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 
-class TableStructureAdapter implements TableStructure {
+public class TableStructureAdapter implements TableStructure {
     private static final String DEFAULT_TIMESTAMP_FIELD = "timestamp";
     private static final ThreadLocal<StringSink> tempSink = new ThreadLocal<>(StringSink::new);
     private final CairoConfiguration cairoConfiguration;
@@ -41,13 +41,15 @@ class TableStructureAdapter implements TableStructure {
     private final int defaultPartitionBy;
     private final ObjList<LineTcpParser.ProtoEntity> entities = new ObjList<>();
     private final LowerCaseCharSequenceHashSet entityNamesUtf16 = new LowerCaseCharSequenceHashSet();
+    private final boolean walEnabledDefault;
     private CharSequence tableName;
     private int timestampIndex = -1;
 
-    public TableStructureAdapter(CairoConfiguration configuration, DefaultColumnTypes defaultColumnTypes, int defaultPartitionBy) {
+    public TableStructureAdapter(CairoConfiguration configuration, DefaultColumnTypes defaultColumnTypes, int defaultPartitionBy, boolean walEnabledDefault) {
         this.cairoConfiguration = configuration;
         this.defaultColumnTypes = defaultColumnTypes;
         this.defaultPartitionBy = defaultPartitionBy;
+        this.walEnabledDefault = walEnabledDefault;
     }
 
     @Override
@@ -67,6 +69,14 @@ class TableStructureAdapter implements TableStructure {
             return colName;
         }
         throw CairoException.nonCritical().put("column name contains invalid characters [colName=").put(colName).put(']');
+    }
+
+    public CharSequence getColumnNameNoValidation(int columnIndex) {
+        assert columnIndex < getColumnCount();
+        if (columnIndex == getTimestampIndex()) {
+            return DEFAULT_TIMESTAMP_FIELD;
+        }
+        return entities.get(columnIndex).getName().toString();
     }
 
     @Override
@@ -134,10 +144,10 @@ class TableStructureAdapter implements TableStructure {
 
     @Override
     public boolean isWalEnabled() {
-        return cairoConfiguration.getWalEnabledDefault() && PartitionBy.isPartitioned(getPartitionBy());
+        return walEnabledDefault && PartitionBy.isPartitioned(getPartitionBy());
     }
 
-    TableStructureAdapter of(CharSequence tableName, LineTcpParser parser) {
+    public TableStructureAdapter of(CharSequence tableName, LineTcpParser parser) {
         this.tableName = tableName;
         entityNamesUtf16.clear();
         entities.clear();

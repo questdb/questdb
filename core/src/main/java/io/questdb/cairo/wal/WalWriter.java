@@ -543,7 +543,7 @@ public class WalWriter implements TableWriterAPI {
     @Override
     public void rollback() {
         try {
-            if (inTransaction() || hasDirtyColumns(currentTxnStartRowNum)) {
+            if (!isDistressed() && (inTransaction() || hasDirtyColumns(currentTxnStartRowNum))) {
                 setAppendPosition(currentTxnStartRowNum);
                 segmentRowCount = currentTxnStartRowNum;
                 txnMinTimestamp = Long.MAX_VALUE;

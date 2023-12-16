@@ -35,7 +35,9 @@ public final class HttpConstants {
     public static final char COOKIE_VALUE_SEPARATOR = '=';
 
     public static final Utf8String HEADER_CONTENT_ACCEPT_ENCODING = new Utf8String("Accept-Encoding");
+
     public static final Utf8String HEADER_CONTENT_DISPOSITION = new Utf8String("Content-Disposition");
+    public static final Utf8String HEADER_CONTENT_LENGTH = new Utf8String("Content-Length");
     public static final Utf8String HEADER_CONTENT_TYPE = new Utf8String("Content-Type");
     public static final Utf8String HEADER_COOKIE = new Utf8String("Cookie");
     public static final Utf8String HEADER_IF_NONE_MATCH = new Utf8String("If-None-Match");
@@ -43,7 +45,6 @@ public final class HttpConstants {
     public static final Utf8String HEADER_SET_COOKIE = new Utf8String("Set-Cookie");
     public static final Utf8String HEADER_STATEMENT_TIMEOUT = new Utf8String("Statement-Timeout");
     public static final Utf8String HEADER_TRANSFER_ENCODING = new Utf8String("Transfer-Encoding");
-
     public static final Utf8String URL_PARAM_ATOMICITY = new Utf8String("atomicity");
     public static final Utf8String URL_PARAM_ATTACHMENT = new Utf8String("attachment");
     public static final Utf8String URL_PARAM_COLS = new Utf8String("cols");
