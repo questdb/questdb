@@ -412,11 +412,11 @@ public class ParallelGroupByTest extends AbstractCairoTest {
                         "k0\tk0\t2027.5\t1642000.0\n" +
                         "k1\tk1\t2023.5\t1638800.0\n" +
                         "k2\tk2\t2024.5\t1639600.0\n",
-                "SELECT key1, key2, avg(value), sum(colTop) FROM tab LIMIT -3",
+                "SELECT key1, key2, avg(value), sum(colTop) FROM tab ORDER BY key1, key2 LIMIT -3",
                 "key1\tkey2\tavg\tsum\n" +
+                        "k2\tk2\t2024.5\t1639600.0\n" +
                         "k3\tk3\t2025.5\t1640400.0\n" +
-                        "k4\tk4\t2026.5\t1641200.0\n" +
-                        "k0\tk0\t2027.5\t1642000.0\n"
+                        "k4\tk4\t2026.5\t1641200.0\n"
         );
     }
 
