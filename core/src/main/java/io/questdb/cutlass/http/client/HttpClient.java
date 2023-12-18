@@ -83,8 +83,8 @@ public abstract class HttpClient implements QuietCloseable {
         return request;
     }
 
-    private int die(int byteCount) {
-        if (byteCount < 1) {
+    private int dieIfNegative(int byteCount) {
+        if (byteCount < 0) {
             throw new HttpClientException("peer disconnect [errno=").errno(nf.errno()).put(']');
         }
         return byteCount;
@@ -102,13 +102,39 @@ public abstract class HttpClient implements QuietCloseable {
     }
 
     private int recvOrDie(long lo, int len, int timeout) {
-        ioWait(timeout, IOOperation.READ);
-        return die(socket.recv(lo, len));
+        // todo: decrease timeout
+        handleTlsOps(timeout);
+        int n = dieIfNegative(socket.recv(lo, len));
+        if (n == 0) {
+            ioWait(timeout, IOOperation.READ);
+            n = dieIfNegative(socket.recv(lo, len));
+        }
+        return n;
     }
 
-    private int sendOrDie(long lo, int len, int timeout) {
-        ioWait(timeout, IOOperation.WRITE);
-        return die(socket.send(lo, len));
+    private void handleTlsOps(int timeout) {
+        for (; ; ) {
+            if (socket.wantsTlsRead()) {
+                dieIfNegative(socket.tlsIO(Socket.READ_FLAG));
+                continue;
+            }
+            if (socket.wantsTlsWrite()) {
+                dieIfNegative(socket.tlsIO(Socket.WRITE_FLAG));
+                continue;
+            }
+            break;
+        }
+    }
+
+    private int sendOrDie(long lo, int len, int timeoutMillis) {
+        handleTlsOps(timeoutMillis);
+
+        int n = dieIfNegative(socket.send(lo, len));
+        if (n == 0) {
+            ioWait(timeoutMillis, IOOperation.WRITE);
+            n = dieIfNegative(socket.send(lo, len));
+        }
+        return n;
     }
 
     protected void dieWaiting(int n) {
@@ -357,16 +383,19 @@ public abstract class HttpClient implements QuietCloseable {
                 throw new HttpClientException("could not connect to host ").put("[host=").put(host).put(", port=").put(port).put(", errno=").put(errno).put(']');
             }
             nf.freeAddrInfo(addrInfo);
+
+            //todo: handle error
+            nf.configureNonBlocking(fd);
             socket.of(fd);
             setupIoWait();
         }
 
-        private void doSend(int timeout) {
+        private void doSend(int timeoutMillis) {
             int len = (int) (ptr - bufLo);
             if (len > 0) {
                 long p = bufLo;
                 do {
-                    final int sent = sendOrDie(p, len, timeout);
+                    final int sent = sendOrDie(p, len, timeoutMillis);
                     if (sent > 0) {
                         p += sent;
                         len -= sent;
