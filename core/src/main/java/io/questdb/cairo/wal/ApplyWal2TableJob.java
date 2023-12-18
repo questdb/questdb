@@ -459,7 +459,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 throw e;
             } else {
                 // Mark as applied.
-                tableWriter.setSeqTxn(seqTxn);
+                tableWriter.commitSeqTxn(seqTxn);
                 return -1;
             }
         }
