@@ -41,6 +41,7 @@ import org.jetbrains.annotations.Nullable;
 import static io.questdb.cutlass.http.HttpConstants.*;
 
 public abstract class HttpClient implements QuietCloseable {
+    private static final String HEADER_CONTENT_LENGTH = "Content-Length: ";
     private static final Log LOG = LogFactory.getLog(HttpClient.class);
     protected final NetworkFacade nf;
     protected final Socket socket;
@@ -50,6 +51,7 @@ public abstract class HttpClient implements QuietCloseable {
     private final int defaultTimeout;
     private final Request request = new Request();
     private long bufLo;
+    private long contentStart = -1;
     private long ptr = bufLo;
     private ResponseHeaders responseHeaders;
 
@@ -79,6 +81,8 @@ public abstract class HttpClient implements QuietCloseable {
 
     public Request newRequest() {
         ptr = bufLo;
+        contentStart = -1;
+        request.contentLengthHeaderReserved = 0;
         request.state = Request.STATE_REQUEST;
         return request;
     }
@@ -195,11 +199,13 @@ public abstract class HttpClient implements QuietCloseable {
 
     public class Request implements Utf8Sink {
         private static final int STATE_HEADER = 4;
+        private static final int STATE_CONTENT = STATE_HEADER + 1;
         private static final int STATE_QUERY = 3;
         private static final int STATE_REQUEST = 0;
         private static final int STATE_URL = 1;
         private static final int STATE_URL_DONE = 2;
         private BinarySequenceAdapter binarySequenceAdapter;
+        private int contentLengthHeaderReserved = 0;
         private int state;
         private boolean urlEncode = false;
 
@@ -207,6 +213,18 @@ public abstract class HttpClient implements QuietCloseable {
             assert state == STATE_REQUEST;
             state = STATE_URL;
             return put("GET ");
+        }
+
+        public Request POST() {
+            assert state == STATE_REQUEST;
+            state = STATE_URL;
+            return put("POST ");
+        }
+
+        public Request PUT() {
+            assert state == STATE_REQUEST;
+            state = STATE_URL;
+            return put("PUT ");
         }
 
         public Request authBasic(CharSequence username, CharSequence password) {
@@ -321,7 +339,7 @@ public abstract class HttpClient implements QuietCloseable {
         }
 
         public ResponseHeaders send(CharSequence host, int port, int timeout) {
-            assert state == STATE_URL_DONE || state == STATE_QUERY || state == STATE_HEADER;
+            assert state == STATE_URL_DONE || state == STATE_QUERY || state == STATE_HEADER || state == STATE_CONTENT;
             if (socket.isClosed()) {
                 connect(host, port);
             }
@@ -330,10 +348,26 @@ public abstract class HttpClient implements QuietCloseable {
                 putAscii(" HTTP/1.1").putEOL();
             }
 
-            eol();
-            doSend(timeout);
+            if (contentStart > -1) {
+                assert state == STATE_CONTENT;
+                sendHeaderAndContent(Integer.MAX_VALUE, timeout);
+            } else {
+                eol();
+                doSend(bufLo, ptr, timeout);
+            }
             responseHeaders.clear();
             return responseHeaders;
+        }
+
+        public void sendPartialContent(CharSequence host, int port, int maxContentLen, int timeout) {
+            if (state != STATE_CONTENT || contentStart == -1) {
+                throw new IllegalStateException("No content to send");
+            }
+            if (socket.isClosed()) {
+                connect(host, port);
+            }
+
+            sendHeaderAndContent(maxContentLen, timeout);
         }
 
         public void setCookie(CharSequence name, CharSequence value) {
@@ -346,6 +380,30 @@ public abstract class HttpClient implements QuietCloseable {
             assert state == STATE_URL;
             state = STATE_URL_DONE;
             return put(url);
+        }
+
+        public Request withChunkedContent() {
+            beforeHeader();
+
+            header("Transfer-Encoding", "chunked");
+            putEOL();
+
+            contentLengthHeaderReserved = 0;
+            contentStart = ptr;
+            state = STATE_CONTENT;
+            return this;
+        }
+
+        public Request withContent() {
+            beforeHeader();
+
+            putAscii(HEADER_CONTENT_LENGTH);
+            contentLengthHeaderReserved = ((int) Math.log10(bufferSize) + 1) + 4; // length + 2 x EOL
+            ensureCapacity(contentLengthHeaderReserved);
+            ptr += contentLengthHeaderReserved;
+            contentStart = ptr;
+            state = STATE_CONTENT;
+            return this;
         }
 
         private void beforeHeader() {
@@ -390,10 +448,10 @@ public abstract class HttpClient implements QuietCloseable {
             setupIoWait();
         }
 
-        private void doSend(int timeoutMillis) {
-            int len = (int) (ptr - bufLo);
+        private void doSend(long lo, long hi, int timeoutMillis) {
+            int len = (int) (hi - lo);
             if (len > 0) {
-                long p = bufLo;
+                long p = lo;
                 do {
                     final int sent = sendOrDie(p, len, timeoutMillis);
                     if (sent > 0) {
@@ -528,6 +586,31 @@ public abstract class HttpClient implements QuietCloseable {
                     putAsciiInternal(c);
                     break;
             }
+        }
+
+        private void sendHeaderAndContent(int maxContentLen, int timeout) {
+            final int contentLength = (int) (ptr - contentStart);
+
+            // Add content bytes into the header.
+            final long hi = ptr;
+            final long headerHi;
+            if (contentLengthHeaderReserved > 0) {
+                ptr = contentStart - contentLengthHeaderReserved;
+                put(contentLength);
+                eol();
+                eol();
+                headerHi = ptr;
+                assert headerHi < contentStart;
+                ptr = hi;
+            } else {
+                headerHi = contentStart;
+            }
+
+            // Send header.
+            doSend(bufLo, headerHi, timeout);
+
+            // Send content.
+            doSend(contentStart, contentStart + Math.min(hi - contentStart, maxContentLen), timeout);
         }
     }
 
