@@ -3002,12 +3002,40 @@ if __name__ == "__main__":
                 drop("drop table if exists tab");
                 ddl(ddl);
                 insert("insert into tab select true, (86400000000*x)::timestamp, null from long_sequence(1000)");
+                drop("drop table if exists new_tab");
                 if (isWal) {
                     drainWalQueue();
                 }
 
                 for (int j = 0, k = commands.size(); j < k; j++) {
                     final String command = (String) commands.getQuick(j);
+
+                    // skip pending wal changes in case wal table has been suspended by earlier command
+                    if (isWal) {
+                        try (RecordCursorFactory factory = select("select suspended, writerTxn, sequencerTxn from wal_tables() where name = 'tab'")) {
+                            boolean suspended;
+                            long sequencerTxn;
+
+                            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                cursor.hasNext();
+                                Record record = cursor.getRecord();
+                                suspended = record.getBool(0);
+                                sequencerTxn = record.getLong(2) + 1;
+                            }
+
+                            if (suspended) {
+                                ddl("alter table tab resume wal from txn " + sequencerTxn);
+
+                                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                    cursor.hasNext();
+                                    Record record = cursor.getRecord();
+                                    suspended = record.getBool(1);
+                                    Assert.assertFalse(suspended);
+                                }
+                            }
+                        }
+                        drainWalQueue();
+                    }
 
                     // statements containing multiple transactions, such as 'alter table add column col1, col2' are currently not supported for WAL tables
                     // UPDATE statements with join are not supported yet for WAL tables
@@ -3016,7 +3044,6 @@ if __name__ == "__main__":
                     }
 
                     try {
-                        drop("drop table if exists new_tab");
                         if (isWal) {
                             drainWalQueue();
                         }

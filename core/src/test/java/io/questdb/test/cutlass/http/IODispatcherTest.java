@@ -27,9 +27,7 @@ package io.questdb.test.cutlass.http;
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cutlass.Services;
@@ -41,6 +39,7 @@ import io.questdb.cutlass.http.processors.TextImportProcessor;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
@@ -4154,7 +4153,15 @@ public class IODispatcherTest extends AbstractTest {
                         "00\r\n" +
                         "\r\n"
         );
-        Assert.assertFalse(builder.getSqlExecutionContext().isColumnPreTouchEnabled());
+
+        ObjList<SqlExecutionContextImpl> contexts = builder.getSqlExecutionContexts();
+        for (int i = 0, n = contexts.size(); i < n; i++) {
+            if (!contexts.getQuick(i).isColumnPreTouchEnabled()) {
+                return;
+            }
+        }
+
+        Assert.fail("Only contexts with preTouch enabled found");
     }
 
     @Test
@@ -4183,7 +4190,15 @@ public class IODispatcherTest extends AbstractTest {
                         "00\r\n" +
                         "\r\n"
         );
-        Assert.assertTrue(builder.getSqlExecutionContext().isColumnPreTouchEnabled());
+
+        ObjList<SqlExecutionContextImpl> contexts = builder.getSqlExecutionContexts();
+        for (int i = 0, n = contexts.size(); i < n; i++) {
+            if (contexts.getQuick(i).isColumnPreTouchEnabled()) {
+                return;
+            }
+        }
+
+        Assert.fail("No context with preTouch enabled found");
     }
 
     @Test
@@ -8454,9 +8469,6 @@ public class IODispatcherTest extends AbstractTest {
                     //testHttpClient.setKeepConnection(true);
 
                     try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
-                        engine.ddl("create table test (col_a int, col_b long, ts timestamp) timestamp(ts) partition by week", executionContext);
-                        engine.ddl("alter table test drop column col_b", executionContext);
-
                         for (int i = 0, n = ddls.size(); i < n; i++) {
                             final String ddl = (String) ddls.getQuick(i);
                             boolean isWal = ddl.equals(walTable);
@@ -8470,6 +8482,31 @@ public class IODispatcherTest extends AbstractTest {
 
                             for (int j = 0, k = commands.size(); j < k; j++) {
                                 final String command = (String) commands.getQuick(j);
+
+                                if (isWal) {
+                                    try (RecordCursorFactory factory = engine.select("select suspended, writerTxn, sequencerTxn from wal_tables() where name = 'tab'", executionContext)) {
+                                        boolean suspended;
+                                        long sequencerTxn;
+
+                                        try (RecordCursor cursor = factory.getCursor(executionContext)) {
+                                            cursor.hasNext();
+                                            Record record = cursor.getRecord();
+                                            suspended = record.getBool(0);
+                                            sequencerTxn = record.getLong(2) + 1;
+                                        }
+
+                                        if (suspended) {
+                                            engine.ddl("alter table tab resume wal from txn " + sequencerTxn, executionContext);
+
+                                            try (RecordCursor cursor = factory.getCursor(executionContext)) {
+                                                cursor.hasNext();
+                                                Record record = cursor.getRecord();
+                                                suspended = record.getBool(1);
+                                                Assert.assertFalse(suspended);
+                                            }
+                                        }
+                                    }
+                                }
 
                                 // statements containing multiple transactions, such as 'alter table add column col1, col2' are currently not supported for WAL tables
                                 // UPDATE statements with join are not supported yet for WAL tables

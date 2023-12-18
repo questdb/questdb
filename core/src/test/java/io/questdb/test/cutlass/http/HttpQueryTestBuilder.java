@@ -79,8 +79,8 @@ public class HttpQueryTestBuilder {
     private HttpRequestProcessorBuilder textImportProcessor;
     private int workerCount = 1;
 
-    public SqlExecutionContextImpl getSqlExecutionContext() {
-        return sqlExecutionContexts.get(0);
+    public ObjList<SqlExecutionContextImpl> getSqlExecutionContexts() {
+        return sqlExecutionContexts;
     }
 
     public int getWorkerCount() {
