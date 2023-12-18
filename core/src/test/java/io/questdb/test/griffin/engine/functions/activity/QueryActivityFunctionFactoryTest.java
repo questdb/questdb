@@ -65,7 +65,7 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testAdminCanSeeOtherPeoplesQueries() throws Exception {
         assertMemoryLeak(() -> {
-            final String query = "select 1 t from long_sequence(1) where sleep(60000)";
+            final String query = "select 1 t from long_sequence(1) where sleep(120000)";
 
             SOCountDownLatch started = new SOCountDownLatch(1);
             SOCountDownLatch stopped = new SOCountDownLatch(1);
@@ -143,7 +143,7 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testNonAdminCantSeeOtherUsersCommands() throws Exception {
         assertMemoryLeak(() -> {
-            final String query = "select 1 t from long_sequence(1) where sleep(60000)";
+            final String query = "select 1 t from long_sequence(1) where sleep(120000)";
 
             SOCountDownLatch started = new SOCountDownLatch(1);
             SOCountDownLatch stopped = new SOCountDownLatch(1);

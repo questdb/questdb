@@ -37,6 +37,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.FlyweightMessageContainer;
+import io.questdb.std.Os;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -81,7 +82,7 @@ public class CancelQueryFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testCancelMultipleQueries() throws Exception {
         assertMemoryLeak(() -> {
-            final String query = "select 1 t from long_sequence(1) where sleep(60000)";
+            final String query = "select 1 t from long_sequence(1) where sleep(120000)";
 
             SOCountDownLatch started = new SOCountDownLatch(2);
             SOCountDownLatch stopped = new SOCountDownLatch(2);
@@ -122,13 +123,14 @@ public class CancelQueryFunctionFactoryTest extends AbstractCairoTest {
                             break;
                         }
                     }
+                    Os.sleep(1);
                 }
             }
 
             try {
                 assertSql("query\twas_cancelled\n" +
-                                "select 1 t from long_sequence(1) where sleep(60000)\ttrue\n" +
-                                "select 1 t from long_sequence(1) where sleep(60000)\ttrue\n",
+                                "select 1 t from long_sequence(1) where sleep(120000)\ttrue\n" +
+                                "select 1 t from long_sequence(1) where sleep(120000)\ttrue\n",
                         "select query, cancel_query(query_id) was_cancelled from query_activity() where query = '" + query + "'");
             } finally {
                 stopped.await();
@@ -193,6 +195,7 @@ public class CancelQueryFunctionFactoryTest extends AbstractCairoTest {
                                 break;
                             }
                         }
+                        Os.sleep(1);
                     }
                 }
 

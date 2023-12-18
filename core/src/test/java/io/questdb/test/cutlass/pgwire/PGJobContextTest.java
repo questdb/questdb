@@ -2948,25 +2948,25 @@ if __name__ == "__main__":
                 walTable
         );
 
-        String createAsSelect = "create table new_tab as (select * from tab where sleep(60000))";
-        String select1 = "select 1 from long_sequence(1) where sleep(60000)";
-        String select2 = "select sleep(60000) from long_sequence(1)";
-        String selectWithJoin = "select 1 from long_sequence(1) ls1 join long_sequence(1) on sleep(60000)";
-        String insert = "insert into tab values (sleep(60000), 100000000000000L::timestamp, 'A' )";
-        String insertAsSelect1 = "insert into tab select true, 100000000000000L::timestamp, 'B' from long_sequence(1) where sleep(60000)";
-        String insertAsSelect2 = "insert into tab select sleep(60000), 100000000000000L::timestamp, 'B' from long_sequence(1)";
-        String insertAsSelectBatched = "insert batch 100 into tab select true, 100000000000000L::timestamp, 'B' from long_sequence(1) where sleep(60000)";
-        String insertAsSelectWithJoin1 = "insert into tab select ls1.x = ls2.x, 100000000000000L::timestamp, 'B' from long_sequence(1) ls1 left join (select * from long_sequence(1)) ls2 on ls1.x = ls2.x where sleep(60000)";
-        String insertAsSelectWithJoin2 = "insert into tab select sleep(60000), 100000000000000L::timestamp, 'B' from long_sequence(1) ls1 left join (select * from long_sequence(1)) ls2 on ls1.x = ls2.x";
-        String insertAsSelectWithJoin3 = "insert into tab select ls1.x = ls2.x, 100000000000000L::timestamp, 'B' from long_sequence(1) ls1 left join (select * from long_sequence(1)) ls2 on ls1.x = ls2.x and sleep(60000)";
-        String update1 = "update tab set b=true where sleep(60000)";
-        String update2 = "update tab set b=sleep(60000)";
-        String updateWithJoin1 = "update tab t1 set b=true from tab t2 where sleep(60000) and t1.b = t2.b";
-        String updateWithJoin2 = "update tab t1 set b=sleep(60000) from tab t2 where t1.b = t2.b";
+        String createAsSelect = "create table new_tab as (select * from tab where sleep(120000))";
+        String select1 = "select 1 from long_sequence(1) where sleep(120000)";
+        String select2 = "select sleep(120000) from long_sequence(1)";
+        String selectWithJoin = "select 1 from long_sequence(1) ls1 join long_sequence(1) on sleep(120000)";
+        String insert = "insert into tab values (sleep(120000), 100000000000000L::timestamp, 'A' )";
+        String insertAsSelect1 = "insert into tab select true, 100000000000000L::timestamp, 'B' from long_sequence(1) where sleep(120000)";
+        String insertAsSelect2 = "insert into tab select sleep(120000), 100000000000000L::timestamp, 'B' from long_sequence(1)";
+        String insertAsSelectBatched = "insert batch 100 into tab select true, 100000000000000L::timestamp, 'B' from long_sequence(1) where sleep(120000)";
+        String insertAsSelectWithJoin1 = "insert into tab select ls1.x = ls2.x, 100000000000000L::timestamp, 'B' from long_sequence(1) ls1 left join (select * from long_sequence(1)) ls2 on ls1.x = ls2.x where sleep(120000)";
+        String insertAsSelectWithJoin2 = "insert into tab select sleep(120000), 100000000000000L::timestamp, 'B' from long_sequence(1) ls1 left join (select * from long_sequence(1)) ls2 on ls1.x = ls2.x";
+        String insertAsSelectWithJoin3 = "insert into tab select ls1.x = ls2.x, 100000000000000L::timestamp, 'B' from long_sequence(1) ls1 left join (select * from long_sequence(1)) ls2 on ls1.x = ls2.x and sleep(120000)";
+        String update1 = "update tab set b=true where sleep(120000)";
+        String update2 = "update tab set b=sleep(120000)";
+        String updateWithJoin1 = "update tab t1 set b=true from tab t2 where sleep(120000) and t1.b = t2.b";
+        String updateWithJoin2 = "update tab t1 set b=sleep(120000) from tab t2 where t1.b = t2.b";
 
         // add many symbols to slow down operation enough so that other thread can detect it in registry and cancel it
         String addColumnsTmp = "alter table tab add column s1 symbol index";
-        for (int i = 2; i < 40; i++) {
+        for (int i = 2; i < 20; i++) {
             addColumnsTmp += ", s" + i + " symbol index";
         }
         final String addColumns = addColumnsTmp;
