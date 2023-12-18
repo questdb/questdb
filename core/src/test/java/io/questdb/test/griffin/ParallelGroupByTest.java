@@ -223,7 +223,7 @@ public class ParallelGroupByTest extends AbstractCairoTest {
     @Test
     public void testParallelFunctionKeyExplicitGroupBy() throws Exception {
         testParallelSymbolKeyGroupBy(
-                "SELECT day_of_week(ts) day, key, vwap(price, quantity), sum(colTop) FROM tab GROUP BY day, key ORDER BY day",
+                "SELECT day_of_week(ts) day, key, vwap(price, quantity), sum(colTop) FROM tab GROUP BY day, key ORDER BY day, key",
                 "day\tkey\tvwap\tsum\n" +
                         "1\tk0\t2848.23852863102\t263700.0\n" +
                         "1\tk1\t2848.94253657797\t263820.0\n" +
@@ -240,11 +240,11 @@ public class ParallelGroupByTest extends AbstractCairoTest {
                         "3\tk2\t2528.070992925104\t204950.0\n" +
                         "3\tk3\t2528.8376005852233\t205050.0\n" +
                         "3\tk4\t2529.6044357786986\t205150.0\n" +
+                        "4\tk0\t2594.679907219484\t215425.0\n" +
                         "4\tk1\t2595.0011126435716\t215585.0\n" +
                         "4\tk2\t2595.617813662006\t215695.0\n" +
                         "4\tk3\t2596.234922950459\t215805.0\n" +
                         "4\tk4\t2596.8524398569757\t215915.0\n" +
-                        "4\tk0\t2594.679907219484\t215425.0\n" +
                         "5\tk0\t2651.1220904699167\t227700.0\n" +
                         "5\tk1\t2651.7251338776227\t227820.0\n" +
                         "5\tk2\t2652.3285952443625\t227940.0\n" +
