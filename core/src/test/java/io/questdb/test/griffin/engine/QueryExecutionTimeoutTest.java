@@ -44,6 +44,7 @@ import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.BeforeClass;
+import org.junit.Ignore;
 import org.junit.Test;
 
 
@@ -103,6 +104,7 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
                         testTimeoutInLatestByAllIndexed(compiler, sqlExecutionContext));
     }
 
+    @Ignore// create table as select doesn't time out anymore but can be cancelled manually
     @Test
     public void testTimeoutInCreateTableAsSelectFromRealTable() throws Exception {
         unsetTimeout();
@@ -120,6 +122,7 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
         }
     }
 
+    @Ignore// create table as select doesn't time out anymore but can be cancelled manually
     @Test
     public void testTimeoutInCreateTableAsSelectFromVirtualTable() throws Exception {
         assertTimeout("create table instest as (select rnd_int(), rnd_long(), rnd_double() from long_sequence(10000000))");
@@ -132,24 +135,28 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
         }
     }
 
+    @Ignore// insert as select doesn't time out anymore but can be cancelled manually
     @Test
     public void testTimeoutInInsertAsSelect() throws Exception {
         assertTimeout("create table instest ( i int, l long, d double ) ",
                 "insert into instest select rnd_int(), rnd_long(), rnd_double() from long_sequence(10000000)");
     }
 
+    @Ignore// insert as select doesn't time out anymore but can be cancelled manually
     @Test
     public void testTimeoutInInsertAsSelectBatchedAndOrderedByTs() throws Exception {
         assertTimeout("create table instest ( i int, l long, d double, ts timestamp ) timestamp(ts) ",
                 "insert batch 100 into instest select rnd_int(), rnd_long(), rnd_double(), cast(x as timestamp) from long_sequence(10000000)");
     }
 
+    @Ignore// insert as select doesn't time out anymore but can be cancelled manually
     @Test
     public void testTimeoutInInsertAsSelectBatchedAndOrderedByTsAsString() throws Exception {
         assertTimeout("create table instest ( i int, l long, d double, ts timestamp ) timestamp(ts) ",
                 "insert batch 100 into instest select rnd_int(), rnd_long(), rnd_double(), cast(cast(x as timestamp) as string) from long_sequence(10000000)");
     }
 
+    @Ignore// insert as select doesn't time out anymore but can be cancelled manually
     @Test
     public void testTimeoutInInsertAsSelectOrderedByTs() throws Exception {
         assertTimeout("create table instest ( i int, l long, d double, ts timestamp ) timestamp(ts) ",
@@ -358,6 +365,7 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
                         "from rntest");
     }
 
+    @Ignore// update table doesn't time out anymore but can be cancelled manually
     @Test
     public void testTimeoutInUpdateTable() throws Exception {
         assertTimeout("create table updtest as (select rnd_int() i, rnd_long() l, rnd_double() d from long_sequence(10000))",

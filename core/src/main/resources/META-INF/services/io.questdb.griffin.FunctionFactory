@@ -22,6 +22,9 @@
 #
 ################################################################################
 
+io.questdb.griffin.engine.functions.activity.CancelQueryFunctionFactory
+io.questdb.griffin.engine.functions.activity.QueryActivityFunctionFactory
+
 io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFactory
 io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory
 io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory
@@ -29,6 +32,7 @@ io.questdb.griffin.engine.functions.test.TestSumXDoubleGroupByFunctionFactory
 io.questdb.griffin.engine.functions.test.TestSumTDoubleGroupByFunctionFactory
 io.questdb.griffin.engine.functions.test.TestSumStringGroupByFunctionFactory
 io.questdb.griffin.engine.functions.test.TestNPEFactory
+io.questdb.griffin.engine.functions.test.TestSleepFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndLogFunctionFactory
 
 # logical operations

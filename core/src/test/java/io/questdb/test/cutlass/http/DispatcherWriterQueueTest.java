@@ -40,6 +40,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.Timeout;
@@ -269,6 +270,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                 "alter+table+<x>+drop+column+s");
     }
 
+    @Ignore// update statements don't time out anymore but can be cancelled manually
     @Test
     public void testRestUpdateTimeout() throws Exception {
         HttpQueryTestBuilder queryTestBuilder = new HttpQueryTestBuilder()

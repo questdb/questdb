@@ -25,13 +25,21 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.mp.Worker;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.NotNull;
 
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class QueryRegistry {
+
+    private static final Log LOG = LogFactory.getLog(QueryRegistry.class);
     private final NanosecondClock clock;
     private final AtomicLong idSeq = new AtomicLong();
     private final ConcurrentLongHashMap<Entry> registry = new ConcurrentLongHashMap<>();
@@ -42,30 +50,170 @@ public class QueryRegistry {
         tlQueryPool = new ThreadLocal<>(() -> new WeakMutableObjectPool<>(Entry::new, configuration.getQueryRegistryPoolSize()));
     }
 
-    // TODO we shouldn't copy text in case of sensitive queries
-    public long register(CharSequence query) {
-        final long qid = idSeq.getAndIncrement();
+    public boolean cancel(long queryId, SqlExecutionContext executionContext) {
+        SecurityContext securityContext = executionContext.getSecurityContext();
+        securityContext.authorizeCancelQuery();
+
+        Entry entry = registry.get(queryId);
+        if (entry != null) {
+            if (!Chars.equals(entry.principal, securityContext.getPrincipal())) {
+                // only admin can cancel other user's queries
+                securityContext.authorizeAdminAction();
+            }
+
+            entry.cancel();
+            entry.changedAtNs = clock.getTicks();
+            entry.state = Entry.State.CANCELLED;
+            LOG.info().$("cancelling query [id=").$(queryId).I$();
+            return true;
+        }
+
+        LOG.info().$("query not found in registry [id=").$(queryId).I$();
+        return false;
+    }
+
+    public Entry getEntry(long id) {
+        return registry.get(id);
+    }
+
+    public void getEntryIds(@NotNull LongList target) {
+        target.clear();
+
+        ConcurrentLongHashMap.KeyIterator<Entry> iterator = registry.keySet().iterator();
+
+        while (iterator.hasNext()) {
+            target.add(iterator.next());
+        }
+    }
+
+    public long register(CharSequence query, SqlExecutionContext executionContext) {
+        final long queryId = idSeq.getAndIncrement();
         final Entry e = tlQueryPool.get().pop();
+
         e.registeredAtNs = clock.getTicks();
-        e.sink.put(query);
-        registry.put(qid, e);
-        return qid;
+        e.changedAtNs = e.registeredAtNs;
+        e.state = Entry.State.ACTIVE;
+
+        if (executionContext.containsSecret()) {
+            e.query.put("<SECRET>");
+        } else {
+            // we shouldn't copy text in case of sensitive queries
+            e.query.put(query);
+        }
+
+        final Thread thread = Thread.currentThread();
+        if (thread instanceof Worker) {
+            Worker worker = (Worker) thread;
+            e.workerId = worker.getWorkerId();
+            e.poolName = worker.getPoolName();
+        }
+        e.principal = executionContext.getSecurityContext().getPrincipal();
+        registry.put(queryId, e);
+
+        executionContext.setCancelledFlag(e.cancelled);
+        return queryId;
     }
 
-    public void unregister(long qid) {
-        final Entry e = registry.remove(qid);
-        tlQueryPool.get().push(e);
+    public void unregister(long queryId, SqlExecutionContext executionContext) {
+        if (queryId < 0) {
+            //likely because query was already unregistered
+            return;
+        }
+
+        final Entry e = registry.remove(queryId);
+        if (e != null) {
+            tlQueryPool.get().push(e);
+        } else {
+            // this might happen if query was cancelled
+            LOG.error().$("query to unregister not found [id=").$(queryId).I$();
+        }
+
+        executionContext.setCancelledFlag(null);
     }
 
-    private static class Entry implements Mutable {
-        // TODO add cancelled flag, owner id
-        final StringSink sink = new StringSink();
-        long registeredAtNs;
+    public static class Entry implements Mutable {
+
+        private final AtomicBoolean cancelled = new AtomicBoolean();
+        private final StringSink query = new StringSink();
+        private long changedAtNs;
+        private CharSequence poolName;
+        private CharSequence principal;
+        private long registeredAtNs;
+        private byte state;
+        private long workerId;
+
+        public void cancel() {
+            cancelled.set(true);
+        }
 
         @Override
         public void clear() {
-            sink.clear();
+            query.clear();
             registeredAtNs = 0;
+            changedAtNs = 0;
+            cancelled.set(false);
+            poolName = null;
+            workerId = -1;
+            principal = null;
+            state = State.IDLE;
+        }
+
+        public AtomicBoolean getCancelled() {
+            return cancelled;
+        }
+
+        public long getChangedAtNs() {
+            return changedAtNs;
+        }
+
+        public CharSequence getPoolName() {
+            return poolName;
+        }
+
+        public CharSequence getPrincipal() {
+            return principal;
+        }
+
+        public StringSink getQuery() {
+            return query;
+        }
+
+        public long getRegisteredAtNs() {
+            return registeredAtNs;
+        }
+
+        public byte getState() {
+            return state;
+        }
+
+        public String getStateText() {
+            return State.getText(state);
+        }
+
+        public long getWorkerId() {
+            return workerId;
+        }
+
+        public static class State {
+            public static final byte ACTIVE = 2;
+            public static final byte CANCELLED = (byte) (ACTIVE + 1);
+            public static final byte IDLE = 1;
+
+            private State() {
+            }
+
+            public static String getText(byte state) {
+                switch (state) {
+                    case IDLE:
+                        return "idle";
+                    case ACTIVE:
+                        return "active";
+                    case CANCELLED:
+                        return "cancelled";
+                    default:
+                        return "unknown state";
+                }
+            }
         }
     }
 }

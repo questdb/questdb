@@ -32,6 +32,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriterMetadata;
+import io.questdb.griffin.engine.RegisteredRecordCursorFactory;
 import io.questdb.griffin.engine.ops.*;
 import io.questdb.griffin.model.*;
 import io.questdb.log.Log;
@@ -96,6 +97,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final QueryLogger queryLogger;
     private final ObjectPool<QueryModel> queryModelPool;
+    private final QueryRegistry queryRegistry;
     private final IndexBuilder rebuildIndex;
     private final Path renamePath = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
     private final ObjectPool<ExpressionNode> sqlNodePool;
@@ -171,6 +173,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         );
 
         alterOperationBuilder = new AlterOperationBuilder();
+        queryRegistry = engine.getQueryRegistry();
     }
 
     // public for testing
@@ -691,14 +694,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             int symbolCapacity;
             final boolean indexed;
 
-            if (
-                    ColumnType.isSymbol(type)
-                            && tok != null
-                            &&
-                            !Chars.equals(tok, ',')
-                            && !Chars.equals(tok, ';')
+            if (ColumnType.isSymbol(type)
+                    && tok != null
+                    && !Chars.equals(tok, ',')
+                    && !Chars.equals(tok, ';')
             ) {
-
                 if (isCapacityKeyword(tok)) {
                     tok = expectToken(lexer, "symbol capacity");
 
@@ -1266,6 +1266,30 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return tableName;
     }
 
+    private void cancelQuery(SqlExecutionContext executionContext) throws SqlException {
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok == null || !SqlKeywords.isQueryKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "'QUERY' expected'");
+        }
+
+        tok = SqlUtil.fetchNext(lexer);
+        try {
+            long queryId = Numbers.parseLong(tok);
+
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok != null && !isSemicolon(tok)) {
+                throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
+            }
+
+            if (!executionContext.getCairoEngine().getQueryRegistry().cancel(queryId, executionContext)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "query to cancel not found in registry [id=").put(queryId).put(']');
+            }
+            compiledQuery.ofCancelQuery();
+        } catch (NumericException e) {
+            throw SqlException.$(lexer.lastTokenPosition(), "non-negative integer literal expected as query id");
+        }
+    }
+
     private void compileBegin(SqlExecutionContext executionContext) {
         compiledQuery.ofBegin();
     }
@@ -1396,7 +1420,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             if (shouldLog(executor)) {
                 logQuery(executionContext);
             }
-            // an executor can return null as a fallback to execution model
+            // an executor can return compiled query with NONE type as a fallback to execution model
             executor.execute(executionContext);
         }
         // executor is allowed to give up on the execution and fall back to standard behaviour
@@ -1426,52 +1450,79 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         // full ownership over it. In that however caller may
         // choose to return factory back to this or any other
         // instance of compiler for safekeeping
-
         // lexer would have parsed first token to determine direction of execution flow
         lexer.unparseLast();
         codeGenerator.clear();
+        int queryStart = lexer.lastTokenPosition();
+        long queryId = -1;
 
-        final ExecutionModel executionModel = compileExecutionModel(executionContext);
-        switch (executionModel.getModelType()) {
-            case ExecutionModel.QUERY:
-                LOG.info().$("plan [q=`").$((QueryModel) executionModel).$("`, fd=").$(executionContext.getRequestFd()).$(']').$();
-                compiledQuery.of(generate((QueryModel) executionModel, executionContext));
-                break;
-            case ExecutionModel.CREATE_TABLE:
-                createTableWithRetries(executionModel, executionContext);
-                break;
-            case ExecutionModel.COPY:
-                copy(executionContext, (CopyModel) executionModel);
-                break;
-            case ExecutionModel.RENAME_TABLE:
-                final RenameTableModel rtm = (RenameTableModel) executionModel;
-                engine.rename(executionContext.getSecurityContext(), path, mem, GenericLexer.unquote(rtm.getFrom().token), renamePath, GenericLexer.unquote(rtm.getTo().token));
-                compiledQuery.ofRenameTable();
-                break;
-            case ExecutionModel.UPDATE:
-                final QueryModel updateQueryModel = (QueryModel) executionModel;
-                TableToken tableToken = executionContext.getTableToken(updateQueryModel.getTableName());
-                try (TableRecordMetadata metadata = executionContext.getSequencerMetadata(tableToken)) {
-                    final UpdateOperation updateOperation = generateUpdate(updateQueryModel, executionContext, metadata);
-                    compiledQuery.ofUpdate(updateOperation);
-                }
-                break;
-            case ExecutionModel.EXPLAIN:
-                compiledQuery.ofExplain(generateExplain((ExplainModel) executionModel, executionContext));
-                break;
-            default:
-                final InsertModel insertModel = (InsertModel) executionModel;
-                if (insertModel.getQueryModel() != null) {
-                    executeWithRetries(
-                            insertAsSelectMethod,
-                            executionModel,
-                            configuration.getCreateAsSelectRetryCount(),
-                            executionContext
-                    );
-                } else {
-                    insert(executionModel, executionContext);
-                }
-                break;
+        try {
+            final ExecutionModel executionModel = compileExecutionModel(executionContext);
+            if (query == null) {//we need query text for query registry
+                query = lexer.getContent().subSequence(queryStart, lexer.getPosition());
+            }
+            switch (executionModel.getModelType()) {
+                case ExecutionModel.QUERY:
+                    LOG.info().$("plan [q=`").$((QueryModel) executionModel).$("`, fd=").$(executionContext.getRequestFd()).$(']').$();
+                    RecordCursorFactory generatedFactory = generate((QueryModel) executionModel, executionContext);
+                    compiledQuery.of(new RegisteredRecordCursorFactory(queryRegistry, query, generatedFactory));
+                    break;
+                case ExecutionModel.CREATE_TABLE:
+                    queryId = queryRegistry.register(query, executionContext);
+                    createTableWithRetries(executionModel, executionContext);
+                    break;
+                case ExecutionModel.COPY:
+                    copy(executionContext, (CopyModel) executionModel);
+                    break;
+                case ExecutionModel.RENAME_TABLE:
+                    queryId = queryRegistry.register(query, executionContext);
+                    final RenameTableModel rtm = (RenameTableModel) executionModel;
+                    engine.rename(executionContext.getSecurityContext(), path, mem, GenericLexer.unquote(rtm.getFrom().token), renamePath, GenericLexer.unquote(rtm.getTo().token));
+                    compiledQuery.ofRenameTable();
+                    break;
+                case ExecutionModel.UPDATE:
+                    final QueryModel updateQueryModel = (QueryModel) executionModel;
+                    TableToken tableToken = executionContext.getTableToken(updateQueryModel.getTableName());
+                    try (TableRecordMetadata metadata = executionContext.getSequencerMetadata(tableToken)) {
+                        final UpdateOperation updateOperation = generateUpdate(updateQueryModel, executionContext, metadata);
+                        //updateOperation.setUpdateSql(query);
+                        compiledQuery.ofUpdate(updateOperation);
+                    }
+                    //update is delayed until operation execution (for non-wal tables) or pushed to wal job completely
+                    break;
+                case ExecutionModel.EXPLAIN:
+                    queryId = queryRegistry.register(query, executionContext);
+                    compiledQuery.ofExplain(generateExplain((ExplainModel) executionModel, executionContext));
+                    break;
+                default:
+                    final InsertModel insertModel = (InsertModel) executionModel;
+                    if (insertModel.getQueryModel() != null) {
+                        queryId = queryRegistry.register(query, executionContext);
+                        executeWithRetries(
+                                insertAsSelectMethod,
+                                executionModel,
+                                configuration.getCreateAsSelectRetryCount(),
+                                executionContext
+                        );
+                    } else {
+                        insert(executionModel, executionContext);
+                        compiledQuery.getInsertOperation().setInsertSql(query);
+                    }
+                    break;
+            }
+
+            short type = compiledQuery.getType();
+            if (type == CompiledQuery.INSERT_AS_SELECT // insert as select is immediate, simple insert is not!
+                    || type == CompiledQuery.EXPLAIN
+                    || type == CompiledQuery.RENAME_TABLE  // non-wal rename table is complete at this point
+                    || type == CompiledQuery.CREATE_TABLE || type == CompiledQuery.CREATE_TABLE_AS_SELECT // create table is complete at this point
+            ) {
+                queryRegistry.unregister(queryId, executionContext);
+            }
+        } catch (Throwable t) {
+            // unregister query on error
+            queryRegistry.unregister(queryId, executionContext);
+            throw t;
         }
     }
 
@@ -1856,6 +1907,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             int position,
             CharSequence volumeAlias
     ) throws SqlException {
+        executionContext.setUseSimpleCircuitBreaker(true);
         try (
                 final RecordCursorFactory factory = generate(model.getQueryModel(), executionContext);
                 final RecordCursor cursor = factory.getCursor(executionContext)
@@ -1897,6 +1949,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw e;
             }
             return tableToken;
+        } finally {
+            executionContext.setUseSimpleCircuitBreaker(false);
         }
     }
 
@@ -2161,7 +2215,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
 
             insertOperation.setColumnNames(columnNameList);
-
             compiledQuery.ofInsert(insertOperation);
         } catch (SqlException e) {
             Misc.freeObjList(valueFunctions);
@@ -2176,6 +2229,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         TableToken tableToken = tableExistsOrFail(tableNameExpr.position, tableNameExpr.token, executionContext);
         long insertCount;
 
+        executionContext.setUseSimpleCircuitBreaker(true);
         try (
                 TableWriterAPI writer = engine.getTableWriterAPI(tableToken, "insertAsSelect");
                 RecordCursorFactory factory = generate(model.getQueryModel(), executionContext)
@@ -2317,7 +2371,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     throw e;
                 }
             }
+        } finally {
+            executionContext.setUseSimpleCircuitBreaker(false);
         }
+
         compiledQuery.ofInsertAsSelect(insertCount);
     }
 
@@ -2825,6 +2882,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final KeywordBasedExecutor vacuumTable = this::vacuum;
         final KeywordBasedExecutor snapshotDatabase = this::snapshotDatabase;
         final KeywordBasedExecutor compileDeallocate = this::compileDeallocate;
+        final KeywordBasedExecutor cancelQuery = this::cancelQuery;
 
         keywordBasedExecutors.put("truncate", truncateTables);
         keywordBasedExecutors.put("alter", alterTable);
@@ -2842,6 +2900,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         keywordBasedExecutors.put("vacuum", vacuumTable);
         keywordBasedExecutors.put("snapshot", snapshotDatabase);
         keywordBasedExecutors.put("deallocate", compileDeallocate);
+        keywordBasedExecutors.put("cancel", cancelQuery);
     }
 
     @SuppressWarnings({"unused"})

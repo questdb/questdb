@@ -81,8 +81,11 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
 
         TableToken tableToken = tableWriter.getTableToken();
         LOG.info().$("updating [table=").$(tableToken).$(" instance=").$(op.getCorrelationId()).I$();
-
+        QueryRegistry queryRegistry = sqlExecutionContext.getCairoEngine().getQueryRegistry();
+        long queryId = -1L;
         try {
+            sqlExecutionContext.setUseSimpleCircuitBreaker(true);
+            queryId = queryRegistry.register(op.getSqlText(), sqlExecutionContext);
             final int tableId = op.getTableId();
             final long tableVersion = op.getTableVersion();
             final RecordCursorFactory factory = op.getFactory();
@@ -278,6 +281,8 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
             LOG.error().$("could not update").$(th).$();
             throw th;
         } finally {
+            sqlExecutionContext.setUseSimpleCircuitBreaker(false);
+            queryRegistry.unregister(queryId, sqlExecutionContext);
             op.closeWriter();
         }
     }

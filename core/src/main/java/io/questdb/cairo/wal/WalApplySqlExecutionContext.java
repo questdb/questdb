@@ -27,9 +27,11 @@ package io.questdb.cairo.wal;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.NotNull;
 
 class WalApplySqlExecutionContext extends SqlExecutionContextImpl {
     private TableToken tableToken;
@@ -38,11 +40,9 @@ class WalApplySqlExecutionContext extends SqlExecutionContextImpl {
         super(cairoEngine, workerCount, sharedWorkerCount);
     }
 
-    public TableRecordMetadata getSequencerMetadata(TableToken tableToken) {
-        // When WAL is applied and SQL is re-compiled
-        // the correct metadata for writing is reader metadata,
-        // because the sequencer metadata looks at the future.
-        return getCairoEngine().getTableReaderMetadata(this.tableToken);
+    @Override
+    public @NotNull SqlExecutionCircuitBreaker getCircuitBreaker() {
+        return getSimpleCircuitBreaker();//wal operations should use cancellable circuit breaker instead of noop
     }
 
     @Override
@@ -53,6 +53,13 @@ class WalApplySqlExecutionContext extends SqlExecutionContextImpl {
     @Override
     public TableReader getReader(TableToken tableName) {
         return getCairoEngine().getReader(this.tableToken);
+    }
+
+    public TableRecordMetadata getSequencerMetadata(TableToken tableToken) {
+        // When WAL is applied and SQL is re-compiled
+        // the correct metadata for writing is reader metadata,
+        // because the sequencer metadata looks at the future.
+        return getCairoEngine().getTableReaderMetadata(this.tableToken);
     }
 
     @Override

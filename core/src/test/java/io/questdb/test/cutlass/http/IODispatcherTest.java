@@ -30,6 +30,8 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.wal.ApplyWal2TableJob;
+import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cutlass.Services;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.http.processors.HealthCheckProcessor;
@@ -79,6 +81,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
+import static io.questdb.test.tools.TestUtils.drainWalQueue;
 
 public class IODispatcherTest extends AbstractTest {
     public static final String JSON_DDL_RESPONSE = "0c\r\n" +
@@ -515,6 +518,16 @@ public class IODispatcherTest extends AbstractTest {
                 0,
                 false
         ), false);
+    }
+
+    @Test
+    public void testExecuteAndCancelSqlCommandsOnExpEndpoint() throws Exception {
+        testExecuteAndCancelSqlCommands("/exp");
+    }
+
+    @Test
+    public void testExecuteAndCancelSqlCommandsOnQueryEndpoint() throws Exception {
+        testExecuteAndCancelSqlCommands("/query");
     }
 
     @Test
@@ -3383,11 +3396,13 @@ public class IODispatcherTest extends AbstractTest {
         );
     }
 
+    @Ignore// CTAS statements don't time out anymore but can be cancelled manually
     @Test
     public void testJsonQueryCreateTableAsSelectTimeoutNoWal() throws Exception {
         testJsonQueryCreateTableAsSelectTimeout(false);
     }
 
+    @Ignore// CTAS statements don't time out anymore but can be cancelled manually
     @Test
     public void testJsonQueryCreateTableAsSelectTimeoutWal() throws Exception {
         testJsonQueryCreateTableAsSelectTimeout(true);
@@ -8353,6 +8368,244 @@ public class IODispatcherTest extends AbstractTest {
                         nf.close(fd);
                         // Make sure to close the event on the producer side.
                         Misc.free(eventRef.get());
+                    }
+                });
+    }
+
+    private void testExecuteAndCancelSqlCommands(final String url) throws Exception {
+        final long TIMEOUT = 240_000;
+
+        String baseTable = "create table tab (b boolean, ts timestamp, sym symbol)";
+        String walTable = baseTable + " timestamp(ts) partition by DAY WAL";
+        ObjList ddls = new ObjList(
+                baseTable,
+                baseTable + " timestamp(ts)",
+                baseTable + " timestamp(ts) partition by DAY BYPASS WAL",
+                walTable
+        );
+
+        String createAsSelect = "create table new_tab as (select * from tab where sleep(60000))";
+        String select1 = "select 1 from long_sequence(1) where sleep(60000)";
+        String select2 = "select sleep(60000) from long_sequence(1)";
+        String selectWithJoin = "select 1 from long_sequence(1) ls1 join long_sequence(1) on sleep(60000)";
+        String insert = "insert into tab values (sleep(60000), 100000000000000L::timestamp, 'A' )";
+        String insertAsSelect1 = "insert into tab select true, 100000000000000L::timestamp, 'B' from long_sequence(1) where sleep(60000)";
+        String insertAsSelect2 = "insert into tab select sleep(60000), 100000000000000L::timestamp, 'B' from long_sequence(1)";
+        String insertAsSelectBatched = "insert batch 100 into tab select true, 100000000000000L::timestamp, 'B' from long_sequence(1) where sleep(60000)";
+        String insertAsSelectWithJoin1 = "insert into tab select ls1.x = ls2.x, 100000000000000L::timestamp, 'B' from long_sequence(1) ls1 left join (select * from long_sequence(1)) ls2 on ls1.x = ls2.x where sleep(60000)";
+        String insertAsSelectWithJoin2 = "insert into tab select sleep(60000), 100000000000000L::timestamp, 'B' from long_sequence(1) ls1 left join (select * from long_sequence(1)) ls2 on ls1.x = ls2.x";
+        String insertAsSelectWithJoin3 = "insert into tab select ls1.x = ls2.x, 100000000000000L::timestamp, 'B' from long_sequence(1) ls1 left join (select * from long_sequence(1)) ls2 on ls1.x = ls2.x and sleep(60000)";
+        String update1 = "update tab set b=true where sleep(60000)";
+        String update2 = "update tab set b=sleep(60000)";
+        String updateWithJoin1 = "update tab t1 set b=true from tab t2 where sleep(60000) and t1.b = t2.b";
+        String updateWithJoin2 = "update tab t1 set b=sleep(60000) from tab t2 where t1.b = t2.b";
+
+        // add many symbols to slow down operation enough so that other thread can detect it in registry and cancel it
+        String addColumnsTmp = "alter table tab add column s1 symbol index";
+        for (int i = 2; i < 40; i++) {
+            addColumnsTmp += ", s" + i + " symbol index";
+        }
+        final String addColumns = addColumnsTmp;
+
+        final ObjList commands;
+        if ("/query".equals(url)) {
+            commands = new ObjList(
+                    createAsSelect,
+                    select1,
+                    select2,
+                    selectWithJoin,
+                    insert,
+                    insertAsSelect1,
+                    insertAsSelect2,
+                    insertAsSelectBatched,
+                    insertAsSelectWithJoin1,
+                    insertAsSelectWithJoin2,
+                    insertAsSelectWithJoin3,
+                    update1,
+                    update2,
+                    updateWithJoin1,
+                    updateWithJoin2,
+                    addColumns
+            );
+        } else {
+            commands = new ObjList(
+                    select1,
+                    select2,
+                    selectWithJoin);
+        }
+
+
+        SOCountDownLatch started = new SOCountDownLatch(1);
+        SOCountDownLatch stopped = new SOCountDownLatch(1);
+        AtomicReference<Throwable> queryError = new AtomicReference<>();
+
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(2)
+                .withHttpServerConfigBuilder(
+                        new HttpServerConfigurationBuilder()
+                                .withNetwork(NetworkFacadeImpl.INSTANCE)
+                                .withDumpingTraffic(false)
+                                .withAllowDeflateBeforeSend(false)
+                                .withHttpProtocolVersion("HTTP/1.1 ")
+                                .withServerKeepAlive(true)
+                )
+                .run((engine) -> {
+                    //testHttpClient.setKeepConnection(true);
+
+                    try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                        engine.ddl("create table test (col_a int, col_b long, ts timestamp) timestamp(ts) partition by week", executionContext);
+                        engine.ddl("alter table test drop column col_b", executionContext);
+
+                        for (int i = 0, n = ddls.size(); i < n; i++) {
+                            final String ddl = (String) ddls.getQuick(i);
+                            boolean isWal = ddl.equals(walTable);
+
+                            engine.drop("drop table if exists tab", executionContext, null);
+                            engine.ddl(ddl, executionContext);
+                            engine.insert("insert into tab select true, (86400000000*x)::timestamp, null from long_sequence(1000)", executionContext);
+                            if (isWal) {
+                                drainWalQueue(engine);
+                            }
+
+                            for (int j = 0, k = commands.size(); j < k; j++) {
+                                final String command = (String) commands.getQuick(j);
+
+                                // statements containing multiple transactions, such as 'alter table add column col1, col2' are currently not supported for WAL tables
+                                // UPDATE statements with join are not supported yet for WAL tables
+                                if ((isWal && (command.equals(updateWithJoin1) || command.equals(updateWithJoin2) /*|| command.equals(addColumns)*/))) {
+                                    continue;
+                                }
+
+                                try {
+                                    engine.drop("drop table if exists new_tab", executionContext, null);
+                                    if (isWal) {
+                                        drainWalQueue(engine);
+                                    }
+
+                                    started.setCount(isWal ? 2 : 1);
+                                    stopped.setCount(isWal ? 2 : 1);
+                                    queryError.set(null);
+
+                                    new Thread(() -> {
+                                        String response;
+                                        try (TestHttpClient testHttpClient = new TestHttpClient()) {
+                                            started.countDown();
+                                            try {
+                                                testHttpClient.assertGetRegexp(
+                                                        url,
+                                                        ".*(cancelling statement due to user request|Could not create table|timeout, query aborted|\"ddl\":\"OK\").*",
+                                                        command,
+                                                        null, null,
+                                                        null
+                                                );
+                                            } catch (Throwable e) {
+                                                queryError.set(e);
+                                            }
+                                        } finally {
+                                            stopped.countDown();
+                                        }
+                                    }, "command_thread").start();
+
+                                    if (isWal) {
+                                        Thread walJob = new Thread(() -> {
+                                            started.countDown();
+
+                                            try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1);) {
+                                                while (queryError.get() == null) {
+                                                    walApplyJob.drain(0);
+                                                    new CheckWalTransactionsJob(engine).run(0);
+                                                    // run once again as there might be notifications to handle now
+                                                    walApplyJob.drain(0);
+                                                }
+                                            } finally {
+                                                // release native path memory used by the job
+                                                Path.PATH.get().close();
+                                                stopped.countDown();
+                                            }
+                                        }, "wal_job");
+                                        walJob.start();
+                                    }
+
+                                    started.await();
+
+                                    long queryId;
+                                    long start = System.currentTimeMillis();
+
+                                    //wait until query appears in registry and get query id
+                                    while (true) {
+                                        Os.sleep(1);
+                                        testHttpClient.assertGetRegexp(
+                                                "/query",
+                                                ".*dataset.*",
+                                                "select query_id from query_activity() where query = '" + command.replace("'", "''") + "'",
+                                                null, null,
+                                                "200",
+                                                new CharSequenceObjHashMap<String>() {{
+                                                    put("nm", "true");
+                                                }}
+                                        );
+                                        String response = testHttpClient.getSink().toString();
+                                        int startIdx = response.indexOf("\"dataset\":[[");
+                                        if (startIdx > -1) {
+                                            startIdx += "\"dataset\":[[".length();
+                                            int endIdx = response.indexOf("]]", startIdx);
+                                            queryId = Numbers.parseLong(response, startIdx, endIdx);
+                                            break;
+                                        }
+
+                                        if (System.currentTimeMillis() - start > TIMEOUT) {
+                                            throw new RuntimeException("Timed out waiting for command to appear in registry: " + command);
+                                        }
+                                        if (queryError.get() != null) {
+                                            throw new RuntimeException("Query to cancel failed!", queryError.get());
+                                        }
+                                    }
+
+                                    testHttpClient.assertGetRegexp(
+                                            "/query",
+                                            "\\{\"ddl\":\"OK\"\\}",
+                                            "cancel query " + queryId,
+                                            null, null,
+                                            "200"
+                                    );
+
+                                    start = System.currentTimeMillis();
+
+                                    // wait until query disappears from registry
+                                    while (true) {
+                                        Os.sleep(1);
+                                        testHttpClient.assertGetRegexp(
+                                                "/query",
+                                                "\\{\"query\":\"select \\* from query_activity\\(\\).*",
+                                                "select * from query_activity() where query_id = " + queryId,
+                                                null, null,
+                                                "200"
+                                        );
+                                        if (testHttpClient.getSink().toString().endsWith("\"count\":0}")) {
+                                            break;
+                                        }
+
+                                        if (System.currentTimeMillis() - start > TIMEOUT) {
+                                            throw new RuntimeException("Timed out waiting for command to stop: " + command);
+                                        }
+                                    }
+                                    // run simple query to test that previous query cancellation doesn't 'spill into' other queries
+                                    testHttpClient.assertGet(url,
+                                            "{\"query\":\"select sleep(1)\",\"columns\":[{\"name\":\"sleep\",\"type\":\"BOOLEAN\"}],\"timestamp\":-1,\"dataset\":[[true]],\"count\":1}",
+                                            "select sleep(1)", null, null);
+                                } catch (Throwable t) {
+                                    throw new RuntimeException("Failed on\n ddl: " + ddl +
+                                            "\n query: " + command +
+                                            "\n exception: ", t);
+                                } finally {
+                                    queryError.set(new Exception());//stop wal thread
+                                    stopped.await();
+                                }
+                            }
+                        }
+                    } catch (Throwable t) {
+                        t.printStackTrace();
                     }
                 });
     }

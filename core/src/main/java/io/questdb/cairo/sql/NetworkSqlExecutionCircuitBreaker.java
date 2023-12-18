@@ -30,6 +30,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
 import java.io.Closeable;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBreaker, Closeable {
     private final int bufferSize;
@@ -40,6 +41,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     private final NetworkFacade nf;
     private final int throttle;
     private long buffer;
+    private AtomicBoolean cancelledFlag;
     private int fd = -1;
     private volatile long powerUpTime = Long.MAX_VALUE;
     private int secret;
@@ -68,6 +70,9 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     @Override
     public void cancel() {
         powerUpTime = Long.MIN_VALUE;
+        if (cancelledFlag != null) {
+            cancelledFlag.set(true);
+        }
     }
 
     @Override
@@ -137,6 +142,11 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     @Override
+    public void setCancelledFlag(AtomicBoolean cancelledFlag) {
+        this.cancelledFlag = cancelledFlag;
+    }
+
+    @Override
     public void setFd(int fd) {
         this.fd = fd;
     }
@@ -173,6 +183,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     public void statefulThrowExceptionIfTrippedNoThrottle() {
         testCount = 0;
         testTimeout();
+        testCancelled();
         if (testConnection(fd)) {
             throw CairoException.nonCritical().put("remote disconnected, query aborted [fd=").put(fd).put(']').setInterruption(true);
         }
@@ -181,6 +192,12 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     @Override
     public void unsetTimer() {
         powerUpTime = Long.MAX_VALUE;
+    }
+
+    private void testCancelled() {
+        if (cancelledFlag != null && cancelledFlag.get()) {
+            throw CairoException.queryCancelled(fd);
+        }
     }
 
     private void testTimeout() {

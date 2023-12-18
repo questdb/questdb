@@ -2335,7 +2335,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 try (OperationFuture fut = cq.execute(sqlExecutionContext, tempSequence, true)) {
                     fut.await();
                 }
-                // fall thru
+                // fall through
             default:
                 // DDL
                 queryTag = TAG_OK;

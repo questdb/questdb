@@ -45,6 +45,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
 import java.io.File;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class SecurityTest extends AbstractCairoTest {
@@ -138,6 +139,11 @@ public class SecurityTest extends AbstractCairoTest {
             @Override
             public void resetTimer() {
                 deadline = circuitBreakerTimeoutDeadline;
+            }
+
+            @Override
+            public void setCancelledFlag(AtomicBoolean cancelledFlag) {
+
             }
 
             @Override

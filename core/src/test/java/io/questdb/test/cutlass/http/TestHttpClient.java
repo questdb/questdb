@@ -133,11 +133,12 @@ public class TestHttpClient implements QuietCloseable {
             CharSequence sql,
             @Nullable CharSequence username,
             @Nullable CharSequence password,
-            CharSequence expectedStatus
+            CharSequence expectedStatus,
+            @Nullable CharSequenceObjHashMap<String> queryParams
     ) {
         try {
             sink.clear();
-            toSink0(url, sql, sink, username, password, expectedStatus);
+            toSink0(url, sql, sink, username, password, expectedStatus, queryParams);
             Pattern pattern = Pattern.compile(expectedResponseRegexp);
             String message = "Expected response to match regexp " + expectedResponseRegexp + " but got " + sink + " which does not match";
             Assert.assertTrue(message, pattern.matcher(sink).matches());
@@ -148,9 +149,24 @@ public class TestHttpClient implements QuietCloseable {
         }
     }
 
+    public void assertGetRegexp(
+            CharSequence url,
+            String expectedResponseRegexp,
+            CharSequence sql,
+            @Nullable CharSequence username,
+            @Nullable CharSequence password,
+            CharSequence expectedStatus
+    ) {
+        assertGetRegexp(url, expectedResponseRegexp, sql, username, password, expectedStatus, null);
+    }
+
     @Override
     public void close() {
         Misc.free(httpClient);
+    }
+
+    public StringSink getSink() {
+        return sink;
     }
 
     public void setKeepConnection(boolean keepConnection) {
@@ -175,11 +191,30 @@ public class TestHttpClient implements QuietCloseable {
             @Nullable CharSequence password,
             CharSequence expectedStatus
     ) {
+        toSink0(url, sql, sink, username, password, expectedStatus, null);
+    }
+
+    private void toSink0(
+            CharSequence url,
+            CharSequence sql,
+            CharSink sink,
+            @Nullable CharSequence username,
+            @Nullable CharSequence password,
+            CharSequence expectedStatus,
+            CharSequenceObjHashMap<String> queryParams
+    ) {
         HttpClient.Request req = httpClient.newRequest();
         req
                 .GET()
                 .url(url)
                 .query("query", sql);
+
+        if (queryParams != null) {
+            for (int i = 0, n = queryParams.size(); i < n; i++) {
+                CharSequence name = queryParams.keys().getQuick(i);
+                req.query(name, queryParams.get(name));
+            }
+        }
 
         if (username != null && password != null) {
             req.authBasic(username, password);

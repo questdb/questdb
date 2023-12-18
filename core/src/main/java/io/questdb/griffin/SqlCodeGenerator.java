@@ -1829,23 +1829,49 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             // unfortunately we had to go all out to create join metadata
             // now it is time to check if we have constant conditions
-            ExpressionNode constFilter = model.getConstWhereClause();
-            if (constFilter != null) {
-                Function function = functionParser.parseFunction(constFilter, null, executionContext);
-                if (!ColumnType.isBoolean(function.getType())) {
-                    throw SqlException.position(constFilter.position).put("boolean expression expected");
+            ExpressionNode constFilterExpr = model.getConstWhereClause();
+            if (constFilterExpr != null) {
+                Function filter = functionParser.parseFunction(constFilterExpr, null, executionContext);
+                if (!ColumnType.isBoolean(filter.getType())) {
+                    throw SqlException.position(constFilterExpr.position).put("boolean expression expected");
                 }
-                function.init(null, executionContext);
-                if (!function.getBool(null)) {
-                    // do not copy metadata here
-                    // this would have been JoinRecordMetadata, which is new instance anyway
-                    // we have to make sure that this metadata is safely transitioned
-                    // to empty cursor factory
-                    JoinRecordMetadata metadata = (JoinRecordMetadata) master.getMetadata();
-                    metadata.incrementRefCount();
-                    RecordCursorFactory factory = new EmptyTableRecordCursorFactory(metadata);
-                    Misc.free(master);
-                    return factory;
+                filter.init(null, executionContext);
+                if (filter.isConstant()) {
+                    if (!filter.getBool(null)) {
+                        // do not copy metadata here
+                        // this would have been JoinRecordMetadata, which is new instance anyway
+                        // we have to make sure that this metadata is safely transitioned
+                        // to empty cursor factory
+                        JoinRecordMetadata metadata = (JoinRecordMetadata) master.getMetadata();
+                        metadata.incrementRefCount();
+                        RecordCursorFactory factory = new EmptyTableRecordCursorFactory(metadata);
+                        Misc.free(master);
+                        return factory;
+                    }
+                } else {
+                    // make it a post-join filter (same as for post join where clause above)
+                    if (executionContext.isParallelFilterEnabled() && master.supportPageFrameCursor()) {
+                        master = new AsyncFilteredRecordCursorFactory(
+                                configuration,
+                                executionContext.getMessageBus(),
+                                master,
+                                filter,
+                                reduceTaskFactory,
+                                compileWorkerFilterConditionally(
+                                        !filter.isReadThreadSafe(),
+                                        executionContext.getSharedWorkerCount(),
+                                        constFilterExpr,
+                                        master.getMetadata(),
+                                        executionContext
+                                ),
+                                null,
+                                0,
+                                false,
+                                executionContext.getSharedWorkerCount()
+                        );
+                    } else {
+                        master = new FilteredRecordCursorFactory(master, filter);
+                    }
                 }
             }
             return master;

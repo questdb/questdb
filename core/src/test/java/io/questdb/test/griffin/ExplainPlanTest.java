@@ -4656,6 +4656,91 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNoArgFalseConstantExpressionUsedInJoinIsOptimizedAway() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab (b boolean, ts timestamp)");
+            //true
+            assertPlan("update tab t1 set b=true from tab t2 where 1>2 and t1.b = t2.b",
+                    "Update table: tab\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [true]\n" +
+                            "        Empty table\n");
+            //false
+            assertPlan("update tab t1 set b=true from tab t2 where 1<2 and t1.b = t2.b",
+                    "Update table: tab\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [true]\n" +
+                            "        Hash Join Light\n" +
+                            "          condition: t2.b=t1.b\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: tab\n" +
+                            "            Hash\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: tab\n");
+        });
+    }
+
+    @Test
+    public void testNoArgNonConstantExpressionUsedInJoinClauseIsUsedAsPostJoinFilter() throws Exception {
+        assertPlan("create table tab (b boolean, ts timestamp)",
+                "update tab t1 set b=true from tab t2 where not sleep(60000) and t1.b = t2.b",
+                "Update table: tab\n" +
+                        "    VirtualRecord\n" +
+                        "      functions: [true]\n" +
+                        "        Filter filter: not (sleep(60000))\n" +
+                        "            Hash Join Light\n" +
+                        "              condition: t2.b=t1.b\n" +
+                        "                DataFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: tab\n" +
+                        "                Hash\n" +
+                        "                    DataFrame\n" +
+                        "                        Row forward scan\n" +
+                        "                        Frame forward scan on: tab\n");
+    }
+
+    @Test
+    public void testNoArgRuntimeConstantExpressionUsedInJoinClauseIsUsedAsPostJoinFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab (b boolean, ts timestamp)");
+
+            //true
+            assertPlan("update tab t1 set b=true from tab t2 where now()::long > -1 and t1.b = t2.b",
+                    "Update table: tab\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [true]\n" +
+                            "        Filter filter: -1<now()::long\n" +
+                            "            Hash Join Light\n" +
+                            "              condition: t2.b=t1.b\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: tab\n" +
+                            "                Hash\n" +
+                            "                    DataFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: tab\n");
+
+            //false
+            assertPlan("update tab t1 set b=true from tab t2 where now()::long < 0 and t1.b = t2.b",
+                    "Update table: tab\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [true]\n" +
+                            "        Filter filter: now()::long<0\n" +
+                            "            Hash Join Light\n" +
+                            "              condition: t2.b=t1.b\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: tab\n" +
+                            "                Hash\n" +
+                            "                    DataFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: tab\n");
+        });
+    }
+
+    @Test
     public void testOrderByAdvicePushdown() throws SqlException {
         // TODO: improve :
         // - limit propagation to async filter factory

@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireServer;
@@ -45,10 +46,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.CharSink;
-import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8s;
+import io.questdb.std.str.*;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cutlass.NetUtils;
 import io.questdb.test.mp.TestWorkerPool;
@@ -1283,7 +1281,7 @@ if __name__ == "__main__":
     @Test
     public void testBasicFetch() throws Exception {
         skipOnWalRun(); // Non-partitioned
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_SIMPLE_TEXT, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_SIMPLE_TEXT, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             int totalRows = 100;
 
@@ -1319,7 +1317,7 @@ if __name__ == "__main__":
     @Test
     public void testBasicFetchIPv4() throws Exception {
         skipOnWalRun(); // Non-partitioned
-        assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             int totalRows = 100;
             IntIntHashMap map = new IntIntHashMap();
@@ -1456,7 +1454,7 @@ if __name__ == "__main__":
     @Test
     public void testBasicFetchIPv4MultiCol() throws Exception {
         skipOnWalRun(); // Non-partitioned
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             int totalRows = 100;
             IntIntHashMap map = new IntIntHashMap();
@@ -1619,7 +1617,7 @@ if __name__ == "__main__":
     @Test
     public void testBasicFetchIPv4Null() throws Exception {
         skipOnWalRun(); // Non-partitioned
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             int totalRows = 100;
             IntIntHashMap map = new IntIntHashMap();
@@ -1756,7 +1754,7 @@ if __name__ == "__main__":
     @Test
     public void testBatchInsertWithTransaction() throws Exception {
         skipOnWalRun(); // Non-partitioned
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
                 statement.executeUpdate("create table test (id long,val int)");
                 statement.executeUpdate("create table test2(id long,val int)");
@@ -1893,7 +1891,7 @@ if __name__ == "__main__":
 
     @Test
     public void testBindVariableDropLastPartitionListWithWeekPrecision() throws Exception {
-        final ConnectionAwareRunnable runnable = (connection, binary) -> {
+        final ConnectionAwareRunnable runnable = (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             connection.prepareStatement("CREATE TABLE x (l LONG, ts TIMESTAMP, date DATE) TIMESTAMP(ts) PARTITION BY WEEK").execute();
             connection.prepareStatement("INSERT INTO x VALUES (12, '2023-02-11T11:12:22.116234Z', '2023-02-11'::date)").execute();
@@ -1927,7 +1925,7 @@ if __name__ == "__main__":
 
     @Test
     public void testBindVariableInFilter() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL & ~(CONN_AWARE_SIMPLE_TEXT), (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL & ~(CONN_AWARE_SIMPLE_TEXT), (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             connection.prepareStatement("create table x (l long, ts timestamp) timestamp(ts) partition by YEAR").execute();
             connection.prepareStatement("insert into x values (100, 0)").execute();
@@ -1969,7 +1967,7 @@ if __name__ == "__main__":
     public void testBindVariableIsNull() throws Exception {
         // todo: in "simple" mode we do not support this SQL:
         //    tab1 where 'NaN'::double precision is null
-        assertWithPgServer(CONN_AWARE_ALL & ~(CONN_AWARE_SIMPLE_TEXT | CONN_AWARE_SIMPLE_BINARY), (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL & ~(CONN_AWARE_SIMPLE_TEXT | CONN_AWARE_SIMPLE_BINARY), (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             connection.prepareStatement("create table tab1 (value int, ts timestamp) timestamp(ts) partition by YEAR").execute();
             connection.prepareStatement("insert into tab1 (value, ts) values (100, 0)").execute();
@@ -2353,7 +2351,7 @@ if __name__ == "__main__":
                         "'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' || dest.l || '00000'; "
         };
 
-        assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary, mode, port) -> {
             ddl("create table if not exists tab as " +
                     "(select x::timestamp ts, x, rnd_double() d from long_sequence(5000000)) timestamp(ts) partition by day");
             ddl("create table if not exists dest as (select x l from long_sequence(10000))");
@@ -2644,7 +2642,7 @@ if __name__ == "__main__":
     @Test
     public void testCreateTableAsSelectExtendedPrepared() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             try (PreparedStatement pstmt = connection.prepareStatement("create table t as " +
                     "(select cast(x + 1 as long) a, cast(x as timestamp) b from long_sequence(10))")) {
@@ -2690,9 +2688,10 @@ if __name__ == "__main__":
         });
     }
 
+    @Ignore//create table as select doesn't time out anymore but can be cancelled manually
     @Test
     public void testCreateTableAsSelectTimeout() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, TIMEOUT_FAIL_ON_FIRST_CHECK, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL, TIMEOUT_FAIL_ON_FIRST_CHECK, (connection, binary, mode, port) -> {
             try (final PreparedStatement statement = connection.prepareStatement(
                     "create table tab as (select rnd_double() from long_sequence(1000));")) {
                 statement.execute();
@@ -2706,7 +2705,7 @@ if __name__ == "__main__":
     @Test
     public void testCreateTableDuplicateColumnName() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try {
                 connection.prepareStatement("create table tab as (\n" +
                         "            select\n" +
@@ -2724,7 +2723,7 @@ if __name__ == "__main__":
     @Test
     public void testCreateTableDuplicateColumnNameNonAscii() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try {
                 connection.prepareStatement("create table tab as (\n" +
                         "            select\n" +
@@ -2742,7 +2741,7 @@ if __name__ == "__main__":
     @Test
     public void testCreateTableExtendedPrepared() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             try (PreparedStatement pstmt = connection.prepareStatement("create table t (\n" +
                     "  a SYMBOL,\n" +
@@ -2761,7 +2760,7 @@ if __name__ == "__main__":
         // This test doesn't use partitioned tables.
         Assume.assumeFalse(walEnabled);
 
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_SIMPLE_TEXT & ~CONN_AWARE_SIMPLE_BINARY, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_SIMPLE_TEXT & ~CONN_AWARE_SIMPLE_BINARY, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             int totalRows = 10000;
             int fetchSize = 993;
@@ -2806,7 +2805,7 @@ if __name__ == "__main__":
     @Test
     public void testDDL() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (final PreparedStatement statement = connection.prepareStatement("create table x (a int)")) {
                 statement.execute();
                 try (
@@ -2900,7 +2899,7 @@ if __name__ == "__main__":
                 {"drop all ;", "ERROR: 'tables' expected"},
                 {"drop database ;", "ERROR: 'table' or 'all tables' expected"}
         };
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             for (int i = 0, n = sqlExpectedErrMsg.length; i < n; i++) {
                 String[] testData = sqlExpectedErrMsg[i];
                 try (PreparedStatement statement = connection.prepareStatement(testData[0])) {
@@ -2916,7 +2915,7 @@ if __name__ == "__main__":
     @Test
     public void testDropTableIfExistsDoesNotFailWhenTableDoesNotExist() throws Exception {
         skipOnWalRun(); // table not created
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (PreparedStatement statement = connection.prepareStatement("drop table if exists doesnt")) {
                 statement.execute();
             }
@@ -2926,7 +2925,7 @@ if __name__ == "__main__":
     @Test
     public void testEmptySql() throws Exception {
         skipOnWalRun(); // table not created
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (PreparedStatement statement = connection.prepareStatement("")) {
                 statement.execute();
             }
@@ -2934,9 +2933,215 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testExecuteAndCancelSqlCommands() throws Exception {
+        // test covers all table types on its own
+        Assume.assumeTrue(walEnabled);
+
+        final long TIMEOUT = 240_000;
+
+        String baseTable = "create table tab (b boolean, ts timestamp, sym symbol)";
+        String walTable = baseTable + " timestamp(ts) partition by DAY WAL";
+        ObjList ddls = new ObjList(
+                baseTable,
+                baseTable + " timestamp(ts)",
+                baseTable + " timestamp(ts) partition by DAY BYPASS WAL",
+                walTable
+        );
+
+        String createAsSelect = "create table new_tab as (select * from tab where sleep(60000))";
+        String select1 = "select 1 from long_sequence(1) where sleep(60000)";
+        String select2 = "select sleep(60000) from long_sequence(1)";
+        String selectWithJoin = "select 1 from long_sequence(1) ls1 join long_sequence(1) on sleep(60000)";
+        String insert = "insert into tab values (sleep(60000), 100000000000000L::timestamp, 'A' )";
+        String insertAsSelect1 = "insert into tab select true, 100000000000000L::timestamp, 'B' from long_sequence(1) where sleep(60000)";
+        String insertAsSelect2 = "insert into tab select sleep(60000), 100000000000000L::timestamp, 'B' from long_sequence(1)";
+        String insertAsSelectBatched = "insert batch 100 into tab select true, 100000000000000L::timestamp, 'B' from long_sequence(1) where sleep(60000)";
+        String insertAsSelectWithJoin1 = "insert into tab select ls1.x = ls2.x, 100000000000000L::timestamp, 'B' from long_sequence(1) ls1 left join (select * from long_sequence(1)) ls2 on ls1.x = ls2.x where sleep(60000)";
+        String insertAsSelectWithJoin2 = "insert into tab select sleep(60000), 100000000000000L::timestamp, 'B' from long_sequence(1) ls1 left join (select * from long_sequence(1)) ls2 on ls1.x = ls2.x";
+        String insertAsSelectWithJoin3 = "insert into tab select ls1.x = ls2.x, 100000000000000L::timestamp, 'B' from long_sequence(1) ls1 left join (select * from long_sequence(1)) ls2 on ls1.x = ls2.x and sleep(60000)";
+        String update1 = "update tab set b=true where sleep(60000)";
+        String update2 = "update tab set b=sleep(60000)";
+        String updateWithJoin1 = "update tab t1 set b=true from tab t2 where sleep(60000) and t1.b = t2.b";
+        String updateWithJoin2 = "update tab t1 set b=sleep(60000) from tab t2 where t1.b = t2.b";
+
+        // add many symbols to slow down operation enough so that other thread can detect it in registry and cancel it
+        String addColumnsTmp = "alter table tab add column s1 symbol index";
+        for (int i = 2; i < 40; i++) {
+            addColumnsTmp += ", s" + i + " symbol index";
+        }
+        final String addColumns = addColumnsTmp;
+
+        ObjList commands = new ObjList(
+                createAsSelect,
+                select1,
+                select2,
+                selectWithJoin,
+                insert,
+                insertAsSelect1,
+                insertAsSelect2,
+                insertAsSelectBatched,
+                insertAsSelectWithJoin1,
+                insertAsSelectWithJoin2,
+                insertAsSelectWithJoin3,
+                update1,
+                update2,
+                updateWithJoin1,
+                updateWithJoin2,
+                addColumns
+        );
+
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            SOCountDownLatch started = new SOCountDownLatch(1);
+            SOCountDownLatch stopped = new SOCountDownLatch(1);
+            AtomicReference<Exception> queryError = new AtomicReference<>();
+
+            for (int i = 0, n = ddls.size(); i < n; i++) {
+                final String ddl = (String) ddls.getQuick(i);
+                boolean isWal = ddl.equals(walTable);
+
+                drop("drop table if exists tab");
+                ddl(ddl);
+                insert("insert into tab select true, (86400000000*x)::timestamp, null from long_sequence(1000)");
+                if (isWal) {
+                    drainWalQueue();
+                }
+
+                for (int j = 0, k = commands.size(); j < k; j++) {
+                    final String command = (String) commands.getQuick(j);
+
+                    // statements containing multiple transactions, such as 'alter table add column col1, col2' are currently not supported for WAL tables
+                    // UPDATE statements with join are not supported yet for WAL tables
+                    if ((isWal && (command.equals(updateWithJoin1) || command.equals(updateWithJoin2) || command.equals(addColumns)))) {
+                        continue;
+                    }
+
+                    try {
+                        drop("drop table if exists new_tab");
+                        if (isWal) {
+                            drainWalQueue();
+                        }
+
+                        started.setCount(isWal ? 2 : 1);
+                        stopped.setCount(isWal ? 2 : 1);
+                        queryError.set(null);
+
+                        new Thread(() -> {
+                            try {
+                                try (Connection conn = getConnection(mode, port, binary, 5)) {
+                                    started.countDown();
+
+                                    try (PreparedStatement stmt = conn.prepareStatement(command)) {
+                                        if (command.startsWith("select")) {
+                                            try (ResultSet result = stmt.executeQuery()) {
+                                                while (result.next()) {
+                                                    //ignore
+                                                }
+                                            }
+                                        } else {
+                                            stmt.executeUpdate();
+                                        }
+                                    }
+                                }
+                            } catch (SQLException e) {
+                                // ignore errors showing that statement has been cancelled
+                                if (!Chars.contains(e.getMessage(), "Could not create table") &&
+                                        !Chars.contains(e.getMessage(), "cancelling statement due to user request")) {
+                                    queryError.set(e);
+                                }
+                            } catch (Exception e) {
+                                queryError.set(e);
+                            } finally {
+                                stopped.countDown();
+                            }
+                        }, "command_thread").start();
+
+                        if (isWal) {
+                            Thread walJob = new Thread(() -> {
+                                started.countDown();
+
+                                try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
+                                    while (queryError.get() == null) {
+                                        drainWalQueue(walApplyJob);
+                                    }
+                                } finally {
+                                    // release native path memory used by the job
+                                    Path.PATH.get().close();
+                                    stopped.countDown();
+                                }
+                            }, "wal_job");
+                            walJob.start();
+                        }
+
+                        started.await();
+
+                        long queryId;
+                        long start = System.currentTimeMillis();
+
+                        try (PreparedStatement stmt = connection.prepareStatement("select query_id from query_activity() where query = ?")) {
+                            stmt.setString(1, command);
+                            while (true) {
+                                Os.sleep(1);
+                                try (ResultSet result = stmt.executeQuery()) {
+                                    if (result.next()) {
+                                        queryId = result.getLong(1);
+                                        break;
+                                    }
+                                }
+
+                                if (System.currentTimeMillis() - start > TIMEOUT) {
+                                    throw new RuntimeException("Timed out waiting for command to appear in registry: " + command);
+                                }
+                                if (queryError.get() != null) {
+                                    throw new RuntimeException("Query to cancel failed!", queryError.get());
+                                }
+                            }
+                        }
+
+                        try (PreparedStatement stmt = connection.prepareStatement("cancel query " + queryId)) {
+                            stmt.executeUpdate();
+                        }
+
+                        start = System.currentTimeMillis();
+
+                        try (PreparedStatement stmt = connection.prepareStatement("select * from query_activity() where query_id = ?")) {
+                            stmt.setLong(1, queryId);
+                            while (true) {
+                                Os.sleep(1);
+                                try (ResultSet result = stmt.executeQuery()) {
+                                    if (!result.next()) {
+                                        break;
+                                    }
+                                }
+                                if (System.currentTimeMillis() - start > TIMEOUT) {
+                                    throw new RuntimeException("Timed out waiting for command to stop: " + command);
+                                }
+                            }
+                        }
+
+                        // run simple query to test that previous query cancellatio doesn't 'spill into' other queries
+                        try (PreparedStatement stmt = connection.prepareStatement("select sleep(1)")) {
+                            try (ResultSet result = stmt.executeQuery()) {
+                                result.next();
+                                Assert.assertTrue(result.getBoolean(1));
+                            }
+                        }
+                    } catch (Throwable t) {
+                        throw new RuntimeException("Failed on\n ddl: " + ddl +
+                                "\n query: " + command +
+                                "\n exception: ", t);
+                    } finally {
+                        queryError.set(new Exception());//stop wal thread
+                        stopped.await();
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testExecuteSameQueryManyTimesWithMaxRowsReturnsCorrectResult() throws Exception {
         skipOnWalRun();
-        assertWithPgServer(CONN_AWARE_EXTENDED_ALL, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_EXTENDED_ALL, (connection, binary, mode, port) -> {
 
             try (Statement stmt = connection.createStatement()) {
                 stmt.executeUpdate("create table if not exists tab ( a int, b long, ts timestamp)");
@@ -2983,7 +3188,7 @@ if __name__ == "__main__":
 
     @Test
     public void testExplainPlan() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (PreparedStatement pstmt = connection.prepareStatement("create table xx as (" +
                     "select x," +
                     " timestamp_sequence(0, 1000) ts" +
@@ -3010,7 +3215,7 @@ if __name__ == "__main__":
 
     @Test
     public void testExplainPlanWithBindVariables() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_SIMPLE_TEXT & ~CONN_AWARE_SIMPLE_BINARY, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_SIMPLE_TEXT & ~CONN_AWARE_SIMPLE_BINARY, (connection, binary, mode, port) -> {
             try (PreparedStatement pstmt = connection.prepareStatement("create table xx as (" +
                     "select x," +
                     " timestamp_sequence(0, 1000) ts" +
@@ -3044,7 +3249,7 @@ if __name__ == "__main__":
 
     @Test
     public void testExplainPlanWithBindVariablesFailsIfAllValuesArentSet() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_SIMPLE_TEXT & ~CONN_AWARE_SIMPLE_BINARY, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_SIMPLE_TEXT & ~CONN_AWARE_SIMPLE_BINARY, (connection, binary, mode, port) -> {
             try (PreparedStatement statement = connection.prepareStatement("explain select * from long_sequence(1) where x > ? and x < ? limit 10")) {
                 statement.setLong(1, 0);
                 try {
@@ -3058,7 +3263,7 @@ if __name__ == "__main__":
 
     @Test
     public void testExplainPlanWithWhitespaces() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (PreparedStatement pstmt = connection.prepareStatement("create table xx as (" +
                     "select x as x," +
                     " 's' || x as str" +
@@ -3088,7 +3293,7 @@ if __name__ == "__main__":
 
     @Test
     public void testExtendedQueryTimeout() throws Exception {
-        assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY | CONN_AWARE_EXTENDED_PREPARED_TEXT, TIMEOUT_FAIL_ON_FIRST_CHECK, (conn, binary) -> {
+        assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY | CONN_AWARE_EXTENDED_PREPARED_TEXT, TIMEOUT_FAIL_ON_FIRST_CHECK, (conn, binary, mode, port) -> {
             ddl("create table t1 as (select 's' || x as s from long_sequence(1000));");
             try (final PreparedStatement statement = conn.prepareStatement("select s, count(*) from t1 group by s ")) {
                 statement.execute();
@@ -3101,7 +3306,7 @@ if __name__ == "__main__":
 
     @Test// fetch works only in extended query mode
     public void testFetch10RowsAtaTime() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_SIMPLE_BINARY & ~CONN_AWARE_SIMPLE_TEXT, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_SIMPLE_BINARY & ~CONN_AWARE_SIMPLE_TEXT, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             try (PreparedStatement pstmt = connection.prepareStatement(
                     "create table xx as (" +
@@ -3255,7 +3460,7 @@ if __name__ == "__main__":
 
     @Test
     public void testFetchTablePartitions() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (PreparedStatement stmt = connection.prepareStatement("create table if not exists t1 as " +
                     "(" +
                     "select dateadd('h', x::int, '2023-03-23T00:00:00.000000Z') as ts  " +
@@ -3453,7 +3658,7 @@ if __name__ == "__main__":
 
     @Test
     public void testGroupByExpressionNotAppearingInSelectClause() throws Exception {
-        assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY, (conn, binary) -> {
+        assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY, (conn, binary, mode, port) -> {
             ddl("create table t1 as (select 's' || x as s from long_sequence(1000));");
             try (final PreparedStatement statement = conn.prepareStatement("select count(*) from t1 group by 1+2")) {
                 try (ResultSet rs = statement.executeQuery()) {
@@ -3466,7 +3671,7 @@ if __name__ == "__main__":
 
     @Test
     public void testGroupByExpressionNotAppearingInSelectClauseWhenTableIsEmpty() throws Exception {
-        assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY, (conn, binary) -> {
+        assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY, (conn, binary, mode, port) -> {
             ddl("create table t1 ( s string );");
             try (final PreparedStatement statement = conn.prepareStatement("select count(*) from t1 group by 1+2")) {
                 try (ResultSet rs = statement.executeQuery()) {
@@ -3479,7 +3684,7 @@ if __name__ == "__main__":
 
     @Test
     public void testGroupByExpressionWithBindVariableNotAppearingInSelectClause() throws Exception {
-        assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY, (conn, binary) -> {
+        assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY, (conn, binary, mode, port) -> {
             ddl("create table t1 as (select 's' || x as s from long_sequence(1000));");
             try (final PreparedStatement statement = conn.prepareStatement("select count(*) from t1 group by 1+?")) {
                 statement.setLong(1, 1);
@@ -3646,7 +3851,7 @@ if __name__ == "__main__":
     @Test
     public void testImplicitStringAndCharConversions() throws Exception {
         skipOnWalRun();
-        assertWithPgServer(CONN_AWARE_EXTENDED_ALL, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_EXTENDED_ALL, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
 
             try (PreparedStatement stmt = connection.prepareStatement("select ? > 'a'")) {
@@ -3863,9 +4068,10 @@ if __name__ == "__main__":
         testInsertAllTypes(false);
     }
 
+    @Ignore//insert as select doesn't time out anymore but can be cancelled manually
     @Test
     public void testInsertAsSelectTimeout() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, TIMEOUT_FAIL_ON_FIRST_CHECK, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL, TIMEOUT_FAIL_ON_FIRST_CHECK, (connection, binary, mode, port) -> {
             ddl("create table tab (d double)");
             try (final PreparedStatement statement = connection.prepareStatement(
                     "insert into tab select rnd_double() from long_sequence(1000);")) {
@@ -4358,7 +4564,7 @@ nodejs code:
     @Test
     public void testInsertStringWithEscapedQuote() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement s = connection.createStatement()) {
                 s.execute("create table t ( s string)");
                 s.executeUpdate("insert into t values ('o''brien ''''')");
@@ -5019,7 +5225,7 @@ nodejs code:
 
     @Test
     public void testLatestByDeferredValueFactoriesWithBindVariable() throws Exception {
-        assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY, (connection, binary, mode, port) -> {
 
             try (PreparedStatement pstmt = connection.prepareStatement("CREATE TABLE IF NOT EXISTS tab (" +
                     "ts timestamp, " +
@@ -5067,7 +5273,7 @@ nodejs code:
 
     @Test
     public void testLimitWithBindVariable() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_SIMPLE_BINARY & ~CONN_AWARE_SIMPLE_TEXT, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_SIMPLE_BINARY & ~CONN_AWARE_SIMPLE_TEXT, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             try (PreparedStatement pstmt = connection.prepareStatement(
                     "create table xx as ( select x from long_sequence(1000) )")) {
@@ -5086,7 +5292,7 @@ nodejs code:
     @Test
     public void testLocalCopyFrom() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (
                     final PreparedStatement copy = connection.prepareStatement("copy x from '/test-numeric-headers.csv' with header true");
                     final ResultSet ignore = copy.executeQuery()
@@ -5113,7 +5319,7 @@ nodejs code:
     @Test
     public void testLocalCopyFromCancellation() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (final PreparedStatement copyStatement = connection.prepareStatement("copy x from '/test-numeric-headers.csv' with header true")) {
                 String copyID;
                 try (final ResultSet rs = copyStatement.executeQuery()) {
@@ -5242,7 +5448,7 @@ nodejs code:
     @Test
     public void testMetadata() throws Exception {
         recvBufferSize = 2048;
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> connection.getMetaData().getColumns("dontcare", "whatever", "x", null).close());
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> connection.getMetaData().getColumns("dontcare", "whatever", "x", null).close());
     }
 
     @Test
@@ -6299,7 +6505,7 @@ nodejs code:
         // todo: simple mode doesn't work because PG sends timestamp as:
         //     dateadd('d', -1, '1973-03-12 16:00:00+00')
         //     we don't yet support text argument for the dateadd function.
-        assertWithPgServer(CONN_AWARE_ALL & ~(CONN_AWARE_SIMPLE_TEXT | CONN_AWARE_SIMPLE_BINARY), (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL & ~(CONN_AWARE_SIMPLE_TEXT | CONN_AWARE_SIMPLE_BINARY), (connection, binary, mode, port) -> {
             try (PreparedStatement statement = connection.prepareStatement(createDatesTblStmt)) {
                 statement.execute();
             }
@@ -6491,7 +6697,7 @@ nodejs code:
         final String[] tsOptions = {"", "timestamp(ts)", "timestamp(ts) partition by HOUR"};
 
         for (String tsOption : tsOptions) {
-            assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary) -> {
+            assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary, mode, port) -> {
                 drop("drop table if exists tab");
                 ddl("create table tab (s symbol index, ts timestamp) " + tsOption);
                 insert("insert into tab select case when x = 10 then null::string else x::string end, x::timestamp from long_sequence(10) ");
@@ -6601,7 +6807,7 @@ nodejs code:
 
     @Test
     public void testQueryCountWithTsSmallerThanMinTsInTable() throws Exception {
-        assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY, (conn, binary) -> {
+        assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY, (conn, binary, mode, port) -> {
             ddl(
                     "create table \"table\" (" +
                             "id symbol, " +
@@ -6902,7 +7108,7 @@ nodejs code:
     public void testRegularBatchInsertMethod() throws Exception {
         // bind variables do not work well over "simple" protocol
         skipOnWalRun(); // non-partitioned table
-        assertWithPgServer(CONN_AWARE_ALL & ~(CONN_AWARE_SIMPLE_TEXT | CONN_AWARE_SIMPLE_BINARY), (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL & ~(CONN_AWARE_SIMPLE_TEXT | CONN_AWARE_SIMPLE_BINARY), (connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
                 statement.executeUpdate("create table test_batch(id long,val int)");
             }
@@ -6952,7 +7158,7 @@ nodejs code:
     @Test
     public void testResultSetFetchSizeFour() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             int totalRows = 100;
 
@@ -6984,7 +7190,7 @@ nodejs code:
     @Test
     public void testResultSetFetchSizeOne() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             int totalRows = 100;
 
@@ -7021,7 +7227,7 @@ nodejs code:
     @Test
     public void testResultSetFetchSizeThree() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             int totalRows = 100;
 
@@ -7057,7 +7263,7 @@ nodejs code:
     @Test
     public void testResultSetFetchSizeTwo() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             int totalRows = 100;
 
@@ -7284,7 +7490,7 @@ nodejs code:
     @Test
     public void testRunSimpleQueryMultipleTimes() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
                 final String query = "select 42 as the_answer";
                 final String expected = "the_answer[INTEGER]\n" +
@@ -7725,7 +7931,7 @@ create table tab as (
 
     @Test
     public void testSelectStringInWithBindVariables() throws Exception {
-        assertWithPgServer(CONN_AWARE_EXTENDED_ALL, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_EXTENDED_ALL, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             connection.prepareStatement("CREATE TABLE tab (ts TIMESTAMP, s INT)").execute();
             connection.prepareStatement("INSERT INTO tab VALUES ('2023-06-05T11:12:22.116234Z', 1)").execute();//monday
@@ -7816,7 +8022,7 @@ create table tab as (
         sendBufferSize = 512;
         forceSendFragmentationChunkSize = 10;
 
-        assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary, mode, port) -> {
 
             connection.setAutoCommit(false);
             try (PreparedStatement pstmt = connection.prepareStatement("create table t as " +
@@ -7878,7 +8084,7 @@ create table tab as (
         // 2. alter table
         // 3. check table column added
         skipOnWalRun(); // non-partitioned table
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             PreparedStatement statement = connection.prepareStatement("create table x (a int)");
             statement.execute();
 
@@ -7895,7 +8101,7 @@ create table tab as (
 
     @Test
     public void testSimpleCountQueryTimeout() throws Exception {
-        assertWithPgServer(CONN_AWARE_SIMPLE_TEXT | CONN_AWARE_SIMPLE_BINARY, TIMEOUT_FAIL_ON_FIRST_CHECK, (conn, binary) -> {
+        assertWithPgServer(CONN_AWARE_SIMPLE_TEXT | CONN_AWARE_SIMPLE_BINARY, TIMEOUT_FAIL_ON_FIRST_CHECK, (conn, binary, mode, port) -> {
             ddl("create table t1 as (select 's' || x as s from long_sequence(1000));");
             try (final Statement statement = conn.createStatement()) {
                 statement.execute("select count(*) from t1 where s = 's10'");
@@ -7908,7 +8114,7 @@ create table tab as (
 
     @Test
     public void testSimpleGroupByQueryTimeout() throws Exception {
-        assertWithPgServer(CONN_AWARE_SIMPLE_TEXT | CONN_AWARE_SIMPLE_BINARY, TIMEOUT_FAIL_ON_FIRST_CHECK, (conn, binary) -> {
+        assertWithPgServer(CONN_AWARE_SIMPLE_TEXT | CONN_AWARE_SIMPLE_BINARY, TIMEOUT_FAIL_ON_FIRST_CHECK, (conn, binary, mode, port) -> {
             ddl("create table t1 as (select 's' || x as s from long_sequence(1000));");
             try (final Statement statement = conn.createStatement()) {
                 statement.execute("select s, count(*) from t1 group by s ");
@@ -7967,7 +8173,7 @@ create table tab as (
     @Test
     public void testSimpleSimpleQuery() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
                 statement.execute(
                         "create table x as (select " +
@@ -8058,7 +8264,7 @@ create table tab as (
     @Test
     public void testSingleInClause() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (PreparedStatement statement = connection.prepareStatement(createDatesTblStmt)) {
                 statement.execute();
             }
@@ -8145,7 +8351,7 @@ create table tab as (
     @Test
     public void testSingleInClauseNonDedicatedTimestamp() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (PreparedStatement statement = connection.prepareStatement(
                     "create table xts as (select timestamp_sequence(0, 3600L * 1000 * 1000) ts from long_sequence(" + count + "))")) {
                 statement.execute();
@@ -8448,11 +8654,11 @@ create table tab as (
 
     @Test
     public void testSqlBatchTimeout() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, TIMEOUT_FAIL_ON_FIRST_CHECK, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL, TIMEOUT_FAIL_ON_FIRST_CHECK, (connection, binary, mode, port) -> {
             try (final Statement statement = connection.createStatement()) {
                 statement.execute("create table tab (d double);" +
                         "select count(*) from tab;" +
-                        "insert into tab select count(*) from tab;");
+                        "select * from (select * from long_sequence(1000) order by x desc) ");
                 Assert.fail();
             } catch (SQLException e) {
                 TestUtils.assertContains(e.getMessage(), "timeout, query aborted ");
@@ -8462,7 +8668,7 @@ create table tab as (
 
     @Test
     public void testSquashPartitionsReturnsOk() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
                     connection.setAutoCommit(false);
                     connection.prepareStatement("CREATE TABLE x (l LONG, ts TIMESTAMP, date DATE) TIMESTAMP(ts) PARTITION BY WEEK").execute();
                     connection.prepareStatement("INSERT INTO x VALUES (12, '2023-02-11T11:12:22.116234Z', '2023-02-11'::date)").execute();
@@ -8479,7 +8685,7 @@ create table tab as (
 
     @Test
     public void testStaleQueryCacheOnTableDropped() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (CallableStatement st1 = connection.prepareCall("create table y as (" +
                     "select timestamp_sequence(0, 1000000000) timestamp," +
                     " rnd_symbol('a','b',null) symbol1 " +
@@ -8523,7 +8729,7 @@ create table tab as (
 
     @Test
     public void testSymbolBindVariableInFilter() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary1) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary1, mode, port) -> {
             // create and initialize table outside of PG wire
             // to ensure we do not collaterally initialize execution context on function parser
             ddl("CREATE TABLE x (\n" +
@@ -8592,7 +8798,7 @@ create table tab as (
     @Test
     public void testSyntaxErrorReporting() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try {
                 connection.prepareCall("drop table xyz;").execute();
                 Assert.fail();
@@ -8652,7 +8858,7 @@ create table tab as (
 
     @Test
     public void testTimeoutIsPerPreparedStatement() throws Exception {
-        assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY | CONN_AWARE_EXTENDED_PREPARED_TEXT, 1000, (conn, binary) -> {
+        assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY | CONN_AWARE_EXTENDED_PREPARED_TEXT, 1000, (conn, binary, mode, port) -> {
             ddl("create table t1 as (select 's' || x as s from long_sequence(1000));");
             try (final PreparedStatement statement = conn.prepareStatement("insert into t1 select 's' || x from long_sequence(100)")) {
                 statement.execute();
@@ -8666,7 +8872,7 @@ create table tab as (
 
     @Test
     public void testTimeoutIsPerSimpleStatement() throws Exception {
-        assertWithPgServer(CONN_AWARE_SIMPLE_TEXT | CONN_AWARE_SIMPLE_BINARY, 200, (conn, binary) -> {
+        assertWithPgServer(CONN_AWARE_SIMPLE_TEXT | CONN_AWARE_SIMPLE_BINARY, 200, (conn, binary, mode, port) -> {
             ddl("create table t1 as (select 's' || x as s from long_sequence(1000));");
             try (final Statement statement = conn.createStatement()) {
                 statement.execute("insert into t1 select 's' || x from long_sequence(100)");
@@ -8836,7 +9042,7 @@ create table tab as (
     @Test
     public void testTransaction() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             connection.prepareStatement("create table xyz(a int)").execute();
             connection.prepareStatement("insert into xyz values (100)").execute();
@@ -8881,7 +9087,7 @@ create table tab as (
     }
 
     public void testTruncateAndUpdateOnTable(String config) throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement stat = connection.createStatement()) {
                 stat.execute("create table tb ( i int, b boolean, ts timestamp ) " + config + ";");
             }
@@ -9033,6 +9239,10 @@ create table tab as (
         });
     }
 
+    //
+    // Tests for ResultSet.setFetchSize().
+    //
+
     @Test
     public void testUpdateAfterDroppingColumnNotUsedByTheUpdate() throws Exception {
         assertMemoryLeak(() -> {
@@ -9070,10 +9280,6 @@ create table tab as (
         });
     }
 
-    //
-    // Tests for ResultSet.setFetchSize().
-    //
-
     @Test
     public void testUpdateAfterDroppingColumnUsedByTheUpdate() throws Exception {
         assertMemoryLeak(() -> {
@@ -9108,6 +9314,10 @@ create table tab as (
             }
         });
     }
+
+    //
+    // Tests for ResultSet.setFetchSize().
+    //
 
     @Test
     public void testUpdateAsync() throws Exception {
@@ -9149,10 +9359,6 @@ create table tab as (
                         "9,3.0,2020-06-01 00:00:12.0,null\n"
         );
     }
-
-    //
-    // Tests for ResultSet.setFetchSize().
-    //
 
     @Test
     public void testUpdateBatch() throws Exception {
@@ -9479,7 +9685,7 @@ create table tab as (
 
     @Test
     public void testUuidType_insertIntoUUIDColumn() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (final PreparedStatement statement = connection.prepareStatement("create table x (u1 uuid, u2 uuid, s1 string)")) {
                 statement.execute();
                 try (PreparedStatement insert = connection.prepareStatement("insert into x values (?, ?, ?)")) {
@@ -9500,7 +9706,7 @@ create table tab as (
 
     @Test
     public void testUuidType_update_nonPartitionedTable() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (final PreparedStatement statement = connection.prepareStatement("create table x (u1 uuid)")) {
                 statement.execute();
                 try (PreparedStatement insert = connection.prepareStatement("insert into x values (?)")) {
@@ -9523,7 +9729,7 @@ create table tab as (
 
     @Test
     public void testUuidType_update_partitionedTable() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (final PreparedStatement statement = connection.prepareStatement("create table x (ts timestamp, u1 uuid) timestamp(ts) partition by DAY")) {
                 statement.execute();
                 try (PreparedStatement insert = connection.prepareStatement("insert into x values (?, ?)")) {
@@ -9797,7 +10003,7 @@ create table tab as (
                 ) {
                     workerPool.start(LOG);
                     try (final Connection connection = getConnection(mode, server.getPort(), binary, prepareThreshold)) {
-                        runnable.run(connection, binary);
+                        runnable.run(connection, binary, mode, server.getPort());
                     }
                 }
             });
@@ -10249,7 +10455,7 @@ create table tab as (
     }
 
     private void testBindVariableDropLastPartitionListWithDatePrecision(int partitionBy) throws Exception {
-        final ConnectionAwareRunnable runnable = (connection, binary) -> {
+        final ConnectionAwareRunnable runnable = (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             connection.prepareStatement("CREATE TABLE x (l LONG, ts TIMESTAMP, date DATE) TIMESTAMP(ts) PARTITION BY " + PartitionBy.toString(partitionBy)).execute();
             connection.prepareStatement("INSERT INTO x VALUES (12, '2023-02-11T11:12:22.116234Z', '2023-02-11'::date)").execute();
@@ -11187,7 +11393,7 @@ create table tab as (
 
     private void testQuery(String s, String s2) throws Exception {
         skipOnWalRun(); // non-partitioned table
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
                 statement.execute("create table x as (" +
                         "select " +
@@ -11354,7 +11560,7 @@ create table tab as (
 
     @FunctionalInterface
     interface ConnectionAwareRunnable {
-        void run(Connection connection, boolean binary) throws Exception;
+        void run(Connection connection, boolean binary, Mode mode, int port) throws Exception;
     }
 
     @FunctionalInterface
