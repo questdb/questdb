@@ -44,7 +44,7 @@ public interface Authenticator extends QuietCloseable {
     default void close() {
     }
 
-    default int denyAccess() throws AuthenticatorException {
+    default int denyAccess(CharSequence message) throws AuthenticatorException {
         throw new UnsupportedOperationException();
     }
 

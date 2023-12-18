@@ -32,7 +32,7 @@ import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.OperationFuture;
-import io.questdb.cairo.sql.WriterOutOfDateException;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.InsertRowImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -88,7 +88,7 @@ public class InsertOperationImpl implements InsertOperation {
                             || !Chars.equals(tableToken.getTableName(), writer.getTableToken().getTableName())
             ) {
                 writer.close();
-                throw WriterOutOfDateException.of(tableToken.getTableName());
+                throw TableReferenceOutOfDateException.of(tableToken.getTableName());
             }
             insertMethod.writer = writer;
         }

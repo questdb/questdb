@@ -42,6 +42,7 @@ import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.CharSinkBase;
 import io.questdb.tasks.VectorAggregateTask;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -74,7 +75,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             @Transient ObjList<VectorAggregateFunction> vafList,
             int keyColumnIndexInBase,
             int keyColumnIndexInThisCursor,
-            @Transient IntList symbolTableSkewIndex
+            @Transient @Nullable IntList symbolTableSkewIndex
     ) {
         super(metadata);
         this.workerCount = workerCount;
@@ -144,7 +145,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
         this.vafList.addAll(vafList);
         keyColumnIndex = keyColumnIndexInBase;
-        if (symbolTableSkewIndex.size() > 0) {
+        if (symbolTableSkewIndex != null && symbolTableSkewIndex.size() > 0) {
             final IntList symbolSkew = new IntList(symbolTableSkewIndex.size());
             symbolSkew.addAll(symbolTableSkewIndex);
             cursor = new RostiRecordCursor(pRosti, columnSkewIndex, symbolSkew);

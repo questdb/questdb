@@ -336,14 +336,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
      * If this is a SELECT DISTINCT then we don't push since the parent model contains the necessary columns.
      */
     public boolean allowsNestedColumnsChange() {
-        QueryModel union = this;
-        while (union != null) {
-            if (union.getSelectModelType() == QueryModel.SELECT_MODEL_DISTINCT) {
-                return false;
-            }
-            union = union.getUnionModel();
-        }
-        return true;
+        return this.getSelectModelType() != QueryModel.SELECT_MODEL_DISTINCT;
     }
 
     @Override

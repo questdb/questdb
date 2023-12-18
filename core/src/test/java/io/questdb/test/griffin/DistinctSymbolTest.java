@@ -24,144 +24,13 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnTypes;
-import io.questdb.cairo.TableToken;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.Files;
-import io.questdb.std.RostiAllocFacadeImpl;
-import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
 import org.junit.Test;
 
-public class DistinctKeyRecordCursorFactoryTest extends AbstractCairoTest {
-    @Test
-    public void testDistinctFailAllocRosti() throws Exception {
-        // fail Rosti instance #3
-        int workerCount = 4;
-        int failInstance = 3;
-        configOverrideRostiAllocFacade(
-                new RostiAllocFacadeImpl() {
-                    int count = 0;
-
-                    @Override
-                    public long alloc(ColumnTypes types, long capacity) {
-                        if (++count == failInstance) {
-                            return 0;
-                        }
-                        return super.alloc(types, capacity);
-                    }
-                }
-        );
-
-        // override worker count to allocate multiple Rosti instances
-        final SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine, workerCount);
-
-        assertMemoryLeak(() -> {
-            ddl(
-                    "create table tab as (select timestamp_sequence('2020-01-01', 10 * 60 * 1000000L) ts, cast(" +
-                            "to_str(timestamp_sequence('2020-01-01', 10 * 60 * 1000000L), 'yyyy-MM-dd')" +
-                            " as symbol) sym from long_sequence(10000)) timestamp(ts) PARTITION BY MONTH",
-                    sqlExecutionContext
-            );
-
-            try {
-                assertException("select DISTINCT sym from tab order by 1 LIMIT 3", sqlExecutionContext);
-            } catch (OutOfMemoryError e) {
-                // ignore
-            }
-        });
-    }
+public class DistinctSymbolTest extends AbstractCairoTest {
 
     @Test
-    public void testDistinctInt() throws Exception {
-        assertQuery(
-                "sym\n" +
-                        "0\n" +
-                        "2\n" +
-                        "4\n" +
-                        "6\n",
-                "select DISTINCT sym from tab WHERE ts in '2020-03' order by 1 LIMIT 4",
-                "create table tab as (select timestamp_sequence('2020-01-01', 10 * 60 * 1000000L) ts, cast(" +
-                        "2 * (x % 10)" +
-                        " as int) sym from long_sequence(10000)) timestamp(ts) PARTITION BY MONTH",
-                null,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testDistinctLongFilteredFramed() throws Exception {
-        assertQuery(
-                "sym\n" +
-                        "12\n" +
-                        "14\n" +
-                        "16\n" +
-                        "18\n",
-                "select DISTINCT sym from tab WHERE ts in '2020-03' order by 1 LIMIT -4",
-                "create table tab as (" +
-                        "select timestamp_sequence('2020-01-01', 10 * 60 * 1000000L) ts,2 * (x % 10) sym from long_sequence(10000)" +
-                        ") timestamp(ts) PARTITION BY MONTH",
-                null,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testDistinctOnBrokenTable() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl(
-                    "create table tab as (select timestamp_sequence('2020-01-01', 10 * 60 * 1000000L) ts, cast(" +
-                            "to_str(timestamp_sequence('2020-01-01', 10 * 60 * 1000000L), 'yyyy-MM-dd')" +
-                            " as symbol) sym from long_sequence(10000)) timestamp(ts) PARTITION BY MONTH"
-            );
-
-            // remove partition
-            final String partition = "2020-02";
-
-            TableToken tableToken = engine.verifyTableName("tab");
-            try (Path path = new Path().of(engine.getConfiguration().getRoot()).concat(tableToken).concat(partition).$()) {
-                Assert.assertTrue(Files.rmdir(path, true));
-            }
-
-            try {
-                assertException("select DISTINCT sym from tab order by 1 LIMIT 3");
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "Partition '2020-02' does not exist in table 'tab' directory");
-            }
-        });
-    }
-
-    @Test
-    public void testDistinctSymWithAnotherCol() throws Exception {
-        assertQuery(
-                "sym\tmonth\n" +
-                        "2020-01-01\t1\n" +
-                        "2020-01-02\t1\n" +
-                        "2020-01-03\t1\n" +
-                        "2020-01-04\t1\n" +
-                        "2020-01-05\t1\n" +
-                        "2020-01-06\t1\n" +
-                        "2020-01-07\t1\n" +
-                        "2020-01-08\t1\n" +
-                        "2020-01-09\t1\n" +
-                        "2020-01-10\t1\n",
-                "select DISTINCT sym, month(ts) from tab order by 1 LIMIT 10",
-                "create table tab as (select timestamp_sequence('2020-01-01', 10 * 60 * 1000000L) ts, cast(" +
-                        "to_str(timestamp_sequence('2020-01-01', 10 * 60 * 1000000L), 'yyyy-MM-dd')" +
-                        " as symbol) sym from long_sequence(10000)) timestamp(ts) PARTITION BY MONTH",
-                null,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testDistinctSymbolsIndexed() throws Exception {
+    public void testDistinctSymbolIndexed() throws Exception {
         assertQuery(
                 "sym\n" +
                         "2020-01-01\n" +
@@ -198,7 +67,7 @@ public class DistinctKeyRecordCursorFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDistinctSymbolsIndexedWithUpdates() throws Exception {
+    public void testDistinctSymbolIndexedWithUpdates() throws Exception {
         assertQuery(
                 "sym\n" +
                         "2020-01-01\n" +
@@ -225,7 +94,7 @@ public class DistinctKeyRecordCursorFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDistinctSymbolsNonIndexed() throws Exception {
+    public void testDistinctSymbolNonIndexed() throws Exception {
         assertQuery(
                 "sym\n" +
                         "2020-01-01\n" +
@@ -248,7 +117,7 @@ public class DistinctKeyRecordCursorFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDistinctSymbolsNonIndexedFilteredFramed() throws Exception {
+    public void testDistinctSymbolNonIndexedFilteredFramed() throws Exception {
         assertQuery(
                 "sym\n" +
                         "2020-03-01\n" +
@@ -266,7 +135,7 @@ public class DistinctKeyRecordCursorFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDistinctSymbolsNonIndexedFilteredNonFramed() throws Exception {
+    public void testDistinctSymbolNonIndexedFilteredNonFramed() throws Exception {
         // Filter framing not possible
         assertQuery(
                 "sym\n" +
@@ -275,6 +144,47 @@ public class DistinctKeyRecordCursorFactoryTest extends AbstractCairoTest {
                         "2020-02-03\n" +
                         "2020-02-04\n",
                 "select DISTINCT sym from tab WHERE ts > '2020-01-15' and left(sym, 7) = '2020-02' order by 1 LIMIT 4",
+                "create table tab as (select timestamp_sequence('2020-01-01', 10 * 60 * 1000000L) ts, cast(" +
+                        "to_str(timestamp_sequence('2020-01-01', 10 * 60 * 1000000L), 'yyyy-MM-dd')" +
+                        " as symbol) sym from long_sequence(10000)) timestamp(ts) PARTITION BY MONTH",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testDistinctSymbolNonIndexedWithNulls() throws Exception {
+        assertQuery(
+                "sym\n" +
+                        "\n" +
+                        "a\n" +
+                        "b\n" +
+                        "c\n",
+                "select DISTINCT sym from tab order by 1",
+                "create table tab as (select timestamp_sequence('2020-01-01', 10 * 60 * 1000000L) ts, rnd_symbol('a','b','c',null) sym from long_sequence(10000))" +
+                        " timestamp(ts) PARTITION BY MONTH",
+                null,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testDistinctSymbolWithAnotherCol() throws Exception {
+        assertQuery(
+                "sym\tmonth\n" +
+                        "2020-01-01\t1\n" +
+                        "2020-01-02\t1\n" +
+                        "2020-01-03\t1\n" +
+                        "2020-01-04\t1\n" +
+                        "2020-01-05\t1\n" +
+                        "2020-01-06\t1\n" +
+                        "2020-01-07\t1\n" +
+                        "2020-01-08\t1\n" +
+                        "2020-01-09\t1\n" +
+                        "2020-01-10\t1\n",
+                "select DISTINCT sym, month(ts) from tab order by 1 LIMIT 10",
                 "create table tab as (select timestamp_sequence('2020-01-01', 10 * 60 * 1000000L) ts, cast(" +
                         "to_str(timestamp_sequence('2020-01-01', 10 * 60 * 1000000L), 'yyyy-MM-dd')" +
                         " as symbol) sym from long_sequence(10000)) timestamp(ts) PARTITION BY MONTH",

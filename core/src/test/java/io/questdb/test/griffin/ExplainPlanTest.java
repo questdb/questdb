@@ -1395,6 +1395,34 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExplainWindowFunctionWithCharConstantFrameBounds() throws Exception {
+        assertMemoryLeak(()->{
+            ddl("create table tab ( key int, value double, ts timestamp) timestamp(ts)");
+
+            assertPlan("select avg(value) over (PARTITION BY key ORDER BY ts RANGE BETWEEN '1' MINUTES PRECEDING AND CURRENT ROW) from tab",
+                    "Window\n" +
+                            "  functions: [avg(value) over (partition by [key] range between 60000000 preceding and current row)]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n");
+
+            assertPlan("select avg(value) over (PARTITION BY key ORDER BY ts RANGE BETWEEN '4' MINUTES PRECEDING AND '3' MINUTES PRECEDING) from tab",
+                    "Window\n" +
+                            "  functions: [avg(value) over (partition by [key] range between 240000000 preceding and 180000000 preceding)]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n");
+
+            assertPlan("select avg(value) over (PARTITION BY key ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND '10' MINUTES PRECEDING) from tab",
+                    "Window\n" +
+                            "  functions: [avg(value) over (partition by [key] range between unbounded preceding and 600000000 preceding)]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n");
+        });
+    }
+
+    @Test
     public void testExplainWithJsonFormat1() throws Exception {
         assertQuery("QUERY PLAN\n" +
                 "[\n" +
@@ -3345,20 +3373,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
         );
     }
 
-    @Test // TODO: subquery should just read symbols from map
+    @Test
     public void testLatestOn12() throws Exception {
         assertPlan(
                 "create table a ( i int, s symbol, ts timestamp) timestamp(ts);",
                 "select s, i, ts from a where s in (select distinct s from a) and length(s) = 2 latest on ts partition by s",
                 "LatestBySubQuery\n" +
                         "    Subquery\n" +
-                        "        DistinctKey\n" +
-                        "            GroupBy vectorized: true workers: 1\n" +
-                        "              keys: [s]\n" +
-                        "              values: [count(*)]\n" +
-                        "                DataFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: a\n" +
+                        "        DistinctSymbol\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: a\n" +
                         "    Row backward scan on: s\n" +
                         "      filter: length(s)=2\n" +
                         "    Frame backward scan on: a\n"
@@ -3366,60 +3391,51 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     }
 
-    @Test // TODO: subquery should just read symbols from map
+    @Test
     public void testLatestOn12a() throws Exception {
         assertPlan(
                 "create table a ( i int, s symbol, ts timestamp) timestamp(ts);",
                 "select s, i, ts from a where s in (select distinct s from a) latest on ts partition by s",
                 "LatestBySubQuery\n" +
                         "    Subquery\n" +
-                        "        DistinctKey\n" +
-                        "            GroupBy vectorized: true workers: 1\n" +
-                        "              keys: [s]\n" +
-                        "              values: [count(*)]\n" +
-                        "                DataFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: a\n" +
+                        "        DistinctSymbol\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: a\n" +
                         "    Row backward scan on: s\n" +
                         "    Frame backward scan on: a\n"
         );
 
     }
 
-    @Test // TODO: subquery should just read symbols from map
+    @Test
     public void testLatestOn13() throws Exception {
         assertPlan(
                 "create table a ( i int, s symbol index, ts timestamp) timestamp(ts);",
                 "select i, ts, s from a where s in (select distinct s from a) and length(s) = 2 latest on ts partition by s",
                 "LatestBySubQuery\n" +
                         "    Subquery\n" +
-                        "        DistinctKey\n" +
-                        "            GroupBy vectorized: true workers: 1\n" +
-                        "              keys: [s]\n" +
-                        "              values: [count(*)]\n" +
-                        "                DataFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: a\n" +
+                        "        DistinctSymbol\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: a\n" +
                         "    Index backward scan on: s\n" +
                         "      filter: length(s)=2\n" +
                         "    Frame backward scan on: a\n"
         );
     }
 
-    @Test // TODO: subquery should just read symbols from map
+    @Test
     public void testLatestOn13a() throws Exception {
         assertPlan(
                 "create table a ( i int, s symbol index, ts timestamp) timestamp(ts);",
                 "select i, ts, s from a where s in (select distinct s from a) latest on ts partition by s",
                 "LatestBySubQuery\n" +
                         "    Subquery\n" +
-                        "        DistinctKey\n" +
-                        "            GroupBy vectorized: true workers: 1\n" +
-                        "              keys: [s]\n" +
-                        "              values: [count(*)]\n" +
-                        "                DataFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: a\n" +
+                        "        DistinctSymbol\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: a\n" +
                         "    Index backward scan on: s\n" +
                         "    Frame backward scan on: a\n"
         );
@@ -6279,34 +6295,26 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    // TODO: should scan symbols table (note: some symbols from the symbol table may be
-    //  not present in the end table due to, say, UPDATE)
     public void testSelectDistinct2() throws Exception {
         assertPlan(
                 "create table tab ( s symbol, ts timestamp);",
                 "select distinct(s) from tab",
-                "DistinctKey\n" +
-                        "    GroupBy vectorized: true workers: 1\n" +
-                        "      keys: [s]\n" +
-                        "      values: [count(*)]\n" +
-                        "        DataFrame\n" +
-                        "            Row forward scan\n" +
-                        "            Frame forward scan on: tab\n"
+                "DistinctSymbol\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: tab\n"
         );
     }
 
-    @Test // TODO: should scan symbols table
+    @Test
     public void testSelectDistinct3() throws Exception {
         assertPlan(
                 "create table tab ( s symbol index, ts timestamp);",
                 "select distinct(s) from tab",
-                "DistinctKey\n" +
-                        "    GroupBy vectorized: true workers: 1\n" +
-                        "      keys: [s]\n" +
-                        "      values: [count(*)]\n" +
-                        "        DataFrame\n" +
-                        "            Row forward scan\n" +
-                        "            Frame forward scan on: tab\n"
+                "DistinctSymbol\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: tab\n"
         );
     }
 

@@ -148,8 +148,10 @@ public class SnapshotTest extends AbstractCairoTest {
 
             ddl("snapshot prepare");
 
-            insert("insert into " + tableName +
-                    " select x+20 x, timestamp_sequence(100000000000, 100000000000) ts from long_sequence(3)");
+            insert(
+                    "insert into " + tableName +
+                            " select x+20 x, timestamp_sequence(100000000000, 100000000000) ts from long_sequence(3)"
+            );
 
             // Release all readers and writers, but keep the snapshot dir around.
             engine.clear();
@@ -320,6 +322,16 @@ public class SnapshotTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSnapshotPrepareCheckTableMetadataFilesForNonWalSystemTable() throws Exception {
+        final String sysTableName = configuration.getSystemTableNamePrefix() + "test_non_wal";
+        testSnapshotPrepareCheckTableMetadataFiles(
+                "create table '" + sysTableName + "' (a symbol, b double, c long);",
+                null,
+                sysTableName
+        );
+    }
+
+    @Test
     public void testSnapshotPrepareCheckTableMetadataFilesForPartitionedTable() throws Exception {
         final String tableName = "test";
         testSnapshotPrepareCheckTableMetadataFiles(
@@ -347,6 +359,16 @@ public class SnapshotTest extends AbstractCairoTest {
                 "create table " + tableName + " (a symbol index capacity 128, b double, c long)",
                 null,
                 tableName
+        );
+    }
+
+    @Test
+    public void testSnapshotPrepareCheckTableMetadataFilesForWalSystemTable() throws Exception {
+        final String sysTableName = configuration.getSystemTableNamePrefix() + "test_wal";
+        testSnapshotPrepareCheckTableMetadataFiles(
+                "create table '" + sysTableName + "' (ts timestamp, a symbol, b double, c long) timestamp(ts) partition by day wal;",
+                null,
+                sysTableName
         );
     }
 
@@ -1117,7 +1139,6 @@ public class SnapshotTest extends AbstractCairoTest {
         });
     }
 
-    @SuppressWarnings("SameParameterValue")
     private void testSnapshotPrepareCheckTableMetadataFiles(String ddl, String ddl2, String tableName) throws Exception {
         assertMemoryLeak(() -> {
             try (Path path = new Path(); Path copyPath = new Path()) {

@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.window.*;
+import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -546,6 +547,24 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "ts",
                     true,//query is using cached window factory
                     false
+            );
+
+            // separate test for first_value() only to use it with non-caching factory
+            // this variant doesn't need to scan whole partition (while sum() or avg() do)
+            assertQuery(
+                    "ts\ti\tj\tfirst_value\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t1.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\t3\t1.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t4.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\t1\t4.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t4.0\n",
+                    "select ts, i, j, first_value(j) over (partition by i) " +
+                            "from tab",
+                    "ts",
+                    false,
+                    true
             );
 
             assertQuery(
@@ -3172,9 +3191,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "", //only allowed for rows frame
                     "order by val",
                     "order by val, ts",
-                    "order by ts"
-                    //TODO: add
-                    //,"order by ts desc"
+                    "order by ts",
+                    "order by ts desc"
                     //, "order by " + EXPRESSION
             );
 
@@ -3187,11 +3205,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             }
 
                             String query = "select count(*) from (" +
-                                    ("select *, #FUNCTION(length(#EXPRESSION)) " + frameVariant + " from tab)")
+                                    ("select *, #FUNCTION(length(#EXPRESSION)) " + frameVariant + " from tab ")
                                             .replace("#FUNCTION", function)
                                             .replace("#EXPRESSION", EXPRESSION)
                                             .replace("#FRAME", frameType)
                                             .replace("#ORDERBY", orderBy);
+
+                            if (Chars.equals("order by ts desc", orderBy)) {
+                                query += orderBy + ")";
+                            } else {
+                                query += ")";
+                            }
+
                             try {
                                 assertSql("count\n10\n", query);
                             } catch (Exception e) {
@@ -3200,21 +3225,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         }
                     }
                 }
-
-//                assertSql("count\n10\n",
-//                        "select count(*) from (select x, #FUNCTION(length(rnd_str(100,100,100,10))) over ( partition by rnd_str(100,100,100,10) ) from tab)");
-//
-//                assertQuery("count\n10\n",
-//                        "select count(*) from (" +
-//                                "select *, " +
-//                                "avg(val) over ( partition by rnd_str(100,100,100,10) order by ts rows between unbounded preceding and current row ) " +
-//                                "from tab)",
-//                        null,
-//                        false,
-//                        true);
             }
-
-
         });
     }
 
