@@ -2621,7 +2621,7 @@ public class ConcurrentLongHashMap<V> implements Serializable {
         }
     }
 
-    static final class KeyIterator<V> extends BaseIterator<V> {
+    public static final class KeyIterator<V> extends BaseIterator<V> {
 
         public long next() {
             Node<V> p;
