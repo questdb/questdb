@@ -2,6 +2,14 @@
 #include <string>
 #include "duckdb_jni.h"
 #include <duckdb.hpp>
+//#include <malloc_extension.h>
+//#include <iostream>
+//
+//static size_t CurrentlyAllocatedBytes() {
+//  size_t value;
+//  MallocExtension::instance()->GetNumericProperty("generic.current_allocated_bytes", &value);
+//  return value;
+//}
 
 thread_local duckdb::PreservedError duckdb_error;
 
@@ -47,7 +55,11 @@ JNIEXPORT void JNICALL Java_io_questdb_duckdb_DuckDB_databaseClose(JNIEnv *, jcl
 JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_databaseConnect(JNIEnv *, jclass, jlong db) {
             D_ASSERT(db > 0);
     try {
-        return (jlong) new duckdb::Connection(*(duckdb::DuckDB *) db);
+//        auto a = CurrentlyAllocatedBytes();
+        jlong ptr = (jlong) new duckdb::Connection(*(duckdb::DuckDB *) db);
+//        auto b = CurrentlyAllocatedBytes();
+//        std::cerr << "Allocated " << (b - a) << " bytes for connection" << std::endl;
+        return ptr;
     } catch (const duckdb::Exception &ex) {
         duckdb_error = duckdb::PreservedError(ex);
     } catch (const std::exception &ex) {
@@ -138,9 +150,12 @@ Java_io_questdb_duckdb_DuckDB_connectionPrepare(JNIEnv *, jclass, jlong connecti
             D_ASSERT(connection > 0);
             D_ASSERT(query_ptr > 0);
             D_ASSERT(query_size > 0);
-
     std::string query((const char *) query_ptr, query_size);
-    return (jlong) ((duckdb::Connection *) connection)->Prepare(query).release();
+//    auto a = CurrentlyAllocatedBytes();
+    jlong ptr = (jlong) ((duckdb::Connection *) connection)->Prepare(query).release();
+//    auto b = CurrentlyAllocatedBytes();
+//    std::cerr << "Allocated " << (b - a) << " bytes for prepared statement: " << query << std::endl;
+    return ptr;
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_preparedExecute(JNIEnv *, jclass, jlong stmt) {

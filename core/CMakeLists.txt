@@ -65,6 +65,9 @@ set(
 # JNI includes
 include_directories($ENV{JAVA_HOME}/include/)
 
+# profiling experiments
+#include_directories(/opt/homebrew/opt/gperftools/include/gperftools/)
+
 if (APPLE)
     include_directories($ENV{JAVA_HOME}/include/darwin/)
     if (CMAKE_SYSTEM_PROCESSOR MATCHES "^arm64")
@@ -343,6 +346,9 @@ if (WIN32)
     target_link_libraries(questdb wsock32 ws2_32 secur32 shlwapi psapi -s -static-libgcc)
     target_compile_options(questdb PRIVATE -fno-threadsafe-statics)
 elseif (APPLE)
+#    profiling experiments
+#    target_link_libraries(questdb -L/opt/homebrew/opt/gperftools/lib)
+#    target_link_libraries(questdb -nostdlib++ -dead_strip -lc++ -ltcmalloc_and_profiler)
     target_link_libraries(questdb -nostdlib++ -dead_strip -lc++)
 else ()
     target_compile_options(questdb PRIVATE -fno-threadsafe-statics -ffunction-sections -fdata-sections)

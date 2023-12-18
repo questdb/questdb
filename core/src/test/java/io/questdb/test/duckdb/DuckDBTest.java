@@ -68,6 +68,17 @@ public class DuckDBTest extends AbstractCairoTest {
         return res;
     }
 
+    public static long prepareNoFailTest(long conn) {
+        final long res = DuckDB.connectionPrepare(conn, 0, 0);
+        Assert.assertNotEquals(0, res); // result of error
+        final long err = DuckDB.preparedGetError(res);
+        if (err != 0) {
+            DirectUtf8StringZ error = new DirectUtf8StringZ();
+            error.of(err);
+            Assert.fail("Prepared Statement failed with message: " + error);
+        }
+        return res;
+    }
     public static long prepareNoFail(long conn, CharSequence stmt) {
         DirectUtf8Sequence utf8Sequence = new GcUtf8String(stmt.toString());
         final long res = DuckDB.connectionPrepare(conn, utf8Sequence.ptr(), utf8Sequence.size());
@@ -372,6 +383,88 @@ public class DuckDBTest extends AbstractCairoTest {
 
         DuckDB.connectionDisconnect(conn);
         DuckDB.databaseClose(db);
+    }
+
+    @Test
+    public void testRss3() {
+        final long db = DuckDB.databaseOpen(0, 0);
+        int connCount = 1000;
+        long[] conn = new long[connCount];
+        long cm = DuckDB.databaseConnect(db);
+        final long createStmt = prepareNoFail(cm, "CREATE TABLE integers(i INTEGER)");
+        DuckDB.resultDestroy(executeNoFail(createStmt));
+        DuckDB.preparedDestroy(createStmt);
+        DuckDB.connectionDisconnect(cm);
+        System.gc();
+        long a = Os.getRss();
+        long start = System.nanoTime();
+        for (int i = 0; i < connCount; i++) {
+            long c = DuckDB.databaseConnect(db);
+            conn[i] = prepareNoFail(c, "select i, i+1, i*2 from integers where i > 100 and i < 1000 limit 100");
+            DuckDB.connectionDisconnect(c);
+        }
+        long end = System.nanoTime();
+        System.out.println("Time: " + (end - start) / 1000000);
+        DuckDB.databaseClose(db);
+        long b = Os.getRss();
+        for (int i = 0; i < connCount; i++) {
+            DuckDB.preparedDestroy(conn[i]);
+        }
+        conn = null;
+        System.gc();
+        long c = Os.getRss();
+        System.out.println("RSS: " + (b - a));
+        System.out.println("RSS: " + (b-a) / connCount);
+    }
+    @Test
+    public void testRss2() {
+        final long db = DuckDB.databaseOpen(0, 0);
+        int connCount = 1000;
+        long[] conn = new long[connCount];
+        long cm = DuckDB.databaseConnect(db);
+        final long createStmt = prepareNoFail(cm, "CREATE TABLE integers(i INTEGER)");
+        DuckDB.resultDestroy(executeNoFail(createStmt));
+        DuckDB.preparedDestroy(createStmt);
+        DuckDB.connectionDisconnect(cm);
+        System.gc();
+        long a = Os.getRss();
+        for (int i = 0; i < connCount; i++) {
+            long c = DuckDB.databaseConnect(db);
+            conn[i] = prepareNoFail(c, "INSERT INTO integers VALUES (1), (2), (3), (4), (5)");
+            DuckDB.connectionDisconnect(c);
+        }
+        DuckDB.databaseClose(db);
+        long b = Os.getRss();
+        for (int i = 0; i < connCount; i++) {
+            DuckDB.preparedDestroy(conn[i]);
+        }
+        conn = null;
+        System.gc();
+        long c = Os.getRss();
+        System.out.println("RSS: " + (b - a));
+        System.out.println("RSS: " + (b-a) / connCount);
+    }
+
+    @Test
+    public void testRss() {
+        final long db = DuckDB.databaseOpen(0, 0);
+        int connCount = 1000000;
+        long[] conn = new long[connCount];
+        System.gc();
+        long a = Os.getRss();
+        for (int i = 0; i < connCount; i++) {
+            conn[i] = DuckDB.databaseConnect(db);
+        }
+        DuckDB.databaseClose(db);
+        long b = Os.getRss();
+        for (int i = 0; i < connCount; i++) {
+            DuckDB.connectionDisconnect(conn[i]);
+        }
+        conn = null;
+        System.gc();
+        long c = Os.getRss();
+        System.out.println("RSS: " + (b - a));
+        System.out.println("RSS: " + (b-a) / connCount);
     }
 
     private static void updateCollection(int iters, long conn, List<Long> longs) {

@@ -25,17 +25,18 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.pool.DuckDBConnectionPool;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.*;
+import io.questdb.duckdb.DuckDB;
+import io.questdb.duckdb.DuckDBRecordCursorFactory;
 import io.questdb.griffin.engine.functions.catalogue.*;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowTablesRecordCursorFactory;
 import io.questdb.griffin.model.*;
 import io.questdb.std.*;
-import io.questdb.std.str.FlyweightCharSequence;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -2535,7 +2536,40 @@ public class SqlOptimiser implements Mutable {
         int status = executionContext.getTableStatus(path, tableToken);
 
         if (status == TableUtils.TABLE_DOES_NOT_EXIST) {
-            // TODO: check quack prefix here?
+            //select * from quack('INSTALL parquet;');
+            //select * from quack('LOAD parquet;');
+            //select * from quack('CREATE TABLE integers(i INTEGER)');
+            //select * from quack('INSERT INTO integers VALUES (1), (2), (3), (4), (5)');
+
+            //select i as ii, i + 1 as aa from quack('select * from integers') limit 3;
+            //select i as ii, i+1 as aa, i*10 as bb from q:integers where i > 2 limit -1;
+            //select * from "q:'$USER_HOME/duckdb/data/parquet-testing/p2.parquet'";
+
+            if (Chars.startsWith(tableName, "q:")) {
+                try(DuckDBConnectionPool.Connection conn = executionContext.getCairoEngine().getDuckDBConnection()) {
+                    CharSequence tn = tableName.subSequence(2, tableName.length());
+                    GcUtf8String query = new GcUtf8String("select * from " + tn + " limit 0");
+                    final long stmt = conn.prepare(query);
+                    final long error = DuckDB.preparedGetError(stmt);
+                    if (error != 0) {
+                        DirectUtf8StringZ err = new DirectUtf8StringZ();
+                        err.of(error);
+                        throw SqlException.$(tableNamePosition, "could not read table [name=")
+                                .put(tableName).put(", error=").put(err.toString()).put("]");
+                    }
+                    model.setMetadataVersion(1);
+                    model.setTableId(1);
+                    RecordMetadata metadata = DuckDBRecordCursorFactory.buildMetadata(stmt);
+                    if (metadata == null) {
+                        throw SqlException.$(tableNamePosition, "could not read table [name=")
+                                .put(tableName).put(", error=").put("metadata is null").put("]");
+                    }
+                    copyColumnsFromMetadata(model, metadata, false);
+                    DuckDB.preparedDestroy(stmt);
+                }
+                return;
+            }
+
             try {
                 model.getTableNameExpr().type = ExpressionNode.FUNCTION;
                 parseFunctionAndEnumerateColumns(model, executionContext, sqlParserCallback);

@@ -50,7 +50,7 @@ public class DuckDBRecordCursorFactory implements RecordCursorFactory {
         this.metadata = buildMetadata(statement);
     }
 
-    private static RecordMetadata buildMetadata(long statement) {
+    public static RecordMetadata buildMetadata(long statement) {
         final int columnCount = (int)DuckDB.preparedGetColumnCount(statement);
         if (columnCount == 0) {
             return null;

@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.map.RecordValueSink;
 import io.questdb.cairo.map.RecordValueSinkFactory;
+import io.questdb.cairo.pool.DuckDBConnectionPool;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
@@ -62,6 +63,8 @@ import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
+import io.questdb.std.str.DirectUtf8StringZ;
+import io.questdb.std.str.GcUtf8String;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -2746,6 +2749,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             SqlExecutionContext executionContext,
             boolean processJoins
     ) throws SqlException {
+        // TODO: special duck model type?
         switch (model.getSelectModelType()) {
             case QueryModel.SELECT_MODEL_CHOOSE:
                 return generateSelectChoose(model, executionContext);
@@ -4042,12 +4046,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final ObjList<ExpressionNode> latestBy = model.getLatestBy();
 
         final GenericLexer.FloatingSequence tab = (GenericLexer.FloatingSequence) model.getTableName();
-        final boolean supportsRandomAccess;
+        boolean supportsRandomAccess = false;
         if (Chars.startsWith(tab, NO_ROWID_MARKER)) {
             tab.setLo(tab.getLo() + NO_ROWID_MARKER.length());
-            supportsRandomAccess = false;
         } else {
             supportsRandomAccess = true;
+        }
+
+        if (Chars.startsWith(tab, "q:")) {
+            try(DuckDBConnectionPool.Connection conn = executionContext.getCairoEngine().getDuckDBConnection()) {
+                CharSequence tn = tab.subSequence(2, tab.length());
+                GcUtf8String query = new GcUtf8String("select * from " + tn);
+                long stmt = conn.prepare(query);
+                long error = DuckDB.preparedGetError(stmt);
+                if (error != 0) {
+                    DirectUtf8StringZ err = new DirectUtf8StringZ();
+                    err.of(error);
+                    throw SqlException.$(0, err.toString());
+                }
+                return new DuckDBRecordCursorFactory(stmt); // stmt is owned by factory
+            }
         }
 
         final TableToken tableToken = executionContext.getTableToken(tab);
@@ -4059,13 +4077,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             try (TableReader reader = executionContext.getReader(tableToken, model.getMetadataVersion())) {
                 return generateTableQuery0(model, executionContext, latestBy, supportsRandomAccess, reader, reader.getMetadata());
             }
-//            boolean duckDB = true;
-//            if (duckDB) {
-//                DuckDBInstance duckDBInstance = executionContext.getCairoEngine().getDuckDBInstance();
-//                DuckDBConnection connection = duckDBInstance.getConnection();
-//                DuckDBPreparedStatement stmt = connection.prepareStatement("INSERT INTO integers VALUES (?, ?);");
-//                new DuckDBRecordCursorFactory(stmt, connection);
-//            }
         }
     }
 
