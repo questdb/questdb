@@ -24,11 +24,8 @@
 
 package io.questdb.test.cutlass.http.client;
 
-import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
-import io.questdb.network.JavaTlsClientSocketFactory;
-import io.questdb.network.SocketFactory;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
@@ -36,9 +33,7 @@ public class HttpsClientTest {
 
     @Test
     public void foo() {
-        SocketFactory socketFactory = JavaTlsClientSocketFactory.INSTANCE;
-
-        try (HttpClient client = HttpClientFactory.newInstance(DefaultHttpClientConfiguration.INSTANCE, socketFactory)) {
+        try (HttpClient client = HttpClientFactory.newTlsInstance()) {
             HttpClient.Request r = client.newRequest();
             try (HttpClient.ResponseHeaders responseHeaders = r.GET().url("/").send("127.0.0.1", 9000)) {
                 responseHeaders.await();

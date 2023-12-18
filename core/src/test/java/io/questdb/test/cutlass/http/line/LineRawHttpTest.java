@@ -25,11 +25,8 @@
 package io.questdb.test.cutlass.http.line;
 
 import io.questdb.DefaultHttpClientConfiguration;
-import io.questdb.ServerMain;
-import io.questdb.cairo.TableToken;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
-import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractBootstrapTest;
@@ -45,10 +42,7 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.List;
 
 import static io.questdb.PropertyKey.*;
 import static io.questdb.test.cutlass.http.line.IlpHttpUtils.getHttpPort;
@@ -115,7 +109,7 @@ public class LineRawHttpTest extends AbstractBootstrapTest {
                 Rnd rnd = TestUtils.generateRandom(LOG);
 
                 int totalCount = 0;
-                try (HttpClient httpClient = HttpClientFactory.newInstance(new DefaultHttpClientConfiguration())) {
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
                     String line = "line,sym1=123 field1=123i 1234567890000000000\n";
 
                     for (int r = 0; r < 3; r++) {

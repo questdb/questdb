@@ -26,19 +26,12 @@ package io.questdb.cutlass.http.client;
 
 import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.HttpClientConfiguration;
+import io.questdb.network.JavaTlsClientSocketFactory;
 import io.questdb.network.PlainSocketFactory;
 import io.questdb.network.SocketFactory;
 import io.questdb.std.Os;
 
 public class HttpClientFactory {
-    public static HttpClient newInstance() {
-        return newInstance(DefaultHttpClientConfiguration.INSTANCE);
-    }
-
-    public static HttpClient newInstance(HttpClientConfiguration configuration) {
-        return newInstance(configuration, PlainSocketFactory.INSTANCE);
-    }
-
     public static HttpClient newInstance(HttpClientConfiguration configuration, SocketFactory socketFactory) {
         switch (Os.type) {
             case Os.LINUX_AMD64:
@@ -53,5 +46,21 @@ public class HttpClientFactory {
             default:
                 throw new UnsupportedOperationException();
         }
+    }
+
+    public static HttpClient newPlainTextInstance(HttpClientConfiguration configuration) {
+        return newInstance(configuration, PlainSocketFactory.INSTANCE);
+    }
+
+    public static HttpClient newPlainTextInstance() {
+        return newPlainTextInstance(DefaultHttpClientConfiguration.INSTANCE);
+    }
+
+    public static HttpClient newTlsInstance() {
+        return newTlsInstance(DefaultHttpClientConfiguration.INSTANCE);
+    }
+
+    public static HttpClient newTlsInstance(HttpClientConfiguration configuration) {
+        return newInstance(configuration, JavaTlsClientSocketFactory.INSTANCE);
     }
 }

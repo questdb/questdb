@@ -101,8 +101,18 @@ public abstract class HttpClient implements QuietCloseable {
         }
     }
 
-    private int recvOrDie(long addr, int timeout) {
-        return recvOrDie(addr, (int) (bufferSize - (addr - bufLo)), timeout);
+    private void handleTlsOps(int timeout) {
+        for (; ; ) {
+            if (socket.wantsTlsRead()) {
+                dieIfNegative(socket.tlsIO(Socket.READ_FLAG));
+                continue;
+            }
+            if (socket.wantsTlsWrite()) {
+                dieIfNegative(socket.tlsIO(Socket.WRITE_FLAG));
+                continue;
+            }
+            break;
+        }
     }
 
     private int recvOrDie(long lo, int len, int timeout) {
@@ -116,18 +126,8 @@ public abstract class HttpClient implements QuietCloseable {
         return n;
     }
 
-    private void handleTlsOps(int timeout) {
-        for (; ; ) {
-            if (socket.wantsTlsRead()) {
-                dieIfNegative(socket.tlsIO(Socket.READ_FLAG));
-                continue;
-            }
-            if (socket.wantsTlsWrite()) {
-                dieIfNegative(socket.tlsIO(Socket.WRITE_FLAG));
-                continue;
-            }
-            break;
-        }
+    private int recvOrDie(long addr, int timeout) {
+        return recvOrDie(addr, (int) (bufferSize - (addr - bufLo)), timeout);
     }
 
     private int sendOrDie(long lo, int len, int timeoutMillis) {
@@ -370,10 +370,14 @@ public abstract class HttpClient implements QuietCloseable {
             sendHeaderAndContent(maxContentLen, timeout);
         }
 
-        public void setCookie(CharSequence name, CharSequence value) {
+        public Request setCookie(CharSequence name, CharSequence value) {
             beforeHeader();
-            put(HEADER_COOKIE).putAscii(": ").put(name).putAscii(COOKIE_VALUE_SEPARATOR).put(value);
+            put(HEADER_COOKIE).putAscii(": ").put(name);
+            if (value != null) {
+                putAscii(COOKIE_VALUE_SEPARATOR).put(value);
+            }
             eol();
+            return this;
         }
 
         public Request url(CharSequence url) {

@@ -37,7 +37,7 @@ public class HttpClientMain {
         try (
                 CairoEngine engine = new CairoEngine(configuration);
                 JsonToTableSerializer jsonToTableSerializer = new JsonToTableSerializer(engine);
-                HttpClient client = HttpClientFactory.newInstance()
+                HttpClient client = HttpClientFactory.newPlainTextInstance()
         ) {
 
 
@@ -71,7 +71,7 @@ public class HttpClientMain {
                         chunkCount++;
                     }
                     System.out.println(System.currentTimeMillis() - t);
-                    System.out.println("done: " + i +", chunks: "+chunkCount);
+                    System.out.println("done: " + i + ", chunks: " + chunkCount);
                 }
             }
         }
