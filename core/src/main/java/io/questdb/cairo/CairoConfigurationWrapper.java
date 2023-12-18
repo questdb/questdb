@@ -276,8 +276,18 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getGroupByMergeShardQueueCapacity() {
+        return delegate.getGroupByMergeShardQueueCapacity();
+    }
+
+    @Override
     public int getGroupByPoolCapacity() {
         return delegate.getGroupByPoolCapacity();
+    }
+
+    @Override
+    public int getGroupByShardingThreshold() {
+        return delegate.getGroupByShardingThreshold();
     }
 
     @Override

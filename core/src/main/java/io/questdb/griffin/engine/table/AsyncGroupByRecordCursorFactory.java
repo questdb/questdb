@@ -69,8 +69,8 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             @NotNull RecordCursorFactory base,
             @NotNull RecordMetadata groupByMetadata,
             @Transient @NotNull ListColumnFilter listColumnFilter,
-            @Transient @NotNull ColumnTypes keyTypes,
-            @Transient @NotNull ColumnTypes valueTypes,
+            @Transient @NotNull ArrayColumnTypes keyTypes,
+            @Transient @NotNull ArrayColumnTypes valueTypes,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
             @NotNull ObjList<Function> keyFunctions,
             @Nullable ObjList<ObjList<Function>> perWorkerKeyFunctions,
@@ -100,7 +100,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
                     workerCount
             );
             this.frameSequence = new PageFrameSequence<>(configuration, messageBus, atom, REDUCER, reduceTaskFactory, PageFrameReduceTask.TYPE_GROUP_BY);
-            this.cursor = new AsyncGroupByRecordCursor(groupByFunctions, recordFunctions);
+            this.cursor = new AsyncGroupByRecordCursor(groupByFunctions, recordFunctions, messageBus);
             this.workerCount = workerCount;
         } catch (Throwable e) {
             close();
@@ -168,27 +168,78 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
 
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.acquire(workerId, owner, circuitBreaker);
-        final Map map = atom.getMap(slotId);
+        final AsyncGroupByAtom.Particle particle = atom.getParticle(slotId);
         final Function filter = atom.getFilter(slotId);
         final RecordSink mapSink = atom.getMapSink(slotId);
         try {
-            for (long r = 0; r < frameRowCount; r++) {
-                record.setRowIndex(r);
-                if (filter != null && !filter.getBool(record)) {
-                    continue;
-                }
-
-                final MapKey key = map.withKey();
-                mapSink.copy(record, key);
-                MapValue value = key.createValue();
-                if (value.isNew()) {
-                    functionUpdater.updateNew(value, record);
-                } else {
-                    functionUpdater.updateExisting(value, record);
-                }
+            if (!particle.isSharded()) {
+                aggregateNonSharded(record, frameRowCount, filter, functionUpdater, particle, mapSink);
+            } else {
+                aggregateSharded(record, frameRowCount, filter, functionUpdater, particle, mapSink);
             }
+            atom.tryShard(particle);
         } finally {
             atom.release(slotId);
+        }
+    }
+
+    private static void aggregateNonSharded(
+            PageAddressCacheRecord record,
+            long frameRowCount,
+            Function filter,
+            GroupByFunctionsUpdater functionUpdater,
+            AsyncGroupByAtom.Particle particle,
+            RecordSink mapSink
+    ) {
+        final Map map = particle.getMap();
+        for (long r = 0; r < frameRowCount; r++) {
+            record.setRowIndex(r);
+            if (filter != null && !filter.getBool(record)) {
+                continue;
+            }
+
+            final MapKey key = map.withKey();
+            mapSink.copy(record, key);
+            MapValue value = key.createValue();
+            if (value.isNew()) {
+                functionUpdater.updateNew(value, record);
+            } else {
+                functionUpdater.updateExisting(value, record);
+            }
+        }
+    }
+
+    private static void aggregateSharded(
+            PageAddressCacheRecord record,
+            long frameRowCount,
+            Function filter,
+            GroupByFunctionsUpdater functionUpdater,
+            AsyncGroupByAtom.Particle particle,
+            RecordSink mapSink
+    ) {
+        // The first map is used to write keys.
+        final Map lookupShard = particle.getShardMaps().getQuick(0);
+        for (long r = 0; r < frameRowCount; r++) {
+            record.setRowIndex(r);
+            if (filter != null && !filter.getBool(record)) {
+                continue;
+            }
+
+            final MapKey lookupKey = lookupShard.withKey();
+            mapSink.copy(record, lookupKey);
+            lookupKey.commit();
+            final int hashCode = lookupKey.hash();
+
+            final Map shard = particle.getShardMap(hashCode);
+            final MapKey shardKey = shard.withKey();
+            shardKey.copyFrom(lookupKey);
+
+            MapValue shardValue = shardKey.createValue(hashCode);
+            if (shardValue.isNew()) {
+                functionUpdater.updateNew(shardValue, record);
+            } else {
+                functionUpdater.updateExisting(shardValue, record);
+            }
         }
     }
 

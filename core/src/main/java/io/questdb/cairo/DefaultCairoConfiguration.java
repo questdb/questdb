@@ -289,8 +289,18 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getGroupByMergeShardQueueCapacity() {
+        return 32;
+    }
+
+    @Override
     public int getGroupByPoolCapacity() {
         return 1024;
+    }
+
+    @Override
+    public int getGroupByShardingThreshold() {
+        return 10000;
     }
 
     @Override

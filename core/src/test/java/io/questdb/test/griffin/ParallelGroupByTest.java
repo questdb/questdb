@@ -33,6 +33,7 @@ import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.MemoryTag;
@@ -42,7 +43,10 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
-import org.junit.*;
+import org.junit.Assert;
+import org.junit.Assume;
+import org.junit.Before;
+import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
@@ -66,7 +70,7 @@ public class ParallelGroupByTest extends AbstractCairoTest {
         this.enableParallelGroupBy = enableParallelGroupBy;
     }
 
-    @Parameterized.Parameters(name = "parallel={0}")
+    @Parameterized.Parameters(name = "parallel={0} threshold={1}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
                 {true},
@@ -74,20 +78,16 @@ public class ParallelGroupByTest extends AbstractCairoTest {
         });
     }
 
-    @BeforeClass
-    public static void setUpStatic() throws Exception {
+    @Override
+    @Before
+    public void setUp() {
         pageFrameMaxRows = PAGE_FRAME_MAX_ROWS;
         // We intentionally use small values for shard count and reduce
         // queue capacity to exhibit various edge cases.
         pageFrameReduceShardCount = 2;
         pageFrameReduceQueueCapacity = PAGE_FRAME_COUNT;
-
-        AbstractCairoTest.setUpStatic();
-    }
-
-    @Override
-    @Before
-    public void setUp() {
+        // Set the sharding threshold to a small value to test sharding.
+        groupByShardingThreshold = 2;
         super.setUp();
         configOverrideParallelGroupByEnabled(enableParallelGroupBy);
     }
@@ -1023,7 +1023,9 @@ public class ParallelGroupByTest extends AbstractCairoTest {
     private void testParallelStringKeyGroupBy(String... queriesAndExpectedResults) throws Exception {
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool((() -> 4));
-            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+            TestUtils.execute(pool,
+                    (engine) -> pool.assign(new GroupByMergeShardJob(engine.getMessageBus())),
+                    (engine, compiler, sqlExecutionContext) -> {
                         ddl(
                                 compiler,
                                 "CREATE TABLE tab (" +

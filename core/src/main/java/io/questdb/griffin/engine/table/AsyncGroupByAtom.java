@@ -25,12 +25,8 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.map.Map;
-import io.questdb.cairo.map.MapFactory;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import io.questdb.cairo.sql.StatefulAtom;
-import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.map.*;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
@@ -39,34 +35,40 @@ import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdaterFactory;
-import io.questdb.std.BytecodeAssembler;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
-import io.questdb.std.Transient;
+import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
 public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Plannable {
-
+    // We use the first 8 bits of a hash code to determine the shard, hence 128 as the max number of shards.
+    private static final int MAX_SHARDS = 128;
+    private final CairoConfiguration configuration;
     private final Function filter;
     private final GroupByFunctionsUpdater functionUpdater;
+    private final ObjList<GroupByFunction> groupByFunctions;
     private final ObjList<Function> keyFunctions;
-    private final Map map;
-    private final RecordSink mapSink;
+    private final ColumnTypes keyTypes;
+    private final RecordSink ownerMapSink;
+    private final Particle ownerParticle;
     private final ObjList<Function> perWorkerFilters;
     private final ObjList<ObjList<Function>> perWorkerKeyFunctions;
     private final PerWorkerLocks perWorkerLocks;
     private final ObjList<RecordSink> perWorkerMapSinks;
-    private final ObjList<Map> perWorkerMaps;
+    private final ObjList<Particle> perWorkerParticles;
+    private final int shardCount;
+    private final int shardMask;
+    private final int shardingThreshold;
+    private final ColumnTypes valueTypes;
+    private volatile boolean sharded;
 
     public AsyncGroupByAtom(
             @Transient @NotNull BytecodeAssembler asm,
             @NotNull CairoConfiguration configuration,
             @Transient @NotNull ColumnTypes columnTypes,
-            @Transient @NotNull ColumnTypes keyTypes,
-            @Transient @NotNull ColumnTypes valueTypes,
+            @Transient @NotNull ArrayColumnTypes keyTypes,
+            @Transient @NotNull ArrayColumnTypes valueTypes,
             @Transient @NotNull ListColumnFilter listColumnFilter,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
             @NotNull ObjList<Function> keyFunctions,
@@ -78,18 +80,27 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         assert perWorkerFilters == null || perWorkerFilters.size() == workerCount;
         assert perWorkerKeyFunctions == null || perWorkerKeyFunctions.size() == workerCount;
         try {
+            this.configuration = configuration;
+            this.shardingThreshold = configuration.getGroupByShardingThreshold();
+            this.keyTypes = new ArrayColumnTypes().addAll(keyTypes);
+            this.valueTypes = new ArrayColumnTypes().addAll(valueTypes);
             this.filter = filter;
             this.perWorkerFilters = perWorkerFilters;
+            this.groupByFunctions = groupByFunctions;
             this.keyFunctions = keyFunctions;
             this.perWorkerKeyFunctions = perWorkerKeyFunctions;
             functionUpdater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
             perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
-            map = MapFactory.createMap(configuration, keyTypes, valueTypes);
-            perWorkerMaps = new ObjList<>(workerCount);
+
+            shardCount = Math.min(Numbers.ceilPow2(workerCount), MAX_SHARDS);
+            shardMask = shardCount - 1;
+            ownerParticle = new Particle();
+            perWorkerParticles = new ObjList<>(workerCount);
             for (int i = 0; i < workerCount; i++) {
-                perWorkerMaps.extendAndSet(i, MapFactory.createMap(configuration, keyTypes, valueTypes));
+                perWorkerParticles.extendAndSet(i, new Particle());
             }
-            mapSink = RecordSinkFactory.getInstance(asm, columnTypes, listColumnFilter, keyFunctions, false);
+
+            ownerMapSink = RecordSinkFactory.getInstance(asm, columnTypes, listColumnFilter, keyFunctions, false);
             if (perWorkerKeyFunctions != null) {
                 perWorkerMapSinks = new ObjList<>(workerCount);
                 for (int i = 0; i < workerCount; i++) {
@@ -118,17 +129,18 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
     @Override
     public void clear() {
-        map.close();
-        for (int i = 0, n = perWorkerMaps.size(); i < n; i++) {
-            Map m = perWorkerMaps.getQuick(i);
-            m.close();
+        sharded = false;
+        ownerParticle.close();
+        for (int i = 0, n = perWorkerParticles.size(); i < n; i++) {
+            Particle p = perWorkerParticles.getQuick(i);
+            p.close();
         }
     }
 
     @Override
     public void close() {
-        Misc.free(map);
-        Misc.freeObjList(perWorkerMaps);
+        Misc.free(ownerParticle);
+        Misc.freeObjList(perWorkerParticles);
         Misc.free(filter);
         Misc.freeObjList(keyFunctions);
         Misc.freeObjList(perWorkerFilters);
@@ -150,28 +162,32 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         return functionUpdater;
     }
 
-    public Map getMap(int slotId) {
-        if (slotId == -1) {
-            return map;
-        }
-        return perWorkerMaps.getQuick(slotId);
-    }
-
     public RecordSink getMapSink(int slotId) {
         if (slotId == -1 || perWorkerMapSinks == null) {
-            return mapSink;
+            return ownerMapSink;
         }
         return perWorkerMapSinks.getQuick(slotId);
     }
 
     // Thread-unsafe, should be used by query owner thread only.
-    public Map getOwnerMap() {
-        return map;
+    public Particle getOwnerParticle() {
+        return ownerParticle;
+    }
+
+    public Particle getParticle(int slotId) {
+        if (slotId == -1) {
+            return ownerParticle;
+        }
+        return perWorkerParticles.getQuick(slotId);
     }
 
     // Thread-unsafe, should be used by query owner thread only.
-    public ObjList<Map> getPerWorkerMaps() {
-        return perWorkerMaps;
+    public ObjList<Particle> getPerWorkerParticles() {
+        return perWorkerParticles;
+    }
+
+    public int getShardCount() {
+        return shardCount;
     }
 
     @Override
@@ -219,6 +235,34 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         }
     }
 
+    public boolean isSharded() {
+        return sharded;
+    }
+
+    public void mergeShard(int shardIndex) {
+        assert sharded;
+
+        final Map destMap = ownerParticle.getShardMaps().getQuick(shardIndex);
+        for (int i = 0, n = perWorkerParticles.size(); i < n; i++) {
+            final Particle srcParticle = perWorkerParticles.getQuick(i);
+            final Map srcMap = srcParticle.getShardMaps().getQuick(shardIndex);
+            if (srcMap.size() > 0) {
+                RecordCursor srcCursor = srcMap.getCursor();
+                MapRecord srcRecord = srcMap.getRecord();
+                while (srcCursor.hasNext()) {
+                    MapKey destKey = destMap.withKey();
+                    srcRecord.copyToKey(destKey);
+                    MapValue destValue = destKey.createValue();
+                    MapValue srcValue = srcRecord.getValue();
+                    for (int j = 0, m = groupByFunctions.size(); j < m; j++) {
+                        groupByFunctions.getQuick(j).merge(destValue, srcValue);
+                    }
+                }
+            }
+            srcMap.close();
+        }
+    }
+
     public void release(int slotId) {
         if (perWorkerLocks != null) {
             perWorkerLocks.releaseSlot(slotId);
@@ -227,15 +271,123 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
     @Override
     public void reopen() {
-        map.reopen();
-        for (int i = 0, n = perWorkerMaps.size(); i < n; i++) {
-            Map m = perWorkerMaps.getQuick(i);
-            m.reopen();
+        ownerParticle.reopen();
+        for (int i = 0, n = perWorkerParticles.size(); i < n; i++) {
+            Particle p = perWorkerParticles.getQuick(i);
+            p.reopen();
+        }
+    }
+
+    public void shardAll() {
+        ownerParticle.shard();
+        for (int i = 0, n = perWorkerParticles.size(); i < n; i++) {
+            Particle p = perWorkerParticles.getQuick(i);
+            p.shard();
         }
     }
 
     @Override
     public void toPlan(PlanSink sink) {
         sink.val(filter);
+    }
+
+    public void tryShard(Particle particle) {
+        if (particle.isSharded()) {
+            return;
+        }
+        if (particle.getMap().size() > shardingThreshold || sharded) {
+            particle.shard();
+            sharded = true;
+        }
+    }
+
+    private int shardIndex(int hashCode) {
+        return (hashCode >>> 24) & shardMask;
+    }
+
+    public class Particle implements Reopenable, QuietCloseable {
+        private final Map map; // non-sharded partial result
+        private final ObjList<Map> shards; // this.map split into shards
+        private boolean sharded;
+
+        private Particle() {
+            this.map = MapFactory.createMap(configuration, keyTypes, valueTypes);
+            this.shards = new ObjList<>(shardCount);
+        }
+
+        @Override
+        public void close() {
+            sharded = false;
+            map.close();
+            for (int i = 0, n = shards.size(); i < n; i++) {
+                Map m = shards.getQuick(i);
+                if (m != null) {
+                    m.close();
+                }
+            }
+        }
+
+        public Map getMap() {
+            return map;
+        }
+
+        public Map getShardMap(int hashCode) {
+            final int shardIndex = shardIndex(hashCode);
+            return shards.getQuick(shardIndex);
+        }
+
+        public ObjList<Map> getShardMaps() {
+            return shards;
+        }
+
+        public boolean isSharded() {
+            return sharded;
+        }
+
+        @Override
+        public void reopen() {
+            map.reopen();
+        }
+
+        private void reopenShards() {
+            int size = shards.size();
+            if (size == 0) {
+                for (int i = 0; i < shardCount; i++) {
+                    shards.add(MapFactory.createMap(configuration, keyTypes, valueTypes));
+                }
+            } else {
+                assert size == shardCount;
+                for (int i = 0, n = shards.size(); i < n; i++) {
+                    Map m = shards.getQuick(i);
+                    if (m != null) {
+                        m.reopen();
+                    }
+                }
+            }
+        }
+
+        private void shard() {
+            if (sharded) {
+                return;
+            }
+
+            reopenShards();
+
+            if (map.size() > 0) {
+                RecordCursor cursor = map.getCursor();
+                MapRecord record = map.getRecord();
+                while (cursor.hasNext()) {
+                    final int hashCode = record.keyHashCode();
+                    final Map shard = getShardMap(hashCode);
+                    MapKey shardKey = shard.withKey();
+                    record.copyToKey(shardKey);
+                    MapValue shardValue = shardKey.createValue(hashCode);
+                    record.copyValue(shardValue);
+                }
+            }
+
+            map.close();
+            sharded = true;
+        }
     }
 }

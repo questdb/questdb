@@ -69,6 +69,8 @@ public interface ConfigurationOverrides {
 
     FilesFacade getFilesFacade();
 
+    int getGroupByShardingThreshold();
+
     int getInactiveReaderMaxOpenPartitions();
 
     String getInputRoot();
@@ -214,6 +216,8 @@ public interface ConfigurationOverrides {
     void setFactoryProvider(FactoryProvider factoryProvider);
 
     void setFilesFacade(FilesFacade ff);
+
+    void setGroupByShardingThreshold(int groupByShardingThreshold);
 
     void setHideTelemetryTable(boolean hideTelemetryTable);
 

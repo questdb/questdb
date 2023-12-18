@@ -104,6 +104,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static TestCairoEngineFactory engineFactory;
     protected static FactoryProvider factoryProvider;
     protected static FilesFacade ff;
+    protected static int groupByShardingThreshold = -1;
     protected static String inputRoot = null;
     protected static String inputWorkRoot = null;
     protected static IOURingFacade ioURingFacade = IOURingFacadeImpl.INSTANCE;

@@ -24,10 +24,7 @@
 
 package io.questdb.cairo.map;
 
-import io.questdb.std.Long256;
-import io.questdb.std.Long256Impl;
-import io.questdb.std.Long256Util;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 
 final class FastMapValue implements MapValue {
     private final Long256Impl long256 = new Long256Impl();
@@ -37,8 +34,10 @@ final class FastMapValue implements MapValue {
     private FastMapRecord record; // double-linked
     private long startAddress; // key-value pair start address
     private long valueAddress;
+    private int valueSize;
 
-    public FastMapValue(int[] valueOffsets) {
+    public FastMapValue(int valueSize, int[] valueOffsets) {
+        this.valueSize = valueSize;
         this.valueOffsets = valueOffsets;
     }
 
@@ -288,6 +287,10 @@ final class FastMapValue implements MapValue {
 
     private long address0(int index) {
         return valueAddress + valueOffsets[index];
+    }
+
+    void copyRawValue(long ptr) {
+        Vect.memcpy(valueAddress, ptr, valueSize);
     }
 
     void linkRecord(FastMapRecord record) {

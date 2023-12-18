@@ -25,11 +25,10 @@
 package io.questdb.cairo.map;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.Unsafe;
 
-public final class FastMapCursor implements RecordCursor {
+public final class FastMapCursor implements MapRecordCursor {
     // Set to -1 when key-value pair is var-size.
     private final int keyValueSize;
     private final FastMap map;

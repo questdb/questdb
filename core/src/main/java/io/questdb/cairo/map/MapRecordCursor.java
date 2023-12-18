@@ -22,22 +22,15 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.groupby.vect;
+package io.questdb.cairo.map;
 
-import io.questdb.MessageBus;
-import io.questdb.mp.AbstractQueueConsumerJob;
-import io.questdb.tasks.VectorAggregateTask;
+import io.questdb.cairo.sql.RecordCursor;
 
-public class GroupByJob extends AbstractQueueConsumerJob<VectorAggregateTask> {
-
-    public GroupByJob(MessageBus messageBus) {
-        super(messageBus.getVectorAggregateQueue(), messageBus.getVectorAggregateSubSeq());
-    }
+public interface MapRecordCursor extends RecordCursor {
 
     @Override
-    protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
-        final VectorAggregateEntry entry = queue.get(cursor).entry;
-        entry.run(workerId, subSeq, cursor);
-        return true;
-    }
+    MapRecord getRecord();
+
+    @Override
+    MapRecord getRecordB();
 }

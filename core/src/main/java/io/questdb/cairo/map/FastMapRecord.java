@@ -54,6 +54,7 @@ final class FastMapRecord implements MapRecord {
     private final int splitIndex;
     private final FastMapValue value;
     private final int[] valueOffsets;
+    private final int valueSize;
     private long keyAddress;
     private int lastKeyIndex = -1;
     private int lastKeyOffset = -1;
@@ -65,12 +66,14 @@ final class FastMapRecord implements MapRecord {
 
     FastMapRecord(
             int keySize,
+            int valueSize,
             int[] valueOffsets,
             FastMapValue value,
             @NotNull @Transient ColumnTypes keyTypes,
             @Nullable @Transient ColumnTypes valueTypes
     ) {
         this.keySize = keySize;
+        this.valueSize = valueSize;
         this.valueOffsets = valueOffsets;
         this.value = value;
         this.value.linkRecord(this); // provides feature to position this record at location of map value
@@ -147,6 +150,7 @@ final class FastMapRecord implements MapRecord {
 
     private FastMapRecord(
             int keySize,
+            int valueSize,
             int[] valueOffsets,
             ColumnTypes keyTypes,
             int splitIndex,
@@ -157,10 +161,11 @@ final class FastMapRecord implements MapRecord {
             Long256Impl[] keyLong256B
     ) {
         this.keySize = keySize;
+        this.valueSize = valueSize;
         this.valueOffsets = valueOffsets;
         this.keyTypes = keyTypes;
         this.splitIndex = splitIndex;
-        this.value = new FastMapValue(valueOffsets);
+        this.value = new FastMapValue(valueSize, valueOffsets);
         this.csA = csA;
         this.csB = csB;
         this.bs = bs;
@@ -169,17 +174,19 @@ final class FastMapRecord implements MapRecord {
     }
 
     @Override
-    public void copyKey(MapKey destKey) {
-        if (!(destKey instanceof FastMap.BaseKey)) {
-            throw new IllegalArgumentException();
-        }
-
+    public void copyToKey(MapKey destKey) {
         FastMap.BaseKey destFastKey = (FastMap.BaseKey) destKey;
         int keySize = this.keySize;
         if (keySize == -1) {
             keySize = Unsafe.getUnsafe().getInt(startAddress);
         }
-        destFastKey.copyRawKey(keyAddress, keySize);
+        destFastKey.copyFromRawKey(keyAddress, keySize);
+    }
+
+    @Override
+    public void copyValue(MapValue destValue) {
+        FastMapValue destFastValue = (FastMapValue) destValue;
+        destFastValue.copyRawValue(valueAddress);
     }
 
     @Override
@@ -225,23 +232,23 @@ final class FastMapRecord implements MapRecord {
     }
 
     @Override
-    public byte getGeoByte(int col) {
-        return getByte(col);
+    public byte getGeoByte(int columnIndex) {
+        return getByte(columnIndex);
     }
 
     @Override
-    public int getGeoInt(int col) {
-        return getInt(col);
+    public int getGeoInt(int columnIndex) {
+        return getInt(columnIndex);
     }
 
     @Override
-    public long getGeoLong(int col) {
-        return getLong(col);
+    public long getGeoLong(int columnIndex) {
+        return getLong(columnIndex);
     }
 
     @Override
-    public short getGeoShort(int col) {
-        return getShort(col);
+    public short getGeoShort(int columnIndex) {
+        return getShort(columnIndex);
     }
 
     @Override
@@ -328,18 +335,29 @@ final class FastMapRecord implements MapRecord {
     }
 
     @Override
-    public CharSequence getSym(int col) {
-        return symbolTableResolver.getSymbolTable(symbolTableIndex.getQuick(col)).valueOf(getInt(col));
+    public CharSequence getSym(int columnIndex) {
+        return symbolTableResolver.getSymbolTable(symbolTableIndex.getQuick(columnIndex)).valueOf(getInt(columnIndex));
     }
 
     @Override
-    public CharSequence getSymB(int col) {
-        return symbolTableResolver.getSymbolTable(symbolTableIndex.getQuick(col)).valueBOf(getInt(col));
+    public CharSequence getSymB(int columnIndex) {
+        return symbolTableResolver.getSymbolTable(symbolTableIndex.getQuick(columnIndex)).valueBOf(getInt(columnIndex));
     }
 
     @Override
     public MapValue getValue() {
         return value.of(startAddress, valueAddress, limit, false);
+    }
+
+    @Override
+    public int keyHashCode() {
+        int keySize = this.keySize;
+        int keyOffset = 0;
+        if (keySize == -1) {
+            keySize = Unsafe.getUnsafe().getInt(startAddress);
+            keyOffset = Integer.BYTES;
+        }
+        return Hash.hashMem32(startAddress + keyOffset, keySize);
     }
 
     @Override
@@ -464,7 +482,7 @@ final class FastMapRecord implements MapRecord {
             long256A = null;
             long256B = null;
         }
-        return new FastMapRecord(keySize, valueOffsets, keyTypes, splitIndex, csA, csB, bs, long256A, long256B);
+        return new FastMapRecord(keySize, valueSize, valueOffsets, keyTypes, splitIndex, csA, csB, bs, long256A, long256B);
     }
 
     void of(long address, long limit) {

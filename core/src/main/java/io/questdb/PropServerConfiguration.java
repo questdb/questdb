@@ -82,6 +82,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean cairoAttachPartitionCopy;
     private final String cairoAttachPartitionSuffix;
     private final CairoConfiguration cairoConfiguration = new PropCairoConfiguration();
+    private final int cairoGroupByMergeShardQueueCapacity;
+    private final int cairoGroupByShardingThreshold;
     private final int cairoMaxCrashFiles;
     private final int cairoPageFrameReduceColumnListCapacity;
     private final int cairoPageFrameReduceQueueCapacity;
@@ -1188,6 +1190,8 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             final int defaultReduceQueueCapacity = Math.min(2 * sharedWorkerCount, 128);
             this.cairoPageFrameReduceQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, defaultReduceQueueCapacity));
+            this.cairoGroupByMergeShardQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUP_BY_MERGE_QUEUE_CAPACITY, defaultReduceQueueCapacity));
+            this.cairoGroupByShardingThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUP_BY_SHARDING_THRESHOLD, 10000);
             this.cairoPageFrameReduceRowIdListCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_ROWID_LIST_CAPACITY, 256));
             this.cairoPageFrameReduceColumnListCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_COLUMN_LIST_CAPACITY, 16));
             this.sqlParallelFilterEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED, true);
@@ -2046,8 +2050,18 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getGroupByMergeShardQueueCapacity() {
+            return cairoGroupByMergeShardQueueCapacity;
+        }
+
+        @Override
         public int getGroupByPoolCapacity() {
             return sqlGroupByPoolCapacity;
+        }
+
+        @Override
+        public int getGroupByShardingThreshold() {
+            return cairoGroupByShardingThreshold;
         }
 
         @Override

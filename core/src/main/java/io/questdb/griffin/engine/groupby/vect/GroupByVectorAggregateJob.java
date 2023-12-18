@@ -22,27 +22,22 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.map;
+package io.questdb.griffin.engine.groupby.vect;
 
-import io.questdb.cairo.Reopenable;
-import io.questdb.std.Mutable;
+import io.questdb.MessageBus;
+import io.questdb.mp.AbstractQueueConsumerJob;
+import io.questdb.tasks.VectorAggregateTask;
 
-import java.io.Closeable;
+public class GroupByVectorAggregateJob extends AbstractQueueConsumerJob<VectorAggregateTask> {
 
-public interface Map extends Mutable, Closeable, Reopenable {
+    public GroupByVectorAggregateJob(MessageBus messageBus) {
+        super(messageBus.getVectorAggregateQueue(), messageBus.getVectorAggregateSubSeq());
+    }
 
     @Override
-    void close();
-
-    MapRecordCursor getCursor();
-
-    MapRecord getRecord();
-
-    void restoreInitialCapacity();
-
-    long size();
-
-    MapValue valueAt(long address);
-
-    MapKey withKey();
+    protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
+        final VectorAggregateEntry entry = queue.get(cursor).entry;
+        entry.run(workerId, subSeq, cursor);
+        return true;
+    }
 }

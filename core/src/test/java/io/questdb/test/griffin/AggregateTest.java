@@ -33,7 +33,8 @@ import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.groupby.vect.GroupByJob;
+import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
+import io.questdb.griffin.engine.groupby.vect.GroupByVectorAggregateJob;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.*;
@@ -46,7 +47,6 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.BeforeClass;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -73,15 +73,10 @@ public class AggregateTest extends AbstractCairoTest {
         });
     }
 
-    @BeforeClass
-    public static void setUpStatic() throws Exception {
-        pageFrameMaxRows = PAGE_FRAME_MAX_ROWS;
-        AbstractCairoTest.setUpStatic();
-    }
-
     @Override
     @Before
     public void setUp() {
+        pageFrameMaxRows = PAGE_FRAME_MAX_ROWS;
         super.setUp();
         configOverrideParallelGroupByEnabled(enableParallelGroupBy);
     }
@@ -413,7 +408,7 @@ public class AggregateTest extends AbstractCairoTest {
     public void testHourDouble() throws Exception {
         assertQuery(
                 "hour\tsum\tksum\tnsum\tmin\tmax\tavg\tmax1\tmin1\n" +
-                        "0\t15104.996921874175\t15104.996921874172\t15104.996921874175\t1.8362081935174857E-5\t0.999916269120484\t0.5030304023536092\t1970-01-01T00:59:59.900000Z\t1970-01-01T00:00:00.000000Z\n" +
+                        "0\t15104.996921874219\t15104.996921874184\t15104.996921874175\t1.8362081935174857E-5\t0.999916269120484\t0.5030304023536106\t1970-01-01T00:59:59.900000Z\t1970-01-01T00:00:00.000000Z\n" +
                         "1\t15097.837814466568\t15097.837814466722\t15097.837814466713\t3.921217994906634E-5\t0.9999575311567217\t0.50183938223256\t1970-01-01T01:59:59.900000Z\t1970-01-01T01:00:00.000000Z\n" +
                         "2\t11641.765471468498\t11641.76547146845\t11641.765471468458\t1.8566421983501336E-5\t0.9999768905891359\t0.500376750256533\t1970-01-01T02:46:39.900000Z\t1970-01-01T02:00:00.000000Z\n",
                 "select hour(ts), sum(val), ksum(val), nsum(val), min(val), max(val), avg(val), max(ts), min(ts) from tab order by 1",
@@ -1042,10 +1037,10 @@ public class AggregateTest extends AbstractCairoTest {
     public void testIntSymbolResolution() throws Exception {
         assertQuery(
                 "s2\tsum\n" +
-                        "\t104119.880948161\n" +
-                        "a1\t103804.62242300605\n" +
-                        "a2\t104433.68659571148\n" +
-                        "a3\t104341.28852517322\n",
+                        "\t104119.88094816262\n" +
+                        "a1\t103804.6224230062\n" +
+                        "a2\t104433.68659571264\n" +
+                        "a3\t104341.2885251736\n",
                 "select s2, sum(val) from tab order by s2",
                 "create table tab as (select rnd_symbol('s1','s2','s3', null) s1, rnd_symbol('a1','a2','a3', null) s2, rnd_double(2) val from long_sequence(1000000))",
                 null,
@@ -2167,8 +2162,10 @@ public class AggregateTest extends AbstractCairoTest {
         ) {
             try {
                 if (pool != null) {
-                    GroupByJob job = new GroupByJob(engine.getMessageBus());
-                    pool.assign(job);
+                    GroupByVectorAggregateJob vectorAggregateJob = new GroupByVectorAggregateJob(engine.getMessageBus());
+                    pool.assign(vectorAggregateJob);
+                    GroupByMergeShardJob mergeShardJob = new GroupByMergeShardJob(engine.getMessageBus());
+                    pool.assign(mergeShardJob);
                     pool.start(LOG);
                 }
 

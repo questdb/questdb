@@ -46,7 +46,10 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.RecordCursorPrinter;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
-import org.junit.*;
+import org.junit.Assert;
+import org.junit.Assume;
+import org.junit.Before;
+import org.junit.Test;
 
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -108,20 +111,11 @@ public class ParallelFilterTest extends AbstractCairoTest {
     private static final String queryNoLimit = "select v from x where v > 3326086085493629941L and v < 4326086085493629941L order by v";
     private static final String queryPositiveLimit = "select v from x where v > 3326086085493629941L and v < 4326086085493629941L limit 10";
 
-    @BeforeClass
-    public static void setUpStatic() throws Exception {
-        pageFrameMaxRows = PAGE_FRAME_MAX_ROWS;
-        // We intentionally use small values for shard count and reduce
-        // queue capacity to exhibit various edge cases.
-        pageFrameReduceShardCount = 2;
-        pageFrameReduceQueueCapacity = PAGE_FRAME_COUNT;
-
-        AbstractCairoTest.setUpStatic();
-    }
-
     @Before
     public void setUp() {
         pageFrameMaxRows = PAGE_FRAME_MAX_ROWS;
+        // We intentionally use small values for shard count and reduce
+        // queue capacity to exhibit various edge cases.
         pageFrameReduceShardCount = 2;
         pageFrameReduceQueueCapacity = PAGE_FRAME_COUNT;
         super.setUp();

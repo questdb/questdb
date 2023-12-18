@@ -57,6 +57,7 @@ public class Overrides implements ConfigurationOverrides {
     private Map<String, String> env = null;
     private FactoryProvider factoryProvider = null;
     private FilesFacade ff;
+    private int groupByShardingThreshold = -1;
     private boolean hideTelemetryTable = false;
     private String inputRoot = null;
     private String inputWorkRoot = null;
@@ -193,6 +194,11 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public FilesFacade getFilesFacade() {
         return ff;
+    }
+
+    @Override
+    public int getGroupByShardingThreshold() {
+        return groupByShardingThreshold;
     }
 
     @Override
@@ -475,6 +481,7 @@ public class Overrides implements ConfigurationOverrides {
         writerAsyncCommandBusyWaitTimeout = -1;
         writerAsyncCommandMaxTimeout = -1;
         pageFrameMaxRows = -1;
+        groupByShardingThreshold = -1;
         jitMode = SqlJitMode.JIT_MODE_ENABLED;
         rndFunctionMemoryPageSize = -1;
         rndFunctionMemoryMaxPages = -1;
@@ -604,6 +611,11 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public void setFilesFacade(FilesFacade ff) {
         this.ff = ff;
+    }
+
+    @Override
+    public void setGroupByShardingThreshold(int groupByShardingThreshold) {
+        this.groupByShardingThreshold = groupByShardingThreshold;
     }
 
     @Override

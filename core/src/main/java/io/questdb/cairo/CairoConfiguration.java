@@ -173,7 +173,11 @@ public interface CairoConfiguration {
 
     int getGroupByMapCapacity();
 
+    int getGroupByMergeShardQueueCapacity();
+
     int getGroupByPoolCapacity();
+
+    int getGroupByShardingThreshold();
 
     @NotNull
     default IOURingFacade getIOURingFacade() {

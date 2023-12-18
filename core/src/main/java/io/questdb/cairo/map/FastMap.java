@@ -183,7 +183,7 @@ public class FastMap implements Map, Reopenable {
         this.keySize = keySize;
 
         // Reserve 4 bytes for key length in case of var-size keys.
-        keyOffset = keySize != -1 ? 0 : 4;
+        keyOffset = keySize != -1 ? 0 : Integer.BYTES;
 
         int valueOffset = 0;
         int[] valueOffsets = null;
@@ -208,11 +208,11 @@ public class FastMap implements Map, Reopenable {
         }
         this.valueSize = valueSize;
 
-        value = new FastMapValue(valueOffsets);
-        value2 = new FastMapValue(valueOffsets);
-        value3 = new FastMapValue(valueOffsets);
+        value = new FastMapValue(valueSize, valueOffsets);
+        value2 = new FastMapValue(valueSize, valueOffsets);
+        value3 = new FastMapValue(valueSize, valueOffsets);
 
-        record = new FastMapRecord(keySize, valueOffsets, value, keyTypes, valueTypes);
+        record = new FastMapRecord(keySize, valueSize, valueOffsets, value, keyTypes, valueTypes);
 
         assert keySize + valueSize <= heapLimit - heapStart : "page size is too small to fit a single key";
         cursor = new FastMapCursor(record, this);
@@ -244,7 +244,7 @@ public class FastMap implements Map, Reopenable {
     }
 
     @Override
-    public RecordCursor getCursor() {
+    public MapRecordCursor getCursor() {
         return cursor.init(heapStart, heapLimit, size);
     }
 
@@ -442,13 +442,13 @@ public class FastMap implements Map, Reopenable {
             // calculate hash remembering "key" structure
             // [ key size | key block | value block ]
             int hashCode = hash();
-            int index = hashCode & mask;
-            long offset = getOffset(offsets, index);
-            if (offset > -1 && hashCode == getHashCode(offsets, index) && eq(offset)) {
-                long startAddress = heapStart + offset;
-                return valueOf(startAddress, startAddress + keyOffset + keySize, false, value);
-            }
-            return createValueSlow(value, offset, index, hashCode, keySize);
+            return createValue(keySize, hashCode);
+        }
+
+        @Override
+        public MapValue createValue(int hashCode) {
+            int keySize = commit();
+            return createValue(keySize, hashCode);
         }
 
         @Override
@@ -482,6 +482,16 @@ public class FastMap implements Map, Reopenable {
             // no-op
         }
 
+        private MapValue createValue(int keySize, int hashCode) {
+            int index = hashCode & mask;
+            long offset = getOffset(offsets, index);
+            if (offset > -1 && hashCode == getHashCode(offsets, index) && eq(offset)) {
+                long startAddress = heapStart + offset;
+                return valueOf(startAddress, startAddress + keyOffset + keySize, false, value);
+            }
+            return createValueSlow(value, offset, index, hashCode, keySize);
+        }
+
         private FastMapValue createValueSlow(FastMapValue value, long offset, int index, int hashCode, int keySize) {
             if (offset < 0) {
                 return asNew(this, index, hashCode, value);
@@ -511,17 +521,28 @@ public class FastMap implements Map, Reopenable {
             }
         }
 
-        // returns actual key size
-        protected abstract int commit();
-
-        abstract void copyRawKey(long ptr, int size);
+        abstract void copyFromRawKey(long ptr, int size);
 
         protected abstract boolean eq(long offset);
-
-        protected abstract int hash();
     }
 
     private class FixedSizeKey extends BaseKey {
+
+        @Override
+        public int commit() {
+            return keySize;
+        }
+
+        @Override
+        public void copyFrom(MapKey srcKey) {
+            FixedSizeKey srcFastKey = (FixedSizeKey) srcKey;
+            copyFromRawKey(srcFastKey.startAddress, keySize);
+        }
+
+        @Override
+        public int hash() {
+            return Hash.hashMem32(startAddress, keySize);
+        }
 
         public FixedSizeKey init() {
             super.init();
@@ -634,30 +655,37 @@ public class FastMap implements Map, Reopenable {
         }
 
         @Override
-        protected int commit() {
-            return keySize;
-        }
-
-        @Override
-        void copyRawKey(long ptr, int size) {
-            assert size == keySize;
-            Vect.memcpy(appendAddress, ptr, size);
-            appendAddress += size;
+        void copyFromRawKey(long srcPtr, int srcSize) {
+            assert srcSize == keySize;
+            Vect.memcpy(appendAddress, srcPtr, srcSize);
+            appendAddress += srcSize;
         }
 
         @Override
         protected boolean eq(long offset) {
-            return Vect.memeq(heapStart + offset + keyOffset, startAddress + keyOffset, keySize);
-        }
-
-        @Override
-        protected int hash() {
-            return Hash.hashMem32(startAddress + keyOffset, keySize);
+            return Vect.memeq(heapStart + offset, startAddress, keySize);
         }
     }
 
     private class VarSizeKey extends BaseKey {
         private int len;
+
+        @Override
+        public int commit() {
+            Unsafe.getUnsafe().putInt(startAddress, len = (int) (appendAddress - startAddress - keyOffset));
+            return len;
+        }
+
+        @Override
+        public void copyFrom(MapKey srcKey) {
+            VarSizeKey srcFastKey = (VarSizeKey) srcKey;
+            copyFromRawKey(srcFastKey.startAddress + keyOffset, srcFastKey.len);
+        }
+
+        @Override
+        public int hash() {
+            return Hash.hashMem32(startAddress + keyOffset, len);
+        }
 
         @Override
         public void putBin(BinarySequence value) {
@@ -832,16 +860,10 @@ public class FastMap implements Map, Reopenable {
         }
 
         @Override
-        protected int commit() {
-            Unsafe.getUnsafe().putInt(startAddress, len = (int) (appendAddress - startAddress - keyOffset));
-            return len;
-        }
-
-        @Override
-        void copyRawKey(long ptr, int size) {
-            checkSize(size);
-            Vect.memcpy(appendAddress, ptr, size);
-            appendAddress += size;
+        void copyFromRawKey(long srcPtr, int srcSize) {
+            checkSize(srcSize);
+            Vect.memcpy(appendAddress, srcPtr, srcSize);
+            appendAddress += srcSize;
         }
 
         @Override
@@ -853,11 +875,6 @@ public class FastMap implements Map, Reopenable {
                 return false;
             }
             return Vect.memeq(a + keyOffset, b + keyOffset, len);
-        }
-
-        @Override
-        protected int hash() {
-            return Hash.hashMem32(startAddress + keyOffset, len);
         }
     }
 }

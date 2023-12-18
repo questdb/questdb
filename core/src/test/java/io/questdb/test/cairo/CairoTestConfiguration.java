@@ -126,6 +126,11 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
+    public int getGroupByShardingThreshold() {
+        return overrides.getGroupByShardingThreshold() < 0 ? super.getGroupByShardingThreshold() : overrides.getGroupByShardingThreshold();
+    }
+
+    @Override
     public int getInactiveReaderMaxOpenPartitions() {
         return overrides.getInactiveReaderMaxOpenPartitions() > 0 ? overrides.getInactiveReaderMaxOpenPartitions() : super.getInactiveReaderMaxOpenPartitions();
     }

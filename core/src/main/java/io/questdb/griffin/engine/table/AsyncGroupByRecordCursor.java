@@ -24,48 +24,61 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.MessageBus;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.map.Map;
-import io.questdb.cairo.map.MapKey;
-import io.questdb.cairo.map.MapRecord;
-import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.map.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameSequence;
+import io.questdb.cutlass.text.AtomicBooleanCircuitBreaker;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.MCSequence;
+import io.questdb.mp.MPSequence;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
+import io.questdb.tasks.GroupByMergeShardTask;
 
 class AsyncGroupByRecordCursor implements RecordCursor {
-
     private static final Log LOG = LogFactory.getLog(AsyncGroupByRecordCursor.class);
+
+    private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch(); // used for merge shard workers
     private final ObjList<GroupByFunction> groupByFunctions;
+    private final MessageBus messageBus;
     private final VirtualRecord recordA;
     private final VirtualRecord recordB;
     private final ObjList<Function> recordFunctions;
+    private final ShardedMapCursor shardedCursor = new ShardedMapCursor();
+    private final AtomicBooleanCircuitBreaker sharedCircuitBreaker; // used to signal cancellation to merge shard workers
+    private SqlExecutionCircuitBreaker circuitBreaker;
     private int frameLimit;
     private PageFrameSequence<AsyncGroupByAtom> frameSequence;
     private boolean isDataMapBuilt;
     private boolean isOpen;
-    private RecordCursor mapCursor;
+    private MapRecordCursor mapCursor;
 
     public AsyncGroupByRecordCursor(
             ObjList<GroupByFunction> groupByFunctions,
-            ObjList<Function> recordFunctions
+            ObjList<Function> recordFunctions,
+            MessageBus messageBus
     ) {
         this.groupByFunctions = groupByFunctions;
         this.recordFunctions = recordFunctions;
-        this.recordA = new VirtualRecord(recordFunctions);
-        this.recordB = new VirtualRecord(recordFunctions);
-        this.isOpen = true;
+        this.messageBus = messageBus;
+        recordA = new VirtualRecord(recordFunctions);
+        recordB = new VirtualRecord(recordFunctions);
+        sharedCircuitBreaker = new AtomicBooleanCircuitBreaker();
+        isOpen = true;
     }
 
     @Override
@@ -191,17 +204,35 @@ class AsyncGroupByRecordCursor implements RecordCursor {
             throwTimeoutException();
         }
 
-        // Merge the maps.
         final AsyncGroupByAtom atom = frameSequence.getAtom();
-        final Map dataMap = atom.getOwnerMap();
-        for (int i = 0, n = atom.getPerWorkerMaps().size(); i < n; i++) {
-            final Map srcMap = atom.getPerWorkerMaps().getQuick(i);
+
+        if (!atom.isSharded()) {
+            // No sharding was necessary, so the maps are small, and we merge them ourselves.
+            final Map dataMap = mergeNonShardedMap(atom);
+            mapCursor = dataMap.getCursor();
+        } else {
+            // We had to shard the maps, so they must be big.
+            final ObjList<Map> shards = mergeShards(atom);
+            // The shards contain non-intersecting row groups, so we can return what's in the shards without merging them.
+            shardedCursor.of(shards);
+            mapCursor = shardedCursor;
+        }
+
+        recordA.of(mapCursor.getRecord());
+        recordB.of(mapCursor.getRecordB());
+        isDataMapBuilt = true;
+    }
+
+    private Map mergeNonShardedMap(AsyncGroupByAtom atom) {
+        final Map destMap = atom.getOwnerParticle().getMap();
+        for (int i = 0, n = atom.getPerWorkerParticles().size(); i < n; i++) {
+            final Map srcMap = atom.getPerWorkerParticles().getQuick(i).getMap();
             if (srcMap.size() > 0) {
                 RecordCursor srcCursor = srcMap.getCursor();
                 MapRecord srcRecord = srcMap.getRecord();
                 while (srcCursor.hasNext()) {
-                    MapKey destKey = dataMap.withKey();
-                    srcRecord.copyKey(destKey);
+                    MapKey destKey = destMap.withKey();
+                    srcRecord.copyToKey(destKey);
                     MapValue destValue = destKey.createValue();
                     MapValue srcValue = srcRecord.getValue();
                     for (int j = 0, m = groupByFunctions.size(); j < m; j++) {
@@ -210,11 +241,76 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                 }
             }
         }
+        return destMap;
+    }
 
-        mapCursor = dataMap.getCursor();
-        recordA.of(mapCursor.getRecord());
-        recordB.of(mapCursor.getRecordB());
-        isDataMapBuilt = true;
+    private ObjList<Map> mergeShards(AsyncGroupByAtom atom) {
+        sharedCircuitBreaker.reset();
+        doneLatch.reset();
+
+        // First, make sure to shard all non-sharded maps, if any.
+        atom.shardAll();
+
+        // Next, merge each set of partial shard maps into the final shard map. This is done in parallel.
+        final int shardCount = atom.getShardCount();
+        final RingQueue<GroupByMergeShardTask> queue = messageBus.getGroupByMergeShardQueue();
+        final MPSequence pubSeq = messageBus.getGroupByMergeShardPubSeq();
+        final MCSequence subSeq = messageBus.getGroupByMergeShardSubSeq();
+
+        int queuedCount = 0;
+        int ownCount = 0;
+        int reclaimed = 0;
+        int total = 0;
+
+        try {
+            for (int i = 0; i < shardCount; i++) {
+                long cursor = pubSeq.next();
+                if (cursor < 0) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                    atom.mergeShard(i);
+                    ownCount++;
+                } else {
+                    queue.get(cursor).of(sharedCircuitBreaker, doneLatch, atom, i);
+                    pubSeq.done(cursor);
+                    queuedCount++;
+                }
+                total++;
+            }
+        } catch (Throwable e) {
+            sharedCircuitBreaker.cancel();
+            throw e;
+        } finally {
+            // All done? Great, start consuming the queue we just published.
+            // How do we get to the end? If we consume our own queue there is chance we will be consuming
+            // aggregation tasks not related to this execution (we work in concurrent environment).
+            // To deal with that we need to check our latch.
+
+            while (!doneLatch.done(queuedCount)) {
+                if (circuitBreaker.checkIfTripped()) {
+                    sharedCircuitBreaker.cancel();
+                }
+
+                long cursor = subSeq.next();
+                if (cursor > -1) {
+                    GroupByMergeShardTask task = queue.get(cursor);
+                    GroupByMergeShardJob.run(task, subSeq, cursor);
+                    reclaimed++;
+                } else {
+                    Os.pause();
+                }
+            }
+        }
+
+        if (sharedCircuitBreaker.isCanceled()) {
+            throwTimeoutException();
+        }
+
+        LOG.debug().$("merge shards done [total=").$(total)
+                .$(", ownCount=").$(ownCount)
+                .$(", reclaimed=").$(reclaimed)
+                .$(", queuedCount=").$(queuedCount).I$();
+
+        return atom.getOwnerParticle().getShardMaps();
     }
 
     private void throwTimeoutException() {
@@ -227,6 +323,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
             frameSequence.getAtom().reopen();
         }
         this.frameSequence = frameSequence;
+        this.circuitBreaker = executionContext.getCircuitBreaker();
         Function.init(recordFunctions, frameSequence.getSymbolTableSource(), executionContext);
         isDataMapBuilt = false;
         frameLimit = -1;
