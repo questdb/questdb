@@ -24,6 +24,7 @@
 
 package io.questdb.network;
 
+import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.log.Log;
 import io.questdb.std.MemoryTag;
@@ -41,6 +42,7 @@ import java.security.cert.X509Certificate;
 
 public final class JavaTlsClientSocket implements Socket {
 
+    private static final long ADDRESS_FIELD_OFFSET;
     private static final TrustManager[] BLIND_TRUST_MANAGERS = new TrustManager[]{new X509TrustManager() {
         public void checkClientTrusted(X509Certificate[] certs, String t) {
         }
@@ -52,28 +54,22 @@ public final class JavaTlsClientSocket implements Socket {
             return null;
         }
     }};
-
     private static final long CAPACITY_FIELD_OFFSET;
-    private static final long LIMIT_FIELD_OFFSET;
-    private static final long ADDRESS_FIELD_OFFSET;
-
     private static final int INITIAL_BUFFER_CAPACITY = 64 * 1024;
-
-    private static final int STATE_INITIAL = 0;
+    private static final long LIMIT_FIELD_OFFSET;
     private static final int STATE_CLOSING = 2;
-
-    private SSLEngine sslEngine;
+    private static final int STATE_INITIAL = 0;
+    private final Socket delegate;
+    private final Log log;
     private final ByteBuffer wrapInputBuffer;
+    private SSLEngine sslEngine;
+    private int state = STATE_INITIAL;
     private ByteBuffer unwrapInputBuffer;
     private long unwrapInputBufferPtr;
     private ByteBuffer unwrapOutputBuffer;
     private long unwrapOutputBufferPtr;
     private ByteBuffer wrapOutputBuffer;
     private long wrapOutputBufferPtr;
-    private int state = STATE_INITIAL;
-
-    private final Socket delegate;
-    private final Log log;
 
     JavaTlsClientSocket(NetworkFacade nf, Log log) {
         this.delegate = new PlainSocket(nf, log);
@@ -92,44 +88,6 @@ public final class JavaTlsClientSocket implements Socket {
         this.wrapOutputBufferPtr = allocateMemoryAndResetBuffer(wrapOutputBuffer, initialCapacity);
         this.unwrapInputBufferPtr = allocateMemoryAndResetBuffer(unwrapInputBuffer, initialCapacity);
         this.unwrapOutputBufferPtr = allocateMemoryAndResetBuffer(unwrapOutputBuffer, initialCapacity);
-    }
-
-    private static SSLEngine createSslEngine() {
-        // todo: make configurable: CAs, peer advisory, etc.
-
-        SSLContext sslContext;
-        try {
-            sslContext = SSLContext.getInstance("TLS");
-            sslContext.init(null, BLIND_TRUST_MANAGERS, new SecureRandom());
-        } catch (NoSuchAlgorithmException | KeyManagementException e) {
-            throw new RuntimeException(e);
-        }
-        SSLEngine sslEngine = sslContext.createSSLEngine();
-        sslEngine.setUseClientMode(true);
-        return sslEngine;
-    }
-
-    @Override
-    public void of(int fd) {
-        delegate.of(fd);
-        startTlsSession();
-        unwrapInputBuffer.clear();
-        unwrapOutputBuffer.clear();
-        wrapOutputBuffer.clear();
-    }
-
-    private static long allocateMemoryAndResetBuffer(ByteBuffer buffer, int capacity) {
-        // TODO: what is the right tag here?
-        long newAddress = Unsafe.malloc(capacity, MemoryTag.NATIVE_TLS_RSS);
-        resetBufferToPointer(buffer, newAddress, capacity);
-        return newAddress;
-    }
-
-    private static void resetBufferToPointer(ByteBuffer buffer, long ptr, int len) {
-        assert buffer.isDirect();
-        Unsafe.getUnsafe().putLong(buffer, ADDRESS_FIELD_OFFSET, ptr);
-        Unsafe.getUnsafe().putLong(buffer, LIMIT_FIELD_OFFSET, len);
-        Unsafe.getUnsafe().putLong(buffer, CAPACITY_FIELD_OFFSET, len);
     }
 
     @Override
@@ -174,53 +132,15 @@ public final class JavaTlsClientSocket implements Socket {
         return sslEngine != null;
     }
 
-    private int unwrapOutputBufferToPtr(long dstPtr, int dstLen) {
-        // assume unwrapOutputBuffer is in read mode
-
-        int oldPosition = unwrapOutputBuffer.position();
-
-        assert Unsafe.getUnsafe().getLong(unwrapOutputBufferPtr, ADDRESS_FIELD_OFFSET) == unwrapOutputBufferPtr;
-        long srcPtr = unwrapOutputBufferPtr + oldPosition;
-        int srcLen = unwrapOutputBuffer.remaining();
-        int len = Math.min(dstLen, srcLen);
-        Vect.memcpy(dstPtr, srcPtr, len);
-        unwrapOutputBuffer.position(oldPosition + len);
-        return len;
-    }
-
-    private void growUnwrapInputBuffer() {
-        unwrapInputBufferPtr = expandBuffer(unwrapInputBuffer, unwrapInputBufferPtr);
-    }
-
-    private void growUnwrapOutputBuffer() {
-        unwrapOutputBufferPtr = expandBuffer(unwrapOutputBuffer, unwrapOutputBufferPtr);
-    }
-
-    private static long expandBuffer(ByteBuffer buffer, long oldAddress) {
-        int oldCapacity = buffer.capacity();
-        int newCapacity = oldCapacity * 2;
-        long newAddress = Unsafe.realloc(oldAddress, oldCapacity, newCapacity, MemoryTag.NATIVE_TLS_RSS);
-        resetBufferToPointer(buffer, newAddress, newCapacity);
-        return newAddress;
-    }
-
-    private int readFromUpstream() {
-        assert unwrapInputBuffer.limit() == unwrapInputBuffer.capacity();
-        int remainingLen = unwrapInputBuffer.remaining();
-        if (remainingLen == 0) {
-            // no point in reading if we have no space left
-            return 0;
+    @Override
+    public void of(int fd) {
+        delegate.of(fd);
+        if (startTlsSession() < 0) {
+            throw new HttpClientException("could not start TLS session");
         }
-
-        assert Unsafe.getUnsafe().getLong(unwrapInputBuffer, ADDRESS_FIELD_OFFSET) == unwrapInputBufferPtr;
-        long adjustedPtr = unwrapInputBufferPtr + unwrapInputBuffer.position();
-
-        int n = delegate.recv(adjustedPtr, remainingLen);
-        if (n < 0) {
-            return n;
-        }
-        unwrapInputBuffer.position(unwrapInputBuffer.position() + n);
-        return n;
+        unwrapInputBuffer.clear();
+        unwrapOutputBuffer.clear();
+        wrapOutputBuffer.clear();
     }
 
     @Override
@@ -353,11 +273,6 @@ public final class JavaTlsClientSocket implements Socket {
         }
     }
 
-    private void growWrapOutputBuffer() {
-        wrapOutputBufferPtr = expandBuffer(wrapOutputBuffer, wrapOutputBufferPtr);
-    }
-
-
     @Override
     public int shutdown(int how) {
         return 0;
@@ -466,6 +381,87 @@ public final class JavaTlsClientSocket implements Socket {
 //        return wrapOutputBuffer.position() > 0 || sslEngine.getHandshakeStatus() == SSLEngineResult.HandshakeStatus.NEED_WRAP;
     }
 
+    private static long allocateMemoryAndResetBuffer(ByteBuffer buffer, int capacity) {
+        // TODO: what is the right tag here?
+        long newAddress = Unsafe.malloc(capacity, MemoryTag.NATIVE_TLS_RSS);
+        resetBufferToPointer(buffer, newAddress, capacity);
+        return newAddress;
+    }
+
+    private static SSLEngine createSslEngine() {
+        // todo: make configurable: CAs, peer advisory, etc.
+
+        SSLContext sslContext;
+        try {
+            sslContext = SSLContext.getInstance("TLS");
+            sslContext.init(null, BLIND_TRUST_MANAGERS, new SecureRandom());
+        } catch (NoSuchAlgorithmException | KeyManagementException e) {
+            throw new RuntimeException(e);
+        }
+        SSLEngine sslEngine = sslContext.createSSLEngine();
+        sslEngine.setUseClientMode(true);
+        return sslEngine;
+    }
+
+    private static long expandBuffer(ByteBuffer buffer, long oldAddress) {
+        int oldCapacity = buffer.capacity();
+        int newCapacity = oldCapacity * 2;
+        long newAddress = Unsafe.realloc(oldAddress, oldCapacity, newCapacity, MemoryTag.NATIVE_TLS_RSS);
+        resetBufferToPointer(buffer, newAddress, newCapacity);
+        return newAddress;
+    }
+
+    private static void resetBufferToPointer(ByteBuffer buffer, long ptr, int len) {
+        assert buffer.isDirect();
+        Unsafe.getUnsafe().putLong(buffer, ADDRESS_FIELD_OFFSET, ptr);
+        Unsafe.getUnsafe().putLong(buffer, LIMIT_FIELD_OFFSET, len);
+        Unsafe.getUnsafe().putLong(buffer, CAPACITY_FIELD_OFFSET, len);
+    }
+
+    private void growUnwrapInputBuffer() {
+        unwrapInputBufferPtr = expandBuffer(unwrapInputBuffer, unwrapInputBufferPtr);
+    }
+
+    private void growUnwrapOutputBuffer() {
+        unwrapOutputBufferPtr = expandBuffer(unwrapOutputBuffer, unwrapOutputBufferPtr);
+    }
+
+    private void growWrapOutputBuffer() {
+        wrapOutputBufferPtr = expandBuffer(wrapOutputBuffer, wrapOutputBufferPtr);
+    }
+
+    private int readFromUpstream() {
+        assert unwrapInputBuffer.limit() == unwrapInputBuffer.capacity();
+        int remainingLen = unwrapInputBuffer.remaining();
+        if (remainingLen == 0) {
+            // no point in reading if we have no space left
+            return 0;
+        }
+
+        assert Unsafe.getUnsafe().getLong(unwrapInputBuffer, ADDRESS_FIELD_OFFSET) == unwrapInputBufferPtr;
+        long adjustedPtr = unwrapInputBufferPtr + unwrapInputBuffer.position();
+
+        int n = delegate.recv(adjustedPtr, remainingLen);
+        if (n < 0) {
+            return n;
+        }
+        unwrapInputBuffer.position(unwrapInputBuffer.position() + n);
+        return n;
+    }
+
+    private int unwrapOutputBufferToPtr(long dstPtr, int dstLen) {
+        // assume unwrapOutputBuffer is in read mode
+
+        int oldPosition = unwrapOutputBuffer.position();
+
+        assert Unsafe.getUnsafe().getLong(unwrapOutputBufferPtr, ADDRESS_FIELD_OFFSET) == unwrapOutputBufferPtr;
+        long srcPtr = unwrapOutputBufferPtr + oldPosition;
+        int srcLen = unwrapOutputBuffer.remaining();
+        int len = Math.min(dstLen, srcLen);
+        Vect.memcpy(dstPtr, srcPtr, len);
+        unwrapOutputBuffer.position(oldPosition + len);
+        return len;
+    }
 
     static {
         Field addressField;
