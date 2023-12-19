@@ -24,6 +24,7 @@
 
 package io.questdb.test.log;
 
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.*;
 import io.questdb.mp.*;
@@ -43,6 +44,7 @@ import org.junit.rules.TemporaryFolder;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Paths;
 import java.util.Properties;
@@ -162,6 +164,61 @@ public class LogFactoryTest {
             factory.close(true);
         }
         Assert.assertEquals(messageCount, counter.get());
+    }
+
+    @Test
+    public void testGuaranteedLogging() throws Exception {
+        final File x = temp.newFile();
+        try (LogFactory factory = new LogFactory()) {
+            factory.add(new LogWriterConfig(LogLevel.ERROR, (ring, seq, level) -> {
+                LogFileWriter w = new LogFileWriter(ring, seq, level);
+                w.setLocation(x.getAbsolutePath());
+                return w;
+            }));
+
+            factory.bind();
+            factory.startThread();
+
+            final Log logger = factory.create("x");
+            Assert.assertEquals(Logger.class, logger.getClass());
+
+            LogFactory.enableGuaranteedLogging();
+
+            final Log guaranteedLogger = factory.create("x");
+            Assert.assertEquals(GuaranteedLogger.class, guaranteedLogger.getClass());
+
+            LogFactory.disableGuaranteedLogging();
+
+            final Log logger2 = factory.create("x");
+            Assert.assertEquals(Logger.class, logger2.getClass());
+        }
+    }
+
+    @Test
+    public void testGuaranteedLoggingForClasses() {
+        try (LogFactory factory = new LogFactory()) {
+            factory.add(new LogWriterConfig(LogLevel.ERROR, (ring, seq, level) -> {
+                LogFileWriter w = new LogFileWriter(ring, seq, level);
+                w.setLocation("io");
+                return w;
+            }));
+
+            factory.bind();
+            factory.startThread();
+
+            Assert.assertEquals(Logger.class, getLogger(SqlCompilerImpl.class).getClass());
+
+            LogFactory.enableGuaranteedLogging(SqlCompilerImpl.class);
+            Assert.assertEquals(GuaranteedLogger.class, getLogger(SqlCompilerImpl.class).getClass());
+
+            LogFactory.disableGuaranteedLogging(SqlCompilerImpl.class);
+            Assert.assertEquals(Logger.class, getLogger(SqlCompilerImpl.class).getClass());
+        } finally {
+            final Path ioPath = Path.getThreadLocal("io");
+            if (Files.exists(ioPath)) {
+                Files.remove(ioPath);
+            }
+        }
     }
 
     @Test
@@ -939,6 +996,16 @@ public class LogFactoryTest {
     private static void assertEnabled(LogRecord r) {
         Assert.assertTrue(r.isEnabled());
         r.$();
+    }
+
+    private static Log getLogger(Class<?> clazz) {
+        try {
+            final Field field = clazz.getDeclaredField("LOG");
+            field.setAccessible(true);
+            return (Log) field.get(null);
+        } catch (NoSuchFieldException | IllegalAccessException e) {
+            throw new RuntimeException("Could not set logger", e);
+        }
     }
 
     private void assertFileLength(String file) {
