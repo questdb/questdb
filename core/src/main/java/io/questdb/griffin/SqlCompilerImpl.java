@@ -67,8 +67,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         public void preCompile(SqlCompiler compiler) {
         }
     };
-    private final static Log LOG = LogFactory.getLog(SqlCompilerImpl.class);
     private static final IntList castGroups = new IntList();
+    @SuppressWarnings("FieldMayBeFinal")
+    private static Log LOG = LogFactory.getLog(SqlCompilerImpl.class);
     protected final AlterOperationBuilder alterOperationBuilder;
     protected final SqlCodeGenerator codeGenerator;
     protected final CompiledQueryImpl compiledQuery;

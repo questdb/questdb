@@ -39,7 +39,7 @@ import org.jetbrains.annotations.Nullable;
 import java.io.File;
 
 /**
- * Same as #Logger but doesn't lose messages.
+ * Same as #Logger but does not lose messages.
  */
 public final class GuaranteedLogger extends AbstractLogRecord implements Log {
     private final RingQueue<LogRecordSink> advisoryRing;
@@ -94,7 +94,7 @@ public final class GuaranteedLogger extends AbstractLogRecord implements Log {
     @Override
     public LogRecord $(@Nullable CharSequence sequence) {
         if (sequence == null) {
-            sink().put("null");
+            sink().putAscii("null");
         } else {
             sink().putAscii(sequence);
         }
@@ -166,7 +166,7 @@ public final class GuaranteedLogger extends AbstractLogRecord implements Log {
     @Override
     public LogRecord $(@Nullable Object x) {
         if (x == null) {
-            sink().put("null");
+            sink().putAscii("null");
         } else {
             try {
                 sink().put(x.toString());
@@ -183,7 +183,7 @@ public final class GuaranteedLogger extends AbstractLogRecord implements Log {
     @Override
     public LogRecord $(@Nullable Sinkable x) {
         if (x == null) {
-            sink().put("null");
+            sink().putAscii("null");
         } else {
             try {
                 x.toSink(sink());
