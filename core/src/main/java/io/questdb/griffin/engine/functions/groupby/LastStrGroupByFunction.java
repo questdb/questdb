@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.groupby;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.std.str.DirectCharSink;
 import org.jetbrains.annotations.NotNull;
 
 public class LastStrGroupByFunction extends FirstStrGroupByFunction {
@@ -36,7 +37,15 @@ public class LastStrGroupByFunction extends FirstStrGroupByFunction {
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        computeFirst(mapValue, record);
+        final CharSequence str = arg.getStr(record);
+        if (str != null) {
+            final DirectCharSink sink = sinks.getQuick(mapValue.getInt(valueIndex));
+            sink.clear();
+            sink.put(str);
+            mapValue.putBool(valueIndex + 1, false);
+        } else {
+            mapValue.putBool(valueIndex + 1, true);
+        }
     }
 
     @Override

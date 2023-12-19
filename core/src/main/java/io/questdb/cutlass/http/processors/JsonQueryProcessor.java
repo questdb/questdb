@@ -51,8 +51,9 @@ import static io.questdb.cutlass.http.HttpConstants.URL_PARAM_QUERY;
 
 public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
 
-    private static final Log LOG = LogFactory.getLog(JsonQueryProcessor.class);
     private static final LocalValue<JsonQueryProcessorState> LV = new LocalValue<>();
+    @SuppressWarnings("FieldMayBeFinal")
+    private static Log LOG = LogFactory.getLog(JsonQueryProcessor.class);
     protected final ObjList<QueryExecutor> queryExecutors = new ObjList<>();
     private final long asyncCommandTimeout;
     private final long asyncWriterStartTimeout;

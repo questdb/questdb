@@ -217,6 +217,8 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
             writer.println("");
         }
 
+        // note: nice try, but this is not used!
+        // at this point LogFactory has been initialized already
         // logs
         file = confPath + Files.SEPARATOR + "log.conf";
         System.setProperty("out", file);

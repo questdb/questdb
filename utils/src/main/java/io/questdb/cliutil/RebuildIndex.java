@@ -34,7 +34,7 @@ import static io.questdb.cliutil.RebuildColumnCommandArgs.parseCommandArgs;
 
 public class RebuildIndex {
     public static void main(String[] args) {
-        LogFactory.configureSync();
+        LogFactory.enableGuaranteedLogging();
         RebuildColumnCommandArgs params = parseCommandArgs(args, RebuildIndex.class.getName());
         if (params == null) {
             // Invalid params, usage already printed
