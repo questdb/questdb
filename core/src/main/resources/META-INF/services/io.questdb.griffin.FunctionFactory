@@ -81,6 +81,7 @@ io.questdb.griffin.engine.functions.conditional.NullIfStrFunctionFactory
 io.questdb.griffin.engine.functions.conditional.NullIfIPv4FunctionFactory
 io.questdb.griffin.engine.functions.conditional.NullIfIntFunctionFactory
 io.questdb.griffin.engine.functions.conditional.NullIfLongFunctionFactory
+io.questdb.griffin.engine.functions.conditional.NullIfDoubleFunctionFactory
 
 # '<' operator
 io.questdb.griffin.engine.functions.lt.LtDoubleVVFunctionFactory
