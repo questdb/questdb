@@ -26,10 +26,7 @@ package io.questdb.cutlass.http;
 
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cutlass.http.processors.StaticContentProcessor;
-import io.questdb.cutlass.http.processors.TableStatusCheckProcessor;
-import io.questdb.cutlass.http.processors.TextImportProcessor;
-import io.questdb.cutlass.http.processors.TextQueryProcessor;
+import io.questdb.cutlass.http.processors.*;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.*;
@@ -103,8 +100,52 @@ public class HttpServer implements Closeable {
             CairoEngine cairoEngine,
             WorkerPool workerPool,
             int sharedWorkerCount,
-            HttpRequestProcessorBuilder jsonQueryProcessorBuilder
+            HttpRequestProcessorBuilder jsonQueryProcessorBuilder,
+            HttpRequestProcessorBuilder ilpWriteProcessorBuilderV2
     ) {
+        // Disable ILP HTTP if the instance configured to be read-only for HTTP requests
+        if (configuration.getLineHttpProcessorConfiguration().isEnabled() &&
+                !configuration.getHttpContextConfiguration().readOnlySecurityContext()) {
+            server.bind(new HttpRequestProcessorFactory() {
+                @Override
+                public String getUrl() {
+                    return "/write";
+                }
+
+                @Override
+                public HttpRequestProcessor newInstance() {
+                    return ilpWriteProcessorBuilderV2.newInstance();
+                }
+            });
+
+            server.bind(new HttpRequestProcessorFactory() {
+                @Override
+                public String getUrl() {
+                    return "/api/v2/write";
+                }
+
+                @Override
+                public HttpRequestProcessor newInstance() {
+                    return ilpWriteProcessorBuilderV2.newInstance();
+                }
+            });
+
+            LineHttpPingProcessor pingProcessor = new LineHttpPingProcessor(
+                    configuration.getLineHttpProcessorConfiguration().getInfluxPingVersion()
+            );
+            server.bind(new HttpRequestProcessorFactory() {
+                @Override
+                public String getUrl() {
+                    return "/ping";
+                }
+
+                @Override
+                public HttpRequestProcessor newInstance() {
+                    return pingProcessor;
+                }
+            });
+        }
+
         server.bind(new HttpRequestProcessorFactory() {
             @Override
             public String getUrl() {

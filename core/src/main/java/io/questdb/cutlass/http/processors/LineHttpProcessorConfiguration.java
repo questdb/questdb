@@ -22,22 +22,35 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.line.tcp;
+package io.questdb.cutlass.http.processors;
 
-import io.questdb.mp.Job;
-import io.questdb.std.Pool;
-import io.questdb.std.QuietCloseable;
-import io.questdb.std.str.DirectUtf8Sequence;
-import io.questdb.std.str.Utf8String;
+import io.questdb.cutlass.line.LineTcpTimestampAdapter;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 
-public interface NetworkIOJob extends Job, QuietCloseable {
-    void addTableUpdateDetails(Utf8String tableNameUtf8, TableUpdateDetails tableUpdateDetails);
+public interface LineHttpProcessorConfiguration {
+    boolean autoCreateNewColumns();
 
-    TableUpdateDetails getLocalTableDetails(DirectUtf8Sequence tableNameUtf8);
+    boolean autoCreateNewTables();
 
-    Pool<SymbolCache> getSymbolCachePool();
+    short getDefaultColumnTypeForFloat();
 
-    int getWorkerId();
+    short getDefaultColumnTypeForInteger();
 
-    void releaseWalTableDetails();
+    int getDefaultPartitionBy();
+
+    CharSequence getInfluxPingVersion();
+
+    MicrosecondClock getMicrosecondClock();
+
+    long getSymbolCacheWaitUsBeforeReload();
+
+    LineTcpTimestampAdapter getTimestampAdapter();
+
+    boolean isEnabled();
+
+    boolean isStringAsTagSupported();
+
+    boolean isStringToCharCastAllowed();
+
+    boolean isSymbolAsFieldSupported();
 }

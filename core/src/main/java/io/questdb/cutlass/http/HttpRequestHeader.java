@@ -39,6 +39,8 @@ public interface HttpRequestHeader {
 
     DirectUtf8Sequence getContentDispositionName();
 
+    int getContentLength();
+
     DirectUtf8Sequence getContentType();
 
     DirectUtf8Sequence getHeader(Utf8Sequence name);

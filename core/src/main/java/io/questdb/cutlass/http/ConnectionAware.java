@@ -22,22 +22,8 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.line.tcp;
+package io.questdb.cutlass.http;
 
-import io.questdb.mp.Job;
-import io.questdb.std.Pool;
-import io.questdb.std.QuietCloseable;
-import io.questdb.std.str.DirectUtf8Sequence;
-import io.questdb.std.str.Utf8String;
-
-public interface NetworkIOJob extends Job, QuietCloseable {
-    void addTableUpdateDetails(Utf8String tableNameUtf8, TableUpdateDetails tableUpdateDetails);
-
-    TableUpdateDetails getLocalTableDetails(DirectUtf8Sequence tableNameUtf8);
-
-    Pool<SymbolCache> getSymbolCachePool();
-
-    int getWorkerId();
-
-    void releaseWalTableDetails();
+public interface ConnectionAware {
+    void onDisconnected();
 }

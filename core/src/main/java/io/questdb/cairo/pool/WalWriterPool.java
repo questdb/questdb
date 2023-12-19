@@ -85,6 +85,7 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
         @Override
         public void close() {
             if (isOpen()) {
+                rollback();
                 final AbstractMultiTenantPool<WalWriterTenant> pool = this.pool;
                 if (pool != null && entry != null) {
                     if (!isDistressed()) {

@@ -49,6 +49,7 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
     private DirectUtf8String contentDisposition;
     private DirectUtf8String contentDispositionFilename;
     private DirectUtf8String contentDispositionName;
+    private int contentLength;
     private DirectUtf8String contentType;
     private DirectUtf8String headerName;
     private long headerPtr;
@@ -138,6 +139,11 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
     @Override
     public DirectUtf8Sequence getContentDispositionName() {
         return contentDispositionName;
+    }
+
+    @Override
+    public int getContentLength() {
+        return contentLength;
     }
 
     @Override
@@ -346,6 +352,20 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
         }
     }
 
+    private void parseContentLength() {
+        contentLength = -1;
+        DirectUtf8Sequence seq = getHeader(HEADER_CONTENT_LENGTH);
+        if (seq == null) {
+            return;
+        }
+
+        try {
+            contentLength = Numbers.parseInt(seq);
+        } catch (NumericException ignore) {
+            throw HttpException.instance("Malformed ").put(HEADER_CONTENT_LENGTH).put(" header");
+        }
+    }
+
     private void parseContentType() {
         DirectUtf8Sequence seq = getHeader(HEADER_CONTENT_TYPE);
         if (seq == null) {
@@ -409,6 +429,7 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
         parseContentType();
         parseContentDisposition();
         parseStatementTimeout();
+        parseContentLength();
     }
 
     private int parseMethod(long lo, long hi) {
