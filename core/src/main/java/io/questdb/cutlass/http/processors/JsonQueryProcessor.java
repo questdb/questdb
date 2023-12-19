@@ -600,10 +600,12 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             final long updatedCount = fut.getAffectedRowsCount();
             metrics.jsonQuery().markComplete();
             sendUpdateConfirmation(state, keepAliveHeader, updatedCount);
-        } catch (Throwable t) {
+        } catch (CairoException e) {
             // close e.g. when query has been cancelled
-            cq.getUpdateOperation().close();
-            throw t;
+            if (e.isInterruption()) {
+                cq.getUpdateOperation().close();
+            }
+            throw e;
         } finally {
             if (!isAsyncWait && fut != null) {
                 fut.close();
