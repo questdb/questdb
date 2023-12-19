@@ -158,30 +158,6 @@ public class WalAlterTableSqlTest extends AbstractCairoTest {
         });
     }
 
-
-    @Test
-    public void testDropNonExistingPartition() throws Exception {
-        assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
-            compile("create table " + tableName + " as (" +
-                    "select x, " +
-                    " rnd_symbol('AB', 'BC', 'CD') sym, " +
-                    " timestamp_sequence('2022-02-24', 21600000000L) ts, " +
-                    " rnd_symbol('DE', null, 'EF', 'FG') sym2 " +
-                    " from long_sequence(5)" +
-                    ") timestamp(ts) partition by DAY WAL");
-
-            ddl("alter table " + tableName + " drop partition list '2022-02-23'");
-            ddl("alter table " + tableName + " drop partition where ts < '2022-02-23'");
-
-            drainWalQueue();
-
-            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(
-                    engine.verifyTableName(tableName)
-            ));
-        });
-    }
-
     @Test
     public void createWalAndDropPartitionList() throws Exception {
         assertMemoryLeak(() -> {
@@ -329,6 +305,31 @@ public class WalAlterTableSqlTest extends AbstractCairoTest {
             assertSql(
                     "o3MaxLag\n117000000\n", "select o3MaxLag from tables() where table_name = '" + tableName + "'"
             );
+        });
+    }
+
+    @Test
+    public void testDropNonExistingPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            compile("create table " + tableName + " as (" +
+                    "select x, " +
+                    " rnd_symbol('AB', 'BC', 'CD') sym, " +
+                    " timestamp_sequence('2022-02-24', 21600000000L) ts, " +
+                    " rnd_symbol('DE', null, 'EF', 'FG') sym2 " +
+                    " from long_sequence(5)" +
+                    ") timestamp(ts) partition by DAY WAL");
+
+            ddl("alter table " + tableName + " drop partition list '2022-02-23'");
+            ddl("alter table " + tableName + " drop partition where ts < '2022-02-23'");
+            ddl("alter table " + tableName + " drop partition where ts > '2023-02-23'");
+            ddl("alter table " + tableName + " drop partition list '2023-02-23'");
+
+            drainWalQueue();
+
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(
+                    engine.verifyTableName(tableName)
+            ));
         });
     }
 
