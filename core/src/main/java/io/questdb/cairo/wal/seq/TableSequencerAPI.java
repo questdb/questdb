@@ -482,7 +482,7 @@ public class TableSequencerAPI implements QuietCloseable {
     }
 
     private boolean releaseEntries(long deadline) {
-        if (seqRegistry.size() == 0) {
+        if (seqRegistry.isEmpty()) {
             // nothing to release
             return true;
         }
@@ -543,7 +543,11 @@ public class TableSequencerAPI implements QuietCloseable {
                     // Sequencer is distressed or dropped, close before removing from the pool.
                     // Remove from registry only if this thread closed the instance.
                     if (checkClose()) {
-                        LOG.info().$("closed distressed table sequencer [table=").$(getTableToken()).I$();
+                        LOG.info()
+                                .$("closed table sequencer [table=").$(getTableToken())
+                                .$(", distressed=").$(isDistressed())
+                                .$(", dropped=").$(isDropped())
+                                .I$();
                         pool.seqRegistry.remove(getTableToken().getDirName(), this);
                     }
                 }

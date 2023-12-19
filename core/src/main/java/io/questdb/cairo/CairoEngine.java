@@ -149,7 +149,7 @@ public class CairoEngine implements Closeable, WriterSource {
             tableNameRegistry = configuration.isReadOnlyInstance()
                     ? new TableNameRegistryRO(configuration, protectedTableResolver)
                     : new TableNameRegistryRW(configuration, protectedTableResolver);
-            tableNameRegistry.reloadTableNameCache();
+            tableNameRegistry.reload();
         } catch (Throwable e) {
             close();
             throw e;
@@ -707,7 +707,7 @@ public class CairoEngine implements Closeable, WriterSource {
     public void load() {
         // Convert tables to WAL/non-WAL, if necessary.
         final ObjList<TableToken> convertedTables = TableConverter.convertTables(configuration, tableSequencerAPI, protectedTableResolver);
-        tableNameRegistry.reloadTableNameCache(convertedTables);
+        tableNameRegistry.reload(convertedTables);
     }
 
     public String lockAll(TableToken tableToken, String lockReason, boolean ignoreSnapshots) {
@@ -809,6 +809,10 @@ public class CairoEngine implements Closeable, WriterSource {
         snapshotAgent.prepareSnapshot(executionContext);
     }
 
+    public void reconcileTableNameRegistryState() {
+        tableNameRegistry.reconcile();
+    }
+
     public void recoverSnapshot() {
         snapshotAgent.recoverSnapshot();
     }
@@ -860,8 +864,8 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     @TestOnly
-    public void reloadTableNames(ObjList<TableToken> convertedTables) {
-        tableNameRegistry.reloadTableNameCache(convertedTables);
+    public void reloadTableNames(@Nullable ObjList<TableToken> convertedTables) {
+        tableNameRegistry.reload(convertedTables);
     }
 
     public void removeTableToken(TableToken tableToken) {
@@ -907,7 +911,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     try {
                         try (WalWriter walWriter = getWalWriter(fromTableToken)) {
                             long seqTxn = walWriter.renameTable(fromTableName, toTableNameStr);
-                            LOG.info().$("renamed table [from='").utf8(fromTableName)
+                            LOG.info().$("renaming table [from='").utf8(fromTableName)
                                     .$("', to='").utf8(toTableName)
                                     .$("', wal=").$(walWriter.getWalId())
                                     .$("', seqTxn=").$(seqTxn)
@@ -922,7 +926,7 @@ public class CairoEngine implements Closeable, WriterSource {
                         );
                     } finally {
                         if (renamed) {
-                            tableNameRegistry.replaceAlias(fromTableToken, toTableToken);
+                            tableNameRegistry.rename(fromTableToken, toTableToken);
                         } else {
                             LOG.info()
                                     .$("failed to rename table [from=").utf8(fromTableName)
@@ -1139,7 +1143,6 @@ public class CairoEngine implements Closeable, WriterSource {
                 }
                 throw EntryUnavailableException.instance("table exists");
             }
-
             try {
                 String lockedReason = lockAll(tableToken, "createTable", true);
                 if (lockedReason == null) {

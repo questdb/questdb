@@ -33,6 +33,7 @@ import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
@@ -46,6 +47,7 @@ import org.junit.Test;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.cairo.wal.WalUtils.TABLE_REGISTRY_NAME_FILE;
@@ -220,11 +222,11 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                         try (TableNameRegistryRO ro = new TableNameRegistryRO(configuration, CairoEngine.EMPTY_RESOLVER)) {
                             startBarrier.await();
                             while (!done.get()) {
-                                ro.reloadTableNameCache();
+                                ro.reload();
                                 Os.pause();
                             }
 
-                            ro.reloadTableNameCache();
+                            ro.reload();
                             Assert.assertEquals(tableCount, getNonDroppedSize(ro));
                         }
                     } catch (Throwable e) {
@@ -246,7 +248,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                 engine.closeNameRegistry();
                 Rnd rnd = TestUtils.generateRandom(LOG);
                 try (TableNameRegistryRW rw = new TableNameRegistryRW(configuration, CairoEngine.EMPTY_RESOLVER)) {
-                    rw.reloadTableNameCache();
+                    rw.reload();
                     startBarrier.await();
                     int iteration = 0;
                     IntHashSet addedTables = new IntHashSet();
@@ -285,11 +287,11 @@ public class TableNameRegistryTest extends AbstractCairoTest {
 
                         if (rnd.nextBoolean()) {
                             // May run compaction
-                            rw.reloadTableNameCache();
+                            rw.reload();
                             Assert.assertEquals(addedTables.size(), getNonDroppedSize(rw));
                         }
                     }
-                    rw.reloadTableNameCache();
+                    rw.reload();
                     Assert.assertEquals(addedTables.size(), getNonDroppedSize(rw));
                 } finally {
                     done.set(true);
@@ -384,6 +386,35 @@ public class TableNameRegistryTest extends AbstractCairoTest {
     @Test
     public void testConvertedTableListPassedToRegistrySequencerExists() throws Exception {
         testConvertedTableListPassedToRegistryOnLoad0(false);
+    }
+
+    @Test
+    public void testFuzz() {
+        int threadCount = 4;
+        CyclicBarrier barrier = new CyclicBarrier(threadCount);
+        SOCountDownLatch haltLatch = new SOCountDownLatch(threadCount);
+        AtomicInteger errorCounter = new AtomicInteger();
+        for (int i = 0; i < threadCount; i++) {
+            int k = i;
+            new Thread() {
+                @Override
+                public void run() {
+                    TestUtils.await(barrier);
+                    try {
+                        testFuzz0(k);
+                    } catch (Throwable e) {
+                        System.out.println("Thread: " + getId());
+                        e.printStackTrace();
+                        errorCounter.incrementAndGet();
+                    } finally {
+                        haltLatch.countDown();
+                    }
+                }
+            }.start();
+        }
+
+        haltLatch.await();
+        Assert.assertEquals(0, errorCounter.get());
     }
 
     @Test
@@ -561,5 +592,141 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             ss.put(tableTokenBucket.get(i).getTableName());
         }
         return ss.toString();
+    }
+
+    private static final int FUZZ_CREATE = 0;
+    private static final int FUZZ_RENAME = 1;
+    private static final int FUZZ_DROP = 2;
+    private static final int FUZZ_RELOAD = 3;
+    private static final int FUZZ_SWEEP = 4;
+
+    private void testFuzz0(int thread) throws SqlException {
+        // create sequence of metadata events for single table, it will always begin with CREATE=0
+        // number of events in the sequence
+        final int maxSteps = 100;
+        final int loopCounter = 8;
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+
+        try (WalPurgeJob purgeJob = new WalPurgeJob(engine, FilesFacadeImpl.INSTANCE, () -> 0)) {
+
+            for (int j = 0; j < loopCounter; j++) {
+
+                int n = rnd.nextInt(maxSteps);
+
+                // steps
+                // create = 0
+                // rename = 1
+                // drop = 2
+                // reload = 3
+
+                IntList steps = new IntList(maxSteps);
+                // the initial step is always "create"
+                for (int i = 0; i < n; i++) {
+                    steps.add(rnd.nextInt(5));
+                }
+
+                final String ogTableName = Chars.toString(rnd.nextChars(10));
+
+                ObjList<String> tableNames = new ObjList<>();
+                BitSet success = new BitSet(n);
+
+                // analyse steps and inject table names
+                boolean tableExists = false;
+                for (int i = 0; i < n; i++) {
+                    int step = steps.getQuick(i);
+
+                    switch (step) {
+                        case FUZZ_CREATE:
+                            tableNames.add(ogTableName);
+                            if (!tableExists) {
+                                // if table doesn't exist, "create" must succeed
+                                success.set(i);
+                            }
+                            tableExists = true;
+                            break;
+                        case FUZZ_RENAME:
+                            // with 1/4th probability generate the ogName
+                            if (rnd.nextInt(3) == 0) {
+                                tableNames.add(ogTableName);
+                            } else {
+                                tableNames.add(Chars.toString(rnd.nextChars(10)));
+                            }
+
+                            if (tableExists) {
+                                success.set(i);
+                                tableExists = Chars.equalsNc(tableNames.get(i), tableNames.get(i - 1));
+                            }
+                            break;
+                        case FUZZ_DROP:
+                            if (i > 0) {
+                                tableNames.add(tableNames.get(i - 1));
+                            } else {
+                                tableNames.add(ogTableName);
+                            }
+                            if (tableExists) {
+                                success.set(i);
+                            }
+                            tableExists = false;
+                            break;
+                        case FUZZ_RELOAD:
+                        case FUZZ_SWEEP:
+                            success.set(i);
+                            if (i > 0) {
+                                tableNames.add(tableNames.get(i - 1));
+                            } else {
+                                tableNames.add(ogTableName);
+                            }
+                            break;
+                        default:
+                            assert false : step;
+                    }
+                }
+
+                // verify steps
+                for (int i = 0; i < n; i++) {
+                    CharSequence oldTableName = null;
+                    CharSequence tableName = tableNames.getQuick(i) + Thread.currentThread().getId();
+                    if (i > 0) {
+                        oldTableName = tableNames.getQuick(i - 1) + Thread.currentThread().getId();
+                    }
+                    if (!success.get(i)) {
+                        continue;
+                    }
+                    final int step = steps.getQuick(i);
+                    try {
+                        switch (step) {
+                            case FUZZ_CREATE:
+                                compile("create table " + tableName + "(a int, t timestamp) timestamp(t) partition by day wal");
+                                break;
+                            case FUZZ_RENAME:
+                                compile("rename table " + oldTableName + " to " + tableName);
+                                break;
+                            case FUZZ_DROP:
+                                drop("drop table " + tableName);
+                                break;
+                            case FUZZ_RELOAD:
+                                // reload is only used at either server starts or from tests
+                                // at runtime it will break the registry
+                                break;
+                            case FUZZ_SWEEP:
+                                purgeJob.run(thread);
+                                break;
+                            default:
+                                assert false;
+                        }
+                        Assert.assertTrue(success.get(i));
+                    } catch (Throwable e) {
+                        if (success.get(i)) {
+                            throw e;
+                        }
+                    }
+                    engine.reconcileTableNameRegistryState();
+                }
+            }
+        }
+    }
+
+    static {
+        LogFactory.configureSync();
     }
 }

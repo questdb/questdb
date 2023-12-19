@@ -24,11 +24,11 @@
 
 package io.questdb.cairo;
 
-public class ReverseTableMapItem {
+public class MapBeDroppedTableToken {
     private final boolean isDropped;
     private final TableToken tableToken;
 
-    private ReverseTableMapItem(TableToken tableToken, boolean isDropped) {
+    private MapBeDroppedTableToken(TableToken tableToken, boolean isDropped) {
         this.tableToken = tableToken;
         this.isDropped = isDropped;
     }
@@ -41,11 +41,11 @@ public class ReverseTableMapItem {
         return isDropped;
     }
 
-    static ReverseTableMapItem of(TableToken tableToken) {
-        return new ReverseTableMapItem(tableToken, false);
+    static MapBeDroppedTableToken of(TableToken tableToken) {
+        return new MapBeDroppedTableToken(tableToken, false);
     }
 
-    static ReverseTableMapItem ofDropped(TableToken tableToken) {
-        return new ReverseTableMapItem(tableToken, true);
+    static MapBeDroppedTableToken ofDropped(TableToken tableToken) {
+        return new MapBeDroppedTableToken(tableToken, true);
     }
 }
