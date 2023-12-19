@@ -54,6 +54,12 @@ import static io.questdb.cairo.wal.WalUtils.TABLE_REGISTRY_NAME_FILE;
 
 public class TableNameRegistryTest extends AbstractCairoTest {
 
+    private static final int FUZZ_CREATE = 0;
+    private static final int FUZZ_DROP = 2;
+    private static final int FUZZ_RELOAD = 3;
+    private static final int FUZZ_RENAME = 1;
+    private static final int FUZZ_SWEEP = 4;
+
     @Test
     public void testConcurrentCreateDropRemove() throws Exception {
         assertMemoryLeak(() -> {
@@ -396,21 +402,16 @@ public class TableNameRegistryTest extends AbstractCairoTest {
         AtomicInteger errorCounter = new AtomicInteger();
         for (int i = 0; i < threadCount; i++) {
             int k = i;
-            new Thread() {
-                @Override
-                public void run() {
-                    TestUtils.await(barrier);
-                    try {
-                        testFuzz0(k);
-                    } catch (Throwable e) {
-                        System.out.println("Thread: " + getId());
-                        e.printStackTrace();
-                        errorCounter.incrementAndGet();
-                    } finally {
-                        haltLatch.countDown();
-                    }
+            new Thread(() -> {
+                TestUtils.await(barrier);
+                try {
+                    testFuzz0(k);
+                } catch (Throwable e) {
+                    errorCounter.incrementAndGet();
+                } finally {
+                    haltLatch.countDown();
                 }
-            }.start();
+            }).start();
         }
 
         haltLatch.await();
@@ -593,12 +594,6 @@ public class TableNameRegistryTest extends AbstractCairoTest {
         }
         return ss.toString();
     }
-
-    private static final int FUZZ_CREATE = 0;
-    private static final int FUZZ_RENAME = 1;
-    private static final int FUZZ_DROP = 2;
-    private static final int FUZZ_RELOAD = 3;
-    private static final int FUZZ_SWEEP = 4;
 
     private void testFuzz0(int thread) throws SqlException {
         // create sequence of metadata events for single table, it will always begin with CREATE=0
