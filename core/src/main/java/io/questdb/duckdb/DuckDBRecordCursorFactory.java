@@ -97,10 +97,10 @@ public class DuckDBRecordCursorFactory implements RecordCursorFactory {
 
     public static class RecordCursorImpl implements RecordCursor {
         private final RecordImpl record = new RecordImpl();
-        private PageFrameCursor pageFrameCursor;
-        private PageFrame currentPageFrame;
+        private DuckDBPageFrameCursor pageFrameCursor;
+        private DuckDBPageFrameCursor.PageFrameImpl currentPageFrame;
 
-        public void of(PageFrameCursor pageFrameCursor) {
+        public void of(DuckDBPageFrameCursor pageFrameCursor) {
             assert pageFrameCursor != null;
             this.pageFrameCursor = pageFrameCursor;
             this.currentPageFrame = pageFrameCursor.next();
@@ -165,6 +165,10 @@ public class DuckDBRecordCursorFactory implements RecordCursorFactory {
                 if (address == 0) {
                     return NullMemoryMR.INSTANCE.getBool(0);
                 }
+                long validityAddress = currentPageFrame.getValidityMaskAddress(columnIndex);
+                if (!DuckDB.validityRowIsValid(validityAddress, pageRowIndex)) {
+                    return NullMemoryMR.INSTANCE.getBool(0);
+                }
                 return Unsafe.getUnsafe().getByte(address + pageRowIndex * Byte.BYTES) == 1;
             }
 
@@ -172,6 +176,10 @@ public class DuckDBRecordCursorFactory implements RecordCursorFactory {
             public byte getByte(int columnIndex) {
                 final long address = currentPageFrame.getPageAddress(columnIndex);
                 if (address == 0) {
+                    return NullMemoryMR.INSTANCE.getByte(0);
+                }
+                long validityAddress = currentPageFrame.getValidityMaskAddress(columnIndex);
+                if (!DuckDB.validityRowIsValid(validityAddress, pageRowIndex)) {
                     return NullMemoryMR.INSTANCE.getByte(0);
                 }
                 return Unsafe.getUnsafe().getByte(address + pageRowIndex * Byte.BYTES);
@@ -183,6 +191,10 @@ public class DuckDBRecordCursorFactory implements RecordCursorFactory {
                 if (address == 0) {
                     return NullMemoryMR.INSTANCE.getChar(0);
                 }
+                long validityAddress = currentPageFrame.getValidityMaskAddress(columnIndex);
+                if (!DuckDB.validityRowIsValid(validityAddress, pageRowIndex)) {
+                    return NullMemoryMR.INSTANCE.getChar(0);
+                }
                 return Unsafe.getUnsafe().getChar(address + pageRowIndex * Character.BYTES);
             }
 
@@ -190,6 +202,10 @@ public class DuckDBRecordCursorFactory implements RecordCursorFactory {
             public double getDouble(int columnIndex) {
                 final long address = currentPageFrame.getPageAddress(columnIndex);
                 if (address == 0) {
+                    return NullMemoryMR.INSTANCE.getDouble(0);
+                }
+                long validityAddress = currentPageFrame.getValidityMaskAddress(columnIndex);
+                if (!DuckDB.validityRowIsValid(validityAddress, pageRowIndex)) {
                     return NullMemoryMR.INSTANCE.getDouble(0);
                 }
                 return Unsafe.getUnsafe().getDouble(address + pageRowIndex * Double.BYTES);
@@ -201,6 +217,10 @@ public class DuckDBRecordCursorFactory implements RecordCursorFactory {
                 if (address == 0) {
                     return NullMemoryMR.INSTANCE.getFloat(0);
                 }
+                long validityAddress = currentPageFrame.getValidityMaskAddress(columnIndex);
+                if (!DuckDB.validityRowIsValid(validityAddress, pageRowIndex)) {
+                    return NullMemoryMR.INSTANCE.getFloat(0);
+                }
                 return Unsafe.getUnsafe().getFloat(address + pageRowIndex * Float.BYTES);
             }
 
@@ -210,6 +230,10 @@ public class DuckDBRecordCursorFactory implements RecordCursorFactory {
                 if (address == 0) {
                     return NullMemoryMR.INSTANCE.getInt(0);
                 }
+                long validityAddress = currentPageFrame.getValidityMaskAddress(columnIndex);
+                if (!DuckDB.validityRowIsValid(validityAddress, pageRowIndex)) {
+                    return NullMemoryMR.INSTANCE.getInt(0);
+                }
                 return Unsafe.getUnsafe().getInt(address + pageRowIndex * Integer.BYTES);
             }
 
@@ -217,6 +241,10 @@ public class DuckDBRecordCursorFactory implements RecordCursorFactory {
             public long getLong(int columnIndex) {
                 final long address = currentPageFrame.getPageAddress(columnIndex);
                 if (address == 0) {
+                    return NullMemoryMR.INSTANCE.getLong(0);
+                }
+                long validityAddress = currentPageFrame.getValidityMaskAddress(columnIndex);
+                if (!DuckDB.validityRowIsValid(validityAddress, pageRowIndex)) {
                     return NullMemoryMR.INSTANCE.getLong(0);
                 }
                 return Unsafe.getUnsafe().getLong(address + pageRowIndex * Long.BYTES);
@@ -235,6 +263,10 @@ public class DuckDBRecordCursorFactory implements RecordCursorFactory {
             public short getShort(int columnIndex) {
                 final long address = currentPageFrame.getPageAddress(columnIndex);
                 if (address == 0) {
+                    return NullMemoryMR.INSTANCE.getShort(0);
+                }
+                long validityAddress = currentPageFrame.getValidityMaskAddress(columnIndex);
+                if (!DuckDB.validityRowIsValid(validityAddress, pageRowIndex)) {
                     return NullMemoryMR.INSTANCE.getShort(0);
                 }
                 return Unsafe.getUnsafe().getShort(address + pageRowIndex * Short.BYTES);

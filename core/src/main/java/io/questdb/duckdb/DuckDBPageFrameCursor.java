@@ -88,7 +88,7 @@ public class DuckDBPageFrameCursor implements PageFrameCursor {
     }
 
     @Override
-    public @Nullable PageFrame next() {
+    public @Nullable PageFrameImpl next() {
         exhausted = true; // dirty hack to prevent toTop to re-execute query
         // release previous chunk
         if (currentDataChunk != 0) {
@@ -116,7 +116,7 @@ public class DuckDBPageFrameCursor implements PageFrameCursor {
         }
     }
 
-    private class PageFrameImpl implements PageFrame {
+    public class PageFrameImpl implements PageFrame {
         @Override
         public BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction) {
             return null;
@@ -139,6 +139,11 @@ public class DuckDBPageFrameCursor implements PageFrameCursor {
         public long getPageAddress(int columnIndex) {
             long vec = DuckDB.dataChunkGetVector(currentDataChunk, columnIndex);
             return DuckDB.vectorGetData(vec);
+        }
+
+        public long getValidityMaskAddress(int columnIndex) {
+            long vec = DuckDB.dataChunkGetVector(currentDataChunk, columnIndex);
+            return DuckDB.vectorGetValidity(vec);
         }
 
         @Override
