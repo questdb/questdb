@@ -56,10 +56,10 @@ public class FirstStrGroupByFunction extends StrFunction implements GroupByFunct
     public void clear() {
         // Free extra sinks.
         if (sinks.size() > LIST_CLEAR_THRESHOLD) {
-            for (int i = sinks.size() - 1; i > LIST_CLEAR_THRESHOLD - 1; i--) {
-                Misc.free(sinks.getQuick(i));
-                sinks.remove(i);
+            for (int i = LIST_CLEAR_THRESHOLD, n = sinks.size(); i < n; i++) {
+                sinks.getAndSetQuick(i, null).close();
             }
+            sinks.setPos(LIST_CLEAR_THRESHOLD);
         }
         // Reset capacity on the remaining ones.
         for (int i = 0, n = sinks.size(); i < n; i++) {

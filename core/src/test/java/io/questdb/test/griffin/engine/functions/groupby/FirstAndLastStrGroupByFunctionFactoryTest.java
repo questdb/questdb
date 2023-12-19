@@ -144,7 +144,7 @@ public class FirstAndLastStrGroupByFunctionFactoryTest extends AbstractCairoTest
                     "2023-12-18T18:00:00.000000Z\tB\t\tNaN\tcold_1\t3.0\t\tNaN\tcold_2\t4.0\n";
 
             assertSql(expected, query);
-            assertSql(expected, query + " sample by 1h");
+            assertSql(expected, query + " sample by 1h fill(prev)");
         });
     }
 
@@ -180,7 +180,7 @@ public class FirstAndLastStrGroupByFunctionFactoryTest extends AbstractCairoTest
                     "2023-12-18T18:00:00.000000Z\tB\tcold_1\t3.0\tcold_1\t3.0\tcold_3\t5.0\tcold_3\t5.0\n";
 
             assertSql(expected, query);
-            assertSql(expected, query + " sample by 1h");
+            assertSql(expected, query + " sample by 1h fill(prev)");
         });
     }
 }
