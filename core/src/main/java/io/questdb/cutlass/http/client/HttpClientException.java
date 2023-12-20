@@ -36,6 +36,11 @@ public class HttpClientException extends RuntimeException {
         this.message.put(message);
     }
 
+    public HttpClientException(String message, Throwable cause) {
+        super(message, cause);
+        this.message.put(message);
+    }
+
     public HttpClientException errno(int errno) {
         this.errno = errno;
         return this;

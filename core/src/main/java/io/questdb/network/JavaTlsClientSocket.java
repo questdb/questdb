@@ -25,7 +25,6 @@
 package io.questdb.network;
 
 import io.questdb.cutlass.http.client.HttpClientException;
-import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.log.Log;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
@@ -58,6 +57,7 @@ public final class JavaTlsClientSocket implements Socket {
     private static final int INITIAL_BUFFER_CAPACITY = 64 * 1024;
     private static final long LIMIT_FIELD_OFFSET;
     private static final int STATE_CLOSING = 2;
+    private static final int STATE_HANDSHAKE_COMPLETED = 1;
     private static final int STATE_INITIAL = 0;
     private final Socket delegate;
     private final Log log;
@@ -93,7 +93,7 @@ public final class JavaTlsClientSocket implements Socket {
     @Override
     public void close() {
         // todo: do a proper TLS shutdown
-//        sslEngine.closeOutbound();
+        sslEngine.closeOutbound();
         state = STATE_CLOSING;
         delegate.close();
 
@@ -207,11 +207,11 @@ public final class JavaTlsClientSocket implements Socket {
                         }
                         break;
                     case CLOSED:
-                        throw new LineSenderException("server closed connection unexpectedly");
+                        throw new HttpClientException("server closed connection unexpectedly");
                 }
             }
         } catch (SSLException e) {
-            throw new LineSenderException("could not unwrap SSL packet", e);
+            throw new HttpClientException("could not unwrap SSL packet", e);
         }
     }
 
@@ -233,11 +233,13 @@ public final class JavaTlsClientSocket implements Socket {
                     int limit = wrapOutputBuffer.limit();
                     int n = delegate.send(wrapOutputBufferPtr, limit);
                     if (n < 0) {
+                        // ops, something went wrong
                         return n;
                     }
                     wrapOutputBuffer.position(n);
                     wrapOutputBuffer.compact();
                     if (n == 0) {
+                        // we didn't manage to send anything, the socket is full, no point in trying to send more
                         return plainBytesConsumed;
                     }
                 }
@@ -258,18 +260,19 @@ public final class JavaTlsClientSocket implements Socket {
                         break;
                     case OK:
                         if (wrapInputBuffer.remaining() == 0) {
+                            // all sent, nothing left to be done.
                             return plainBytesConsumed;
                         }
                         break;
                     case CLOSED:
                         if (state != STATE_CLOSING) {
-                            throw new LineSenderException("server closed connection unexpectedly");
+                            throw new HttpClientException("server closed connection unexpectedly");
                         }
                         return -1;
                 }
             }
         } catch (SSLException e) {
-            throw new LineSenderException("error while sending data to questdb server", e);
+            throw new HttpClientException("error while sending data to questdb server", e);
         }
     }
 
@@ -312,9 +315,7 @@ public final class JavaTlsClientSocket implements Socket {
                                 wrapOutputBuffer.clear();
                                 break;
                             case CLOSED:
-                                if (state != STATE_CLOSING) {
-                                    throw new LineSenderException("server closed connection unexpectedly");
-                                }
+                                log.error().$("server closed connection unexpectedly").$();
                                 return -1;
                         }
                         break;
@@ -325,9 +326,10 @@ public final class JavaTlsClientSocket implements Socket {
                         }
                         break;
                     case FINISHED:
-                        return 0;
+                        break;
                 }
             }
+            state = STATE_HANDSHAKE_COMPLETED;
             return 0;
         } catch (Exception e) {
             log.error().$("could not start SSL session").$(e).$();
@@ -342,43 +344,31 @@ public final class JavaTlsClientSocket implements Socket {
 
     @Override
     public int tlsIO(int readinessFlags) {
-        boolean madeProgress;
-        do {
-            madeProgress = false;
-            if ((readinessFlags & WRITE_FLAG) != 0) {
-                int wrapOutputBufferPos = wrapOutputBuffer.position();
-                while (wrapOutputBufferPos > 0) {
-                    // there are some bytes in the output buffer, let's try to send them
-                    wrapOutputBuffer.flip();
-                    int limit = wrapOutputBuffer.limit();
-                    int sentBytes = delegate.send(wrapOutputBufferPtr, limit);
-                    if (sentBytes < 0) {
-                        return -1;
-                    }
-                    wrapOutputBuffer.position(sentBytes);
-                    wrapOutputBuffer.compact();
-                    if (sentBytes < limit) {
-                        // we didn't manage to send all the bytes, socket is full, no point in trying to send more
-                        return 0;
-                    }
-                    madeProgress = true;
-                    wrapOutputBufferPos = wrapOutputBuffer.position();
+        if ((readinessFlags & WRITE_FLAG) != 0) {
+            int wrapOutputBufferPos = wrapOutputBuffer.position();
+            if (wrapOutputBufferPos > 0) {
+                // there are some encrypted bytes in the output buffer, let's try to send them
+                wrapOutputBuffer.flip();
+                int limit = wrapOutputBuffer.limit();
+                int sentBytes = delegate.send(wrapOutputBufferPtr, limit);
+                if (sentBytes < 0) {
+                    return -1;
                 }
+                wrapOutputBuffer.position(sentBytes);
+                wrapOutputBuffer.compact();
             }
-        } while (madeProgress);
+        }
         return 0;
     }
 
     @Override
     public boolean wantsTlsRead() {
         return false;
-//        return sslEngine.getHandshakeStatus() == SSLEngineResult.HandshakeStatus.NEED_UNWRAP;
     }
 
     @Override
     public boolean wantsTlsWrite() {
         return wrapOutputBuffer.position() > 0;
-//        return wrapOutputBuffer.position() > 0 || sslEngine.getHandshakeStatus() == SSLEngineResult.HandshakeStatus.NEED_WRAP;
     }
 
     private static long allocateMemoryAndResetBuffer(ByteBuffer buffer, int capacity) {
@@ -416,10 +406,6 @@ public final class JavaTlsClientSocket implements Socket {
         Unsafe.getUnsafe().putLong(buffer, ADDRESS_FIELD_OFFSET, ptr);
         Unsafe.getUnsafe().putLong(buffer, LIMIT_FIELD_OFFSET, len);
         Unsafe.getUnsafe().putLong(buffer, CAPACITY_FIELD_OFFSET, len);
-    }
-
-    private void growUnwrapInputBuffer() {
-        unwrapInputBufferPtr = expandBuffer(unwrapInputBuffer, unwrapInputBufferPtr);
     }
 
     private void growUnwrapOutputBuffer() {
