@@ -27,8 +27,8 @@ package io.questdb.test.griffin.engine.functions.str;
 import io.questdb.cairo.CairoException;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.str.ReplaceStrFunctionFactory;
+import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -89,6 +89,17 @@ public class ReplaceStrFunctionFactoryTest extends AbstractFunctionFactoryTest {
         call("a", null, "c").andAssert(null);
         call("a", "b", null).andAssert(null);
         call("a", null, null).andAssert(null);
+    }
+
+    @Test
+    public void testReplaceWithSymbols() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab as (select 'sym'::symbol sym from long_sequence(1))");
+
+            assertSql("replace\nSym\n", "select replace(sym, 's', 'S') from tab");
+            assertSql("replace\nS\n", "select replace(sym, sym, 'S') from tab");
+            assertSql("replace\nsym\n", "select replace(sym, sym, sym) from tab");
+        });
     }
 
     @Test
