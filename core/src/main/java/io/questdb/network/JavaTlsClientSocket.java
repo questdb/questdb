@@ -88,6 +88,7 @@ public final class JavaTlsClientSocket implements Socket {
 
         this.wrapOutputBufferPtr = allocateMemoryAndResetBuffer(wrapOutputBuffer, initialCapacity);
         this.unwrapInputBufferPtr = allocateMemoryAndResetBuffer(unwrapInputBuffer, initialCapacity);
+        unwrapInputBuffer.flip(); // read mode
     }
 
     @Override
@@ -132,7 +133,11 @@ public final class JavaTlsClientSocket implements Socket {
         if (startTlsSession() < 0) {
             throw new HttpClientException("could not start TLS session");
         }
-        unwrapInputBuffer.clear();
+        // unwrap input buffer: read mode and empty
+        unwrapInputBuffer.position(0);
+        unwrapInputBuffer.limit(0);
+
+        // write mode and empty
         unwrapOutputBuffer.clear();
         wrapOutputBuffer.clear();
     }
@@ -148,39 +153,44 @@ public final class JavaTlsClientSocket implements Socket {
 
 
         try {
-            int plainTextReadBytes = 0;
+            int plainTextReadBytesProduced = 0;
             for (; ; ) {
-                // unwrap input buffer: write mode
                 // unwrap output buffer: write mode
                 int n = readFromSocket();
                 if (n < 0) {
                     return n;
-                } else if (unwrapInputBuffer.position() == 0) {
-                    // nothing to unwrap
-                    return plainTextReadBytes;
                 }
 
-                unwrapInputBuffer.flip();
-                // unwrap input buffer: read mode
-                // unwrap output buffer: write mode
+                assert unwrapInputBuffer.position() == 0 : "missing compact() call";
+                int bytesToConsume = unwrapInputBuffer.limit();
+                if (bytesToConsume == 0) {
+                    // nothing to unwrap, we are done
+                    return plainTextReadBytesProduced;
+                }
+
                 SSLEngineResult result = sslEngine.unwrap(unwrapInputBuffer, unwrapOutputBuffer);
-                plainTextReadBytes += result.bytesProduced();
-                unwrapInputBuffer.compact();
-                // unwrap input buffer: write mode
-                // unwrap output buffer: write mode
+                int bytesConsumed = result.bytesConsumed();
+                plainTextReadBytesProduced += result.bytesProduced();
+
+                // compact the buffer
+                int bytesRemaining = bytesToConsume - bytesConsumed;
+                Vect.memcpy(unwrapInputBufferPtr, unwrapInputBufferPtr + bytesConsumed, bytesRemaining);
+                unwrapInputBuffer.position(0);
+                unwrapInputBuffer.limit(bytesRemaining);
+
 
                 switch (result.getStatus()) {
                     case BUFFER_UNDERFLOW:
                         // we need more data to unwrap, let's return whatever we have
-                        return plainTextReadBytes;
+                        return plainTextReadBytesProduced;
                     case BUFFER_OVERFLOW:
                         if (unwrapOutputBuffer.position() == 0) {
                             throw new AssertionError("output buffer to small");
                         }
-                        return plainTextReadBytes;
+                        return plainTextReadBytesProduced;
                     case OK:
                         if (result.getHandshakeStatus() == SSLEngineResult.HandshakeStatus.NEED_TASK || result.getHandshakeStatus() == SSLEngineResult.HandshakeStatus.NEED_WRAP) {
-                            return plainTextReadBytes;
+                            return plainTextReadBytesProduced;
                         }
                         break;
                     case CLOSED:
@@ -388,20 +398,23 @@ public final class JavaTlsClientSocket implements Socket {
     }
 
     private int readFromSocket() {
-        int remainingLen = unwrapInputBuffer.remaining();
-        if (remainingLen == 0) {
+        // unwrap input buffer: read mode
+
+        int writerPos = unwrapInputBuffer.limit(); // we are in the read mode, so limit (for reader) = position for writer
+        int freeSpace = unwrapInputBuffer.capacity() - writerPos;
+        if (freeSpace == 0) {
             // no point in reading if we have no space left
             return 0;
         }
 
         assert Unsafe.getUnsafe().getLong(unwrapInputBuffer, ADDRESS_FIELD_OFFSET) == unwrapInputBufferPtr;
-        long adjustedPtr = unwrapInputBufferPtr + unwrapInputBuffer.position();
+        long adjustedPtr = unwrapInputBufferPtr + writerPos;
 
-        int n = delegate.recv(adjustedPtr, remainingLen);
+        int n = delegate.recv(adjustedPtr, freeSpace);
         if (n < 0) {
             return n;
         }
-        unwrapInputBuffer.position(unwrapInputBuffer.position() + n);
+        unwrapInputBuffer.limit(writerPos + n);
         return n;
     }
 
