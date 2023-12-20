@@ -410,20 +410,6 @@ public final class JavaTlsClientSocket implements Socket {
         return n;
     }
 
-//    private int unwrapOutputBufferToPtr(long dstPtr, int dstLen) {
-//        // assume unwrapOutputBuffer is in read mode
-//
-//        int oldPosition = unwrapOutputBuffer.position();
-//
-//        assert Unsafe.getUnsafe().getLong(unwrapOutputBufferPtr, ADDRESS_FIELD_OFFSET) == unwrapOutputBufferPtr;
-//        long srcPtr = unwrapOutputBufferPtr + oldPosition;
-//        int srcLen = unwrapOutputBuffer.remaining();
-//        int len = Math.min(dstLen, srcLen);
-//        Vect.memcpy(dstPtr, srcPtr, len);
-//        unwrapOutputBuffer.position(oldPosition + len);
-//        return len;
-//    }
-
     static {
         Field addressField;
         Field limitField;
