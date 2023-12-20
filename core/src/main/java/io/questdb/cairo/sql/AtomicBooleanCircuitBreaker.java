@@ -50,8 +50,8 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     }
 
     @Override
-    public boolean checkIfTripped(long millis, int fd) {
-        return isCancelled();
+    public int checkIfTripped(long millis, int fd) {
+        return isCancelled() ? STATE_CANCELLED : STATE_OK;
     }
 
     @Override

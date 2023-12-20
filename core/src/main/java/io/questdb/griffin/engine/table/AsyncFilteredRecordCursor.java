@@ -39,7 +39,6 @@ import io.questdb.std.Rows;
 
 class AsyncFilteredRecordCursor implements RecordCursor {
 
-    static final String exceptionMessage = "timeout, query aborted";
     private static final Log LOG = LogFactory.getLog(AsyncFilteredRecordCursor.class);
     private final Function filter;
     private final boolean hasDescendingOrder;
@@ -84,7 +83,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
             frameRowIndex += frameRowsLeft;
             counter.add(frameRowsLeft);
             if (rowsRemaining < 1) {
-                frameSequence.cancel();
+                frameSequence.cancel(SqlExecutionCircuitBreaker.STATE_OK);
                 return;
             }
         }
@@ -102,7 +101,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                 frameRowIndex += frameRowsLeft;
                 counter.add(frameRowsLeft);
                 if (rowsRemaining < 1) {
-                    frameSequence.cancel();
+                    frameSequence.cancel(SqlExecutionCircuitBreaker.STATE_OK);
                     return;
                 } else {
                     collectCursor(false);
@@ -281,7 +280,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
 
     private boolean checkLimit() {
         if (--rowsRemaining < 0) {
-            frameSequence.cancel();
+            frameSequence.cancel(SqlExecutionCircuitBreaker.STATE_OK);
             return false;
         }
         return true;
@@ -358,7 +357,11 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     }
 
     private void throwTimeoutException() {
-        throw CairoException.nonCritical().put(exceptionMessage).setInterruption(true);
+        if (frameSequence.getCancelReason() == SqlExecutionCircuitBreaker.STATE_CANCELLED) {
+            throw CairoException.queryCancelled();
+        } else {
+            throw CairoException.queryTimedOut();
+        }
     }
 
     void of(PageFrameSequence<?> frameSequence, long rowsRemaining) {

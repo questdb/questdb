@@ -77,15 +77,22 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
 
     @Override
     public boolean checkIfTripped() {
-        return checkIfTripped(powerUpTime, fd);
+        return checkIfTripped(powerUpTime, fd) != STATE_OK;
     }
 
     @Override
-    public boolean checkIfTripped(long millis, int fd) {
+    public int checkIfTripped(long millis, int fd) {
         if (clock.getTicks() - timeout > millis) {
-            return true;
+            return STATE_TIMEOUT;
         }
-        return testConnection(fd);
+        if (cancelledFlag != null && cancelledFlag.get()) {
+            return STATE_CANCELLED;
+        }
+        if (testConnection(fd)) {
+            return STATE_BROKEN_CONNECTION;
+        }
+
+        return STATE_OK;
     }
 
     public void clear() {

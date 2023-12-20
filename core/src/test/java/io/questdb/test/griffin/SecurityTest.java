@@ -112,8 +112,8 @@ public class SecurityTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean checkIfTripped(long millis, int fd) {
-                return false;
+            public int checkIfTripped(long millis, int fd) {
+                return STATE_OK;
             }
 
             @Override

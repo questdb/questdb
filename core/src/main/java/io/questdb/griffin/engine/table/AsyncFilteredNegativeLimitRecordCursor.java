@@ -193,7 +193,7 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
                         }
 
                         if (rowCount >= rowLimit) {
-                            frameSequence.cancel();
+                            frameSequence.cancel(SqlExecutionCircuitBreaker.STATE_OK);
                         }
                     }
 
@@ -223,7 +223,11 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
     }
 
     private void throwTimeoutException() {
-        throw CairoException.nonCritical().put(AsyncFilteredRecordCursor.exceptionMessage).setInterruption(true);
+        if (frameSequence.getCancelReason() == SqlExecutionCircuitBreaker.STATE_CANCELLED) {
+            throw CairoException.queryCancelled();
+        } else {
+            throw CairoException.queryTimedOut();
+        }
     }
 
     void of(PageFrameSequence<?> frameSequence, long rowLimit, DirectLongList negativeLimitRows) {

@@ -30,6 +30,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
 
+    int STATE_OK = 0;
     SqlExecutionCircuitBreaker NOOP_CIRCUIT_BREAKER = new SqlExecutionCircuitBreaker() {
         @Override
         public void cancel() {
@@ -41,8 +42,8 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
         }
 
         @Override
-        public boolean checkIfTripped(long millis, int fd) {
-            return false;
+        public int checkIfTripped(long millis, int fd) {
+            return STATE_OK;
         }
 
         @Override
@@ -89,7 +90,9 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
         public void unsetTimer() {
         }
     };
-
+    int STATE_TIMEOUT = STATE_OK + 1; // 1
+    int STATE_BROKEN_CONNECTION = STATE_TIMEOUT + 1; // 2
+    int STATE_CANCELLED = STATE_BROKEN_CONNECTION + 1;// 3
     // Triggers timeout on first timeout check regardless of how much time elapsed since timer was reset
     // (used mainly for testing)
     long TIMEOUT_FAIL_ON_FIRST_CHECK = Long.MIN_VALUE;
@@ -99,7 +102,7 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
      */
     void cancel();
 
-    boolean checkIfTripped(long millis, int fd);
+    int checkIfTripped(long millis, int fd);
 
     @Nullable
     SqlExecutionCircuitBreakerConfiguration getConfiguration();

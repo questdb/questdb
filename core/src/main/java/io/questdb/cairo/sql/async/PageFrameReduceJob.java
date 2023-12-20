@@ -25,6 +25,7 @@
 package io.questdb.cairo.sql.async;
 
 import io.questdb.MessageBus;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.PageAddressCacheRecord;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -190,7 +191,11 @@ public class PageFrameReduceJob implements Job, Closeable {
                 } catch (Throwable th) {
                     LOG.error().$("reduce error [ex=").$(th).I$();
                     task.setErrorMsg(th);
-                    frameSequence.cancel();
+                    int interruptReason = SqlExecutionCircuitBreaker.STATE_OK;
+                    if (th instanceof CairoException) {
+                        interruptReason = ((CairoException) th).getInterruptionReason();
+                    }
+                    frameSequence.cancel(interruptReason);
                 } finally {
                     subSeq.done(cursor);
                     // Reduce counter has to be incremented only when we make
@@ -218,13 +223,15 @@ public class PageFrameReduceJob implements Job, Closeable {
         // we deliberately hold the queue item because
         // processing is daisy-chained. If we were to release item before
         // finishing reduction, next step (job) will be processing an incomplete task
-        if (!circuitBreaker.checkIfTripped(frameSequence.getStartTime(), frameSequence.getCircuitBreakerFd())) {
+        int cbState = circuitBreaker.checkIfTripped(frameSequence.getStartTime(), frameSequence.getCircuitBreakerFd());
+
+        if (cbState == SqlExecutionCircuitBreaker.STATE_OK) {
             record.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());
             record.setFrameIndex(task.getFrameIndex());
             assert !frameSequence.done;
             frameSequence.getReducer().reduce(workerId, record, task, circuitBreaker, stealingFrameSequence);
         } else {
-            frameSequence.cancel();
+            frameSequence.cancel(cbState);
         }
     }
 }
