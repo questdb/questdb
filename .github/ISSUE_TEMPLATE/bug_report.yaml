@@ -1,50 +1,54 @@
-name: Bug report
-description: Create a bug report to help us improve QuestDB
-labels: [bug]
+name: Feature request
+description: Suggest an idea for this project
+labels: New feature
 body:
   - type: markdown
     attributes:
       value: |
-        Thank you for reporting the bug.  
-        ❗ Please provide all the required information to receive faster responses from the maintainers. 
+        Thanks for taking the time to request a feature for QuestDB!
   - type: textarea
     attributes:
-      label: Describe the bug
-      description: A concise description of what you're experiencing.
-  - type: textarea
-    attributes:
-      label: To reproduce
-      description: Steps to reproduce this behavior.
+      label: Is your feature request related to a problem?
+      description:
+        A concise description of the problem you are facing or the motivation
+        behind this feature request.
       placeholder: |
-        1. Go to '...'
-        2. Click on '....'
-        3. Run this SQL '....'
-        4. See error
+        I experienced difficulties with...
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Describe the solution you'd like.
+      description: A concise description of what you want to happen.
+      placeholder: |
+        I would like to have...
     validations:
       required: false
   - type: textarea
     attributes:
-      label: Expected Behavior
-      description: A concise description of what you expected to happen.
+      label: Describe alternatives you've considered.
+      description: Is there another approach to solve the problem?
     validations:
       required: false
-
-  - type: textarea
+  - type: markdown
     attributes:
-      label: Environment
-      description: |
-        Provide details about your environment if applicable, for example:
-          - **QuestDB version**: 6.0.9
-          - **OS**: Ubuntu 20.04
-          - **Browser**: Firefox 93.0 (64-bit)
-
+      value: "# Identity Disclosure:"
+  - type: input
+    attributes:
+      label: "Full Name:"
+      placeholder: e.g., John Doe
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: "Affiliation:"
+      placeholder: e.g., Oracle
+    validations:
+      required: true
+  - type: markdown
+    attributes:
       value: |
-        - **QuestDB version**:
-        - **OS**:
-        - **Browser**:
-      render: markdown
-    validations:
-      required: false
+        If the above is not given and is not obvious from your GitHub profile page, we might close your issue without further review. Please refer to the [reasoning behind this rule](https://berthub.eu/articles/posts/anonymous-help/) if you have questions.
 
   - type: textarea
     attributes:
