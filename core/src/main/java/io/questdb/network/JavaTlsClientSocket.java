@@ -257,7 +257,7 @@ public final class JavaTlsClientSocket implements Socket {
 
     @Override
     public int shutdown(int how) {
-        return 0;
+        return delegate.shutdown(how);
     }
 
     @Override
