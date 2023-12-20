@@ -653,7 +653,7 @@ public final class TableUtils {
         if (!metadata.isWalEnabled() && metadata instanceof TableWriterMetadata) {
             return ((TableWriterMetadata) metadata).getMaxUncommittedRows();
         }
-        try (TableMetadata tableMetadata = engine.getTableReaderMetadata(metadata.getTableToken())) {
+        try (TableMetadata tableMetadata = engine.getTableMetadata(metadata.getTableToken())) {
             return tableMetadata.getMaxUncommittedRows();
         }
     }
@@ -702,7 +702,7 @@ public final class TableUtils {
                 return ((TableWriterMetadata) metadata).getO3MaxLag();
             }
 
-            try (TableMetadata tableMetadata = engine.getTableReaderMetadata(metadata.getTableToken())) {
+            try (TableMetadata tableMetadata = engine.getTableMetadata(metadata.getTableToken())) {
                 return tableMetadata.getO3MaxLag();
             }
         }
@@ -714,7 +714,7 @@ public final class TableUtils {
         if (!metadata.isWalEnabled() && metadata instanceof TableWriterMetadata) {
             return ((TableWriterMetadata) metadata).getPartitionBy();
         }
-        try (TableMetadata tableMetadata = engine.getTableReaderMetadata(metadata.getTableToken())) {
+        try (TableMetadata tableMetadata = engine.getTableMetadata(metadata.getTableToken())) {
             return tableMetadata.getPartitionBy();
         }
     }
