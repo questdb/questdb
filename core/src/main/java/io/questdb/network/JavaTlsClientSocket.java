@@ -145,8 +145,6 @@ public final class JavaTlsClientSocket implements Socket {
     @Override
     public int recv(long bufferPtr, int bufferLen) {
         assert sslEngine != null;
-        // unwrap  input buffer: write mode
-        // unwrap output buffer: write mode
 
         resetBufferToPointer(unwrapOutputBuffer, bufferPtr, bufferLen);
         unwrapOutputBuffer.position(0);
@@ -213,20 +211,14 @@ public final class JavaTlsClientSocket implements Socket {
             for (; ; ) {
                 // try to send whatever we have in the encrypted buffer
                 int bytesToSend = wrapOutputBuffer.position();
-                if (bytesToSend > 0) {
-                    // there are some bytes in the output buffer, let's try to send them
-                    int n = delegate.send(wrapOutputBufferPtr, bytesToSend);
-                    if (n < 0) {
-                        // ops, something went wrong
-                        return n;
-                    } else if (n == 0) {
+                if (bytesToSend < 0) {
+                    int sent = writeToSocket(bytesToSend);
+                    if (sent < 0) {
+                        return sent;
+                    } else if (sent == 0) {
                         // we didn't manage to send anything, the network socket is full, no point in trying to send more
                         return plainBytesConsumed;
                     }
-                    int bytesRemaining = bytesToSend - n;
-                    // compact the buffer
-                    Vect.memcpy(wrapOutputBufferPtr, wrapOutputBufferPtr + n, bytesRemaining);
-                    wrapOutputBuffer.position(bytesRemaining);
                 }
 
                 if (wrapInputBuffer.remaining() == 0) {
@@ -416,6 +408,21 @@ public final class JavaTlsClientSocket implements Socket {
         }
         unwrapInputBuffer.limit(writerPos + n);
         return n;
+    }
+
+    private int writeToSocket(int bytesToSend) {
+        assert wrapOutputBuffer.position() == 0 : "missing compact() call";
+        int n = delegate.send(wrapOutputBufferPtr, bytesToSend);
+        if (n < 0) {
+            // ops, something went wrong
+            return n;
+        }
+
+        int bytesRemaining = bytesToSend - n;
+        // compact the buffer
+        Vect.memcpy(wrapOutputBufferPtr, wrapOutputBufferPtr + n, bytesRemaining);
+        wrapOutputBuffer.position(bytesRemaining);
+        return 0;
     }
 
     static {
