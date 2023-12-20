@@ -39,6 +39,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cutlass.http.HttpConstants.*;
+import static java.util.concurrent.TimeUnit.NANOSECONDS;
 
 public abstract class HttpClient implements QuietCloseable {
     private static final String HEADER_CONTENT_LENGTH = "Content-Length: ";
@@ -87,9 +88,27 @@ public abstract class HttpClient implements QuietCloseable {
         return request;
     }
 
+    private int decreaseTimeout(int timeoutMillis, long startTimeNanos) {
+        timeoutMillis -= (int) NANOSECONDS.toMillis(System.nanoTime() - startTimeNanos);
+        if (timeoutMillis <= 0) {
+            throw new HttpClientException("timed out [errno=").errno(nf.errno()).put(']');
+        }
+        return timeoutMillis;
+    }
+
     private int dieIfNegative(int byteCount) {
         if (byteCount < 0) {
             throw new HttpClientException("peer disconnect [errno=").errno(nf.errno()).put(']');
+        }
+        return byteCount;
+    }
+
+    private int dieIfNotPositive(int byteCount) {
+        if (byteCount < 0) {
+            throw new HttpClientException("peer disconnect [errno=").errno(nf.errno()).put(']');
+        }
+        if (byteCount == 0) {
+            throw new HttpClientException("timed out [errno=").errno(nf.errno()).put(']');
         }
         return byteCount;
     }
@@ -101,27 +120,11 @@ public abstract class HttpClient implements QuietCloseable {
         }
     }
 
-    private void handleTlsOps(int timeout) {
-        for (; ; ) {
-            if (socket.wantsTlsRead()) {
-                dieIfNegative(socket.tlsIO(Socket.READ_FLAG));
-                continue;
-            }
-            if (socket.wantsTlsWrite()) {
-                dieIfNegative(socket.tlsIO(Socket.WRITE_FLAG));
-                continue;
-            }
-            break;
-        }
-    }
-
     private int recvOrDie(long lo, int len, int timeout) {
-        // todo: decrease timeout
-        handleTlsOps(timeout);
         int n = dieIfNegative(socket.recv(lo, len));
         if (n == 0) {
             ioWait(timeout, IOOperation.READ);
-            n = dieIfNegative(socket.recv(lo, len));
+            n = dieIfNotPositive(socket.recv(lo, len));
         }
         return n;
     }
@@ -131,12 +134,13 @@ public abstract class HttpClient implements QuietCloseable {
     }
 
     private int sendOrDie(long lo, int len, int timeoutMillis) {
-        handleTlsOps(timeoutMillis);
-
-        int n = dieIfNegative(socket.send(lo, len));
-        if (n == 0) {
+        long startTimeNanos = System.nanoTime();
+        ioWait(timeoutMillis, IOOperation.WRITE);
+        int n = dieIfNotPositive(socket.send(lo, len));
+        while (socket.wantsTlsWrite()) {
+            timeoutMillis = decreaseTimeout(timeoutMillis, startTimeNanos);
             ioWait(timeoutMillis, IOOperation.WRITE);
-            n = dieIfNegative(socket.send(lo, len));
+            n = dieIfNegative(socket.tlsIO(Socket.WRITE_FLAG));
         }
         return n;
     }

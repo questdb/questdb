@@ -151,26 +151,25 @@ public final class JavaTlsClientSocket implements Socket {
 
 
         try {
-            int plainTextReadBytesProduced = 0;
+            int bytesProduced = 0;
             for (; ; ) {
-                // unwrap output buffer: write mode
                 int n = readFromSocket();
                 if (n < 0) {
                     return n;
                 }
 
-                assert unwrapInputBuffer.position() == 0 : "missing compact() call";
+                assert unwrapInputBuffer.position() == 0 : "missing unwrapInputBuffer compact call";
                 int bytesToConsume = unwrapInputBuffer.limit();
                 if (bytesToConsume == 0) {
                     // nothing to unwrap, we are done
-                    return plainTextReadBytesProduced;
+                    return bytesProduced;
                 }
 
                 SSLEngineResult result = sslEngine.unwrap(unwrapInputBuffer, unwrapOutputBuffer);
-                int bytesConsumed = result.bytesConsumed();
-                plainTextReadBytesProduced += result.bytesProduced();
+                bytesProduced += result.bytesProduced();
 
                 // compact the buffer
+                int bytesConsumed = result.bytesConsumed();
                 int bytesRemaining = bytesToConsume - bytesConsumed;
                 Vect.memcpy(unwrapInputBufferPtr, unwrapInputBufferPtr + bytesConsumed, bytesRemaining);
                 unwrapInputBuffer.position(0);
@@ -180,12 +179,12 @@ public final class JavaTlsClientSocket implements Socket {
                 switch (result.getStatus()) {
                     case BUFFER_UNDERFLOW:
                         // we need more data to unwrap, let's return whatever we have
-                        return plainTextReadBytesProduced;
+                        return bytesProduced;
                     case BUFFER_OVERFLOW:
                         if (unwrapOutputBuffer.position() == 0) {
                             throw new AssertionError("output buffer to small");
                         }
-                        return plainTextReadBytesProduced;
+                        return bytesProduced;
                     case OK:
                         break;
                     case CLOSED:
@@ -208,7 +207,7 @@ public final class JavaTlsClientSocket implements Socket {
             for (; ; ) {
                 // try to send whatever we have in the encrypted buffer
                 int bytesToSend = wrapOutputBuffer.position();
-                if (bytesToSend < 0) {
+                if (bytesToSend > 0) {
                     int sent = writeToSocket(bytesToSend);
                     if (sent < 0) {
                         return sent;
@@ -233,7 +232,6 @@ public final class JavaTlsClientSocket implements Socket {
                             // not even a single byte was written to the output buffer even the buffer is empty
                             // apparently the output buffer cannot fit even a single TLS record. let's grow it and try again!
                             growWrapOutputBuffer();
-                            break;
                         }
                         break;
                     case OK:
@@ -426,7 +424,7 @@ public final class JavaTlsClientSocket implements Socket {
     }
 
     private int writeToSocket(int bytesToSend) {
-        assert wrapOutputBuffer.position() == 0 : "missing compact() call";
+        // wrapOutputBuffer is in the write mode
         int n = delegate.send(wrapOutputBufferPtr, bytesToSend);
         if (n < 0) {
             // ops, something went wrong
