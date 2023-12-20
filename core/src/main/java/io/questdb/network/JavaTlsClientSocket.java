@@ -273,9 +273,9 @@ public final class JavaTlsClientSocket implements Socket {
                         handshakeStatus = result.getHandshakeStatus();
                         switch (result.getStatus()) {
                             case BUFFER_UNDERFLOW:
-                                throw new AssertionError("buffer underflow, this should not happen. please report as a bug");
+                                throw new AssertionError("buffer underflow during handshaking, this should not happen. please report as a bug");
                             case BUFFER_OVERFLOW:
-                                throw new AssertionError("buffer overflow, this should not happen, please report as a bug");
+                                throw new AssertionError("buffer overflow during handshaking, this should not happen, please report as a bug");
                             case OK:
                                 // wrapOutputBuffer: write mode
                                 int written = 0;

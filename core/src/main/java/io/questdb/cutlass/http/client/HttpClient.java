@@ -450,8 +450,11 @@ public abstract class HttpClient implements QuietCloseable {
             }
             nf.freeAddrInfo(addrInfo);
 
-            //todo: handle error
-            nf.configureNonBlocking(fd);
+            if (nf.configureNonBlocking(fd) < 0) {
+                int errno = nf.errno();
+                nf.close(fd);
+                throw new HttpClientException("could not configure socket to be non-blocking [fd=").put(fd).put(", errno=").put(errno).put(']');
+            }
             socket.of(fd);
             setupIoWait();
         }
