@@ -1,35 +1,42 @@
-name: Feature request
-description: Suggest an idea for this project
-labels: New feature
+name: Bug report
+description: Create a bug report to help us improve QuestDB
+labels: [ bug ]
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for taking the time to request a feature for QuestDB!
+        Thank you for reporting the bug.  
+        ❗ Please provide all the required information to receive faster responses from the maintainers.
   - type: textarea
     attributes:
-      label: Is your feature request related to a problem?
-      description:
-        A concise description of the problem you are facing or the motivation
-        behind this feature request.
+      label: To reproduce
+      description: Steps to reproduce this behavior.
       placeholder: |
-        I experienced difficulties with...
+        1. Go to '...'
+        2. Click on '....'
+        3. Run this SQL '....'
+        4. See error
     validations:
       required: true
-  - type: textarea
+
+  - type: input
     attributes:
-      label: Describe the solution you'd like.
-      description: A concise description of what you want to happen.
-      placeholder: |
-        I would like to have...
+      label: "QuestDB version:"
+      placeholder: e.g., 7.3.5
     validations:
-      required: false
-  - type: textarea
+      required: true
+  - type: input
     attributes:
-      label: Describe alternatives you've considered.
-      description: Is there another approach to solve the problem?
+      label: "OS, in case of Docker specify Docker and the Host OS:"
+      placeholder: e.g., Ubuntu 22.04 (Docker)
     validations:
-      required: false
+      required: true
+  - type: input
+    attributes:
+      label: "File System, in case of Docker specify Host File System:"
+      placeholder: e.g., ext4
+    validations:
+      required: true
   - type: markdown
     attributes:
       value: "# Identity Disclosure:"
@@ -49,7 +56,16 @@ body:
     attributes:
       value: |
         If the above is not given and is not obvious from your GitHub profile page, we might close your issue without further review. Please refer to the [reasoning behind this rule](https://berthub.eu/articles/posts/anonymous-help/) if you have questions.
-
+  - type: checkboxes
+    attributes:
+      label: "Have you followed Linux, MacOs kernel configuration steps to increase Maximum open files and Maximum virtual memory areas limit?"
+      options:
+        - label: Yes, I have
+          required: true
+  - type: markdown
+    attributes:
+      value: |          
+        [OS configuration](https://questdb.io/docs/deployment/capacity-planning/#os-configuration)
   - type: textarea
     attributes:
       label: Additional context
