@@ -151,7 +151,7 @@ public final class Files {
     }
 
     public static void fadvise(int fd, long offset, long len, int advise) {
-        if (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64) {
+        if (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64 || Os.type == Os.LINUX_LOONGARCH64) {
             fadvise0(fd, offset, len, advise);
         }
     }
@@ -310,7 +310,7 @@ public final class Files {
     public static native int lock(int fd);
 
     public static void madvise(long address, long len, int advise) {
-        if (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64) {
+        if (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64 || Os.type == Os.LINUX_LOONGARCH64) {
             madvise0(address, len, advise);
         }
     }
@@ -670,7 +670,7 @@ public final class Files {
         UTF_8 = StandardCharsets.UTF_8;
         PAGE_SIZE = getPageSize();
         SEPARATOR = File.separatorChar;
-        if (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64) {
+        if (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64 || Os.type == Os.LINUX_LOONGARCH64) {
             POSIX_FADV_RANDOM = getPosixFadvRandom();
             POSIX_FADV_SEQUENTIAL = getPosixFadvSequential();
             POSIX_MADV_RANDOM = getPosixMadvRandom();

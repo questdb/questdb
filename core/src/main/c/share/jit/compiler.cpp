@@ -46,7 +46,7 @@ struct JitGlobalContext {
     JitRuntime rt;
 };
 
-#ifndef __aarch64__
+#if !defined(__aarch64__) && !defined(__loongarch64)
 static JitGlobalContext gGlobalContext;
 #endif
 
@@ -269,7 +269,7 @@ Java_io_questdb_jit_FiltersCompiler_compileFunction(JNIEnv *e,
                                                     jlong filterSize,
                                                     jint options,
                                                     jobject error) {
-#ifndef __aarch64__
+#if !defined(__aarch64__) && !defined(__loongarch64)
 
     auto size = static_cast<size_t>(filterSize) / sizeof(instruction_t);
     if (filterAddress <= 0 || size <= 0) {
@@ -326,7 +326,7 @@ Java_io_questdb_jit_FiltersCompiler_compileFunction(JNIEnv *e,
 
 JNIEXPORT void JNICALL
 Java_io_questdb_jit_FiltersCompiler_freeFunction(JNIEnv *e, jclass cl, jlong fnAddress) {
-#ifndef __aarch64__
+#if !defined(__aarch64__) && !defined(__loongarch64)
     auto fn = reinterpret_cast<void *>(fnAddress);
     gGlobalContext.rt.release(fn);
 #endif
@@ -342,7 +342,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_jit_FiltersCompiler_callFunction(JNIEnv 
                                                                          jlong rowsAddress,
                                                                          jlong rowsSize,
                                                                          jlong rowsStartOffset) {
-#ifndef __aarch64__
+#if !defined(__aarch64__) && !defined(__loongarch64)
     auto fn = reinterpret_cast<CompiledFn>(fnAddress);
     return fn(reinterpret_cast<int64_t *>(colsAddress),
               colsSize,

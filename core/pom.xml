@@ -514,6 +514,20 @@
             </properties>
         </profile>
         <profile>
+            <id>platform-linux-loongarch64</id>
+            <activation>
+                <os>
+                    <family>unix</family>
+                    <arch>loongarch64</arch>
+                </os>
+            </activation>
+            <properties>
+                <archive.name>${project.version}-rt-linux-loongarch64</archive.name>
+                <runtime.name>questdb-${project.version}-rt-linux-loongarch64</runtime.name>
+                <runtime.assembly>src/main/assembly/linux-runtime.xml</runtime.assembly>
+            </properties>
+        </profile>
+        <profile>
             <id>platform-osx-amd64</id>
             <activation>
                 <os>

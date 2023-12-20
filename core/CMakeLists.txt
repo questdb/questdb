@@ -100,6 +100,9 @@ elseif (UNIX)
         if (CMAKE_SYSTEM_PROCESSOR MATCHES "^aarch64")
             set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/armlinux)
             set(AARCH64 1)
+        elseif (CMAKE_SYSTEM_PROCESSOR MATCHES "^loongarch64")
+            set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/loongarch64linux)
+            set(LOONGARCH64 1)
         else ()
             set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/linux)
         endif ()
@@ -253,7 +256,34 @@ if (AARCH64)
     target_compile_options(questdb PRIVATE
             "$<$<CONFIG:DEBUG>:${DEBUG_OPTIONS}>"
             "$<$<CONFIG:RELEASE>:${RELEASE_OPTIONS}>")
+elseif (LOONGARCH64)
 
+    add_compile_definitions(__loongarch64)
+
+    ## on LOONGARCH64 we use vanilla arithmetic functions for now
+    set(
+            LOONGARCH64_FILES
+            src/main/c/share/rosti.cpp
+            src/main/c/loongarch64/vect.cpp
+            src/main/c/share/vec_int_key_agg.cpp
+            src/main/c/share/vec_agg_vanilla.cpp
+            src/main/c/share/ooo_dispatch_vanilla.cpp
+            src/main/c/share/geohash_dispatch_vanilla.cpp
+    )
+
+    add_library(questdb-loongarch64 OBJECT ${LOONGARCH64_FILES})
+    target_compile_options(questdb-loongarch64 PRIVATE "-fPIC"
+            "$<$<CONFIG:DEBUG>:${DEBUG_OPTIONS}>"
+            "$<$<CONFIG:RELEASE>:${RELEASE_OPTIONS}>")
+
+    target_link_libraries(
+            questdb
+            questdb-loongarch64
+    )
+
+    target_compile_options(questdb PRIVATE
+            "$<$<CONFIG:DEBUG>:${DEBUG_OPTIONS}>"
+            "$<$<CONFIG:RELEASE>:${RELEASE_OPTIONS}>")
 else ()
 
     #assembler subroutines by Agner Fog

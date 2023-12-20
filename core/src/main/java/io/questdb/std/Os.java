@@ -38,6 +38,7 @@ public final class Os {
     public static final int FREEBSD = 5;
     public static final int LINUX_AMD64 = 2;
     public static final int LINUX_ARM64 = 4;
+    public static final int LINUX_LOONGARCH64 = 8;
     public static final int OSX_AMD64 = 1;
     public static final int OSX_ARM64 = 6;
     public static final long PARK_NANOS_MAX = 5 * 1_000_000_000L;
@@ -130,7 +131,7 @@ public final class Os {
     }
 
     public static boolean isLinux() {
-        return type == LINUX_AMD64 || type == LINUX_ARM64;
+        return type == LINUX_AMD64 || type == LINUX_ARM64 || type == LINUX_LOONGARCH64;
     }
 
     public static boolean isOSX() {
@@ -226,6 +227,9 @@ public final class Os {
                 if ("aarch64".equals(System.getProperty("os.arch"))) {
                     type = LINUX_ARM64;
                     loadLib("/io/questdb/bin/armlinux/libquestdb.so");
+                } else if ("loongarch64".equals(System.getProperty("os.arch"))) {
+                    type = LINUX_LOONGARCH64;
+                    loadLib("/io/questdb/bin/loongarch64linux/libquestdb.so");
                 } else {
                     type = LINUX_AMD64;
                     loadLib("/io/questdb/bin/linux/libquestdb.so");

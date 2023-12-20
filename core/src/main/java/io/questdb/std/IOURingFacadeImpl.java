@@ -98,7 +98,7 @@ public class IOURingFacadeImpl implements IOURingFacade {
     }
 
     static {
-        if (Os.type != Os.LINUX_AMD64 && Os.type != Os.LINUX_ARM64) {
+        if (Os.type != Os.LINUX_AMD64 && Os.type != Os.LINUX_ARM64 && Os.type != Os.LINUX_LOONGARCH64) {
             available = false;
         } else {
             String kernelVersion = IOUringAccessor.kernelVersion();
