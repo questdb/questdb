@@ -254,9 +254,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
                     srcRecord.copyToKey(destKey);
                     MapValue destValue = destKey.createValue();
                     MapValue srcValue = srcRecord.getValue();
-                    for (int j = 0, m = groupByFunctions.size(); j < m; j++) {
-                        groupByFunctions.getQuick(j).merge(destValue, srcValue);
-                    }
+                    functionUpdater.merge(destValue, srcValue);
                 }
             }
             srcMap.close();

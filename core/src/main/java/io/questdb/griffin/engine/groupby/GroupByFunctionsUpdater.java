@@ -31,6 +31,8 @@ import io.questdb.std.ObjList;
 
 public interface GroupByFunctionsUpdater {
 
+    void merge(MapValue destValue, MapValue srcValue);
+
     void setFunctions(ObjList<GroupByFunction> groupByFunctions);
 
     void updateEmpty(MapValue value);

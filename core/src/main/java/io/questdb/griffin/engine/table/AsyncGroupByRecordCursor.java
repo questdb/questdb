@@ -36,6 +36,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.log.Log;
@@ -225,6 +226,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
 
     private Map mergeNonShardedMap(AsyncGroupByAtom atom) {
         final Map destMap = atom.getOwnerParticle().getMap();
+        final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater();
         for (int i = 0, n = atom.getPerWorkerParticles().size(); i < n; i++) {
             final Map srcMap = atom.getPerWorkerParticles().getQuick(i).getMap();
             if (srcMap.size() > 0) {
@@ -235,9 +237,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                     srcRecord.copyToKey(destKey);
                     MapValue destValue = destKey.createValue();
                     MapValue srcValue = srcRecord.getValue();
-                    for (int j = 0, m = groupByFunctions.size(); j < m; j++) {
-                        groupByFunctions.getQuick(j).merge(destValue, srcValue);
-                    }
+                    functionUpdater.merge(destValue, srcValue);
                 }
             }
         }
