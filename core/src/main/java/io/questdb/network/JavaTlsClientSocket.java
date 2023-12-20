@@ -353,6 +353,16 @@ public final class JavaTlsClientSocket implements Socket {
 
     @Override
     public boolean wantsTlsRead() {
+        // Ops, we cannot tell if we want to read from a network socket. How is that possible?
+        // The problem is that we don't know if we have enough data in our internal buffer to unwrap.
+        // We can only tell when we try to unwrap it. It could be we have *some* data, but they are not enough to unwrap
+        // a single TLS record. In this case we need to read more data from the socket.
+        // Maybe you are asking: Cannot we simply always return true? No, we cannot. If we return true, then the
+        // event loop will wait until there is data to read from the socket. But maybe we do have a full TLS record in
+        // the buffer and we can unwrap it. In this case we don't want to wait for socket ot have more data to be
+        // available for reading.
+        // So it's better to pretend we never want to read and the caller simple calls recv(). If recv()
+        // returns 0 then we know there is not enough data available and we need to wait for socket to have more data.
         return false;
     }
 
