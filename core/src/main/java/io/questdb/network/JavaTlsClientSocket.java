@@ -187,9 +187,6 @@ public final class JavaTlsClientSocket implements Socket {
                         }
                         return plainTextReadBytesProduced;
                     case OK:
-                        if (result.getHandshakeStatus() == SSLEngineResult.HandshakeStatus.NEED_TASK || result.getHandshakeStatus() == SSLEngineResult.HandshakeStatus.NEED_WRAP) {
-                            return plainTextReadBytesProduced;
-                        }
                         break;
                     case CLOSED:
                         throw new HttpClientException("server closed connection unexpectedly");
@@ -263,21 +260,24 @@ public final class JavaTlsClientSocket implements Socket {
         try {
             this.sslEngine = createSslEngine();
             this.sslEngine.beginHandshake();
-            SSLEngineResult.HandshakeStatus handshakeStatus;
-            while ((handshakeStatus = sslEngine.getHandshakeStatus()) != SSLEngineResult.HandshakeStatus.NOT_HANDSHAKING) {
+            SSLEngineResult.HandshakeStatus handshakeStatus = sslEngine.getHandshakeStatus();
+            while (handshakeStatus != SSLEngineResult.HandshakeStatus.FINISHED) {
                 switch (handshakeStatus) {
                     case NEED_TASK:
                         Runnable task;
                         while ((task = sslEngine.getDelegatedTask()) != null) {
                             task.run();
                         }
+                        handshakeStatus = sslEngine.getHandshakeStatus();
                         break;
-                    case NEED_WRAP:
+                    case NEED_WRAP: {
                         SSLEngineResult result = sslEngine.wrap(wrapInputBuffer, wrapOutputBuffer);
+                        handshakeStatus = result.getHandshakeStatus();
                         switch (result.getStatus()) {
                             case BUFFER_UNDERFLOW:
+                                throw new AssertionError("buffer underflow, this should not happen. please report as a bug");
                             case BUFFER_OVERFLOW:
-                                throw new AssertionError("should not happen, report as bug");
+                                throw new AssertionError("buffer overflow, this should not happen, please report as a bug");
                             case OK:
                                 // wrapOutputBuffer: write mode
                                 int written = 0;
@@ -296,14 +296,29 @@ public final class JavaTlsClientSocket implements Socket {
                                 return -1;
                         }
                         break;
-                    case NEED_UNWRAP:
-                        int n = recv(0, 0);
+                    }
+                    case NEED_UNWRAP: {
+                        int n = readFromSocket();
                         if (n < 0) {
                             return n;
                         }
-                        break;
-                    case FINISHED:
-                        break;
+                        SSLEngineResult result = sslEngine.unwrap(unwrapInputBuffer, unwrapOutputBuffer);
+                        handshakeStatus = result.getHandshakeStatus();
+                        switch (result.getStatus()) {
+                            case BUFFER_UNDERFLOW:
+                                // we need to receive more data from a socket, let's try again
+                                break;
+                            case BUFFER_OVERFLOW:
+                                throw new AssertionError("buffer overflow, this should not happen, please report as a bug");
+                            case OK:
+                                // good, let's see what we need to do next
+                                break;
+                            case CLOSED:
+                                log.error().$("server closed connection unexpectedly").$();
+                                return -1;
+                        }
+                    }
+                    break;
                 }
             }
             state = STATE_HANDSHAKE_COMPLETED;
