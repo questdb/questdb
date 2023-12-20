@@ -435,6 +435,14 @@ public class ParallelGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelMultiKeyGroupByWithTooStrictFilter() throws Exception {
+        testParallelMultiKeyGroupBy(
+                "SELECT key1, key2, avg(value), sum(colTop) FROM tab WHERE value < 0 ORDER BY key1, key2",
+                "key1\tkey2\tavg\tsum\n"
+        );
+    }
+
+    @Test
     public void testParallelNonKeyedGroupBy() throws Exception {
         testParallelNonKeyedGroupBy(
                 "SELECT vwap(price, quantity), sum(colTop) FROM tab",
@@ -529,6 +537,15 @@ public class ParallelGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelNonKeyedGroupByWithFilter() throws Exception {
+        testParallelNonKeyedGroupBy(
+                "SELECT vwap(price, quantity), sum(colTop) FROM tab WHERE quantity < 100",
+                "vwap\tsum\n" +
+                        "1981.006198090988\t3675.0\n"
+        );
+    }
+
+    @Test
     public void testParallelNonKeyedGroupByWithNestedFilter() throws Exception {
         testParallelNonKeyedGroupBy(
                 "SELECT vwap(p, q), sum(ct) " +
@@ -553,6 +570,15 @@ public class ParallelGroupByTest extends AbstractCairoTest {
                 "SELECT vwap(price, quantity), sum(colTop) FROM tab WHERE key = 'k1'",
                 "vwap\tsum\n" +
                         "2682.7321472695826\t1638800.0\n"
+        );
+    }
+
+    @Test
+    public void testParallelNonKeyedGroupByWithTooStrictFilter() throws Exception {
+        testParallelNonKeyedGroupBy(
+                "SELECT vwap(price, quantity), sum(colTop) FROM tab WHERE quantity < 0",
+                "vwap\tsum\n" +
+                        "NaN\tNaN\n"
         );
     }
 
@@ -678,6 +704,14 @@ public class ParallelGroupByTest extends AbstractCairoTest {
                         "k2\t46.31818181818182\t387.0\t22\n" +
                         "k3\t47.31818181818182\t393.0\t22\n" +
                         "k4\t48.31818181818182\t399.0\t22\n"
+        );
+    }
+
+    @Test
+    public void testParallelSingleKeyGroupByWithTooStrictFilter() throws Exception {
+        testParallelStringKeyGroupBy(
+                "SELECT key, avg(value), sum(colTop), count() FROM tab WHERE value < 0 ORDER BY key",
+                "key\tavg\tsum\tcount\n"
         );
     }
 
