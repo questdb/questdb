@@ -28,6 +28,7 @@ import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.log.Log;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 
 import javax.net.ssl.*;
 import java.lang.reflect.Field;
@@ -145,14 +146,13 @@ public final class JavaTlsClientSocket implements Socket {
         resetBufferToPointer(unwrapOutputBuffer, bufferPtr, bufferLen);
         unwrapOutputBuffer.position(0);
 
-        // first, try to read whatever we have in the output buffer
-        int plainTextReadBytes = 0;
 
         try {
+            int plainTextReadBytes = 0;
             for (; ; ) {
                 // unwrap input buffer: write mode
                 // unwrap output buffer: write mode
-                int n = readFromUpstream();
+                int n = readFromSocket();
                 if (n < 0) {
                     return n;
                 } else if (unwrapInputBuffer.position() == 0) {
@@ -175,8 +175,6 @@ public final class JavaTlsClientSocket implements Socket {
                         return plainTextReadBytes;
                     case BUFFER_OVERFLOW:
                         if (unwrapOutputBuffer.position() == 0) {
-                            // not even a single byte was written to the output buffer even the buffer is empty
-                            // apparently the output buffer cannot fit even a single TLS record. let's grow it and try again!
                             throw new AssertionError("output buffer to small");
                         }
                         return plainTextReadBytes;
@@ -203,31 +201,34 @@ public final class JavaTlsClientSocket implements Socket {
 
             int plainBytesConsumed = 0;
             for (; ; ) {
-
                 // try to send whatever we have in the encrypted buffer
-                int wrapOutputBufferPos = wrapOutputBuffer.position();
-                if (wrapOutputBufferPos > 0) {
+                int bytesToSend = wrapOutputBuffer.position();
+                if (bytesToSend > 0) {
                     // there are some bytes in the output buffer, let's try to send them
-                    wrapOutputBuffer.flip();
-                    int limit = wrapOutputBuffer.limit();
-                    int n = delegate.send(wrapOutputBufferPtr, limit);
+                    int n = delegate.send(wrapOutputBufferPtr, bytesToSend);
                     if (n < 0) {
                         // ops, something went wrong
                         return n;
-                    }
-                    wrapOutputBuffer.position(n);
-                    wrapOutputBuffer.compact();
-                    if (n == 0) {
-                        // we didn't manage to send anything, the socket is full, no point in trying to send more
+                    } else if (n == 0) {
+                        // we didn't manage to send anything, the network socket is full, no point in trying to send more
                         return plainBytesConsumed;
                     }
+                    int bytesRemaining = bytesToSend - n;
+                    // compact the buffer
+                    Vect.memcpy(wrapOutputBufferPtr, wrapOutputBufferPtr + n, bytesRemaining);
+                    wrapOutputBuffer.position(bytesRemaining);
+                }
+
+                if (wrapInputBuffer.remaining() == 0) {
+                    // we sent whatever we could and there is nothing left to be wrapped
+                    return plainBytesConsumed;
                 }
 
                 SSLEngineResult result = sslEngine.wrap(wrapInputBuffer, wrapOutputBuffer);
                 plainBytesConsumed += result.bytesConsumed();
                 switch (result.getStatus()) {
                     case BUFFER_UNDERFLOW:
-                        throw new AssertionError("should not happen, report as bug");
+                        throw new AssertionError("Underflow while reading a plain text. This should not happen, please report as a bug");
                     case BUFFER_OVERFLOW:
                         if (wrapOutputBuffer.position() == 0) {
                             // not even a single byte was written to the output buffer even the buffer is empty
@@ -235,13 +236,8 @@ public final class JavaTlsClientSocket implements Socket {
                             growWrapOutputBuffer();
                             break;
                         }
-                        // wrapOutputBuffer: write mode
                         break;
                     case OK:
-                        if (wrapInputBuffer.remaining() == 0) {
-                            // all sent, nothing left to be done.
-                            return plainBytesConsumed;
-                        }
                         break;
                     case CLOSED:
                         if (state != STATE_CLOSING) {
@@ -391,8 +387,7 @@ public final class JavaTlsClientSocket implements Socket {
         wrapOutputBufferPtr = expandBuffer(wrapOutputBuffer, wrapOutputBufferPtr);
     }
 
-    private int readFromUpstream() {
-        assert unwrapInputBuffer.limit() == unwrapInputBuffer.capacity();
+    private int readFromSocket() {
         int remainingLen = unwrapInputBuffer.remaining();
         if (remainingLen == 0) {
             // no point in reading if we have no space left
