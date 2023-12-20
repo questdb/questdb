@@ -28,7 +28,6 @@ import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.log.Log;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
 
 import javax.net.ssl.*;
 import java.lang.reflect.Field;
@@ -61,13 +60,12 @@ public final class JavaTlsClientSocket implements Socket {
     private static final int STATE_INITIAL = 0;
     private final Socket delegate;
     private final Log log;
+    private final ByteBuffer unwrapOutputBuffer;
     private final ByteBuffer wrapInputBuffer;
     private SSLEngine sslEngine;
     private int state = STATE_INITIAL;
     private ByteBuffer unwrapInputBuffer;
     private long unwrapInputBufferPtr;
-    private ByteBuffer unwrapOutputBuffer;
-    private long unwrapOutputBufferPtr;
     private ByteBuffer wrapOutputBuffer;
     private long wrapOutputBufferPtr;
 
@@ -78,16 +76,17 @@ public final class JavaTlsClientSocket implements Socket {
 
         // wrapInputBuffer is just a placeholder, we set the internal address, capacity and limit in send()
         this.wrapInputBuffer = ByteBuffer.allocateDirect(0);
+        // also a placeholder
+        this.unwrapOutputBuffer = ByteBuffer.allocateDirect(0);
 
         // we want to track allocated memory hence we just create dummy direct byte buffers
         // and later reset it to manually allocated memory
         this.wrapOutputBuffer = ByteBuffer.allocateDirect(0);
         this.unwrapInputBuffer = ByteBuffer.allocateDirect(0);
-        this.unwrapOutputBuffer = ByteBuffer.allocateDirect(0);
+
 
         this.wrapOutputBufferPtr = allocateMemoryAndResetBuffer(wrapOutputBuffer, initialCapacity);
         this.unwrapInputBufferPtr = allocateMemoryAndResetBuffer(unwrapInputBuffer, initialCapacity);
-        this.unwrapOutputBufferPtr = allocateMemoryAndResetBuffer(unwrapOutputBuffer, initialCapacity);
     }
 
     @Override
@@ -108,12 +107,6 @@ public final class JavaTlsClientSocket implements Socket {
         ptrToFree = unwrapInputBufferPtr;
         unwrapInputBuffer = null;
         unwrapInputBufferPtr = 0;
-        Unsafe.free(ptrToFree, capacity, MemoryTag.NATIVE_TLS_RSS);
-
-        capacity = unwrapOutputBuffer.capacity();
-        ptrToFree = unwrapOutputBufferPtr;
-        unwrapOutputBuffer = null;
-        unwrapOutputBufferPtr = 0;
         Unsafe.free(ptrToFree, capacity, MemoryTag.NATIVE_TLS_RSS);
     }
 
@@ -149,12 +142,11 @@ public final class JavaTlsClientSocket implements Socket {
         // unwrap  input buffer: write mode
         // unwrap output buffer: write mode
 
+        resetBufferToPointer(unwrapOutputBuffer, bufferPtr, bufferLen);
+        unwrapOutputBuffer.position(0);
+
         // first, try to read whatever we have in the output buffer
-        unwrapOutputBuffer.flip();
-        int plainTextReadBytes = unwrapOutputBufferToPtr(bufferPtr, bufferLen);
-        unwrapOutputBuffer.compact();
-        bufferPtr += plainTextReadBytes;
-        bufferLen -= plainTextReadBytes;
+        int plainTextReadBytes = 0;
 
         try {
             for (; ; ) {
@@ -172,6 +164,7 @@ public final class JavaTlsClientSocket implements Socket {
                 // unwrap input buffer: read mode
                 // unwrap output buffer: write mode
                 SSLEngineResult result = sslEngine.unwrap(unwrapInputBuffer, unwrapOutputBuffer);
+                plainTextReadBytes += result.bytesProduced();
                 unwrapInputBuffer.compact();
                 // unwrap input buffer: write mode
                 // unwrap output buffer: write mode
@@ -184,24 +177,10 @@ public final class JavaTlsClientSocket implements Socket {
                         if (unwrapOutputBuffer.position() == 0) {
                             // not even a single byte was written to the output buffer even the buffer is empty
                             // apparently the output buffer cannot fit even a single TLS record. let's grow it and try again!
-                            growUnwrapOutputBuffer();
-                            break;
+                            throw new AssertionError("output buffer to small");
                         }
-
-                        // ok, we have some data in the output buffer, let's return them
-                        unwrapOutputBuffer.flip();
-                        // this is the last call of unwrapOutputBufferToPtr before we return
-                        // -> we don't need to adjust bufferPtr and bufferLen
-                        plainTextReadBytes += unwrapOutputBufferToPtr(bufferPtr, bufferLen);
-                        unwrapOutputBuffer.compact();
                         return plainTextReadBytes;
                     case OK:
-                        unwrapOutputBuffer.flip();
-                        int moved = unwrapOutputBufferToPtr(bufferPtr, bufferLen);
-                        bufferPtr += moved;
-                        bufferLen -= moved;
-                        plainTextReadBytes += moved;
-                        unwrapOutputBuffer.compact();
                         if (result.getHandshakeStatus() == SSLEngineResult.HandshakeStatus.NEED_TASK || result.getHandshakeStatus() == SSLEngineResult.HandshakeStatus.NEED_WRAP) {
                             return plainTextReadBytes;
                         }
@@ -408,10 +387,6 @@ public final class JavaTlsClientSocket implements Socket {
         Unsafe.getUnsafe().putLong(buffer, CAPACITY_FIELD_OFFSET, len);
     }
 
-    private void growUnwrapOutputBuffer() {
-        unwrapOutputBufferPtr = expandBuffer(unwrapOutputBuffer, unwrapOutputBufferPtr);
-    }
-
     private void growWrapOutputBuffer() {
         wrapOutputBufferPtr = expandBuffer(wrapOutputBuffer, wrapOutputBufferPtr);
     }
@@ -435,19 +410,19 @@ public final class JavaTlsClientSocket implements Socket {
         return n;
     }
 
-    private int unwrapOutputBufferToPtr(long dstPtr, int dstLen) {
-        // assume unwrapOutputBuffer is in read mode
-
-        int oldPosition = unwrapOutputBuffer.position();
-
-        assert Unsafe.getUnsafe().getLong(unwrapOutputBufferPtr, ADDRESS_FIELD_OFFSET) == unwrapOutputBufferPtr;
-        long srcPtr = unwrapOutputBufferPtr + oldPosition;
-        int srcLen = unwrapOutputBuffer.remaining();
-        int len = Math.min(dstLen, srcLen);
-        Vect.memcpy(dstPtr, srcPtr, len);
-        unwrapOutputBuffer.position(oldPosition + len);
-        return len;
-    }
+//    private int unwrapOutputBufferToPtr(long dstPtr, int dstLen) {
+//        // assume unwrapOutputBuffer is in read mode
+//
+//        int oldPosition = unwrapOutputBuffer.position();
+//
+//        assert Unsafe.getUnsafe().getLong(unwrapOutputBufferPtr, ADDRESS_FIELD_OFFSET) == unwrapOutputBufferPtr;
+//        long srcPtr = unwrapOutputBufferPtr + oldPosition;
+//        int srcLen = unwrapOutputBuffer.remaining();
+//        int len = Math.min(dstLen, srcLen);
+//        Vect.memcpy(dstPtr, srcPtr, len);
+//        unwrapOutputBuffer.position(oldPosition + len);
+//        return len;
+//    }
 
     static {
         Field addressField;
