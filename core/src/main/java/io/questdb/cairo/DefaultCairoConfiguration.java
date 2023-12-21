@@ -299,8 +299,13 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getGroupByShardCount() {
+        return 32;
+    }
+
+    @Override
     public int getGroupByShardingThreshold() {
-        return 10000;
+        return 1000;
     }
 
     @Override
