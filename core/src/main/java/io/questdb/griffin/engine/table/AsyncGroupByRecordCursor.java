@@ -26,7 +26,9 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.map.*;
+import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapRecordCursor;
+import io.questdb.cairo.map.ShardedMapCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
@@ -250,21 +252,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater();
         for (int i = 0; i < perWorkerMapCount; i++) {
             final Map srcMap = atom.getPerWorkerParticles().getQuick(i).getMap();
-            if (srcMap.size() > 0) {
-                RecordCursor srcCursor = srcMap.getCursor();
-                MapRecord srcRecord = srcMap.getRecord();
-                while (srcCursor.hasNext()) {
-                    MapKey destKey = destMap.withKey();
-                    srcRecord.copyToKey(destKey);
-                    MapValue destValue = destKey.createValue();
-                    MapValue srcValue = srcRecord.getValue();
-                    if (destValue.isNew()) {
-                        destValue.copyFrom(srcValue);
-                    } else {
-                        functionUpdater.merge(destValue, srcValue);
-                    }
-                }
-            }
+            destMap.merge(srcMap, functionUpdater);
         }
 
         for (int i = 0; i < perWorkerMapCount; i++) {

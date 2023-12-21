@@ -28,6 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.LimitOverflowException;
+import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -86,6 +87,7 @@ public class FastMap implements Map, Reopenable {
     private final int listMemoryTag;
     private final double loadFactor;
     private final int maxResizes;
+    private final Merger mergeRef;
     private final FastMapRecord record;
     private final FastMapValue value;
     private final FastMapValue value2;
@@ -216,7 +218,13 @@ public class FastMap implements Map, Reopenable {
 
         assert keySize + valueSize <= heapLimit - heapStart : "page size is too small to fit a single key";
         cursor = new FastMapCursor(record, this);
-        key = keySize == -1 ? new VarSizeKey() : new FixedSizeKey();
+        if (keySize == -1) {
+            key = new VarSizeKey();
+            mergeRef = this::mergeVarSizeKey;
+        } else {
+            key = new FixedSizeKey();
+            mergeRef = this::mergeFixedSizeKey;
+        }
     }
 
     @Override
@@ -268,6 +276,15 @@ public class FastMap implements Map, Reopenable {
 
     public int getValueColumnCount() {
         return valueColumnCount;
+    }
+
+    @Override
+    public void merge(Map srcMap, GroupByFunctionsUpdater mergeFunc) {
+        assert this != srcMap;
+        if (srcMap.size() == 0) {
+            return;
+        }
+        mergeRef.merge((FastMap) srcMap, mergeFunc);
     }
 
     public void reopen() {
@@ -345,6 +362,64 @@ public class FastMap implements Map, Reopenable {
         }
         size++;
         return valueOf(keyWriter.startAddress, keyWriter.appendAddress, true, value);
+    }
+
+    private void mergeFixedSizeKey(FastMap srcMap, GroupByFunctionsUpdater mergeFunc) {
+        assert keySize > 0;
+        setKeyCapacity(size + srcMap.size);
+
+        OUTER:
+        for (int i = 0, k = (int) (srcMap.offsets.size() / 2); i < k; i++) {
+            long offset = getOffset(srcMap.offsets, i);
+            if (offset < 0) {
+                continue;
+            }
+
+            long srcStartAddress = srcMap.heapStart + offset;
+            int hashCode = getHashCode(srcMap.offsets, i);
+            int index = hashCode & mask;
+            long destOffset;
+            while ((destOffset = getOffset(offsets, index)) > -1) {
+                if (hashCode == getHashCode(offsets, index) && Vect.memeq(heapStart + destOffset, srcStartAddress, keySize)) {
+                    // Match found, merge values.
+                    mergeFunc.merge(
+                            valueAt(heapStart + destOffset),
+                            srcMap.valueAt(srcStartAddress)
+                    );
+                    continue OUTER;
+                }
+                index = (index + 1) & mask;
+            }
+
+            assert free > 0;
+            int len = keySize + valueSize;
+            if (kPos + len > heapLimit) {
+                resize(len);
+            }
+            Vect.memcpy(kPos, srcStartAddress, len);
+            setOffset(offsets, index, kPos - heapStart);
+            setHashCode(offsets, index, hashCode);
+            kPos = (kPos + len + 7) & ~0x7;
+            free--;
+            size++;
+        }
+    }
+
+    private void mergeVarSizeKey(FastMap srcMap, GroupByFunctionsUpdater mergeFunc) {
+        assert keySize == -1;
+        RecordCursor srcCursor = srcMap.getCursor();
+        MapRecord srcRecord = srcMap.getRecord();
+        while (srcCursor.hasNext()) {
+            MapKey destKey = withKey();
+            srcRecord.copyToKey(destKey);
+            MapValue destValue = destKey.createValue();
+            MapValue srcValue = srcRecord.getValue();
+            if (destValue.isNew()) {
+                destValue.copyFrom(srcValue);
+            } else {
+                mergeFunc.merge(destValue, srcValue);
+            }
+        }
     }
 
     private FastMapValue probe0(BaseKey keyWriter, int index, int hashCode, int keySize, FastMapValue value) {
@@ -442,6 +517,11 @@ public class FastMap implements Map, Reopenable {
 
     int valueSize() {
         return valueSize;
+    }
+
+    @FunctionalInterface
+    private interface Merger {
+        void merge(FastMap srcMap, GroupByFunctionsUpdater mergeFunc);
     }
 
     abstract class BaseKey implements MapKey {

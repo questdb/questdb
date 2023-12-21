@@ -25,6 +25,7 @@
 package io.questdb.cairo.map;
 
 import io.questdb.cairo.Reopenable;
+import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.std.Mutable;
 
 import java.io.Closeable;
@@ -37,6 +38,10 @@ public interface Map extends Mutable, Closeable, Reopenable {
     MapRecordCursor getCursor();
 
     MapRecord getRecord();
+
+    default void merge(Map srcMap, GroupByFunctionsUpdater mergeFunc) {
+        throw new UnsupportedOperationException();
+    }
 
     void restoreInitialCapacity();
 
