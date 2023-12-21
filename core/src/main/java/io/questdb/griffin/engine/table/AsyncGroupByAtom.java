@@ -47,7 +47,6 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     private final CairoConfiguration configuration;
     private final Function filter;
     private final GroupByFunctionsUpdater functionUpdater;
-    private final ObjList<GroupByFunction> groupByFunctions;
     private final ObjList<Function> keyFunctions;
     private final ColumnTypes keyTypes;
     private final RecordSink ownerMapSink;
@@ -86,7 +85,6 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             this.valueTypes = new ArrayColumnTypes().addAll(valueTypes);
             this.filter = filter;
             this.perWorkerFilters = perWorkerFilters;
-            this.groupByFunctions = groupByFunctions;
             this.keyFunctions = keyFunctions;
             this.perWorkerKeyFunctions = perWorkerKeyFunctions;
             functionUpdater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);

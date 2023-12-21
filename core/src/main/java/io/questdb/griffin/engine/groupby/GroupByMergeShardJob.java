@@ -52,7 +52,6 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
 
         try {
             if (circuitBreaker.checkIfTripped()) {
-                doneLatch.countDown();
                 return;
             }
             atom.mergeShard(shardIndex);
