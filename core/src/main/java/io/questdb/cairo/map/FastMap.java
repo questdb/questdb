@@ -495,16 +495,11 @@ public class FastMap implements Map, Reopenable {
         private MapValue createValue(int keySize, int hashCode) {
             int index = hashCode & mask;
             long offset = getOffset(offsets, index);
-            if (offset > -1 && hashCode == getHashCode(offsets, index) && eq(offset)) {
-                long startAddress = heapStart + offset;
-                return valueOf(startAddress, startAddress + keyOffset + keySize, false, value);
-            }
-            return createValueSlow(value, offset, index, hashCode, keySize);
-        }
-
-        private FastMapValue createValueSlow(FastMapValue value, long offset, int index, int hashCode, int keySize) {
             if (offset < 0) {
                 return asNew(this, index, hashCode, value);
+            } else if (hashCode == getHashCode(offsets, index) && eq(offset)) {
+                long startAddress = heapStart + offset;
+                return valueOf(startAddress, startAddress + keyOffset + keySize, false, value);
             }
             return probe0(this, index, hashCode, keySize, value);
         }
