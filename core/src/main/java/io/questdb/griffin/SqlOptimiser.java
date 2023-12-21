@@ -5071,7 +5071,6 @@ public class SqlOptimiser implements Mutable {
         QueryModel rewrittenModel = model;
         try {
             rewrittenModel = bubbleUpOrderByAndLimitFromUnion(rewrittenModel);
-            //extractCorrelatedQueriesAsJoins(model);
             optimiseExpressionModels(rewrittenModel, sqlExecutionContext, sqlParserCallback);
             enumerateTableColumns(rewrittenModel, sqlExecutionContext, sqlParserCallback);
             rewriteTopLevelLiteralsToFunctions(rewrittenModel);
