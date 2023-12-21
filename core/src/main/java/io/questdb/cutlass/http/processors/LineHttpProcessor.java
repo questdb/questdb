@@ -165,7 +165,7 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
         state = LV.get(context);
         assert state != null;
-        
+
         switch (state.getSendStatus()) {
             case HEADER:
                 context.resumeResponseSend();

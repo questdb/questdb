@@ -28,9 +28,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitFailedException;
 import io.questdb.cairo.SecurityContext;
-import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cutlass.http.ConnectionAware;
-import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.line.tcp.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -69,7 +67,6 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         assert recvBufSize > 0;
         this.recvBufSize = recvBufSize;
 
-        assert HttpServerConfiguration.MIN_SEND_BUFFER_SIZE > 100;
         // Response is measured in bytes some error messages can have non-ascii characters
         // approximate 1.5 bytes per character
         this.maxResponseErrorMessageLength = (int) ((maxResponseContentLength - 100) / 1.5);
@@ -77,7 +74,8 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         this.recvBufEnd = this.recvBufPos + recvBufSize;
         this.parser = new LineTcpParser(configuration.isStringAsTagSupported(), configuration.isSymbolAsFieldSupported());
         this.parser.of(buffer);
-        this.appender = new IlpWalAppender(configuration.autoCreateNewColumns(),
+        this.appender = new IlpWalAppender(
+                configuration.autoCreateNewColumns(),
                 configuration.isStringToCharCastAllowed(),
                 configuration.getTimestampAdapter(),
                 engine.getConfiguration().getMaxFileNameLength(),
@@ -166,7 +164,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
     }
 
     public void onMessageComplete() {
-        if (currentStatus == Status.NEEDS_REED) {
+        if (currentStatus == Status.NEEDS_READ) {
             // Last line did not have \n as a last character
             // this is allowed by the protocol, no error in Influx
             // NEEDS_REED status means that there is still a buffer space to read to.
@@ -209,7 +207,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
     private Status appendMeasurement() throws IlpTudCache.TableCreateException {
         WalTableUpdateDetails tud = this.ilpTudCache.getTableUpdateDetails(securityContext, parser, symbolCachePool);
         try {
-            appender.appendToWal(AllowAllSecurityContext.INSTANCE, parser, tud);
+            appender.appendToWal(securityContext, parser, tud);
             return Status.OK;
         } catch (IlpException e) {
             errorLine = ++line;
@@ -258,6 +256,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
 
     private Status handleCommitError(Throwable ex) {
         errorId = ERROR_COUNT.incrementAndGet();
+        errorLine = -1;
         LOG.critical()
                 .$('[').$(fd).$("] could not commit [table=").$(parser.getMeasurementName())
                 .$(", errorId=").$(ERROR_ID).$('-').$(errorId)
@@ -268,11 +267,11 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         if (ex instanceof CairoException) {
             CairoException exception = (CairoException) ex;
             error.put(", errno: ").put(exception.getErrno()).put(", error: ").put(exception.getFlyweightMessage());
+            return exception.isAuthorizationError() ? Status.SECURITY_ERROR : Status.INTERNAL_ERROR;
         } else {
             error.put(", error: ").put(ex.getClass().getCanonicalName());
+            return Status.INTERNAL_ERROR;
         }
-        errorLine = -1;
-        return Status.INTERNAL_ERROR;
     }
 
     private Status handleLineError(LineTcpParser parser) {
@@ -404,7 +403,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
                             error.put("unable to read data: ILP line does not fit QuestDB ILP buffer size");
                             return Status.MESSAGE_TOO_LARGE;
                         }
-                        return Status.NEEDS_REED;
+                        return Status.NEEDS_READ;
                     }
                 }
             } catch (IlpTudCache.TableCreateException parseException) {
@@ -430,14 +429,14 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
     }
 
     private boolean stopParse() {
-        return currentStatus != Status.OK && currentStatus != Status.NEEDS_REED;
+        return currentStatus != Status.OK && currentStatus != Status.NEEDS_READ;
     }
 
     public enum Status {
         OK(null, 204),
         ENCODING_NOT_SUPPORTED("not supported", 415),
         PRECISION_NOT_SUPPORTED("not supported", 400),
-        NEEDS_REED("invalid", 400),
+        NEEDS_READ("invalid", 400),
         PARSE_ERROR("invalid", 400),
         APPEND_ERROR("invalid", 400),
         METHOD_NOT_SUPPORTED("invalid", 404),
