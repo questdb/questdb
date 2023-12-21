@@ -2565,10 +2565,10 @@ public class SqlOptimiser implements Mutable {
             throw SqlException.$(tableNamePosition, "table directory is of unknown format [table=").put(tableName).put(']');
         }
 
-        if (model.isUpdate() && !executionContext.isWalApplication()) {
+        if (model.isUpdate()) {
             assert lo == 0;
             try {
-                try (TableRecordMetadata metadata = executionContext.getCairoEngine().getSequencerMetadata(tableToken)) {
+                try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(tableToken, model.getMetadataVersion())) {
                     enumerateColumns(model, metadata);
                 }
             } catch (CairoException e) {
@@ -2822,7 +2822,7 @@ public class SqlOptimiser implements Mutable {
                 }
                 break;
             default:
-                // sub-query ordering is not needed but we'd like to propagate order by advice (if possible)
+                // sub-query ordering is not needed, but we'd like to propagate order by advice (if possible)
                 model.getOrderBy().clear();
                 if (model.getSampleBy() != null) {
                     orderByMnemonic = OrderByMnemonic.ORDER_BY_REQUIRED;

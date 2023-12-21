@@ -25,7 +25,7 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.mp.Job;
-import io.questdb.std.ObjList;
+import io.questdb.std.Pool;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8String;
@@ -35,11 +35,9 @@ public interface NetworkIOJob extends Job, QuietCloseable {
 
     TableUpdateDetails getLocalTableDetails(DirectUtf8Sequence tableNameUtf8);
 
-    ObjList<SymbolCache> getUnusedSymbolCaches();
+    Pool<SymbolCache> getSymbolCachePool();
 
     int getWorkerId();
 
     void releaseWalTableDetails();
-
-    TableUpdateDetails removeTableUpdateDetails(DirectUtf8Sequence tableNameUtf8);
 }

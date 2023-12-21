@@ -196,7 +196,7 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
 
     @Test
     public void testNoFieldsAndNotTags() {
-        assertThat("measurement 10000--ERROR=INCOMPLETE_FIELD--", "measurement 10000\n"); // One space char
+        assertThat("measurement 10000--ERROR=MISSING_FIELD_VALUE--", "measurement 10000\n"); // One space char
         assertThat("measurement  10000--ERROR=NO_FIELDS--", "measurement  10000\n"); // Two space chars
     }
 

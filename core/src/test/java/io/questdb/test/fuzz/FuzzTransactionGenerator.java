@@ -28,6 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 
@@ -35,8 +36,8 @@ public class FuzzTransactionGenerator {
     private static final int MAX_COLUMNS = 200;
 
     public static ObjList<FuzzTransaction> generateSet(
-            RecordMetadata sequencerMetadata,
-            RecordMetadata readerMetadata,
+            TableMetadata sequencerMetadata,
+            TableMetadata tableMetadata,
             Rnd rnd,
             long minTimestamp,
             long maxTimestamp,
@@ -60,7 +61,7 @@ public class FuzzTransactionGenerator {
     ) {
         ObjList<FuzzTransaction> transactionList = new ObjList<>();
         int waitBarrierVersion = 0;
-        RecordMetadata meta = deepMetadataCopyOf(sequencerMetadata, readerMetadata);
+        RecordMetadata meta = deepMetadataCopyOf(sequencerMetadata, tableMetadata);
 
         long lastTimestamp = minTimestamp;
 
@@ -85,7 +86,7 @@ public class FuzzTransactionGenerator {
 
         for (int i = 0; i < transactionCount; i++) {
             if (i == dropIteration) {
-                generateTableDropCreate(transactionList, metaVersion, waitBarrierVersion++, meta);
+                generateTableDropCreate(transactionList, metaVersion, waitBarrierVersion++);
                 metaVersion = 0;
                 continue;
             }
@@ -185,8 +186,8 @@ public class FuzzTransactionGenerator {
         to.setTimestampIndex(from.getTimestampIndex());
     }
 
-    private static GenericRecordMetadata deepMetadataCopyOf(RecordMetadata sequencerMetadata, RecordMetadata readerMetadata) {
-        if (sequencerMetadata != null && readerMetadata != null) {
+    private static GenericRecordMetadata deepMetadataCopyOf(TableMetadata sequencerMetadata, TableMetadata tableMetadata) {
+        if (sequencerMetadata != null && tableMetadata != null) {
             GenericRecordMetadata metadata = new GenericRecordMetadata();
             for (int i = 0, n = sequencerMetadata.getColumnCount(); i < n; i++) {
                 metadata.add(
@@ -198,7 +199,7 @@ public class FuzzTransactionGenerator {
                                 sequencerMetadata.isSymbolTableStatic(i),
                                 sequencerMetadata.getMetadata(i),
                                 sequencerMetadata.getWriterIndex(i),
-                                readerMetadata.getColumnCount() > i && readerMetadata.isDedupKey(i)
+                                tableMetadata.getColumnCount() > i && tableMetadata.isDedupKey(i)
                         )
                 );
             }
@@ -260,7 +261,7 @@ public class FuzzTransactionGenerator {
         return null;
     }
 
-    private static void generateTableDropCreate(ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion, RecordMetadata meta) {
+    private static void generateTableDropCreate(ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion) {
         FuzzTransaction transaction = new FuzzTransaction();
         transaction.waitBarrierVersion = waitBarrierVersion;
         transaction.structureVersion = metadataVersion;

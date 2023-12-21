@@ -116,7 +116,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             ObjList<FuzzTransaction> transactions = new ObjList<>();
             long initialDelta = Timestamps.MINUTE_MICROS * 15;
             int rndCount = rnd.nextInt(10);
-            List<String> distinctSymbols = Arrays.stream(generateSymbols(rnd, 1 + rndCount, 4, tableName)).distinct()
+            List<String> distinctSymbols = Arrays.stream(generateSymbols(rnd, 1 + rndCount, rnd.nextPositiveInt() % 16, tableName)).distinct()
                     .collect(Collectors.toList());
             String[] symbols = new String[distinctSymbols.size()];
             distinctSymbols.toArray(symbols);

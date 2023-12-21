@@ -711,7 +711,8 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
                     createTableX(tableName, TableHeader);
                     try {
                         ddl("alter table " + tableName + " drop partition where timestamp > 0", sqlExecutionContext);
-                    } catch (SqlException e) {
+                        Assert.fail();
+                    } catch (CairoException e) {
                         Assert.assertEquals(("alter table " + tableName + " drop partition where ").length(), e.getPosition());
                         TestUtils.assertContains(e.getFlyweightMessage(), "no partitions matched WHERE clause");
                     }

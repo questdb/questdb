@@ -22,24 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.pool;
+package io.questdb.std;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.TableToken;
+public interface Pool<T> {
+    T pop();
 
-public class TableReaderMetadataPool extends AbstractMultiTenantPool<MetadataPoolTenant> {
-
-    public TableReaderMetadataPool(CairoConfiguration configuration) {
-        super(configuration, configuration.getMetadataPoolCapacity(), configuration.getInactiveReaderTTL());
-    }
-
-    @Override
-    protected byte getListenerSrc() {
-        return PoolListener.SRC_TABLE_READER_METADATA;
-    }
-
-    @Override
-    protected MetadataPoolTenant newTenant(TableToken tableToken, Entry<MetadataPoolTenant> entry, int index) {
-        return new TableReaderMetadataTenantImpl(this, entry, index, tableToken, false);
-    }
+    boolean push(T obj);
 }

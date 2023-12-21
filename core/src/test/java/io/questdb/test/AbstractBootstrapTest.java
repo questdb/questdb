@@ -87,14 +87,14 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
         });
     }
 
-    public static ServerMain startWithEnvVariables(String... envs) {
+    public static TestServerMain startWithEnvVariables(String... envs) {
         assert envs.length % 2 == 0;
 
         Map<String, String> envMap = new HashMap<>();
         for (int i = 0; i < envs.length; i += 2) {
             envMap.put(envs[i], envs[i + 1]);
         }
-        ServerMain serverMain = new ServerMain(newBootstrapWithEnvVariables(envMap));
+        TestServerMain serverMain = new TestServerMain(newBootstrapWithEnvVariables(envMap));
         serverMain.start();
         return serverMain;
     }
@@ -217,6 +217,8 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
             writer.println("");
         }
 
+        // note: nice try, but this is not used!
+        // at this point LogFactory has been initialized already
         // logs
         file = confPath + Files.SEPARATOR + "log.conf";
         System.setProperty("out", file);

@@ -38,7 +38,7 @@ public class Table2Ilp {
      *                             [-sts <timestamp_column>] [-sym <symbol_columns>] [-dauth <ilp_auth_key:ilp_auth_token>] [-dtls]
      */
     public static void main(String[] args) {
-        LogFactory.configureSync();
+        LogFactory.enableGuaranteedLogging();
 
         Table2IlpParams params = Table2IlpParams.parse(args);
         if (!params.isValid()) {

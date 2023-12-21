@@ -22,17 +22,8 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cutlass.http;
 
-import io.questdb.cairo.sql.TableRecordMetadata;
-import io.questdb.cairo.wal.seq.SequencerMetadata;
-
-import java.io.Closeable;
-
-public interface MetadataFactory extends Closeable {
-    SequencerMetadata getSequencerMetadata();
-
-    TableRecordMetadata openTableReaderMetadata(TableReader tableReader);
-
-    TableRecordMetadata openTableReaderMetadata(String tableName);
+public interface ConnectionAware {
+    void onDisconnected();
 }
