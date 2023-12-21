@@ -177,6 +177,8 @@ public interface CairoConfiguration {
 
     int getGroupByPoolCapacity();
 
+    int getGroupByShardCount();
+
     int getGroupByShardingThreshold();
 
     @NotNull

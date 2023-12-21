@@ -57,7 +57,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     private final ObjList<RecordSink> perWorkerMapSinks;
     private final ObjList<Particle> perWorkerParticles;
     private final int shardCount;
-    private final int shardMask;
+    private final int shardCountShr;
     private final int shardingThreshold;
     private final ColumnTypes valueTypes;
     private volatile boolean sharded;
@@ -90,8 +90,8 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             functionUpdater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
             perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
 
-            shardCount = Math.min(Numbers.ceilPow2(workerCount), MAX_SHARDS);
-            shardMask = shardCount - 1;
+            shardCount = Math.min(configuration.getGroupByShardCount(), MAX_SHARDS);
+            shardCountShr = 32 - Numbers.msb(shardCount);
             ownerParticle = new Particle();
             perWorkerParticles = new ObjList<>(workerCount);
             for (int i = 0; i < workerCount; i++) {
@@ -255,6 +255,11 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
                     functionUpdater.merge(destValue, srcValue);
                 }
             }
+        }
+
+        for (int i = 0, n = perWorkerParticles.size(); i < n; i++) {
+            final Particle srcParticle = perWorkerParticles.getQuick(i);
+            final Map srcMap = srcParticle.getShardMaps().getQuick(shardIndex);
             srcMap.close();
         }
     }
@@ -298,7 +303,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     }
 
     private int shardIndex(int hashCode) {
-        return (hashCode >>> 24) & shardMask;
+        return hashCode >>> shardCountShr;
     }
 
     public class Particle implements Reopenable, QuietCloseable {
