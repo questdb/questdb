@@ -111,7 +111,7 @@ public class O3MaxLagFuzzTest extends AbstractO3Test {
         int rowCount = Math.max(1, txCount * rnd.nextInt(200) * 1000);
         try (
                 TableWriter w = TestUtils.getWriter(engine, "x");
-                TableMetadata sequencerMetadata = engine.getSequencerMetadata(w.getTableToken());
+                TableMetadata sequencerMetadata = engine.getLegacyMetadata(w.getTableToken());
                 TableWriter w2 = TestUtils.getWriter(engine, "y")
         ) {
             ObjList<FuzzTransaction> transactions = FuzzTransactionGenerator.generateSet(

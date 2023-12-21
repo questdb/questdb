@@ -402,7 +402,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final TableToken tableToken = tableExistsOrFail(tableNamePosition, GenericLexer.unquote(tok), executionContext);
         final SecurityContext securityContext = executionContext.getSecurityContext();
 
-        try (TableRecordMetadata tableMetadata = executionContext.getSequencerMetadata(tableToken)) {
+        try (TableRecordMetadata tableMetadata = executionContext.getMetadataForWrite(tableToken)) {
             final String expectedTokenDescription = "'add', 'alter', 'attach', 'detach', 'drop', 'resume', 'rename', 'set' or 'squash'";
             tok = expectToken(lexer, expectedTokenDescription);
 
@@ -1390,7 +1390,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             case ExecutionModel.UPDATE:
                 final QueryModel queryModel = (QueryModel) model;
                 TableToken tableToken = executionContext.getTableToken(queryModel.getTableName());
-                try (TableRecordMetadata metadata = executionContext.getSequencerMetadata(tableToken)) {
+                try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(tableToken)) {
                     optimiser.optimiseUpdate(queryModel, executionContext, metadata, this);
                     return model;
                 }
@@ -1485,7 +1485,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 case ExecutionModel.UPDATE:
                     final QueryModel updateQueryModel = (QueryModel) executionModel;
                     TableToken tableToken = executionContext.getTableToken(updateQueryModel.getTableName());
-                    try (TableRecordMetadata metadata = executionContext.getSequencerMetadata(tableToken)) {
+                try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(tableToken)) {
                         final UpdateOperation updateOperation = generateUpdate(updateQueryModel, executionContext, metadata);
                         //updateOperation.setUpdateSql(query);
                         compiledQuery.ofUpdate(updateOperation);
@@ -2128,7 +2128,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         ObjList<Function> valueFunctions = null;
         TableToken token = tableExistsOrFail(tableNameExpr.position, tableNameExpr.token, executionContext);
 
-        try (TableRecordMetadata metadata = engine.getSequencerMetadata(token)) {
+        try (TableMetadata metadata = executionContext.getMetadataForWrite(token)) {
             final long metadataVersion = metadata.getMetadataVersion();
             final InsertOperationImpl insertOperation = new InsertOperationImpl(engine, metadata.getTableToken(), metadataVersion);
             final int metadataTimestampIndex = metadata.getTimestampIndex();

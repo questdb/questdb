@@ -22,17 +22,24 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.pool;
 
-import io.questdb.cairo.sql.TableRecordMetadata;
-import io.questdb.cairo.wal.seq.SequencerMetadata;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.TableToken;
 
-import java.io.Closeable;
+public class TableMetadataPool extends AbstractMultiTenantPool<MetadataPoolTenant> {
 
-public interface MetadataFactory extends Closeable {
-    SequencerMetadata getSequencerMetadata();
+    public TableMetadataPool(CairoConfiguration configuration) {
+        super(configuration, configuration.getMetadataPoolCapacity(), configuration.getInactiveReaderTTL());
+    }
 
-    TableRecordMetadata openTableReaderMetadata(TableReader tableReader);
+    @Override
+    protected byte getListenerSrc() {
+        return PoolListener.SRC_TABLE_METADATA;
+    }
 
-    TableRecordMetadata openTableReaderMetadata(String tableName);
+    @Override
+    protected MetadataPoolTenant newTenant(TableToken tableToken, Entry<MetadataPoolTenant> entry, int index) {
+        return new TableReaderMetadataTenantImpl(this, entry, index, tableToken, false);
+    }
 }
