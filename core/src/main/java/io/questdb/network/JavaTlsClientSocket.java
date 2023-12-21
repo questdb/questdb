@@ -335,17 +335,10 @@ public final class JavaTlsClientSocket implements Socket {
     @Override
     public int tlsIO(int readinessFlags) {
         if ((readinessFlags & WRITE_FLAG) != 0) {
-            int wrapOutputBufferPos = wrapOutputBuffer.position();
-            if (wrapOutputBufferPos > 0) {
-                // there are some encrypted bytes in the output buffer, let's try to send them
-                wrapOutputBuffer.flip();
-                int limit = wrapOutputBuffer.limit();
-                int sentBytes = delegate.send(wrapOutputBufferPtr, limit);
-                if (sentBytes < 0) {
-                    return -1;
-                }
-                wrapOutputBuffer.position(sentBytes);
-                wrapOutputBuffer.compact();
+            int bytesToSend = wrapOutputBuffer.position();
+            if (bytesToSend > 0) {
+                int n = writeToSocket(bytesToSend);
+                return Math.min(n, 0);
             }
         }
         return 0;
@@ -372,7 +365,6 @@ public final class JavaTlsClientSocket implements Socket {
     }
 
     private static long allocateMemoryAndResetBuffer(ByteBuffer buffer, int capacity) {
-        // TODO: what is the right tag here?
         long newAddress = Unsafe.malloc(capacity, MemoryTag.NATIVE_TLS_RSS);
         resetBufferToPointer(buffer, newAddress, capacity);
         return newAddress;
@@ -445,7 +437,7 @@ public final class JavaTlsClientSocket implements Socket {
         // compact the buffer
         Vect.memcpy(wrapOutputBufferPtr, wrapOutputBufferPtr + n, bytesRemaining);
         wrapOutputBuffer.position(bytesRemaining);
-        return 0;
+        return n;
     }
 
     static {
