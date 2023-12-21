@@ -159,8 +159,8 @@ public final class JavaTlsClientSocket implements Socket {
                 }
 
                 assert unwrapInputBuffer.position() == 0 : "missing unwrapInputBuffer compact call";
-                int bytesToConsume = unwrapInputBuffer.limit();
-                if (bytesToConsume == 0) {
+                int bytesAvailable = unwrapInputBuffer.limit();
+                if (bytesAvailable == 0) {
                     // nothing to unwrap, we are done
                     return bytesProduced;
                 }
@@ -170,7 +170,7 @@ public final class JavaTlsClientSocket implements Socket {
 
                 // compact the buffer
                 int bytesConsumed = result.bytesConsumed();
-                int bytesRemaining = bytesToConsume - bytesConsumed;
+                int bytesRemaining = bytesAvailable - bytesConsumed;
                 Vect.memcpy(unwrapInputBufferPtr, unwrapInputBufferPtr + bytesConsumed, bytesRemaining);
                 unwrapInputBuffer.position(0);
                 unwrapInputBuffer.limit(bytesRemaining);
