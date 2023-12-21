@@ -25,14 +25,14 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.Chars;
 
 import static io.questdb.cairo.TableUtils.META_OFFSET_PARTITION_BY;
 
-public class TableWriterMetadata extends AbstractRecordMetadata implements TableRecordMetadata, TableStructure {
+public class TableWriterMetadata extends AbstractRecordMetadata implements TableMetadata, TableStructure {
     private int maxUncommittedRows;
     private long metadataVersion;
     private long o3MaxLag;
@@ -40,12 +40,16 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     private int symbolMapCount;
     private int tableId;
     private TableToken tableToken;
-    private int version;
     private boolean walEnabled;
 
     public TableWriterMetadata(TableToken tableToken, MemoryMR metaMem) {
         this.tableToken = tableToken;
         reload(metaMem);
+    }
+
+    @Override
+    public boolean isSoftLink() {
+        return false;
     }
 
     @Override
@@ -126,7 +130,6 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         this.partitionBy = metaMem.getInt(META_OFFSET_PARTITION_BY);
         this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
         this.columnNameIndexMap.clear();
-        this.version = metaMem.getInt(TableUtils.META_OFFSET_VERSION);
         this.tableId = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
         this.maxUncommittedRows = metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
         this.o3MaxLag = metaMem.getLong(TableUtils.META_OFFSET_O3_MAX_LAG);
@@ -179,10 +182,6 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
 
     public void setO3MaxLag(long o3MaxLagUs) {
         this.o3MaxLag = o3MaxLagUs;
-    }
-
-    public void setTableVersion() {
-        version = ColumnType.VERSION;
     }
 
     public void updateTableToken(TableToken tableToken) {

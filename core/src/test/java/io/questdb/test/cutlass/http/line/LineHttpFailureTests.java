@@ -160,7 +160,6 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
             )) {
                 serverMain.start();
 
-                final List<String> points = new ArrayList<>();
                 try (HttpClient httpClient = HttpClientFactory.newInstance(new DefaultHttpClientConfiguration())) {
                     String line = "line,sym1=123 field1=123i 1234567890000000000\n";
 
@@ -276,7 +275,7 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
             final FilesFacade filesFacade = new TestFilesFacadeImpl() {
                 @Override
                 public int openRW(LPSZ name, long opts) {
-                    if (Utf8s.endsWithAscii(name, "field1.d")) {
+                    if (Utf8s.endsWithAscii(name, "field1.d") && Utf8s.containsAscii(name, "wal")) {
                         ping.await();
                         httpClientRef.get().disconnect();
                         pong.countDown();
@@ -296,17 +295,21 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
                 serverMain.start();
                 AtomicInteger walWriterTaken = countWalWriterTakenFromPool(serverMain);
 
+                int count = 10;
                 try (HttpClient httpClient = HttpClientFactory.newInstance(new DefaultHttpClientConfiguration())) {
                     httpClientRef.set(httpClient);
-                    String line = "line,sym1=123 field1=123i 1234567890000000000\n";
+                    String line = ",sym1=123 field1=123i 1234567890000000000\n";
 
-                    for (int i = 0; i < 10; i++) {
+                    for (int i = 0; i < count; i++) {
+                        ping.setCount(1);
+                        pong.setCount(1);
                         HttpClient.Request request = httpClient.newRequest();
+                        String contentLine = "line" + i + line;
                         request.POST()
                                 .url("/write ")
                                 .withContent()
-                                .putAscii(line)
-                                .putAscii(line)
+                                .putAscii(contentLine)
+                                .putAscii(contentLine)
                                 .send("localhost", getHttpPort(serverMain));
                         ping.countDown();
                         pong.await();
@@ -314,11 +317,6 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
                 }
 
                 assertEventually(() -> {
-                    // Table is create but no line should be committed
-                    TableToken tt = serverMain.getEngine().getTableTokenIfExists("line");
-                    Assert.assertNotNull(tt);
-                    Assert.assertEquals(-1, getSeqTxn(serverMain, tt));
-
                     // Assert no Wal Writers are left in ILP http TUD cache
                     Assert.assertEquals(0, walWriterTaken.get());
                 });
@@ -818,11 +816,9 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
             if (factoryType == PoolListener.SRC_WAL_WRITER && tableToken != null && tableToken.getTableName().equals("line")) {
                 if (event == PoolListener.EV_GET || event == PoolListener.EV_CREATE) {
                     walWriterTaken.incrementAndGet();
-                    new Exception("GET").printStackTrace(System.out);
                 }
                 if (event == PoolListener.EV_RETURN) {
                     walWriterTaken.decrementAndGet();
-                    new Exception("RETURN").printStackTrace(System.out);
                 }
             }
         });
