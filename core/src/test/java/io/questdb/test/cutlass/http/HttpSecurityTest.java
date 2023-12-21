@@ -57,18 +57,18 @@ public class HttpSecurityTest extends AbstractTest {
             return null;
         }
     };
-    private static final String INVALID_CREDENTIALS_HEADER = "Authorization: Basic YmFyOmJheg=="; // bar:baz
+    private static final String INVALID_BASIC_AUTH_CREDENTIALS_HEADER = "Authorization: Basic YmFyOmJheg=="; // bar:baz
     private static final String UNAUTHORIZED_RESPONSE = "HTTP/1.1 401 Unauthorized\r\n" +
             "Server: questDB/1.0\r\n" +
             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
             "Transfer-Encoding: chunked\r\n" +
             "Content-Type: text/plain; charset=utf-8\r\n" +
             "WWW-Authenticate: Basic realm=\"questdb\", charset=\"UTF-8\"\r\n";
-    private static final String VALID_CREDENTIALS = "Basic Zm9vOmJhcg=="; // foo:bar
-    private static final HttpAuthenticatorFactory SINGLE_USER_AUTH_FACTORY = () -> new HttpAuthenticator() {
+    private static final String VALID_BASIC_AUTH_CREDENTIALS = "Basic Zm9vOmJhcg=="; // foo:bar
+    private static final HttpAuthenticatorFactory SINGLE_USER_BASIC_AUTH_FACTORY = () -> new HttpAuthenticator() {
         @Override
         public boolean authenticate(HttpRequestHeader headers) {
-            return Utf8s.equalsNcAscii(VALID_CREDENTIALS, headers.getHeader(new Utf8String("Authorization")));
+            return Utf8s.equalsNcAscii(VALID_BASIC_AUTH_CREDENTIALS, headers.getHeader(new Utf8String("Authorization")));
         }
 
         @Override
@@ -76,8 +76,21 @@ public class HttpSecurityTest extends AbstractTest {
             return "foo";
         }
     };
-    private static final String VALID_CREDENTIALS_HEADER = "Authorization: " + VALID_CREDENTIALS;
+    private static final String VALID_BASIC_AUTH_CREDENTIALS_HEADER = "Authorization: " + VALID_BASIC_AUTH_CREDENTIALS;
+    private static final String VALID_REST_TOKEN_AUTH_CREDENTIALS = "Token validToken-XubtaE";
+    private static final HttpAuthenticatorFactory SINGLE_USER_REST_TOKEN_AUTH_FACTORY = () -> new HttpAuthenticator() {
+        @Override
+        public boolean authenticate(HttpRequestHeader headers) {
+            return Utf8s.equalsNcAscii(VALID_REST_TOKEN_AUTH_CREDENTIALS, headers.getHeader(new Utf8String("Authorization")));
+        }
+
+        @Override
+        public CharSequence getPrincipal() {
+            return "foo";
+        }
+    };
     private static TestHttpClient testHttpClient;
+
     @Rule
     public Timeout timeout = Timeout.builder()
             .withTimeout(10 * 60 * 1000, TimeUnit.MILLISECONDS)
@@ -100,7 +113,7 @@ public class HttpSecurityTest extends AbstractTest {
     @Test
     public void testChkAllowWithValidCredentials() throws Exception {
         testHttpEndpoint(
-                SINGLE_USER_AUTH_FACTORY,
+                SINGLE_USER_BASIC_AUTH_FACTORY,
                 engine -> testHttpClient.assertGet(
                         "/chk",
                         "{\"status\":\"Does not exist\"}",
@@ -135,7 +148,7 @@ public class HttpSecurityTest extends AbstractTest {
     @Test
     public void testChkDisallowWithInvalidCredentials() throws Exception {
         testHttpEndpoint(
-                SINGLE_USER_AUTH_FACTORY,
+                SINGLE_USER_BASIC_AUTH_FACTORY,
                 engine -> testHttpClient.assertGet(
                         "/chk",
                         "Unauthorized\r\n",
@@ -152,7 +165,7 @@ public class HttpSecurityTest extends AbstractTest {
     @Test
     public void testExecAllowWithValidCredentials() throws Exception {
         testHttpEndpoint(
-                SINGLE_USER_AUTH_FACTORY,
+                SINGLE_USER_BASIC_AUTH_FACTORY,
                 engine -> testHttpClient.assertGet(
                         "/exec",
                         "{\"query\":\"select 1\",\"columns\":[{\"name\":\"1\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}",
@@ -173,13 +186,14 @@ public class HttpSecurityTest extends AbstractTest {
                         "select 1",
                         "foo",
                         "baz"
-                ));
+                )
+        );
     }
 
     @Test
     public void testExecDisallowInvalidCredentials() throws Exception {
         testHttpEndpoint(
-                SINGLE_USER_AUTH_FACTORY,
+                SINGLE_USER_BASIC_AUTH_FACTORY,
                 engine -> testHttpClient.assertGet(
                         "/exec",
                         "{\"query\":\"select 1\",\"columns\":[{\"name\":\"1\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}",
@@ -192,7 +206,8 @@ public class HttpSecurityTest extends AbstractTest {
 
     @Test
     public void testExpAllowWithValidCredentials() throws Exception {
-        testHttpEndpoint(SINGLE_USER_AUTH_FACTORY,
+        testHttpEndpoint(
+                SINGLE_USER_BASIC_AUTH_FACTORY,
                 engine -> testHttpClient.assertGet(
                         "/exp",
                         "\"1\"\r\n" +
@@ -215,7 +230,7 @@ public class HttpSecurityTest extends AbstractTest {
     @Test
     public void testExpDisallowWithInvalidCredentials2() throws Exception {
         testHttpEndpoint(
-                SINGLE_USER_AUTH_FACTORY,
+                SINGLE_USER_BASIC_AUTH_FACTORY,
                 engine -> testHttpClient.assertGet(
                         "/exp",
                         "Unauthorized\r\n",
@@ -242,7 +257,7 @@ public class HttpSecurityTest extends AbstractTest {
     @Test
     public void testHealthCheckAllowWithValidCredentials() throws Exception {
         testHttpEndpoint(
-                SINGLE_USER_AUTH_FACTORY,
+                SINGLE_USER_BASIC_AUTH_FACTORY,
                 engine ->
                         testHttpClient.assertGet(
                                 "/status",
@@ -257,7 +272,7 @@ public class HttpSecurityTest extends AbstractTest {
     @Test
     public void testHealthCheckDisallow() throws Exception {
         testHttpEndpoint(
-                SINGLE_USER_AUTH_FACTORY,
+                SINGLE_USER_BASIC_AUTH_FACTORY,
                 engine -> testHttpClient.assertGet(
                         "/status",
                         "Unauthorized\r\n",
@@ -270,14 +285,14 @@ public class HttpSecurityTest extends AbstractTest {
 
     @Test
     public void testImpAllowWithValidCredentials() throws Exception {
-        testHttpEndpoint(SINGLE_USER_AUTH_FACTORY, engine -> sendAndReceive(
+        testHttpEndpoint(SINGLE_USER_BASIC_AUTH_FACTORY, engine -> sendAndReceive(
                 "POST /upload?name=test HTTP/1.1\r\n" +
                         "Host: localhost:9000\r\n" +
                         "User-Agent: curl/7.71.1\r\n" +
                         "Accept: */*\r\n" +
                         "Content-Length: 243\r\n" +
                         "Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
-                        VALID_CREDENTIALS_HEADER + "\r\n" +
+                        VALID_BASIC_AUTH_CREDENTIALS_HEADER + "\r\n" +
                         "\r\n" +
                         "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
                         "Content-Disposition: form-data; name=\"data\"\r\n" +
@@ -337,14 +352,14 @@ public class HttpSecurityTest extends AbstractTest {
 
     @Test
     public void testImpDisallowWithInvalidCredentials() throws Exception {
-        testHttpEndpoint(SINGLE_USER_AUTH_FACTORY, engine -> sendAndReceive(
+        testHttpEndpoint(SINGLE_USER_BASIC_AUTH_FACTORY, engine -> sendAndReceive(
                 "POST /upload?name=test HTTP/1.1\r\n" +
                         "Host: localhost:9000\r\n" +
                         "User-Agent: curl/7.71.1\r\n" +
                         "Accept: */*\r\n" +
                         "Content-Length: 243\r\n" +
                         "Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
-                        INVALID_CREDENTIALS_HEADER + "\r\n" +
+                        INVALID_BASIC_AUTH_CREDENTIALS_HEADER + "\r\n" +
                         "\r\n" +
                         "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
                         "Content-Disposition: form-data; name=\"data\"\r\n" +
@@ -362,13 +377,28 @@ public class HttpSecurityTest extends AbstractTest {
     @Test
     public void testJsonQueryAllowWithValidCredentials() throws Exception {
         testHttpEndpoint(
-                SINGLE_USER_AUTH_FACTORY,
+                SINGLE_USER_BASIC_AUTH_FACTORY,
                 engine -> testHttpClient.assertGet(
                         "/query",
                         "{\"query\":\"select 1\",\"columns\":[{\"name\":\"1\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}",
                         "select 1",
                         "foo",
                         "bar"
+                )
+        );
+    }
+
+    @Test
+    public void testJsonQueryAllowWithValidToken() throws Exception {
+        testHttpEndpoint(
+                SINGLE_USER_REST_TOKEN_AUTH_FACTORY,
+                engine -> testHttpClient.assertGet(
+                        "/query",
+                        "{\"query\":\"select 1\",\"columns\":[{\"name\":\"1\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}",
+                        "select 1",
+                        "foo",
+                        null,
+                        "validToken-XubtaE"
                 )
         );
     }
@@ -384,13 +414,28 @@ public class HttpSecurityTest extends AbstractTest {
     @Test
     public void testJsonQueryDisallowWithInvalidCredentials() throws Exception {
         testHttpEndpoint(
-                SINGLE_USER_AUTH_FACTORY,
+                SINGLE_USER_BASIC_AUTH_FACTORY,
                 engine -> testHttpClient.assertGet(
                         "/query",
                         "Unauthorized\r\n",
                         "select 1",
                         "bar",
                         "baz"
+                )
+        );
+    }
+
+    @Test
+    public void testJsonQueryDisallowWithInvalidToken() throws Exception {
+        testHttpEndpoint(
+                SINGLE_USER_BASIC_AUTH_FACTORY,
+                engine -> testHttpClient.assertGet(
+                        "/query",
+                        "Unauthorized\r\n",
+                        "select 1",
+                        "bar",
+                        null,
+                        "invalidToken-XubtaE"
                 )
         );
     }
@@ -411,7 +456,7 @@ public class HttpSecurityTest extends AbstractTest {
     @Test
     public void testStaticContentAllowWithValidCredentials() throws Exception {
         testHttpEndpoint(
-                SINGLE_USER_AUTH_FACTORY,
+                SINGLE_USER_BASIC_AUTH_FACTORY,
                 engine ->
                         testHttpClient.assertGet(
                                 "/index.html",
@@ -445,7 +490,7 @@ public class HttpSecurityTest extends AbstractTest {
     }
 
     private void testAdditionalUnprotectedHttpEndpoint(HttpQueryTestBuilder.HttpClientCode code) throws Exception {
-        testHttpEndpoint(HttpSecurityTest.SINGLE_USER_AUTH_FACTORY, false, false, code);
+        testHttpEndpoint(HttpSecurityTest.SINGLE_USER_BASIC_AUTH_FACTORY, false, false, code);
     }
 
     private void testHttpEndpoint(
