@@ -163,7 +163,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 1
         );
         setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL), getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd), getMaxWalSize(rnd), getMaxWalFdCache(rnd));
-        runFuzz(rnd, getTestName(), 1, false, false);
+        runFuzz(rnd, getTestName(), 1);
     }
 
     @Test
@@ -198,7 +198,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 1
         );
         setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL), getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd), getMaxWalSize(rnd), getMaxWalFdCache(rnd));
-        runFuzz(rnd, getTestName(), 1, false, false);
+        runFuzz(rnd, getTestName(), 1);
     }
 
     @Test
@@ -219,7 +219,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         setFuzzProbabilities(0, 0, 0, 0, 0, 0, 0, 1, 0.001, 0.01, 0.0);
         setFuzzCounts(false, 500_000, 5_000, 10, 10, 5500, 0, 1);
         String tableNameBase = getTestName();
-        runFuzz(rnd, tableNameBase, tableCount, false, false);
+        runFuzz(rnd, tableNameBase, tableCount);
     }
 
     @Test
@@ -245,7 +245,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         Rnd rnd = generateRandom(LOG);
         setFuzzProbabilities(0, 0.2, 0.1, 0, 0, 0, 0, 1.0, 0.01, 0.01, 0.0);
         setFuzzCounts(true, 100_000, 10, 10, 10, 10, 50, 1);
-        runFuzz(rnd, getTestName(), 1, false, false);
+        runFuzz(rnd, getTestName(), 1);
         Assert.assertEquals(o3MemorySize, node1.getConfigurationOverrides().getO3ColumnMemorySize());
     }
 

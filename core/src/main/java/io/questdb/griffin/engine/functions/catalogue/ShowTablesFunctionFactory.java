@@ -87,7 +87,6 @@ public class ShowTablesFunctionFactory implements FunctionFactory {
         private final CharSequence sysTablePrefix;
         private final CharSequence tempPendingRenameTablePrefix;
         private final String toPlan;
-        private CairoEngine engine;
         private TableToken tableToken;
 
         public ShowTablesCursorFactory(CairoConfiguration configuration, RecordMetadata metadata, String toPlan, boolean showAllTables) {
@@ -109,8 +108,7 @@ public class ShowTablesFunctionFactory implements FunctionFactory {
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
-            engine = executionContext.getCairoEngine();
-            cursor.toTop();
+            cursor.of(executionContext);
             return cursor;
         }
 
@@ -127,12 +125,12 @@ public class ShowTablesFunctionFactory implements FunctionFactory {
         @Override
         protected void _close() {
             cursor.close();
-            engine = null;
         }
 
         private class TableListRecordCursor implements NoRandomAccessRecordCursor {
             private final TableListRecord record = new TableListRecord();
             private final ObjHashSet<TableToken> tableBucket = new ObjHashSet<>();
+            private SqlExecutionContext executionContext;
             private int tableIndex = -1;
 
             @Override
@@ -148,7 +146,7 @@ public class ShowTablesFunctionFactory implements FunctionFactory {
             @Override
             public boolean hasNext() {
                 if (tableIndex < 0) {
-                    engine.getTableTokens(tableBucket, false);
+                    executionContext.getCairoEngine().getTableTokens(tableBucket, false);
                     tableIndex = -1;
                 }
                 tableIndex++;
@@ -170,6 +168,11 @@ public class ShowTablesFunctionFactory implements FunctionFactory {
             @Override
             public void toTop() {
                 tableIndex = -1;
+            }
+
+            private void of(SqlExecutionContext executionContext) {
+                this.executionContext = executionContext;
+                toTop();
             }
 
             private class TableListRecord implements Record {
@@ -251,7 +254,7 @@ public class ShowTablesFunctionFactory implements FunctionFactory {
                     }
 
                     if (getMetadata() == METADATA) {
-                        try (TableMetadata tableMetadata = engine.getTableReaderMetadata(tableToken)) {
+                        try (TableMetadata tableMetadata = executionContext.getMetadataForRead(tableToken)) {
                             isSoftLink = tableMetadata.isSoftLink();
                             maxUncommittedRows = tableMetadata.getMaxUncommittedRows();
                             o3MaxLag = tableMetadata.getO3MaxLag();
