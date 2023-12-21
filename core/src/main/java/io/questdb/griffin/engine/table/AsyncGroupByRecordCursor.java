@@ -234,8 +234,21 @@ class AsyncGroupByRecordCursor implements RecordCursor {
 
     private Map mergeNonShardedMap(AsyncGroupByAtom atom) {
         final Map destMap = atom.getOwnerParticle().getMap();
+        final int perWorkerMapCount = atom.getPerWorkerParticles().size();
+
+        long sizeEstimate = destMap.size();
+        for (int i = 0; i < perWorkerMapCount; i++) {
+            final Map srcMap = atom.getPerWorkerParticles().getQuick(i).getMap();
+            sizeEstimate += srcMap.size();
+        }
+
+        if (sizeEstimate > 0) {
+            // Pre-size the destination map, so that we don't have to resize it later.
+            destMap.setKeyCapacity((int) sizeEstimate);
+        }
+
         final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater();
-        for (int i = 0, n = atom.getPerWorkerParticles().size(); i < n; i++) {
+        for (int i = 0; i < perWorkerMapCount; i++) {
             final Map srcMap = atom.getPerWorkerParticles().getQuick(i).getMap();
             if (srcMap.size() > 0) {
                 RecordCursor srcCursor = srcMap.getCursor();
@@ -245,9 +258,18 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                     srcRecord.copyToKey(destKey);
                     MapValue destValue = destKey.createValue();
                     MapValue srcValue = srcRecord.getValue();
-                    functionUpdater.merge(destValue, srcValue);
+                    if (destValue.isNew()) {
+                        destValue.copyFrom(srcValue);
+                    } else {
+                        functionUpdater.merge(destValue, srcValue);
+                    }
                 }
             }
+        }
+
+        for (int i = 0; i < perWorkerMapCount; i++) {
+            final Map srcMap = atom.getPerWorkerParticles().getQuick(i).getMap();
+            srcMap.close();
         }
         return destMap;
     }

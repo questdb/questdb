@@ -1438,6 +1438,10 @@ public class FastMapTest extends AbstractCairoTest {
 
             map.setKeyCapacity(1000);
             Assert.assertEquals(2048, map.getKeyCapacity());
+
+            // this call should be ignored
+            map.setKeyCapacity(10);
+            Assert.assertEquals(2048, map.getKeyCapacity());
         }
     }
 

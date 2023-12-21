@@ -29,12 +29,12 @@ import io.questdb.std.*;
 final class FastMapValue implements MapValue {
     private final Long256Impl long256 = new Long256Impl();
     private final int[] valueOffsets;
+    private final int valueSize;
     private long limit;
     private boolean newValue;
     private FastMapRecord record; // double-linked
     private long startAddress; // key-value pair start address
     private long valueAddress;
-    private int valueSize;
 
     public FastMapValue(int valueSize, int[] valueOffsets) {
         this.valueSize = valueSize;
@@ -86,6 +86,12 @@ final class FastMapValue implements MapValue {
     public void addShort(int index, short value) {
         final long p = address0(index);
         Unsafe.getUnsafe().putShort(p, (short) (Unsafe.getUnsafe().getShort(p) + value));
+    }
+
+    @Override
+    public void copyFrom(MapValue value) {
+        FastMapValue other = (FastMapValue) value;
+        Vect.memcpy(valueAddress, other.valueAddress, valueSize);
     }
 
     @Override

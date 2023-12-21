@@ -374,7 +374,9 @@ public class FastMap implements Map, Reopenable {
     }
 
     private void rehash(int newKeyCapacity) {
-        assert newKeyCapacity > keyCapacity : "invalid capacity " + newKeyCapacity;
+        if (newKeyCapacity <= keyCapacity) {
+            return;
+        }
 
         mask = newKeyCapacity - 1;
         DirectIntList newOffsets = new DirectIntList((long) newKeyCapacity << 1, listMemoryTag);

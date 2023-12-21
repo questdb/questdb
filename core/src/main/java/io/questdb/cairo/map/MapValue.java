@@ -43,6 +43,10 @@ public interface MapValue extends Record {
 
     void addShort(int index, short value);
 
+    default void copyFrom(MapValue value) {
+        throw new UnsupportedOperationException();
+    }
+
     boolean getBool(int index);
 
     byte getByte(int index);
@@ -75,6 +79,8 @@ public interface MapValue extends Record {
 
     boolean isNew();
 
+    void maxLong(int index, long value);
+
     void putBool(int index, boolean value);
 
     void putByte(int index, byte value);
@@ -90,8 +96,6 @@ public interface MapValue extends Record {
     void putInt(int index, int value);
 
     void putLong(int index, long value);
-
-    void maxLong(int index, long value);
 
     void putLong128(int index, long lo, long hi);
 

@@ -241,9 +241,21 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         assert sharded;
 
         final Map destMap = ownerParticle.getShardMaps().getQuick(shardIndex);
-        // Pre-size the destination map, so that we don't have to resize it later.
-        destMap.setKeyCapacity((int) (destMap.size() * (perWorkerParticles.size() + 1)));
-        for (int i = 0, n = perWorkerParticles.size(); i < n; i++) {
+        final int perWorkerMapCount = perWorkerParticles.size();
+
+        long sizeEstimate = destMap.size();
+        for (int i = 0; i < perWorkerMapCount; i++) {
+            final Particle srcParticle = perWorkerParticles.getQuick(i);
+            final Map srcMap = srcParticle.getShardMaps().getQuick(shardIndex);
+            sizeEstimate += srcMap.size();
+        }
+
+        if (sizeEstimate > 0) {
+            // Pre-size the destination map, so that we don't have to resize it later.
+            destMap.setKeyCapacity((int) sizeEstimate);
+        }
+
+        for (int i = 0; i < perWorkerMapCount; i++) {
             final Particle srcParticle = perWorkerParticles.getQuick(i);
             final Map srcMap = srcParticle.getShardMaps().getQuick(shardIndex);
             if (srcMap.size() > 0) {
@@ -254,7 +266,11 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
                     srcRecord.copyToKey(destKey);
                     MapValue destValue = destKey.createValue();
                     MapValue srcValue = srcRecord.getValue();
-                    functionUpdater.merge(destValue, srcValue);
+                    if (destValue.isNew()) {
+                        destValue.copyFrom(srcValue);
+                    } else {
+                        functionUpdater.merge(destValue, srcValue);
+                    }
                 }
             }
         }
