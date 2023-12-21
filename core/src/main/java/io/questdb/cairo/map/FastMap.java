@@ -295,6 +295,11 @@ public class FastMap implements Map, Reopenable {
     }
 
     @Override
+    public void setKeyCapacity(int newKeyCapacity) {
+        rehash(Numbers.ceilPow2((int) (newKeyCapacity / loadFactor)));
+    }
+
+    @Override
     public long size() {
         return size;
     }
@@ -365,10 +370,15 @@ public class FastMap implements Map, Reopenable {
     }
 
     private void rehash() {
-        int capacity = keyCapacity << 1;
-        mask = capacity - 1;
-        DirectIntList newOffsets = new DirectIntList((long) capacity << 1, listMemoryTag);
-        newOffsets.setPos((long) capacity << 1);
+        rehash(keyCapacity << 1);
+    }
+
+    private void rehash(int newKeyCapacity) {
+        assert newKeyCapacity > keyCapacity : "invalid capacity " + newKeyCapacity;
+
+        mask = newKeyCapacity - 1;
+        DirectIntList newOffsets = new DirectIntList((long) newKeyCapacity << 1, listMemoryTag);
+        newOffsets.setPos((long) newKeyCapacity << 1);
         newOffsets.zero(0);
 
         for (int i = 0, k = (int) (offsets.size() / 2); i < k; i++) {
@@ -386,8 +396,8 @@ public class FastMap implements Map, Reopenable {
         }
         offsets.close();
         offsets = newOffsets;
-        free += (int) ((capacity - keyCapacity) * loadFactor);
-        keyCapacity = capacity;
+        free += (int) ((newKeyCapacity - keyCapacity) * loadFactor);
+        keyCapacity = newKeyCapacity;
     }
 
     private void resize(int size) {
