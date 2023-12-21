@@ -5897,6 +5897,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     " 'substring' " +
                     "from long_sequence(10)");
 
+            // multiple count_distinct, no re-write
+            assertPlan("SELECT count_distinct(s), count_distinct(x) FROM test",
+                    "GroupBy vectorized: false\n" +
+                            "  values: [count_distinct(s),count_distinct(x)]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: test\n");
+
             // no where clause, distinct constant
             assertPlan("SELECT count_distinct(10) FROM test",
                     "Count\n" +
