@@ -28,6 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.map.*;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -38,6 +39,54 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class ShardedMapCursorTest extends AbstractCairoTest {
+
+    @Test
+    public void testCalculateSize() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            ColumnTypes types = new SingleColumnType(ColumnType.INT);
+
+            final int N = 1000;
+            final Rnd rnd = new Rnd();
+            try (
+                    FastMap mapA = new FastMap(Numbers.SIZE_1MB, types, types, 64, 0.5, 1);
+                    FastMap mapB = new FastMap(Numbers.SIZE_1MB, types, types, 64, 0.5, 1)
+            ) {
+                for (int i = 0; i < N; i++) {
+                    MapKey keyA = mapA.withKey();
+                    keyA.putInt(rnd.nextInt());
+                    MapValue valueA = keyA.createValue();
+                    Assert.assertTrue(valueA.isNew());
+                    valueA.putInt(0, i + 1);
+
+                    MapKey keyB = mapB.withKey();
+                    keyB.putInt(rnd.nextInt());
+                    MapValue valueB = keyB.createValue();
+                    Assert.assertTrue(valueB.isNew());
+                    valueB.putInt(0, i + 1);
+                }
+
+                try (ShardedMapCursor cursor = new ShardedMapCursor()) {
+                    ObjList<Map> shards = new ObjList<>();
+                    shards.add(mapA);
+                    shards.add(mapB);
+                    cursor.of(shards);
+
+                    RecordCursor.Counter counter = new RecordCursor.Counter();
+                    cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
+                    Assert.assertEquals(2 * N, counter.get());
+
+                    int iterated = 0;
+                    while (cursor.hasNext()) {
+                        iterated++;
+                        counter.clear();
+
+                        cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
+                        Assert.assertEquals(2 * N - iterated, counter.get());
+                    }
+                }
+            }
+        });
+    }
 
     @Test
     public void testRowIdAccess() throws Exception {
@@ -54,9 +103,9 @@ public class ShardedMapCursorTest extends AbstractCairoTest {
                 for (int i = 0; i < N; i++) {
                     MapKey key = mapA.withKey();
                     key.putInt(rnd.nextInt());
-                    MapValue values = key.createValue();
-                    Assert.assertTrue(values.isNew());
-                    values.putInt(0, i + 1);
+                    MapValue value = key.createValue();
+                    Assert.assertTrue(value.isNew());
+                    value.putInt(0, i + 1);
                 }
 
                 for (int i = N; i < N + M; i++) {
@@ -115,9 +164,9 @@ public class ShardedMapCursorTest extends AbstractCairoTest {
                 for (int i = 0; i < aSize; i++) {
                     MapKey key = mapA.withKey();
                     key.putInt(rnd.nextInt());
-                    MapValue values = key.createValue();
-                    Assert.assertTrue(values.isNew());
-                    values.putInt(0, i + 1);
+                    MapValue value = key.createValue();
+                    Assert.assertTrue(value.isNew());
+                    value.putInt(0, i + 1);
                 }
 
                 for (int i = 0; i < cSize; i++) {

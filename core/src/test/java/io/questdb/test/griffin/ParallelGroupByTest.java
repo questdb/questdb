@@ -221,6 +221,24 @@ public class ParallelGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelCountOverMultiKeyGroupBy() throws Exception {
+        testParallelMultiKeyGroupBy(
+                "SELECT count(*) FROM (SELECT key1, key2 FROM tab GROUP BY key1, key2 ORDER BY key1, key2)",
+                "count\n" +
+                        "5\n"
+        );
+    }
+
+    @Test
+    public void testParallelCountOverSingleKeyGroupBy() throws Exception {
+        testParallelStringKeyGroupBy(
+                "SELECT count(*) FROM (SELECT key FROM tab WHERE key IS NOT NULL GROUP BY key ORDER BY key)",
+                "count\n" +
+                        "5\n"
+        );
+    }
+
+    @Test
     public void testParallelFunctionKeyExplicitGroupBy() throws Exception {
         testParallelSymbolKeyGroupBy(
                 "SELECT day_of_week(ts) day, key, vwap(price, quantity), sum(colTop) FROM tab GROUP BY day, key ORDER BY day, key",

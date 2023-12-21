@@ -27,6 +27,7 @@ package io.questdb.cairo.map;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.CharSinkBase;
@@ -37,6 +38,13 @@ public class ShardedMapCursor implements MapRecordCursor {
     private final ObjList<MapRecordCursor> shardCursors = new ObjList<>();
     private MapRecordCursor currentCursor;
     private int currentIndex;
+
+    @Override
+    public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
+        for (int i = currentIndex, n = shardCursors.size(); i < n; i++) {
+            shardCursors.getQuick(i).calculateSize(circuitBreaker, counter);
+        }
+    }
 
     @Override
     public void close() {

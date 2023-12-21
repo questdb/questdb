@@ -83,6 +83,14 @@ class AsyncGroupByRecordCursor implements RecordCursor {
     }
 
     @Override
+    public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
+        if (!isDataMapBuilt) {
+            buildMap();
+        }
+        mapCursor.calculateSize(circuitBreaker, counter);
+    }
+
+    @Override
     public void close() {
         if (isOpen) {
             isOpen = false;
