@@ -29,6 +29,7 @@ import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -66,7 +67,7 @@ public class TestServerMain extends ServerMain {
         try {
             if (sqlExecutionContext == null) {
                 sqlExecutionContext = new SqlExecutionContextImpl(getEngine(), 1).with(
-                        getEngine().getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                        AllowAllSecurityContext.INSTANCE,
                         null,
                         null,
                         -1,
@@ -83,7 +84,7 @@ public class TestServerMain extends ServerMain {
         try {
             if (sqlExecutionContext == null) {
                 sqlExecutionContext = new SqlExecutionContextImpl(getEngine(), 1).with(
-                        getEngine().getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                        AllowAllSecurityContext.INSTANCE,
                         null,
                         null,
                         -1,

@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.pgwire;
 
-import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
 import io.questdb.QueryLogger;
 import io.questdb.TelemetryOrigin;
@@ -276,8 +275,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         this.batchCallback = new PGConnectionBatchCallback();
         this.queryTag = TAG_OK;
         this.queryContainsSecret = false;
-        FactoryProvider factoryProvider = configuration.getFactoryProvider();
-        this.securityContextFactory = factoryProvider.getSecurityContextFactory();
+        this.securityContextFactory = configuration.getFactoryProvider().getSecurityContextFactory();
     }
 
     public static int getInt(long address, long msgLimit, CharSequence errorMessage) throws BadProtocolException {

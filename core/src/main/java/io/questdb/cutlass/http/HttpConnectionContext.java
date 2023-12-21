@@ -435,7 +435,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             if (!authenticator.authenticate(headerParser)) {
                 return false;
             }
-            securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(
+            securityContext = securityContextFactory.getInstance(
                     authenticator.getPrincipal(),
                     authenticator.getAuthType(),
                     SecurityContextFactory.HTTP
