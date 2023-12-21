@@ -3503,28 +3503,30 @@ public class SqlOptimiser implements Mutable {
         return agg;
     }
 
-    /* Rewrites expressions such as :
-         SELECT count_distinct(s) FROM tab WHERE s like '%a' ;
-       into more parallel-friendly :
-         SELECT count(*) FROM (SELECT s FROM tab WHERE s like '%a' AND s IS NOT NULL GROUP BY s);
+    /**
+     * Rewrites expressions such as :
+     * SELECT count_distinct(s) FROM tab WHERE s like '%a' ;
+     * into more parallel-friendly :
+     * SELECT count(*) FROM (SELECT s FROM tab WHERE s like '%a' AND s IS NOT NULL GROUP BY s);
      */
     private void rewriteCountDistinct(QueryModel model) throws SqlException {
         QueryModel nested = model.getNestedModel();
         ExpressionNode countDistinctExpr;
 
-        if (model.getColumns().size() == 1
-                && (countDistinctExpr = model.getColumns().getQuick(0).getAst()).type == ExpressionNode.FUNCTION
-                && Chars.equalsIgnoreCase("count_distinct", countDistinctExpr.token)
-                && countDistinctExpr.paramCount == 1
-                && !isSymbolColumn(countDistinctExpr, nested) // don't rewrite for symbol column because there's a separate optimization in count_distinct
-                && model.getJoinModels().size() == 1
-                && model.getUnionModel() == null
-                && nested != null
-                && nested.getNestedModel() == null
-                && model.getWhereClause() == null
-                && nested.getTableName() != null
-                && model.getSampleBy() == null
-                && model.getGroupBy().size() == 0
+        if (
+                model.getColumns().size() == 1
+                        && (countDistinctExpr = model.getColumns().getQuick(0).getAst()).type == ExpressionNode.FUNCTION
+                        && Chars.equalsIgnoreCase("count_distinct", countDistinctExpr.token)
+                        && countDistinctExpr.paramCount == 1
+                        && !isSymbolColumn(countDistinctExpr, nested) // don't rewrite for symbol column because there's a separate optimization in count_distinct
+                        && model.getJoinModels().size() == 1
+                        && model.getUnionModel() == null
+                        && nested != null
+                        && nested.getNestedModel() == null
+                        && model.getWhereClause() == null
+                        && nested.getTableName() != null
+                        && model.getSampleBy() == null
+                        && model.getGroupBy().size() == 0
         ) {
             ExpressionNode distinctExpr = countDistinctExpr.rhs;
 
@@ -3546,8 +3548,8 @@ public class SqlOptimiser implements Mutable {
             node.type = OPERATION;
             node.token = "!=";
             node.paramCount = 2;
-            node.lhs = distinctExpr;
-            node.rhs = nullExpr;
+            node.lhs = nullExpr;
+            node.rhs = distinctExpr;
             node.precedence = 7;
 
             nested.setWhereClause(concatFilters(nested.getWhereClause(), node));
