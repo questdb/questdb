@@ -294,7 +294,7 @@ public final class JavaTlsClientSocket implements Socket {
                                 throw new AssertionError("Buffer underflow during TLS handshake. This should not happen. please report as a bug");
                             case BUFFER_OVERFLOW:
                                 // in theory, this can happen if the output buffer is too small to fit a single TLS handshake record, but that would indicate
-                                // our starting buffer is too small. 
+                                // our starting buffer is too small.
                                 throw new AssertionError("Buffer overflow during TLS handshake. This should not happen, please report as a bug");
                             case OK:
                                 // wrapOutputBuffer: write mode

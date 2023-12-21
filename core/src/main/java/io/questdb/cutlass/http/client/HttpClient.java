@@ -406,7 +406,7 @@ public abstract class HttpClient implements QuietCloseable {
             beforeHeader();
 
             putAscii(HEADER_CONTENT_LENGTH);
-            contentLengthHeaderReserved = ((int) Math.log10(bufferSize) + 1) + 4; // length + 2 x EOL
+            contentLengthHeaderReserved = ((int) Math.log10(bufferSize) + 2) + 4; // length + 2 x EOL
             ensureCapacity(contentLengthHeaderReserved);
             ptr += contentLengthHeaderReserved;
             contentStart = ptr;
