@@ -1429,6 +1429,19 @@ public class FastMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSetKeyCapacity() {
+        try (FastMap map = new FastMap(4096, new SingleColumnType(ColumnType.INT), new SingleColumnType(ColumnType.INT), 64, 0.5, 2147483647)) {
+            Assert.assertEquals(128, map.getKeyCapacity());
+
+            map.setKeyCapacity(130);
+            Assert.assertEquals(512, map.getKeyCapacity());
+
+            map.setKeyCapacity(1000);
+            Assert.assertEquals(2048, map.getKeyCapacity());
+        }
+    }
+
+    @Test
     public void testUnsupportedKeyValueBinary() throws Exception {
         testUnsupportedValueType();
     }
@@ -1466,7 +1479,9 @@ public class FastMapTest extends AbstractCairoTest {
                                         .add(ColumnType.getGeoHashTypeWithBits(10))
                                         .add(ColumnType.getGeoHashTypeWithBits(20))
                                         .add(ColumnType.getGeoHashTypeWithBits(40)),
-                                N, 0.9f, 1
+                                N,
+                                0.9f,
+                                1
                         )
                 ) {
                     RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, true);

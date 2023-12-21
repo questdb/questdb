@@ -40,6 +40,10 @@ public interface Map extends Mutable, Closeable, Reopenable {
 
     void restoreInitialCapacity();
 
+    default void setKeyCapacity(int keyCapacity) {
+        throw new UnsupportedOperationException();
+    }
+
     long size();
 
     MapValue valueAt(long address);
