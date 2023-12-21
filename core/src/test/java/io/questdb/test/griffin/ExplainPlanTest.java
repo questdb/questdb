@@ -5897,8 +5897,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     " 'substring' " +
                     "from long_sequence(10)");
 
-
-            //no where clause, distinct constant
+            // no where clause, distinct constant
             assertPlan("SELECT count_distinct(10) FROM test",
                     "Count\n" +
                             "    GroupBy vectorized: false\n" +
@@ -5907,7 +5906,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "            Row forward scan\n" +
                             "            Frame forward scan on: test\n");
 
-            //no where clause, distinct column
+            // no where clause, distinct column
             assertPlan("SELECT count_distinct(s) FROM test",
                     "Count\n" +
                             "    Async Group By workers: 1\n" +
@@ -5917,7 +5916,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "            Row forward scan\n" +
                             "            Frame forward scan on: test\n");
 
-            //with where clause, distinct column
+            // with where clause, distinct column
             assertPlan("SELECT count_distinct(s) FROM test where s like '%abc%'",
                     "Count\n" +
                             "    Async Group By workers: 1\n" +
@@ -5927,7 +5926,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "            Row forward scan\n" +
                             "            Frame forward scan on: test\n");
 
-            //no where clause, distinct expression 1
+            // no where clause, distinct expression 1
             assertPlan("SELECT count_distinct(substring(s,1,1)) FROM test ",
                     "Count\n" +
                             "    Async Group By workers: 1\n" +
@@ -5937,7 +5936,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "            Row forward scan\n" +
                             "            Frame forward scan on: test\n");
 
-            //where clause, distinct expression 2
+            // where clause, distinct expression 2
             assertPlan("SELECT count_distinct(substring(s,1,1)) FROM test where s like '%abc%'",
                     "Count\n" +
                             "    Async Group By workers: 1\n" +
@@ -5947,7 +5946,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "            Row forward scan\n" +
                             "            Frame forward scan on: test\n");
 
-            //where clause, distinct expression 3, function name clash with column name
+            // where clause, distinct expression 3, function name clash with column name
             assertPlan("SELECT count_distinct(substring(s,1,1)) FROM test where s like '%abc%' and substring != null",
                     "Count\n" +
                             "    Async Group By workers: 1\n" +
@@ -5957,22 +5956,22 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "            Row forward scan\n" +
                             "            Frame forward scan on: test\n");
 
-            //where clause, distinct expression 3
+            // where clause, distinct expression 3
             assertPlan("SELECT count_distinct(x+1) FROM test where x > 5",
                     "Count\n" +
                             "    Async Group By workers: 1\n" +
                             "      keys: [column]\n" +
-                            "      filter: (5<x and x+1!=null)\n" +
+                            "      filter: (5<x and null!=x+1)\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: test\n");
 
-            //where clause, distinct expression, col alias
+            // where clause, distinct expression, col alias
             assertPlan("SELECT count_distinct(x+1) cnt_dst FROM test where x > 5",
                     "Count\n" +
                             "    Async Group By workers: 1\n" +
                             "      keys: [column]\n" +
-                            "      filter: (5<x and x+1!=null)\n" +
+                            "      filter: (5<x and null!=x+1)\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: test\n");
@@ -5981,12 +5980,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "5\n",
                     "SELECT count_distinct(x+1) cnt_dst FROM test where x > 5");
 
-            //where clause, distinct expression, table alias
+            // where clause, distinct expression, table alias
             assertPlan("SELECT count_distinct(x+1) FROM test tab where x > 5",
                     "Count\n" +
                             "    Async Group By workers: 1\n" +
                             "      keys: [column]\n" +
-                            "      filter: (5<x and x+1!=null)\n" +
+                            "      filter: (5<x and null!=x+1)\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: test\n");
@@ -6499,7 +6498,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "Count\n" +
                         "    Async Group By workers: 1\n" +
                         "      keys: [l]\n" +
-                        "      filter: l!=null\n" +
+                        "      filter: null!=l\n" +
                         "        DataFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: tab\n"
