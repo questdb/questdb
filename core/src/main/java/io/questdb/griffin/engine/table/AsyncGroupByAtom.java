@@ -241,6 +241,8 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         assert sharded;
 
         final Map destMap = ownerParticle.getShardMaps().getQuick(shardIndex);
+        // Pre-size the destination map, so that we don't have to resize it later.
+        destMap.setKeyCapacity((int) (destMap.size() * (perWorkerParticles.size() + 1)));
         for (int i = 0, n = perWorkerParticles.size(); i < n; i++) {
             final Particle srcParticle = perWorkerParticles.getQuick(i);
             final Map srcMap = srcParticle.getShardMaps().getQuick(shardIndex);
