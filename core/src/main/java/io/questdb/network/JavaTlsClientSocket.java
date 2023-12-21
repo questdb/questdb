@@ -54,62 +54,71 @@ public final class JavaTlsClientSocket implements Socket {
         }
     }};
     private static final long CAPACITY_FIELD_OFFSET;
-    private static final int INITIAL_BUFFER_CAPACITY = 64 * 1024;
+    private static final int INITIAL_BUFFER_CAPACITY_BYTES = 256 * 1024;
     private static final long LIMIT_FIELD_OFFSET;
-    private static final int STATE_CLOSING = 2;
-    private static final int STATE_HANDSHAKE_COMPLETED = 1;
-    private static final int STATE_INITIAL = 0;
+    private static final int STATE_CLOSING = 3;
+    private static final int STATE_EMPTY = 0;
+    private static final int STATE_PLAINTEXT = 1;
+    private static final int STATE_TLS = 2;
     private final Socket delegate;
     private final Log log;
+    private final ByteBuffer unwrapInputBuffer;
     private final ByteBuffer unwrapOutputBuffer;
     private final ByteBuffer wrapInputBuffer;
+    private final ByteBuffer wrapOutputBuffer;
     private SSLEngine sslEngine;
-    private int state = STATE_INITIAL;
-    private ByteBuffer unwrapInputBuffer;
+    private int state = STATE_EMPTY;
     private long unwrapInputBufferPtr;
-    private ByteBuffer wrapOutputBuffer;
     private long wrapOutputBufferPtr;
 
     JavaTlsClientSocket(NetworkFacade nf, Log log) {
         this.delegate = new PlainSocket(nf, log);
         this.log = log;
-        int initialCapacity = Integer.getInteger("questdb.experimental.tls.buffersize", INITIAL_BUFFER_CAPACITY);
 
-        // wrapInputBuffer is just a placeholder, we set the internal address, capacity and limit in send()
+        // wrapInputBuffer are just placeholders. we set the internal address, capacity and limit in send() and recv()
         this.wrapInputBuffer = ByteBuffer.allocateDirect(0);
-        // also a placeholder
         this.unwrapOutputBuffer = ByteBuffer.allocateDirect(0);
 
-        // we want to track allocated memory hence we just create dummy direct byte buffers
-        // and later reset it to manually allocated memory
+        // wrapOutputBuffer and unwrapInputBuffer are set as 0 bytes long buffers.
+        // we allocate the actual memory only when starting a TLS session
         this.wrapOutputBuffer = ByteBuffer.allocateDirect(0);
         this.unwrapInputBuffer = ByteBuffer.allocateDirect(0);
-
-
-        this.wrapOutputBufferPtr = allocateMemoryAndResetBuffer(wrapOutputBuffer, initialCapacity);
-        this.unwrapInputBufferPtr = allocateMemoryAndResetBuffer(unwrapInputBuffer, initialCapacity);
-        unwrapInputBuffer.flip(); // read mode
     }
 
     @Override
     public void close() {
-        // todo: do a proper TLS shutdown
-        sslEngine.closeOutbound();
-        state = STATE_CLOSING;
-        delegate.close();
-
-        // a bit of ceremony to make sure there is no point that a buffer or a pointer is referencing unallocated memory
-        int capacity = wrapOutputBuffer.capacity();
-        long ptrToFree = wrapOutputBufferPtr;
-        wrapOutputBuffer = null; // if there is an attempt to use a buffer after close() then it's better to throw NPE than segfaulting
-        wrapOutputBufferPtr = 0;
-        Unsafe.free(ptrToFree, capacity, MemoryTag.NATIVE_TLS_RSS);
-
-        capacity = unwrapInputBuffer.capacity();
-        ptrToFree = unwrapInputBufferPtr;
-        unwrapInputBuffer = null;
-        unwrapInputBufferPtr = 0;
-        Unsafe.free(ptrToFree, capacity, MemoryTag.NATIVE_TLS_RSS);
+        log.debug().$("closing TLS socket [fd=").$(delegate.getFd()).$(']').$();
+        switch (state) {
+            case STATE_CLOSING: // intentional fall through
+            case STATE_EMPTY:
+                return;
+            case STATE_TLS: {
+                assert sslEngine != null;
+                state = STATE_CLOSING;
+                sslEngine.closeOutbound();
+                try {
+                    // we don't care about the result. wrap() is just to generate a close_notify TLS record
+                    // if that fails, we don't care, we are closing anyway
+                    sslEngine.wrap(wrapInputBuffer, wrapOutputBuffer);
+                    while (wantsTlsWrite()) {
+                        int n = tlsIO(Socket.WRITE_FLAG);
+                        if (n < 0) {
+                            log.debug().$("could not send TLS close_notify").$();
+                            break;
+                        }
+                    }
+                } catch (SSLException e) {
+                    log.debug().$("could not send TLS close_notify").$(e).$();
+                }
+                sslEngine = null;
+                freeInternalBuffers();
+            } // fall through
+            case STATE_PLAINTEXT:
+                state = STATE_CLOSING;
+                delegate.close();
+                state = STATE_EMPTY;
+                break;
+        }
     }
 
     @Override
@@ -129,7 +138,9 @@ public final class JavaTlsClientSocket implements Socket {
 
     @Override
     public void of(int fd) {
+        assert state == STATE_EMPTY;
         delegate.of(fd);
+        state = STATE_PLAINTEXT;
         if (startTlsSession() < 0) {
             throw new HttpClientException("could not start TLS session");
         }
@@ -255,6 +266,8 @@ public final class JavaTlsClientSocket implements Socket {
 
     @Override
     public int startTlsSession() {
+        assert state == STATE_PLAINTEXT;
+        prepareInternalBuffers();
         try {
             this.sslEngine = createSslEngine();
             this.sslEngine.beginHandshake();
@@ -319,7 +332,7 @@ public final class JavaTlsClientSocket implements Socket {
                     break;
                 }
             }
-            state = STATE_HANDSHAKE_COMPLETED;
+            state = STATE_TLS;
             return 0;
         } catch (Exception e) {
             log.error().$("could not start SSL session").$(e).$();
@@ -361,6 +374,7 @@ public final class JavaTlsClientSocket implements Socket {
 
     @Override
     public boolean wantsTlsWrite() {
+        // we want to write if we have TLS data to send
         return wrapOutputBuffer.position() > 0;
     }
 
@@ -400,8 +414,32 @@ public final class JavaTlsClientSocket implements Socket {
         Unsafe.getUnsafe().putLong(buffer, CAPACITY_FIELD_OFFSET, len);
     }
 
+    private void freeInternalBuffers() {
+        int capacity = wrapOutputBuffer.capacity();
+        long ptrToFree = wrapOutputBufferPtr;
+        assert ptrToFree != 0;
+        wrapOutputBufferPtr = 0;
+        Unsafe.free(ptrToFree, capacity, MemoryTag.NATIVE_TLS_RSS);
+
+        capacity = unwrapInputBuffer.capacity();
+        ptrToFree = unwrapInputBufferPtr;
+        assert ptrToFree != 0;
+        unwrapInputBufferPtr = 0;
+        Unsafe.free(ptrToFree, capacity, MemoryTag.NATIVE_TLS_RSS);
+    }
+
     private void growWrapOutputBuffer() {
         wrapOutputBufferPtr = expandBuffer(wrapOutputBuffer, wrapOutputBufferPtr);
+    }
+
+    private void prepareInternalBuffers() {
+        int initialCapacity = Integer.getInteger("questdb.experimental.tls.buffersize", INITIAL_BUFFER_CAPACITY_BYTES);
+
+        // we want to track allocated memory hence we just create dummy direct byte buffers
+        // and later reset it to manually allocated memory
+        this.wrapOutputBufferPtr = allocateMemoryAndResetBuffer(wrapOutputBuffer, initialCapacity);
+        this.unwrapInputBufferPtr = allocateMemoryAndResetBuffer(unwrapInputBuffer, initialCapacity);
+        unwrapInputBuffer.flip(); // read mode
     }
 
     private int readFromSocket() {
