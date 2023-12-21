@@ -3504,9 +3504,9 @@ public class SqlOptimiser implements Mutable {
     }
 
     /* Rewrites expressions such as :
-         SELECT count_distinct(s) FROM tab WHERE s like '%a ;
+         SELECT count_distinct(s) FROM tab WHERE s like '%a' ;
        into more parallel-friendly :
-         SELECT count(*) FROM (SELECT s FROM tab WHERE s like '%a AND s IS NOT NULL GROUP BY s);
+         SELECT count(*) FROM (SELECT s FROM tab WHERE s like '%a' AND s IS NOT NULL GROUP BY s);
      */
     private void rewriteCountDistinct(QueryModel model) throws SqlException {
         QueryModel nested = model.getNestedModel();
