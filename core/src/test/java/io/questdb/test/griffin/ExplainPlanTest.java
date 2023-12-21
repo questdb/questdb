@@ -5887,6 +5887,117 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRewriteSelectCountDistinct() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table test(s string, x long, ts timestamp, substring string) timestamp(ts) partition by day");
+            insert("insert into test " +
+                    "select 's' || (x%10), " +
+                    " x, " +
+                    " (x*86400000000)::timestamp, " +
+                    " 'substring' " +
+                    "from long_sequence(10)");
+
+
+            //no where clause, distinct constant
+            assertPlan("SELECT count_distinct(10) FROM test",
+                    "Count\n" +
+                            "    GroupBy vectorized: false\n" +
+                            "      keys: [10]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: test\n");
+
+            //no where clause, distinct column
+            assertPlan("SELECT count_distinct(s) FROM test",
+                    "Count\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [s]\n" +
+                            "      filter: s is not null \n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: test\n");
+
+            //with where clause, distinct column
+            assertPlan("SELECT count_distinct(s) FROM test where s like '%abc%'",
+                    "Count\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [s]\n" +
+                            "      filter: (s like %abc% and s is not null )\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: test\n");
+
+            //no where clause, distinct expression 1
+            assertPlan("SELECT count_distinct(substring(s,1,1)) FROM test ",
+                    "Count\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [substring]\n" +
+                            "      filter: substring(s,1,1) is not null \n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: test\n");
+
+            //where clause, distinct expression 2
+            assertPlan("SELECT count_distinct(substring(s,1,1)) FROM test where s like '%abc%'",
+                    "Count\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [substring]\n" +
+                            "      filter: (s like %abc% and substring(s,1,1) is not null )\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: test\n");
+
+            //where clause, distinct expression 3, function name clash with column name
+            assertPlan("SELECT count_distinct(substring(s,1,1)) FROM test where s like '%abc%' and substring != null",
+                    "Count\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [substring]\n" +
+                            "      filter: ((s like %abc% and substring is not null ) and substring(s,1,1) is not null )\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: test\n");
+
+            //where clause, distinct expression 3
+            assertPlan("SELECT count_distinct(x+1) FROM test where x > 5",
+                    "Count\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [column]\n" +
+                            "      filter: (5<x and x+1!=null)\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: test\n");
+
+            //where clause, distinct expression, col alias
+            assertPlan("SELECT count_distinct(x+1) cnt_dst FROM test where x > 5",
+                    "Count\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [column]\n" +
+                            "      filter: (5<x and x+1!=null)\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: test\n");
+
+            assertSql("cnt_dst\n" +
+                            "5\n",
+                    "SELECT count_distinct(x+1) cnt_dst FROM test where x > 5");
+
+            //where clause, distinct expression, table alias
+            assertPlan("SELECT count_distinct(x+1) FROM test tab where x > 5",
+                    "Count\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [column]\n" +
+                            "      filter: (5<x and x+1!=null)\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: test\n");
+
+            assertSql("count_distinct\n" +
+                            "5\n",
+                    "SELECT count_distinct(x+1) FROM test tab where x > 5");
+        });
+    }
+
+    @Test
     public void testSampleBy() throws Exception {
         assertPlan(
                 "create table a ( i int, ts timestamp) timestamp(ts);",
@@ -6354,7 +6465,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         );
     }
 
-    @Test // TODO: should use symbol list
+    @Test
     public void testSelectCountDistinct1() throws Exception {
         assertPlan(
                 "create table tab ( s symbol, ts timestamp);",
@@ -6367,7 +6478,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         );
     }
 
-    @Test // TODO: should use symbol list
+    @Test
     public void testSelectCountDistinct2() throws Exception {
         assertPlan(
                 "create table tab ( s symbol index, ts timestamp);",
@@ -6383,13 +6494,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectCountDistinct3() throws Exception {
         assertPlan(
-                "create table tab ( s string, l long );",
+                "create table tab ( s string, l long )",
                 "select count_distinct(l) from tab",
-                "GroupBy vectorized: false\n" +
-                        "  values: [count_distinct(l)]\n" +
-                        "    DataFrame\n" +
-                        "        Row forward scan\n" +
-                        "        Frame forward scan on: tab\n"
+                "Count\n" +
+                        "    Async Group By workers: 1\n" +
+                        "      keys: [l]\n" +
+                        "      filter: l!=null\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: tab\n"
         );
     }
 

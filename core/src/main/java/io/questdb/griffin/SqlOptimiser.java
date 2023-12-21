@@ -194,6 +194,12 @@ public class SqlOptimiser implements Mutable {
                 && Chars.equals(model.getOrderBy().getQuick(0).token, model.getTimestamp().token);
     }
 
+    private static boolean isSymbolColumn(ExpressionNode countDistinctExpr, QueryModel nested) {
+        return countDistinctExpr.rhs.type == LITERAL
+                && nested.getAliasToColumnMap().get(countDistinctExpr.rhs.token) != null
+                && nested.getAliasToColumnMap().get(countDistinctExpr.rhs.token).getColumnType() == ColumnType.SYMBOL;
+    }
+
     private static void linkDependencies(QueryModel model, int parent, int child) {
         model.getJoinModels().getQuick(parent).addDependency(child);
     }
@@ -3497,6 +3503,79 @@ public class SqlOptimiser implements Mutable {
         return agg;
     }
 
+    /* Rewrites expressions such as :
+         SELECT count_distinct(s) FROM tab WHERE s like '%a ;
+       into more parallel-friendly :
+         SELECT count(*) FROM (SELECT s FROM tab WHERE s like '%a AND s IS NOT NULL GROUP BY s);
+     */
+    private void rewriteCountDistinct(QueryModel model) throws SqlException {
+        QueryModel nested = model.getNestedModel();
+        ExpressionNode countDistinctExpr;
+
+        if (model.getColumns().size() == 1
+                && (countDistinctExpr = model.getColumns().getQuick(0).getAst()).type == ExpressionNode.FUNCTION
+                && Chars.equalsIgnoreCase("count_distinct", countDistinctExpr.token)
+                && countDistinctExpr.paramCount == 1
+                && !isSymbolColumn(countDistinctExpr, nested) // don't rewrite for symbol column because there's a separate optimization in count_distinct
+                && model.getJoinModels().size() == 1
+                && model.getUnionModel() == null
+                && nested != null
+                && nested.getNestedModel() == null
+                && model.getWhereClause() == null
+                && nested.getTableName() != null
+                && model.getSampleBy() == null
+                && model.getGroupBy().size() == 0
+        ) {
+            ExpressionNode distinctExpr = countDistinctExpr.rhs;
+
+            QueryModel middle = queryModelPool.next();
+            middle.setNestedModel(nested);
+            middle.setSelectModelType(QueryModel.SELECT_MODEL_GROUP_BY);
+            model.setNestedModel(middle);
+
+            CharSequence innerAlias = createColumnAlias(distinctExpr.token, middle, true);
+            QueryColumn qc = queryColumnPool.next().of(innerAlias, distinctExpr);
+            middle.addBottomUpColumn(qc);
+
+            ExpressionNode nullExpr = expressionNodePool.next();
+            nullExpr.type = CONSTANT;
+            nullExpr.token = "null";
+            nullExpr.precedence = 0;
+
+            ExpressionNode node = expressionNodePool.next();
+            node.type = OPERATION;
+            node.token = "!=";
+            node.paramCount = 2;
+            node.lhs = distinctExpr;
+            node.rhs = nullExpr;
+            node.precedence = 7;
+
+            nested.setWhereClause(concatFilters(nested.getWhereClause(), node));
+            middle.addGroupBy(distinctExpr);
+
+            countDistinctExpr.token = "count";
+            countDistinctExpr.paramCount = 0;
+            countDistinctExpr.rhs = null;
+
+            // if rewrite applies to this model then there's no point trying to apply it to nested, joined or union-ed models
+            return;
+        }
+
+        if (nested != null) {
+            rewriteCountDistinct(nested);
+        }
+
+        final QueryModel union = model.getUnionModel();
+        if (union != null) {
+            rewriteCountDistinct(union);
+        }
+
+        ObjList<QueryModel> joinModels = model.getJoinModels();
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            rewriteCountDistinct(joinModels.getQuick(i));
+        }
+    }
+
     // push aggregate function calls to group by model, replace key column expressions with group by aliases
     // raise error if raw column usage doesn't match one of expressions on group by list
     private ExpressionNode rewriteGroupBySelectExpression(
@@ -4992,7 +5071,7 @@ public class SqlOptimiser implements Mutable {
         QueryModel rewrittenModel = model;
         try {
             rewrittenModel = bubbleUpOrderByAndLimitFromUnion(rewrittenModel);
-            //extractCorrelatedQueriesAsJoins(rewrittenModel);
+            //extractCorrelatedQueriesAsJoins(model);
             optimiseExpressionModels(rewrittenModel, sqlExecutionContext, sqlParserCallback);
             enumerateTableColumns(rewrittenModel, sqlExecutionContext, sqlParserCallback);
             rewriteTopLevelLiteralsToFunctions(rewrittenModel);
@@ -5001,6 +5080,7 @@ public class SqlOptimiser implements Mutable {
             optimiseBooleanNot(rewrittenModel);
             rewrittenModel = rewriteSelectClause(rewrittenModel, true, sqlExecutionContext, sqlParserCallback);
             optimiseJoins(rewrittenModel);
+            rewriteCountDistinct(rewrittenModel);
             rewriteNegativeLimit(rewrittenModel, sqlExecutionContext);
             rewriteOrderByPosition(rewrittenModel);
             rewriteOrderByPositionForUnionModels(rewrittenModel);
