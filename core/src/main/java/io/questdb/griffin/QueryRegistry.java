@@ -31,25 +31,38 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.Worker;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
+/**
+ * A concurrent registry of running sql commands.
+ */
 public class QueryRegistry {
 
     private static final Log LOG = LogFactory.getLog(QueryRegistry.class);
-    private final NanosecondClock clock;
+    private final MicrosecondClock clock;
     private final AtomicLong idSeq = new AtomicLong();
     private final ConcurrentLongHashMap<Entry> registry = new ConcurrentLongHashMap<>();
     private final ThreadLocal<WeakMutableObjectPool<Entry>> tlQueryPool;
 
     public QueryRegistry(CairoConfiguration configuration) {
-        this.clock = configuration.getNanosecondClock();
+        this.clock = configuration.getMicrosecondClock();
         tlQueryPool = new ThreadLocal<>(() -> new WeakMutableObjectPool<>(Entry::new, configuration.getQueryRegistryPoolSize()));
     }
 
+    /**
+     * Cancels command with given id.
+     * Cancellation is not immediate and depends on how often the running command checks circuit breaker.
+     * Cancelling commands issued by other users is allowed for admin user only.
+     *
+     * @param queryId          - id of query to cancel, must be non-negative
+     * @param executionContext - execution context
+     * @return true if query was found in registry and cancelled, otherwise false
+     */
     public boolean cancel(long queryId, SqlExecutionContext executionContext) {
         SecurityContext securityContext = executionContext.getSecurityContext();
         securityContext.authorizeCancelQuery();
@@ -76,6 +89,12 @@ public class QueryRegistry {
         return registry.get(id);
     }
 
+    /**
+     * Copy ids of currently running sql commands to target list.
+     * List is cleared before adding ids.
+     *
+     * @param target - list to copy ids to
+     */
     public void getEntryIds(@NotNull LongList target) {
         target.clear();
 
@@ -86,6 +105,13 @@ public class QueryRegistry {
         }
     }
 
+    /**
+     * Add given command to registry.
+     *
+     * @param query            - query text
+     * @param executionContext - execution context
+     * @return non-negative id assigned to given query. Id may be used to look query up in registry.
+     */
     public long register(CharSequence query, SqlExecutionContext executionContext) {
         final long queryId = idSeq.getAndIncrement();
         final Entry e = tlQueryPool.get().pop();
@@ -114,6 +140,12 @@ public class QueryRegistry {
         return queryId;
     }
 
+    /**
+     * Remove query with given id from registry.
+     *
+     * @param queryId          - id of query to remove
+     * @param executionContext - execution context
+     */
     public void unregister(long queryId, SqlExecutionContext executionContext) {
         if (queryId < 0) {
             //likely because query was already unregistered

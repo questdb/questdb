@@ -159,9 +159,9 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
             @Override
             public long getTimestamp(int col) {
                 if (col == 4) {
-                    return entry.getRegisteredAtNs() / 1000;
+                    return entry.getRegisteredAtNs();
                 } else if (col == 5) {
-                    return entry.getChangedAtNs() / 1000;
+                    return entry.getChangedAtNs();
                 }
 
                 return Record.super.getTimestamp(col);

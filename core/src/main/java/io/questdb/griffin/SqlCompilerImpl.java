@@ -1485,7 +1485,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 case ExecutionModel.UPDATE:
                     final QueryModel updateQueryModel = (QueryModel) executionModel;
                     TableToken tableToken = executionContext.getTableToken(updateQueryModel.getTableName());
-                try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(tableToken)) {
+                    try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(tableToken)) {
                         final UpdateOperation updateOperation = generateUpdate(updateQueryModel, executionContext, metadata);
                         //updateOperation.setUpdateSql(query);
                         compiledQuery.ofUpdate(updateOperation);
