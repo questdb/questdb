@@ -45,14 +45,14 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
     }
 
     @Override
-    public synchronized TableToken addTableAlias(String newName, TableToken tableToken) {
+    public TableToken addTableAlias(String newName, TableToken tableToken) {
         final TableToken newTableToken = tableToken.renamed(newName);
         final TableToken oldToken = tableNameToTableTokenMap.putIfAbsent(newName, newTableToken);
         return oldToken == null ? newTableToken : null;
     }
 
     @Override
-    public synchronized boolean dropTable(TableToken token) {
+    public boolean dropTable(TableToken token) {
         final MapBeDroppedTableToken reverseMapItem = dirNameToTableTokenMap.get(token.getDirName());
         if (reverseMapItem != null && tableNameToTableTokenMap.remove(token.getTableName(), token)) {
             if (token.isWal()) {
@@ -67,7 +67,7 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
     }
 
     @Override
-    public synchronized TableToken lockTableName(String tableName, String dirName, int tableId, boolean isWal) {
+    public TableToken lockTableName(String tableName, String dirName, int tableId, boolean isWal) {
         final TableToken registeredRecord = tableNameToTableTokenMap.putIfAbsent(tableName, LOCKED_TOKEN);
         if (registeredRecord == null) {
             boolean isProtected = protectedTableResolver.test(tableName);
@@ -79,12 +79,12 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
     }
 
     @Override
-    public synchronized void purgeToken(TableToken token) {
+    public void purgeToken(TableToken token) {
         dirNameToTableTokenMap.remove(token.getDirName());
     }
 
     @Override
-    public synchronized void registerName(TableToken tableToken) {
+    public void registerName(TableToken tableToken) {
         String tableName = tableToken.getTableName();
         if (!tableNameToTableTokenMap.replace(tableName, LOCKED_TOKEN, tableToken)) {
             throw CairoException.critical(0).put("cannot register table, name is not locked [name=").put(tableName).put(']');
@@ -106,12 +106,12 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
     }
 
     @Override
-    public synchronized void removeAlias(TableToken tableToken) {
+    public void removeAlias(TableToken tableToken) {
         tableNameToTableTokenMap.remove(tableToken.getTableName());
     }
 
     @Override
-    public synchronized TableToken rename(CharSequence oldName, CharSequence newName, TableToken tableToken) {
+    public TableToken rename(CharSequence oldName, CharSequence newName, TableToken tableToken) {
         String newTableNameStr = Chars.toString(newName);
         TableToken renamedTableToken = tableToken.renamed(newTableNameStr);
 
@@ -133,7 +133,7 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
     }
 
     @Override
-    public synchronized void rename(TableToken oldToken, TableToken newToken) {
+    public void rename(TableToken oldToken, TableToken newToken) {
         if (tableNameToTableTokenMap.remove(oldToken.getTableName(), oldToken)) {
             nameStore.logDropTable(oldToken);
             nameStore.logAddTable(newToken);
@@ -142,7 +142,7 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
     }
 
     @Override
-    public synchronized void unlockTableName(TableToken tableToken) {
+    public void unlockTableName(TableToken tableToken) {
         tableNameToTableTokenMap.remove(tableToken.getTableName(), LOCKED_TOKEN);
     }
 }

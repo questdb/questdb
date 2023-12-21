@@ -53,12 +53,12 @@ public abstract class AbstractTableNameRegistry implements TableNameRegistry {
     }
 
     @Override
-    public synchronized TableToken getTableToken(CharSequence tableName) {
+    public TableToken getTableToken(CharSequence tableName) {
         return tableNameToTableTokenMap.get(tableName);
     }
 
     @Override
-    public synchronized TableToken getTableTokenByDirName(String dirName) {
+    public TableToken getTableTokenByDirName(String dirName) {
         MapBeDroppedTableToken rmi = dirNameToTableTokenMap.get(dirName);
         if (rmi != null && !rmi.isDropped()) {
             return rmi.getToken();
@@ -67,7 +67,7 @@ public abstract class AbstractTableNameRegistry implements TableNameRegistry {
     }
 
     @Override
-    public synchronized int getTableTokenCount(boolean includeDropped) {
+    public int getTableTokenCount(boolean includeDropped) {
         int count = 0;
         for (MapBeDroppedTableToken entry : dirNameToTableTokenMap.values()) {
             if (includeDropped || !entry.isDropped()) {
@@ -78,7 +78,7 @@ public abstract class AbstractTableNameRegistry implements TableNameRegistry {
     }
 
     @Override
-    public synchronized void getTableTokens(ObjHashSet<TableToken> target, boolean includeDropped) {
+    public void getTableTokens(ObjHashSet<TableToken> target, boolean includeDropped) {
         target.clear();
         for (MapBeDroppedTableToken entry : dirNameToTableTokenMap.values()) {
             if (includeDropped || !entry.isDropped()) {
@@ -88,13 +88,13 @@ public abstract class AbstractTableNameRegistry implements TableNameRegistry {
     }
 
     @Override
-    public synchronized TableToken getTokenByDirName(CharSequence dirName) {
+    public TableToken getTokenByDirName(CharSequence dirName) {
         MapBeDroppedTableToken entry = dirNameToTableTokenMap.get(dirName);
         return entry == null ? null : entry.getToken();
     }
 
     @Override
-    public synchronized boolean isTableDropped(TableToken tableToken) {
+    public boolean isTableDropped(TableToken tableToken) {
         MapBeDroppedTableToken rmi = dirNameToTableTokenMap.get(tableToken.getDirName());
         return rmi != null && rmi.isDropped();
     }

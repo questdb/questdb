@@ -406,6 +406,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                 try {
                     testFuzz0(k);
                 } catch (Throwable e) {
+                    LOG.error().$(e).I$();
                     errorCounter.incrementAndGet();
                 } finally {
                     haltLatch.countDown();
@@ -414,6 +415,8 @@ public class TableNameRegistryTest extends AbstractCairoTest {
         }
 
         haltLatch.await();
+        engine.reconcileTableNameRegistryState();
+
         Assert.assertEquals(0, errorCounter.get());
     }
 
@@ -714,7 +717,6 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                             throw e;
                         }
                     }
-                    engine.reconcileTableNameRegistryState();
                 }
             }
         }
