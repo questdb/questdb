@@ -435,6 +435,38 @@ public class ParallelGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelMultiKeyGroupByWithNoFunctions() throws Exception {
+        testParallelMultiKeyGroupBy(
+                "SELECT key1, key2 FROM tab GROUP BY key1, key2 ORDER BY key1, key2",
+                "key1\tkey2\n" +
+                        "k0\tk0\n" +
+                        "k1\tk1\n" +
+                        "k2\tk2\n" +
+                        "k3\tk3\n" +
+                        "k4\tk4\n"
+        );
+    }
+
+    @Test
+    public void testParallelMultiKeyGroupByWithNoFunctionsAndFilter() throws Exception {
+        testParallelMultiKeyGroupBy(
+                "SELECT key1, key2 FROM tab WHERE key1 != 'k1' and key2 != 'k2' GROUP BY key1, key2 ORDER BY key1, key2",
+                "key1\tkey2\n" +
+                        "k0\tk0\n" +
+                        "k3\tk3\n" +
+                        "k4\tk4\n"
+        );
+    }
+
+    @Test
+    public void testParallelMultiKeyGroupByWithNoFunctionsAndTooStrictFilter() throws Exception {
+        testParallelMultiKeyGroupBy(
+                "SELECT key1, key2 FROM tab WHERE value < 0 GROUP BY key1, key2 ORDER BY key1, key2",
+                "key1\tkey2\n"
+        );
+    }
+
+    @Test
     public void testParallelMultiKeyGroupByWithTooStrictFilter() throws Exception {
         testParallelMultiKeyGroupBy(
                 "SELECT key1, key2, avg(value), sum(colTop) FROM tab WHERE value < 0 ORDER BY key1, key2",
@@ -704,6 +736,39 @@ public class ParallelGroupByTest extends AbstractCairoTest {
                         "k2\t46.31818181818182\t387.0\t22\n" +
                         "k3\t47.31818181818182\t393.0\t22\n" +
                         "k4\t48.31818181818182\t399.0\t22\n"
+        );
+    }
+
+    @Test
+    public void testParallelSingleKeyGroupByWithNoFunctions() throws Exception {
+        testParallelSymbolKeyGroupBy(
+                "SELECT key FROM tab GROUP BY key ORDER BY key",
+                "key\n" +
+                        "k0\n" +
+                        "k1\n" +
+                        "k2\n" +
+                        "k3\n" +
+                        "k4\n"
+        );
+    }
+
+    @Test
+    public void testParallelSingleKeyGroupByWithNoFunctionsAndFilter() throws Exception {
+        testParallelSymbolKeyGroupBy(
+                "SELECT key FROM tab WHERE key != 'k1' GROUP BY key ORDER BY key",
+                "key\n" +
+                        "k0\n" +
+                        "k2\n" +
+                        "k3\n" +
+                        "k4\n"
+        );
+    }
+
+    @Test
+    public void testParallelSingleKeyGroupByWithNoFunctionsAndTooStrictFilter() throws Exception {
+        testParallelSymbolKeyGroupBy(
+                "SELECT key FROM tab WHERE quantity < 0 GROUP BY key ORDER BY key",
+                "key\n"
         );
     }
 

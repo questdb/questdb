@@ -2579,6 +2579,132 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByNoFunctions1() throws Exception {
+        assertPlan(
+                "create table a (i int, d double)",
+                "select i from a group by i",
+                "GroupBy vectorized: true workers: 1\n" +
+                        "  keys: [i]\n" +
+                        "  values: [count(*)]\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+    }
+
+    @Test
+    public void testGroupByNoFunctions2() throws Exception {
+        assertPlan(
+                "create table a (i int, d double)",
+                "select i from a where d < 42 group by i",
+                "Async Group By workers: 1\n" +
+                        "  keys: [i]\n" +
+                        "  filter: d<42\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+    }
+
+    @Test
+    public void testGroupByNoFunctions3() throws Exception {
+        assertPlan(
+                "create table a (i short, d double)",
+                "select i from a group by i",
+                "Async Group By workers: 1\n" +
+                        "  keys: [i]\n" +
+                        "  filter: null\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+    }
+
+    @Test
+    public void testGroupByNoFunctions4() throws Exception {
+        assertPlan(
+                "create table a (i long, j long)",
+                "select i, j from a group by i, j",
+                "Async Group By workers: 1\n" +
+                        "  keys: [i,j]\n" +
+                        "  filter: null\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+    }
+
+    @Test
+    public void testGroupByNoFunctions5() throws Exception {
+        assertPlan(
+                "create table a (i long, j long, d double)",
+                "select i, j from a where d > 42 group by i, j",
+                "Async Group By workers: 1\n" +
+                        "  keys: [i,j]\n" +
+                        "  filter: 42<d\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+    }
+
+    @Test
+    public void testGroupByNoFunctions6() throws Exception {
+        assertPlan(
+                "create table a (s symbol)",
+                "select s from a group by s",
+                "GroupBy vectorized: true workers: 1\n" +
+                        "  keys: [s]\n" +
+                        "  values: [count(*)]\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+    }
+
+    @Test
+    public void testGroupByNoFunctions7() throws Exception {
+        assertPlan(
+                "create table a (s symbol, d double)",
+                "select s from a where d = 42 group by s",
+                "Async Group By workers: 1\n" +
+                        "  keys: [s]\n" +
+                        "  filter: d=42\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+    }
+
+    @Test
+    public void testGroupByNoFunctions8() throws Exception {
+        assertPlan(
+                "create table a (s string)",
+                "select s from a group by s",
+                "Async Group By workers: 1\n" +
+                        "  keys: [s]\n" +
+                        "  filter: null\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+    }
+
+    @Test
+    public void testGroupByNoFunctions9() throws Exception {
+        assertPlan(
+                "create table a (s string)",
+                "select s from a where s like '%foobar%' group by s",
+                "Async Group By workers: 1\n" +
+                        "  keys: [s]\n" +
+                        "  filter: s like %foobar%\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+    }
+
+    @Test
     public void testGroupByNotKeyed1() throws Exception {
         assertPlan(
                 "create table a ( i int, d double)",
@@ -4207,7 +4333,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testLeftJoinWithPostJoinFilter() throws Exception {
         assertMemoryLeak(() -> {
             compile("  CREATE TABLE tab ( created timestamp, value int ) timestamp(created)");
-
 
             String[] joinTypes = {"LEFT", "LT", "ASOF"};
             String[] joinFactoryTypes = {"Hash Outer Join Light", "Lt Join", "AsOf Join"};
@@ -6087,6 +6212,36 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    Index forward scan on: s deferred: true\n" +
                         "      filter: s='S1'\n" +
                         "    Frame forward scan on: a\n"
+        );
+    }
+
+    @Test
+    public void testSelectCount16() throws Exception {
+        assertPlan(
+                "create table a (i long, j long)",
+                "select count(*) from (select i, j from a group by i, j)",
+                "Count\n" +
+                        "    Async Group By workers: 1\n" +
+                        "      keys: [i,j]\n" +
+                        "      filter: null\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: a\n"
+        );
+    }
+
+    @Test
+    public void testSelectCount17() throws Exception {
+        assertPlan(
+                "create table a (i long, j long, d double)",
+                "select count(*) from (select i, j from a where d > 42 group by i, j)",
+                "Count\n" +
+                        "    Async Group By workers: 1\n" +
+                        "      keys: [i,j]\n" +
+                        "      filter: 42<d\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: a\n"
         );
     }
 
