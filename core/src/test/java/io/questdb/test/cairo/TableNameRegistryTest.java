@@ -33,7 +33,6 @@ import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
@@ -719,9 +718,5 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                 }
             }
         }
-    }
-
-    static {
-        LogFactory.configureSync();
     }
 }
