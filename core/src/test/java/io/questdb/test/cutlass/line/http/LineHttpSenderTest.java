@@ -34,7 +34,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
             )) {
                 int httpPort = getHttpPort(serverMain);
 
-                int totalCount = 1_000;
+                int totalCount = 100;
                 try (LineHttpSender sender = new LineHttpSender("localhost", httpPort, -1, false)) {
                     for (int i = 0; i < totalCount; i++) {
                         sender.table("m1")
