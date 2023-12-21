@@ -80,13 +80,9 @@ public class MinTimestampGroupByFunction extends TimestampFunction implements Gr
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         long srcMin = srcValue.getTimestamp(valueIndex);
-        if (destValue.isNew()) {
+        long destMin = destValue.getTimestamp(valueIndex);
+        if (srcMin != Numbers.LONG_NaN && (srcMin < destMin || destMin == Numbers.LONG_NaN)) {
             destValue.putTimestamp(valueIndex, srcMin);
-        } else {
-            long destMin = destValue.getTimestamp(valueIndex);
-            if (srcMin != Numbers.LONG_NaN && (srcMin < destMin || destMin == Numbers.LONG_NaN)) {
-                destValue.putTimestamp(valueIndex, srcMin);
-            }
         }
     }
 

@@ -80,13 +80,9 @@ public class MaxDateGroupByFunction extends DateFunction implements GroupByFunct
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         long srcMax = srcValue.getDate(valueIndex);
-        if (destValue.isNew()) {
+        long destMax = destValue.getDate(valueIndex);
+        if (srcMax > destMax || destMax == Numbers.LONG_NaN) {
             destValue.putDate(valueIndex, srcMax);
-        } else {
-            long destMax = destValue.getDate(valueIndex);
-            if (srcMax > destMax || destMax == Numbers.LONG_NaN) {
-                destValue.putDate(valueIndex, srcMax);
-            }
         }
     }
 

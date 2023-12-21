@@ -175,11 +175,18 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
         // Merge the values.
         final AsyncGroupByNotKeyedAtom atom = frameSequence.getAtom();
         final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater();
-        final SimpleMapValue dataValue = atom.getOwnerMapValue();
+        final SimpleMapValue destValue = atom.getOwnerMapValue();
         for (int i = 0, n = atom.getPerWorkerMapValues().size(); i < n; i++) {
             final SimpleMapValue srcValue = atom.getPerWorkerMapValues().getQuick(i);
-            if (!srcValue.isNew()) {
-                functionUpdater.merge(dataValue, srcValue);
+            if (srcValue.isNew()) {
+                continue;
+            }
+
+            if (destValue.isNew()) {
+                destValue.copy(srcValue);
+            } else {
+                functionUpdater.merge(destValue, srcValue);
+                destValue.setNew(false);
             }
         }
 

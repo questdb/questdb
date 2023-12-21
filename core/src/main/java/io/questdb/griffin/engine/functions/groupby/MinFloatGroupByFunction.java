@@ -79,13 +79,9 @@ public class MinFloatGroupByFunction extends FloatFunction implements GroupByFun
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         float srcMin = srcValue.getFloat(valueIndex);
-        if (destValue.isNew()) {
+        float destMin = destValue.getFloat(valueIndex);
+        if (srcMin < destMin || Float.isNaN(destMin)) {
             destValue.putFloat(valueIndex, srcMin);
-        } else {
-            float destMin = destValue.getFloat(valueIndex);
-            if (srcMin < destMin || Float.isNaN(destMin)) {
-                destValue.putFloat(valueIndex, srcMin);
-            }
         }
     }
 

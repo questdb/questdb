@@ -80,13 +80,9 @@ public class MaxTimestampGroupByFunction extends TimestampFunction implements Gr
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         long srcMax = srcValue.getLong(valueIndex);
-        if (destValue.isNew()) {
+        long destMax = destValue.getLong(valueIndex);
+        if (srcMax > destMax || destMax == Numbers.LONG_NaN) {
             destValue.putLong(valueIndex, srcMax);
-        } else {
-            long destMax = destValue.getLong(valueIndex);
-            if (srcMax > destMax || destMax == Numbers.LONG_NaN) {
-                destValue.putLong(valueIndex, srcMax);
-            }
         }
     }
 

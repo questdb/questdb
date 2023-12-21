@@ -80,13 +80,9 @@ public class MaxCharGroupByFunction extends CharFunction implements GroupByFunct
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         char srcMax = srcValue.getChar(valueIndex);
-        if (destValue.isNew()) {
+        char destMax = destValue.getChar(valueIndex);
+        if (srcMax > destMax || destMax == CharConstant.ZERO.getChar(null)) {
             destValue.putChar(valueIndex, srcMax);
-        } else {
-            char destMax = destValue.getChar(valueIndex);
-            if (srcMax > destMax || destMax == CharConstant.ZERO.getChar(null)) {
-                destValue.putChar(valueIndex, srcMax);
-            }
         }
     }
 

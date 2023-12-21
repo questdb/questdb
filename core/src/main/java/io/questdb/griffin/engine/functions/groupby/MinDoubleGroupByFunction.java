@@ -79,13 +79,9 @@ public class MinDoubleGroupByFunction extends DoubleFunction implements GroupByF
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         double srcMin = srcValue.getDouble(valueIndex);
-        if (destValue.isNew()) {
+        double destMin = destValue.getDouble(valueIndex);
+        if (srcMin < destMin || Double.isNaN(destMin)) {
             destValue.putDouble(valueIndex, srcMin);
-        } else {
-            double destMin = destValue.getDouble(valueIndex);
-            if (srcMin < destMin || Double.isNaN(destMin)) {
-                destValue.putDouble(valueIndex, srcMin);
-            }
         }
     }
 

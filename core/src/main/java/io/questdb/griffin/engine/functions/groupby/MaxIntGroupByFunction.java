@@ -85,13 +85,9 @@ public class MaxIntGroupByFunction extends IntFunction implements GroupByFunctio
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         int srcMax = srcValue.getInt(valueIndex);
-        if (destValue.isNew()) {
+        int destMax = destValue.getInt(valueIndex);
+        if (srcMax > destMax || destMax == Numbers.INT_NaN) {
             destValue.putInt(valueIndex, srcMax);
-        } else {
-            int destMax = destValue.getInt(valueIndex);
-            if (srcMax > destMax || destMax == Numbers.INT_NaN) {
-                destValue.putInt(valueIndex, srcMax);
-            }
         }
     }
 

@@ -97,13 +97,8 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
     public void merge(MapValue destValue, MapValue srcValue) {
         double srcSum = srcValue.getDouble(valueIndex);
         long srcCount = srcValue.getLong(valueIndex + 1);
-        if (destValue.isNew()) {
-            destValue.putDouble(valueIndex, srcSum);
-            destValue.putLong(valueIndex + 1, srcCount);
-        } else {
-            destValue.addDouble(valueIndex, srcSum);
-            destValue.addLong(valueIndex + 1, srcCount);
-        }
+        destValue.addDouble(valueIndex, srcSum);
+        destValue.addLong(valueIndex + 1, srcCount);
     }
 
     @Override

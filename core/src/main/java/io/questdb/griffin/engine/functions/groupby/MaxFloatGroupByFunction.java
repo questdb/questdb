@@ -79,13 +79,9 @@ public class MaxFloatGroupByFunction extends FloatFunction implements GroupByFun
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         float srcMax = srcValue.getFloat(valueIndex);
-        if (destValue.isNew()) {
+        float destMax = destValue.getFloat(valueIndex);
+        if (srcMax > destMax || Float.isNaN(destMax)) {
             destValue.putFloat(valueIndex, srcMax);
-        } else {
-            float destMax = destValue.getFloat(valueIndex);
-            if (srcMax > destMax || Float.isNaN(destMax)) {
-                destValue.putFloat(valueIndex, srcMax);
-            }
         }
     }
 

@@ -59,11 +59,7 @@ public class CountLongConstGroupByFunction extends LongFunction implements Group
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         long srcCount = srcValue.getLong(valueIndex);
-        if (destValue.isNew()) {
-            destValue.putLong(valueIndex, srcCount);
-        } else {
-            destValue.addLong(valueIndex, srcCount);
-        }
+        destValue.addLong(valueIndex, srcCount);
     }
 
     @Override
