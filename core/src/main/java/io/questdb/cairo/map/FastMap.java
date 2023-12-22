@@ -380,12 +380,17 @@ public class FastMap implements Map, Reopenable {
             long srcStartAddress = srcMap.heapStart + offset;
             int hashCode = getHashCode(srcMap.offsets, i);
             int index = hashCode & mask;
+
             long destOffset;
+            long destStartAddress;
             while ((destOffset = getOffset(offsets, index)) > -1) {
-                if (hashCode == getHashCode(offsets, index) && Vect.memeq(heapStart + destOffset, srcStartAddress, keySize)) {
+                if (
+                        hashCode == getHashCode(offsets, index)
+                                && Vect.memeq((destStartAddress = heapStart + destOffset), srcStartAddress, keySize)
+                ) {
                     // Match found, merge values.
                     mergeFunc.merge(
-                            valueAt(heapStart + destOffset),
+                            valueAt(destStartAddress),
                             srcMap.valueAt(srcStartAddress)
                     );
                     continue OUTER;
@@ -409,18 +414,49 @@ public class FastMap implements Map, Reopenable {
 
     private void mergeVarSizeKey(FastMap srcMap, GroupByFunctionsUpdater mergeFunc) {
         assert keySize == -1;
-        RecordCursor srcCursor = srcMap.getCursor();
-        MapRecord srcRecord = srcMap.getRecord();
-        while (srcCursor.hasNext()) {
-            MapKey destKey = withKey();
-            srcRecord.copyToKey(destKey);
-            MapValue destValue = destKey.createValue();
-            MapValue srcValue = srcRecord.getValue();
-            if (destValue.isNew()) {
-                destValue.copyFrom(srcValue);
-            } else {
-                mergeFunc.merge(destValue, srcValue);
+        setKeyCapacity(size + srcMap.size);
+
+        OUTER:
+        for (int i = 0, k = (int) (srcMap.offsets.size() / 2); i < k; i++) {
+            long offset = getOffset(srcMap.offsets, i);
+            if (offset < 0) {
+                continue;
             }
+
+            long srcStartAddress = srcMap.heapStart + offset;
+            int srcKeySize = Unsafe.getUnsafe().getInt(srcStartAddress);
+            int hashCode = getHashCode(srcMap.offsets, i);
+            int index = hashCode & mask;
+
+            long destOffset;
+            long destStartAddress;
+            while ((destOffset = getOffset(offsets, index)) > -1) {
+                if (
+                        hashCode == getHashCode(offsets, index)
+                                && Unsafe.getUnsafe().getInt((destStartAddress = heapStart + destOffset)) == srcKeySize
+                                && Vect.memeq(destStartAddress + keyOffset, srcStartAddress + keyOffset, srcKeySize)
+                ) {
+                    // Match found, merge values.
+                    mergeFunc.merge(
+                            valueAt(destStartAddress),
+                            srcMap.valueAt(srcStartAddress)
+                    );
+                    continue OUTER;
+                }
+                index = (index + 1) & mask;
+            }
+
+            assert free > 0;
+            int len = keyOffset + srcKeySize + valueSize;
+            if (kPos + len > heapLimit) {
+                resize(len);
+            }
+            Vect.memcpy(kPos, srcStartAddress, len);
+            setOffset(offsets, index, kPos - heapStart);
+            setHashCode(offsets, index, hashCode);
+            kPos = (kPos + len + 7) & ~0x7;
+            free--;
+            size++;
         }
     }
 
