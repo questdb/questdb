@@ -370,9 +370,11 @@ final class FastMapRecord implements MapRecord {
         // Column indexes start with value fields followed by key fields.
         // The key-value pair layout is [key len, key data, value data].
         if (index < splitIndex) {
+            if (index == 0) {
+                return valueAddress;
+            }
             return valueAddress + valueOffsets[index];
-        }
-        if (index == splitIndex) {
+        } else if (index == splitIndex) {
             return keyAddress;
         }
         return addressOfKeyColumn(index - splitIndex);

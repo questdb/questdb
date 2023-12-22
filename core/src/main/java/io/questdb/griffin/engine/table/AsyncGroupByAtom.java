@@ -131,7 +131,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         ownerParticle.close();
         for (int i = 0, n = perWorkerParticles.size(); i < n; i++) {
             Particle p = perWorkerParticles.getQuick(i);
-            p.close();
+            Misc.free(p);
         }
     }
 
@@ -326,9 +326,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             map.close();
             for (int i = 0, n = shards.size(); i < n; i++) {
                 Map m = shards.getQuick(i);
-                if (m != null) {
-                    m.close();
-                }
+                Misc.free(m);
             }
         }
 

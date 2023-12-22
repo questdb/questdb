@@ -114,7 +114,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         Misc.free(valueChain);
     }
 
-    //returns address of node containing searchRecord; otherwise returns -1
+    // returns address of node containing searchRecord; otherwise returns -1
     public long find(Record searchedRecord,
                      RecordCursor sourceCursor,
                      Record placeholder,
@@ -152,7 +152,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         print(sink, null);
     }
 
-    //prints tree in-order, horizontally
+    // prints tree in-order, horizontally
     public void print(CharSink sink, ValuePrinter printer) {
         if (root == EMPTY) {
             sink.put("[EMPTY TREE]");
@@ -176,16 +176,16 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
 
         comparator.setLeft(leftRecord);
 
-        //if maxValues < 0 then there's no limit (unless there's more than 2^64 records, which is unlikely)
+        // if maxValues < 0 then there's no limit (unless there's more than 2^64 records, which is unlikely)
         if (maxValues == currentValues) {
             sourceCursor.recordAt(rightRecord, minMaxRowId);
             int cmp = comparator.compare(rightRecord);
 
-            if (isFirstN && cmp >= 0) {//bigger than max for firstN/bottomN
+            if (isFirstN && cmp >= 0) { // bigger than max for firstN/bottomN
                 return;
-            } else if (!isFirstN && cmp <= 0) { //smaller than min for lastN/topN
+            } else if (!isFirstN && cmp <= 0) { // smaller than min for lastN/topN
                 return;
-            } else { //record has to be inserted so we've to remove current minMax
+            } else { // record has to be inserted, so we've to remove current minMax
                 removeAndCache(minMaxNode);
             }
         }
@@ -211,7 +211,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
             } else if (cmp > 0) {
                 p = rightOf(p);
             } else {
-                setRef(p, appendValue(leftRecord.getRowId(), r)); //appends value to chain, minmax shouldn't change
+                setRef(p, appendValue(leftRecord.getRowId(), r)); // appends value to chain, minMax shouldn't change
                 if (minMaxRowId == -1) {
                     refreshMinMaxNode();
                 }
@@ -233,16 +233,16 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         currentValues++;
     }
 
-    //remove node and put on freelist (if holds only one value in chain)
+    // remove node and put on freelist (if holds only one value in chain)
     public void removeAndCache(long node) {
         if (hasMoreThanOneValue(node)) {
-            removeMostRecentChainValue(node);//don't change minmax
+            removeMostRecentChainValue(node); // don't change minMax
         } else {
             long nodeToRemove = super.remove(node);
             clearBlock(nodeToRemove);
-            freeList.add(nodeToRemove);//keep node on freelist to minimize allocations
+            freeList.add(nodeToRemove); // keep node on freelist to minimize allocations
 
-            minMaxRowId = -1;//re-compute after inserting, there's no point doing it now
+            minMaxRowId = -1; // re-compute after inserting, there's no point doing it now
             minMaxNode = -1;
         }
 
@@ -265,7 +265,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         setLeft(position, -1);
         setRight(position, -1);
         setColor(position, BLACK);
-        //assume there's only one value in the chain (otherwise node shouldn't be deleted)
+        // assume there's only one value in the chain (otherwise node shouldn't be deleted)
         long refOffset = refOf(position);
         assert valueChain.getLong(refOffset + 8) == CHAIN_END;
         valueChain.putLong(refOffset, FREE_SLOT);
@@ -294,7 +294,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
 
         if (isFirstN) {
             p = findMaxNode();
-        } else {//lastN/topN
+        } else { // lastN/topN
             p = findMinNode();
         }
 
@@ -307,14 +307,14 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         long previousOffset = valueChain.getLong(ref + 8);
         setRef(node, previousOffset);
 
-        //clear both rowid slot and rext value offset
+        // clear both rowid slot and next value offset
         valueChain.putLong(ref, -1L);
         valueChain.putLong(ref + 8, -1L);
 
         chainFreeList.add(ref);
     }
 
-    //if not empty - reuses most recently deleted node from freelist; otherwise allocates a new node
+    // if not empty - reuses most recently deleted node from freelist; otherwise allocates a new node
     protected long allocateBlock(long parent, long recordRowId) {
         if (freeList.size() > 0) {
             long freeNode = freeList.get(freeList.size() - 1);
