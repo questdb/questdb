@@ -28,6 +28,7 @@ import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.line.LineChannel;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.LineTcpSender;
+import io.questdb.cutlass.line.http.LineHttpSender;
 import io.questdb.cutlass.line.tcp.DelegatingTlsChannel;
 import io.questdb.cutlass.line.tcp.PlainTcpLineChannel;
 import io.questdb.network.NetworkFacade;
@@ -78,6 +79,10 @@ public interface Sender extends Closeable {
      */
     static LineSenderBuilder builder() {
         return new LineSenderBuilder();
+    }
+
+    static Sender withDefaultsFromUrl(CharSequence url) {
+        return builder().url(url).build();
     }
 
     /**
@@ -238,18 +243,25 @@ public interface Sender extends Closeable {
      * }</pre>
      */
     final class LineSenderBuilder {
-        // indicates that buffer capacity was not set explicitly
         private static final byte BUFFER_CAPACITY_DEFAULT = 0;
         private static final int DEFAULT_BUFFER_CAPACITY = 64 * 1024;
-        private static final int DEFAULT_PORT = 9009;
+        private static final int DEFAULT_HTTP_PORT = 9000;
+        // indicates that buffer capacity was not set explicitly
+        private static final int DEFAULT_MAX_PENDING_ROWS = 10_000;
+        private static final int DEFAULT_TCP_PORT = 9009;
         private static final int MIN_BUFFER_SIZE_FOR_AUTH = 512 + 1; // challenge size + 1;
         // indicate that port was not set explicitly
         private static final byte PORT_DEFAULT = 0;
+        private static final int PROTOCOL_HTTP = 1;
+        private static final int PROTOCOL_TCP = 0;
+        private static final int PROTOCOL_DEFAULT = PROTOCOL_TCP;
         private int bufferCapacity = BUFFER_CAPACITY_DEFAULT;
         private String host;
         private String keyId;
+        private int maxPendingRows = DEFAULT_MAX_PENDING_ROWS;
         private int port = PORT_DEFAULT;
         private PrivateKey privateKey;
+        private int protocol = PROTOCOL_DEFAULT;
         private boolean shouldDestroyPrivKey;
         private boolean tlsEnabled;
         private TlsValidationMode tlsValidationMode = TlsValidationMode.DEFAULT;
@@ -349,6 +361,13 @@ public interface Sender extends Closeable {
             validateParameters();
 
             NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
+            if (protocol == PROTOCOL_HTTP) {
+                return new LineHttpSender(host, port, bufferCapacity, tlsEnabled, maxPendingRows);
+            } else if (protocol != PROTOCOL_TCP) {
+                throw new LineSenderException("unsupported protocol ")
+                        .put("[protocol=").put(protocol).put("]");
+            }
+
             LineChannel channel = new PlainTcpLineChannel(nf, host, port, bufferCapacity * 2);
             LineTcpSender sender;
             if (tlsEnabled) {
@@ -430,6 +449,53 @@ public interface Sender extends Closeable {
             return this;
         }
 
+        public LineSenderBuilder url(CharSequence url) {
+            if (url == null || url.length() == 0) {
+                throw new LineSenderException("url cannot be empty nor null");
+            }
+            if (host != null) {
+                throw new LineSenderException("server address is already configured ")
+                        .put("[configured-address=").put(this.host).put("]");
+            }
+            if (port != PORT_DEFAULT) {
+                throw new LineSenderException("post is already configured ")
+                        .put("[configured-port=").put(port).put("]");
+            }
+            // todo: add more conflict checks and support for TCP and TCP+TLS scheme
+            int hostStart = 0;
+            if (Chars.startsWith(url, "http://")) {
+                hostStart = 7;
+            } else if (Chars.startsWith(url, "https://")) {
+                enableTls();
+                hostStart = 8;
+            } else {
+                throw new LineSenderException("invalid url protocol ")
+                        .put("[url=").put(url).put("]");
+            }
+            protocol = PROTOCOL_HTTP;
+            int hostEnd = Chars.indexOf(url, hostStart, ':');
+            if (hostEnd == -1) {
+                port = DEFAULT_HTTP_PORT;
+                hostEnd = Chars.indexOf(url, hostStart, '/');
+                if (hostEnd == -1) {
+                    hostEnd = url.length();
+                }
+            } else {
+                int portEnd = Chars.indexOf(url, hostEnd + 1, '/');
+                if (portEnd == -1) {
+                    portEnd = url.length();
+                }
+                try {
+                    port = Numbers.parseInt(url, hostEnd + 1, portEnd);
+                } catch (NumericException e) {
+                    throw new LineSenderException("invalid port in url ")
+                            .put("[url=").put(url).put("]");
+                }
+            }
+            host = url.subSequence(hostStart, hostEnd).toString();
+            return this;
+        }
+
         private static RuntimeException rethrow(Throwable t) {
             if (t instanceof LineSenderException) {
                 throw (LineSenderException) t;
@@ -442,7 +508,7 @@ public interface Sender extends Closeable {
                 bufferCapacity = DEFAULT_BUFFER_CAPACITY;
             }
             if (port == PORT_DEFAULT) {
-                port = DEFAULT_PORT;
+                port = DEFAULT_TCP_PORT;
             }
         }
 
