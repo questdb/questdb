@@ -37,12 +37,12 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 int totalCount = 1_000_000;
                 try (LineHttpSender sender = new LineHttpSender("localhost", httpPort, -1, false)) {
                     for (int i = 0; i < totalCount; i++) {
-                        sender.table("m1")
+                        sender.table("table with space")
                                 .symbol("tag1", "value" + i % 10)
-                                .symbol("tag2", "value" + i % 10)
+                                .symbol("tag2", "value " + i % 10)
                                 .stringColumn("scol1", "value" + i)
                                 .stringColumn("scol2", "value" + i)
-                                .longColumn("lcol1", i)
+                                .longColumn("lcol 1", i)
                                 .longColumn("lcol2", i)
                                 .doubleColumn("dcol1", i)
                                 .doubleColumn("dcol2", i)
@@ -57,8 +57,8 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     sender.flush();
                 }
 
-                serverMain.waitWalTxnApplied("m1");
-                serverMain.assertSql("select count() from m1", "count\n" +
+                serverMain.waitWalTxnApplied("table with space");
+                serverMain.assertSql("select count() from 'table with space'", "count\n" +
                         totalCount + "\n");
             }
         });

@@ -18,7 +18,6 @@ public final class LineHttpSender implements Sender {
     private final int port;
     private HttpClient client;
     private boolean closed;
-    private boolean quoted;
     private HttpClient.Request request;
     private RequestState state = RequestState.EMPTY;
 
@@ -110,8 +109,7 @@ public final class LineHttpSender implements Sender {
     public Sender stringColumn(CharSequence name, CharSequence value) {
         writeFieldName(name);
         request.put('"');
-        // todo: deal with quoting values
-        request.put(value);
+        writeEscapedString_insideQuotes(value);
         request.put('"');
         return this;
     }
@@ -128,10 +126,10 @@ public final class LineHttpSender implements Sender {
                 // fall through
             case ADDING_SYMBOLS:
                 validateColumnName(name);
-                request.putAscii(',')
-                        .put(name)
-                        .putAscii('=')
-                        .put(value);
+                request.putAscii(',');
+                writeEscapedString_notInQuotes(name);
+                request.putAscii('=');
+                writeEscapedString_notInQuotes(value);
                 state = RequestState.ADDING_SYMBOLS;
                 break;
             default:
@@ -151,9 +149,8 @@ public final class LineHttpSender implements Sender {
         if (table.length() == 0) {
             throw new LineSenderException("table name cannot be empty");
         }
-        quoted = false;
         state = RequestState.TABLE_NAME_SET;
-        request.put(table);
+        writeEscapedString_notInQuotes(table);
         return this;
     }
 
@@ -215,6 +212,43 @@ public final class LineHttpSender implements Sender {
         }
     }
 
+    private void writeEscapedString_insideQuotes(CharSequence value) {
+        for (int i = 0, n = value.length(); i < n; i++) {
+            char c = value.charAt(i);
+            switch (c) {
+                case '\n':
+                case '\r':
+                case '"':
+                case '\\':
+                    request.put((byte) '\\').put((byte) c);
+                    break;
+                default:
+                    request.put(c);
+                    break;
+            }
+        }
+    }
+
+    private void writeEscapedString_notInQuotes(CharSequence name) {
+        for (int i = 0, n = name.length(); i < n; i++) {
+            char c = name.charAt(i);
+            switch (c) {
+                case ' ':
+                case ',':
+                case '=':
+                case '\n':
+                case '\r':
+                case '\\':
+                    request.put((byte) '\\');
+                    request.put((byte) c);
+                    break;
+                default:
+                    request.put(c);
+                    break;
+            }
+        }
+    }
+
     private HttpClient.Request writeFieldName(CharSequence name) {
         validateColumnName(name);
         switch (state) {
@@ -230,7 +264,8 @@ public final class LineHttpSender implements Sender {
                 request.putAscii(',');
                 break;
         }
-        request.put(name).put('=');
+        writeEscapedString_notInQuotes(name);
+        request.put('=');
         return request;
     }
 
