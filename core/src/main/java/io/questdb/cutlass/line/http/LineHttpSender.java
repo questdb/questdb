@@ -15,15 +15,18 @@ import java.time.temporal.ChronoUnit;
 public final class LineHttpSender implements Sender {
     private static final String URL = "/write";
     private final String host;
+    private final int maxPendingRows;
     private final int port;
     private HttpClient client;
     private boolean closed;
+    private long pendingRows;
     private HttpClient.Request request;
     private RequestState state = RequestState.EMPTY;
 
-    public LineHttpSender(String host, int port, int initialBufferCapacity, boolean tls) {
+    public LineHttpSender(String host, int port, int initialBufferCapacity, boolean tls, int maxPendingRows) {
         this.host = host;
         this.port = port;
+        this.maxPendingRows = maxPendingRows;
         this.client = tls ? HttpClientFactory.newTlsInstance() : HttpClientFactory.newPlainTextInstance();
         this.request = newRequest();
     }
@@ -52,6 +55,9 @@ public final class LineHttpSender implements Sender {
                 request.put('\n');
                 state = RequestState.EMPTY;
                 break;
+        }
+        if (++pendingRows == maxPendingRows) {
+            flush();
         }
     }
 
@@ -94,6 +100,7 @@ public final class LineHttpSender implements Sender {
             response.getStatusCode();
             throw new LineSenderException("unexpected status code: "); //todo: add status code
         }
+        pendingRows = 0;
         request = newRequest();
     }
 
