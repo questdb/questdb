@@ -26,7 +26,6 @@ package io.questdb.cutlass.http.client;
 
 import io.questdb.HttpClientConfiguration;
 import io.questdb.cutlass.http.HttpHeaderParser;
-import io.questdb.cutlass.http.ex.BufferOverflowException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.IOOperation;
@@ -46,15 +45,17 @@ public abstract class HttpClient implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(HttpClient.class);
     protected final NetworkFacade nf;
     protected final Socket socket;
-    private final int bufferSize;
     private final HttpClientCookieHandler cookieHandler;
     private final ObjectPool<DirectUtf8String> csPool = new ObjectPool<>(DirectUtf8String.FACTORY, 64);
     private final int defaultTimeout;
     private final Request request = new Request();
+    private final int responseParserBufSize;
     private long bufLo;
+    private int bufferSize;
     private long contentStart = -1;
     private long ptr = bufLo;
     private ResponseHeaders responseHeaders;
+    private long responseParserBufLo;
 
     public HttpClient(HttpClientConfiguration configuration, SocketFactory socketFactory) {
         this.nf = configuration.getNetworkFacade();
@@ -62,8 +63,10 @@ public abstract class HttpClient implements QuietCloseable {
         this.defaultTimeout = configuration.getTimeout();
         this.cookieHandler = configuration.getCookieHandlerFactory().getInstance();
         this.bufferSize = configuration.getBufferSize();
+        this.responseParserBufSize = bufferSize;
         this.bufLo = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
-        this.responseHeaders = new ResponseHeaders(bufLo, bufferSize, defaultTimeout, 4096, csPool);
+        this.responseParserBufLo = Unsafe.malloc(responseParserBufSize, MemoryTag.NATIVE_DEFAULT);
+        this.responseHeaders = new ResponseHeaders(responseParserBufLo, responseParserBufSize, defaultTimeout, 4096, csPool);
     }
 
     @Override
@@ -72,6 +75,9 @@ public abstract class HttpClient implements QuietCloseable {
         if (bufLo != 0) {
             Unsafe.free(bufLo, bufferSize, MemoryTag.NATIVE_DEFAULT);
             bufLo = 0;
+            assert responseParserBufLo != 0;
+            Unsafe.free(responseParserBufLo, responseParserBufSize, MemoryTag.NATIVE_DEFAULT);
+            responseParserBufLo = 0;
         }
         responseHeaders = Misc.free(responseHeaders);
     }
@@ -114,9 +120,27 @@ public abstract class HttpClient implements QuietCloseable {
     }
 
     private void ensureCapacity(long capacity) {
-        final long requiredSize = ptr - bufLo + capacity;
+        long usedBytes = ptr - bufLo;
+        final long requiredSize = usedBytes + capacity;
         if (requiredSize > bufferSize) {
-            throw BufferOverflowException.INSTANCE;
+            growBuffer(requiredSize);
+
+//            throw BufferOverflowException.INSTANCE;
+        }
+    }
+
+    private void growBuffer(long requiredSize) {
+        // todo: check sensible boundaries and int overflow
+        long newBufferSize = Numbers.ceilPow2((int) requiredSize);
+        long newBufLo = Unsafe.realloc(bufLo, bufferSize, newBufferSize, MemoryTag.NATIVE_DEFAULT);
+
+        long offset = newBufLo - bufLo;
+
+        ptr += offset;
+        bufLo = newBufLo;
+        bufferSize = (int) newBufferSize;
+        if (contentStart > -1) {
+            contentStart += offset;
         }
     }
 
@@ -406,7 +430,8 @@ public abstract class HttpClient implements QuietCloseable {
             beforeHeader();
 
             putAscii(HEADER_CONTENT_LENGTH);
-            contentLengthHeaderReserved = ((int) Math.log10(bufferSize) + 2) + 4; // length + 2 x EOL
+//            contentLengthHeaderReserved = ((int) Math.log10(bufferSize) + 2) + 4; // length + 2 x EOL
+            contentLengthHeaderReserved = 20; // hack
             ensureCapacity(contentLengthHeaderReserved);
             ptr += contentLengthHeaderReserved;
             contentStart = ptr;
@@ -626,13 +651,11 @@ public abstract class HttpClient implements QuietCloseable {
     }
 
     public class ResponseHeaders extends HttpHeaderParser {
-        private final long bufLo;
         private final ChunkedResponseImpl chunkedResponse;
         private final int defaultTimeout;
 
         public ResponseHeaders(long respParserBufLo, int respParserBufSize, int defaultTimeout, int headerBufSize, ObjectPool<DirectUtf8String> pool) {
             super(headerBufSize, pool);
-            this.bufLo = respParserBufLo;
             this.defaultTimeout = defaultTimeout;
             this.chunkedResponse = new ChunkedResponseImpl(respParserBufLo, respParserBufLo + respParserBufSize, defaultTimeout);
         }

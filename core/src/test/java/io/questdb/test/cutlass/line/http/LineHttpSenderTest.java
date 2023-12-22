@@ -34,12 +34,12 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
             )) {
                 int httpPort = getHttpPort(serverMain);
 
-                int totalCount = 100;
+                int totalCount = 1_000_000;
                 try (LineHttpSender sender = new LineHttpSender("localhost", httpPort, -1, false)) {
                     for (int i = 0; i < totalCount; i++) {
                         sender.table("m1")
-                                .symbol("tag1", "value" + i)
-                                .symbol("tag2", "value" + i)
+                                .symbol("tag1", "value" + i % 10)
+                                .symbol("tag2", "value" + i % 10)
                                 .stringColumn("scol1", "value" + i)
                                 .stringColumn("scol2", "value" + i)
                                 .longColumn("lcol1", i)
