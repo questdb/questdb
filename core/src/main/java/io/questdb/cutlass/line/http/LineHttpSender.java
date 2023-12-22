@@ -109,7 +109,7 @@ public final class LineHttpSender implements Sender {
     public Sender stringColumn(CharSequence name, CharSequence value) {
         writeFieldName(name);
         request.put('"');
-        writeEscapedString_insideQuotes(value);
+        escapeString(value);
         request.put('"');
         return this;
     }
@@ -127,9 +127,9 @@ public final class LineHttpSender implements Sender {
             case ADDING_SYMBOLS:
                 validateColumnName(name);
                 request.putAscii(',');
-                writeEscapedString_notInQuotes(name);
+                escapeQuotedString(name);
                 request.putAscii('=');
-                writeEscapedString_notInQuotes(value);
+                escapeQuotedString(value);
                 state = RequestState.ADDING_SYMBOLS;
                 break;
             default:
@@ -150,7 +150,7 @@ public final class LineHttpSender implements Sender {
             throw new LineSenderException("table name cannot be empty");
         }
         state = RequestState.TABLE_NAME_SET;
-        writeEscapedString_notInQuotes(table);
+        escapeQuotedString(table);
         return this;
     }
 
@@ -188,6 +188,42 @@ public final class LineHttpSender implements Sender {
         }
     }
 
+    private void escapeQuotedString(CharSequence name) {
+        for (int i = 0, n = name.length(); i < n; i++) {
+            char c = name.charAt(i);
+            switch (c) {
+                case ' ':
+                case ',':
+                case '=':
+                case '\n':
+                case '\r':
+                case '\\':
+                    request.put((byte) '\\').put((byte) c);
+                    break;
+                default:
+                    request.put(c);
+                    break;
+            }
+        }
+    }
+
+    private void escapeString(CharSequence value) {
+        for (int i = 0, n = value.length(); i < n; i++) {
+            char c = value.charAt(i);
+            switch (c) {
+                case '\n':
+                case '\r':
+                case '"':
+                case '\\':
+                    request.put((byte) '\\').put((byte) c);
+                    break;
+                default:
+                    request.put(c);
+                    break;
+            }
+        }
+    }
+
     private HttpClient.Request newRequest() {
         return client.newRequest().POST().url(URL).withContent();
     }
@@ -212,43 +248,6 @@ public final class LineHttpSender implements Sender {
         }
     }
 
-    private void writeEscapedString_insideQuotes(CharSequence value) {
-        for (int i = 0, n = value.length(); i < n; i++) {
-            char c = value.charAt(i);
-            switch (c) {
-                case '\n':
-                case '\r':
-                case '"':
-                case '\\':
-                    request.put((byte) '\\').put((byte) c);
-                    break;
-                default:
-                    request.put(c);
-                    break;
-            }
-        }
-    }
-
-    private void writeEscapedString_notInQuotes(CharSequence name) {
-        for (int i = 0, n = name.length(); i < n; i++) {
-            char c = name.charAt(i);
-            switch (c) {
-                case ' ':
-                case ',':
-                case '=':
-                case '\n':
-                case '\r':
-                case '\\':
-                    request.put((byte) '\\');
-                    request.put((byte) c);
-                    break;
-                default:
-                    request.put(c);
-                    break;
-            }
-        }
-    }
-
     private HttpClient.Request writeFieldName(CharSequence name) {
         validateColumnName(name);
         switch (state) {
@@ -264,7 +263,7 @@ public final class LineHttpSender implements Sender {
                 request.putAscii(',');
                 break;
         }
-        writeEscapedString_notInQuotes(name);
+        escapeQuotedString(name);
         request.put('=');
         return request;
     }
