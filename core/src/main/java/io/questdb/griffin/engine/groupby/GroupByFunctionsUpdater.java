@@ -31,6 +31,10 @@ import io.questdb.std.ObjList;
 
 public interface GroupByFunctionsUpdater {
 
+    /**
+     * Merges two map values. Used in parallel GROUP BY. Both values are guaranteed to be not new
+     * when this method is called, i.e. {@code !destValue.isNew() && !srcValue.isNew()} is true.
+     */
     void merge(MapValue destValue, MapValue srcValue);
 
     void setFunctions(ObjList<GroupByFunction> groupByFunctions);

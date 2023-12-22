@@ -82,7 +82,7 @@ public interface GroupByFunction extends Function, Mutable {
     }
 
     /**
-     * Used in parallel GROUP BY to merge partial results. Both value are guaranteed to be not new
+     * Used in parallel GROUP BY to merge partial results. Both values are guaranteed to be not new
      * when this method is called, i.e. {@code !destValue.isNew() && !srcValue.isNew()} is true.
      */
     default void merge(MapValue destValue, MapValue srcValue) {

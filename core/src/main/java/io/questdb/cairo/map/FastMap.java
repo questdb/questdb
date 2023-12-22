@@ -28,7 +28,6 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.LimitOverflowException;
-import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.std.*;
 import io.questdb.std.bytes.Bytes;
 import org.jetbrains.annotations.NotNull;
@@ -88,7 +87,7 @@ public class FastMap implements Map, Reopenable {
     private final int listMemoryTag;
     private final double loadFactor;
     private final int maxResizes;
-    private final Merger mergeRef;
+    private final MergeFunction mergeRef;
     private final FastMapRecord record;
     private final FastMapValue value;
     private final FastMapValue value2;
@@ -280,7 +279,7 @@ public class FastMap implements Map, Reopenable {
     }
 
     @Override
-    public void merge(Map srcMap, GroupByFunctionsUpdater mergeFunc) {
+    public void merge(Map srcMap, MapValueMergeFunction mergeFunc) {
         assert this != srcMap;
         if (srcMap.size() == 0) {
             return;
@@ -366,7 +365,7 @@ public class FastMap implements Map, Reopenable {
         return valueOf(keyWriter.startAddress, keyWriter.appendAddress, true, value);
     }
 
-    private void mergeFixedSizeKey(FastMap srcMap, GroupByFunctionsUpdater mergeFunc) {
+    private void mergeFixedSizeKey(FastMap srcMap, MapValueMergeFunction mergeFunc) {
         assert keySize >= 0;
         setKeyCapacity(size + srcMap.size);
 
@@ -414,7 +413,7 @@ public class FastMap implements Map, Reopenable {
         }
     }
 
-    private void mergeVarSizeKey(FastMap srcMap, GroupByFunctionsUpdater mergeFunc) {
+    private void mergeVarSizeKey(FastMap srcMap, MapValueMergeFunction mergeFunc) {
         assert keySize == -1;
         setKeyCapacity(size + srcMap.size);
 
@@ -560,8 +559,8 @@ public class FastMap implements Map, Reopenable {
     }
 
     @FunctionalInterface
-    private interface Merger {
-        void merge(FastMap srcMap, GroupByFunctionsUpdater mergeFunc);
+    private interface MergeFunction {
+        void merge(FastMap srcMap, MapValueMergeFunction mergeFunc);
     }
 
     abstract class BaseKey implements MapKey {

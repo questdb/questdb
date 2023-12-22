@@ -29,8 +29,6 @@ import io.questdb.cairo.map.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.LimitOverflowException;
-import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.std.*;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
@@ -1368,7 +1366,7 @@ public class FastMapTest extends AbstractCairoTest {
 
             Assert.assertEquals(2 * mapA.size(), mapB.size());
 
-            mapA.merge(mapB, new TestGroupByFunctionsUpdater());
+            mapA.merge(mapB, new TestMapValueMergeFunction());
 
             Assert.assertEquals(mapA.size(), mapB.size());
 
@@ -1430,7 +1428,7 @@ public class FastMapTest extends AbstractCairoTest {
 
             Assert.assertEquals(2 * mapA.size(), mapB.size());
 
-            mapA.merge(mapB, new TestGroupByFunctionsUpdater());
+            mapA.merge(mapB, new TestMapValueMergeFunction());
 
             Assert.assertEquals(mapA.size(), mapB.size());
 
@@ -2203,27 +2201,11 @@ public class FastMapTest extends AbstractCairoTest {
         });
     }
 
-    private static class TestGroupByFunctionsUpdater implements GroupByFunctionsUpdater {
+    private static class TestMapValueMergeFunction implements MapValueMergeFunction {
 
         @Override
         public void merge(MapValue destValue, MapValue srcValue) {
             destValue.addLong(0, srcValue.getLong(0));
-        }
-
-        @Override
-        public void setFunctions(ObjList<GroupByFunction> groupByFunctions) {
-        }
-
-        @Override
-        public void updateEmpty(MapValue value) {
-        }
-
-        @Override
-        public void updateExisting(MapValue value, Record record) {
-        }
-
-        @Override
-        public void updateNew(MapValue value, Record record) {
         }
     }
 }
