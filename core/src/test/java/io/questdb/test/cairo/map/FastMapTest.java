@@ -810,6 +810,32 @@ public class FastMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFixedSizeKeyOnly() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            ColumnTypes types = new SingleColumnType(ColumnType.INT);
+
+            final int N = 10000;
+            try (FastMap map = new FastMap(Numbers.SIZE_1MB, types, null, 64, 0.5, 1)) {
+                for (int i = 0; i < N; i++) {
+                    MapKey key = map.withKey();
+                    key.putInt(i);
+                    MapValue values = key.createValue();
+                    Assert.assertTrue(values.isNew());
+                }
+
+                try (RecordCursor cursor = map.getCursor()) {
+                    final MapRecord record = (MapRecord) cursor.getRecord();
+                    int i = 0;
+                    while (cursor.hasNext()) {
+                        Assert.assertEquals(i, record.getInt(0));
+                        i++;
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testGeoHashRecordAsKey() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final int N = 5000;
@@ -1728,6 +1754,31 @@ public class FastMapTest extends AbstractCairoTest {
                         Assert.assertEquals(rnd2.nextInt(), value.getInt(1));
                         Assert.assertEquals(rnd2.nextShort(), value.getShort(2));
                         Assert.assertEquals(rnd2.nextByte(), value.getByte(3));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testVarSizeKeyOnly() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            ColumnTypes types = new SingleColumnType(ColumnType.STRING);
+
+            final int N = 10000;
+            try (FastMap map = new FastMap(Numbers.SIZE_1MB, types, null, 64, 0.5, 1)) {
+                for (int i = 0; i < N; i++) {
+                    MapKey key = map.withKey();
+                    key.putStr(Chars.repeat("a", i % 32));
+                    key.createValue();
+                }
+
+                try (RecordCursor cursor = map.getCursor()) {
+                    final MapRecord record = (MapRecord) cursor.getRecord();
+                    int i = 0;
+                    while (cursor.hasNext()) {
+                        TestUtils.assertEquals(Chars.repeat("a", i % 32), record.getStr(0));
+                        i++;
                     }
                 }
             }

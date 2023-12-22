@@ -318,7 +318,7 @@ final class FastMapFixedSizeRecord implements FastMapRecord {
 
     private long addressOfColumn(int index) {
         if (index == 0) {
-            return valueAddress;
+            return valueSize > 0 ? valueAddress : keyAddress;
         }
         return keyAddress + columnOffsets[index];
     }
