@@ -226,7 +226,7 @@ final class FastMapVarSizeRecord implements FastMapRecord {
 
     @Override
     public void copyToKey(MapKey destKey) {
-        FastMap.BaseKey destFastKey = (FastMap.BaseKey) destKey;
+        FastMap.VarSizeKey destFastKey = (FastMap.VarSizeKey) destKey;
         int keySize = Unsafe.getUnsafe().getInt(startAddress);
         destFastKey.copyFromRawKey(keyAddress, keySize);
     }

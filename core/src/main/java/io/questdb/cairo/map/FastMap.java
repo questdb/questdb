@@ -651,7 +651,7 @@ public class FastMap implements Map, Reopenable {
         protected abstract boolean eq(long offset);
     }
 
-    private class FixedSizeKey extends BaseKey {
+    class FixedSizeKey extends BaseKey {
 
         @Override
         public int commit() {
@@ -792,7 +792,7 @@ public class FastMap implements Map, Reopenable {
         }
     }
 
-    private class VarSizeKey extends BaseKey {
+    class VarSizeKey extends BaseKey {
         private int len;
 
         @Override

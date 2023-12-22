@@ -167,7 +167,7 @@ final class FastMapFixedSizeRecord implements FastMapRecord {
 
     @Override
     public void copyToKey(MapKey destKey) {
-        FastMap.BaseKey destFastKey = (FastMap.BaseKey) destKey;
+        FastMap.FixedSizeKey destFastKey = (FastMap.FixedSizeKey) destKey;
         destFastKey.copyFromRawKey(keyAddress, keySize);
     }
 
