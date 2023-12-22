@@ -28,7 +28,7 @@ import io.questdb.std.*;
 
 final class FastMapValue implements MapValue {
     private final Long256Impl long256 = new Long256Impl();
-    private final int[] valueOffsets;
+    private final long[] valueOffsets;
     private final int valueSize;
     private long limit;
     private boolean newValue;
@@ -36,7 +36,7 @@ final class FastMapValue implements MapValue {
     private long startAddress; // key-value pair start address
     private long valueAddress;
 
-    public FastMapValue(int valueSize, int[] valueOffsets) {
+    public FastMapValue(int valueSize, long[] valueOffsets) {
         this.valueSize = valueSize;
         this.valueOffsets = valueOffsets;
     }

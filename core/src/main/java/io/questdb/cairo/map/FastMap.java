@@ -189,11 +189,11 @@ public class FastMap implements Map, Reopenable {
         keyOffset = keySize != -1 ? 0 : Integer.BYTES;
 
         int valueOffset = 0;
-        int[] valueOffsets = null;
+        long[] valueOffsets = null;
         int valueSize = 0;
         if (valueTypes != null) {
             valueColumnCount = valueTypes.getColumnCount();
-            valueOffsets = new int[valueColumnCount];
+            valueOffsets = new long[valueColumnCount];
 
             for (int i = 0; i < valueColumnCount; i++) {
                 valueOffsets[i] = valueOffset;

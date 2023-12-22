@@ -39,12 +39,12 @@ import org.jetbrains.annotations.Nullable;
  * Uses an offsets array to speed up key and value column look-ups.
  */
 final class FastMapFixedSizeRecord implements FastMapRecord {
-    private final int[] columnOffsets;
+    private final long[] columnOffsets;
     private final Long256Impl[] keyLong256A;
     private final Long256Impl[] keyLong256B;
     private final int keySize;
     private final FastMapValue value;
-    private final int[] valueOffsets;
+    private final long[] valueOffsets;
     private final int valueSize;
     private long keyAddress;
     private long limit;
@@ -55,7 +55,7 @@ final class FastMapFixedSizeRecord implements FastMapRecord {
     FastMapFixedSizeRecord(
             int keySize,
             int valueSize,
-            int[] valueOffsets,
+            long[] valueOffsets,
             FastMapValue value,
             @NotNull @Transient ColumnTypes keyTypes,
             @Nullable @Transient ColumnTypes valueTypes
@@ -77,7 +77,7 @@ final class FastMapFixedSizeRecord implements FastMapRecord {
             nColumns = keyTypes.getColumnCount();
         }
 
-        columnOffsets = new int[nColumns];
+        columnOffsets = new long[nColumns];
 
         Long256Impl[] long256A = null;
         Long256Impl[] long256B = null;
@@ -127,8 +127,8 @@ final class FastMapFixedSizeRecord implements FastMapRecord {
     private FastMapFixedSizeRecord(
             int keySize,
             int valueSize,
-            int[] valueOffsets,
-            int[] columnOffsets,
+            long[] valueOffsets,
+            long[] columnOffsets,
             Long256Impl[] keyLong256A,
             Long256Impl[] keyLong256B
     ) {
@@ -317,9 +317,6 @@ final class FastMapFixedSizeRecord implements FastMapRecord {
     }
 
     private long addressOfColumn(int index) {
-        if (index == 0) {
-            return valueSize > 0 ? valueAddress : keyAddress;
-        }
         return keyAddress + columnOffsets[index];
     }
 

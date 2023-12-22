@@ -52,7 +52,7 @@ final class FastMapVarSizeRecord implements FastMapRecord {
     private final ColumnTypes keyTypes;
     private final int splitIndex;
     private final FastMapValue value;
-    private final int[] valueOffsets;
+    private final long[] valueOffsets;
     private final int valueSize;
     private long keyAddress;
     private int lastKeyIndex = -1;
@@ -65,7 +65,7 @@ final class FastMapVarSizeRecord implements FastMapRecord {
 
     FastMapVarSizeRecord(
             int valueSize,
-            int[] valueOffsets,
+            long[] valueOffsets,
             FastMapValue value,
             @NotNull @Transient ColumnTypes keyTypes,
             @Nullable @Transient ColumnTypes valueTypes
@@ -147,7 +147,7 @@ final class FastMapVarSizeRecord implements FastMapRecord {
 
     private FastMapVarSizeRecord(
             int valueSize,
-            int[] valueOffsets,
+            long[] valueOffsets,
             ColumnTypes keyTypes,
             int splitIndex,
             DirectString[] csA,
@@ -428,9 +428,6 @@ final class FastMapVarSizeRecord implements FastMapRecord {
         // Column indexes start with value fields followed by key fields.
         // The key-value pair layout is [key len, key data, value data].
         if (index < splitIndex) {
-            if (index == 0) {
-                return valueAddress;
-            }
             return valueAddress + valueOffsets[index];
         }
         if (index == splitIndex) {
