@@ -38,7 +38,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
-import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.log.Log;
@@ -249,10 +248,9 @@ class AsyncGroupByRecordCursor implements RecordCursor {
             destMap.setKeyCapacity((int) sizeEstimate);
         }
 
-        final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater();
         for (int i = 0; i < perWorkerMapCount; i++) {
             final Map srcMap = atom.getPerWorkerParticles().getQuick(i).getMap();
-            destMap.merge(srcMap, functionUpdater::merge);
+            destMap.merge(srcMap, atom.getMergeFunctionRef());
         }
 
         for (int i = 0; i < perWorkerMapCount; i++) {
