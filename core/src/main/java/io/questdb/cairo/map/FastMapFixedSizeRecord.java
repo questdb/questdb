@@ -60,7 +60,7 @@ final class FastMapFixedSizeRecord implements FastMapRecord {
             @NotNull @Transient ColumnTypes keyTypes,
             @Nullable @Transient ColumnTypes valueTypes
     ) {
-        assert keySize > 0;
+        assert keySize >= 0;
         this.keySize = keySize;
         this.valueSize = valueSize;
         this.valueOffsets = valueOffsets;

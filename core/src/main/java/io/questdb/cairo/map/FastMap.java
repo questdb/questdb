@@ -367,8 +367,11 @@ public class FastMap implements Map, Reopenable {
     }
 
     private void mergeFixedSizeKey(FastMap srcMap, GroupByFunctionsUpdater mergeFunc) {
-        assert keySize > 0;
+        assert keySize >= 0;
         setKeyCapacity(size + srcMap.size);
+
+        int len = keySize + valueSize;
+        long alignedLen = Bytes.align8b(len);
 
         OUTER:
         for (int i = 0, k = (int) (srcMap.offsets.size() / 2); i < k; i++) {
@@ -399,14 +402,13 @@ public class FastMap implements Map, Reopenable {
             }
 
             assert free > 0;
-            int len = keySize + valueSize;
             if (kPos + len > heapLimit) {
                 resize(len);
             }
             Vect.memcpy(kPos, srcStartAddress, len);
             setOffset(offsets, index, kPos - heapStart);
             setHashCode(offsets, index, hashCode);
-            kPos = Bytes.align8b(kPos + len);
+            kPos += alignedLen;
             free--;
             size++;
         }

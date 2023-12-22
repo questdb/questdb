@@ -907,7 +907,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             dispatcher.disconnect(this, DISCONNECT_REASON_PROTOCOL_VIOLATION);
             busyRecv = false;
         } catch (Throwable e) {
-            LOG.error().$("internal error [fd=").$(getFd()).$(", e=`").$(e.getMessage()).$("`]").$();
+            LOG.error().$("internal error [fd=").$(getFd()).$(", e=`").$(e).$("`]").$();
             dispatcher.disconnect(this, DISCONNECT_REASON_SERVER_ERROR);
             busyRecv = false;
         }

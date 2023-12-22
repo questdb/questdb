@@ -301,6 +301,7 @@ final class FastMapValue implements MapValue {
 
     void linkRecord(FastMapRecord record) {
         this.record = record;
+        record.setLimit(limit);
     }
 
     FastMapValue of(long startAddress, long valueAddress, long limit, boolean newValue) {
@@ -308,7 +309,6 @@ final class FastMapValue implements MapValue {
         this.valueAddress = valueAddress;
         this.limit = limit;
         this.newValue = newValue;
-        record.setLimit(limit);
         return this;
     }
 }

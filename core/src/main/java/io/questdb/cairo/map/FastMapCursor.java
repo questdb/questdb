@@ -31,7 +31,7 @@ import io.questdb.std.bytes.Bytes;
 
 public final class FastMapCursor implements MapRecordCursor {
     // Set to -1 when key-value pair is var-size.
-    private final int keyValueSize;
+    private final long alignedKeyValueSize;
     private final FastMap map;
     private final FastMapRecord recordA;
     private final FastMapRecord recordB;
@@ -47,9 +47,9 @@ public final class FastMapCursor implements MapRecordCursor {
         this.map = map;
         this.valueSize = map.valueSize();
         if (map.keySize() != -1) {
-            keyValueSize = map.keySize() + map.valueSize();
+            alignedKeyValueSize = Bytes.align8b(map.keySize() + map.valueSize());
         } else {
-            keyValueSize = -1;
+            alignedKeyValueSize = -1;
         }
     }
 
@@ -80,11 +80,11 @@ public final class FastMapCursor implements MapRecordCursor {
     public boolean hasNext() {
         if (remaining > 0) {
             recordA.of(address);
-            if (keyValueSize == -1) {
+            if (alignedKeyValueSize == -1) {
                 int keySize = Unsafe.getUnsafe().getInt(address);
                 address = Bytes.align8b(address + Integer.BYTES + keySize + valueSize);
             } else {
-                address = Bytes.align8b(address + keyValueSize);
+                address += alignedKeyValueSize;
             }
             remaining--;
             return true;
