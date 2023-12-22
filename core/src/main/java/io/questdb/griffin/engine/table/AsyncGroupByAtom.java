@@ -49,7 +49,6 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     private final GroupByFunctionsUpdater functionUpdater;
     private final ObjList<Function> keyFunctions;
     private final ColumnTypes keyTypes;
-    private final MapValueMergeFunction mergeFunctionRef;
     private final RecordSink ownerMapSink;
     private final Particle ownerParticle;
     private final ObjList<Function> perWorkerFilters;
@@ -89,7 +88,6 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             this.keyFunctions = keyFunctions;
             this.perWorkerKeyFunctions = perWorkerKeyFunctions;
             functionUpdater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
-            mergeFunctionRef = functionUpdater::merge;
             perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
 
             shardCount = Math.min(configuration.getGroupByShardCount(), MAX_SHARDS);
@@ -167,10 +165,6 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             return ownerMapSink;
         }
         return perWorkerMapSinks.getQuick(slotId);
-    }
-
-    public MapValueMergeFunction getMergeFunctionRef() {
-        return mergeFunctionRef;
     }
 
     // Thread-unsafe, should be used by query owner thread only.
@@ -264,7 +258,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         for (int i = 0; i < perWorkerMapCount; i++) {
             final Particle srcParticle = perWorkerParticles.getQuick(i);
             final Map srcMap = srcParticle.getShardMaps().getQuick(shardIndex);
-            destMap.merge(srcMap, mergeFunctionRef);
+            destMap.merge(srcMap, functionUpdater);
         }
 
         for (int i = 0, n = perWorkerParticles.size(); i < n; i++) {
