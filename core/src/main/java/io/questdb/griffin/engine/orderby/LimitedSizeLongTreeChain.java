@@ -41,56 +41,57 @@ import org.jetbrains.annotations.TestOnly;
  * LongTreeChain with a size limit - used to keep only the necessary records
  * instead of whole result set for queries with "limit L | limit L, H"  clause.
  * <p>
- * 1. "limit L" means we only need to keep :
- * <p>
- * L &gt;=0 - first L records
- * L &lt; 0 - last L records
- * 2. "limit L, H" means we need to keep :
- * L &lt; 0          - last  L records (but skip last H records, if H &gt;=0 then don't skip anything    )
- * L &gt;= 0, H &gt;= 0 - first H records (but skip first L later, if H &lt;= L then return empty set)
- * L &gt;= 0, H &lt; 0  - we can't optimize this case (because it spans from record L-th from the beginning up to
- * H-th from the end, and we don't  ) and need to revert to default behavior -
+ * 1. "limit L" means we only need to keep:
+ * <pre>
+ * L >= 0 - first L records
+ * L < 0  - last L records
+ * 2. "limit L, H" means we need to keep:
+ * L < 0          - last  L records (but skip last H records, if H &gt;=0 then don't skip anything)
+ * L >= 0, H >= 0 - first H records (but skip first L later, if H &lt;= L then return empty set)
+ * L >= 0, H < 0  - we can't optimize this case (because it spans from record L-th from the beginning up to
+ * H-th from the end, and we don't) and need to revert to default behavior -
  * produce the whole set and skip.
- * </p>
+ * </pre>
  * <p>
- * TreeChain stores repeating values (rowids) on valueChain as a linked list :
- * [latest rowid, offset to next] -&gt; [old rowid, offset to next] -&gt; [oldest rowid, -1L ]
- * -1L marks end of current node's value chain .
- * -2  marks an unused element on the value chain list for the current tree node
- * but should only happen once . It's meant to limit value chain allocations on delete/insert.
- * </p>
+ * TreeChain stores repeating values (rowids) on valueChain as a linked list:
+ * <pre>
+ * [latest rowid, offset to next] -> [old rowid, offset to next] -> [oldest rowid, -1L]
+ * </pre>
+ * -1 - marks end of current node's value chain.
+ * -2 - marks an unused element on the value chain list for the current tree node
+ * but should only happen once. It's meant to limit value chain allocations on delete/insert.
  */
 public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Reopenable {
-    //value marks end of value chain 
+    // value marks end of value chain
     private static final long CHAIN_END = -1;
 
-    //marks value chain entry as unused (belonging to a node on the freelist)
-    //it's meant to avoid unnecessary reallocations when removing nodes and adding nodes  
+    // marks value chain entry as unused (belonging to a node on the freelist)
+    // it's meant to avoid unnecessary reallocations when removing nodes and adding nodes
     private static final long FREE_SLOT = -2L;
-    //LIFO list of free blocks to reuse, allocated on the value chain
+    // LIFO list of free blocks to reuse, allocated on the value chain
     private final LongList chainFreeList;
     private final LimitedSizeLongTreeChain.TreeCursor cursor = new LimitedSizeLongTreeChain.TreeCursor();
-    //LIFO list of nodes to reuse, instead of releasing and reallocating
+    // LIFO list of nodes to reuse, instead of releasing and reallocating
     private final LongList freeList;
-    //firstN - keep <first->N> set , otherwise keep <last-N->last> set
+    // firstN - keep <first->N> set , otherwise keep <last-N->last> set
     private final boolean isFirstN;
-    //maximum number of values tree can store (including repeating values)
+    // maximum number of values tree can store (including repeating values)
     private final long maxValues; //-1 means 'almost' unlimited
     private final MemoryARW valueChain;
-    //number of all values stored in tree (including repeating ones)
+    // number of all values stored in tree (including repeating ones)
     private long currentValues = 0;
     private long minMaxNode = -1;
-    //for fast filtering out of records in here we store rowId of :
-    // - record with max value for firstN/bottomN query
-    // - record with min value for lastN/topN query
+    // for fast filtering out of records in here we store rowId of:
+    //  - record with max value for firstN/bottomN query
+    //  - record with min value for lastN/topN query
     private long minMaxRowId = -1;
 
-    public LimitedSizeLongTreeChain(long keyPageSize, int keyMaxPages, long valuePageSize, int valueMaxPages, boolean isfirstN, long maxValues) {
+    public LimitedSizeLongTreeChain(long keyPageSize, int keyMaxPages, long valuePageSize, int valueMaxPages, boolean isFirstN, long maxValues) {
         super(keyPageSize, keyMaxPages);
         this.valueChain = Vm.getARWInstance(valuePageSize, valueMaxPages, MemoryTag.NATIVE_TREE_CHAIN);
         this.freeList = new LongList();
         this.chainFreeList = new LongList();
-        this.isFirstN = isfirstN;
+        this.isFirstN = isFirstN;
         this.maxValues = maxValues;
     }
 
@@ -115,10 +116,12 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
     }
 
     // returns address of node containing searchRecord; otherwise returns -1
-    public long find(Record searchedRecord,
-                     RecordCursor sourceCursor,
-                     Record placeholder,
-                     RecordComparator comparator) {
+    public long find(
+            Record searchedRecord,
+            RecordCursor sourceCursor,
+            Record placeholder,
+            RecordComparator comparator
+    ) {
         comparator.setLeft(searchedRecord);
 
         if (root == -1) {

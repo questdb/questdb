@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.std.*;
+import io.questdb.std.bytes.Bytes;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -214,17 +215,17 @@ public class FastMap implements Map, Reopenable {
         value2 = new FastMapValue(valueSize, valueOffsets);
         value3 = new FastMapValue(valueSize, valueOffsets);
 
-        record = new FastMapRecord(keySize, valueSize, valueOffsets, value, keyTypes, valueTypes);
-
         assert keySize + valueSize <= heapLimit - heapStart : "page size is too small to fit a single key";
-        cursor = new FastMapCursor(record, this);
         if (keySize == -1) {
+            record = new FastMapVarSizeRecord(valueSize, valueOffsets, value, keyTypes, valueTypes);
             key = new VarSizeKey();
             mergeRef = this::mergeVarSizeKey;
         } else {
+            record = new FastMapFixedSizeRecord(keySize, valueSize, valueOffsets, value, keyTypes, valueTypes);
             key = new FixedSizeKey();
             mergeRef = this::mergeFixedSizeKey;
         }
+        cursor = new FastMapCursor(record, this);
     }
 
     @Override
@@ -354,9 +355,8 @@ public class FastMap implements Map, Reopenable {
     }
 
     private FastMapValue asNew(BaseKey keyWriter, int index, int hashCode, FastMapValue value) {
-        kPos = keyWriter.appendAddress + valueSize;
         // Align current pointer to 8 bytes, so that we can store compressed offsets.
-        kPos = (kPos + 7) & ~0x7;
+        kPos = Bytes.align8b(keyWriter.appendAddress + valueSize);
         setOffset(offsets, index, keyWriter.startAddress - heapStart);
         setHashCode(offsets, index, hashCode);
         if (--free == 0) {
@@ -406,7 +406,7 @@ public class FastMap implements Map, Reopenable {
             Vect.memcpy(kPos, srcStartAddress, len);
             setOffset(offsets, index, kPos - heapStart);
             setHashCode(offsets, index, hashCode);
-            kPos = (kPos + len + 7) & ~0x7;
+            kPos = Bytes.align8b(kPos + len);
             free--;
             size++;
         }
@@ -454,7 +454,7 @@ public class FastMap implements Map, Reopenable {
             Vect.memcpy(kPos, srcStartAddress, len);
             setOffset(offsets, index, kPos - heapStart);
             setHashCode(offsets, index, hashCode);
-            kPos = (kPos + len + 7) & ~0x7;
+            kPos = Bytes.align8b(kPos + len);
             free--;
             size++;
         }

@@ -288,7 +288,7 @@ final class FastMapValue implements MapValue {
 
     @Override
     public void setMapRecordHere() {
-        record.of(startAddress, limit);
+        record.of(startAddress);
     }
 
     private long address0(int index) {
@@ -308,6 +308,7 @@ final class FastMapValue implements MapValue {
         this.valueAddress = valueAddress;
         this.limit = limit;
         this.newValue = newValue;
+        record.setLimit(limit);
         return this;
     }
 }
