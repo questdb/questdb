@@ -30,27 +30,41 @@ import io.questdb.cairo.sql.Record;
 
 public interface MapKey extends RecordSinkSPI {
 
+    // Updates key size for var-sized keys and returns the size.
+    default int commit() {
+        throw new UnsupportedOperationException();
+    }
+
+    default void copyFrom(MapKey srcKey) {
+        throw new UnsupportedOperationException();
+    }
+
     default boolean create() {
         return createValue().isNew();
     }
 
+    // Commits implicitly.
     MapValue createValue();
 
-    default MapValue createValue2() {
+    default MapValue createValue(int hashCode) {
         throw new UnsupportedOperationException();
     }
 
-    default MapValue createValue3() {
-        throw new UnsupportedOperationException();
-    }
-
+    // Commits implicitly.
     MapValue findValue();
 
+    // Commits implicitly.
     default MapValue findValue2() {
         throw new UnsupportedOperationException();
     }
 
+    // Commits implicitly.
     default MapValue findValue3() {
+        throw new UnsupportedOperationException();
+    }
+
+    // Must be called after commit.
+    default int hash() {
         throw new UnsupportedOperationException();
     }
 

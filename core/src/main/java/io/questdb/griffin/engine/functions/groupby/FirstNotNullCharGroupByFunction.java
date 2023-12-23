@@ -38,7 +38,7 @@ public class FirstNotNullCharGroupByFunction extends FirstCharGroupByFunction {
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        if (CharConstant.ZERO.getChar(null) == mapValue.getChar(valueIndex)) {
+        if (mapValue.getChar(valueIndex) == CharConstant.ZERO.getChar(null)) {
             computeFirst(mapValue, record);
         }
     }
@@ -47,5 +47,4 @@ public class FirstNotNullCharGroupByFunction extends FirstCharGroupByFunction {
     public String getName() {
         return "first_not_null";
     }
-
 }

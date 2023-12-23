@@ -22,22 +22,14 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.groupby.vect;
+package io.questdb.cairo.map;
 
-import io.questdb.MessageBus;
-import io.questdb.mp.AbstractQueueConsumerJob;
-import io.questdb.tasks.VectorAggregateTask;
+@FunctionalInterface
+public interface MapValueMergeFunction {
 
-public class GroupByJob extends AbstractQueueConsumerJob<VectorAggregateTask> {
-
-    public GroupByJob(MessageBus messageBus) {
-        super(messageBus.getVectorAggregateQueue(), messageBus.getVectorAggregateSubSeq());
-    }
-
-    @Override
-    protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
-        final VectorAggregateEntry entry = queue.get(cursor).entry;
-        entry.run(workerId, subSeq, cursor);
-        return true;
-    }
+    /**
+     * Merges two map values. Used in parallel GROUP BY. Both values are guaranteed to be not new
+     * when this method is called, i.e. {@code !destValue.isNew() && !srcValue.isNew()} is true.
+     */
+    void merge(MapValue destValue, MapValue srcValue);
 }

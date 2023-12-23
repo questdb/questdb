@@ -54,8 +54,8 @@ import io.questdb.std.Rows;
 class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
 
     private static final Log LOG = LogFactory.getLog(AsyncFilteredNegativeLimitRecordCursor.class);
-    private final boolean hasDescendingOrder;
 
+    private final boolean hasDescendingOrder;
     private final PageAddressCacheRecord record;
     private int frameIndex;
     private int frameLimit;
@@ -176,7 +176,7 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
 
                     // Consider frame sequence status only if we haven't accumulated enough rows.
                     allFramesActive &= frameSequence.isActive() || rowCount >= rowLimit;
-                    final DirectLongList frameRows = task.getRows();
+                    final DirectLongList frameRows = task.getFilteredRows();
                     final long frameRowCount = frameRows.size();
                     frameIndex = task.getFrameIndex();
 

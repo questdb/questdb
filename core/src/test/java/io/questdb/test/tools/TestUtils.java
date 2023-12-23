@@ -438,6 +438,15 @@ public final class TestUtils {
         }
     }
 
+    public static void assertEquals(IntList expected, IntList actual) {
+        Assert.assertEquals(expected.size(), actual.size());
+        for (int i = 0, n = expected.size(); i < n; i++) {
+            if (expected.getQuick(i) != actual.getQuick(i)) {
+                Assert.assertEquals("index " + i, expected.getQuick(i), actual.getQuick(i));
+            }
+        }
+    }
+
     public static <T> void assertEquals(ObjList<T> expected, ObjList<T> actual) {
         Assert.assertEquals(expected.size(), actual.size());
         for (int i = 0, n = expected.size(); i < n; i++) {
@@ -1066,6 +1075,17 @@ public final class TestUtils {
             Metrics metrics,
             Log log
     ) throws Exception {
+        execute(pool, null, runnable, configuration, metrics, log);
+    }
+
+    public static void execute(
+            @Nullable WorkerPool pool,
+            WorkerPoolCallback poolCallback,
+            CustomisableRunnable runnable,
+            CairoConfiguration configuration,
+            Metrics metrics,
+            Log log
+    ) throws Exception {
         final int workerCount = pool != null ? pool.getWorkerCount() : 1;
         try (
                 final CairoEngine engine = new CairoEngine(configuration, metrics);
@@ -1074,6 +1094,9 @@ public final class TestUtils {
         ) {
             try {
                 if (pool != null) {
+                    if (poolCallback != null) {
+                        poolCallback.setupJobs(engine);
+                    }
                     setupWorkerPool(pool, engine);
                     pool.start(log);
                 }
@@ -1095,7 +1118,17 @@ public final class TestUtils {
             CairoConfiguration configuration,
             Log log
     ) throws Exception {
-        execute(pool, runner, configuration, Metrics.disabled(), log);
+        execute(pool, null, runner, configuration, Metrics.disabled(), log);
+    }
+
+    public static void execute(
+            @Nullable WorkerPool pool,
+            WorkerPoolCallback poolCallback,
+            CustomisableRunnable runner,
+            CairoConfiguration configuration,
+            Log log
+    ) throws Exception {
+        execute(pool, poolCallback, runner, configuration, Metrics.disabled(), log);
     }
 
     @NotNull
@@ -1706,6 +1739,12 @@ public final class TestUtils {
         }
     }
 
+    private static StringSink getTlSink() {
+        StringSink ss = tlSink.get();
+        ss.clear();
+        return ss;
+    }
+
 /*
     private static RecordMetadata copySymAstStr(RecordMetadata src) {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
@@ -1721,12 +1760,6 @@ public final class TestUtils {
         return metadata;
     }
 */
-
-    private static StringSink getTlSink() {
-        StringSink ss = tlSink.get();
-        ss.clear();
-        return ss;
-    }
 
     private static long partitionIncrement(int partitionBy, long fromTimestamp, int totalRows, int partitionCount) {
         long increment = 0;
@@ -1806,5 +1839,9 @@ public final class TestUtils {
     @FunctionalInterface
     public interface LeakProneCode {
         void run() throws Exception;
+    }
+
+    public interface WorkerPoolCallback {
+        void setupJobs(CairoEngine engine);
     }
 }

@@ -45,18 +45,19 @@ import java.io.Closeable;
  * close() method must be called after other calls are complete.
  * <p>
  * Example:
- * <p>
+ * <pre>
  * final SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1);
  * try (SqlCompiler compiler = new SqlCompiler(engine)) {
- * try (RecordCursorFactory factory = compiler.compile("abc", ctx).getRecordCursorFactory()) {
- * try (RecordCursor cursor = factory.getCursor(ctx)) {
- * final Record record = cursor.getRecord();
- * while (cursor.hasNext()) {
- * // access 'record' instance for field values
+ *     try (RecordCursorFactory factory = compiler.compile("abc", ctx).getRecordCursorFactory()) {
+ *         try (RecordCursor cursor = factory.getCursor(ctx)) {
+ *             final Record record = cursor.getRecord();
+ *             while (cursor.hasNext()) {
+ *                 // access 'record' instance for field values
+ *             }
+ *         }
+ *     }
  * }
- * }
- * }
- * }
+ * </pre>
  */
 public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
 
@@ -93,7 +94,7 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     // that key read from symbol column map to symbol values unambiguously.
     // In that if you read key 1 at row 10, it might map to 'AAA' and if you read
     // key 1 at row 100 it might map to 'BBB'.
-    // Such factories cannot be used in multithreaded execution and cannot be tested
+    // Such factories cannot be used in multi-threaded execution and cannot be tested
     // via `testSymbolAPI()` call.
     default boolean fragmentedSymbolTables() {
         return false;
@@ -148,7 +149,7 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      * - {@link #SCAN_DIRECTION_FORWARD}, {@link #SCAN_DIRECTION_BACKWARD} - for regular data/interval frame scans
      * - {@link #SCAN_DIRECTION_OTHER} - for some index scans, e.g. cursor-order index lookup with multiple values
      * where order is 'random'.<br>
-     * Note: tables with designated timestamp keep rows in timestamp order, so :
+     * Note: tables with designated timestamp keep rows in timestamp order, so:
      * - forward scan produces rows in ascending ts order
      * - backward scan produces rows in descending ts order
      */
@@ -165,8 +166,10 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         return null;
     }
 
-    /* Returns true if this factory handles limit M , N clause already and false otherwise .
-     *  If true then separate limit cursor factory is not needed (and could actually cause problem by re-applying limit logic).   */
+    /**
+     * Returns true if this factory handles limit M , N clause already and false otherwise .
+     * If true then separate limit cursor factory is not needed (and could actually cause problem by re-applying limit logic).
+     */
     default boolean implementsLimit() {
         return false;
     }
@@ -184,7 +187,9 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         return false;
     }
 
-    /* Adds description of this factory to EXPLAIN output. */
+    /**
+     * Adds description of this factory to EXPLAIN output.
+     */
     @Override
     default void toPlan(PlanSink sink) {
         sink.type(getClass().getName());
@@ -194,7 +199,17 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         throw new UnsupportedOperationException("Unsupported for: " + getClass());
     }
 
+    /**
+     * Returns true if the factory uses a {@link io.questdb.jit.CompiledFilter}.
+     */
     default boolean usesCompiledFilter() {
+        return false;
+    }
+
+    /**
+     * Returns true if the factory uses index-based access.
+     */
+    default boolean usesIndex() {
         return false;
     }
 }

@@ -83,6 +83,11 @@ public class LatestByValuesIndexedFilteredRecordCursorFactory extends AbstractDe
     }
 
     @Override
+    public boolean usesIndex() {
+        return true;
+    }
+
+    @Override
     protected void _close() {
         super._close();
         Misc.free(filter);

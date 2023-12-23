@@ -26,9 +26,14 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
-import io.questdb.griffin.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.jit.JitUtil;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
@@ -41,12 +46,15 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.RecordCursorPrinter;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
-import org.junit.*;
+import org.junit.Assert;
+import org.junit.Assume;
+import org.junit.Before;
+import org.junit.Test;
 
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class AsyncOffloadTest extends AbstractCairoTest {
+public class ParallelFilterTest extends AbstractCairoTest {
 
     private static final int PAGE_FRAME_COUNT = 4; // also used to set queue size, so must be a power of 2
     private static final int PAGE_FRAME_MAX_ROWS = 100;
@@ -103,20 +111,11 @@ public class AsyncOffloadTest extends AbstractCairoTest {
     private static final String queryNoLimit = "select v from x where v > 3326086085493629941L and v < 4326086085493629941L order by v";
     private static final String queryPositiveLimit = "select v from x where v > 3326086085493629941L and v < 4326086085493629941L limit 10";
 
-    @BeforeClass
-    public static void setUpStatic() throws Exception {
-        pageFrameMaxRows = PAGE_FRAME_MAX_ROWS;
-        // We intentionally use small values for shard count and reduce
-        // queue capacity to exhibit various edge cases.
-        pageFrameReduceShardCount = 2;
-        pageFrameReduceQueueCapacity = PAGE_FRAME_COUNT;
-
-        AbstractCairoTest.setUpStatic();
-    }
-
     @Before
     public void setUp() {
         pageFrameMaxRows = PAGE_FRAME_MAX_ROWS;
+        // We intentionally use small values for shard count and reduce
+        // queue capacity to exhibit various edge cases.
         pageFrameReduceShardCount = 2;
         pageFrameReduceQueueCapacity = PAGE_FRAME_COUNT;
         super.setUp();
@@ -386,120 +385,130 @@ public class AsyncOffloadTest extends AbstractCairoTest {
         );
     }
 
-    private void testAsyncOffloadNegativeLimitTimeout() throws SqlException {
-        SqlExecutionContextImpl context = (SqlExecutionContextImpl) sqlExecutionContext;
-        currentMicros = 0;
-        SqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(
-                new DefaultSqlExecutionCircuitBreakerConfiguration() {
-                    @Override
-                    @NotNull
-                    public MillisecondClock getClock() {
-                        return () -> Long.MAX_VALUE;
-                    }
+    private void testAsyncOffloadNegativeLimitTimeout() throws Exception {
+        assertMemoryLeak(() -> {
+            SqlExecutionContextImpl context = (SqlExecutionContextImpl) sqlExecutionContext;
+            currentMicros = 0;
+            NetworkSqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(
+                    new DefaultSqlExecutionCircuitBreakerConfiguration() {
+                        @Override
+                        @NotNull
+                        public MillisecondClock getClock() {
+                            return () -> Long.MAX_VALUE;
+                        }
 
-                    @Override
-                    public long getQueryTimeout() {
-                        return 1;
-                    }
-                },
-                MemoryTag.NATIVE_DEFAULT
-        );
-
-        ddl("create table x ( " +
-                "v long, " +
-                "s symbol capacity 4 cache " +
-                ")"
-        );
-        ddl("insert into x select rnd_long() v, rnd_symbol('A','B','C') s from long_sequence(" + ROW_COUNT + ")");
-
-        context.with(
-                context.getSecurityContext(),
-                context.getBindVariableService(),
-                context.getRandom(),
-                context.getRequestFd(),
-                circuitBreaker
-        );
-
-        try {
-            assertSql(
-                    "s\n" +
-                            "A\n" +
-                            "A\n" +
-                            "A\n" +
-                            "A\n" +
-                            "A\n", "select s from x where v > 3326086085493629941L and v < 4326086085493629941L and s = 'A' limit -5"
+                        @Override
+                        public long getQueryTimeout() {
+                            return 1;
+                        }
+                    },
+                    MemoryTag.NATIVE_DEFAULT
             );
-            Assert.fail();
-        } catch (CairoException ex) {
-            TestUtils.assertContains(ex.getFlyweightMessage(), "timeout, query aborted");
-        } finally {
+
+            ddl(
+                    "create table x ( " +
+                            "v long, " +
+                            "s symbol capacity 4 cache " +
+                            ")"
+            );
+            insert("insert into x select rnd_long() v, rnd_symbol('A','B','C') s from long_sequence(" + ROW_COUNT + ")");
+
             context.with(
                     context.getSecurityContext(),
                     context.getBindVariableService(),
                     context.getRandom(),
                     context.getRequestFd(),
-                    null
+                    circuitBreaker
             );
-        }
+
+            try {
+                assertSql(
+                        "s\n" +
+                                "A\n" +
+                                "A\n" +
+                                "A\n" +
+                                "A\n" +
+                                "A\n",
+                        "select s from x where v > 3326086085493629941L and v < 4326086085493629941L and s = 'A' limit -5"
+                );
+                Assert.fail();
+            } catch (CairoException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "timeout, query aborted");
+            } finally {
+                context.with(
+                        context.getSecurityContext(),
+                        context.getBindVariableService(),
+                        context.getRandom(),
+                        context.getRequestFd(),
+                        null
+                );
+                Misc.free(circuitBreaker);
+            }
+        });
     }
 
-    private void testAsyncOffloadTimeout() throws SqlException {
-        SqlExecutionContextImpl context = (SqlExecutionContextImpl) sqlExecutionContext;
-        currentMicros = 0;
-        SqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(
-                new DefaultSqlExecutionCircuitBreakerConfiguration() {
-                    @Override
-                    @NotNull
-                    public MillisecondClock getClock() {
-                        return () -> Long.MAX_VALUE;
-                    }
+    private void testAsyncOffloadTimeout() throws Exception {
+        assertMemoryLeak(() -> {
+            SqlExecutionContextImpl context = (SqlExecutionContextImpl) sqlExecutionContext;
+            currentMicros = 0;
+            NetworkSqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(
+                    new DefaultSqlExecutionCircuitBreakerConfiguration() {
+                        @Override
+                        @NotNull
+                        public MillisecondClock getClock() {
+                            return () -> Long.MAX_VALUE;
+                        }
 
-                    @Override
-                    public long getQueryTimeout() {
-                        return 1;
-                    }
-                },
-                MemoryTag.NATIVE_DEFAULT
-        );
-
-        ddl("create table x ( " +
-                "v long, " +
-                "s symbol capacity 4 cache " +
-                ")"
-        );
-        ddl("insert into x select rnd_long() v, rnd_symbol('A','B','C') s from long_sequence(" + ROW_COUNT + ")");
-
-        context.with(
-                context.getSecurityContext(),
-                context.getBindVariableService(),
-                context.getRandom(),
-                context.getRequestFd(),
-                circuitBreaker
-        );
-
-        try {
-            assertSql(
-                    "v\ts\n" +
-                            "3393210801760647293\tA\n" +
-                            "3433721896286859656\tA\n" +
-                            "3619114107112892010\tA\n" +
-                            "3669882909701240516\tA\n" +
-                            "3820631780839257855\tA\n" +
-                            "4039070554630775695\tA\n" +
-                            "4290477379978201771\tA\n", "x where v > 3326086085493629941L and v < 4326086085493629941L and s = 'A' order by v"
+                        @Override
+                        public long getQueryTimeout() {
+                            return 1;
+                        }
+                    },
+                    MemoryTag.NATIVE_DEFAULT
             );
-            Assert.fail();
-        } catch (CairoException ex) {
-            TestUtils.assertContains(ex.getFlyweightMessage(), "timeout, query aborted");
-        } finally {
+
+            ddl(
+                    "create table x ( " +
+                            "v long, " +
+                            "s symbol capacity 4 cache " +
+                            ")"
+            );
+            insert("insert into x select rnd_long() v, rnd_symbol('A','B','C') s from long_sequence(" + ROW_COUNT + ")");
+
             context.with(
                     context.getSecurityContext(),
                     context.getBindVariableService(),
                     context.getRandom(),
                     context.getRequestFd(),
-                    null
+                    circuitBreaker
             );
-        }
+
+            try {
+                assertSql(
+                        "v\ts\n" +
+                                "3393210801760647293\tA\n" +
+                                "3433721896286859656\tA\n" +
+                                "3619114107112892010\tA\n" +
+                                "3669882909701240516\tA\n" +
+                                "3820631780839257855\tA\n" +
+                                "4039070554630775695\tA\n" +
+                                "4290477379978201771\tA\n",
+                        "x where v > 3326086085493629941L and v < 4326086085493629941L and s = 'A' order by v"
+                );
+                Assert.fail();
+            } catch (CairoException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "timeout, query aborted");
+            } finally {
+                context.with(
+                        context.getSecurityContext(),
+                        context.getBindVariableService(),
+                        context.getRandom(),
+                        context.getRequestFd(),
+                        null
+                );
+                Misc.free(circuitBreaker);
+            }
+        });
     }
 
     private void testAsyncSubQueryWithFilter(String query) throws Exception {

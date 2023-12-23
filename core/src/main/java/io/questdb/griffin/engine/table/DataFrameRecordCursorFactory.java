@@ -142,6 +142,11 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
     }
 
     @Override
+    public boolean usesIndex() {
+        return rowCursorFactory.isUsingIndex();
+    }
+
+    @Override
     protected void _close() {
         super._close();
         Misc.free(filter);

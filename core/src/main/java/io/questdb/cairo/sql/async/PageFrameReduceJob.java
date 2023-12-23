@@ -179,6 +179,7 @@ public class PageFrameReduceJob implements Job, Closeable {
                     LOG.debug()
                             .$("reducing [shard=").$(frameSequence.getShard())
                             .$(", id=").$(frameSequence.getId())
+                            .$(", taskType=").$(task.getType())
                             .$(", frameIndex=").$(task.getFrameIndex())
                             .$(", frameCount=").$(frameSequence.getFrameCount())
                             .$(", active=").$(frameSequence.isActive())

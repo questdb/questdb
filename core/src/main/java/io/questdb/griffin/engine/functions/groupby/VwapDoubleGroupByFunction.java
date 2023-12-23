@@ -49,11 +49,9 @@ public class VwapDoubleGroupByFunction extends DoubleFunction implements GroupBy
     public void computeFirst(MapValue mapValue, Record record) {
         final double price = priceFunction.getDouble(record);
         final double volume = volumeFunction.getDouble(record);
-
         if (Numbers.isFinite(price) && Numbers.isFinite(volume) && volume > 0.0d) {
             final double notional = price * volume;
             final double vwap = notional / volume;
-
             mapValue.putDouble(valueIndex, vwap);
             mapValue.putDouble(valueIndex + 1, notional);
             mapValue.putDouble(valueIndex + 2, volume);
@@ -68,13 +66,10 @@ public class VwapDoubleGroupByFunction extends DoubleFunction implements GroupBy
     public void computeNext(MapValue mapValue, Record record) {
         final double price = priceFunction.getDouble(record);
         final double volume = volumeFunction.getDouble(record);
-
         if (Numbers.isFinite(price) && Numbers.isFinite(volume) && volume > 0.0d) {
             final double notional = price * volume;
-
             mapValue.addDouble(valueIndex + 1, notional);
             mapValue.addDouble(valueIndex + 2, volume);
-
             mapValue.putDouble(valueIndex, mapValue.getDouble(valueIndex + 1) / mapValue.getDouble(valueIndex + 2));
         }
     }
@@ -85,13 +80,13 @@ public class VwapDoubleGroupByFunction extends DoubleFunction implements GroupBy
     }
 
     @Override
-    public String getName() {
-        return "vwap";
+    public Function getLeft() {
+        return priceFunction;
     }
 
     @Override
-    public Function getLeft() {
-        return priceFunction;
+    public String getName() {
+        return "vwap";
     }
 
     @Override
@@ -102,6 +97,22 @@ public class VwapDoubleGroupByFunction extends DoubleFunction implements GroupBy
     @Override
     public boolean isConstant() {
         return false;
+    }
+
+    @Override
+    public boolean isParallelismSupported() {
+        return priceFunction.isReadThreadSafe() && volumeFunction.isReadThreadSafe();
+    }
+
+    @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        double srcNotional = srcValue.getDouble(valueIndex + 1);
+        double srcVolume = srcValue.getDouble(valueIndex + 2);
+        if (Numbers.isFinite(srcNotional) && Numbers.isFinite(srcVolume) && srcVolume > 0.0d) {
+            destValue.addDouble(valueIndex + 1, srcNotional);
+            destValue.addDouble(valueIndex + 2, srcVolume);
+            destValue.putDouble(valueIndex, destValue.getDouble(valueIndex + 1) / destValue.getDouble(valueIndex + 2));
+        }
     }
 
     @Override

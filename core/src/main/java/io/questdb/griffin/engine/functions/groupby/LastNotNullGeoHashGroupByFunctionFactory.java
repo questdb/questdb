@@ -73,7 +73,7 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
 
         @Override
         public void computeNext(MapValue mapValue, Record record) {
-            if (GeoHashes.BYTE_NULL != function.getGeoByte(record)) {
+            if (arg.getGeoByte(record) != GeoHashes.BYTE_NULL) {
                 computeFirst(mapValue, record);
             }
         }
@@ -91,7 +91,7 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
 
         @Override
         public void computeNext(MapValue mapValue, Record record) {
-            if (GeoHashes.INT_NULL != function.getGeoInt(record)) {
+            if (arg.getGeoInt(record) != GeoHashes.INT_NULL) {
                 computeFirst(mapValue, record);
             }
         }
@@ -109,7 +109,7 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
 
         @Override
         public void computeNext(MapValue mapValue, Record record) {
-            if (GeoHashes.NULL != function.getGeoLong(record)) {
+            if (arg.getGeoLong(record) != GeoHashes.NULL) {
                 computeFirst(mapValue, record);
             }
         }
@@ -127,7 +127,7 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
 
         @Override
         public void computeNext(MapValue mapValue, Record record) {
-            if (GeoHashes.SHORT_NULL != function.getGeoShort(record)) {
+            if (arg.getGeoShort(record) != GeoHashes.SHORT_NULL) {
                 computeFirst(mapValue, record);
             }
         }

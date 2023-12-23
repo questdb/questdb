@@ -50,11 +50,7 @@ public class MaxLongGroupByFunction extends LongFunction implements GroupByFunct
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        long max = mapValue.getLong(valueIndex);
-        long next = arg.getLong(record);
-        if (next > max) {
-            mapValue.putLong(valueIndex, next);
-        }
+        mapValue.maxLong(valueIndex, arg.getLong(record));
     }
 
     @Override
@@ -70,6 +66,20 @@ public class MaxLongGroupByFunction extends LongFunction implements GroupByFunct
     @Override
     public String getName() {
         return "max";
+    }
+
+    @Override
+    public boolean isParallelismSupported() {
+        return arg.isReadThreadSafe();
+    }
+
+    @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        long srcMax = srcValue.getLong(valueIndex);
+        long destMax = destValue.getLong(valueIndex);
+        if (srcMax > destMax || destMax == Numbers.LONG_NaN) {
+            destValue.putLong(valueIndex, srcMax);
+        }
     }
 
     @Override

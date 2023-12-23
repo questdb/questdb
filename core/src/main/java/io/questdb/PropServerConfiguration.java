@@ -82,6 +82,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean cairoAttachPartitionCopy;
     private final String cairoAttachPartitionSuffix;
     private final CairoConfiguration cairoConfiguration = new PropCairoConfiguration();
+    private final int cairoGroupByMergeShardQueueCapacity;
+    private final int cairoGroupByShardCount;
+    private final int cairoGroupByShardingThreshold;
     private final int cairoMaxCrashFiles;
     private final int cairoPageFrameReduceColumnListCapacity;
     private final int cairoPageFrameReduceQueueCapacity;
@@ -293,6 +296,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlPageFrameMinRows;
     private final boolean sqlParallelFilterEnabled;
     private final boolean sqlParallelFilterPreTouchEnabled;
+    private final boolean sqlParallelGroupByEnabled;
     private final int sqlRenameTableModelPoolCapacity;
     private final int sqlSmallMapKeyCapacity;
     private final int sqlSmallMapPageSize;
@@ -911,13 +915,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.columnPurgeRetryDelayMultiplier = getDouble(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_MULTIPLIER, "10.0");
             this.systemTableNamePrefix = getString(properties, env, PropertyKey.CAIRO_SQL_SYSTEM_TABLE_PREFIX, "sys.");
 
-            this.cairoPageFrameReduceQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 64));
-            this.cairoPageFrameReduceRowIdListCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_ROWID_LIST_CAPACITY, 256));
-            this.cairoPageFrameReduceColumnListCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_COLUMN_LIST_CAPACITY, 16));
-            this.sqlParallelFilterEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED, true);
-            this.sqlParallelFilterPreTouchEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_ENABLED, true);
-            this.cairoPageFrameReduceShardCount = getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 4);
-
             this.writerDataIndexKeyAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_WRITER_DATA_INDEX_KEY_APPEND_PAGE_SIZE, 512 * 1024));
             this.writerDataIndexValueAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE, 16 * Numbers.SIZE_1MB));
             this.writerDataAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, 16 * Numbers.SIZE_1MB));
@@ -984,10 +981,10 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.cairoSqlCopyWorkRoot = null;
             }
 
-            if (pathEquals(root, this.cairoSqlCopyWorkRoot) ||
-                    pathEquals(this.root, this.cairoSqlCopyWorkRoot) ||
-                    pathEquals(this.confRoot, this.cairoSqlCopyWorkRoot) ||
-                    pathEquals(this.snapshotRoot, this.cairoSqlCopyWorkRoot)) {
+            if (pathEquals(root, this.cairoSqlCopyWorkRoot)
+                    || pathEquals(this.root, this.cairoSqlCopyWorkRoot)
+                    || pathEquals(this.confRoot, this.cairoSqlCopyWorkRoot)
+                    || pathEquals(this.snapshotRoot, this.cairoSqlCopyWorkRoot)) {
                 throw new ServerConfigurationException("Configuration value for " + PropertyKey.CAIRO_SQL_COPY_WORK_ROOT.getPropertyPath() + " can't point to root, data, conf or snapshot dirs. ");
             }
 
@@ -1191,6 +1188,21 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sharedWorkerSleepTimeout = getLong(properties, env, PropertyKey.SHARED_WORKER_SLEEP_TIMEOUT, 10);
 
             this.sqlCompilerPoolCapacity = 2 * (httpWorkerCount + pgWorkerCount + sharedWorkerCount + walApplyWorkerCount);
+
+            final int defaultReduceQueueCapacity = Math.min(2 * sharedWorkerCount, 64);
+            this.cairoPageFrameReduceQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, defaultReduceQueueCapacity));
+            this.cairoGroupByMergeShardQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUP_BY_MERGE_QUEUE_CAPACITY, defaultReduceQueueCapacity));
+            this.cairoGroupByShardingThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUP_BY_SHARDING_THRESHOLD, 10000);
+            this.cairoGroupByShardCount = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUP_BY_SHARD_COUNT, 64));
+            this.cairoPageFrameReduceRowIdListCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_ROWID_LIST_CAPACITY, 256));
+            this.cairoPageFrameReduceColumnListCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_COLUMN_LIST_CAPACITY, 16));
+            final int defaultReduceShardCount = Math.min(sharedWorkerCount, 4);
+            this.cairoPageFrameReduceShardCount = getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, defaultReduceShardCount);
+            this.sqlParallelFilterPreTouchEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_ENABLED, true);
+
+            boolean defaultParallelSqlEnabled = sharedWorkerCount >= 4;
+            this.sqlParallelFilterEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED, defaultParallelSqlEnabled);
+            this.sqlParallelGroupByEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUP_BY_ENABLED, defaultParallelSqlEnabled);
 
             this.metricsEnabled = getBoolean(properties, env, PropertyKey.METRICS_ENABLED, false);
             this.writerAsyncCommandBusyWaitTimeout = getLong(properties, env, PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 500);
@@ -2042,8 +2054,23 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getGroupByMergeShardQueueCapacity() {
+            return cairoGroupByMergeShardQueueCapacity;
+        }
+
+        @Override
         public int getGroupByPoolCapacity() {
             return sqlGroupByPoolCapacity;
+        }
+
+        @Override
+        public int getGroupByShardCount() {
+            return cairoGroupByShardCount;
+        }
+
+        @Override
+        public int getGroupByShardingThreshold() {
+            return cairoGroupByShardingThreshold;
         }
 
         @Override
@@ -2768,6 +2795,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isSqlParallelFilterPreTouchEnabled() {
             return sqlParallelFilterPreTouchEnabled;
+        }
+
+        @Override
+        public boolean isSqlParallelGroupByEnabled() {
+            return sqlParallelGroupByEnabled;
         }
 
         @Override

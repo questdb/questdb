@@ -85,6 +85,21 @@ public class AvgDoubleGroupByFunction extends DoubleFunction implements GroupByF
     }
 
     @Override
+    public boolean isParallelismSupported() {
+        return arg.isReadThreadSafe();
+    }
+
+    @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        double srcSum = srcValue.getDouble(valueIndex);
+        long srcCount = srcValue.getLong(valueIndex + 1);
+        double destSum = destValue.getDouble(valueIndex);
+        long destCount = destValue.getLong(valueIndex + 1);
+        destValue.putDouble(valueIndex, destSum + srcSum);
+        destValue.putLong(valueIndex + 1, destCount + srcCount);
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.DOUBLE);

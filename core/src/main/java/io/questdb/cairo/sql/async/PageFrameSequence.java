@@ -48,6 +48,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     private static final AtomicLong ID_SEQ = new AtomicLong();
     private static final long LOCAL_TASK_CURSOR = Long.MAX_VALUE;
     private static final Log LOG = LogFactory.getLog(PageFrameSequence.class);
+    private final T atom;
     private final MillisecondClock clock;
     private final LongList frameRowCounts = new LongList();
     private final PageFrameReduceTaskFactory localTaskFactory;
@@ -55,9 +56,9 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     private final PageAddressCache pageAddressCache;
     private final AtomicInteger reduceCounter = new AtomicInteger(0);
     private final PageFrameReducer reducer;
+    private final byte taskType; // PageFrameReduceTask.TYPE_*
     private final AtomicBoolean valid = new AtomicBoolean(true);
     public volatile boolean done;
-    private T atom;
     private SqlExecutionCircuitBreaker circuitBreaker;
     private int circuitBreakerFd;
     private SCSequence collectSubSeq;
@@ -79,14 +80,18 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     public PageFrameSequence(
             CairoConfiguration configuration,
             MessageBus messageBus,
+            T atom,
             PageFrameReducer reducer,
-            PageFrameReduceTaskFactory localTaskFactory
+            PageFrameReduceTaskFactory localTaskFactory,
+            byte taskType
     ) {
         this.pageAddressCache = new PageAddressCache(configuration);
         this.messageBus = messageBus;
+        this.atom = atom;
         this.reducer = reducer;
         this.clock = configuration.getMillisecondClock();
         this.localTaskFactory = localTaskFactory;
+        this.taskType = taskType;
     }
 
     /**
@@ -158,6 +163,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         collectedFrameIndex = -1;
         readyToDispatch = false;
         pageAddressCache.clear();
+        atom.clear();
         pageFrameCursor = Misc.freeIfCloseable(pageFrameCursor);
         // collect sequence may not be set here when
         // factory is closed without using cursor
@@ -177,6 +183,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         record = Misc.free(record);
         circuitBreaker = Misc.freeIfCloseable(circuitBreaker);
         localTask = Misc.free(localTask);
+        Misc.free(atom);
     }
 
     public void collect(long cursor, boolean forceCollect) {
@@ -249,6 +256,10 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         return reduceQueue.get(cursor);
     }
 
+    public byte getTaskType() {
+        return taskType;
+    }
+
     public boolean isActive() {
         return valid.get();
     }
@@ -309,13 +320,12 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             RecordCursorFactory base,
             SqlExecutionContext executionContext,
             SCSequence collectSubSeq,
-            T atom,
             int order
     ) throws SqlException {
         sqlExecutionContext = executionContext;
         startTime = clock.getTicks();
         circuitBreakerFd = executionContext.getCircuitBreaker().getFd();
-        this.uninterruptible = executionContext.isUninterruptible();
+        uninterruptible = executionContext.isUninterruptible();
 
         initRecord(executionContext.getCircuitBreaker());
 
@@ -328,7 +338,6 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
 
             assert pageFrameCursor == null;
             pageFrameCursor = base.getPageFrameCursor(executionContext, order);
-            this.atom = atom;
             this.collectSubSeq = collectSubSeq;
             id = ID_SEQ.incrementAndGet();
             done = false;
@@ -521,6 +530,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
 
         if (localTask == null) {
             localTask = localTaskFactory.getInstance();
+            localTask.setType(taskType);
         }
         localTask.of(this, dispatchStartFrameIndex++);
 
@@ -528,6 +538,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             LOG.debug()
                     .$("reducing locally [shard=").$(shard)
                     .$(", id=").$(id)
+                    .$(", taskType=").$(taskType)
                     .$(", frameIndex=").$(localTask.getFrameIndex())
                     .$(", frameCount=").$(frameCount)
                     .$(", active=").$(isActive())

@@ -242,14 +242,13 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(-1, configuration.getLineUdpReceiverConfiguration().ownThreadAffinity());
         Assert.assertFalse(configuration.getLineUdpReceiverConfiguration().ownThread());
 
-        Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelFilterEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelFilterPreTouchEnabled());
         Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getSqlPageFrameMaxRows());
         Assert.assertEquals(1000, configuration.getCairoConfiguration().getSqlPageFrameMinRows());
-        Assert.assertEquals(4, configuration.getCairoConfiguration().getPageFrameReduceShardCount());
-        Assert.assertEquals(64, configuration.getCairoConfiguration().getPageFrameReduceQueueCapacity());
         Assert.assertEquals(256, configuration.getCairoConfiguration().getPageFrameReduceRowIdListCapacity());
         Assert.assertEquals(16, configuration.getCairoConfiguration().getPageFrameReduceColumnListCapacity());
+        Assert.assertEquals(10000, configuration.getCairoConfiguration().getGroupByShardingThreshold());
+        Assert.assertEquals(64, configuration.getCairoConfiguration().getGroupByShardCount());
 
         Assert.assertEquals(SqlJitMode.JIT_MODE_ENABLED, configuration.getCairoConfiguration().getSqlJitMode());
         Assert.assertEquals(8192, configuration.getCairoConfiguration().getSqlJitIRMemoryPageSize());
@@ -1090,12 +1089,16 @@ public class PropServerConfigurationTest {
 
             Assert.assertFalse(configuration.getCairoConfiguration().isSqlParallelFilterEnabled());
             Assert.assertFalse(configuration.getCairoConfiguration().isSqlParallelFilterPreTouchEnabled());
+            Assert.assertFalse(configuration.getCairoConfiguration().isSqlParallelGroupByEnabled());
             Assert.assertEquals(1000, configuration.getCairoConfiguration().getSqlPageFrameMaxRows());
             Assert.assertEquals(100, configuration.getCairoConfiguration().getSqlPageFrameMinRows());
             Assert.assertEquals(128, configuration.getCairoConfiguration().getPageFrameReduceShardCount());
             Assert.assertEquals(1024, configuration.getCairoConfiguration().getPageFrameReduceQueueCapacity());
             Assert.assertEquals(8, configuration.getCairoConfiguration().getPageFrameReduceRowIdListCapacity());
             Assert.assertEquals(4, configuration.getCairoConfiguration().getPageFrameReduceColumnListCapacity());
+            Assert.assertEquals(2048, configuration.getCairoConfiguration().getGroupByMergeShardQueueCapacity());
+            Assert.assertEquals(100, configuration.getCairoConfiguration().getGroupByShardingThreshold());
+            Assert.assertEquals(128, configuration.getCairoConfiguration().getGroupByShardCount());
 
             Assert.assertEquals(SqlJitMode.JIT_MODE_FORCE_SCALAR, configuration.getCairoConfiguration().getSqlJitMode());
             Assert.assertEquals(2048, configuration.getCairoConfiguration().getSqlJitIRMemoryPageSize());

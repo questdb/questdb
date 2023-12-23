@@ -39,6 +39,8 @@ import org.jetbrains.annotations.NotNull;
 
 public class SumLong256GroupByFunction extends Long256Function implements GroupByFunction, UnaryFunction {
     private final Function arg;
+    private final Long256Impl long256A = new Long256Impl();
+    private final Long256Impl long256B = new Long256Impl();
     private int valueIndex;
 
     public SumLong256GroupByFunction(@NotNull Function arg) {
@@ -79,17 +81,12 @@ public class SumLong256GroupByFunction extends Long256Function implements GroupB
 
     @Override
     public Long256 getLong256A(Record rec) {
-        Long256Impl res = new Long256Impl();
-        if (rec.getLong(valueIndex + 1) > 0) {
-            res.copyFrom(rec.getLong256A(valueIndex));
-            return res;
-        }
-        return Long256Impl.NULL_LONG256;
+        return getLong256(rec, long256A);
     }
 
     @Override
     public Long256 getLong256B(Record rec) {
-        return getLong256A(rec);
+        return getLong256(rec, long256B);
     }
 
     @Override
@@ -103,6 +100,19 @@ public class SumLong256GroupByFunction extends Long256Function implements GroupB
     }
 
     @Override
+    public boolean isParallelismSupported() {
+        return arg.isReadThreadSafe();
+    }
+
+    @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        Long256 srcSum = srcValue.getLong256A(valueIndex);
+        long srcCount = srcValue.getLong(valueIndex + 1);
+        destValue.addLong256(valueIndex, srcSum);
+        destValue.addLong(valueIndex + 1, srcCount);
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.LONG256);
@@ -113,5 +123,13 @@ public class SumLong256GroupByFunction extends Long256Function implements GroupB
     public void setNull(MapValue mapValue) {
         mapValue.putLong256(valueIndex, Long256Impl.NULL_LONG256);
         mapValue.putLong(valueIndex + 1, 0);
+    }
+
+    private Long256 getLong256(Record rec, Long256Impl long256) {
+        if (rec.getLong(valueIndex + 1) > 0) {
+            long256.copyFrom(rec.getLong256A(valueIndex));
+            return long256;
+        }
+        return Long256Impl.NULL_LONG256;
     }
 }
