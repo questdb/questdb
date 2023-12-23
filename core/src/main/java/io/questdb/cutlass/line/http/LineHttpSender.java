@@ -34,6 +34,7 @@ public final class LineHttpSender implements Sender {
     @Override
     public void at(long timestamp, ChronoUnit unit) {
         request.putAscii(' ').put(timestamp * unitToNanos(unit));
+        atNow();
     }
 
     @Override

@@ -169,7 +169,12 @@ public final class JavaTlsClientSocket implements Socket {
             for (; ; ) {
                 int n = readFromSocket();
                 if (n < 0) {
-                    return n;
+                    if (plainBytesReceived == 0) {
+                        // we didn't manage to read anything from the socket, let's return the error
+                        return n;
+                    }
+                    // we have some data to return, let's return it
+                    return plainBytesReceived;
                 }
 
                 assert unwrapInputBuffer.position() == 0 : "unwrapInputBuffer is not compacted";
@@ -188,7 +193,6 @@ public final class JavaTlsClientSocket implements Socket {
                 Vect.memcpy(unwrapInputBufferPtr, unwrapInputBufferPtr + bytesConsumed, bytesRemaining);
                 unwrapInputBuffer.position(0);
                 unwrapInputBuffer.limit(bytesRemaining);
-
 
                 switch (result.getStatus()) {
                     case BUFFER_UNDERFLOW:
@@ -227,8 +231,8 @@ public final class JavaTlsClientSocket implements Socket {
                     int sent = writeToSocket(bytesToSend);
                     if (sent < 0) {
                         return sent;
-                    } else if (sent == 0) {
-                        // we didn't manage to send anything, the network socket is full, no point in trying to send more
+                    } else if (sent < bytesToSend) {
+                        // we didn't manage to send everything we wanted, the socket is full
                         return plainBytesConsumed;
                     }
                 }

@@ -94,14 +94,6 @@ public abstract class HttpClient implements QuietCloseable {
         return request;
     }
 
-    private int decreaseTimeout(int timeoutMillis, long startTimeNanos) {
-        timeoutMillis -= (int) NANOSECONDS.toMillis(System.nanoTime() - startTimeNanos);
-        if (timeoutMillis <= 0) {
-            throw new HttpClientException("timed out [errno=").errno(nf.errno()).put(']');
-        }
-        return timeoutMillis;
-    }
-
     private int dieIfNegative(int byteCount) {
         if (byteCount < 0) {
             throw new HttpClientException("peer disconnect [errno=").errno(nf.errno()).put(']');
@@ -145,10 +137,12 @@ public abstract class HttpClient implements QuietCloseable {
     }
 
     private int recvOrDie(long lo, int len, int timeout) {
+        long startTimeNanos = System.nanoTime();
         int n = dieIfNegative(socket.recv(lo, len));
+
         if (n == 0) {
-            ioWait(timeout, IOOperation.READ);
-            n = dieIfNotPositive(socket.recv(lo, len));
+            ioWait(remainingTime(timeout, startTimeNanos), IOOperation.READ);
+            n = dieIfNegative(socket.recv(lo, len));
         }
         return n;
     }
@@ -157,14 +151,22 @@ public abstract class HttpClient implements QuietCloseable {
         return recvOrDie(addr, (int) (bufferSize - (addr - bufLo)), timeout);
     }
 
+    private int remainingTime(int timeoutMillis, long startTimeNanos) {
+        timeoutMillis -= (int) NANOSECONDS.toMillis(System.nanoTime() - startTimeNanos);
+        if (timeoutMillis <= 0) {
+            throw new HttpClientException("timed out [errno=").errno(nf.errno()).put(']');
+        }
+        return timeoutMillis;
+    }
+
     private int sendOrDie(long lo, int len, int timeoutMillis) {
         long startTimeNanos = System.nanoTime();
         ioWait(timeoutMillis, IOOperation.WRITE);
         int n = dieIfNotPositive(socket.send(lo, len));
         while (socket.wantsTlsWrite()) {
-            timeoutMillis = decreaseTimeout(timeoutMillis, startTimeNanos);
+            timeoutMillis = remainingTime(timeoutMillis, startTimeNanos);
             ioWait(timeoutMillis, IOOperation.WRITE);
-            n = dieIfNegative(socket.tlsIO(Socket.WRITE_FLAG));
+            dieIfNegative(socket.tlsIO(Socket.WRITE_FLAG));
         }
         return n;
     }
