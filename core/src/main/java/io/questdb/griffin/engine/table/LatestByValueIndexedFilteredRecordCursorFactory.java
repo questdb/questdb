@@ -63,6 +63,11 @@ public class LatestByValueIndexedFilteredRecordCursorFactory extends AbstractDat
     }
 
     @Override
+    public boolean usesIndex() {
+        return true;
+    }
+
+    @Override
     protected void _close() {
         super._close();
         filter.close();

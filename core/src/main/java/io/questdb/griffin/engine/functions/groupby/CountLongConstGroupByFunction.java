@@ -38,7 +38,7 @@ public class CountLongConstGroupByFunction extends LongFunction implements Group
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putLong(valueIndex, 1L);
+        mapValue.putLong(valueIndex, 1);
     }
 
     @Override
@@ -49,6 +49,17 @@ public class CountLongConstGroupByFunction extends LongFunction implements Group
     @Override
     public long getLong(Record rec) {
         return rec.getLong(valueIndex);
+    }
+
+    @Override
+    public boolean isParallelismSupported() {
+        return true;
+    }
+
+    @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        long srcCount = srcValue.getLong(valueIndex);
+        destValue.addLong(valueIndex, srcCount);
     }
 
     @Override

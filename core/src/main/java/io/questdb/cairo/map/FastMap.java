@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.*;
+import io.questdb.std.bytes.Bytes;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -86,6 +87,7 @@ public class FastMap implements Map, Reopenable {
     private final int listMemoryTag;
     private final double loadFactor;
     private final int maxResizes;
+    private final MergeFunction mergeRef;
     private final FastMapRecord record;
     private final FastMapValue value;
     private final FastMapValue value2;
@@ -183,14 +185,14 @@ public class FastMap implements Map, Reopenable {
         this.keySize = keySize;
 
         // Reserve 4 bytes for key length in case of var-size keys.
-        keyOffset = keySize != -1 ? 0 : 4;
+        keyOffset = keySize != -1 ? 0 : Integer.BYTES;
 
         int valueOffset = 0;
-        int[] valueOffsets = null;
+        long[] valueOffsets = null;
         int valueSize = 0;
         if (valueTypes != null) {
             valueColumnCount = valueTypes.getColumnCount();
-            valueOffsets = new int[valueColumnCount];
+            valueOffsets = new long[valueColumnCount];
 
             for (int i = 0; i < valueColumnCount; i++) {
                 valueOffsets[i] = valueOffset;
@@ -208,15 +210,21 @@ public class FastMap implements Map, Reopenable {
         }
         this.valueSize = valueSize;
 
-        value = new FastMapValue(valueOffsets);
-        value2 = new FastMapValue(valueOffsets);
-        value3 = new FastMapValue(valueOffsets);
-
-        record = new FastMapRecord(keySize, valueOffsets, value, keyTypes, valueTypes);
+        value = new FastMapValue(valueSize, valueOffsets);
+        value2 = new FastMapValue(valueSize, valueOffsets);
+        value3 = new FastMapValue(valueSize, valueOffsets);
 
         assert keySize + valueSize <= heapLimit - heapStart : "page size is too small to fit a single key";
+        if (keySize == -1) {
+            record = new FastMapVarSizeRecord(valueSize, valueOffsets, value, keyTypes, valueTypes);
+            key = new VarSizeKey();
+            mergeRef = this::mergeVarSizeKey;
+        } else {
+            record = new FastMapFixedSizeRecord(keySize, valueSize, valueOffsets, value, keyTypes, valueTypes);
+            key = new FixedSizeKey();
+            mergeRef = this::mergeFixedSizeKey;
+        }
         cursor = new FastMapCursor(record, this);
-        key = keySize == -1 ? new VarSizeKey() : new FixedSizeKey();
     }
 
     @Override
@@ -244,7 +252,7 @@ public class FastMap implements Map, Reopenable {
     }
 
     @Override
-    public RecordCursor getCursor() {
+    public MapRecordCursor getCursor() {
         return cursor.init(heapStart, heapLimit, size);
     }
 
@@ -270,6 +278,15 @@ public class FastMap implements Map, Reopenable {
         return valueColumnCount;
     }
 
+    @Override
+    public void merge(Map srcMap, MapValueMergeFunction mergeFunc) {
+        assert this != srcMap;
+        if (srcMap.size() == 0) {
+            return;
+        }
+        mergeRef.merge((FastMap) srcMap, mergeFunc);
+    }
+
     public void reopen() {
         if (heapStart == 0) {
             // handles both mem and offsets
@@ -279,17 +296,26 @@ public class FastMap implements Map, Reopenable {
 
     @Override
     public void restoreInitialCapacity() {
-        heapStart = kPos = Unsafe.realloc(heapStart, heapLimit - heapStart, capacity = initialPageSize, heapMemoryTag);
-        heapLimit = heapStart + initialPageSize;
-        keyCapacity = (int) (initialKeyCapacity / loadFactor);
-        keyCapacity = keyCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(keyCapacity);
-        mask = keyCapacity - 1;
-        free = (int) (keyCapacity * loadFactor);
-        offsets.resetCapacity();
-        offsets.setCapacity((long) keyCapacity << 1);
-        offsets.setPos((long) keyCapacity << 1);
-        offsets.zero(0);
-        nResizes = 0;
+        if (capacity != initialPageSize || keyCapacity != offsets.getCapacity()) {
+            heapStart = kPos = Unsafe.realloc(heapStart, heapLimit - heapStart, capacity = initialPageSize, heapMemoryTag);
+            heapLimit = heapStart + initialPageSize;
+            keyCapacity = (int) (initialKeyCapacity / loadFactor);
+            keyCapacity = keyCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(keyCapacity);
+            mask = keyCapacity - 1;
+            free = (int) (keyCapacity * loadFactor);
+            offsets.resetCapacity();
+            offsets.setCapacity((long) keyCapacity << 1);
+            offsets.setPos((long) keyCapacity << 1);
+            offsets.zero(0);
+            nResizes = 0;
+        }
+    }
+
+    @Override
+    public void setKeyCapacity(int newKeyCapacity) {
+        if (newKeyCapacity > keyCapacity) {
+            rehash(Numbers.ceilPow2((int) (newKeyCapacity / loadFactor)));
+        }
     }
 
     @Override
@@ -328,9 +354,8 @@ public class FastMap implements Map, Reopenable {
     }
 
     private FastMapValue asNew(BaseKey keyWriter, int index, int hashCode, FastMapValue value) {
-        kPos = keyWriter.appendAddress + valueSize;
         // Align current pointer to 8 bytes, so that we can store compressed offsets.
-        kPos = (kPos + 7) & ~0x7;
+        kPos = Bytes.align8b(keyWriter.appendAddress + valueSize);
         setOffset(offsets, index, keyWriter.startAddress - heapStart);
         setHashCode(offsets, index, hashCode);
         if (--free == 0) {
@@ -338,6 +363,102 @@ public class FastMap implements Map, Reopenable {
         }
         size++;
         return valueOf(keyWriter.startAddress, keyWriter.appendAddress, true, value);
+    }
+
+    private void mergeFixedSizeKey(FastMap srcMap, MapValueMergeFunction mergeFunc) {
+        assert keySize >= 0;
+        setKeyCapacity(size + srcMap.size);
+
+        int len = keySize + valueSize;
+        long alignedLen = Bytes.align8b(len);
+
+        OUTER:
+        for (int i = 0, k = (int) (srcMap.offsets.size() / 2); i < k; i++) {
+            long offset = getOffset(srcMap.offsets, i);
+            if (offset < 0) {
+                continue;
+            }
+
+            long srcStartAddress = srcMap.heapStart + offset;
+            int hashCode = getHashCode(srcMap.offsets, i);
+            int index = hashCode & mask;
+
+            long destOffset;
+            long destStartAddress;
+            while ((destOffset = getOffset(offsets, index)) > -1) {
+                if (
+                        hashCode == getHashCode(offsets, index)
+                                && Vect.memeq((destStartAddress = heapStart + destOffset), srcStartAddress, keySize)
+                ) {
+                    // Match found, merge values.
+                    mergeFunc.merge(
+                            valueAt(destStartAddress),
+                            srcMap.valueAt(srcStartAddress)
+                    );
+                    continue OUTER;
+                }
+                index = (index + 1) & mask;
+            }
+
+            assert free > 0;
+            if (kPos + len > heapLimit) {
+                resize(len);
+            }
+            Vect.memcpy(kPos, srcStartAddress, len);
+            setOffset(offsets, index, kPos - heapStart);
+            setHashCode(offsets, index, hashCode);
+            kPos += alignedLen;
+            free--;
+            size++;
+        }
+    }
+
+    private void mergeVarSizeKey(FastMap srcMap, MapValueMergeFunction mergeFunc) {
+        assert keySize == -1;
+        setKeyCapacity(size + srcMap.size);
+
+        OUTER:
+        for (int i = 0, k = (int) (srcMap.offsets.size() / 2); i < k; i++) {
+            long offset = getOffset(srcMap.offsets, i);
+            if (offset < 0) {
+                continue;
+            }
+
+            long srcStartAddress = srcMap.heapStart + offset;
+            int srcKeySize = Unsafe.getUnsafe().getInt(srcStartAddress);
+            int hashCode = getHashCode(srcMap.offsets, i);
+            int index = hashCode & mask;
+
+            long destOffset;
+            long destStartAddress;
+            while ((destOffset = getOffset(offsets, index)) > -1) {
+                if (
+                        hashCode == getHashCode(offsets, index)
+                                && Unsafe.getUnsafe().getInt((destStartAddress = heapStart + destOffset)) == srcKeySize
+                                && Vect.memeq(destStartAddress + keyOffset, srcStartAddress + keyOffset, srcKeySize)
+                ) {
+                    // Match found, merge values.
+                    mergeFunc.merge(
+                            valueAt(destStartAddress),
+                            srcMap.valueAt(srcStartAddress)
+                    );
+                    continue OUTER;
+                }
+                index = (index + 1) & mask;
+            }
+
+            assert free > 0;
+            int len = keyOffset + srcKeySize + valueSize;
+            if (kPos + len > heapLimit) {
+                resize(len);
+            }
+            Vect.memcpy(kPos, srcStartAddress, len);
+            setOffset(offsets, index, kPos - heapStart);
+            setHashCode(offsets, index, hashCode);
+            kPos = Bytes.align8b(kPos + len);
+            free--;
+            size++;
+        }
     }
 
     private FastMapValue probe0(BaseKey keyWriter, int index, int hashCode, int keySize, FastMapValue value) {
@@ -363,10 +484,17 @@ public class FastMap implements Map, Reopenable {
     }
 
     private void rehash() {
-        int capacity = keyCapacity << 1;
-        mask = capacity - 1;
-        DirectIntList newOffsets = new DirectIntList((long) capacity << 1, listMemoryTag);
-        newOffsets.setPos((long) capacity << 1);
+        rehash(keyCapacity << 1);
+    }
+
+    private void rehash(int newKeyCapacity) {
+        if (newKeyCapacity <= keyCapacity) {
+            return;
+        }
+
+        mask = newKeyCapacity - 1;
+        DirectIntList newOffsets = new DirectIntList((long) newKeyCapacity << 1, listMemoryTag);
+        newOffsets.setPos((long) newKeyCapacity << 1);
         newOffsets.zero(0);
 
         for (int i = 0, k = (int) (offsets.size() / 2); i < k; i++) {
@@ -384,8 +512,8 @@ public class FastMap implements Map, Reopenable {
         }
         offsets.close();
         offsets = newOffsets;
-        free += (int) ((capacity - keyCapacity) * loadFactor);
-        keyCapacity = capacity;
+        free += (int) ((newKeyCapacity - keyCapacity) * loadFactor);
+        keyCapacity = newKeyCapacity;
     }
 
     private void resize(int size) {
@@ -430,23 +558,28 @@ public class FastMap implements Map, Reopenable {
         return valueSize;
     }
 
-    private abstract class BaseKey implements MapKey {
+    @FunctionalInterface
+    private interface MergeFunction {
+        void merge(FastMap srcMap, MapValueMergeFunction mergeFunc);
+    }
+
+    abstract class BaseKey implements MapKey {
         protected long appendAddress;
         protected long startAddress;
 
         @Override
         public MapValue createValue() {
-            return createValue(value);
+            int keySize = commit();
+            // calculate hash remembering "key" structure
+            // [ key size | key block | value block ]
+            int hashCode = hash();
+            return createValue(keySize, hashCode);
         }
 
         @Override
-        public MapValue createValue2() {
-            return createValue(value2);
-        }
-
-        @Override
-        public MapValue createValue3() {
-            return createValue(value3);
+        public MapValue createValue(int hashCode) {
+            int keySize = commit();
+            return createValue(keySize, hashCode);
         }
 
         @Override
@@ -480,22 +613,16 @@ public class FastMap implements Map, Reopenable {
             // no-op
         }
 
-        private MapValue createValue(FastMapValue value) {
-            int keySize = commit();
-            // calculate hash remembering "key" structure
-            // [ key size | key block | value block ]
-            int hashCode = hash();
+        private MapValue createValue(int keySize, int hashCode) {
             int index = hashCode & mask;
             long offset = getOffset(offsets, index);
-
             if (offset < 0) {
                 return asNew(this, index, hashCode, value);
             } else if (hashCode == getHashCode(offsets, index) && eq(offset)) {
                 long startAddress = heapStart + offset;
                 return valueOf(startAddress, startAddress + keyOffset + keySize, false, value);
-            } else {
-                return probe0(this, index, hashCode, keySize, value);
             }
+            return probe0(this, index, hashCode, keySize, value);
         }
 
         private MapValue findValue(FastMapValue value) {
@@ -520,15 +647,28 @@ public class FastMap implements Map, Reopenable {
             }
         }
 
-        // returns actual key size
-        protected abstract int commit();
+        abstract void copyFromRawKey(long ptr, int size);
 
         protected abstract boolean eq(long offset);
-
-        protected abstract int hash();
     }
 
-    private class FixedSizeKey extends BaseKey {
+    class FixedSizeKey extends BaseKey {
+
+        @Override
+        public int commit() {
+            return keySize;
+        }
+
+        @Override
+        public void copyFrom(MapKey srcKey) {
+            FixedSizeKey srcFastKey = (FixedSizeKey) srcKey;
+            copyFromRawKey(srcFastKey.startAddress, keySize);
+        }
+
+        @Override
+        public int hash() {
+            return Hash.hashMem32(startAddress, keySize);
+        }
 
         public FixedSizeKey init() {
             super.init();
@@ -641,23 +781,37 @@ public class FastMap implements Map, Reopenable {
         }
 
         @Override
-        protected int commit() {
-            return keySize;
+        void copyFromRawKey(long srcPtr, int srcSize) {
+            assert srcSize == keySize;
+            Vect.memcpy(appendAddress, srcPtr, srcSize);
+            appendAddress += srcSize;
         }
 
         @Override
         protected boolean eq(long offset) {
-            return Vect.memeq(heapStart + offset + keyOffset, startAddress + keyOffset, keySize);
-        }
-
-        @Override
-        protected int hash() {
-            return Hash.hashMem32(startAddress + keyOffset, keySize);
+            return Vect.memeq(heapStart + offset, startAddress, keySize);
         }
     }
 
-    private class VarSizeKey extends BaseKey {
+    class VarSizeKey extends BaseKey {
         private int len;
+
+        @Override
+        public int commit() {
+            Unsafe.getUnsafe().putInt(startAddress, len = (int) (appendAddress - startAddress - keyOffset));
+            return len;
+        }
+
+        @Override
+        public void copyFrom(MapKey srcKey) {
+            VarSizeKey srcFastKey = (VarSizeKey) srcKey;
+            copyFromRawKey(srcFastKey.startAddress + keyOffset, srcFastKey.len);
+        }
+
+        @Override
+        public int hash() {
+            return Hash.hashMem32(startAddress + keyOffset, len);
+        }
 
         @Override
         public void putBin(BinarySequence value) {
@@ -832,9 +986,10 @@ public class FastMap implements Map, Reopenable {
         }
 
         @Override
-        protected int commit() {
-            Unsafe.getUnsafe().putInt(startAddress, len = (int) (appendAddress - startAddress - keyOffset));
-            return len;
+        void copyFromRawKey(long srcPtr, int srcSize) {
+            checkSize(srcSize);
+            Vect.memcpy(appendAddress, srcPtr, srcSize);
+            appendAddress += srcSize;
         }
 
         @Override
@@ -846,11 +1001,6 @@ public class FastMap implements Map, Reopenable {
                 return false;
             }
             return Vect.memeq(a + keyOffset, b + keyOffset, len);
-        }
-
-        @Override
-        protected int hash() {
-            return Hash.hashMem32(startAddress + keyOffset, len);
         }
     }
 }

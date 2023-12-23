@@ -31,6 +31,7 @@ import io.questdb.griffin.EmptyRecordMetadata;
 import io.questdb.std.Chars;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public class MapFactory {
 
@@ -74,7 +75,7 @@ public class MapFactory {
     public static Map createMap(
             CairoConfiguration configuration,
             @Transient @NotNull ColumnTypes keyTypes,
-            @Transient @NotNull ColumnTypes valueTypes
+            @Transient @Nullable ColumnTypes valueTypes
     ) {
         final int keyCapacity = configuration.getSqlSmallMapKeyCapacity();
         final int pageSize = configuration.getSqlSmallMapPageSize();
@@ -91,6 +92,7 @@ public class MapFactory {
         }
 
         if (Chars.equalsLowerCaseAscii(mapType, "compact")) {
+            assert valueTypes != null;
             return new CompactMap(
                     pageSize,
                     keyTypes,

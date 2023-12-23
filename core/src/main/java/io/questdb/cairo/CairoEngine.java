@@ -510,7 +510,7 @@ public class CairoEngine implements Closeable, WriterSource {
             LOG.critical()
                     .$("could not open reader [table=").$(tableToken)
                     .$(", errno=").$(e.getErrno())
-                    .$(", error=").$(e.getMessage())
+                    .$(", error=").$(e.getFlyweightMessage())
                     .I$();
             throw e;
         }

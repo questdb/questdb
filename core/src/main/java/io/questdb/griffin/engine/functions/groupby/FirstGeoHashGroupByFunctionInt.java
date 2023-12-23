@@ -35,17 +35,17 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 
 class FirstGeoHashGroupByFunctionInt extends GeoByteFunction implements GroupByFunction, UnaryFunction {
-    protected final Function function;
+    protected final Function arg;
     protected int valueIndex;
 
-    public FirstGeoHashGroupByFunctionInt(int type, Function function) {
+    public FirstGeoHashGroupByFunctionInt(int type, Function arg) {
         super(type);
-        this.function = function;
+        this.arg = arg;
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putInt(valueIndex, function.getGeoInt(record));
+        mapValue.putInt(valueIndex, arg.getGeoInt(record));
     }
 
     @Override
@@ -55,7 +55,7 @@ class FirstGeoHashGroupByFunctionInt extends GeoByteFunction implements GroupByF
 
     @Override
     public Function getArg() {
-        return function;
+        return arg;
     }
 
     @Override
@@ -65,7 +65,7 @@ class FirstGeoHashGroupByFunctionInt extends GeoByteFunction implements GroupByF
 
     @Override
     public int getGeoInt(Record rec) {
-        return rec.getGeoInt(this.valueIndex);
+        return rec.getGeoInt(valueIndex);
     }
 
     @Override
@@ -81,7 +81,7 @@ class FirstGeoHashGroupByFunctionInt extends GeoByteFunction implements GroupByF
 
     @Override
     public void setInt(MapValue mapValue, int value) {
-        mapValue.putInt(this.valueIndex, value);
+        mapValue.putInt(valueIndex, value);
     }
 
     @Override

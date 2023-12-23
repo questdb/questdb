@@ -289,8 +289,23 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getGroupByMergeShardQueueCapacity() {
+        return 32;
+    }
+
+    @Override
     public int getGroupByPoolCapacity() {
         return 1024;
+    }
+
+    @Override
+    public int getGroupByShardCount() {
+        return 32;
+    }
+
+    @Override
+    public int getGroupByShardingThreshold() {
+        return 1000;
     }
 
     @Override
@@ -1012,6 +1027,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isSqlParallelFilterPreTouchEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isSqlParallelGroupByEnabled() {
         return true;
     }
 

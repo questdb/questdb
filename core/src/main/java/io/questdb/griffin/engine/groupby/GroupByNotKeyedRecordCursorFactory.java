@@ -51,26 +51,30 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
             RecordCursorFactory base,
             RecordMetadata groupByMetadata,
             ObjList<GroupByFunction> groupByFunctions,
-            ObjList<Function> recordFunctions,
             int valueCount
     ) {
         super(groupByMetadata);
-        this.simpleMapValue = new SimpleMapValue(valueCount);
-        this.base = base;
-        this.groupByFunctions = groupByFunctions;
-        this.virtualRecordA = new VirtualRecordNoRowid(recordFunctions);
-        this.virtualRecordA.of(simpleMapValue);
+        try {
+            this.simpleMapValue = new SimpleMapValue(valueCount);
+            this.base = base;
+            this.groupByFunctions = groupByFunctions;
+            this.virtualRecordA = new VirtualRecordNoRowid(groupByFunctions);
+            this.virtualRecordA.of(simpleMapValue);
 
-        final GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
-        boolean earlyExitSupported = true;
-        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
-            earlyExitSupported &= groupByFunctions.getQuick(0).isEarlyExitSupported();
-        }
+            final GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
+            boolean earlyExitSupported = true;
+            for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+                earlyExitSupported &= groupByFunctions.getQuick(0).isEarlyExitSupported();
+            }
 
-        if (earlyExitSupported) {
-            this.cursor = new EarlyExitGroupByNotKeyedRecordCursor(updater);
-        } else {
-            this.cursor = new GroupByNotKeyedRecordCursor(updater);
+            if (earlyExitSupported) {
+                this.cursor = new EarlyExitGroupByNotKeyedRecordCursor(updater);
+            } else {
+                this.cursor = new GroupByNotKeyedRecordCursor(updater);
+            }
+        } catch (Throwable e) {
+            Misc.freeObjList(groupByFunctions);
+            throw e;
         }
     }
 
@@ -106,6 +110,11 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
     @Override
     public boolean usesCompiledFilter() {
         return base.usesCompiledFilter();
+    }
+
+    @Override
+    public boolean usesIndex() {
+        return base.usesIndex();
     }
 
     @Override

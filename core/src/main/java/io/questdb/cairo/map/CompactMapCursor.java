@@ -25,9 +25,8 @@
 package io.questdb.cairo.map;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
 
-public class CompactMapCursor implements RecordCursor {
+public class CompactMapCursor implements MapRecordCursor {
 
     private final CompactMapRecord recordA;
     private final CompactMapRecord recordB;

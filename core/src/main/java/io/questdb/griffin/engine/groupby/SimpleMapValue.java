@@ -30,8 +30,10 @@ import io.questdb.std.Long256Impl;
 import io.questdb.std.Long256Util;
 
 public class SimpleMapValue implements MapValue {
+
     private final Long256Impl long256 = new Long256Impl();
     private final long[] values;
+    private boolean isNew;
 
     public SimpleMapValue(int columnCount) {
         this.values = new long[4 * columnCount];
@@ -80,9 +82,14 @@ public class SimpleMapValue implements MapValue {
         values[4 * index] += value;
     }
 
-    public void copy(SimpleMapValue other) {
-        assert values.length >= other.values.length;
-        System.arraycopy(other.values, 0, values, 0, other.values.length);
+    public void copy(SimpleMapValue srcValue) {
+        assert values.length >= srcValue.values.length;
+        System.arraycopy(srcValue.values, 0, values, 0, srcValue.values.length);
+    }
+
+    @Override
+    public void copyFrom(MapValue value) {
+        copy((SimpleMapValue) value);
     }
 
     @Override
@@ -184,7 +191,12 @@ public class SimpleMapValue implements MapValue {
 
     @Override
     public boolean isNew() {
-        return false;
+        return isNew;
+    }
+
+    @Override
+    public void maxLong(int index, long value) {
+        values[4 * index] = Math.max(value, values[4 * index]);
     }
 
     @Override
@@ -256,5 +268,9 @@ public class SimpleMapValue implements MapValue {
     @Override
     public void setMapRecordHere() {
         throw new UnsupportedOperationException();
+    }
+
+    public void setNew(boolean isNew) {
+        this.isNew = isNew;
     }
 }

@@ -122,7 +122,6 @@ public abstract class AbstractCovarGroupByFunction extends DoubleFunction implem
 
         double oldMeanX = meanX;
         meanX += (x - meanX) / count;
-        double oldMeanY = meanY;
         meanY += (y - meanY) / count;
         sumXY += (x - oldMeanX) * (y - meanY);
 

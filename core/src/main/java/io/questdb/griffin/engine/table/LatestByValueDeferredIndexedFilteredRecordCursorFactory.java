@@ -57,6 +57,11 @@ public class LatestByValueDeferredIndexedFilteredRecordCursorFactory extends Abs
     }
 
     @Override
+    public boolean usesIndex() {
+        return true;
+    }
+
+    @Override
     protected AbstractLatestByValueRecordCursor createDataFrameCursorFor(int symbolKey) {
         assert filter != null;
         return new LatestByValueIndexedFilteredRecordCursor(columnIndex, TableUtils.toIndexKey(symbolKey), filter, columnIndexes);

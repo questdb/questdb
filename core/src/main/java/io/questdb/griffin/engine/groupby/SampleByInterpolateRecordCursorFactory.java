@@ -165,7 +165,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
 
         final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
-            // init all record function for this cursor, in case functions require metadata and/or symbol tables
+            // init all record functions for this cursor, in case functions require metadata and/or symbol tables
             Function.init(recordFunctions, baseCursor, executionContext);
             cursor.of(baseCursor, executionContext);
             return cursor;
@@ -193,6 +193,11 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
     @Override
     public boolean usesCompiledFilter() {
         return base.usesCompiledFilter();
+    }
+
+    @Override
+    public boolean usesIndex() {
+        return base.usesIndex();
     }
 
     private void freeYData() {

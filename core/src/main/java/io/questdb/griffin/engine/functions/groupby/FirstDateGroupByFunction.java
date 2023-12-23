@@ -45,7 +45,7 @@ public class FirstDateGroupByFunction extends DateFunction implements GroupByFun
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putLong(this.valueIndex, this.arg.getDate(record));
+        mapValue.putLong(valueIndex, arg.getDate(record));
     }
 
     @Override
@@ -60,7 +60,7 @@ public class FirstDateGroupByFunction extends DateFunction implements GroupByFun
 
     @Override
     public long getDate(Record rec) {
-        return rec.getDate(this.valueIndex);
+        return rec.getDate(valueIndex);
     }
 
     @Override
@@ -76,6 +76,6 @@ public class FirstDateGroupByFunction extends DateFunction implements GroupByFun
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putTimestamp(this.valueIndex, Numbers.LONG_NaN);
+        mapValue.putTimestamp(valueIndex, Numbers.LONG_NaN);
     }
 }
