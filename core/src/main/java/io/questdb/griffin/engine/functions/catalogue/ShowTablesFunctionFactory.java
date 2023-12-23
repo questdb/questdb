@@ -251,21 +251,34 @@ public class ShowTablesFunctionFactory implements FunctionFactory {
                     }
 
                     if (getMetadata() == METADATA) {
-                        try (TableMetadata tableMetadata = engine.getTableReaderMetadata(tableToken)) {
-                            isSoftLink = tableMetadata.isSoftLink();
-                            maxUncommittedRows = tableMetadata.getMaxUncommittedRows();
-                            o3MaxLag = tableMetadata.getO3MaxLag();
-                            partitionBy = tableMetadata.getPartitionBy();
-                            int timestampIndex = tableMetadata.getTimestampIndex();
-                            timestampColumnName = timestampIndex > -1 ? tableMetadata.getColumnName(timestampIndex) : null;
-                            isDedup = timestampIndex >= 0 && tableToken.isWal() && tableMetadata.isDedupKey(timestampIndex);
-                        } catch (CairoException e) {
-                            // perhaps this folder is not a table remove it from the result set
-                            LOG.info()
-                                    .$("cannot query table metadata [table=").$(tableToken)
-                                    .$(", error=").$(e.getFlyweightMessage())
-                                    .$(", errno=").$(e.getErrno())
-                                    .I$();
+                        TableToken lastTableTokenVersion = engine.getTableTokenIfExists(tableToken.getTableName());
+                        if (lastTableTokenVersion != null) {
+                            tableToken = lastTableTokenVersion;
+                            try (TableMetadata tableMetadata = engine.getTableReaderMetadata(tableToken)) {
+                                isSoftLink = tableMetadata.isSoftLink();
+                                maxUncommittedRows = tableMetadata.getMaxUncommittedRows();
+                                o3MaxLag = tableMetadata.getO3MaxLag();
+                                partitionBy = tableMetadata.getPartitionBy();
+                                int timestampIndex = tableMetadata.getTimestampIndex();
+                                timestampColumnName = timestampIndex > -1 ? tableMetadata.getColumnName(timestampIndex) : null;
+                                isDedup = timestampIndex >= 0 && tableToken.isWal() && tableMetadata.isDedupKey(timestampIndex);
+                            } catch (CairoException e) {
+                                // perhaps this folder is not a table remove it from the result set
+                                LOG.info()
+                                        .$("cannot query table metadata [table=").$(tableToken)
+                                        .$(", error=").$(e.getFlyweightMessage())
+                                        .$(", errno=").$(e.getErrno())
+                                        .I$();
+                                return false;
+                            } catch (TableReferenceOutOfDateException e) {
+                                LOG.info()
+                                        .$("cannot query table metadata, can be concurrent table drop [table=").$(tableToken)
+                                        .$(", error=").$(e.getFlyweightMessage())
+                                        .I$();
+                                return false;
+                            }
+                        } else {
+                            // Table is dropped.
                             return false;
                         }
                     }

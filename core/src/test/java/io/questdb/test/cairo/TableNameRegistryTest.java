@@ -40,6 +40,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -53,9 +54,9 @@ import static io.questdb.cairo.wal.WalUtils.TABLE_REGISTRY_NAME_FILE;
 
 public class TableNameRegistryTest extends AbstractCairoTest {
 
+    private static final int FUZZ_APPLY = 3;
     private static final int FUZZ_CREATE = 0;
     private static final int FUZZ_DROP = 2;
-    private static final int FUZZ_RELOAD = 3;
     private static final int FUZZ_RENAME = 1;
     private static final int FUZZ_SWEEP = 4;
 
@@ -384,6 +385,30 @@ public class TableNameRegistryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConvertedDroppedRecreated() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tt1;
+            tt1 = createTableWal("tab1");
+            Assert.assertTrue(engine.isWalTable(tt1));
+
+            ddl("alter table tab1 set type bypass wal");
+            engine.releaseInactive();
+            final ObjList<TableToken> convertedTables = TableConverter.convertTables(configuration, engine.getTableSequencerAPI(), engine.getProtectedTableResolver());
+            engine.closeNameRegistry();
+            engine.reloadTableNames(convertedTables);
+            engine.reconcileTableNameRegistryState();
+
+            compile("drop table tab1");
+            tt1 = createTableWal("tab1");
+
+            engine.closeNameRegistry();
+            engine.reloadTableNames();
+            engine.reconcileTableNameRegistryState();
+
+        });
+    }
+
+    @Test
     public void testConvertedTableListPassedToRegistryOnLoad() throws Exception {
         testConvertedTableListPassedToRegistryOnLoad0(true);
     }
@@ -391,6 +416,51 @@ public class TableNameRegistryTest extends AbstractCairoTest {
     @Test
     public void testConvertedTableListPassedToRegistrySequencerExists() throws Exception {
         testConvertedTableListPassedToRegistryOnLoad0(false);
+    }
+
+    @Test
+    public void testCopiedAndThenDropped() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tt1 = createTableWal("tab1");
+
+            Assert.assertTrue(engine.isWalTable(tt1));
+
+            engine.closeNameRegistry();
+            Assert.assertTrue(TestFilesFacadeImpl.INSTANCE.remove(Path.getThreadLocal(root).concat(TABLE_REGISTRY_NAME_FILE).putAscii(".0").$()));
+            engine.reloadTableNames();
+            engine.reconcileTableNameRegistryState();
+
+            TableToken tt2;
+            try (MemoryMARW mem = Vm.getMARWInstance()) {
+                tt2 = engine.rename(
+                        securityContext,
+                        Path.getThreadLocal(""),
+                        mem,
+                        "tab1",
+                        Path.getThreadLocal2(""),
+                        "tab2"
+                );
+
+            }
+
+            try (TableModel model = new TableModel(configuration, "tab1", PartitionBy.DAY)
+                    .col("a", ColumnType.INT)
+                    .col("b", ColumnType.INT)
+                    .wal()
+                    .timestamp()) {
+                tt1 = createTable(model);
+            }
+
+            Assert.assertTrue(engine.isWalTable(tt1));
+
+            engine.closeNameRegistry();
+//            Assert.assertTrue(TestFilesFacadeImpl.INSTANCE.remove(Path.getThreadLocal(root).concat(TABLE_REGISTRY_NAME_FILE).putAscii(".0").$()));
+            engine.reloadTableNames();
+            engine.reconcileTableNameRegistryState();
+
+            Assert.assertEquals(tt1, engine.verifyTableName("tab1"));
+            Assert.assertEquals(tt2, engine.verifyTableName("tab2"));
+        });
     }
 
     @Test
@@ -417,30 +487,20 @@ public class TableNameRegistryTest extends AbstractCairoTest {
         haltLatch.await();
         engine.reconcileTableNameRegistryState();
 
+        engine.closeNameRegistry();
+        engine.reloadTableNames();
+        engine.reconcileTableNameRegistryState();
+
         Assert.assertEquals(0, errorCounter.get());
     }
 
     @Test
     public void testMissingDirsRemovedFromRegistryOnLoad() throws Exception {
         assertMemoryLeak(() -> {
-            TableToken tt1;
-            try (TableModel model = new TableModel(configuration, "tab1", PartitionBy.DAY)
-                    .col("a", ColumnType.INT)
-                    .col("b", ColumnType.INT)
-                    .wal()
-                    .timestamp()) {
-                tt1 = createTable(model);
-            }
+            TableToken tt1 = createTableWal("tab1");
             Assert.assertTrue(engine.isWalTable(tt1));
 
-            TableToken tt2;
-            try (TableModel model = new TableModel(configuration, "tab2", PartitionBy.DAY)
-                    .col("a", ColumnType.INT)
-                    .col("b", ColumnType.INT)
-                    .wal()
-                    .timestamp()) {
-                tt2 = createTable(model);
-            }
+            TableToken tt2 = createTableWal("tab2");
             Assert.assertTrue(engine.isWalTable(tt2));
 
             engine.releaseInactive();
@@ -455,26 +515,51 @@ public class TableNameRegistryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRestoreTableNamesFile() throws Exception {
+    public void testRenameTableAndCreateSameName() throws Exception {
         assertMemoryLeak(() -> {
-            TableToken tt1;
-            try (TableModel model = new TableModel(configuration, "tab1", PartitionBy.DAY)
-                    .col("a", ColumnType.INT)
-                    .col("b", ColumnType.INT)
-                    .wal()
-                    .timestamp()) {
-                tt1 = createTable(model);
-            }
+            TableToken tt1 = createTableWal("tab1");
             Assert.assertTrue(engine.isWalTable(tt1));
 
             TableToken tt2;
-            try (TableModel model = new TableModel(configuration, "tab2", PartitionBy.DAY)
-                    .col("a", ColumnType.INT)
-                    .col("b", ColumnType.INT)
-                    .wal()
-                    .timestamp()) {
-                tt2 = createTable(model);
+            try (MemoryMARW mem = Vm.getMARWInstance()) {
+                tt2 = engine.rename(
+                        securityContext,
+                        Path.getThreadLocal(""),
+                        mem,
+                        "tab1",
+                        Path.getThreadLocal2(""),
+                        "tab2"
+                );
+                Assert.assertTrue(engine.isWalTable(tt2));
+
+                drainWalQueue();
+
+                try (TableModel model = new TableModel(configuration, "tab1", PartitionBy.DAY)
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .wal()
+                        .timestamp()) {
+                    tt1 = createTable(model);
+                }
             }
+
+            engine.closeNameRegistry();
+            engine.reloadTableNames();
+
+            engine.reconcileTableNameRegistryState();
+
+            Assert.assertEquals(tt1, engine.verifyTableName("tab1"));
+            Assert.assertEquals(tt2, engine.verifyTableName("tab2"));
+        });
+    }
+
+    @Test
+    public void testRestoreTableNamesFile() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tt1 = createTableWal("tab1");
+            Assert.assertTrue(engine.isWalTable(tt1));
+
+            TableToken tt2 = createTableWal("tab2");
             Assert.assertTrue(engine.isWalTable(tt2));
 
             TableToken tt3;
@@ -521,30 +606,29 @@ public class TableNameRegistryTest extends AbstractCairoTest {
         });
     }
 
+    @NotNull
+    private static TableToken createTableWal(String tab1) {
+        TableToken tt1;
+        try (TableModel model = new TableModel(configuration, tab1, PartitionBy.DAY)
+                .col("a", ColumnType.INT)
+                .col("b", ColumnType.INT)
+                .wal()
+                .timestamp()) {
+            tt1 = createTable(model);
+        }
+        return tt1;
+    }
+
     private static int getNonDroppedSize(TableNameRegistry ro) {
         return ro.getTableTokenCount(false);
     }
 
     private static void testConvertedTableListPassedToRegistryOnLoad0(boolean releaseInactiveBeforeConversion) throws Exception {
         assertMemoryLeak(() -> {
-            TableToken tt1;
-            try (TableModel model = new TableModel(configuration, "tab1", PartitionBy.DAY)
-                    .col("a", ColumnType.INT)
-                    .col("b", ColumnType.INT)
-                    .wal()
-                    .timestamp()) {
-                tt1 = createTable(model);
-            }
+            TableToken tt1 = createTableWal("tab1");
             Assert.assertTrue(engine.isWalTable(tt1));
 
-            TableToken tt2;
-            try (TableModel model = new TableModel(configuration, "tab2", PartitionBy.DAY)
-                    .col("a", ColumnType.INT)
-                    .col("b", ColumnType.INT)
-                    .wal()
-                    .timestamp()) {
-                tt2 = createTable(model);
-            }
+            TableToken tt2 = createTableWal("tab2");
             Assert.assertTrue(engine.isWalTable(tt2));
 
             TableToken tt3;
@@ -570,6 +654,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             }
             engine.reloadTableNames(convertedTables);
 
+            engine.reconcileTableNameRegistryState();
             Assert.assertEquals(tt1, engine.verifyTableName("tab1"));
 
             Assert.assertEquals(tt2.getTableId(), engine.verifyTableName("tab2").getTableId());
@@ -619,7 +704,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                 IntList steps = new IntList(maxSteps);
                 // the initial step is always "create"
                 for (int i = 0; i < n; i++) {
-                    steps.add(rnd.nextInt(5));
+                    steps.add(rnd.nextInt(FUZZ_APPLY + 1));
                 }
 
                 final String ogTableName = Chars.toString(rnd.nextChars(10));
@@ -665,7 +750,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                             }
                             tableExists = false;
                             break;
-                        case FUZZ_RELOAD:
+                        case FUZZ_APPLY:
                         case FUZZ_SWEEP:
                             success.set(i);
                             if (i > 0) {
@@ -701,9 +786,8 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                             case FUZZ_DROP:
                                 drop("drop table " + tableName);
                                 break;
-                            case FUZZ_RELOAD:
-                                // reload is only used at either server starts or from tests
-                                // at runtime it will break the registry
+                            case FUZZ_APPLY:
+                                drainWalQueue();
                                 break;
                             case FUZZ_SWEEP:
                                 purgeJob.run(thread);

@@ -53,11 +53,11 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
 
     @Override
     public boolean dropTable(TableToken token) {
-        final MapBeDroppedTableToken reverseMapItem = dirNameToTableTokenMap.get(token.getDirName());
+        final ReverseTableMapItem reverseMapItem = dirNameToTableTokenMap.get(token.getDirName());
         if (reverseMapItem != null && tableNameToTableTokenMap.remove(token.getTableName(), token)) {
             if (token.isWal()) {
                 nameStore.logDropTable(token);
-                dirNameToTableTokenMap.put(token.getDirName(), MapBeDroppedTableToken.ofDropped(token));
+                dirNameToTableTokenMap.put(token.getDirName(), ReverseTableMapItem.ofDropped(token));
             } else {
                 dirNameToTableTokenMap.remove(token.getDirName(), reverseMapItem);
             }
@@ -92,7 +92,7 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
         if (tableToken.isWal()) {
             nameStore.logAddTable(tableToken);
         }
-        dirNameToTableTokenMap.put(tableToken.getDirName(), MapBeDroppedTableToken.of(tableToken));
+        dirNameToTableTokenMap.put(tableToken.getDirName(), ReverseTableMapItem.of(tableToken));
     }
 
     @Override
@@ -120,7 +120,7 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
                 // Persist to file
                 nameStore.logDropTable(tableToken);
                 nameStore.logAddTable(renamedTableToken);
-                dirNameToTableTokenMap.put(renamedTableToken.getDirName(), MapBeDroppedTableToken.of(renamedTableToken));
+                dirNameToTableTokenMap.put(renamedTableToken.getDirName(), ReverseTableMapItem.of(renamedTableToken));
                 return renamedTableToken;
             } else {
                 // Already renamed by another thread. Revert new name reservation.
@@ -137,7 +137,7 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
         if (tableNameToTableTokenMap.remove(oldToken.getTableName(), oldToken)) {
             nameStore.logDropTable(oldToken);
             nameStore.logAddTable(newToken);
-            dirNameToTableTokenMap.put(newToken.getDirName(), MapBeDroppedTableToken.of(newToken));
+            dirNameToTableTokenMap.put(newToken.getDirName(), ReverseTableMapItem.of(newToken));
         }
     }
 

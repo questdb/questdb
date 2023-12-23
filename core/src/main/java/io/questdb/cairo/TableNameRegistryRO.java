@@ -34,11 +34,11 @@ import java.util.function.Predicate;
 public class TableNameRegistryRO extends AbstractTableNameRegistry {
     private final long autoReloadTimeout;
     private final MillisecondClock clockMs;
+    private ConcurrentHashMap<ReverseTableMapItem> dirNameToTableTokenMap1 = new ConcurrentHashMap<>();
+    private ConcurrentHashMap<ReverseTableMapItem> dirNameToTableTokenMap2 = new ConcurrentHashMap<>();
     private volatile long lastReloadTimestampMs = 0;
     private ConcurrentHashMap<TableToken> tableNameToTableTokenMap1 = new ConcurrentHashMap<>(false);
     private ConcurrentHashMap<TableToken> tableNameToTableTokenMap2 = new ConcurrentHashMap<>(false);
-    private ConcurrentHashMap<MapBeDroppedTableToken> dirNameToTableTokenMap1 = new ConcurrentHashMap<>();
-    private ConcurrentHashMap<MapBeDroppedTableToken> dirNameToTableTokenMap2 = new ConcurrentHashMap<>();
 
     public TableNameRegistryRO(CairoConfiguration configuration, Predicate<CharSequence> protectedTableResolver) {
         super(configuration, protectedTableResolver);
@@ -96,7 +96,7 @@ public class TableNameRegistryRO extends AbstractTableNameRegistry {
         tableNameToTableTokenMap2 = tableNameToTableTokenMap1;
         tableNameToTableTokenMap1 = tmp;
 
-        ConcurrentHashMap<MapBeDroppedTableToken> tmp2 = dirNameToTableTokenMap2;
+        ConcurrentHashMap<ReverseTableMapItem> tmp2 = dirNameToTableTokenMap2;
         dirNameToTableTokenMap2 = dirNameToTableTokenMap1;
         dirNameToTableTokenMap1 = tmp2;
 
