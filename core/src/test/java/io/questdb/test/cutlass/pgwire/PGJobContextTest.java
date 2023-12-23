@@ -9786,7 +9786,7 @@ create table tab as (
         AtomicBoolean isCancelled = new AtomicBoolean(false);
         CountDownLatch finished = new CountDownLatch(1);
         backendPid = connection.getQueryExecutor().getBackendPID();
-        String query = "select count(*) from tab t1 join tab t2 on t1.x = t2.x where t1.x > 0";
+        String query = "select count(*) from tab t1 join tab t2 on t1.x = t2.x where sleep(120000)";
 
         try (final PreparedStatement stmt = connection.prepareStatement(query)) {
             new Thread(() -> {
