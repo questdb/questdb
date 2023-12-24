@@ -552,11 +552,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public double getSqlCompactMapLoadFactor() {
-        return 0.8;
-    }
-
-    @Override
     public int getSqlCompilerPoolCapacity() {
         return 10;
     }

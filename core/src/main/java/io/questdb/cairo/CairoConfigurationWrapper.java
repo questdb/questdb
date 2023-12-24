@@ -546,11 +546,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public double getSqlCompactMapLoadFactor() {
-        return delegate.getSqlCompactMapLoadFactor();
-    }
-
-    @Override
     public int getSqlCompilerPoolCapacity() {
         return delegate.getSqlCompilerPoolCapacity();
     }

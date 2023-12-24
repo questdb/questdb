@@ -27,11 +27,13 @@ package io.questdb.cairo.map;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.Unsafe;
-import io.questdb.std.bytes.Bytes;
+
+import static io.questdb.cairo.map.FastMap.HASH_BYTES;
 
 public final class FastMapCursor implements MapRecordCursor {
+    private final int keyOffset;
     // Set to -1 when key-value pair is var-size.
-    private final long alignedKeyValueSize;
+    private final long keyValueSize;
     private final FastMap map;
     private final FastMapRecord recordA;
     private final FastMapRecord recordB;
@@ -45,11 +47,12 @@ public final class FastMapCursor implements MapRecordCursor {
         this.recordA = record;
         this.recordB = record.clone();
         this.map = map;
+        this.keyOffset = map.keyOffset();
         this.valueSize = map.valueSize();
         if (map.keySize() != -1) {
-            alignedKeyValueSize = Bytes.align8b(map.keySize() + map.valueSize());
+            keyValueSize = keyOffset + map.keySize() + valueSize;
         } else {
-            alignedKeyValueSize = -1;
+            keyValueSize = -1;
         }
     }
 
@@ -80,11 +83,11 @@ public final class FastMapCursor implements MapRecordCursor {
     public boolean hasNext() {
         if (remaining > 0) {
             recordA.of(address);
-            if (alignedKeyValueSize == -1) {
-                int keySize = Unsafe.getUnsafe().getInt(address);
-                address = Bytes.align8b(address + Integer.BYTES + keySize + valueSize);
+            if (keyValueSize == -1) {
+                int keySize = Unsafe.getUnsafe().getInt(address + HASH_BYTES);
+                address += keyOffset + keySize + valueSize;
             } else {
-                address += alignedKeyValueSize;
+                address += keyValueSize;
             }
             remaining--;
             return true;

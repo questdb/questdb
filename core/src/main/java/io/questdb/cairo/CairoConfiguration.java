@@ -349,8 +349,6 @@ public interface CairoConfiguration {
 
     int getSqlColumnPoolCapacity();
 
-    double getSqlCompactMapLoadFactor();
-
     int getSqlCompilerPoolCapacity();
 
     int getSqlCopyBufferSize();

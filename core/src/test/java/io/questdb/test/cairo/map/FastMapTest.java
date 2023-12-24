@@ -38,6 +38,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.HashMap;
+
 public class FastMapTest extends AbstractCairoTest {
 
     @Test
@@ -596,10 +598,10 @@ public class FastMapTest extends AbstractCairoTest {
 
             try (TableReader reader = newTableReader(configuration, "x")) {
                 try {
-                    new CompactMap(1024, reader.getMetadata(), new SingleColumnType(ColumnType.LONG), 16, 0.75, 1, Integer.MAX_VALUE);
+                    new FastMap(1024, reader.getMetadata(), new SingleColumnType(ColumnType.STRING), 16, 0.75, Integer.MAX_VALUE);
                     Assert.fail();
                 } catch (Exception e) {
-                    TestUtils.assertContains(e.getMessage(), "Unsupported column type");
+                    TestUtils.assertContains(e.getMessage(), "value type is not supported");
                 }
             }
         });
@@ -917,7 +919,7 @@ public class FastMapTest extends AbstractCairoTest {
     public void testHeapBoundariesFixedSizeKey() {
         // Here, the entry size is 16 bytes, so that we fill the heap up to the boundary exactly before growing it.
         Rnd rnd = new Rnd();
-        int expectedEntrySize = 16;
+        int expectedEntrySize = 20; // +4 bytes for the hash code
 
         try (
                 FastMap map = new FastMap(
@@ -963,7 +965,7 @@ public class FastMapTest extends AbstractCairoTest {
     public void testHeapBoundariesVarSizeKey() {
         // Here, the entry size is 32 bytes, so that we fill the heap up to the boundary exactly before growing it.
         Rnd rnd = new Rnd();
-        int expectedEntrySize = 32;
+        int expectedEntrySize = 36; // +4 bytes for the hash code
 
         ArrayColumnTypes valueTypes = new ArrayColumnTypes();
         valueTypes.add(ColumnType.LONG);
@@ -1137,6 +1139,7 @@ public class FastMapTest extends AbstractCairoTest {
                 MapKey key = map.withKey();
                 key.putInt(i);
                 key.putLong(i + 1);
+                key.commit();
                 int hashCode = key.hash();
                 keyHashCodes.add(hashCode);
 
@@ -1756,6 +1759,61 @@ public class FastMapTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testValuesAreNotSpuriouslyOverridden() {
+        Rnd rnd = new Rnd();
+
+        ArrayColumnTypes keyTypes = new ArrayColumnTypes();
+        keyTypes.add(ColumnType.INT);
+
+        ArrayColumnTypes valueTypes = new ArrayColumnTypes();
+        valueTypes.add(ColumnType.INT);
+
+        java.util.Map<Integer, Integer> expected = new HashMap<>();
+
+        try (FastMap map = new FastMap(1024, keyTypes, valueTypes, 500, 0.8, 24)) {
+            final int N = 50;
+            for (int i = 0; i < N; i++) {
+                MapKey key = map.withKey();
+                int rndKey = rnd.nextInt();
+                key.putInt(rndKey);
+
+                MapValue value = key.createValue();
+                if (value.isNew()) {
+                    value.putInt(0, 1);
+                    Assert.assertNull(expected.put(rndKey, 1));
+                } else {
+                    int expectedVal = expected.get(rndKey);
+                    int actualVal = value.getInt(0);
+                    Assert.assertEquals(expectedVal, actualVal);
+                    value.putInt(0, actualVal + 1);
+                    expected.put(rndKey, actualVal + 1);
+                }
+            }
+
+            rnd.reset();
+
+
+            // assert that all values are good
+            for (int i = 0; i < N; i++) {
+                MapKey key = map.withKey();
+                final int rndKey = rnd.nextInt();
+                key.putInt(rndKey);
+                MapValue mapVal = key.findValue();
+
+                Integer expectedVal = expected.get(rndKey);
+                if (expectedVal == null) {
+                    Assert.assertNull(mapVal);
+                } else {
+                    Assert.assertNotNull("Key " + rndKey + " does not exists", mapVal);
+                    Assert.assertFalse("Key " + rndKey + " does not exists", mapVal.isNew());
+                    int actualVal = mapVal.getInt(0);
+                    Assert.assertEquals("Key " + rndKey + " return bad data", expectedVal.intValue(), actualVal);
+                }
+            }
+        }
     }
 
     @Test

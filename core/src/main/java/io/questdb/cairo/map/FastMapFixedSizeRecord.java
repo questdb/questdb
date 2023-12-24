@@ -33,6 +33,8 @@ import io.questdb.std.str.CharSinkBase;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import static io.questdb.cairo.map.FastMap.HASH_BYTES;
+
 /**
  * Provides Record access interface for FastMap key-value pairs with fixed-size keys.
  * <p>
@@ -46,8 +48,8 @@ final class FastMapFixedSizeRecord implements FastMapRecord {
     private final FastMapValue value;
     private final long[] valueOffsets;
     private final int valueSize;
-    private long keyAddress;
     private long limit;
+    private long startAddress;
     private IntList symbolTableIndex;
     private RecordCursor symbolTableResolver;
     private long valueAddress;
@@ -81,7 +83,7 @@ final class FastMapFixedSizeRecord implements FastMapRecord {
 
         Long256Impl[] long256A = null;
         Long256Impl[] long256B = null;
-        int offset = 0;
+        int offset = (int) HASH_BYTES;
         for (int i = 0, n = keyTypes.getColumnCount(); i < n; i++) {
             final int columnType = keyTypes.getColumnType(i);
             if (ColumnType.tagOf(columnType) == ColumnType.LONG256) {
@@ -168,7 +170,7 @@ final class FastMapFixedSizeRecord implements FastMapRecord {
     @Override
     public void copyToKey(MapKey destKey) {
         FastMap.FixedSizeKey destFastKey = (FastMap.FixedSizeKey) destKey;
-        destFastKey.copyFromRawKey(keyAddress, keySize);
+        destFastKey.copyFromRawKey(startAddress, keySize + HASH_BYTES);
     }
 
     @Override
@@ -271,7 +273,7 @@ final class FastMapFixedSizeRecord implements FastMapRecord {
     public long getRowId() {
         // Important invariant: we assume that the FastMap doesn't grow after the first getRowId() call.
         // Otherwise, row ids returned by this method may no longer point at a valid memory address.
-        return keyAddress;
+        return startAddress;
     }
 
     @Override
@@ -291,18 +293,18 @@ final class FastMapFixedSizeRecord implements FastMapRecord {
 
     @Override
     public MapValue getValue() {
-        return value.of(keyAddress, valueAddress, limit, false);
+        return value.of(startAddress, valueAddress, limit, false);
     }
 
     @Override
     public int keyHashCode() {
-        return Hash.hashMem32(keyAddress, keySize);
+        return Unsafe.getUnsafe().getInt(startAddress);
     }
 
     @Override
     public void of(long address) {
-        this.keyAddress = address;
-        this.valueAddress = address + keySize;
+        this.startAddress = address;
+        this.valueAddress = address + HASH_BYTES + keySize;
     }
 
     @Override
@@ -317,7 +319,7 @@ final class FastMapFixedSizeRecord implements FastMapRecord {
     }
 
     private long addressOfColumn(int index) {
-        return keyAddress + columnOffsets[index];
+        return startAddress + columnOffsets[index];
     }
 
     @NotNull

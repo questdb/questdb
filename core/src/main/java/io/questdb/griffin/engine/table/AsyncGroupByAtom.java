@@ -261,7 +261,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             destMap.merge(srcMap, functionUpdater);
         }
 
-        for (int i = 0, n = perWorkerParticles.size(); i < n; i++) {
+        for (int i = 0; i < perWorkerMapCount; i++) {
             final Particle srcParticle = perWorkerParticles.getQuick(i);
             final Map srcMap = srcParticle.getShardMaps().getQuick(shardIndex);
             srcMap.close();

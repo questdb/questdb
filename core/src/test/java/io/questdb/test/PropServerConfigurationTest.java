@@ -183,7 +183,6 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(1024, configuration.getCairoConfiguration().getSqlCharacterStoreCapacity());
         Assert.assertEquals(64, configuration.getCairoConfiguration().getSqlCharacterStoreSequencePoolCapacity());
         Assert.assertEquals(4096, configuration.getCairoConfiguration().getSqlColumnPoolCapacity());
-        Assert.assertEquals(0.7, configuration.getCairoConfiguration().getSqlCompactMapLoadFactor(), 0.000001);
         Assert.assertEquals(8192, configuration.getCairoConfiguration().getSqlExpressionPoolCapacity());
         Assert.assertEquals(0.7, configuration.getCairoConfiguration().getSqlFastMapLoadFactor(), 0.0000001);
         Assert.assertEquals(64, configuration.getCairoConfiguration().getSqlJoinContextPoolCapacity());
@@ -233,10 +232,10 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(0, configuration.getLineUdpReceiverConfiguration().getBindIPv4Address());
         Assert.assertEquals(9009, configuration.getLineUdpReceiverConfiguration().getPort());
         Assert.assertEquals(-402587133, configuration.getLineUdpReceiverConfiguration().getGroupIPv4Address());
-        Assert.assertEquals(1000000, configuration.getLineUdpReceiverConfiguration().getCommitRate());
+        Assert.assertEquals(1_000_000, configuration.getLineUdpReceiverConfiguration().getCommitRate());
         Assert.assertEquals(PartitionBy.DAY, configuration.getLineUdpReceiverConfiguration().getDefaultPartitionBy());
         Assert.assertEquals(2048, configuration.getLineUdpReceiverConfiguration().getMsgBufferSize());
-        Assert.assertEquals(10000, configuration.getLineUdpReceiverConfiguration().getMsgCount());
+        Assert.assertEquals(10_000, configuration.getLineUdpReceiverConfiguration().getMsgCount());
         Assert.assertEquals(8388608, configuration.getLineUdpReceiverConfiguration().getReceiveBufferSize());
         Assert.assertFalse(configuration.getLineUdpReceiverConfiguration().isEnabled());
         Assert.assertEquals(-1, configuration.getLineUdpReceiverConfiguration().ownThreadAffinity());
@@ -244,10 +243,10 @@ public class PropServerConfigurationTest {
 
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelFilterPreTouchEnabled());
         Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getSqlPageFrameMaxRows());
-        Assert.assertEquals(1000, configuration.getCairoConfiguration().getSqlPageFrameMinRows());
+        Assert.assertEquals(100_000, configuration.getCairoConfiguration().getSqlPageFrameMinRows());
         Assert.assertEquals(256, configuration.getCairoConfiguration().getPageFrameReduceRowIdListCapacity());
         Assert.assertEquals(16, configuration.getCairoConfiguration().getPageFrameReduceColumnListCapacity());
-        Assert.assertEquals(10000, configuration.getCairoConfiguration().getGroupByShardingThreshold());
+        Assert.assertEquals(10_000, configuration.getCairoConfiguration().getGroupByShardingThreshold());
         Assert.assertEquals(64, configuration.getCairoConfiguration().getGroupByShardCount());
 
         Assert.assertEquals(SqlJitMode.JIT_MODE_ENABLED, configuration.getCairoConfiguration().getSqlJitMode());
@@ -1013,7 +1012,6 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(2048, configuration.getCairoConfiguration().getSqlCharacterStoreCapacity());
             Assert.assertEquals(128, configuration.getCairoConfiguration().getSqlCharacterStoreSequencePoolCapacity());
             Assert.assertEquals(2048, configuration.getCairoConfiguration().getSqlColumnPoolCapacity());
-            Assert.assertEquals(0.8, configuration.getCairoConfiguration().getSqlCompactMapLoadFactor(), 0.000001);
             Assert.assertEquals(1024, configuration.getCairoConfiguration().getSqlExpressionPoolCapacity());
             Assert.assertEquals(0.3, configuration.getCairoConfiguration().getSqlFastMapLoadFactor(), 0.0000001);
             Assert.assertEquals(32, configuration.getCairoConfiguration().getSqlJoinContextPoolCapacity());

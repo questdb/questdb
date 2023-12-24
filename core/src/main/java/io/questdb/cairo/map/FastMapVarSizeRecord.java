@@ -36,6 +36,9 @@ import io.questdb.std.str.DirectString;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import static io.questdb.cairo.map.FastMap.HASH_BYTES;
+import static io.questdb.cairo.map.FastMap.KEY_LEN_BYTES;
+
 /**
  * Provides Record access interface for FastMap key-value pairs with var-size keys.
  * <p>
@@ -227,8 +230,8 @@ final class FastMapVarSizeRecord implements FastMapRecord {
     @Override
     public void copyToKey(MapKey destKey) {
         FastMap.VarSizeKey destFastKey = (FastMap.VarSizeKey) destKey;
-        int keySize = Unsafe.getUnsafe().getInt(startAddress);
-        destFastKey.copyFromRawKey(keyAddress, keySize);
+        int keySize = Unsafe.getUnsafe().getInt(startAddress + HASH_BYTES);
+        destFastKey.copyFromRawKey(startAddress, keySize + HASH_BYTES + KEY_LEN_BYTES);
     }
 
     @Override
@@ -399,16 +402,15 @@ final class FastMapVarSizeRecord implements FastMapRecord {
 
     @Override
     public int keyHashCode() {
-        int keySize = Unsafe.getUnsafe().getInt(startAddress);
-        return Hash.hashMem32(startAddress + Integer.BYTES, keySize);
+        return Unsafe.getUnsafe().getInt(startAddress);
     }
 
     @Override
-    public void of(long address) {
-        this.startAddress = address;
-        this.keyAddress = address + Integer.BYTES;
-        int keySize = Unsafe.getUnsafe().getInt(address);
-        this.valueAddress = address + Integer.BYTES + keySize;
+    public void of(long startAddress) {
+        this.startAddress = startAddress;
+        this.keyAddress = startAddress + HASH_BYTES + KEY_LEN_BYTES;
+        int keySize = Unsafe.getUnsafe().getInt(startAddress + HASH_BYTES);
+        this.valueAddress = keyAddress + keySize;
         this.lastKeyIndex = -1;
         this.lastKeyOffset = -1;
     }
