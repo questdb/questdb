@@ -78,15 +78,15 @@ public class DenseRankFunctionFactory implements FunctionFactory {
             arrayColumnTypes.add(ColumnType.LONG); // current index
             arrayColumnTypes.add(ColumnType.LONG); // offset
             Map map = MapFactory.createMap(configuration, windowContext.getPartitionByKeyTypes(), arrayColumnTypes);
-            return new RankFunction(map, windowContext.getPartitionByRecord(), windowContext.getPartitionBySink());
+            return new DenseRankFunction(map, windowContext.getPartitionByRecord(), windowContext.getPartitionBySink());
         }
         if (windowContext.isOrdered()) {
-            return new OrderRankFunction();
+            return new OrderDenseRankFunction();
         }
-        return new SequenceRankFunction();
+        return new SequenceDenseRankFunction();
     }
 
-    private static class OrderRankFunction extends LongFunction implements ScalarFunction, WindowFunction, Reopenable {
+    private static class OrderDenseRankFunction extends LongFunction implements ScalarFunction, WindowFunction, Reopenable {
 
         private int columnIndex;
         private long currentIndex = 0;
@@ -96,7 +96,7 @@ public class DenseRankFunctionFactory implements FunctionFactory {
 
         private long value;
 
-        public OrderRankFunction() {
+        public OrderDenseRankFunction() {
         }
 
         @Override
@@ -175,7 +175,7 @@ public class DenseRankFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class RankFunction extends LongFunction implements ScalarFunction, WindowFunction, Reopenable {
+    private static class DenseRankFunction extends LongFunction implements ScalarFunction, WindowFunction, Reopenable {
 
         private final static int VAL_CURRENT_INDEX = 1;
         private final static int VAL_MAX_INDEX = 0;
@@ -188,7 +188,7 @@ public class DenseRankFunctionFactory implements FunctionFactory {
 
         private long value;
 
-        public RankFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink) {
+        public DenseRankFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink) {
             this.partitionByRecord = partitionByRecord;
             this.partitionBySink = partitionBySink;
             this.map = map;
@@ -305,13 +305,13 @@ public class DenseRankFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class SequenceRankFunction extends LongFunction implements ScalarFunction, WindowFunction, Reopenable {
+    private static class SequenceDenseRankFunction extends LongFunction implements ScalarFunction, WindowFunction, Reopenable {
 
         private int columnIndex;
 
         private long rank;
 
-        public SequenceRankFunction() {
+        public SequenceDenseRankFunction() {
         }
 
         @Override
