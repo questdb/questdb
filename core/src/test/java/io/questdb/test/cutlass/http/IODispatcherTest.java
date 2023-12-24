@@ -3640,7 +3640,7 @@ public class IODispatcherTest extends AbstractTest {
                         "/query",
                         "\\{\"query\":\"select \\* from test_data_unavailable\\(1, 10\\)\",\"error\":\"timeout, query aborted \\[fd=\\d+\\]\",\"position\":0\\}",
                         "select * from test_data_unavailable(1, 10)",
-                        null, null,
+                        null, null, null,
                         "400"
                 ));
     }
@@ -4811,7 +4811,7 @@ public class IODispatcherTest extends AbstractTest {
                                 "/query",
                                 "\\{\"query\":\"select i, avg\\(l\\), max\\(l\\) from t group by i order by i asc limit 3\",\"error\":\"timeout, query aborted \\[fd=\\d+\\]\",\"position\":0\\}",
                                 "select i, avg(l), max(l) from t group by i order by i asc limit 3",
-                                null, null,
+                                null, null, null,
                                 "400"
                         );
                     }
