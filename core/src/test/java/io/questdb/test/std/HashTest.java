@@ -35,6 +35,8 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.zip.ZipFile;
 
+import static org.junit.Assert.assertEquals;
+
 public class HashTest {
 
     @Test
@@ -80,5 +82,27 @@ public class HashTest {
         } finally {
             Unsafe.free(address, len, MemoryTag.NATIVE_DEFAULT);
         }
+    }
+
+    @Test
+    public void testMurmur3ToLongForLongKey() {
+        // The expected values have been obtained from the original implementation of MurmurHash3,
+        // available at: https://github.com/aappleby/smhasher/blob/master/src/MurmurHash3.cpp
+        assertEquals(1586830184839932339L, Hash.murmur3ToLong(2769845405872435875L));
+        assertEquals(5667271150751524839L, Hash.murmur3ToLong(8467001914150166941L));
+        assertEquals(-6164039929522353948L, Hash.murmur3ToLong(3116016319545714670L));
+        assertEquals(5404083732375145584L, Hash.murmur3ToLong(-3505607450965693221L));
+        assertEquals(-2748674767479114199L, Hash.murmur3ToLong(-1442442454180049685L));
+    }
+
+    @Test
+    public void testMurmur3ToLongForIntKey() {
+        // The expected values have been obtained from the original implementation of MurmurHash3,
+        // available at: https://github.com/aappleby/smhasher/blob/master/src/MurmurHash3.cpp
+        assertEquals(-1633616987925480281L, Hash.murmur3ToLong(-1205269188));
+        assertEquals(-5166452714297686332L, Hash.murmur3ToLong(287961467));
+        assertEquals(370098364460170807L, Hash.murmur3ToLong(43976175));
+        assertEquals(337284429664094377L, Hash.murmur3ToLong(1071024900));
+        assertEquals(-7391378269516181578L, Hash.murmur3ToLong(-46715208));
     }
 }
