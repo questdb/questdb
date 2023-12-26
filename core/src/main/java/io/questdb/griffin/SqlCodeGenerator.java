@@ -1894,7 +1894,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 filter,
                                 reduceTaskFactory,
                                 compileWorkerFilterConditionally(
-                                        !filter.isReadThreadSafe(),
+                                        filter,
                                         executionContext.getSharedWorkerCount(),
                                         constFilterExpr,
                                         master.getMetadata(),
