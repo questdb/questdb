@@ -42,6 +42,7 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
     private final int columnIndex;
     private final Function filter;
     private final Record.CharSequenceFunction func;
+    private final boolean indexed;
     private final RecordCursorFactory recordCursorFactory;
     private final IntHashSet symbolKeys;
 
@@ -61,6 +62,7 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
         // factory will be resolving symbols for cursor and if successful
         // symbol keys will be added to this hash set
         symbolKeys = new IntHashSet();
+        this.indexed = indexed;
         DataFrameRecordCursor cursor;
         if (indexed) {
             if (filter != null) {
@@ -93,6 +95,11 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
         sink.child("Subquery", recordCursorFactory);
         sink.child(cursor);
         sink.child(dataFrameCursorFactory);
+    }
+
+    @Override
+    public boolean usesIndex() {
+        return indexed;
     }
 
     @Override

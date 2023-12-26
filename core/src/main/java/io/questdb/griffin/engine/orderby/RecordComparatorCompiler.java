@@ -58,7 +58,6 @@ public class RecordComparatorCompiler {
      * @return RecordComparator instance.
      */
     public RecordComparator compile(ColumnTypes columnTypes, @Transient IntList keyColumnIndices) {
-
         assert keyColumnIndices.size() < SqlParser.MAX_ORDER_BY_COLUMNS;
 
         asm.init(RecordComparator.class);

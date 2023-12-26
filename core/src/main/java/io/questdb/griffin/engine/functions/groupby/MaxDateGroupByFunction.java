@@ -73,6 +73,20 @@ public class MaxDateGroupByFunction extends DateFunction implements GroupByFunct
     }
 
     @Override
+    public boolean isParallelismSupported() {
+        return arg.isReadThreadSafe();
+    }
+
+    @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        long srcMax = srcValue.getDate(valueIndex);
+        long destMax = destValue.getDate(valueIndex);
+        if (srcMax > destMax || destMax == Numbers.LONG_NaN) {
+            destValue.putDate(valueIndex, srcMax);
+        }
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.DATE);

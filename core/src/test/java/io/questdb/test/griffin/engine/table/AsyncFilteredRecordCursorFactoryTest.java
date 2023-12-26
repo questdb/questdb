@@ -474,7 +474,8 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                 Assert.assertEquals(AsyncFilteredRecordCursorFactory.class, f.getBaseFactory().getClass());
             }
 
-            assertQuery(compiler,
+            assertQuery(
+                    compiler,
                     "a\tt\n" +
                             "0.34574819315105954\t1970-01-01T15:03:20.500000Z\n" +
                             "0.34574734261660356\t1970-01-02T02:14:37.600000Z\n" +
@@ -493,19 +494,17 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
     public void testPositiveLimitGroupBy() throws Exception {
         withPool((engine, compiler, sqlExecutionContext) -> {
             compiler.compile("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour", sqlExecutionContext);
-            final String sql = "select sum(a) from x where a > 0.345747032 and a < 0.34575 limit 5";
-            try (RegisteredRecordCursorFactory f = (RegisteredRecordCursorFactory) compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-                Assert.assertEquals(io.questdb.griffin.engine.LimitRecordCursorFactory.class, f.getBaseFactory().getClass());
-            }
+            final String sql = "select sum(a) from (x where a > 0.345747032 and a < 0.34575 limit 5)";
 
-            assertQuery(compiler,
+            assertQuery(
+                    compiler,
                     "sum\n" +
                             "1.382992963766362\n",
                     sql,
                     null,
                     false,
                     sqlExecutionContext,
-                    false
+                    true
             );
         });
     }
@@ -593,7 +592,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         final RingQueue<PageFrameReduceTask> tasks = engine.getMessageBus().getPageFrameReduceQueue(0);
         for (int i = 0; i < tasks.getCycle(); i++) {
             PageFrameReduceTask task = tasks.get(i);
-            Assert.assertTrue("Row id list capacity exceeds max page frame rows", task.getRows().getCapacity() <= maxPageFrameRows);
+            Assert.assertTrue("Row id list capacity exceeds max page frame rows", task.getFilteredRows().getCapacity() <= maxPageFrameRows);
             task.resetCapacities();
         }
     }

@@ -54,9 +54,9 @@ public class HaversineDistDegreeGroupByFunction extends DoubleFunction implement
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
         // first item
-        saveFirstItem(mapValue, this.latDegree.getDouble(record), this.lonDegree.getDouble(record), this.timestamp.getTimestamp(record));
+        saveFirstItem(mapValue, latDegree.getDouble(record), lonDegree.getDouble(record), timestamp.getTimestamp(record));
         // last item
-        saveLastItem(mapValue, this.latDegree.getDouble(record), this.lonDegree.getDouble(record), this.timestamp.getTimestamp(record));
+        saveLastItem(mapValue, latDegree.getDouble(record), lonDegree.getDouble(record), timestamp.getTimestamp(record));
         // result
         saveDistance(mapValue, 0);
     }
@@ -66,9 +66,9 @@ public class HaversineDistDegreeGroupByFunction extends DoubleFunction implement
         double lat1Degrees = getLastLatitude(mapValue);
         double lon1Degrees = getLastLongitude(mapValue);
         long timestamp1 = getLastTimestamp(mapValue);
-        double lat2Degrees = this.latDegree.getDouble(record);
-        double lon2Degrees = this.lonDegree.getDouble(record);
-        long timestamp2 = this.timestamp.getTimestamp(record);
+        double lat2Degrees = latDegree.getDouble(record);
+        double lon2Degrees = lonDegree.getDouble(record);
+        long timestamp2 = timestamp.getTimestamp(record);
         if (!Double.isNaN(lat1Degrees) && !Double.isNaN(lon1Degrees) && timestamp1 != Numbers.LONG_NaN) {
             if (!Double.isNaN(lat2Degrees) && !Double.isNaN(lon2Degrees) && timestamp2 != Numbers.LONG_NaN) {
                 double currentTotalDistance = getDistance(mapValue);

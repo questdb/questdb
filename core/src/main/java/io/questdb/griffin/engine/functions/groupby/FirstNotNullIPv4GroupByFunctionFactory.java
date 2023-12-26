@@ -48,7 +48,13 @@ public class FirstNotNullIPv4GroupByFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
         return new Func(args.getQuick(0));
     }
 
@@ -59,7 +65,7 @@ public class FirstNotNullIPv4GroupByFunctionFactory implements FunctionFactory {
 
         @Override
         public void computeNext(MapValue mapValue, Record record) {
-            if (Numbers.IPv4_NULL == mapValue.getIPv4(valueIndex)) {
+            if (mapValue.getIPv4(valueIndex) == Numbers.IPv4_NULL) {
                 computeFirst(mapValue, record);
             }
         }

@@ -38,7 +38,7 @@ public class LastNotNullLongGroupByFunction extends FirstLongGroupByFunction {
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        if (Numbers.LONG_NaN != arg.getLong(record)) {
+        if (arg.getLong(record) != Numbers.LONG_NaN) {
             computeFirst(mapValue, record);
         }
     }

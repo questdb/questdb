@@ -52,7 +52,7 @@ public class MinDateGroupByFunction extends DateFunction implements GroupByFunct
     public void computeNext(MapValue mapValue, Record record) {
         long min = mapValue.getDate(valueIndex);
         long next = arg.getDate(record);
-        if (next != Numbers.LONG_NaN && next < min || min == Numbers.LONG_NaN) {
+        if (next != Numbers.LONG_NaN && (next < min || min == Numbers.LONG_NaN)) {
             mapValue.putDate(valueIndex, next);
         }
     }
@@ -70,6 +70,20 @@ public class MinDateGroupByFunction extends DateFunction implements GroupByFunct
     @Override
     public String getName() {
         return "min";
+    }
+
+    @Override
+    public boolean isParallelismSupported() {
+        return arg.isReadThreadSafe();
+    }
+
+    @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        long srcMin = srcValue.getDate(valueIndex);
+        long destMin = destValue.getDate(valueIndex);
+        if (srcMin != Numbers.LONG_NaN && (srcMin < destMin || destMin == Numbers.LONG_NaN)) {
+            destValue.putDate(valueIndex, srcMin);
+        }
     }
 
     @Override

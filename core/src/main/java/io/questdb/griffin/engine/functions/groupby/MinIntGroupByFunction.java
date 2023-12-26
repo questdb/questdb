@@ -40,7 +40,6 @@ public class MinIntGroupByFunction extends IntFunction implements GroupByFunctio
     private int valueIndex;
 
     public MinIntGroupByFunction(@NotNull Function arg) {
-        super();
         this.arg = arg;
     }
 
@@ -76,6 +75,20 @@ public class MinIntGroupByFunction extends IntFunction implements GroupByFunctio
     @Override
     public boolean isConstant() {
         return false;
+    }
+
+    @Override
+    public boolean isParallelismSupported() {
+        return arg.isReadThreadSafe();
+    }
+
+    @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        int srcMin = srcValue.getInt(valueIndex);
+        int destMin = destValue.getInt(valueIndex);
+        if (srcMin != Numbers.INT_NaN && (srcMin < destMin || destMin == Numbers.INT_NaN)) {
+            destValue.putInt(valueIndex, srcMin);
+        }
     }
 
     @Override

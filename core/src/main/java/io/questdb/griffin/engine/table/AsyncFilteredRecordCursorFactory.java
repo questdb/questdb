@@ -50,7 +50,6 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
     private final RecordCursorFactory base;
     private final SCSequence collectSubSeq = new SCSequence();
     private final AsyncFilteredRecordCursor cursor;
-    private final AsyncFilterAtom filterAtom;
     private final PageFrameSequence<AsyncFilterAtom> frameSequence;
     private final Function limitLoFunction;
     private final int limitLoPos;
@@ -84,8 +83,8 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
                 preTouchColumnTypes.add(columnType);
             }
         }
-        this.filterAtom = new AsyncFilterAtom(configuration, filter, perWorkerFilters, preTouchColumnTypes);
-        this.frameSequence = new PageFrameSequence<>(configuration, messageBus, REDUCER, reduceTaskFactory);
+        AsyncFilterAtom atom = new AsyncFilterAtom(configuration, filter, perWorkerFilters, preTouchColumnTypes);
+        this.frameSequence = new PageFrameSequence<>(configuration, messageBus, atom, REDUCER, reduceTaskFactory, PageFrameReduceTask.TYPE_FILTER);
         this.limitLoFunction = limitLoFunction;
         this.limitLoPos = limitLoPos;
         this.maxNegativeLimit = configuration.getSqlMaxNegativeLimit();
@@ -94,7 +93,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
 
     @Override
     public PageFrameSequence<AsyncFilterAtom> execute(SqlExecutionContext executionContext, SCSequence collectSubSeq, int order) throws SqlException {
-        return frameSequence.of(base, executionContext, collectSubSeq, filterAtom, order);
+        return frameSequence.of(base, executionContext, collectSubSeq, order);
     }
 
     @Override
@@ -162,7 +161,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
     public void toPlan(PlanSink sink) {
         sink.type("Async Filter");
         sink.meta("workers").val(workerCount);
-        //calc order and limit if possible  
+        // calc order and limit if possible
         long rowsRemaining;
         int baseOrder = base.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
         int order;
@@ -186,7 +185,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         if (rowsRemaining != Long.MAX_VALUE) {
             sink.attr("limit").val(rowsRemaining);
         }
-        sink.attr("filter").val(filterAtom);
+        sink.attr("filter").val(frameSequence.getAtom());
         sink.child(base, order);
     }
 
@@ -202,7 +201,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
             @NotNull SqlExecutionCircuitBreaker circuitBreaker,
             @Nullable PageFrameSequence<?> stealingFrameSequence
     ) {
-        final DirectLongList rows = task.getRows();
+        final DirectLongList rows = task.getFilteredRows();
         final long frameRowCount = task.getFrameRowCount();
         final AsyncFilterAtom atom = task.getFrameSequence(AsyncFilterAtom.class).getAtom();
 
@@ -229,7 +228,6 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
     @Override
     protected void _close() {
         Misc.free(base);
-        Misc.free(filterAtom);
         Misc.free(frameSequence);
         Misc.free(negativeLimitRows);
         cursor.freeRecords();

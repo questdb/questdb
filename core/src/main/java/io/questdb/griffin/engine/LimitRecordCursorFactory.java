@@ -94,6 +94,11 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public boolean usesIndex() {
+        return base.usesIndex();
+    }
+
+    @Override
     protected void _close() {
         base.close();
     }

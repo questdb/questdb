@@ -79,6 +79,11 @@ public class RecordAsAFieldRecordCursorFactory extends AbstractRecordCursorFacto
     }
 
     @Override
+    public boolean usesIndex() {
+        return base.usesIndex();
+    }
+
+    @Override
     protected void _close() {
         Misc.free(base);
     }

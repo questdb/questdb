@@ -26,7 +26,6 @@ package io.questdb.cairo.map;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryR;
@@ -191,7 +190,7 @@ public class CompactMap implements Map, Reopenable {
     }
 
     @Override
-    public RecordCursor getCursor() {
+    public MapRecordCursor getCursor() {
         cursor.of(currentEntryOffset + currentEntrySize);
         return cursor;
     }

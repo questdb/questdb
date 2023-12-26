@@ -320,7 +320,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                     }
 
                     allFramesActive &= frameSequence.isActive();
-                    rows = task.getRows();
+                    rows = task.getFilteredRows();
                     frameRowCount = rows.size();
                     frameIndex = task.getFrameIndex();
                     frameRowIndex = 0;

@@ -276,8 +276,23 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getGroupByMergeShardQueueCapacity() {
+        return delegate.getGroupByMergeShardQueueCapacity();
+    }
+
+    @Override
     public int getGroupByPoolCapacity() {
         return delegate.getGroupByPoolCapacity();
+    }
+
+    @Override
+    public int getGroupByShardCount() {
+        return delegate.getGroupByShardCount();
+    }
+
+    @Override
+    public int getGroupByShardingThreshold() {
+        return delegate.getGroupByShardingThreshold();
     }
 
     @Override
@@ -1013,6 +1028,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isSqlParallelFilterPreTouchEnabled() {
         return delegate.isSqlParallelFilterPreTouchEnabled();
+    }
+
+    @Override
+    public boolean isSqlParallelGroupByEnabled() {
+        return delegate.isSqlParallelGroupByEnabled();
     }
 
     @Override

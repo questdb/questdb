@@ -102,6 +102,11 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
     }
 
     @Override
+    public boolean usesIndex() {
+        return base.usesIndex();
+    }
+
+    @Override
     protected void _close() {
         base.close();
         cursor.close();

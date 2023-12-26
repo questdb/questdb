@@ -173,7 +173,13 @@ public interface CairoConfiguration {
 
     int getGroupByMapCapacity();
 
+    int getGroupByMergeShardQueueCapacity();
+
     int getGroupByPoolCapacity();
+
+    int getGroupByShardCount();
+
+    int getGroupByShardingThreshold();
 
     @NotNull
     default IOURingFacade getIOURingFacade() {
@@ -565,6 +571,8 @@ public interface CairoConfiguration {
     boolean isSqlParallelFilterEnabled();
 
     boolean isSqlParallelFilterPreTouchEnabled();
+
+    boolean isSqlParallelGroupByEnabled();
 
     boolean isTableTypeConversionEnabled();
 
