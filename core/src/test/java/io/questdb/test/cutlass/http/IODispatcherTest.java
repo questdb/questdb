@@ -3640,7 +3640,7 @@ public class IODispatcherTest extends AbstractTest {
                         "/query",
                         "\\{\"query\":\"select \\* from test_data_unavailable\\(1, 10\\)\",\"error\":\"timeout, query aborted \\[fd=\\d+\\]\",\"position\":0\\}",
                         "select * from test_data_unavailable(1, 10)",
-                        null, null, null,
+                        null, null, null, null,
                         "400"
                 ));
     }
@@ -4811,7 +4811,7 @@ public class IODispatcherTest extends AbstractTest {
                                 "/query",
                                 "\\{\"query\":\"select i, avg\\(l\\), max\\(l\\) from t group by i order by i asc limit 3\",\"error\":\"timeout, query aborted \\[fd=\\d+\\]\",\"position\":0\\}",
                                 "select i, avg(l), max(l) from t group by i order by i asc limit 3",
-                                null, null, null,
+                                null, null, null, null,
                                 "400"
                         );
                     }
@@ -8510,7 +8510,7 @@ public class IODispatcherTest extends AbstractTest {
 
                                 // statements containing multiple transactions, such as 'alter table add column col1, col2' are currently not supported for WAL tables
                                 // UPDATE statements with join are not supported yet for WAL tables
-                                if ((isWal && (command.equals(updateWithJoin1) || command.equals(updateWithJoin2) /*|| command.equals(addColumns)*/))) {
+                                if ((isWal && (command.equals(updateWithJoin1) || command.equals(updateWithJoin2) || command.equals(addColumns)))) {
                                     continue;
                                 }
 
@@ -8576,11 +8576,11 @@ public class IODispatcherTest extends AbstractTest {
                                                 "/query",
                                                 ".*dataset.*",
                                                 "select query_id from query_activity() where query = '" + command.replace("'", "''") + "'",
-                                                null, null,
-                                                "200",
+                                                null, null, null,
                                                 new CharSequenceObjHashMap<String>() {{
                                                     put("nm", "true");
-                                                }}
+                                                }},
+                                                "200"
                                         );
                                         String response = testHttpClient.getSink().toString();
                                         int startIdx = response.indexOf("\"dataset\":[[");
@@ -8627,10 +8627,14 @@ public class IODispatcherTest extends AbstractTest {
                                             throw new RuntimeException("Timed out waiting for command to stop: " + command);
                                         }
                                     }
+
                                     // run simple query to test that previous query cancellation doesn't 'spill into' other queries
-                                    testHttpClient.assertGet(url,
-                                            "{\"query\":\"select sleep(1)\",\"columns\":[{\"name\":\"sleep\",\"type\":\"BOOLEAN\"}],\"timestamp\":-1,\"dataset\":[[true]],\"count\":1}",
-                                            "select sleep(1)", null, null);
+                                    if ("/query".equals(url)) {
+                                        testHttpClient.assertGet(url, "{\"query\":\"select sleep(1)\",\"columns\":[{\"name\":\"sleep\",\"type\":\"BOOLEAN\"}],\"timestamp\":-1,\"dataset\":[[true]],\"count\":1}", "select sleep(1)", null, null);
+                                    } else {
+                                        testHttpClient.assertGet(url, "\"sleep\"\r\ntrue\r\n", "select sleep(1)", null, null);
+                                    }
+
                                 } catch (Throwable t) {
                                     throw new RuntimeException("Failed on\n ddl: " + ddl +
                                             "\n query: " + command +
@@ -8641,8 +8645,6 @@ public class IODispatcherTest extends AbstractTest {
                                 }
                             }
                         }
-                    } catch (Throwable t) {
-                        t.printStackTrace();
                     }
                 });
     }
