@@ -2229,7 +2229,7 @@ if __name__ == "__main__":
         assertMemoryLeak(() -> {
             ddl("create table if not exists tab as " +
                     "(select x::timestamp ts, x, rnd_double() d " +
-                    "from long_sequence(1000000)) " +
+                    "from long_sequence(1)) " +
                     "timestamp(ts) " +
                     "partition by day");
             mayDrainWalQueue();
@@ -2256,8 +2256,8 @@ if __name__ == "__main__":
                     final int j = i;
                     new Thread(() -> {
                         final String query = (j == BLOCKED_THREAD) ?
-                                "select count(*) from tab t1 join tab t2 on t1.x = t2.x where t1.x > 0" :
-                                "select count(*) from tab where x > 0";
+                                "select count(*) from tab t1 join tab t2 on t1.x = t2.x where sleep(120000)" :
+                                "select count(*) from tab where sleep(1000)";
                         try (PreparedStatement stmt = conns.getQuick(j).prepareStatement(query)) {
                             startLatch.countDown();
                             startLatch.await();
@@ -2281,7 +2281,7 @@ if __name__ == "__main__":
                 }
 
                 for (int i = 0; i < THREADS; i++) {
-                    Assert.assertEquals(i != BLOCKED_THREAD ? 1000000 : 0, results[i]);
+                    Assert.assertEquals(i != BLOCKED_THREAD ? 1 : 0, results[i]);
                 }
 
             } finally {
@@ -2295,7 +2295,7 @@ if __name__ == "__main__":
     @Test
     public void testCancelQueryThatReusesCircuitBreakerFromPreviousConnection() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table if not exists tab as (select x::timestamp ts, x, rnd_double() d from long_sequence(1000000)) timestamp(ts) partition by day");
+            ddl("create table if not exists tab as (select x::timestamp ts, x, rnd_double() d from long_sequence(1)) timestamp(ts) partition by day");
             mayDrainWalQueue();
 
             try (
@@ -2327,7 +2327,7 @@ if __name__ == "__main__":
                 try (final PreparedStatement stmt = sameConn.prepareStatement("select count(*) from tab where x > 0")) {
                     ResultSet result = stmt.executeQuery();
                     sink.clear();
-                    assertResultSet("count[BIGINT]\n1000000\n", sink, result);
+                    assertResultSet("count[BIGINT]\n1\n", sink, result);
 
                     //then run query and cancel
                     executeAndCancelQuery(sameConn);
@@ -2340,21 +2340,19 @@ if __name__ == "__main__":
 
     @Test
     public void testCancelRunningQuery() throws Exception {
-        String[] queries = {"create table new_tab as (select count(*) from tab t1 join tab t2 on t1.x = t2.x where t1.x > 0)",
-                "select count(*) from tab t1 join tab t2 on t1.x = t2.x where t1.x > 0",
-                "insert into dest select count(*)::timestamp, 0, 0.0 from tab t1 join tab t2 on t1.x = t2.x where t1.x > 0",
+        String[] queries = {"create table new_tab as (select count(*) from tab t1 join tab t2 on t1.x = t2.x where sleep(120000))",
+                "select count(*) from tab t1 join tab t2 on t1.x = t2.x where sleep(120000)",
+                "insert into dest select count(*)::timestamp, 0, 0.0 from tab t1 join tab t2 on t1.x = t2.x where sleep(120000)",
                 "update dest \n" +
                         "set l = t1.x \n" +
                         "from (tab where d > 0  limit 1, -1 ) t1 \n" +
-                        "where \n" +
-                        "'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' || t1.x = \n" +
-                        "'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' || dest.l || '00000'; "
+                        "where sleep(120000)"
         };
 
         assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary, mode, port) -> {
             ddl("create table if not exists tab as " +
-                    "(select x::timestamp ts, x, rnd_double() d from long_sequence(5000000)) timestamp(ts) partition by day");
-            ddl("create table if not exists dest as (select x l from long_sequence(10000))");
+                    "(select x::timestamp ts, x, rnd_double() d from long_sequence(5)) timestamp(ts) partition by day");
+            ddl("create table if not exists dest as (select x l from long_sequence(10))");
             mayDrainWalQueue();
 
             for (String query : queries) {
@@ -7490,7 +7488,7 @@ nodejs code:
                     "(select x::timestamp ts, " +
                     "        x, " +
                     "        rnd_double() d " +
-                    " from long_sequence(1000000)) " +
+                    " from long_sequence(10)) " +
                     "timestamp(ts) partition by day");
             mayDrainWalQueue();
 
@@ -7507,7 +7505,7 @@ nodejs code:
                     try (final PreparedStatement stmt = connection.prepareStatement("select count(*) from tab where x > 0")) {
                         ResultSet result = stmt.executeQuery();
                         sink.clear();
-                        assertResultSet("count[BIGINT]\n1000000\n", sink, result);
+                        assertResultSet("count[BIGINT]\n10\n", sink, result);
                     }
                 }
             }
