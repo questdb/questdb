@@ -32,6 +32,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.griffin.engine.functions.cast.CastStrToSymbolFunctionFactory;
 import io.questdb.griffin.engine.functions.columns.*;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryColumn;
@@ -218,6 +219,9 @@ public class GroupByUtils {
                     functionKeyColumnIndex++;
                     func = createColumnFunction(null, functionKeyColumnIndex, type, -1);
                     keyTypes.add(functionKeyColumnIndex - valueCount - 1, func.getType());
+                    if (type == ColumnType.SYMBOL) {
+                        func = new CastStrToSymbolFunctionFactory.Func(func);
+                    }
 
                     recordFunctions.add(func);
                     recordFunctionPositions.add(node.position);
