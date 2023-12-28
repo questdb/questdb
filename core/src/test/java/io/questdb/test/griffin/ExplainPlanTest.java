@@ -5887,7 +5887,209 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRewriteSelectCountDistinct() throws Exception {
+    public void testRewriteKeyedSelectCountDistinct() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table test(k1 int, k2 long, s string, x long, ts timestamp, substring string, sym symbol) timestamp(ts) partition by day");
+            insert("insert into test " +
+                    "select x::int, " +
+                    " x/3, " +
+                    " 's' || (x%10), " +
+                    " x, " +
+                    " (x*86400000000)::timestamp, " +
+                    " 'substring' ," +
+                    " 'sym'" +
+                    "from long_sequence(10)");
+
+            // multiple count_distinct, no re-write
+            assertPlan("SELECT k1, k2, count_distinct(s), count_distinct(x) FROM test",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [k1,k2]\n" +
+                            "  values: [count_distinct(s),count_distinct(x)]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: test\n");
+
+            // multiple group by functions, no re-write
+            assertPlan("SELECT k1, k2, sum(x), count_distinct(x) FROM test",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [k1,k2]\n" +
+                            "  values: [sum(x),count_distinct(x)]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: test\n");
+
+            // count_distinct on symbol column, no re-write
+            assertPlan("SELECT k1, k2, count_distinct(sym) FROM test",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [k1,k2]\n" +
+                            "  values: [count_distinct(sym)]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: test\n");
+
+            // no where clause, distinct constant
+            assertPlan("SELECT k1, k2, count_distinct(10) FROM test",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [k1,k2]\n" +
+                            "  values: [count(10)]\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [k1,k2,10]\n" +
+                            "      filter: null\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: test\n");
+
+            // no where clause, distinct column
+            assertPlan("SELECT k1, k2, count_distinct(s) FROM test",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [k1,k2]\n" +
+                            "  values: [count(s)]\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [k1,k2,s]\n" +
+                            "      filter: null\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: test\n");
+
+            // with where clause, distinct column
+            assertPlan("SELECT k1, k2, count_distinct(s) FROM test where s like '%abc%'",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [k1,k2]\n" +
+                            "  values: [count(s)]\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [k1,k2,s]\n" +
+                            "      filter: s like %abc%\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: test\n");
+
+            // no where clause, distinct expression 1
+            assertPlan("SELECT k1, k2, count_distinct(substring(s,1,1)) FROM test ",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [k1,k2]\n" +
+                            "  values: [count(substring)]\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [k1,k2,substring]\n" +
+                            "      filter: null\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: test\n");
+
+            // where clause, distinct expression 2
+            assertPlan("SELECT k1, k2, count_distinct(substring(s,1,1)) FROM test where s like '%abc%'",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [k1,k2]\n" +
+                            "  values: [count(substring)]\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [k1,k2,substring]\n" +
+                            "      filter: s like %abc%\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: test\n");
+
+            // where clause, distinct expression 3, function name clash with column name
+            assertPlan("SELECT k1, k2, count_distinct(substring(s,1,1)) FROM test where s like '%abc%' and substring != null",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [k1,k2]\n" +
+                            "  values: [count(substring)]\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [k1,k2,substring]\n" +
+                            "      filter: (s like %abc% and substring is not null )\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: test\n");
+
+            // where clause, distinct expression 3
+            assertPlan("SELECT k1, k2, count_distinct(x+1) FROM test where x > 5",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [k1,k2]\n" +
+                            "  values: [count(column)]\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [k1,k2,column]\n" +
+                            "      filter: 5<x\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: test\n");
+
+            // where clause, distinct expression, col alias
+            assertPlan("SELECT k1, k2, count_distinct(x+1) cnt_dst FROM test where x > 5",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [k1,k2]\n" +
+                            "  values: [count(column)]\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [k1,k2,column]\n" +
+                            "      filter: 5<x\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: test\n");
+
+            assertSql("k1\tk2\tcnt_dst\n" +
+                            "6\t2\t1\n" +
+                            "7\t2\t1\n" +
+                            "8\t2\t1\n" +
+                            "9\t3\t1\n" +
+                            "10\t3\t1\n",
+                    "SELECT k1, k2, count_distinct(x+1) cnt_dst FROM test where x > 5");
+
+            // where clause, distinct expression, table alias
+            assertPlan("SELECT k1, k2, count_distinct(x+1) FROM test tab where x > 5",
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [k1,k2]\n" +
+                            "  values: [count(column)]\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [k1,k2,column]\n" +
+                            "      filter: 5<x\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: test\n");
+
+            assertSql("k1\tk2\tcount_distinct\n" +
+                            "6\t2\t1\n" +
+                            "7\t2\t1\n" +
+                            "8\t2\t1\n" +
+                            "9\t3\t1\n" +
+                            "10\t3\t1\n",
+                    "SELECT k1, k2, count_distinct(x+1) FROM test tab where x > 5");
+
+            // where clause, distinct expression, table alias, explicit group by
+            assertPlan("SELECT k1, k2, count_distinct(x+1) FROM test tab where x > 5 group by k2, k1",
+                    "VirtualRecord\n" +
+                            "  functions: [k1,k2,count_distinct]\n" +
+                            "    GroupBy vectorized: false\n" +
+                            "      keys: [k1,k2]\n" +
+                            "      values: [count(column)]\n" +
+                            "        Async Group By workers: 1\n" +
+                            "          keys: [k1,k2,column]\n" +
+                            "          filter: 5<x\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: test\n");
+
+            // where clause, distinct expression, key expression, table alias, explicit group by
+            assertPlan("SELECT abs(k1), k2+1 as key, count_distinct(x+1) FROM test tab where x > 5 group by k2+1, abs(k1)",
+                    "VirtualRecord\n" +
+                            "  functions: [abs,column,count_distinct]\n" +
+                            "    GroupBy vectorized: false\n" +
+                            "      keys: [abs,column]\n" +
+                            "      values: [count(column1)]\n" +
+                            "        Async Group By workers: 1\n" +
+                            "          keys: [abs,column,column1]\n" +
+                            "          filter: 5<x\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: test\n");
+
+            assertSql("column\tkey\tcount_distinct\n" +
+                    "-6\t3\t1\n" +
+                    "-7\t3\t1\n" +
+                    "-8\t3\t1\n" +
+                    "-9\t4\t1\n" +
+                    "-10\t4\t1\n", "SELECT -abs(k1), k2+1 as key, count_distinct(x+1) FROM test tab where x > 5 group by k2+1, -abs(k1)");
+        });
+    }
+
+    @Test
+    public void testRewriteNonKeyedSelectCountDistinct() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table test(s string, x long, ts timestamp, substring string) timestamp(ts) partition by day");
             insert("insert into test " +

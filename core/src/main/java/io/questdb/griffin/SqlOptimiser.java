@@ -1918,6 +1918,40 @@ public class SqlOptimiser implements Mutable {
         return null;
     }
 
+    // return count_distinct expression only if columns list contains keys plus one count_distinct call on non-symbol column
+    private ExpressionNode getKeyedCountDistinct(QueryModel model) {
+        boolean keyFound = false;
+        QueryModel nested = model.getNestedModel();
+        ExpressionNode countDistinctExpr = null;
+
+        for (int i = 0, n = model.getColumns().size(); i < n; i++) {
+            ExpressionNode column = model.getColumns().getQuick(i).getAst();
+            if (column.type == ExpressionNode.FUNCTION) {
+                if (Chars.equalsIgnoreCase("count_distinct", column.token)
+                        && column.paramCount == 1
+                        && !isSymbolColumn(column, nested)) { // don't rewrite for symbol column because there's a separate optimization in count_distinct
+
+                    if (countDistinctExpr == null) {
+                        countDistinctExpr = column;
+                        continue;
+                    }
+                } else if (!functionParser.getFunctionFactoryCache().isGroupBy(column.token) &&
+                        !functionParser.getFunctionFactoryCache().isWindow(column.token) //non-group by or window-function keys are ok
+                ) {
+                    keyFound = true;
+                    continue;
+                }
+            } else if (column.type == LITERAL || column.type == OPERATION) {
+                keyFound = true;
+                continue;
+            }
+
+            return null;
+        }
+
+        return countDistinctExpr != null && keyFound ? countDistinctExpr : null;
+    }
+
     private Function getLoFunction(ExpressionNode limit, SqlExecutionContext executionContext) throws SqlException {
         final Function func = functionParser.parseFunction(limit, EmptyRecordMetadata.INSTANCE, executionContext);
         final int type = func.getType();
@@ -3508,6 +3542,16 @@ public class SqlOptimiser implements Mutable {
      * SELECT count_distinct(s) FROM tab WHERE s like '%a' ;
      * into more parallel-friendly :
      * SELECT count(*) FROM (SELECT s FROM tab WHERE s like '%a' AND s IS NOT NULL GROUP BY s);
+     * and
+     * SELECT key1, ..., keyN, count_distinct(s) FROM tab WHERE s like '%a' ;
+     * into more parallel-friendly :
+     * SELECT key1, ..., keyN, count(s) FROM
+     * (
+     * SELECT key1, ..., keyN, s
+     * FROM tab
+     * WHERE s like '%a'
+     * GROUP BY key1, ..., keyN, s
+     * )
      */
     private void rewriteCountDistinct(QueryModel model) throws SqlException {
         QueryModel nested = model.getNestedModel();
@@ -3558,6 +3602,68 @@ public class SqlOptimiser implements Mutable {
             countDistinctExpr.token = "count";
             countDistinctExpr.paramCount = 0;
             countDistinctExpr.rhs = null;
+
+            // if rewrite applies to this model then there's no point trying to apply it to nested, joined or union-ed models
+            return;
+        } else if (model.getSelectModelType() == QueryModel.SELECT_MODEL_GROUP_BY
+                && model.getColumns().size() > 1
+                && model.getJoinModels().size() == 1
+                && model.getUnionModel() == null
+                && nested != null
+                && nested.getNestedModel() == null
+                && model.getWhereClause() == null
+                && nested.getTableName() != null
+                && model.getSampleBy() == null
+                && (countDistinctExpr = getKeyedCountDistinct(model)) != null
+        ) {
+            ExpressionNode distinctExpr = countDistinctExpr.rhs;
+
+            QueryModel middle = queryModelPool.next();
+            middle.setNestedModel(nested);
+            middle.setSelectModelType(QueryModel.SELECT_MODEL_GROUP_BY);
+            model.setNestedModel(middle);
+
+            boolean explicitGroupBy = model.getGroupBy().size() > 0;
+            if (explicitGroupBy) {
+                middle.moveGroupByFrom(model);
+            }
+
+            CharSequence innerAlias = null;
+            for (int i = 0, n = model.getColumns().size(); i < n; i++) {
+                QueryColumn column = model.getColumns().getQuick(i);
+                CharSequence alias;
+                if (column.getAst() == countDistinctExpr) {
+                    innerAlias = createColumnAlias(distinctExpr.token, middle, true);
+                    QueryColumn qc = queryColumnPool.next().of(innerAlias, distinctExpr);
+                    middle.addBottomUpColumn(qc);
+                    if (explicitGroupBy) {
+                        middle.addGroupBy(distinctExpr);
+                    }
+                } else {
+                    alias = createColumnAlias(column.getAst().token, middle, true);
+                    QueryColumn qc = queryColumnPool.next().of(alias, column.getAst());
+                    middle.addBottomUpColumn(qc);
+
+                    ExpressionNode expr = expressionNodePool.next();
+                    expr.type = LITERAL;
+                    expr.token = alias;
+                    expr.precedence = 0;
+
+                    column.of(column.getAlias(), expr, column.isIncludeIntoWildcard(), column.getColumnType());
+                    if (explicitGroupBy) {
+                        model.addGroupBy(column.getAst());
+                    }
+                }
+            }
+
+            ExpressionNode expr = expressionNodePool.next();
+            expr.type = LITERAL;
+            expr.token = innerAlias;
+            expr.precedence = 0;
+
+            //replace count_distinct(expr) with count(alias)
+            countDistinctExpr.token = "count";
+            countDistinctExpr.rhs = expr;
 
             // if rewrite applies to this model then there's no point trying to apply it to nested, joined or union-ed models
             return;
