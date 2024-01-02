@@ -150,8 +150,9 @@ inline int64_t scan_down(T* data, V value, int64_t low, int64_t high) {
 // the "high" boundary is inclusive
 template<class T, class V>
 inline int64_t binary_search(T *data, V value, int64_t low, int64_t high, int32_t scan_dir) {
-    while (high - low > 65) {
-        const int64_t mid = (low + high) / 2;
+    const int64_t diff = high - low;
+    while (diff > 65) {
+        const int64_t mid = low + diff / 2;
         const T midVal = data[mid];
 
         if (midVal < value) {
