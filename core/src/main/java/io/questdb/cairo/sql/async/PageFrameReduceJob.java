@@ -190,12 +190,19 @@ public class PageFrameReduceJob implements Job, Closeable {
                         reduce(workerId, record, circuitBreaker, task, frameSequence, stealingFrameSequence);
                     }
                 } catch (Throwable th) {
-                    LOG.error().$("reduce error [ex=").$(th).I$();
-                    task.setErrorMsg(th);
                     int interruptReason = SqlExecutionCircuitBreaker.STATE_OK;
                     if (th instanceof CairoException) {
-                        interruptReason = ((CairoException) th).getInterruptionReason();
+                        CairoException e = (CairoException) th;
+                        interruptReason = e.getInterruptionReason();
+                        if (e.isCancellation()) {
+                            LOG.error().$(e.getFlyweightMessage()).$();
+                        } else {
+                            LOG.error().$("reduce error [ex=").$(th).I$();
+                        }
+                    } else {
+                        LOG.error().$("reduce error [ex=").$(th).I$();
                     }
+                    task.setErrorMsg(th);
                     frameSequence.cancel(interruptReason);
                 } finally {
                     subSeq.done(cursor);

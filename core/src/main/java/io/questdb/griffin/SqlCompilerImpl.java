@@ -1752,8 +1752,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     circuitBreaker
             );
         } catch (CairoException e) {
-            if (e.isAuthorizationError()) {
-                // No point printing stack trace for authorization errors
+            if (e.isAuthorizationError() || e.isCancellation()) {
+                // No point printing stack trace for authorization or cancellation errors
                 LOG.error().$("could not create table [error=").$(e.getFlyweightMessage()).I$();
             } else {
                 LOG.error().$("could not create table [error=").$((Throwable) e).I$();
@@ -1880,8 +1880,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 } catch (EntryUnavailableException e) {
                     throw SqlException.$(name.position, "table already exists");
                 } catch (CairoException e) {
-                    if (e.isAuthorizationError()) {
-                        // No point printing stack trace for authorization errors
+                    if (e.isAuthorizationError() || e.isCancellation()) {
+                        // No point printing stack trace for authorization or cancellation errors
                         LOG.error().$("could not create table [error=").$(e.getFlyweightMessage()).I$();
                     } else {
                         LOG.error().$("could not create table [error=").$((Throwable) e).I$();
