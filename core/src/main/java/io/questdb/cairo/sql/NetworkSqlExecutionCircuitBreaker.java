@@ -77,22 +77,18 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
 
     @Override
     public boolean checkIfTripped() {
-        return checkIfTripped(powerUpTime, fd) != STATE_OK;
+        return checkIfTripped(powerUpTime, fd);
     }
 
     @Override
-    public int checkIfTripped(long millis, int fd) {
+    public boolean checkIfTripped(long millis, int fd) {
         if (clock.getTicks() - timeout > millis) {
-            return STATE_TIMEOUT;
+            return true;
         }
         if (cancelledFlag != null && cancelledFlag.get()) {
-            return STATE_CANCELLED;
+            return true;
         }
-        if (testConnection(fd)) {
-            return STATE_BROKEN_CONNECTION;
-        }
-
-        return STATE_OK;
+        return testConnection(fd);
     }
 
     public void clear() {
@@ -123,8 +119,24 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         return secret;
     }
 
-    public boolean isCancelled() {
-        return powerUpTime == Long.MIN_VALUE;
+    @Override
+    public int getState() {
+        return getState(powerUpTime, fd);
+    }
+
+    @Override
+    public int getState(long millis, int fd) {
+        if (clock.getTicks() - timeout > millis) {
+            return STATE_TIMEOUT;
+        }
+        if (cancelledFlag != null && cancelledFlag.get()) {
+            return STATE_CANCELLED;
+        }
+        if (testConnection(fd)) {
+            return STATE_BROKEN_CONNECTION;
+        }
+
+        return STATE_OK;
     }
 
     @Override
@@ -199,6 +211,10 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     @Override
     public void unsetTimer() {
         powerUpTime = Long.MAX_VALUE;
+    }
+
+    private boolean isCancelled() {
+        return powerUpTime == Long.MIN_VALUE;
     }
 
     private void testCancelled() {

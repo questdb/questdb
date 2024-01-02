@@ -471,7 +471,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                         sharedCircuitBreaker
                 );
                 // we can't reallocate rosti until tasks are complete because some other thread could be using it
-                if (sharedCircuitBreaker.isCancelled()) {
+                if (sharedCircuitBreaker.checkIfTripped()) {
                     resetRostiMemorySize();
                 }
             }

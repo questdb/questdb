@@ -77,7 +77,7 @@ public class QueryRegistry {
             entry.cancel();
             entry.changedAtNs = clock.getTicks();
             entry.state = Entry.State.CANCELLED;
-            LOG.info().$("cancelling query [id=").$(queryId).I$();
+            LOG.info().$("cancelling query [user=").$(securityContext.getPrincipal()).$(",queryId=").$(queryId).$(",sql=").$(entry.query).I$();
             return true;
         }
 

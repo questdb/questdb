@@ -125,8 +125,8 @@ public class SecurityTest extends AbstractCairoTest {
             }
 
             @Override
-            public int checkIfTripped(long millis, int fd) {
-                return STATE_OK;
+            public boolean checkIfTripped(long millis, int fd) {
+                return false;
             }
 
             @Override
@@ -140,8 +140,13 @@ public class SecurityTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean isCancelled() {
-                return false;
+            public int getState() {
+                return SqlExecutionCircuitBreaker.STATE_OK;
+            }
+
+            @Override
+            public int getState(long millis, int fd) {
+                return SqlExecutionCircuitBreaker.STATE_OK;
             }
 
             @Override

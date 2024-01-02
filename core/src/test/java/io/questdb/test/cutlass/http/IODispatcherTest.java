@@ -8531,7 +8531,7 @@ public class IODispatcherTest extends AbstractTest {
                                             try {
                                                 testHttpClient.assertGetRegexp(
                                                         url,
-                                                        ".*(cancelling statement due to user request|Could not create table|timeout, query aborted|\"ddl\":\"OK\").*",
+                                                        ".*(cancelled by user|Could not create table|timeout, query aborted|\"ddl\":\"OK\").*",
                                                         command,
                                                         null, null,
                                                         null

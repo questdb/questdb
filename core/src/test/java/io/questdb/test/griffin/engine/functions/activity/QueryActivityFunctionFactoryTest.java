@@ -81,7 +81,7 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
                                 null, regularUserContext1, true, false);
                         Assert.fail("Query should have been cancelled");
                     } catch (Exception e) {
-                        if (!e.getMessage().contains("cancelling statement due to user request")) {
+                        if (!e.getMessage().contains("cancelled by user")) {
                             error.set(e);
                         }
                     }
@@ -159,7 +159,7 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
                                 null, adminUserContext1, true, false);
                         Assert.fail("Query should have been cancelled");
                     } catch (Exception e) {
-                        if (!e.getMessage().contains("cancelling statement due to user request")) {
+                        if (!e.getMessage().contains("cancelled by user")) {
                             error.set(e);
                         }
                     }

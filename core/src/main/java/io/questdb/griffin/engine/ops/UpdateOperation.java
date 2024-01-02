@@ -94,8 +94,9 @@ public class UpdateOperation extends AbstractOperation {
     }
 
     public void forceTestTimeout() {
-        if (requesterTimeout || circuitBreaker.checkIfTripped()) {
-            if (circuitBreaker.isCancelled()) {
+        int state = SqlExecutionCircuitBreaker.STATE_OK;
+        if (requesterTimeout || (state = circuitBreaker.getState()) != SqlExecutionCircuitBreaker.STATE_OK) {
+            if (state == SqlExecutionCircuitBreaker.STATE_CANCELLED) {
                 throw CairoException.queryCancelled(circuitBreaker.getFd());
             } else {
                 throw CairoException.queryTimedOut(circuitBreaker.getFd());

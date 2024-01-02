@@ -311,7 +311,7 @@ class LatestByAllIndexedRecordCursor extends AbstractDataFrameRecordCursor {
             throw t;
         } finally {
             processTasks(queuedCount);
-            if (sharedCircuitBreaker.isCancelled()) {
+            if (sharedCircuitBreaker.checkIfTripped()) {
                 LatestByArguments.releaseMemoryArray(argumentsAddress, taskCount);
                 argumentsAddress = 0;
             }

@@ -50,8 +50,8 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     }
 
     @Override
-    public int checkIfTripped(long millis, int fd) {
-        return isCancelled() ? STATE_CANCELLED : STATE_OK;
+    public boolean checkIfTripped(long millis, int fd) {
+        return isCancelled();
     }
 
     @Override
@@ -75,8 +75,13 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     }
 
     @Override
-    public boolean isCancelled() {
-        return cancelledFlag.get();
+    public int getState() {
+        return isCancelled() ? STATE_CANCELLED : STATE_OK;
+    }
+
+    @Override
+    public int getState(long millis, int fd) {
+        return getState();
     }
 
     @Override
@@ -122,5 +127,9 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     @Override
     public void unsetTimer() {
         // ignore
+    }
+
+    private boolean isCancelled() {
+        return cancelledFlag.get();
     }
 }

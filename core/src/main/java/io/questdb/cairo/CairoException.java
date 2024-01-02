@@ -125,11 +125,15 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     public static CairoException queryCancelled(int fd) {
-        return nonCritical().put("cancelling statement due to user request [fd=").put(fd).put(']').setInterruption(true).setCancellation(true);
+        CairoException exception = nonCritical().put("cancelled by user").setInterruption(true).setCancellation(true);
+        if (fd > -1) {
+            exception.put(" [fd=").put(fd).put(']');
+        }
+        return exception;
     }
 
     public static CairoException queryCancelled() {
-        return nonCritical().put("cancelling statement due to user request").setInterruption(true).setCancellation(true);
+        return nonCritical().put("cancelled by user").setInterruption(true).setCancellation(true);
     }
 
     public static CairoException queryTimedOut(int fd) {

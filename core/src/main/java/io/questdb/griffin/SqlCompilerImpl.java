@@ -37,6 +37,7 @@ import io.questdb.griffin.engine.ops.*;
 import io.questdb.griffin.model.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.log.LogRecord;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.QueryPausedException;
@@ -1945,7 +1946,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             try {
                 copyTableDataAndUnlock(executionContext.getSecurityContext(), tableToken, model.isWalEnabled(), cursor, metadata, position, circuitBreaker);
             } catch (CairoException e) {
-                LOG.error().$(e.getFlyweightMessage()).$(" [errno=").$(e.getErrno()).$(']').$();
+                LogRecord record = LOG.error().$(e.getFlyweightMessage());
+                if (!e.isCancellation()) {
+                    record.$(" [errno=").$(e.getErrno()).$(']');
+                }
+                record.$();
                 engine.drop(path, tableToken);
                 engine.unlockTableName(tableToken);
                 throw e;

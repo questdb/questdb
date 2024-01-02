@@ -2379,7 +2379,7 @@ if __name__ == "__main__":
                     } catch (PSQLException e) {
                         isCancelled.set(true);
                         finished.await();
-                        assertContains(e.getMessage(), "cancelling statement due to user request");
+                        assertContains(e.getMessage(), "cancelled by user");
                     }
                 }
             }
@@ -3071,7 +3071,7 @@ if __name__ == "__main__":
                             } catch (SQLException e) {
                                 // ignore errors showing that statement has been cancelled
                                 if (!Chars.contains(e.getMessage(), "Could not create table") &&
-                                        !Chars.contains(e.getMessage(), "cancelling statement due to user request")) {
+                                        !Chars.contains(e.getMessage(), "cancelled by user")) {
                                     queryError.set(e);
                                 }
                             } catch (Exception e) {
@@ -9807,7 +9807,7 @@ create table tab as (
             } catch (PSQLException e) {
                 isCancelled.set(true);
                 finished.await();
-                assertContains(e.getMessage(), "cancelling statement due to user request");
+                assertContains(e.getMessage(), "cancelled by user");
             }
         }
         return backendPid;

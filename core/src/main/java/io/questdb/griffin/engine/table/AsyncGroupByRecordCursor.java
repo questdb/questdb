@@ -316,7 +316,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
             }
         }
 
-        if (sharedCircuitBreaker.isCancelled()) {
+        if (sharedCircuitBreaker.checkIfTripped()) {
             throwTimeoutException();
         }
 
