@@ -315,8 +315,10 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                             .$(", active=").$(frameSequence.isActive())
                             .$(", cursor=").$(cursor)
                             .I$();
+
                     if (task.hasError()) {
-                        throw CairoException.nonCritical().put(task.getErrorMsg());
+                        throw CairoException.nonCritical().put(task.getErrorMsg())
+                                .setCancellation(task.isCancelled()).setInterruption(task.isCancelled());
                     }
 
                     allFramesActive &= frameSequence.isActive();
@@ -339,15 +341,17 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                 }
             } while (frameIndex < frameLimit);
         } catch (Throwable e) {
-            LOG.error().$("filter error [ex=").$(e).I$();
             if (e instanceof CairoException) {
                 CairoException ce = (CairoException) e;
-                if (ce.isInterruption()) {
+                if (ce.isInterruption() || ce.isCancellation()) {
+                    LOG.error().$("filter error [ex=").$(((CairoException) e).getFlyweightMessage()).I$();
                     throwTimeoutException();
                 } else {
+                    LOG.error().$("filter error [ex=").$(e).I$();
                     throw ce;
                 }
             }
+            LOG.error().$("filter error [ex=").$(e).I$();
             throw CairoException.nonCritical().put(e.getMessage());
         }
     }
