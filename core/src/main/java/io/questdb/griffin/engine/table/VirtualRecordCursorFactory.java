@@ -37,7 +37,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final RecordCursorFactory baseFactory;
+    private final RecordCursorFactory base;
     private final VirtualFunctionDirectSymbolRecordCursor cursor;
     private final ObjList<Function> functions;
     private final boolean supportsRandomAccess;
@@ -45,11 +45,11 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     public VirtualRecordCursorFactory(
             RecordMetadata metadata,
             ObjList<Function> functions,
-            RecordCursorFactory baseFactory
+            RecordCursorFactory base
     ) {
         super(metadata);
         this.functions = functions;
-        boolean supportsRandomAccess = baseFactory.recordCursorSupportsRandomAccess();
+        boolean supportsRandomAccess = base.recordCursorSupportsRandomAccess();
         for (int i = 0, n = functions.size(); i < n; i++) {
             if (!functions.getQuick(i).supportsRandomAccess()) {
                 supportsRandomAccess = false;
@@ -58,27 +58,27 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
         }
         this.supportsRandomAccess = supportsRandomAccess;
         this.cursor = new VirtualFunctionDirectSymbolRecordCursor(functions, supportsRandomAccess);
-        this.baseFactory = baseFactory;
+        this.base = base;
     }
 
     @Override
     public boolean followedLimitAdvice() {
-        return baseFactory.followedLimitAdvice();
+        return base.followedLimitAdvice();
     }
 
     @Override
     public boolean followedOrderByAdvice() {
-        return baseFactory.followedOrderByAdvice();
+        return base.followedOrderByAdvice();
     }
 
     @Override
     public RecordCursorFactory getBaseFactory() {
-        return baseFactory;
+        return base;
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        RecordCursor cursor = baseFactory.getCursor(executionContext);
+        RecordCursor cursor = base.getCursor(executionContext);
         try {
             Function.init(functions, cursor, executionContext);
             this.cursor.of(cursor);
@@ -91,12 +91,12 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public int getScanDirection() {
-        return baseFactory.getScanDirection();
+        return base.getScanDirection();
     }
 
     @Override
     public boolean implementsLimit() {
-        return baseFactory.implementsLimit();
+        return base.implementsLimit();
     }
 
     @Override
@@ -106,24 +106,29 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public boolean supportsUpdateRowId(TableToken tableToken) {
-        return baseFactory.supportsUpdateRowId(tableToken);
+        return base.supportsUpdateRowId(tableToken);
     }
 
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("VirtualRecord");
         sink.optAttr("functions", functions, true);
-        sink.child(baseFactory);
+        sink.child(base);
     }
 
     @Override
     public boolean usesCompiledFilter() {
-        return baseFactory.usesCompiledFilter();
+        return base.usesCompiledFilter();
+    }
+
+    @Override
+    public boolean usesIndex() {
+        return base.usesIndex();
     }
 
     @Override
     protected void _close() {
         Misc.freeObjList(functions);
-        Misc.free(baseFactory);
+        Misc.free(base);
     }
 }

@@ -288,9 +288,9 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.o3.quicksort.enabled\tQDB_CAIRO_O3_QUICKSORT_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
                                     "cairo.o3.txn.scoreboard.entry.count\tQDB_CAIRO_O3_TXN_SCOREBOARD_ENTRY_COUNT\t16384\tdefault\tfalse\tfalse\n" +
                                     "cairo.page.frame.column.list.capacity\tQDB_CAIRO_PAGE_FRAME_COLUMN_LIST_CAPACITY\t16\tdefault\tfalse\tfalse\n" +
-                                    "cairo.page.frame.reduce.queue.capacity\tQDB_CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY\t64\tdefault\tfalse\tfalse\n" +
+                                    "cairo.page.frame.reduce.queue.capacity\tQDB_CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY\t4\tdefault\tfalse\tfalse\n" +
                                     "cairo.page.frame.rowid.list.capacity\tQDB_CAIRO_PAGE_FRAME_ROWID_LIST_CAPACITY\t256\tdefault\tfalse\tfalse\n" +
-                                    "cairo.page.frame.shard.count\tQDB_CAIRO_PAGE_FRAME_SHARD_COUNT\t4\tdefault\tfalse\tfalse\n" +
+                                    "cairo.page.frame.shard.count\tQDB_CAIRO_PAGE_FRAME_SHARD_COUNT\t2\tdefault\tfalse\tfalse\n" +
                                     "cairo.parallel.index.threshold\tQDB_CAIRO_PARALLEL_INDEX_THRESHOLD\t100000\tdefault\tfalse\tfalse\n" +
                                     "cairo.parallel.indexing.enabled\tQDB_CAIRO_PARALLEL_INDEXING_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.reader.pool.max.segments\tQDB_CAIRO_READER_POOL_MAX_SEGMENTS\t10\tdefault\tfalse\tfalse\n" +
@@ -357,8 +357,12 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.max.symbol.not.equals.count\tQDB_CAIRO_SQL_MAX_SYMBOL_NOT_EQUALS_COUNT\t100\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.page.frame.max.rows\tQDB_CAIRO_SQL_PAGE_FRAME_MAX_ROWS\t1000000\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.page.frame.min.rows\tQDB_CAIRO_SQL_PAGE_FRAME_MIN_ROWS\t1000\tdefault\tfalse\tfalse\n" +
-                                    "cairo.sql.parallel.filter.enabled\tQDB_CAIRO_SQL_PARALLEL_FILTER_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.parallel.filter.enabled\tQDB_CAIRO_SQL_PARALLEL_FILTER_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.filter.pretouch.enabled\tQDB_CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.parallel.groupby.enabled\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.parallel.groupby.merge.shard.queue.capacity\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_MERGE_SHARD_QUEUE_CAPACITY\t4\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.parallel.groupby.sharding.threshold\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD\t10000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.parallel.groupby.shard.count\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_SHARD_COUNT\t64\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.rename.table.model.pool.capacity\tQDB_CAIRO_SQL_RENAME_TABLE_MODEL_POOL_CAPACITY\t16\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.sampleby.page.size\tQDB_CAIRO_SQL_SAMPLEBY_PAGE_SIZE\t0\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.small.map.key.capacity\tQDB_CAIRO_SQL_SMALL_MAP_KEY_CAPACITY\t1024\tdefault\tfalse\tfalse\n" +
@@ -419,7 +423,9 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "circuit.breaker.buffer.size\tQDB_CIRCUIT_BREAKER_BUFFER_SIZE\t64\tdefault\tfalse\tfalse\n" +
                                     "circuit.breaker.throttle\tQDB_CIRCUIT_BREAKER_THROTTLE\t2000000\tdefault\tfalse\tfalse\n" +
                                     "config.validation.strict\tQDB_CONFIG_VALIDATION_STRICT\tfalse\tdefault\tfalse\tfalse\n" +
+                                    "debug.force.recv.fragmentation.chunk.size\tQDB_DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE\t2147483647\tdefault\tfalse\tfalse\n" +
                                     "debug.wal.purge.wait.before.delete\tQDB_DEBUG_WAL_PURGE_WAIT_BEFORE_DELETE\t0\tdefault\tfalse\tfalse\n" +
+                                    "debug.force.send.fragmentation.chunk.size\tQDB_DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE\t2147483647\tdefault\tfalse\tfalse\n" +
                                     "http.allow.deflate.before.send\tQDB_HTTP_ALLOW_DEFLATE_BEFORE_SEND\tfalse\tdefault\tfalse\tfalse\n" +
                                     "http.bind.to\tQDB_HTTP_BIND_TO\t0.0.0.0:9010\tconf\tfalse\tfalse\n" +
                                     "http.busy.retry.exponential.wait.multiplier\tQDB_HTTP_BUSY_RETRY_EXPONENTIAL_WAIT_MULTIPLIER\t2.0\tdefault\tfalse\tfalse\n" +
@@ -505,6 +511,8 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "line.auto.create.new.tables\tQDB_LINE_AUTO_CREATE_NEW_TABLES\ttrue\tdefault\tfalse\tfalse\n" +
                                     "line.default.partition.by\tQDB_LINE_DEFAULT_PARTITION_BY\tDAY\tdefault\tfalse\tfalse\n" +
                                     "line.float.default.column.type\tQDB_LINE_FLOAT_DEFAULT_COLUMN_TYPE\tDOUBLE\tdefault\tfalse\tfalse\n" +
+                                    "line.http.enabled\tQDB_LINE_HTTP_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "line.http.ping.version\tQDB_LINE_HTTP_PING_VERSION\tv2.7.4\tdefault\tfalse\tfalse\n" +
                                     "line.integer.default.column.type\tQDB_LINE_INTEGER_DEFAULT_COLUMN_TYPE\tLONG\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.auth.db.path\tQDB_LINE_TCP_AUTH_DB_PATH\t\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.commit.interval.default\tQDB_LINE_TCP_COMMIT_INTERVAL_DEFAULT\t2000\tdefault\tfalse\tfalse\n" +
@@ -563,8 +571,6 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "pg.connection.pool.capacity\tQDB_PG_CONNECTION_POOL_CAPACITY\t4\tdefault\tfalse\tfalse\n" +
                                     "pg.daemon.pool\tQDB_PG_DAEMON_POOL\ttrue\tdefault\tfalse\tfalse\n" +
                                     "pg.date.locale\tQDB_PG_DATE_LOCALE\ten\tdefault\tfalse\tfalse\n" +
-                                    "pg.debug.force.recv.fragmentation.chunk.size\tQDB_PG_DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE\t2147483647\tdefault\tfalse\tfalse\n" +
-                                    "pg.debug.force.send.fragmentation.chunk.size\tQDB_PG_DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE\t2147483647\tdefault\tfalse\tfalse\n" +
                                     "pg.enabled\tQDB_PG_ENABLED\ttrue\tconf\tfalse\tfalse\n" +
                                     "pg.halt.on.error\tQDB_PG_HALT_ON_ERROR\tfalse\tdefault\tfalse\tfalse\n" +
                                     "pg.insert.cache.block.count\tQDB_PG_INSERT_CACHE_BLOCK_COUNT\t4\tdefault\tfalse\tfalse\n" +
@@ -630,8 +636,12 @@ public class ServerMainTest extends AbstractBootstrapTest {
                         }
                     }
 
-                    assertTrue("Missing properties: " + missingProps, missingProps.isEmpty());
-                    assertTrue("Extra properties: " + actualProps, actualProps.isEmpty());
+                    assertTrue(
+                            "Missing properties: " + missingProps
+                                    + "\n"
+                                    + "Extra properties: " + actualProps,
+                            missingProps.isEmpty() && actualProps.isEmpty()
+                    );
                 }
             }
         });

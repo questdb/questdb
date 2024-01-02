@@ -27,15 +27,15 @@ package io.questdb.cairo.pool;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableToken;
 
-public class TableReaderMetadataPool extends AbstractMultiTenantPool<MetadataPoolTenant> {
+public class TableMetadataPool extends AbstractMultiTenantPool<MetadataPoolTenant> {
 
-    public TableReaderMetadataPool(CairoConfiguration configuration) {
+    public TableMetadataPool(CairoConfiguration configuration) {
         super(configuration, configuration.getMetadataPoolCapacity(), configuration.getInactiveReaderTTL());
     }
 
     @Override
     protected byte getListenerSrc() {
-        return PoolListener.SRC_TABLE_READER_METADATA;
+        return PoolListener.SRC_TABLE_METADATA;
     }
 
     @Override

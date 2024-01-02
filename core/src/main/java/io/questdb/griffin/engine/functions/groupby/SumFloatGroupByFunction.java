@@ -45,18 +45,21 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
         final float value = arg.getFloat(record);
-        if (value == value) {
+        if (Float.isFinite(value)) {
             mapValue.putFloat(valueIndex, value);
+            mapValue.putLong(valueIndex + 1, 1);
         } else {
             mapValue.putFloat(valueIndex, 0f);
+            mapValue.putLong(valueIndex + 1, 0);
         }
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
         final float value = arg.getFloat(record);
-        if (value == value) {
+        if (Float.isFinite(value)) {
             mapValue.addFloat(valueIndex, value);
+            mapValue.addLong(valueIndex + 1, 1);
         }
     }
 
@@ -67,7 +70,11 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
 
     @Override
     public float getFloat(Record rec) {
-        return rec.getFloat(valueIndex);
+        long valueCount = rec.getLong(valueIndex + 1);
+        if (valueCount > 0) {
+            return rec.getFloat(valueIndex);
+        }
+        return Float.NaN;
     }
 
     @Override
@@ -81,18 +88,34 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
     }
 
     @Override
+    public boolean isParallelismSupported() {
+        return arg.isReadThreadSafe();
+    }
+
+    @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        float srcSum = srcValue.getFloat(valueIndex);
+        long srcCount = srcValue.getLong(valueIndex + 1);
+        destValue.addFloat(valueIndex, srcSum);
+        destValue.addLong(valueIndex + 1, srcCount);
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.FLOAT);
+        columnTypes.add(ColumnType.LONG);
     }
 
     @Override
     public void setFloat(MapValue mapValue, float value) {
         mapValue.putFloat(valueIndex, value);
+        mapValue.putLong(valueIndex + 1, 1);
     }
 
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putFloat(valueIndex, Float.NaN);
+        mapValue.putLong(valueIndex + 1, 0);
     }
 }

@@ -211,7 +211,6 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
             }
 
             sink.optAttr("unorderedFunctions", unorderedFunctions, true);
-
         } finally {
             sink.useBaseMetadata(oldVal);
         }
@@ -222,6 +221,11 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
     @Override
     public boolean usesCompiledFilter() {
         return base.usesCompiledFilter();
+    }
+
+    @Override
+    public boolean usesIndex() {
+        return base.usesIndex();
     }
 
     private void addSortKeys(PlanSink sink, IntList list) {

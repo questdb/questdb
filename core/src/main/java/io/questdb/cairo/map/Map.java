@@ -25,20 +25,28 @@
 package io.questdb.cairo.map;
 
 import io.questdb.cairo.Reopenable;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.Mutable;
 
 import java.io.Closeable;
 
 public interface Map extends Mutable, Closeable, Reopenable {
+
     @Override
     void close();
 
-    RecordCursor getCursor();
+    MapRecordCursor getCursor();
 
     MapRecord getRecord();
 
+    default void merge(Map srcMap, MapValueMergeFunction mergeFunc) {
+        throw new UnsupportedOperationException();
+    }
+
     void restoreInitialCapacity();
+
+    default void setKeyCapacity(int keyCapacity) {
+        throw new UnsupportedOperationException();
+    }
 
     long size();
 

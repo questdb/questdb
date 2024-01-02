@@ -27,12 +27,15 @@ package io.questdb.cutlass.http;
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
+import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
+import io.questdb.cutlass.line.LineTcpTimestampAdapter;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Numbers;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 
@@ -46,6 +49,7 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     private final HttpContextConfiguration httpContextConfiguration;
     private final JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new DefaultJsonQueryProcessorConfiguration() {
     };
+    private final LineHttpProcessorConfiguration lineHttpProcessorConfiguration = new DefaultLineHttpProcessorConfiguration();
     private final StaticContentProcessorConfiguration staticContentProcessorConfiguration = new StaticContentProcessorConfiguration() {
         @Override
         public FilesFacade getFilesFacade() {
@@ -117,6 +121,11 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     @Override
     public JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration() {
         return jsonQueryProcessorConfiguration;
+    }
+
+    @Override
+    public LineHttpProcessorConfiguration getLineHttpProcessorConfiguration() {
+        return lineHttpProcessorConfiguration;
     }
 
     @Override
@@ -228,6 +237,73 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
         @Override
         public long getMaxQueryResponseRowLimit() {
             return Long.MAX_VALUE;
+        }
+    }
+
+    public class DefaultLineHttpProcessorConfiguration implements LineHttpProcessorConfiguration {
+        @Override
+        public boolean autoCreateNewColumns() {
+            return lineHttpProcessorConfiguration.isStringAsTagSupported();
+        }
+
+        @Override
+        public boolean autoCreateNewTables() {
+            return lineHttpProcessorConfiguration.isStringAsTagSupported();
+        }
+
+        @Override
+        public short getDefaultColumnTypeForFloat() {
+            return lineHttpProcessorConfiguration.getDefaultColumnTypeForInteger();
+        }
+
+        @Override
+        public short getDefaultColumnTypeForInteger() {
+            return lineHttpProcessorConfiguration.getDefaultColumnTypeForInteger();
+        }
+
+        @Override
+        public int getDefaultPartitionBy() {
+            return lineHttpProcessorConfiguration.getDefaultPartitionBy();
+        }
+
+        @Override
+        public CharSequence getInfluxPingVersion() {
+            return "v2.7.4";
+        }
+
+        @Override
+        public MicrosecondClock getMicrosecondClock() {
+            return lineHttpProcessorConfiguration.getMicrosecondClock();
+        }
+
+        @Override
+        public long getSymbolCacheWaitUsBeforeReload() {
+            return lineHttpProcessorConfiguration.getSymbolCacheWaitUsBeforeReload();
+        }
+
+        @Override
+        public LineTcpTimestampAdapter getTimestampAdapter() {
+            return lineHttpProcessorConfiguration.getTimestampAdapter();
+        }
+
+        @Override
+        public boolean isEnabled() {
+            return true;
+        }
+
+        @Override
+        public boolean isStringAsTagSupported() {
+            return lineHttpProcessorConfiguration.isSymbolAsFieldSupported();
+        }
+
+        @Override
+        public boolean isStringToCharCastAllowed() {
+            return lineHttpProcessorConfiguration.isStringAsTagSupported();
+        }
+
+        @Override
+        public boolean isSymbolAsFieldSupported() {
+            return lineHttpProcessorConfiguration.isSymbolAsFieldSupported();
         }
     }
 }

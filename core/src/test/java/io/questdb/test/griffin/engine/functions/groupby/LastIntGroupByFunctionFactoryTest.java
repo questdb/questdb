@@ -83,7 +83,8 @@ public class LastIntGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFill() throws Exception {
-        assertQuery("b\tlast\tk\n" +
+        assertQuery(
+                "b\tlast\tk\n" +
                         "\t1627393380\t1970-01-03T00:00:00.000000Z\n" +
                         "VTJW\t-2002373666\t1970-01-03T00:00:00.000000Z\n" +
                         "RXGZ\t-1520872171\t1970-01-03T00:00:00.000000Z\n" +
@@ -107,7 +108,9 @@ public class LastIntGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "PEHN\t1278547815\t1970-01-03T09:00:00.000000Z\n" +
                         "VTJW\t-1377625589\t1970-01-03T09:00:00.000000Z\n" +
                         "RXGZ\t-737477868\t1970-01-03T09:00:00.000000Z\n" +
-                        "HYRX\t2147483647\t1970-01-03T09:00:00.000000Z\n", "select b, last(a), k from x sample by 3h fill(linear)", "create table x as " +
+                        "HYRX\t2147483647\t1970-01-03T09:00:00.000000Z\n",
+                "select b, last(a), k from x sample by 3h fill(linear)",
+                "create table x as " +
                         "(" +
                         "select" +
                         " rnd_int() a," +
@@ -115,14 +118,17 @@ public class LastIntGroupByFunctionFactoryTest extends AbstractCairoTest {
                         " timestamp_sequence(172800000000, 360000000) k" +
                         " from" +
                         " long_sequence(100)" +
-                        ") timestamp(k) partition by NONE", "k", "insert into x select * from (" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                "insert into x select * from (" +
                         "select" +
                         " rnd_int() a," +
                         " rnd_symbol(5,4,4,1) b," +
                         " timestamp_sequence(277200000000, 360000000) k" +
                         " from" +
                         " long_sequence(35)" +
-                        ") timestamp(k)", "b\tlast\tk\n" +
+                        ") timestamp(k)",
+                "b\tlast\tk\n" +
                         "\t1627393380\t1970-01-03T00:00:00.000000Z\n" +
                         "VTJW\t-2002373666\t1970-01-03T00:00:00.000000Z\n" +
                         "RXGZ\t-1520872171\t1970-01-03T00:00:00.000000Z\n" +
@@ -243,7 +249,11 @@ public class LastIntGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "PEHN\t2147483647\t1970-01-04T06:00:00.000000Z\n" +
                         "CPSW\t-1258204039\t1970-01-04T06:00:00.000000Z\n" +
                         "HYRX\t2147483647\t1970-01-04T06:00:00.000000Z\n" +
-                        "ZMZV\tNaN\t1970-01-04T06:00:00.000000Z\n", true, true, false);
+                        "ZMZV\tNaN\t1970-01-04T06:00:00.000000Z\n",
+                true,
+                true,
+                false
+        );
     }
 
     @Test

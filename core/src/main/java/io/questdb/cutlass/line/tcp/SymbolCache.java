@@ -59,8 +59,12 @@ public class SymbolCache implements DirectUtf8SymbolLookup, Closeable {
     private TableWriterAPI writerAPI;
 
     public SymbolCache(LineTcpReceiverConfiguration configuration) {
-        this.clock = configuration.getMicrosecondClock();
-        this.waitUsBeforeReload = configuration.getSymbolCacheWaitUsBeforeReload();
+        this(configuration.getMicrosecondClock(), configuration.getSymbolCacheWaitUsBeforeReload());
+    }
+
+    public SymbolCache(MicrosecondClock microsecondClock, long symbolCacheWaitUsBeforeReload) {
+        this.clock = microsecondClock;
+        this.waitUsBeforeReload = symbolCacheWaitUsBeforeReload;
     }
 
     @Override

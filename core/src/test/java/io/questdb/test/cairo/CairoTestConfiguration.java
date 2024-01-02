@@ -126,6 +126,11 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
+    public int getGroupByShardingThreshold() {
+        return overrides.getGroupByShardingThreshold() < 0 ? super.getGroupByShardingThreshold() : overrides.getGroupByShardingThreshold();
+    }
+
+    @Override
     public int getInactiveReaderMaxOpenPartitions() {
         return overrides.getInactiveReaderMaxOpenPartitions() > 0 ? overrides.getInactiveReaderMaxOpenPartitions() : super.getInactiveReaderMaxOpenPartitions();
     }
@@ -143,16 +148,6 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     @Override
     public int getMaxUncommittedRows() {
         return overrides.getMaxUncommittedRows() >= 0 ? overrides.getMaxUncommittedRows() : super.getMaxUncommittedRows();
-    }
-
-    @Override
-    public int getWalMaxSegmentFileDescriptorsCache() {
-        return overrides.getWalMaxSegmentFileDescriptorsCache() >= 0 ? overrides.getWalMaxSegmentFileDescriptorsCache() : super.getWalMaxSegmentFileDescriptorsCache();
-    }
-
-    @Override
-    public long getWalMaxLagSize() {
-        return overrides.getWalMaxLagSize() >= 0 ? overrides.getWalMaxLagSize() : super.getWalMaxLagSize();
     }
 
     @Override
@@ -342,8 +337,18 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
+    public long getWalMaxLagSize() {
+        return overrides.getWalMaxLagSize() >= 0 ? overrides.getWalMaxLagSize() : super.getWalMaxLagSize();
+    }
+
+    @Override
     public int getWalMaxLagTxnCount() {
         return overrides.getWalMaxLagTxnCount() >= 0 ? overrides.getWalMaxLagTxnCount() : super.getWalMaxLagTxnCount();
+    }
+
+    @Override
+    public int getWalMaxSegmentFileDescriptorsCache() {
+        return overrides.getWalMaxSegmentFileDescriptorsCache() >= 0 ? overrides.getWalMaxSegmentFileDescriptorsCache() : super.getWalMaxSegmentFileDescriptorsCache();
     }
 
     @Override
@@ -419,6 +424,11 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     @Override
     public boolean isSqlParallelFilterPreTouchEnabled() {
         return overrides.isColumnPreTouchEnabled() != null ? overrides.isColumnPreTouchEnabled() : super.isSqlParallelFilterPreTouchEnabled();
+    }
+
+    @Override
+    public boolean isSqlParallelGroupByEnabled() {
+        return overrides.isParallelGroupByEnabled() != null ? overrides.isParallelGroupByEnabled() : super.isSqlParallelGroupByEnabled();
     }
 
     @Override

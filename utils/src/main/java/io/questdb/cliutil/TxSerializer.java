@@ -58,7 +58,7 @@ public class TxSerializer {
      *  Command line arguments: -s <json_path> <txn_path> | -d <txn_path>
      */
     public static void main(String[] args) throws IOException {
-        LogFactory.configureSync();
+        LogFactory.enableGuaranteedLogging();
         if (args.length < 2 || args.length > 3) {
             printUsage();
             return;

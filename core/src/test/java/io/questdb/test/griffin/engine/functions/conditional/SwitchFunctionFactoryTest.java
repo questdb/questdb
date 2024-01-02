@@ -584,6 +584,159 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDouble() throws Exception {
+        assertQuery(
+                "x\ta\tb\tc\tk\n" +
+                        "322.0\t1548800833\t-727724771\t73575701\t1548800833\n" +
+                        "-431.0\t592859671\t1868723706\t-847531048\t-847531048\n" +
+                        "302.0\t-1436881714\t-1575378703\t806715481\tNaN\n" +
+                        "-616.0\t1573662097\t-409854405\t339631474\t350\n" +
+                        "251.0\t-1532328444\t-1458132197\t1125579207\tNaN\n" +
+                        "-156.0\t426455968\t-85170055\t-1792928964\tNaN\n" +
+                        "-522.0\t-1101822104\t-1153445279\t1404198\tNaN\n" +
+                        "419.0\t1631244228\t-1975183723\t-1252906348\tNaN\n" +
+                        "760.0\t-2119387831\t-212807500\t1699553881\tNaN\n" +
+                        "381.0\t-113506296\t-422941535\t-938514914\tNaN\n" +
+                        "243.0\t-303295973\t-342047842\t-2132716300\tNaN\n" +
+                        "-618.0\t-27395319\t264240638\t2085282008\tNaN\n" +
+                        "808.0\t1890602616\t-1272693194\t68265578\tNaN\n" +
+                        "340.0\t44173540\t458818940\t410717394\tNaN\n" +
+                        "-154.0\t-1418341054\t-1162267908\t2031014705\tNaN\n" +
+                        "NaN\t-530317703\t-1575135393\t-296610933\t1\n" +
+                        "Infinity\t936627841\t326010667\t-667031149\t2\n" +
+                        "-Infinity\t-1870444467\t-2034804966\t171200398\t3\n" +
+                        "0.0\t1637847416\t-419093579\t-1819240775\t4\n" +
+                        "-0.0\t-1533414895\t-1787109293\t-66297136\t5\n",
+                "select \n" +
+                        "    x,\n" +
+                        "    a,\n" +
+                        "    b,\n" +
+                        "    c,\n" +
+                        "    case x\n" +
+                        "        when  322.0d then a\n" +
+                        "        when -431.0d then c\n" +
+                        "        when -616.0d then 350\n" +
+                        "        when null then 1\n" +
+                        "        when 'Infinity' then 2\n" +
+                        "        when '-Infinity' then 3\n" +
+                        "        when 0.0 then 4\n" +
+                        "        when -0.0 then 5\n" +
+                        "    end k\n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select round(rnd_double() * 2000 - 1000) x," +
+                        " rnd_int() a," +
+                        " rnd_int() b," +
+                        " rnd_int() c" +
+                        " from long_sequence(15)" +
+                        "union all " +
+                        "select " +
+                        "case x when 1 then NaN::double " +
+                        "       when 2 then 'Infinity'::double " +
+                        "       when 3 then '-Infinity'::double " +
+                        "       when 4 then  0.0::double " +
+                        "       when 5 then -0.0::double end x, " +
+                        " rnd_int() a," +
+                        " rnd_int() b," +
+                        " rnd_int() c" +
+                        " from long_sequence(5) )",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testDoubleDuplicateBranch() throws Exception {
+        assertException("select \n" +
+                        "    x,\n" +
+                        "    a,\n" +
+                        "    b,\n" +
+                        "    c,\n" +
+                        "    case x\n" +
+                        "        when -920.0d then a\n" +
+                        "        when 701.0d then c\n" +
+                        "        when -714.0d then 350\n" +
+                        "        when 701.0d then c\n" +
+                        "    end k\n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select round(rnd_double() * 2000 - 1000) x," +
+                        " rnd_int() a," +
+                        " rnd_int() b," +
+                        " rnd_int() c" +
+                        " from long_sequence(20)" +
+                        ")",
+                145,
+                "duplicate branch"
+        );
+    }
+
+    @Test
+    public void testDoubleOrElse() throws Exception {
+        assertQuery(
+                "x\ta\tb\tc\tk\n" +
+                        "322.0\t1548800833\t-727724771\t73575701\t1548800833\n" +
+                        "-431.0\t592859671\t1868723706\t-847531048\t-847531048\n" +
+                        "302.0\t-1436881714\t-1575378703\t806715481\t-1575378703\n" +
+                        "-616.0\t1573662097\t-409854405\t339631474\t350\n" +
+                        "251.0\t-1532328444\t-1458132197\t1125579207\t-1458132197\n" +
+                        "-156.0\t426455968\t-85170055\t-1792928964\t-85170055\n" +
+                        "-522.0\t-1101822104\t-1153445279\t1404198\t-1153445279\n" +
+                        "419.0\t1631244228\t-1975183723\t-1252906348\t-1975183723\n" +
+                        "760.0\t-2119387831\t-212807500\t1699553881\t-212807500\n" +
+                        "381.0\t-113506296\t-422941535\t-938514914\t-422941535\n" +
+                        "243.0\t-303295973\t-342047842\t-2132716300\t-342047842\n" +
+                        "-618.0\t-27395319\t264240638\t2085282008\t264240638\n" +
+                        "808.0\t1890602616\t-1272693194\t68265578\t-1272693194\n" +
+                        "340.0\t44173540\t458818940\t410717394\t458818940\n" +
+                        "-154.0\t-1418341054\t-1162267908\t2031014705\t-1162267908\n" +
+                        "NaN\t-530317703\t-1575135393\t-296610933\t1\n" +
+                        "Infinity\t936627841\t326010667\t-667031149\t2\n" +
+                        "-Infinity\t-1870444467\t-2034804966\t171200398\t3\n" +
+                        "0.0\t1637847416\t-419093579\t-1819240775\t4\n" +
+                        "-0.0\t-1533414895\t-1787109293\t-66297136\t5\n",
+                "select \n" +
+                        "    x,\n" +
+                        "    a,\n" +
+                        "    b,\n" +
+                        "    c,\n" +
+                        "    case x\n" +
+                        "        when  322.0d then a\n" +
+                        "        when -431.0 then c\n" +
+                        "        when -616.0 then 350\n" +
+                        "        when null then 1\n" +
+                        "        when 'Infinity' then 2\n" +
+                        "        when '-Infinity' then 3\n" +
+                        "        when 0.0 then 4\n" +
+                        "        when -0.0 then 5\n" +
+                        "        else b\n" +
+                        "    end k\n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select round(rnd_double() * 2000 - 1000) x," +
+                        " rnd_int() a," +
+                        " rnd_int() b," +
+                        " rnd_int() c" +
+                        " from long_sequence(15)" +
+                        "union all " +
+                        "select " +
+                        "case x when 1 then NaN::double " +
+                        "       when 2 then 'Infinity'::double " +
+                        "       when 3 then '-Infinity'::double " +
+                        "       when 4 then  0.0::double " +
+                        "       when 5 then -0.0::double end x, " +
+                        " rnd_int() a," +
+                        " rnd_int() b," +
+                        " rnd_int() c" +
+                        " from long_sequence(5) )",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testDuplicateBranchStringToLongCast() throws Exception {
         assertException("select \n" +
                         "    x,\n" +
@@ -606,6 +759,159 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                         ")",
                 136,
                 "duplicate branch"
+        );
+    }
+
+    @Test
+    public void testFloat() throws Exception {
+        assertQuery(
+                "x\ta\tb\tc\tk\n" +
+                        "322.0000\t315515118\t1548800833\t-727724771\t315515118\n" +
+                        "-830.0000\t-948263339\t1326447242\t592859671\t592859671\n" +
+                        "-591.0000\t-847531048\t-1191262516\t-2041844972\tNaN\n" +
+                        "685.0000\t-1575378703\t806715481\t1545253512\t350\n" +
+                        "-551.0000\t1573662097\t-409854405\t339631474\tNaN\n" +
+                        "251.0000\t1904508147\t-1532328444\t-1458132197\tNaN\n" +
+                        "49.0000\t-1849627000\t-1432278050\t426455968\tNaN\n" +
+                        "-926.0000\t-1792928964\t-1844391305\t-1520872171\tNaN\n" +
+                        "-155.0000\t-1153445279\t1404198\t-1715058769\tNaN\n" +
+                        "-380.0000\t1631244228\t-1975183723\t-1252906348\tNaN\n" +
+                        "760.0000\t-761275053\t-2119387831\t-212807500\tNaN\n" +
+                        "-342.0000\t1110979454\t1253890363\t-113506296\tNaN\n" +
+                        "954.0000\t-938514914\t-547127752\t-1271909747\tNaN\n" +
+                        "-684.0000\t-342047842\t-2132716300\t2006313928\tNaN\n" +
+                        "-195.0000\t-27395319\t264240638\t2085282008\tNaN\n" +
+                        "NaN\t-483853667\t2137969456\t1890602616\t1\n" +
+                        "Infinity\t-1272693194\t68265578\t1036510002\t2\n" +
+                        "-Infinity\t-2002373666\t44173540\t458818940\t3\n" +
+                        "0.0000\t410717394\t-2144581835\t1978144263\t4\n" +
+                        "-0.0000\t-1418341054\t-1162267908\t2031014705\t5\n",
+                "select \n" +
+                        "    x,\n" +
+                        "    a,\n" +
+                        "    b,\n" +
+                        "    c,\n" +
+                        "    case x\n" +
+                        "        when 322.0f then a\n" +
+                        "        when -830.0f then c\n" +
+                        "        when 685.0f then 350\n" +
+                        "        when cast(null as float) then 1\n" +
+                        "        when cast('Infinity' as float) then 2\n" +
+                        "        when cast('-Infinity' as float) then 3\n" +
+                        "        when cast(0.0 as float) then 4\n" +
+                        "        when cast(-0.0 as float) then 5\n" +
+                        "    end k\n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select cast(round(rnd_float() * 2000 - 1000) as float) x," +
+                        " rnd_int() a," +
+                        " rnd_int() b," +
+                        " rnd_int() c" +
+                        " from long_sequence(15)" +
+                        "union all " +
+                        "select " +
+                        "case x when 1 then cast(NaN as float) " +
+                        "       when 2 then cast('Infinity' as float) " +
+                        "       when 3 then cast('-Infinity' as float) " +
+                        "       when 4 then 0.0f " +
+                        "       when 5 then -0.0f end x, " +
+                        " rnd_int() a," +
+                        " rnd_int() b," +
+                        " rnd_int() c" +
+                        " from long_sequence(5) )",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testFloatDuplicateBranch() throws Exception {
+        assertException("select \n" +
+                        "    x,\n" +
+                        "    a,\n" +
+                        "    b,\n" +
+                        "    c,\n" +
+                        "    case x\n" +
+                        "        when -920.0f then a\n" +
+                        "        when 701.0f then c\n" +
+                        "        when -714.0f then 350\n" +
+                        "        when 701.0f then c\n" +
+                        "    end k\n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select round(rnd_float() * 2000 - 1000)::float x," +
+                        " rnd_int() a," +
+                        " rnd_int() b," +
+                        " rnd_int() c" +
+                        " from long_sequence(20)" +
+                        ")",
+                145,
+                "duplicate branch"
+        );
+    }
+
+    @Test
+    public void testFloatOrElse() throws Exception {
+        assertQuery(
+                "x\ta\tb\tc\tk\n" +
+                        "322.0000\t315515118\t1548800833\t-727724771\t315515118\n" +
+                        "-830.0000\t-948263339\t1326447242\t592859671\t592859671\n" +
+                        "-591.0000\t-847531048\t-1191262516\t-2041844972\t-1191262516\n" +
+                        "685.0000\t-1575378703\t806715481\t1545253512\t350\n" +
+                        "-551.0000\t1573662097\t-409854405\t339631474\t-409854405\n" +
+                        "251.0000\t1904508147\t-1532328444\t-1458132197\t-1532328444\n" +
+                        "49.0000\t-1849627000\t-1432278050\t426455968\t-1432278050\n" +
+                        "-926.0000\t-1792928964\t-1844391305\t-1520872171\t-1844391305\n" +
+                        "-155.0000\t-1153445279\t1404198\t-1715058769\t1404198\n" +
+                        "-380.0000\t1631244228\t-1975183723\t-1252906348\t-1975183723\n" +
+                        "760.0000\t-761275053\t-2119387831\t-212807500\t-2119387831\n" +
+                        "-342.0000\t1110979454\t1253890363\t-113506296\t1253890363\n" +
+                        "954.0000\t-938514914\t-547127752\t-1271909747\t-547127752\n" +
+                        "-684.0000\t-342047842\t-2132716300\t2006313928\t-2132716300\n" +
+                        "-195.0000\t-27395319\t264240638\t2085282008\t264240638\n" +
+                        "NaN\t-483853667\t2137969456\t1890602616\t1\n" +
+                        "Infinity\t-1272693194\t68265578\t1036510002\t2\n" +
+                        "-Infinity\t-2002373666\t44173540\t458818940\t3\n" +
+                        "0.0000\t410717394\t-2144581835\t1978144263\t4\n" +
+                        "-0.0000\t-1418341054\t-1162267908\t2031014705\t5\n",
+                "select \n" +
+                        "    x,\n" +
+                        "    a,\n" +
+                        "    b,\n" +
+                        "    c,\n" +
+                        "    case x\n" +
+                        "        when 322.0f then a\n" +
+                        "        when -830.0f then c\n" +
+                        "        when 685.0f then 350\n" +
+                        "        when cast(null as float) then 1\n" +
+                        "        when cast('Infinity' as float) then 2\n" +
+                        "        when cast('-Infinity' as float) then 3\n" +
+                        "        when cast(0.0 as float) then 4\n" +
+                        "        when cast(-0.0 as float) then 5\n" +
+                        "        else b " +
+                        "    end k\n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select cast(round(rnd_float() * 2000 - 1000) as float) x," +
+                        " rnd_int() a," +
+                        " rnd_int() b," +
+                        " rnd_int() c" +
+                        " from long_sequence(15)" +
+                        "union all " +
+                        "select " +
+                        "case x when 1 then cast(NaN as float) " +
+                        "       when 2 then cast('Infinity' as float) " +
+                        "       when 3 then cast('-Infinity' as float) " +
+                        "       when 4 then 0.0f " +
+                        "       when 5 then -0.0f end x, " +
+                        " rnd_int() a," +
+                        " rnd_int() b," +
+                        " rnd_int() c" +
+                        " from long_sequence(5) )",
+                null,
+                true,
+                true
         );
     }
 

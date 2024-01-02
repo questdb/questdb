@@ -91,6 +91,10 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_PAGE_FRAME_COLUMN_LIST_CAPACITY("cairo.page.frame.column.list.capacity"),
     CAIRO_SQL_PARALLEL_FILTER_ENABLED("cairo.sql.parallel.filter.enabled"),
     CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_ENABLED("cairo.sql.parallel.filter.pretouch.enabled"),
+    CAIRO_SQL_PARALLEL_GROUP_BY_ENABLED("cairo.sql.parallel.groupby.enabled"),
+    CAIRO_SQL_PARALLEL_GROUP_BY_MERGE_QUEUE_CAPACITY("cairo.sql.parallel.groupby.merge.shard.queue.capacity"),
+    CAIRO_SQL_PARALLEL_GROUP_BY_SHARDING_THRESHOLD("cairo.sql.parallel.groupby.sharding.threshold"),
+    CAIRO_SQL_PARALLEL_GROUP_BY_SHARD_COUNT("cairo.sql.parallel.groupby.shard.count"),
     CAIRO_PAGE_FRAME_SHARD_COUNT("cairo.page.frame.shard.count"),
     CAIRO_PAGE_FRAME_TASK_POOL_CAPACITY("cairo.page.frame.task.pool.capacity"),
     CAIRO_SQL_JOIN_METADATA_PAGE_SIZE("cairo.sql.join.metadata.page.size"),
@@ -288,6 +292,8 @@ public enum PropertyKey implements ConfigPropertyKey {
     LINE_UDP_COMMIT_MODE("line.udp.commit.mode"),
     LINE_UDP_TIMESTAMP("line.udp.timestamp"),
     LINE_TCP_ENABLED("line.tcp.enabled"),
+    LINE_HTTP_ENABLED("line.http.enabled"),
+    LINE_HTTP_PING_VERSION("line.http.ping.version"),
     LINE_TCP_NET_ACTIVE_CONNECTION_LIMIT("line.tcp.net.active.connection.limit"),
     LINE_TCP_NET_CONNECTION_LIMIT("line.tcp.net.connection.limit"),
     LINE_TCP_NET_CONNECTION_HINT("line.tcp.net.connection.hint"),
@@ -330,6 +336,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     LINE_INTEGER_DEFAULT_COLUMN_TYPE("line.integer.default.column.type"),
     LINE_TCP_NET_IO_QUEUE_CAPACITY("line.tcp.net.io.queue.capacity"),
     LINE_TCP_IO_AGGRESSIVE_RECV("line.tcp.io.aggressive.recv"),
+    LINE_HTTP_HEADER_MAX_SIZE("line.http.header.max.size"),
     METRICS_ENABLED("metrics.enabled"),
     NET_TEST_CONNECTION_BUFFER_SIZE("net.test.connection.buffer.size"),
     PG_ENABLED("pg.enabled"),
@@ -374,8 +381,8 @@ public enum PropertyKey implements ConfigPropertyKey {
     PG_NAMED_STATEMENT_POOL_CAPACITY("pg.named.statement.pool.capacity"),
     PG_PENDING_WRITERS_CACHE_CAPACITY("pg.pending.writers.cache.capacity"),
     PG_NET_CONNECTION_SNDBUF("pg.net.connection.sndbuf"),
-    PG_DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE("pg.debug.force.send.fragmentation.chunk.size"),
-    PG_DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE("pg.debug.force.recv.fragmentation.chunk.size"),
+    DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE("debug.force.send.fragmentation.chunk.size"),
+    DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE("debug.force.recv.fragmentation.chunk.size"),
     QUERY_TIMEOUT_SEC("query.timeout.sec"),
     SHARED_WORKER_COUNT("shared.worker.count"),
     SHARED_WORKER_AFFINITY("shared.worker.affinity"),
@@ -434,7 +441,6 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_O3_PARTITION_SPLIT_MIN_SIZE("cairo.o3.partition.split.min.size"),
     DEBUG_WAL_PURGE_WAIT_BEFORE_DELETE("debug.wal.purge.wait.before.delete"),
     WRITER_MEMORY_LIMIT("cairo.writer.memory.limit");
-
     private static final Map<String, PropertyKey> nameMapping;
     private final String envVarName;
     private final String propertyPath;

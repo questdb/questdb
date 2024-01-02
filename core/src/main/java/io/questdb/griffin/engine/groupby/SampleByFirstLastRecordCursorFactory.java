@@ -172,6 +172,11 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         return base.usesCompiledFilter();
     }
 
+    @Override
+    public boolean usesIndex() {
+        return base.usesIndex();
+    }
+
     private void buildFirstLastIndex(
             int[] firstLastIndex,
             int[] queryToFrameColumnMapping,

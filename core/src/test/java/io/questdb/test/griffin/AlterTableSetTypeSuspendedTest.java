@@ -31,7 +31,7 @@ import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
-import io.questdb.std.Files;
+import io.questdb.mp.WorkerPool;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -80,7 +80,15 @@ public class AlterTableSetTypeSuspendedTest extends AbstractAlterTableSetTypeRes
                 }
             }, TestUtils.getServerMainArgs(root));
 
-            try (final ServerMain questdb = new TestServerMain(bootstrap)) {
+            try (final ServerMain questdb = new TestServerMain(bootstrap) {
+                @Override
+                protected void setupWalApplyJob(
+                        WorkerPool workerPool,
+                        CairoEngine engine,
+                        int sharedWorkerCount
+                ) {
+                }
+            }) {
                 questdb.start();
                 createTable(tableName, "WAL");
 

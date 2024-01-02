@@ -32,7 +32,7 @@ import io.questdb.cairo.frm.FrameAlgebra;
 import io.questdb.cairo.frm.file.PartitionFrameFactory;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.NullMapWriter;
 import io.questdb.cairo.vm.Vm;
@@ -1385,7 +1385,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public TableRecordMetadata getMetadata() {
+    public TableMetadata getMetadata() {
         return metadata;
     }
 
@@ -2184,7 +2184,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 processCommandQueue(false);
                 metrics.tableWriter().incrementRollbacks();
             } catch (Throwable e) {
-                LOG.critical().$("could not perform rollback [name=").utf8(tableToken.getTableName()).$(", msg=").$(e.getMessage()).I$();
+                LOG.critical().$("could not perform rollback [name=").utf8(tableToken.getTableName()).$(", msg=").$(e).I$();
                 distressed = true;
             }
         }
@@ -3754,7 +3754,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void finishMetaSwapUpdate() {
         finishMetadataSwap();
         bumpMetadataVersion();
-        metadata.setTableVersion();
         clearTodoLog();
     }
 

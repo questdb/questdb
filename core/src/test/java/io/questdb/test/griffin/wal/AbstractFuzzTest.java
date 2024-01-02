@@ -25,7 +25,7 @@
 package io.questdb.test.griffin.wal;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.log.Log;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Chars;
@@ -72,8 +72,8 @@ public class AbstractFuzzTest extends AbstractCairoTest {
 
     public ObjList<FuzzTransaction> generateSet(
             Rnd rnd,
-            TableRecordMetadata sequencerMetadata,
-            TableRecordMetadata readerMetadata,
+            TableMetadata sequencerMetadata,
+            TableMetadata readerMetadata,
             long start,
             long end,
             String tableName
@@ -181,14 +181,14 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         });
     }
 
-    protected void runFuzz(Rnd rnd, String tableNameBase, int tableCount, boolean randomiseProbs, boolean randomiseCounts) throws Exception {
+    protected void runFuzz(Rnd rnd, String tableNameBase, int tableCount) throws Exception {
         assertMemoryLeak(() -> {
             O3Utils.setupWorkerPool(sharedWorkerPool, engine, null);
             sharedWorkerPool.start(LOG);
 
             try {
                 setZeroWalPurgeInterval();
-                fuzzer.runFuzz(rnd, tableNameBase, tableCount, randomiseProbs, randomiseCounts);
+                fuzzer.runFuzz(rnd, tableNameBase, tableCount, false, false);
             } finally {
                 sharedWorkerPool.halt();
             }

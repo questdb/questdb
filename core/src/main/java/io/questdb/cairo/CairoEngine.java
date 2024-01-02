@@ -80,8 +80,8 @@ public class CairoEngine implements Closeable, WriterSource {
     private final DatabaseSnapshotAgentImpl snapshotAgent;
     private final SqlCompilerPool sqlCompilerPool;
     private final IDGenerator tableIdGenerator;
+    private final TableMetadataPool tableMetadataPool;
     private final TableNameRegistry tableNameRegistry;
-    private final TableReaderMetadataPool tableReaderMetadataPool;
     private final TableSequencerAPI tableSequencerAPI;
     private final Telemetry<TelemetryTask> telemetry;
     private final Telemetry<TelemetryWalTask> telemetryWal;
@@ -114,7 +114,7 @@ public class CairoEngine implements Closeable, WriterSource {
         this.writerPool = new WriterPool(configuration, this);
         this.readerPool = new ReaderPool(configuration, messageBus);
         this.sequencerMetadataPool = new SequencerMetadataPool(configuration, this);
-        this.tableReaderMetadataPool = new TableReaderMetadataPool(configuration);
+        this.tableMetadataPool = new TableMetadataPool(configuration);
         this.walWriterPool = new WalWriterPool(configuration, this);
         this.engineMaintenanceJob = new EngineMaintenanceJob(configuration);
         this.telemetry = new Telemetry<>(TelemetryTask.TELEMETRY, configuration);
@@ -250,7 +250,7 @@ public class CairoEngine implements Closeable, WriterSource {
         boolean b3 = tableSequencerAPI.releaseAll();
         boolean b4 = sequencerMetadataPool.releaseAll();
         boolean b5 = walWriterPool.releaseAll();
-        boolean b6 = tableReaderMetadataPool.releaseAll();
+        boolean b6 = tableMetadataPool.releaseAll();
         return b1 & b2 & b3 & b4 & b5 & b6;
     }
 
@@ -260,7 +260,7 @@ public class CairoEngine implements Closeable, WriterSource {
         Misc.free(writerPool);
         Misc.free(readerPool);
         Misc.free(sequencerMetadataPool);
-        Misc.free(tableReaderMetadataPool);
+        Misc.free(tableMetadataPool);
         Misc.free(walWriterPool);
         Misc.free(tableIdGenerator);
         Misc.free(messageBus);
@@ -425,6 +425,25 @@ public class CairoEngine implements Closeable, WriterSource {
         return ffCache;
     }
 
+    public TableMetadata getLegacyMetadata(TableToken tableToken) {
+        return getLegacyMetadata(tableToken, TableUtils.ANY_TABLE_VERSION);
+    }
+
+    /**
+     * Retrieves up-to-date table metadata regardless of table type.
+     *
+     * @param tableToken     table token
+     * @param desiredVersion version of table metadata used previously if consistent metadata reads are required
+     * @return returns {@link io.questdb.cairo.wal.seq.SequencerMetadata} for WAL tables and {@link TableMetadata}
+     * for non-WAL, which would be metadata of the {@link TableReader}
+     */
+    public TableMetadata getLegacyMetadata(TableToken tableToken, long desiredVersion) {
+        if (!tableToken.isWal()) {
+            return getTableMetadata(tableToken, desiredVersion);
+        }
+        return getSequencerMetadata(tableToken, desiredVersion);
+    }
+
     public MessageBus getMessageBus() {
         return messageBus;
     }
@@ -491,40 +510,37 @@ public class CairoEngine implements Closeable, WriterSource {
             LOG.critical()
                     .$("could not open reader [table=").$(tableToken)
                     .$(", errno=").$(e.getErrno())
-                    .$(", error=").$(e.getMessage())
+                    .$(", error=").$(e.getFlyweightMessage())
                     .I$();
             throw e;
         }
     }
 
     public TableMetadata getSequencerMetadata(TableToken tableToken) {
-        if (!tableToken.isWal()) {
-            return getTableReaderMetadata(tableToken);
-        }
-        verifyTableToken(tableToken);
-        return sequencerMetadataPool.get(tableToken);
+        return getSequencerMetadata(tableToken, TableUtils.ANY_TABLE_VERSION);
     }
 
-    public TableRecordMetadata getSequencerMetadata(TableToken tableToken, long metadataVersion) {
+    /**
+     * Table metadata as seen by the table sequencer. This is the most up-to-date table
+     * metadata, and it can be used to positively confirm column metadata changes immediately after
+     * making them.
+     * <p>
+     * However, this metadata cannot confirm all the changes, one of which is "dedup" flag on a table.
+     * This is a shortcoming and to confirm the "dedup" flag {{@link #getTableMetadata(TableToken, long)}} should
+     * be polled instead. We expect to fix issues like this one in the near future.
+     *
+     * @param tableToken     table token
+     * @param desiredVersion version of table metadata used previously if consistent metadata reads are required
+     * @return sequence metadata instance
+     */
+    public TableMetadata getSequencerMetadata(TableToken tableToken, long desiredVersion) {
+        assert tableToken.isWal();
         verifyTableToken(tableToken);
-        try {
-            final TableRecordMetadata metadata = sequencerMetadataPool.get(tableToken);
-            if (metadataVersion != TableUtils.ANY_TABLE_VERSION && metadata.getMetadataVersion() != metadataVersion) {
-                final TableReferenceOutOfDateException ex = TableReferenceOutOfDateException.of(
-                        tableToken,
-                        metadata.getTableId(),
-                        metadata.getTableId(),
-                        metadataVersion,
-                        metadata.getMetadataVersion()
-                );
-                metadata.close();
-                throw ex;
-            }
-            return metadata;
-        } catch (CairoException e) {
-            tryRepairTable(tableToken, e);
-        }
-        return sequencerMetadataPool.get(tableToken);
+        return validateDesiredMetadataVersion(
+                tableToken,
+                sequencerMetadataPool.get(tableToken),
+                desiredVersion
+        );
     }
 
     public DatabaseSnapshotAgent getSnapshotAgent() {
@@ -543,10 +559,34 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableIdGenerator;
     }
 
-    public TableMetadata getTableReaderMetadata(TableToken tableToken) {
+    /**
+     * Same as {{@link #getTableMetadata(TableToken, long)}} but it will provide the most
+     * up-to-date version of the metadata without correlating it with anything else.
+     *
+     * @param tableToken table token
+     * @return pooled metadata instance
+     */
+    public TableMetadata getTableMetadata(TableToken tableToken) {
+        return getTableMetadata(tableToken, TableUtils.ANY_TABLE_VERSION);
+    }
+
+    /**
+     * This is explicitly "table" metadata. For legacy (non-WAL) tables, this metadata
+     * is the same as writer metadata. For new WAL tables, table metadata could be "old",
+     * as in not all WAL transactions has reached the table yet. In scenarios where
+     * table modification is made and positively confirmed immediately after via metadata, {@link #getSequencerMetadata(TableToken, long)}
+     * must be used instead.
+     * <p>
+     * Metadata provided by this method is good enough for the read-only queries.
+     *
+     * @param tableToken     table token
+     * @param desiredVersion version of table metadata used previously if consistent metadata reads are required
+     * @return pooled metadata instance
+     */
+    public TableMetadata getTableMetadata(TableToken tableToken, long desiredVersion) {
         verifyTableToken(tableToken);
         try {
-            return tableReaderMetadataPool.get(tableToken);
+            return validateDesiredMetadataVersion(tableToken, tableMetadataPool.get(tableToken), desiredVersion);
         } catch (CairoException e) {
             if (tableToken.isWal()) {
                 throw e;
@@ -554,7 +594,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 tryRepairTable(tableToken, e);
             }
         }
-        return tableReaderMetadataPool.get(tableToken);
+        return validateDesiredMetadataVersion(tableToken, tableMetadataPool.get(tableToken), desiredVersion);
     }
 
     public TableSequencerAPI getTableSequencerAPI() {
@@ -718,7 +758,7 @@ public class CairoEngine implements Closeable, WriterSource {
         }
         // busy metadata is same as busy reader from user perspective
         String lockedReason;
-        if (tableReaderMetadataPool.lock(tableToken)) {
+        if (tableMetadataPool.lock(tableToken)) {
             if (sequencerMetadataPool.lock(tableToken)) {
                 lockedReason = writerPool.lock(tableToken, lockReason);
                 if (lockedReason == null) {
@@ -736,7 +776,7 @@ public class CairoEngine implements Closeable, WriterSource {
             } else {
                 lockedReason = REASON_BUSY_SEQUENCER_METADATA_POOL;
             }
-            tableReaderMetadataPool.unlock(tableToken);
+            tableMetadataPool.unlock(tableToken);
         } else {
             lockedReason = REASON_BUSY_TABLE_READER_METADATA_POOL;
         }
@@ -820,7 +860,7 @@ public class CairoEngine implements Closeable, WriterSource {
     @TestOnly
     public boolean releaseAllReaders() {
         boolean b1 = sequencerMetadataPool.releaseAll();
-        boolean b2 = tableReaderMetadataPool.releaseAll();
+        boolean b2 = tableMetadataPool.releaseAll();
         return readerPool.releaseAll() & b1 & b2;
     }
 
@@ -839,7 +879,7 @@ public class CairoEngine implements Closeable, WriterSource {
         useful |= readerPool.releaseInactive();
         useful |= tableSequencerAPI.releaseInactive();
         useful |= sequencerMetadataPool.releaseInactive();
-        useful |= tableReaderMetadataPool.releaseInactive();
+        useful |= tableMetadataPool.releaseInactive();
         useful |= walWriterPool.releaseInactive();
         return useful;
     }
@@ -989,7 +1029,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
     @TestOnly
     public void setPoolListener(PoolListener poolListener) {
-        this.tableReaderMetadataPool.setPoolListener(poolListener);
+        this.tableMetadataPool.setPoolListener(poolListener);
         this.sequencerMetadataPool.setPoolListener(poolListener);
         this.writerPool.setPoolListener(poolListener);
         this.readerPool.setPoolListener(poolListener);
@@ -1251,7 +1291,7 @@ public class CairoEngine implements Closeable, WriterSource {
         readerPool.unlock(tableToken);
         writerPool.unlock(tableToken, writer, newTable);
         sequencerMetadataPool.unlock(tableToken);
-        tableReaderMetadataPool.unlock(tableToken);
+        tableMetadataPool.unlock(tableToken);
     }
 
     private void validNameOrThrow(CharSequence tableName) {
@@ -1260,6 +1300,21 @@ public class CairoEngine implements Closeable, WriterSource {
                     .put("invalid table name [table=").putAsPrintable(tableName)
                     .put(']');
         }
+    }
+
+    private TableMetadata validateDesiredMetadataVersion(TableToken tableToken, TableMetadata metadata, long desiredVersion) {
+        if (desiredVersion != TableUtils.ANY_TABLE_VERSION && metadata.getMetadataVersion() != desiredVersion) {
+            final TableReferenceOutOfDateException ex = TableReferenceOutOfDateException.of(
+                    tableToken,
+                    tableToken.getTableId(),
+                    metadata.getTableId(),
+                    desiredVersion,
+                    metadata.getMetadataVersion()
+            );
+            metadata.close();
+            throw ex;
+        }
+        return metadata;
     }
 
     @NotNull

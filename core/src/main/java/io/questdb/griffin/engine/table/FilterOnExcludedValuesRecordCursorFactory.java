@@ -113,8 +113,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
 
     @Override
     public int getScanDirection() {
-        if (dataFrameCursorFactory.getOrder() == DataFrameCursorFactory.ORDER_ASC
-                && heapCursorUsed) {
+        if (dataFrameCursorFactory.getOrder() == DataFrameCursorFactory.ORDER_ASC && heapCursorUsed) {
             return SCAN_DIRECTION_FORWARD;
         }
         return SCAN_DIRECTION_OTHER;
@@ -149,14 +148,14 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
 
             if (symbolMapReader.containsNullValue()
                     && !excludedKeys.contains(SymbolTable.VALUE_IS_NULL) && includedKeys.add(SymbolTable.VALUE_IS_NULL)) {
-                // If the table contains null values and they're not excluded, we need to include
+                // If the table contains null values, and they're not excluded, we need to include
                 // them to the result set to match the behavior of the NOT IN() SQL function.
                 upsertRowCursorFactory(SymbolTable.VALUE_IS_NULL);
             }
 
-            // sorting values makes no sense for heap row cursor  
+            // sorting values makes no sense for heap row cursor
             if (!heapCursorUsed) {
-                //sorting here can produce order of cursorFactories different from one shown by explain command
+                // sorting here can produce order of cursorFactories different from one shown by explain command
                 if (followedOrderByAdvice && orderDirection == QueryModel.ORDER_DIRECTION_ASCENDING) {
                     cursorFactories.sort(0, cursorFactoriesIdx[0], comparator);
                 } else {
@@ -183,6 +182,11 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
         sink.optAttr("filter", filter);
         sink.child(cursor.getRowCursorFactory());
         sink.child(dataFrameCursorFactory);
+    }
+
+    @Override
+    public boolean usesIndex() {
+        return true;
     }
 
     private int compareStrFunctions(SymbolFunctionRowCursorFactory a, SymbolFunctionRowCursorFactory b) {

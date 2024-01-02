@@ -77,6 +77,11 @@ public class SortedSymbolIndexRecordCursorFactory extends AbstractDataFrameRecor
     }
 
     @Override
+    public boolean usesIndex() {
+        return true;
+    }
+
+    @Override
     protected RecordCursor getCursorInstance(
             DataFrameCursor dataFrameCursor,
             SqlExecutionContext executionContext

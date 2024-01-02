@@ -85,7 +85,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private static final int INT_BYTES_X = Numbers.bswap(Integer.BYTES);
     private static final int INT_NULL_X = Numbers.bswap(-1);
     private static final int IN_TRANSACTION = 1;
-    private final static Log LOG = LogFactory.getLog(PGConnectionContext.class);
     private static final byte MESSAGE_TYPE_BIND_COMPLETE = '2';
     private static final byte MESSAGE_TYPE_CLOSE_COMPLETE = '3';
     private static final byte MESSAGE_TYPE_COMMAND_COMPLETE = 'C';
@@ -110,6 +109,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private static final int SYNC_DESCRIBE_PORTAL = 4;
     private static final int SYNC_PARSE = 1;
     private static final String WRITER_LOCK_REASON = "pgConnection";
+    @SuppressWarnings("FieldMayBeFinal")
+    private static Log LOG = LogFactory.getLog(PGConnectionContext.class);
     private final BatchCallback batchCallback;
     private final ObjectPool<DirectBinarySequence> binarySequenceParamsPool;
     //stores result format codes (0=Text,1=Binary) from the latest bind message
@@ -534,9 +535,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             handleException(-1, e.getFlyweightMessage(), false, -1, true);
         } catch (CairoException e) {
             handleException(e.getPosition(), e.getFlyweightMessage(), e.isCritical(), e.getErrno(), e.isInterruption());
-            if (e.isEntityDisabled()) {
-                throw PeerDisconnectedException.INSTANCE;
-            }
         } catch (PeerDisconnectedException | PeerIsSlowToReadException | PeerIsSlowToWriteException |
                  QueryPausedException | BadProtocolException e) {
             throw e;
@@ -1709,17 +1707,18 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         try {
             r = authenticator.handleIO();
             if (r == Authenticator.OK) {
-                SecurityContext securityContext = securityContextFactory.getInstance(
-                        authenticator.getPrincipal(),
-                        authenticator.getAuthType(),
-                        SecurityContextFactory.PGWIRE
-                );
                 try {
-                    securityContext.authorizePGWire();
+                    final SecurityContext securityContext = securityContextFactory.getInstance(
+                            authenticator.getPrincipal(),
+                            authenticator.getAuthType(),
+                            SecurityContextFactory.PGWIRE
+                    );
                     sqlExecutionContext.with(securityContext, bindVariableService, rnd, getFd(), circuitBreaker);
+                    securityContext.checkEntityEnabled();
                     r = authenticator.loginOK();
                 } catch (CairoException e) {
-                    r = authenticator.denyAccess();
+                    LOG.error().$("failed to authenticate [error=").$(e.getFlyweightMessage()).I$();
+                    r = authenticator.denyAccess(e.getFlyweightMessage());
                 }
             }
         } catch (AuthenticatorException e) {

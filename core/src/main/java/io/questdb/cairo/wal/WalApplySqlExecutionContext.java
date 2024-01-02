@@ -27,7 +27,7 @@ package io.questdb.cairo.wal;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.str.Path;
 
@@ -38,11 +38,11 @@ class WalApplySqlExecutionContext extends SqlExecutionContextImpl {
         super(cairoEngine, workerCount, sharedWorkerCount);
     }
 
-    public TableRecordMetadata getSequencerMetadata(TableToken tableToken) {
+    public TableMetadata getMetadataForWrite(TableToken tableToken, long desiredVersion) {
         // When WAL is applied and SQL is re-compiled
         // the correct metadata for writing is reader metadata,
         // because the sequencer metadata looks at the future.
-        return getCairoEngine().getTableReaderMetadata(this.tableToken);
+        return getCairoEngine().getTableMetadata(this.tableToken, desiredVersion);
     }
 
     @Override

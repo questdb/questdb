@@ -241,7 +241,6 @@ public interface Record {
      * @param col numeric index of the column
      * @return 64-bit integer
      */
-
     default long getLongIPv4(int col) {
         throw new UnsupportedOperationException();
     }

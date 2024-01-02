@@ -30,6 +30,34 @@ import org.junit.Test;
 public class VwapDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
+    public void testAll() throws Exception {
+        assertSql("vwap\n" +
+                        "0.4601797676425299\n",
+                "select vwap(rnd_double(), rnd_double()) from long_sequence(10)"
+        );
+    }
+
+    @Test
+    public void testIgnoreNullAndZeroOrNegativeQty() throws Exception {
+        ddl("create table tab (p double, q double)");
+        insert("insert into tab values (null,null),(1,null),(100,10),(null,1),(105,40),(1,0),(1,-1)");
+        assertSql(
+                "vwap\n" +
+                        "104.0\n",
+                "select vwap(p, q) from tab"
+        );
+        // make sure they are the same
+        assertSql("same_vwap\n" +
+                        "true\n",
+                "select (new_vwap=old_vwap) same_vwap " +
+                        "from (" +
+                        "      (select vwap(p, q) new_vwap from tab) a," +
+                        "      (select (sum(p*q)/sum(q)) old_vwap from tab where p != null and q != null and q > 0) b" +
+                        ")"
+        );
+    }
+
+    @Test
     public void testNull() throws Exception {
         ddl("create table tab (a0 double, a1 double)");
         insert("insert into tab values (null,null),(null,1),(1,null)");
@@ -39,13 +67,6 @@ public class VwapDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
         );
 
     }
-    @Test
-    public void testAll() throws Exception {
-        assertSql("vwap\n" +
-                        "0.4601797676425299\n",
-                "select vwap(rnd_double(), rnd_double()) from long_sequence(10)"
-        );
-    }
 
     @Test
     public void testVwap() throws Exception {
@@ -54,21 +75,6 @@ public class VwapDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
         assertSql("vwap\n" +
                         "104.0\n",
                 "select vwap(a0, a1) from tab"
-        );
-    }
-
-    @Test
-    public void testIgnoreNullAndZeroOrNegativeQty() throws Exception {
-        ddl("create table tab (a0 double, a1 double)");
-        insert("insert into tab values (null,null),(1,null),(100,10),(null,1),(105,40),(1,0),(1,-1)");
-        assertSql("vwap\n" +
-                        "104.0\n",
-                "select vwap(a0, a1) from tab"
-        );
-        // make sure they are the same.
-        assertSql("same_vwap\n" +
-                        "true\n",
-                "select (new_vwap=old_vwap)same_vwap from ((select vwap(a0, a1)new_vwap from tab)a, (select (sum(a0*a1)/sum(a1))old_vwap from tab where a0 != null and a1 != null and a1 > 0)b)"
         );
     }
 

@@ -56,7 +56,7 @@ public class LastGeoHashGroupByFunctionFactory implements FunctionFactory {
                 return new FirstGeoHashGroupByFunctionByte(type, function) {
                     @Override
                     public void computeNext(MapValue mapValue, Record record) {
-                        mapValue.putByte(this.valueIndex, this.function.getGeoByte(record));
+                        mapValue.putByte(this.valueIndex, this.arg.getGeoByte(record));
                     }
 
                     @Override
@@ -68,7 +68,7 @@ public class LastGeoHashGroupByFunctionFactory implements FunctionFactory {
                 return new FirstGeoHashGroupByFunctionShort(type, function) {
                     @Override
                     public void computeNext(MapValue mapValue, Record record) {
-                        mapValue.putShort(this.valueIndex, this.function.getGeoShort(record));
+                        mapValue.putShort(this.valueIndex, this.arg.getGeoShort(record));
                     }
 
                     @Override
@@ -80,7 +80,7 @@ public class LastGeoHashGroupByFunctionFactory implements FunctionFactory {
                 return new FirstGeoHashGroupByFunctionInt(type, function) {
                     @Override
                     public void computeNext(MapValue mapValue, Record record) {
-                        mapValue.putInt(this.valueIndex, this.function.getGeoInt(record));
+                        mapValue.putInt(this.valueIndex, this.arg.getGeoInt(record));
                     }
 
                     @Override
@@ -92,7 +92,7 @@ public class LastGeoHashGroupByFunctionFactory implements FunctionFactory {
                 return new FirstGeoHashGroupByFunctionLong(type, function) {
                     @Override
                     public void computeNext(MapValue mapValue, Record record) {
-                        mapValue.putLong(this.valueIndex, this.function.getGeoLong(record));
+                        mapValue.putLong(this.valueIndex, this.arg.getGeoLong(record));
                     }
 
                     @Override

@@ -784,8 +784,16 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testAggregateFunctionExpr() throws SqlException {
         assertQuery(
-                "select-group-by sum(max(x) + 2) sum, f from (select-virtual [x, f(x) f] x, f(x) f from (select [x] from long_sequence(10)))",
+                "select-group-by sum(max(x) + 2) sum, f(x) f from (select [x] from long_sequence(10))",
                 "select sum(max(x) + 2), f(x) from long_sequence(10)"
+        );
+    }
+
+    @Test
+    public void testAggregateOperationExpr() throws SqlException {
+        assertQuery(
+                "select-group-by sum(max(x) + 2) sum, x + 1 column from (select [x] from long_sequence(10))",
+                "select sum(max(x) + 2), x + 1 from long_sequence(10)"
         );
     }
 
@@ -4235,7 +4243,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testGroupByNotConstant1() throws SqlException {
         assertQuery(
-                "select-group-by min(nts) min, column from (select-virtual [nts, 1 + day(nts) * 3 column] nts, 1 + day(nts) * 3 column from (select [nts] from tt timestamp (dts) where nts > '2020-01-01T00:00:00.000000Z'))",
+                "select-group-by min(nts) min, 1 + day(nts) * 3 column from (select [nts] from tt timestamp (dts) where nts > '2020-01-01T00:00:00.000000Z')",
                 "select min(nts), 1 + day(nts) * 3 from tt where nts > '2020-01-01T00:00:00.000000Z'",
                 modelOf("tt").timestamp("dts").col("nts", ColumnType.TIMESTAMP)
         );
@@ -6129,7 +6137,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testMultipleExpressions() throws Exception {
         assertQuery(
-                "select-virtual x, sum + 25 ohoh from (select-group-by [x, sum(z) sum] x, sum(z) sum from (select-virtual [a + b * c x, z] a + b * c x, z from (select [a, c, b, z] from zyzy)))",
+                "select-virtual x, sum + 25 ohoh from (select-group-by [a + b * c x, sum(z) sum] a + b * c x, sum(z) sum from (select [a, c, b, z] from zyzy))",
                 "select a+b*c x, sum(z)+25 ohoh from zyzy",
                 modelOf("zyzy")
                         .col("a", ColumnType.INT)
@@ -9130,7 +9138,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testWhereClause() throws Exception {
         assertQuery(
-                "select-virtual x, sum + 25 ohoh from (select-group-by [x, sum(z) sum] x, sum(z) sum from (select-virtual [a + b * c x, z] a + b * c x, z from (select [a, c, b, z] from zyzy where a in (0,10) and b = 10)))",
+                "select-virtual x, sum + 25 ohoh from (select-group-by [a + b * c x, sum(z) sum] a + b * c x, sum(z) sum from (select [a, c, b, z] from zyzy where a in (0,10) and b = 10))",
                 "select a+b*c x, sum(z)+25 ohoh from zyzy where a in (0,10) AND b = 10",
                 modelOf("zyzy")
                         .col("a", ColumnType.INT)

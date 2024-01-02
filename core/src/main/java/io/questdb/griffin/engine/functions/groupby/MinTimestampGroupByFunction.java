@@ -52,7 +52,7 @@ public class MinTimestampGroupByFunction extends TimestampFunction implements Gr
     public void computeNext(MapValue mapValue, Record record) {
         long min = mapValue.getTimestamp(valueIndex);
         long next = arg.getTimestamp(record);
-        if (next != Numbers.LONG_NaN && next < min || min == Numbers.LONG_NaN) {
+        if (next != Numbers.LONG_NaN && (next < min || min == Numbers.LONG_NaN)) {
             mapValue.putTimestamp(valueIndex, next);
         }
     }
@@ -70,6 +70,20 @@ public class MinTimestampGroupByFunction extends TimestampFunction implements Gr
     @Override
     public long getTimestamp(Record rec) {
         return rec.getTimestamp(valueIndex);
+    }
+
+    @Override
+    public boolean isParallelismSupported() {
+        return arg.isReadThreadSafe();
+    }
+
+    @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        long srcMin = srcValue.getTimestamp(valueIndex);
+        long destMin = destValue.getTimestamp(valueIndex);
+        if (srcMin != Numbers.LONG_NaN && (srcMin < destMin || destMin == Numbers.LONG_NaN)) {
+            destValue.putTimestamp(valueIndex, srcMin);
+        }
     }
 
     @Override

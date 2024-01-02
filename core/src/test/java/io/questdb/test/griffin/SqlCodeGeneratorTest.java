@@ -33,7 +33,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory;
-import io.questdb.griffin.engine.groupby.vect.GroupByJob;
+import io.questdb.griffin.engine.groupby.vect.GroupByVectorAggregateJob;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
@@ -7377,7 +7377,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testVectorSumAvgDoubleRndColumnWithNullsParallel() throws Exception {
         final AtomicBoolean running = new AtomicBoolean(true);
         final SOCountDownLatch haltLatch = new SOCountDownLatch(1);
-        final GroupByJob job = new GroupByJob(engine.getMessageBus());
+        final GroupByVectorAggregateJob job = new GroupByVectorAggregateJob(engine.getMessageBus());
         new Thread(() -> {
             while (running.get()) {
                 job.run(0);
