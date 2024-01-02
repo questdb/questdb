@@ -51,6 +51,8 @@ import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static io.questdb.cairo.wal.WalUtils.TABLE_REGISTRY_NAME_FILE;
+
 public class TextLoaderTest extends AbstractCairoTest {
 
     private static final ByteManipulator ENTITY_MANIPULATOR = (index, len, b) -> b;
@@ -3609,6 +3611,10 @@ public class TextLoaderTest extends AbstractCairoTest {
     }
 
     protected void assertTable(String expected) throws SqlException {
+        engine.closeNameRegistry();
+        Path path = Path.getThreadLocal(root);
+        path.concat(TABLE_REGISTRY_NAME_FILE).put('.').put(0).$();
+        configuration.getFilesFacade().remove(path);
         refreshTablesInBaseEngine();
         assertSql(expected, "test");
     }

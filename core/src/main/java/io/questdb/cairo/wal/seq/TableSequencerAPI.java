@@ -94,14 +94,6 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
-    public void deregisterTable(final TableToken tableToken) {
-        final TableSequencerEntry tableSequencer = seqRegistry.get(tableToken.getDirName());
-        if (tableSequencer != null && tableSequencer.checkClose()) {
-            LOG.info().$("table is converted to non-WAL, closed table sequencer [table=").$(tableToken).I$();
-            seqRegistry.remove(tableToken.getDirName(), tableSequencer);
-        }
-    }
-
     public void dropTable(TableToken tableToken, boolean failedCreate) {
         LOG.info().$("dropping wal table [name=").$(tableToken).$(", dirName=").utf8(tableToken.getDirName()).I$();
         try (TableSequencerImpl seq = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
@@ -325,6 +317,24 @@ public class TableSequencerAPI implements QuietCloseable {
                 sequencer.unlockWrite();
             }
         }
+    }
+
+    public boolean prepareToConvertToNonWal(final TableToken tableToken) {
+        boolean isDropped;
+        try (TableSequencerImpl seq = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
+            isDropped = seq.isDropped();
+            seq.unlockWrite();
+        } catch (CairoException e) {
+            LOG.info().$("failed to convert wal table [name=").$(tableToken).$(", dirName=").utf8(tableToken.getDirName()).I$();
+            return false;
+        }
+
+        final TableSequencerEntry tableSequencer = seqRegistry.get(tableToken.getDirName());
+        if (tableSequencer != null && tableSequencer.checkClose()) {
+            LOG.info().$("table is converted to non-WAL, closed table sequencer [table=").$(tableToken).I$();
+            seqRegistry.remove(tableToken.getDirName(), tableSequencer);
+        }
+        return !isDropped;
     }
 
     public void purgeTxnTracker(String dirName) {
