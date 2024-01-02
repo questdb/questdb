@@ -2939,7 +2939,7 @@ if __name__ == "__main__":
 
         String baseTable = "create table tab (b boolean, ts timestamp, sym symbol)";
         String walTable = baseTable + " timestamp(ts) partition by DAY WAL";
-        ObjList ddls = new ObjList(
+        ObjList<String> ddls = new ObjList<>(
                 baseTable,
                 baseTable + " timestamp(ts)",
                 baseTable + " timestamp(ts) partition by DAY BYPASS WAL",
@@ -2963,13 +2963,14 @@ if __name__ == "__main__":
         String updateWithJoin2 = "update tab t1 set b=sleep(120000) from tab t2 where t1.b = t2.b";
 
         // add many symbols to slow down operation enough so that other thread can detect it in registry and cancel it
-        String addColumnsTmp = "alter table tab add column s1 symbol index";
+        StringSink addColumnsTmp = new StringSink();
+        addColumnsTmp.put("alter table tab add column s1 symbol index");
         for (int i = 2; i < 20; i++) {
-            addColumnsTmp += ", s" + i + " symbol index";
+            addColumnsTmp.put(", s").put(i).put(" symbol index");
         }
-        final String addColumns = addColumnsTmp;
+        final String addColumns = addColumnsTmp.toString();
 
-        ObjList commands = new ObjList(
+        ObjList<String> commands = new ObjList<>(
                 createAsSelect,
                 select1,
                 select2,
@@ -2994,7 +2995,7 @@ if __name__ == "__main__":
             AtomicReference<Exception> queryError = new AtomicReference<>();
 
             for (int i = 0, n = ddls.size(); i < n; i++) {
-                final String ddl = (String) ddls.getQuick(i);
+                final String ddl = ddls.getQuick(i);
                 boolean isWal = ddl.equals(walTable);
 
                 drop("drop table if exists tab");
@@ -3006,7 +3007,7 @@ if __name__ == "__main__":
                 }
 
                 for (int j = 0, k = commands.size(); j < k; j++) {
-                    final String command = (String) commands.getQuick(j);
+                    final String command = commands.getQuick(j);
 
                     // skip pending wal changes in case wal table has been suspended by earlier command
                     if (isWal) {
