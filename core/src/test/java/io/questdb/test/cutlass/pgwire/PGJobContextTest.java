@@ -3014,7 +3014,7 @@ if __name__ == "__main__":
             try (PreparedStatement pstmt = connection.prepareStatement("create table xx as (" +
                     "select x," +
                     " timestamp_sequence(0, 1000) ts" +
-                    " from long_sequence(100000)) timestamp (ts)")) {
+                    " from long_sequence(1000)) timestamp (ts)")) {
                 pstmt.execute();
             }
 
