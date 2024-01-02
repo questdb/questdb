@@ -22,22 +22,24 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.groupby.vect;
+package io.questdb.cairo.pool;
 
-import io.questdb.MessageBus;
-import io.questdb.mp.AbstractQueueConsumerJob;
-import io.questdb.tasks.VectorAggregateTask;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.TableToken;
 
-public class GroupByJob extends AbstractQueueConsumerJob<VectorAggregateTask> {
+public class TableMetadataPool extends AbstractMultiTenantPool<MetadataPoolTenant> {
 
-    public GroupByJob(MessageBus messageBus) {
-        super(messageBus.getVectorAggregateQueue(), messageBus.getVectorAggregateSubSeq());
+    public TableMetadataPool(CairoConfiguration configuration) {
+        super(configuration, configuration.getMetadataPoolCapacity(), configuration.getInactiveReaderTTL());
     }
 
     @Override
-    protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
-        final VectorAggregateEntry entry = queue.get(cursor).entry;
-        entry.run(workerId, subSeq, cursor);
-        return true;
+    protected byte getListenerSrc() {
+        return PoolListener.SRC_TABLE_METADATA;
+    }
+
+    @Override
+    protected MetadataPoolTenant newTenant(TableToken tableToken, Entry<MetadataPoolTenant> entry, int index) {
+        return new TableReaderMetadataTenantImpl(this, entry, index, tableToken, false);
     }
 }

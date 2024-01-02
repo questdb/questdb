@@ -25,9 +25,9 @@
 package io.questdb.test.griffin.engine.groupby;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.test.AbstractCairoTest;
 import io.questdb.std.Chars;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -38,24 +38,31 @@ import static io.questdb.cairo.ColumnType.*;
 
 public class GroupByFunctionCaseTest extends AbstractCairoTest {
 
-    StringSink planSink = new StringSink();
-    StringSink sqlSink = new StringSink();
+    private final StringSink planSink = new StringSink();
+    private final StringSink sqlSink = new StringSink();
+
+    @Override
+    public void setUp() {
+        super.setUp();
+        configOverrideParallelGroupByEnabled(false);
+    }
 
     @Test
     public void testAggregatesOnColumnWithNoKeyWorkRegardlessOfCase() throws Exception {
         assertMemoryLeak(() -> {
             String[] functions = {"KSum", "NSum", "Sum", "Avg", "Min", "Max"};
-            String[][] expectedFunctions = {{"ksum(val)", "nsum(val)", "sum(val)", "avg(val)", "min(val)", "max(val)"},//byte
-                    {"ksum(val)", "nsum(val)", "sum(val)", "avg(val)", "min(val)", "max(val)"},//short
-                    {null, null, null, null, "min(val)", "max(val)"},//char
-                    {"ksum(val)", "nsum(val)", "sum(val)", "avg(val)", "min(val)", "max(val)"},//int
-                    {"ksum(val)", "nsum(val)", "sum(val)", "avg(val)", "min(val)", "max(val)"},//long
-                    {null, null, "sum(val)", "avg(val)", "min(val)", "max(val)"},//date
-                    {null, null, "sum(val)", "avg(val)", "min(val)", "max(val)"},//timestamp
-                    {"ksum(val)", "nsum(val)", "sum(val)", "avg(val)", "min(val)", "max(val)"}, //float
-                    {"ksum(val)", "nsum(val)", "sum(val)", "avg(val)", "min(val)", "max(val)"}, //double
+            String[][] expectedFunctions = {
+                    {"ksum(val)", "nsum(val)", "sum(val)", "avg(val)", "min(val)", "max(val)"}, // byte
+                    {"ksum(val)", "nsum(val)", "sum(val)", "avg(val)", "min(val)", "max(val)"}, // short
+                    {null, null, null, null, "min(val)", "max(val)"}, // char
+                    {"ksum(val)", "nsum(val)", "sum(val)", "avg(val)", "min(val)", "max(val)"}, // int
+                    {"ksum(val)", "nsum(val)", "sum(val)", "avg(val)", "min(val)", "max(val)"}, // long
+                    {null, null, "sum(val)", "avg(val)", "min(val)", "max(val)"}, // date
+                    {null, null, "sum(val)", "avg(val)", "min(val)", "max(val)"}, // timestamp
+                    {"ksum(val)", "nsum(val)", "sum(val)", "avg(val)", "min(val)", "max(val)"}, // float
+                    {"ksum(val)", "nsum(val)", "sum(val)", "avg(val)", "min(val)", "max(val)"}, // double
             };
-            //other types aren't accepted by aggregates at all (including string and symbol!)
+            // other types aren't accepted by aggregates at all (including string and symbol!)
             for (int t = BYTE; t <= DOUBLE; t++) {
                 String typeName = name(ColumnType.nameOf(t));
                 sqlSink.clear();
@@ -96,17 +103,18 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
     public void testAggregatesOnColumnWithSingleKeyWorkRegardlessOfCase() throws Exception {
         assertMemoryLeak(() -> {
             String[] functions = {"KSum", "NSum", "Sum", "Avg", "Min", "Max"};
-            String[][] expectedFunctions = {{"ksum(val)", "nsum(val)", "sum(val)", "avg(val)", "min(val)", "max(val)"},//byte
-                    {"ksum(val)", "nsum(val)", "sum(val)", "avg(val)", "min(val)", "max(val)"},//short
-                    {null, null, null, null, "min(val)", "max(val)"},//char
-                    {"ksum(val)", "nsum(val)", "sum(val)", "avg(val)", "min(val)", "max(val)"},//int
-                    {"ksum(val)", "nsum(val)", "sum(val)", "avg(val)", "min(val)", "max(val)"},//long
-                    {null, null, "sum(val)", "avg(val)", "min(val)", "max(val)"},//date
-                    {null, null, "sum(val)", "avg(val)", "min(val)", "max(val)"},//timestamp
-                    {"ksum(val)", "nsum(val)", "sum(val)", "avg(val)", "min(val)", "max(val)"}, //float
-                    {"ksum(val)", "nsum(val)", "sum(val)", "avg(val)", "min(val)", "max(val)"}, //double
+            String[][] expectedFunctions = {
+                    {"ksum(val)", "nsum(val)", "sum(val)", "avg(val)", "min(val)", "max(val)"}, // byte
+                    {"ksum(val)", "nsum(val)", "sum(val)", "avg(val)", "min(val)", "max(val)"}, // short
+                    {null, null, null, null, "min(val)", "max(val)"}, // char
+                    {"ksum(val)", "nsum(val)", "sum(val)", "avg(val)", "min(val)", "max(val)"}, // int
+                    {"ksum(val)", "nsum(val)", "sum(val)", "avg(val)", "min(val)", "max(val)"}, // long
+                    {null, null, "sum(val)", "avg(val)", "min(val)", "max(val)"}, // date
+                    {null, null, "sum(val)", "avg(val)", "min(val)", "max(val)"}, // timestamp
+                    {"ksum(val)", "nsum(val)", "sum(val)", "avg(val)", "min(val)", "max(val)"}, // float
+                    {"ksum(val)", "nsum(val)", "sum(val)", "avg(val)", "min(val)", "max(val)"}, // double
             };
-            //other types aren't accepted by aggregates at all (including string and symbol!)
+            // other types aren't accepted by aggregates at all (including string and symbol!)
             for (int t = BYTE; t <= DOUBLE; t++) {
                 String typeName = name(ColumnType.nameOf(t));
                 sqlSink.clear();
@@ -159,7 +167,7 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
                 for (int f = 0; f < functions.length; f++) {
                     String function = functions[f];
 
-                    //sum,avg don't work for data & timestamp if there's more than 1 key
+                    // sum,avg don't work for data & timestamp if there's more than 1 key
                     if ((t == CHAR && f < 4) || ((t == DATE || t == TIMESTAMP) && f < 4)) {
                         continue;
                     }
@@ -246,5 +254,4 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
         newAe.setStackTrace(ae.getStackTrace());
         throw newAe;
     }
-
 }

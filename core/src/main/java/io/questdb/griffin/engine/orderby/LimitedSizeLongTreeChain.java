@@ -40,57 +40,56 @@ import org.jetbrains.annotations.TestOnly;
 /**
  * LongTreeChain with a size limit - used to keep only the necessary records
  * instead of whole result set for queries with "limit L | limit L, H"  clause.
- * <p>
- * 1. "limit L" means we only need to keep :
- * <p>
- * L &gt;=0 - first L records
- * L &lt; 0 - last L records
- * 2. "limit L, H" means we need to keep :
- * L &lt; 0          - last  L records (but skip last H records, if H &gt;=0 then don't skip anything    )
+ * <pre>
+ * 1. "limit L" means we only need to keep:
+ * L &gt;= 0 - first L records
+ * L &lt; 0  - last L records
+ * 2. "limit L, H" means we need to keep:
+ * L &lt; 0          - last  L records (but skip last H records, if H &gt;=0 then don't skip anything)
  * L &gt;= 0, H &gt;= 0 - first H records (but skip first L later, if H &lt;= L then return empty set)
  * L &gt;= 0, H &lt; 0  - we can't optimize this case (because it spans from record L-th from the beginning up to
- * H-th from the end, and we don't  ) and need to revert to default behavior -
+ * H-th from the end, and we don't) and need to revert to default behavior -
  * produce the whole set and skip.
- * </p>
- * <p>
- * TreeChain stores repeating values (rowids) on valueChain as a linked list :
- * [latest rowid, offset to next] -&gt; [old rowid, offset to next] -&gt; [oldest rowid, -1L ]
- * -1L marks end of current node's value chain .
- * -2  marks an unused element on the value chain list for the current tree node
- * but should only happen once . It's meant to limit value chain allocations on delete/insert.
- * </p>
+ * </pre>
+ * TreeChain stores repeating values (rowids) on valueChain as a linked list:
+ * <pre>
+ * [latest rowid, offset to next] -&gt; [old rowid, offset to next] -&gt; [oldest rowid, -1L]
+ * </pre>
+ * -1 - marks end of current node's value chain.
+ * -2 - marks an unused element on the value chain list for the current tree node
+ * but should only happen once. It's meant to limit value chain allocations on delete/insert.
  */
 public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Reopenable {
-    //value marks end of value chain 
+    // value marks end of value chain
     private static final long CHAIN_END = -1;
 
-    //marks value chain entry as unused (belonging to a node on the freelist)
-    //it's meant to avoid unnecessary reallocations when removing nodes and adding nodes  
+    // marks value chain entry as unused (belonging to a node on the freelist)
+    // it's meant to avoid unnecessary reallocations when removing nodes and adding nodes
     private static final long FREE_SLOT = -2L;
-    //LIFO list of free blocks to reuse, allocated on the value chain
+    // LIFO list of free blocks to reuse, allocated on the value chain
     private final LongList chainFreeList;
     private final LimitedSizeLongTreeChain.TreeCursor cursor = new LimitedSizeLongTreeChain.TreeCursor();
-    //LIFO list of nodes to reuse, instead of releasing and reallocating
+    // LIFO list of nodes to reuse, instead of releasing and reallocating
     private final LongList freeList;
-    //firstN - keep <first->N> set , otherwise keep <last-N->last> set
+    // firstN - keep <first->N> set , otherwise keep <last-N->last> set
     private final boolean isFirstN;
-    //maximum number of values tree can store (including repeating values)
+    // maximum number of values tree can store (including repeating values)
     private final long maxValues; //-1 means 'almost' unlimited
     private final MemoryARW valueChain;
-    //number of all values stored in tree (including repeating ones)
+    // number of all values stored in tree (including repeating ones)
     private long currentValues = 0;
     private long minMaxNode = -1;
-    //for fast filtering out of records in here we store rowId of :
-    // - record with max value for firstN/bottomN query
-    // - record with min value for lastN/topN query
+    // for fast filtering out of records in here we store rowId of:
+    //  - record with max value for firstN/bottomN query
+    //  - record with min value for lastN/topN query
     private long minMaxRowId = -1;
 
-    public LimitedSizeLongTreeChain(long keyPageSize, int keyMaxPages, long valuePageSize, int valueMaxPages, boolean isfirstN, long maxValues) {
+    public LimitedSizeLongTreeChain(long keyPageSize, int keyMaxPages, long valuePageSize, int valueMaxPages, boolean isFirstN, long maxValues) {
         super(keyPageSize, keyMaxPages);
         this.valueChain = Vm.getARWInstance(valuePageSize, valueMaxPages, MemoryTag.NATIVE_TREE_CHAIN);
         this.freeList = new LongList();
         this.chainFreeList = new LongList();
-        this.isFirstN = isfirstN;
+        this.isFirstN = isFirstN;
         this.maxValues = maxValues;
     }
 
@@ -114,11 +113,13 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         Misc.free(valueChain);
     }
 
-    //returns address of node containing searchRecord; otherwise returns -1
-    public long find(Record searchedRecord,
-                     RecordCursor sourceCursor,
-                     Record placeholder,
-                     RecordComparator comparator) {
+    // returns address of node containing searchRecord; otherwise returns -1
+    public long find(
+            Record searchedRecord,
+            RecordCursor sourceCursor,
+            Record placeholder,
+            RecordComparator comparator
+    ) {
         comparator.setLeft(searchedRecord);
 
         if (root == -1) {
@@ -152,7 +153,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         print(sink, null);
     }
 
-    //prints tree in-order, horizontally
+    // prints tree in-order, horizontally
     public void print(CharSink sink, ValuePrinter printer) {
         if (root == EMPTY) {
             sink.put("[EMPTY TREE]");
@@ -176,16 +177,16 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
 
         comparator.setLeft(leftRecord);
 
-        //if maxValues < 0 then there's no limit (unless there's more than 2^64 records, which is unlikely)
+        // if maxValues < 0 then there's no limit (unless there's more than 2^64 records, which is unlikely)
         if (maxValues == currentValues) {
             sourceCursor.recordAt(rightRecord, minMaxRowId);
             int cmp = comparator.compare(rightRecord);
 
-            if (isFirstN && cmp >= 0) {//bigger than max for firstN/bottomN
+            if (isFirstN && cmp >= 0) { // bigger than max for firstN/bottomN
                 return;
-            } else if (!isFirstN && cmp <= 0) { //smaller than min for lastN/topN
+            } else if (!isFirstN && cmp <= 0) { // smaller than min for lastN/topN
                 return;
-            } else { //record has to be inserted so we've to remove current minMax
+            } else { // record has to be inserted, so we've to remove current minMax
                 removeAndCache(minMaxNode);
             }
         }
@@ -211,7 +212,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
             } else if (cmp > 0) {
                 p = rightOf(p);
             } else {
-                setRef(p, appendValue(leftRecord.getRowId(), r)); //appends value to chain, minmax shouldn't change
+                setRef(p, appendValue(leftRecord.getRowId(), r)); // appends value to chain, minMax shouldn't change
                 if (minMaxRowId == -1) {
                     refreshMinMaxNode();
                 }
@@ -233,16 +234,16 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         currentValues++;
     }
 
-    //remove node and put on freelist (if holds only one value in chain)
+    // remove node and put on freelist (if holds only one value in chain)
     public void removeAndCache(long node) {
         if (hasMoreThanOneValue(node)) {
-            removeMostRecentChainValue(node);//don't change minmax
+            removeMostRecentChainValue(node); // don't change minMax
         } else {
             long nodeToRemove = super.remove(node);
             clearBlock(nodeToRemove);
-            freeList.add(nodeToRemove);//keep node on freelist to minimize allocations
+            freeList.add(nodeToRemove); // keep node on freelist to minimize allocations
 
-            minMaxRowId = -1;//re-compute after inserting, there's no point doing it now
+            minMaxRowId = -1; // re-compute after inserting, there's no point doing it now
             minMaxNode = -1;
         }
 
@@ -265,7 +266,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         setLeft(position, -1);
         setRight(position, -1);
         setColor(position, BLACK);
-        //assume there's only one value in the chain (otherwise node shouldn't be deleted)
+        // assume there's only one value in the chain (otherwise node shouldn't be deleted)
         long refOffset = refOf(position);
         assert valueChain.getLong(refOffset + 8) == CHAIN_END;
         valueChain.putLong(refOffset, FREE_SLOT);
@@ -294,7 +295,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
 
         if (isFirstN) {
             p = findMaxNode();
-        } else {//lastN/topN
+        } else { // lastN/topN
             p = findMinNode();
         }
 
@@ -307,14 +308,14 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         long previousOffset = valueChain.getLong(ref + 8);
         setRef(node, previousOffset);
 
-        //clear both rowid slot and rext value offset
+        // clear both rowid slot and next value offset
         valueChain.putLong(ref, -1L);
         valueChain.putLong(ref + 8, -1L);
 
         chainFreeList.add(ref);
     }
 
-    //if not empty - reuses most recently deleted node from freelist; otherwise allocates a new node
+    // if not empty - reuses most recently deleted node from freelist; otherwise allocates a new node
     protected long allocateBlock(long parent, long recordRowId) {
         if (freeList.size() > 0) {
             long freeNode = freeList.get(freeList.size() - 1);

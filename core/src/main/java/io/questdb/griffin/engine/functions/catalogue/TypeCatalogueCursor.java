@@ -27,14 +27,14 @@ package io.questdb.griffin.engine.functions.catalogue;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.pgwire.PGOids;
 import io.questdb.std.Numbers;
 
-import static io.questdb.cutlass.pgwire.PGOids.PG_TYPE_OIDS;
-import static io.questdb.cutlass.pgwire.PGOids.PG_TYPE_TO_NAME;
+import static io.questdb.cutlass.pgwire.PGOids.*;
 
 class TypeCatalogueCursor implements NoRandomAccessRecordCursor {
     static final RecordMetadata METADATA;
@@ -61,11 +61,13 @@ class TypeCatalogueCursor implements NoRandomAccessRecordCursor {
     public boolean hasNext() {
         if (++row < rowCount) {
             intValues[0] = PG_TYPE_OIDS.get(row);
-            intValues[8] = Numbers.INT_NaN;
-            intValues[9] = 0;
+            intValues[9] = Numbers.INT_NaN;
             intValues[10] = 0;
             intValues[11] = 0;
             intValues[12] = 0;
+            intValues[13] = 0;
+            intValues[21] = 0;//typndims
+            intValues[22] = 0;//typcollation
             return true;
         }
         return false;
@@ -85,11 +87,23 @@ class TypeCatalogueCursor implements NoRandomAccessRecordCursor {
 
         @Override
         public boolean getBool(int col) {
+            if (col == 18) {//typisdefined
+                return true;
+            }
             return false;
         }
 
         @Override
         public char getChar(int col) {
+            if (col == 8) {
+                return PG_TYPE_TO_CATEGORY[row];
+            }
+            if (col == 19) {//typalign
+                return 'c';//char alignment
+            }
+            if (col == 20) {//typstorage
+                return 'p';//plain
+            }
             return 'b';
         }
 
@@ -99,8 +113,23 @@ class TypeCatalogueCursor implements NoRandomAccessRecordCursor {
         }
 
         @Override
+        public short getShort(int col) {
+            if (col == 15) {
+                return PG_TYPE_TO_LENGTH[row];
+            }
+
+            return -1;
+        }
+
+        @Override
         public CharSequence getStr(int col) {
-            return PG_TYPE_TO_NAME[row];
+            if (col == 1) {
+                return PG_TYPE_TO_NAME[row];
+            }
+            if (col == 23) {
+                return PG_TYPE_TO_DEFAULT[row];
+            }
+            return null;
         }
 
         @Override
@@ -110,7 +139,8 @@ class TypeCatalogueCursor implements NoRandomAccessRecordCursor {
 
         @Override
         public int getStrLen(int col) {
-            return getStr(col).length();
+            CharSequence str = getStr(col);
+            return str == null ? TableUtils.NULL_LEN : str.length();
         }
     }
 
@@ -124,11 +154,24 @@ class TypeCatalogueCursor implements NoRandomAccessRecordCursor {
         metadata.add(new TableColumnMetadata("typnotnull", ColumnType.BOOLEAN));
         metadata.add(new TableColumnMetadata("typtypmod", ColumnType.INT));
         metadata.add(new TableColumnMetadata("typtype", ColumnType.CHAR));
+        metadata.add(new TableColumnMetadata("typcategory", ColumnType.CHAR));
         metadata.add(new TableColumnMetadata("typrelid", ColumnType.INT));
         metadata.add(new TableColumnMetadata("typelem", ColumnType.INT));
         metadata.add(new TableColumnMetadata("typreceive", ColumnType.INT));
         metadata.add(new TableColumnMetadata("typdelim", ColumnType.INT));
         metadata.add(new TableColumnMetadata("typinput", ColumnType.INT));
+
+        metadata.add(new TableColumnMetadata("typowner", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("typlen", ColumnType.SHORT));
+        metadata.add(new TableColumnMetadata("typbyval", ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("typispreferred", ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("typisdefined", ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("typalign", ColumnType.CHAR));
+        metadata.add(new TableColumnMetadata("typstorage", ColumnType.CHAR));
+        metadata.add(new TableColumnMetadata("typndims", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("typcollation", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("typdefault", ColumnType.STRING));
+
         METADATA = metadata;
     }
 }

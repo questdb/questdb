@@ -30,11 +30,11 @@ import org.junit.Test;
 import java.util.UUID;
 
 public class LastNotNullGroupByFunctionFactoryTest extends AbstractCairoTest {
-    
+
     @Test
     public void testAllNull() throws Exception {
-
-        assertQuery("a0\ta1\ta2\ta3\ta4\ta5\ta6\ta7\ta8\ta9\ta10\ta11\ta12\ta13\ta14\n" +
+        assertQuery(
+                "a0\ta1\ta2\ta3\ta4\ta5\ta6\ta7\ta8\ta9\ta10\ta11\ta12\ta13\ta14\n" +
                         "\t\tNaN\tNaN\tNaN\tNaN\t\t\t\t\t\t\t\t\t\n",
                 "select last_not_null(a0) a0," +
                         "     last_not_null(a1) a1," +
@@ -134,7 +134,8 @@ public class LastNotNullGroupByFunctionFactoryTest extends AbstractCairoTest {
 
         insert("insert into tab (a1) values (null)"); // other columns default to null
 
-        assertSql("a0\ta1\ta2\ta3\ta4\ta5\ta6\ta7\ta8\ta9\ta10\ta11\ta12\ta13\ta14\n" +
+        assertSql(
+                "a0\ta1\ta2\ta3\ta4\ta5\ta6\ta7\ta8\ta9\ta10\ta11\ta12\ta13\ta14\n" +
                         "a\t2023-10-23T00:00:00.000Z\t2.2\t3.3000\t4\t5\ta_symbol\t2023-10-23T12:34:59.000000Z\t" + lastUuid + "\ta_string\tu\tuu\tuuuuu\tuuuuuuu\t1.0.0.0\n",
                 "select last_not_null(a0) a0," +
                         "     last_not_null(a1) a1," +
@@ -151,6 +152,7 @@ public class LastNotNullGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "     last_not_null(a12) a12, " +
                         "     last_not_null(a13) a13, " +
                         "     last_not_null(a14) a14 " +
-                        "from tab");
+                        "from tab"
+        );
     }
 }

@@ -22,24 +22,15 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.pool;
+package io.questdb.cairo.map;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.RecordCursor;
 
-public class TableReaderMetadataPool extends AbstractMultiTenantPool<MetadataPoolTenant> {
-
-    public TableReaderMetadataPool(CairoConfiguration configuration) {
-        super(configuration, configuration.getMetadataPoolCapacity(), configuration.getInactiveReaderTTL());
-    }
+public interface MapRecordCursor extends RecordCursor {
 
     @Override
-    protected byte getListenerSrc() {
-        return PoolListener.SRC_TABLE_READER_METADATA;
-    }
+    MapRecord getRecord();
 
     @Override
-    protected MetadataPoolTenant newTenant(TableToken tableToken, Entry<MetadataPoolTenant> entry, int index) {
-        return new TableReaderMetadataTenantImpl(this, entry, index, tableToken, false);
-    }
+    MapRecord getRecordB();
 }

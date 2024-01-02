@@ -1,16 +1,12 @@
 name: Bug report
 description: Create a bug report to help us improve QuestDB
-labels: [bug]
+labels: [ bug ]
 body:
   - type: markdown
     attributes:
       value: |
         Thank you for reporting the bug.  
-        ❗ Please provide all the required information to receive faster responses from the maintainers. 
-  - type: textarea
-    attributes:
-      label: Describe the bug
-      description: A concise description of what you're experiencing.
+        ❗ Please provide all the required information to receive faster responses from the maintainers.
   - type: textarea
     attributes:
       label: To reproduce
@@ -21,31 +17,55 @@ body:
         3. Run this SQL '....'
         4. See error
     validations:
-      required: false
-  - type: textarea
+      required: true
+
+  - type: input
     attributes:
-      label: Expected Behavior
-      description: A concise description of what you expected to happen.
+      label: "QuestDB version:"
+      placeholder: e.g., 7.3.5
     validations:
-      required: false
-
-  - type: textarea
+      required: true
+  - type: input
     attributes:
-      label: Environment
-      description: |
-        Provide details about your environment if applicable, for example:
-          - **QuestDB version**: 6.0.9
-          - **OS**: Ubuntu 20.04
-          - **Browser**: Firefox 93.0 (64-bit)
-
+      label: "OS, in case of Docker specify Docker and the Host OS:"
+      placeholder: e.g., Ubuntu 22.04 (Docker)
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: "File System, in case of Docker specify Host File System:"
+      placeholder: e.g., ext4
+    validations:
+      required: true
+  - type: markdown
+    attributes:
+      value: "# Identity Disclosure:"
+  - type: input
+    attributes:
+      label: "Full Name:"
+      placeholder: e.g., John Doe
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: "Affiliation:"
+      placeholder: e.g., Oracle
+    validations:
+      required: true
+  - type: markdown
+    attributes:
       value: |
-        - **QuestDB version**:
-        - **OS**:
-        - **Browser**:
-      render: markdown
-    validations:
-      required: false
-
+        If the above is not given and is not obvious from your GitHub profile page, we might close your issue without further review. Please refer to the [reasoning behind this rule](https://berthub.eu/articles/posts/anonymous-help/) if you have questions.
+  - type: checkboxes
+    attributes:
+      label: "Have you followed Linux, MacOs kernel configuration steps to increase Maximum open files and Maximum virtual memory areas limit?"
+      options:
+        - label: Yes, I have
+          required: true
+  - type: markdown
+    attributes:
+      value: |          
+        [OS configuration](https://questdb.io/docs/deployment/capacity-planning/#os-configuration)
   - type: textarea
     attributes:
       label: Additional context

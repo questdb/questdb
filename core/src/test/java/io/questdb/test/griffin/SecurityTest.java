@@ -96,6 +96,19 @@ public class SecurityTest extends AbstractCairoTest {
                 return 1024;
             }
 
+            @Override
+            public boolean isSqlParallelFilterEnabled() {
+                // Async factories use a special circuit breaker (see PageFrameSequence),
+                // so we make sure to use a single-threaded factory in this test.
+                return false;
+            }
+
+            @Override
+            public boolean isSqlParallelGroupByEnabled() {
+                // Async factories use a special circuit breaker (see PageFrameSequence),
+                // so we make sure to use a single-threaded factory in this test.
+                return false;
+            }
         };
         memoryRestrictedEngine = new CairoEngine(readOnlyConfiguration);
         SqlExecutionCircuitBreaker dummyCircuitBreaker = new SqlExecutionCircuitBreaker() {

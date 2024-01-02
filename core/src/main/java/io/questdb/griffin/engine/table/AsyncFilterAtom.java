@@ -83,10 +83,9 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
     }
 
     public Function getFilter(int filterId) {
-        if (filterId == -1) {
+        if (filterId == -1 || perWorkerFilters == null) {
             return filter;
         }
-        assert perWorkerFilters != null;
         return perWorkerFilters.getQuick(filterId);
     }
 
@@ -207,10 +206,9 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
     }
 
     public void releaseFilter(int filterId) {
-        if (perWorkerLocks == null) {
-            return;
+        if (perWorkerLocks != null) {
+            perWorkerLocks.releaseSlot(filterId);
         }
-        perWorkerLocks.releaseSlot(filterId);
     }
 
     @Override

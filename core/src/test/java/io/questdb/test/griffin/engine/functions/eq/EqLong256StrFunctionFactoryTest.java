@@ -31,6 +31,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class EqLong256StrFunctionFactoryTest extends AbstractCairoTest {
+
     @Test
     public void testLong256Decode1() throws Exception {
         assertQuery(
@@ -38,7 +39,8 @@ public class EqLong256StrFunctionFactoryTest extends AbstractCairoTest {
                 "xxxx where rnd_long256='0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650'",
                 "create table xxxx as (select rnd_long256() from long_sequence(200));",
                 null,
-                true);
+                true
+        );
     }
 
     @Test
@@ -48,7 +50,8 @@ public class EqLong256StrFunctionFactoryTest extends AbstractCairoTest {
                 "xxxx where rnd_long256!='0x056'",
                 "create table xxxx as (select rnd_long256() from long_sequence(1));",
                 null,
-                true);
+                true
+        );
     }
 
     @Test
@@ -59,10 +62,33 @@ public class EqLong256StrFunctionFactoryTest extends AbstractCairoTest {
                     "xxxx where rnd_long256!='0xG56'",
                     "create table xxxx as (select rnd_long256() from long_sequence(1));",
                     null,
-                    true);
+                    true
+            );
             Assert.fail();
         } catch (ImplicitCastException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `0xG56` [STRING -> LONG256]");
         }
+    }
+
+    @Test
+    public void testLong256NotNull() throws Exception {
+        assertQuery(
+                "rnd_long256\n0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\n",
+                "xxxx where null!=rnd_long256 limit 1",
+                "create table xxxx as (select rnd_long256() from long_sequence(200));",
+                null,
+                true
+        );
+    }
+
+    @Test
+    public void testLong256Null() throws Exception {
+        assertQuery(
+                "rnd_long256\n",
+                "xxxx where rnd_long256=null",
+                "create table xxxx as (select rnd_long256() from long_sequence(200));",
+                null,
+                true
+        );
     }
 }

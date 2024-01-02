@@ -42,7 +42,8 @@ import io.questdb.cutlass.line.tcp.StaticChallengeResponseMatcher;
 import io.questdb.cutlass.pgwire.*;
 import io.questdb.cutlass.text.CopyJob;
 import io.questdb.cutlass.text.CopyRequestJob;
-import io.questdb.griffin.engine.groupby.vect.GroupByJob;
+import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
+import io.questdb.griffin.engine.groupby.vect.GroupByVectorAggregateJob;
 import io.questdb.griffin.engine.table.AsyncFilterAtom;
 import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
 import io.questdb.log.Log;
@@ -259,7 +260,8 @@ public class ServerMain implements Closeable {
                     final MessageBus messageBus = engine.getMessageBus();
                     // register jobs that help parallel execution of queries and column indexing.
                     sharedPool.assign(new ColumnIndexerJob(messageBus));
-                    sharedPool.assign(new GroupByJob(messageBus));
+                    sharedPool.assign(new GroupByVectorAggregateJob(messageBus));
+                    sharedPool.assign(new GroupByMergeShardJob(messageBus));
                     sharedPool.assign(new LatestByAllIndexedJob(messageBus));
 
                     if (!isReadOnly) {

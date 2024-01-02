@@ -81,9 +81,8 @@ public class PerWorkerLocks {
     }
 
     public void releaseSlot(int slot) {
-        if (slot == -1) {
-            return;
+        if (slot > -1) {
+            locks.set(slot, 0);
         }
-        locks.set(slot, 0);
     }
 }

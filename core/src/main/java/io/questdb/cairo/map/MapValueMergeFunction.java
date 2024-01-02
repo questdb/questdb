@@ -22,17 +22,14 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.map;
 
-import io.questdb.cairo.sql.TableRecordMetadata;
-import io.questdb.cairo.wal.seq.SequencerMetadata;
+@FunctionalInterface
+public interface MapValueMergeFunction {
 
-import java.io.Closeable;
-
-public interface MetadataFactory extends Closeable {
-    SequencerMetadata getSequencerMetadata();
-
-    TableRecordMetadata openTableReaderMetadata(TableReader tableReader);
-
-    TableRecordMetadata openTableReaderMetadata(String tableName);
+    /**
+     * Merges two map values. Used in parallel GROUP BY. Both values are guaranteed to be not new
+     * when this method is called, i.e. {@code !destValue.isNew() && !srcValue.isNew()} is true.
+     */
+    void merge(MapValue destValue, MapValue srcValue);
 }

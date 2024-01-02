@@ -39,7 +39,6 @@ public class FirstTimestampGroupByFunctionFactoryTest extends AbstractCairoTest 
 
     @Test
     public void testAllNull() throws SqlException {
-
         ddl("create table tab (f timestamp)");
 
         try (TableWriter w = getWriter("tab")) {
@@ -62,7 +61,6 @@ public class FirstTimestampGroupByFunctionFactoryTest extends AbstractCairoTest 
 
     @Test
     public void testFirstNull() throws SqlException {
-
         ddl("create table tab (f timestamp)");
 
         final Rnd rnd = new Rnd();
@@ -89,7 +87,6 @@ public class FirstTimestampGroupByFunctionFactoryTest extends AbstractCairoTest 
 
     @Test
     public void testNonNull() throws SqlException {
-
         ddl("create table tab (f timestamp)");
 
         final Rnd rnd = new Rnd();
@@ -113,7 +110,6 @@ public class FirstTimestampGroupByFunctionFactoryTest extends AbstractCairoTest 
 
     @Test
     public void testSomeNull() throws SqlException {
-
         ddl("create table tab (f timestamp)");
 
         try (TableWriter w = getWriter("tab")) {

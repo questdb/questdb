@@ -179,7 +179,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     public boolean isCritical() {
-        return errno != NON_CRITICAL;
+        return errno != NON_CRITICAL && errno != PARTITION_MANIPULATION_RECOVERABLE && errno != METADATA_VALIDATION_RECOVERABLE;
     }
 
     public boolean isEntityDisabled() {
@@ -284,5 +284,6 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         interruption = false;
         authorizationError = false;
         entityDisabled = false;
+        messagePosition = 0;
     }
 }
