@@ -38,5 +38,9 @@ public interface MapRecord extends Record {
 
     int keyHashCode();
 
+    long keyPtr();
+
+    int keySize();
+
     void setSymbolTableResolver(RecordCursor resolver, IntList symbolTableIndex);
 }

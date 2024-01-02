@@ -24,7 +24,6 @@
 
 package io.questdb.std;
 
-import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8String;
 
@@ -108,8 +107,8 @@ public final class Hash {
      * @param len memory length in bytes
      * @return hash code
      */
-    public static int hashMem32(long p, long len) {
-        long h = 0;
+    public static int hashMem32(long p, long len, long seed) {
+        long h = seed;
         int i = 0;
         for (; i + 7 < len; i += 8) {
             h = h * M2 + Unsafe.getUnsafe().getLong(p + i);
@@ -125,25 +124,8 @@ public final class Hash {
         return (int) h ^ (int) (h >>> 32);
     }
 
-    /**
-     * Same as {@link #hashMem32(long, long)}, but with MemoryR instead of direct
-     * unsafe access.
-     */
-    public static int hashMem32(long p, long len, MemoryR mem) {
-        long h = 0;
-        int i = 0;
-        for (; i + 7 < len; i += 8) {
-            h = h * M2 + mem.getLong(p + i);
-        }
-        if (i + 3 < len) {
-            h = h * M2 + mem.getInt(p + i);
-            i += 4;
-        }
-        for (; i < len; i++) {
-            h = h * M2 + mem.getByte(p + i);
-        }
-        h *= M2;
-        return (int) h ^ (int) (h >>> 32);
+    public static int hashMem32(long p, long len) {
+        return hashMem32(p, len, 0);
     }
 
     /**

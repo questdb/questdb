@@ -61,5 +61,11 @@ public interface MapKey extends RecordSinkSPI {
         return findValue() == null;
     }
 
+    // Must be called after commit.
+    long ptr();
+
     void put(Record record, RecordSink sink);
+
+    // Must be called after commit.
+    int size();
 }

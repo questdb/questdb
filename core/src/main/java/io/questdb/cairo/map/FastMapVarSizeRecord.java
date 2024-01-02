@@ -58,6 +58,7 @@ final class FastMapVarSizeRecord implements FastMapRecord {
     private final long[] valueOffsets;
     private final int valueSize;
     private long keyAddress;
+    private int keySize;
     private int lastKeyIndex = -1;
     private int lastKeyOffset = -1;
     private long limit;
@@ -230,7 +231,6 @@ final class FastMapVarSizeRecord implements FastMapRecord {
     @Override
     public void copyToKey(MapKey destKey) {
         FastMap.VarSizeKey destFastKey = (FastMap.VarSizeKey) destKey;
-        int keySize = Unsafe.getUnsafe().getInt(startAddress + HASH_BYTES);
         destFastKey.copyFromRawKey(startAddress, keySize + HASH_BYTES + KEY_LEN_BYTES);
     }
 
@@ -406,10 +406,20 @@ final class FastMapVarSizeRecord implements FastMapRecord {
     }
 
     @Override
+    public long keyPtr() {
+        return keyAddress;
+    }
+
+    @Override
+    public int keySize() {
+        return keySize;
+    }
+
+    @Override
     public void of(long startAddress) {
         this.startAddress = startAddress;
         this.keyAddress = startAddress + HASH_BYTES + KEY_LEN_BYTES;
-        int keySize = Unsafe.getUnsafe().getInt(startAddress + HASH_BYTES);
+        this.keySize = Unsafe.getUnsafe().getInt(startAddress + HASH_BYTES);
         this.valueAddress = keyAddress + keySize;
         this.lastKeyIndex = -1;
         this.lastKeyOffset = -1;

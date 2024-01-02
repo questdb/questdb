@@ -42,7 +42,6 @@ import org.jetbrains.annotations.Nullable;
 import java.io.Closeable;
 
 public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Plannable {
-    // We use the first 8 bits of a hash code to determine the shard, hence 128 as the max number of shards.
     private static final int MAX_SHARDS = 128;
     private final CairoConfiguration configuration;
     private final Function filter;
@@ -57,7 +56,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     private final ObjList<RecordSink> perWorkerMapSinks;
     private final ObjList<Particle> perWorkerParticles;
     private final int shardCount;
-    private final int shardCountShr;
+    private final int shardCountMask;
     private final int shardingThreshold;
     private final ColumnTypes valueTypes;
     private volatile boolean sharded;
@@ -90,8 +89,8 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             functionUpdater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
             perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
 
-            shardCount = Math.min(configuration.getGroupByShardCount(), MAX_SHARDS);
-            shardCountShr = 32 - Numbers.msb(shardCount);
+            shardCount = Math.min(Numbers.ceilPow2(workerCount), MAX_SHARDS);
+            shardCountMask = shardCount - 1;
             ownerParticle = new Particle();
             perWorkerParticles = new ObjList<>(workerCount);
             for (int i = 0; i < workerCount; i++) {
@@ -306,10 +305,6 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         }
     }
 
-    private int shardIndex(int hashCode) {
-        return hashCode >>> shardCountShr;
-    }
-
     public class Particle implements Reopenable, QuietCloseable {
         private final Map map; // non-sharded partial result
         private final ObjList<Map> shards; // this.map split into shards
@@ -334,8 +329,11 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             return map;
         }
 
-        public Map getShardMap(int hashCode) {
-            final int shardIndex = shardIndex(hashCode);
+        public Map getShardMap(long keyPtr, int keyLen) {
+            // The seed here should be different from the one used in FastMap.
+            // That's to avoid hash collisions within each FastMap shard.
+            final int hashCode = Hash.hashMem32(keyPtr, keyLen, 31);
+            final int shardIndex = hashCode & shardCountMask;
             return shards.getQuick(shardIndex);
         }
 
@@ -380,11 +378,10 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
                 RecordCursor cursor = map.getCursor();
                 MapRecord record = map.getRecord();
                 while (cursor.hasNext()) {
-                    final int hashCode = record.keyHashCode();
-                    final Map shard = getShardMap(hashCode);
+                    final Map shard = getShardMap(record.keyPtr(), record.keySize());
                     MapKey shardKey = shard.withKey();
                     record.copyToKey(shardKey);
-                    MapValue shardValue = shardKey.createValue(hashCode);
+                    MapValue shardValue = shardKey.createValue(record.keyHashCode());
                     record.copyValue(shardValue);
                 }
             }

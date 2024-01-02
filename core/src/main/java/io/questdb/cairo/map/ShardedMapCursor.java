@@ -289,6 +289,16 @@ public class ShardedMapCursor implements MapRecordCursor {
         }
 
         @Override
+        public long keyPtr() {
+            return baseRecord.keyPtr();
+        }
+
+        @Override
+        public int keySize() {
+            return baseRecord.keySize();
+        }
+
+        @Override
         public void setSymbolTableResolver(RecordCursor resolver, IntList symbolTableIndex) {
             for (int i = 0, n = shardCursors.size(); i < n; i++) {
                 if (isPrimary) {

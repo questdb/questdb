@@ -684,6 +684,11 @@ public class FastMap implements Map, Reopenable {
         }
 
         @Override
+        public long ptr() {
+            return startAddress + HASH_BYTES;
+        }
+
+        @Override
         public void putBin(BinarySequence value) {
             throw new UnsupportedOperationException();
         }
@@ -783,6 +788,11 @@ public class FastMap implements Map, Reopenable {
         }
 
         @Override
+        public int size() {
+            return keySize;
+        }
+
+        @Override
         public void skip(int bytes) {
             appendAddress += bytes;
         }
@@ -814,12 +824,17 @@ public class FastMap implements Map, Reopenable {
         @Override
         public void copyFrom(MapKey srcKey) {
             VarSizeKey srcFastKey = (VarSizeKey) srcKey;
-            copyFromRawKey(srcFastKey.startAddress, srcFastKey.len() + keyOffset);
+            copyFromRawKey(srcFastKey.startAddress, srcFastKey.size() + keyOffset);
         }
 
         @Override
         public int hash() {
             return Unsafe.getUnsafe().getInt(startAddress);
+        }
+
+        @Override
+        public long ptr() {
+            return startAddress + keyOffset;
         }
 
         @Override
@@ -983,13 +998,14 @@ public class FastMap implements Map, Reopenable {
         }
 
         @Override
+        public int size() {
+            return Unsafe.getUnsafe().getInt(startAddress + HASH_BYTES);
+        }
+
+        @Override
         public void skip(int bytes) {
             checkSize(bytes);
             appendAddress += bytes;
-        }
-
-        private int len() {
-            return Unsafe.getUnsafe().getInt(startAddress + HASH_BYTES);
         }
 
         private void putVarSizeNull() {

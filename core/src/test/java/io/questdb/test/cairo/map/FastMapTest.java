@@ -1143,6 +1143,8 @@ public class FastMapTest extends AbstractCairoTest {
                 int hashCode = key.hash();
                 keyHashCodes.add(hashCode);
 
+                Assert.assertEquals("0 seed should be used for hash code", Hash.hashMem32(key.ptr(), key.size(), 0), hashCode);
+
                 MapValue value = key.createValue(hashCode);
                 Assert.assertTrue(value.isNew());
                 value.putLong(0, i + 2);
@@ -1153,6 +1155,8 @@ public class FastMapTest extends AbstractCairoTest {
             MapRecord record = map.getRecord();
             while (cursor.hasNext()) {
                 recordHashCodes.add(record.keyHashCode());
+
+                Assert.assertEquals("0 seed should be used for hash code", Hash.hashMem32(record.keyPtr(), record.keySize(), 0), record.keyHashCode());
             }
 
             TestUtils.assertEquals(keyHashCodes, recordHashCodes);
@@ -1179,6 +1183,8 @@ public class FastMapTest extends AbstractCairoTest {
                 int hashCode = key.hash();
                 keyHashCodes.add(hashCode);
 
+                Assert.assertEquals("0 seed should be used for hash code", Hash.hashMem32(key.ptr(), key.size(), 0), hashCode);
+
                 MapValue value = key.createValue(hashCode);
                 Assert.assertTrue(value.isNew());
                 value.putLong(0, i + 2);
@@ -1189,6 +1195,8 @@ public class FastMapTest extends AbstractCairoTest {
             MapRecord record = map.getRecord();
             while (cursor.hasNext()) {
                 recordHashCodes.add(record.keyHashCode());
+
+                Assert.assertEquals("0 seed should be used for hash code", Hash.hashMem32(record.keyPtr(), record.keySize(), 0), record.keyHashCode());
             }
 
             TestUtils.assertEquals(keyHashCodes, recordHashCodes);

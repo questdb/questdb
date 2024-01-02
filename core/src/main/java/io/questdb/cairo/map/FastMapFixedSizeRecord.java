@@ -302,6 +302,16 @@ final class FastMapFixedSizeRecord implements FastMapRecord {
     }
 
     @Override
+    public long keyPtr() {
+        return startAddress + HASH_BYTES;
+    }
+
+    @Override
+    public int keySize() {
+        return keySize;
+    }
+
+    @Override
     public void of(long address) {
         this.startAddress = address;
         this.valueAddress = address + HASH_BYTES + keySize;
