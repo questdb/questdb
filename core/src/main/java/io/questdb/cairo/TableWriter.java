@@ -2464,16 +2464,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private static void removeFileAndOrLog(FilesFacade ff, LPSZ name) {
-        if (ff.exists(name)) {
-            if (ff.remove(name)) {
-                LOG.debug().$("removed [file=").$(name).I$();
-            } else {
-                LOG.error()
-                        .$("could not remove [errno=").$(ff.errno())
-                        .$(", file=").$(name)
-                        .I$();
-            }
+    private static void removeFileOrLog(FilesFacade ff, LPSZ name) {
+        if (!ff.removeQuiet(name)) {
+            LOG.error()
+                    .$("could not remove [errno=").$(ff.errno())
+                    .$(", file=").$(name)
+                    .I$();
         }
     }
 
@@ -2907,9 +2903,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     if (!isIndexedNow && wasIndexedAtDetached) {
                         long columnNameTxn = attachColumnVersionReader.getColumnNameTxn(partitionTimestamp, colIdx);
                         keyFileName(detachedPath.trimTo(detachedPartitionRoot), columnName, columnNameTxn);
-                        removeFileAndOrLog(ff, detachedPath);
+                        removeFileOrLog(ff, detachedPath);
                         valueFileName(detachedPath.trimTo(detachedPartitionRoot), columnName, columnNameTxn);
-                        removeFileAndOrLog(ff, detachedPath);
+                        removeFileOrLog(ff, detachedPath);
                     } else if (isIndexedNow
                             && (!wasIndexedAtDetached || indexValueBlockCapacityNow != indexValueBlockCapacityDetached)) {
                         // Was not indexed before or value block capacity has changed
@@ -3427,7 +3423,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         int res = ff.copy(other, to);
         if (Os.isWindows() && res == -1 && ff.errno() == Files.WINDOWS_ERROR_FILE_EXISTS) {
             // Windows throws an error the destination file already exists, other platforms do not
-            if (!ff.remove(to)) {
+            if (!ff.removeQuiet(to)) {
                 // If file is open, return here so that errno is 5 in the error message
                 return -1;
             }
@@ -3474,7 +3470,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         .$("could not create index [name=").$(path)
                         .$(", errno=").$(e.getErrno())
                         .I$();
-                if (!ff.remove(path)) {
+                if (!ff.removeQuiet(path)) {
                     LOG.critical()
                             .$("could not remove '").$(path).$("'. Please remove MANUALLY.")
                             .$("[errno=").$(ff.errno())
@@ -6612,10 +6608,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             setPathForPartition(path, partitionBy, partitionTimestamp, -1);
             int plen = path.size();
             long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
-            removeFileAndOrLog(ff, dFile(path, columnName, columnNameTxn));
-            removeFileAndOrLog(ff, iFile(path.trimTo(plen), columnName, columnNameTxn));
-            removeFileAndOrLog(ff, keyFileName(path.trimTo(plen), columnName, columnNameTxn));
-            removeFileAndOrLog(ff, valueFileName(path.trimTo(plen), columnName, columnNameTxn));
+            removeFileOrLog(ff, dFile(path, columnName, columnNameTxn));
+            removeFileOrLog(ff, iFile(path.trimTo(plen), columnName, columnNameTxn));
+            removeFileOrLog(ff, keyFileName(path.trimTo(plen), columnName, columnNameTxn));
+            removeFileOrLog(ff, valueFileName(path.trimTo(plen), columnName, columnNameTxn));
             path.trimTo(rootLen);
         } else {
             LOG.critical()
@@ -6677,8 +6673,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         setPathForPartition(path, partitionBy, partitionTimestamp, partitionNameTxn);
         int plen = path.size();
         long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
-        removeFileAndOrLog(ff, keyFileName(path.trimTo(plen), columnName, columnNameTxn));
-        removeFileAndOrLog(ff, valueFileName(path.trimTo(plen), columnName, columnNameTxn));
+        removeFileOrLog(ff, keyFileName(path.trimTo(plen), columnName, columnNameTxn));
+        removeFileOrLog(ff, valueFileName(path.trimTo(plen), columnName, columnNameTxn));
         path.trimTo(rootLen);
     }
 
@@ -6689,13 +6685,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void removeMetaFile() {
         try {
             path.concat(META_FILE_NAME).$();
-            if (ff.exists(path) && !ff.remove(path)) {
+            if (!ff.removeQuiet(path)) {
                 // On Windows opened file cannot be removed
                 // but can be renamed
                 other.concat(META_FILE_NAME).put('.').put(configuration.getMicrosecondClock().getTicks()).$();
                 if (ff.rename(path, other) != FILES_RENAME_OK) {
-                    LOG.error().$("could not remove [path=").$(path).$(']').$();
-                    throw CairoException.critical(ff.errno()).put("Recovery failed. Cannot remove: ").put(path);
+                    LOG.error()
+                            .$("could not rename [from=").$(path)
+                            .$(", to=").$(other)
+                            .I$();
+                    throw CairoException.critical(ff.errno()).put("Recovery failed. Could not rename: ").put(path);
                 }
             }
         } finally {
@@ -6752,10 +6751,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void removeSymbolMapFilesQuiet(CharSequence name, long columnNamTxn) {
         try {
-            removeFileAndOrLog(ff, offsetFileName(path.trimTo(rootLen), name, columnNamTxn));
-            removeFileAndOrLog(ff, charFileName(path.trimTo(rootLen), name, columnNamTxn));
-            removeFileAndOrLog(ff, keyFileName(path.trimTo(rootLen), name, columnNamTxn));
-            removeFileAndOrLog(ff, valueFileName(path.trimTo(rootLen), name, columnNamTxn));
+            removeFileOrLog(ff, offsetFileName(path.trimTo(rootLen), name, columnNamTxn));
+            removeFileOrLog(ff, charFileName(path.trimTo(rootLen), name, columnNamTxn));
+            removeFileOrLog(ff, keyFileName(path.trimTo(rootLen), name, columnNamTxn));
+            removeFileOrLog(ff, valueFileName(path.trimTo(rootLen), name, columnNamTxn));
         } finally {
             path.trimTo(rootLen);
         }
@@ -6789,7 +6788,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     other.$();
                 }
 
-                if (ff.exists(other) && !ff.remove(other)) {
+                if (!ff.removeQuiet(other)) {
                     LOG.info().$("could not remove target of rename '").$(path).$("' to '").$(other).$(" [errno=").$(ff.errno()).I$();
                     index++;
                     continue;
@@ -6967,9 +6966,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             if (ff.exists(path)) {
                 LOG.info().$("Repairing metadata from: ").$(path).$();
-                if (ff.exists(other.concat(META_FILE_NAME).$()) && !ff.remove(other)) {
-                    throw CairoException.critical(ff.errno()).put("Repair failed. Cannot replace ").put(other);
-                }
+                ff.remove(other.concat(META_FILE_NAME).$());
 
                 if (ff.rename(path, other) != FILES_RENAME_OK) {
                     throw CairoException.critical(ff.errno()).put("Repair failed. Cannot rename ").put(path).put(" -> ").put(other);

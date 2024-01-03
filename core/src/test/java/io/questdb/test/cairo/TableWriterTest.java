@@ -118,8 +118,8 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean remove(LPSZ name) {
-                return !Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME) && super.remove(name);
+            public boolean removeQuiet(LPSZ name) {
+                return !Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME) && super.removeQuiet(name);
             }
 
             @Override
@@ -320,8 +320,8 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean remove(LPSZ name) {
-                return !Utf8s.containsAscii(name, abcColumnNamePatternK) && super.remove(name);
+            public boolean removeQuiet(LPSZ name) {
+                return !Utf8s.containsAscii(name, abcColumnNamePatternK) && super.removeQuiet(name);
             }
         });
     }
@@ -427,11 +427,11 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean remove(LPSZ name) {
+            public boolean removeQuiet(LPSZ name) {
                 if (Utf8s.containsAscii(name, TableUtils.META_SWAP_FILE_NAME)) {
                     return --count < 0;
                 }
-                return super.remove(name);
+                return super.removeQuiet(name);
             }
         };
 
@@ -510,8 +510,8 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean remove(LPSZ name) {
-                return !Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME) && super.remove(name);
+            public boolean removeQuiet(LPSZ name) {
+                return !Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME) && super.removeQuiet(name);
             }
         }
         testAddColumnErrorFollowedByRepairFail(new X());
@@ -555,11 +555,11 @@ public class TableWriterTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public boolean remove(LPSZ name) {
+                public boolean removeQuiet(LPSZ name) {
                     if (Utf8s.endsWithAscii(name, TableUtils.META_SWAP_FILE_NAME)) {
                         return deleteAttempted = true;
                     }
-                    return super.remove(name);
+                    return super.removeQuiet(name);
                 }
             }
 
@@ -589,8 +589,8 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean remove(LPSZ name) {
-                return !Utf8s.containsAscii(name, TableUtils.META_SWAP_FILE_NAME) && super.remove(name);
+            public boolean removeQuiet(LPSZ name) {
+                return !Utf8s.containsAscii(name, TableUtils.META_SWAP_FILE_NAME) && super.removeQuiet(name);
             }
         });
     }
@@ -2106,7 +2106,7 @@ public class TableWriterTest extends AbstractCairoTest {
             try (Path path = new Path()) {
                 String all = "all";
                 TableToken tableToken = engine.verifyTableName(all);
-                Assert.assertTrue(FF.remove(path.of(root).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$()));
+                Assert.assertTrue(FF.removeQuiet(path.of(root).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$()));
                 try {
                     newTableWriter(configuration, all, metrics).close();
                     Assert.fail();
@@ -2180,30 +2180,20 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testRemoveColumnCannotRemoveAnyMetadataPrev() throws Exception {
         testRemoveColumnRecoverableFailure(new TestFilesFacade() {
-            int exists = 0;
             int removes = 0;
 
             @Override
-            public boolean exists(LPSZ path) {
-                if (Utf8s.containsAscii(path, TableUtils.META_PREV_FILE_NAME)) {
-                    exists++;
-                    return true;
-                }
-                return super.exists(path);
-            }
-
-            @Override
-            public boolean remove(LPSZ name) {
+            public boolean removeQuiet(LPSZ name) {
                 if (Utf8s.containsAscii(name, TableUtils.META_PREV_FILE_NAME)) {
                     removes++;
                     return false;
                 }
-                return super.remove(name);
+                return super.removeQuiet(name);
             }
 
             @Override
             public boolean wasCalled() {
-                return exists > 0 && removes > 0;
+                return removes > 0;
             }
         });
     }
@@ -2214,12 +2204,12 @@ public class TableWriterTest extends AbstractCairoTest {
             int count = 0;
 
             @Override
-            public boolean remove(LPSZ name) {
+            public boolean removeQuiet(LPSZ name) {
                 if (Utf8s.endsWithAscii(name, "supplier.d")) {
                     count++;
                     return false;
                 }
-                return super.remove(name);
+                return super.removeQuiet(name);
             }
 
             @Override
@@ -2235,12 +2225,12 @@ public class TableWriterTest extends AbstractCairoTest {
             int count = 0;
 
             @Override
-            public boolean remove(LPSZ name) {
+            public boolean removeQuiet(LPSZ name) {
                 if (Utf8s.endsWithAscii(name, "supplier.d")) {
                     count++;
                     return false;
                 }
-                return super.remove(name);
+                return super.removeQuiet(name);
             }
 
             @Override
@@ -2256,16 +2246,11 @@ public class TableWriterTest extends AbstractCairoTest {
             int count = 5;
 
             @Override
-            public boolean exists(LPSZ path) {
-                if (Utf8s.containsAscii(path, TableUtils.META_PREV_FILE_NAME) && --count > 0) {
-                    return true;
+            public boolean removeQuiet(LPSZ name) {
+                if (Utf8s.containsAscii(name, TableUtils.META_PREV_FILE_NAME) && --count > 0) {
+                    return false;
                 }
-                return super.exists(path);
-            }
-
-            @Override
-            public boolean remove(LPSZ name) {
-                return !Utf8s.containsAscii(name, TableUtils.META_PREV_FILE_NAME) && super.remove(name);
+                return super.removeQuiet(name);
             }
 
             @Override
@@ -2286,12 +2271,12 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean remove(LPSZ name) {
+            public boolean removeQuiet(LPSZ name) {
                 if (Utf8s.containsAscii(name, TableUtils.META_SWAP_FILE_NAME)) {
                     hit = true;
                     return false;
                 }
-                return super.remove(name);
+                return super.removeQuiet(name);
             }
 
             @Override
@@ -2435,30 +2420,20 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testRenameColumnCannotRemoveAnyMetadataPrev() throws Exception {
         testRenameColumnRecoverableFailure(new TestFilesFacade() {
-            int exists = 0;
             int removes = 0;
 
             @Override
-            public boolean exists(LPSZ path) {
-                if (Utf8s.containsAscii(path, TableUtils.META_PREV_FILE_NAME)) {
-                    exists++;
-                    return true;
-                }
-                return super.exists(path);
-            }
-
-            @Override
-            public boolean remove(LPSZ name) {
+            public boolean removeQuiet(LPSZ name) {
                 if (Utf8s.containsAscii(name, TableUtils.META_PREV_FILE_NAME)) {
                     removes++;
                     return false;
                 }
-                return super.remove(name);
+                return super.removeQuiet(name);
             }
 
             @Override
             public boolean wasCalled() {
-                return exists > 0 && removes > 0;
+                return removes > 0;
             }
         });
     }
@@ -2469,12 +2444,12 @@ public class TableWriterTest extends AbstractCairoTest {
             int count = 0;
 
             @Override
-            public boolean remove(LPSZ name) {
+            public boolean removeQuiet(LPSZ name) {
                 if (Utf8s.endsWithAscii(name, "supplier.c")) {
                     count++;
                     return false;
                 }
-                return super.remove(name);
+                return super.removeQuiet(name);
             }
 
             @Override
@@ -2490,12 +2465,12 @@ public class TableWriterTest extends AbstractCairoTest {
             int count = 0;
 
             @Override
-            public boolean remove(LPSZ name) {
+            public boolean removeQuiet(LPSZ name) {
                 if (Utf8s.endsWithAscii(name, "supplier.d")) {
                     count++;
                     return false;
                 }
-                return super.remove(name);
+                return super.removeQuiet(name);
             }
 
             @Override
@@ -2511,16 +2486,11 @@ public class TableWriterTest extends AbstractCairoTest {
             int count = 5;
 
             @Override
-            public boolean exists(LPSZ path) {
-                if (Utf8s.containsAscii(path, TableUtils.META_PREV_FILE_NAME) && --count > 0) {
-                    return true;
+            public boolean removeQuiet(LPSZ name) {
+                if (Utf8s.containsAscii(name, TableUtils.META_PREV_FILE_NAME) && --count > 0) {
+                    return false;
                 }
-                return super.exists(path);
-            }
-
-            @Override
-            public boolean remove(LPSZ name) {
-                return !Utf8s.containsAscii(name, TableUtils.META_PREV_FILE_NAME) && super.remove(name);
+                return super.removeQuiet(name);
             }
 
             @Override
@@ -2541,12 +2511,12 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean remove(LPSZ name) {
+            public boolean removeQuiet(LPSZ name) {
                 if (Utf8s.containsAscii(name, TableUtils.META_SWAP_FILE_NAME)) {
                     hit = true;
                     return false;
                 }
-                return super.remove(name);
+                return super.removeQuiet(name);
             }
 
             @Override

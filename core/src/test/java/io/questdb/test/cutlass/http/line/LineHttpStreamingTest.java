@@ -143,7 +143,7 @@ public class LineHttpStreamingTest extends AbstractBootstrapTest {
                         try {
                             Point point = Point.measurement(tableName)
                                     .tag("tag1", "value1")
-                                    .field("value", 55.15)
+                                    .addField("value", 55.15)
                                     .time(Instant.now().minusSeconds(-10).toEpochMilli(), TimeUnit.MILLISECONDS)
                                     .build();
 

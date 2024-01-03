@@ -121,7 +121,7 @@ public class TableConverter {
                             }
 
                             path.trimTo(rootLen).concat(dirNameSink).concat(CONVERT_FILE_NAME).$();
-                            if (!ff.remove(path)) {
+                            if (!ff.removeQuiet(path)) {
                                 LOG.error().$("Could not remove _convert file [path=").$(path).I$();
                             }
                         }
@@ -182,7 +182,7 @@ public class TableConverter {
                     if (CairoKeywords.isWal(name)) {
                         path.trimTo(plen).concat(name).$();
                         if (type == Files.DT_FILE && CairoKeywords.isLock(name)) {
-                            if (!ff.remove(path)) {
+                            if (!ff.removeQuiet(path)) {
                                 LOG.error()
                                         .$("Could not remove wal lock file [errno=").$(ff.errno())
                                         .$(", path=").$(path)

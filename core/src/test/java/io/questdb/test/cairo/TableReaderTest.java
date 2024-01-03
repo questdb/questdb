@@ -1294,7 +1294,7 @@ public class TableReaderTest extends AbstractCairoTest {
             writerThread.join();
             readerThread.join();
 
-            if (exceptions.size() != 0) {
+            if (!exceptions.isEmpty()) {
                 for (Throwable ex : exceptions) {
                     ex.printStackTrace();
                 }
@@ -1372,7 +1372,7 @@ public class TableReaderTest extends AbstractCairoTest {
             writerThread.join();
             readerThread.join();
 
-            if (exceptions.size() != 0) {
+            if (!exceptions.isEmpty()) {
                 Throwable ex = exceptions.poll();
                 ex.printStackTrace();
                 throw new Exception(ex);
@@ -1452,7 +1452,7 @@ public class TableReaderTest extends AbstractCairoTest {
             LOG.infoW().$("total reload count ").$(reloadCount.get()).$();
         });
 
-        if (exceptions.size() != 0) {
+        if (!exceptions.isEmpty()) {
             throw exceptions.poll();
         }
     }
@@ -1495,14 +1495,14 @@ public class TableReaderTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean remove(LPSZ name) {
+            public boolean removeQuiet(LPSZ name) {
                 if (Utf8s.endsWithAscii(name, columnName + ".v" + suffix)) {
                     if (counterRef.get() == CANNOT_DELETE) {
                         return false;
                     }
                     counterRef.incrementAndGet();
                 }
-                return super.remove(name);
+                return super.removeQuiet(name);
             }
 
             @Override
@@ -3468,7 +3468,7 @@ public class TableReaderTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean remove(LPSZ name) {
+            public boolean removeQuiet(LPSZ name) {
                 if (
                         Utf8s.endsWithAscii(name, columnName + ".i") ||
                                 Utf8s.endsWithAscii(name, columnName + ".d" + suffix) ||
@@ -3482,7 +3482,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     }
                     counterRef.incrementAndGet();
                 }
-                return super.remove(name);
+                return super.removeQuiet(name);
             }
 
             @Override

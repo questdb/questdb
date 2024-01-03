@@ -1890,25 +1890,12 @@ public abstract class AbstractCairoTest extends AbstractTest {
         return update(updateSql, sqlExecutionContext, null);
     }
 
-    protected long update(CharSequence updateSql, SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            while (true) {
-                try {
-                    CompiledQuery cc = compiler.compile(updateSql, sqlExecutionContext);
-                    try (OperationFuture future = cc.execute(eventSubSeq)) {
-                        future.await();
-                        return future.getAffectedRowsCount();
-                    }
-                } catch (TableReferenceOutOfDateException ex) {
-                    // retry, e.g. continue
-                } catch (SqlException ex) {
-                    if (Chars.contains(ex.getFlyweightMessage(), "cached query plan cannot be used because table schema has changed")) {
-                        continue;
-                    }
-                    throw new RuntimeException(ex);
-                }
-            }
-        }
+    protected long update(
+            CharSequence updateSql,
+            SqlExecutionContext sqlExecutionContext,
+            @Nullable SCSequence eventSubSeq
+    ) throws SqlException {
+        return engine.update(updateSql, sqlExecutionContext, eventSubSeq);
     }
 
     protected enum StringAsTagMode {

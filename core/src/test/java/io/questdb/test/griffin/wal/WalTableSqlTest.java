@@ -1826,11 +1826,11 @@ public class WalTableSqlTest extends AbstractCairoTest {
         AtomicBoolean latch = new AtomicBoolean();
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
-            public boolean remove(LPSZ name) {
+            public boolean removeQuiet(LPSZ name) {
                 if (Utf8s.endsWithAscii(name, fileName) && latch.get()) {
                     return false;
                 }
-                return super.remove(name);
+                return super.removeQuiet(name);
             }
         };
         assertMemoryLeak(ff, () -> {

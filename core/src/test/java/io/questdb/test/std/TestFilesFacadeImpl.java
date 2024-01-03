@@ -24,6 +24,7 @@
 
 package io.questdb.test.std;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacadeImpl;
@@ -41,7 +42,6 @@ public class TestFilesFacadeImpl extends FilesFacadeImpl {
     private final static Log LOG = LogFactory.getLog(TestFilesFacadeImpl.class);
     private final static HashMap<Long, Utf8String> openFilesFds = new HashMap<>();
     private final static Utf8SequenceIntHashMap openPaths = new Utf8SequenceIntHashMap();
-
     protected int fd = -1;
 
     public static synchronized void resetTracking() {
@@ -66,7 +66,7 @@ public class TestFilesFacadeImpl extends FilesFacadeImpl {
             super.close(fd);
         }
         // Remove without checking that is open using call to super.
-        return super.remove(path);
+        return super.removeQuiet(path);
     }
 
     @Override
@@ -98,15 +98,11 @@ public class TestFilesFacadeImpl extends FilesFacadeImpl {
     }
 
     @Override
-    public boolean remove(LPSZ name) {
+    public void remove(LPSZ name) {
         if (checkRemove(name)) {
-            return false;
+            throw CairoException.critical(0).put("removing open file [file=").put(name).put(']');
         }
-        boolean ok = super.remove(name);
-        if (!ok) {
-            LOG.info().$("cannot remove file: ").$(name).$(", errno:").$(errno()).$();
-        }
-        return ok;
+        super.remove(name);
     }
 
     private static synchronized boolean checkRemove(LPSZ name) {

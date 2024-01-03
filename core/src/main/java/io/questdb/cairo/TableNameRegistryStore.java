@@ -175,7 +175,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                 currentOffset = newAppendOffset;
                 // best effort to remove old files, but we don't care if it fails
                 path.trimTo(pathRootLen).concat(TABLE_REGISTRY_NAME_FILE).putAscii('.').put(lastFileVersion - 1).$();
-                ff.remove(path);
+                ff.removeQuiet(path);
             } else {
                 // Not critical, if rename fails, compaction will be done next time
                 LOG.error().$("could not rename tables file, tables file will not be compacted [from=").$(path)

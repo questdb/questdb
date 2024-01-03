@@ -126,7 +126,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             continue;
                         }
 
-                        if (!ff.remove(tempPath.$())) {
+                        if (!ff.removeQuiet(tempPath.$())) {
                             allClean = false;
                             LOG.info().$("could not remove [tempPath=").$(tempPath).$(", errno=").$(ff.errno()).I$();
                         }
@@ -166,7 +166,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     }
 
     private static boolean tryDestroyDroppedTable(TableToken tableToken, TableWriter writer, CairoEngine engine, Path tempPath) {
-        if (engine.lockReadersByTableToken(tableToken)) {
+        if (engine.lockReadersAndMetadata(tableToken)) {
             TableWriter writerToClose = null;
             try {
                 final CairoConfiguration configuration = engine.getConfiguration();
@@ -189,7 +189,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 if (writerToClose != null) {
                     writerToClose.close();
                 }
-                engine.releaseReadersByTableToken(tableToken);
+                engine.unlockReadersAndMetadata(tableToken);
             }
         } else {
             LOG.info().$("table '").utf8(tableToken.getDirName())

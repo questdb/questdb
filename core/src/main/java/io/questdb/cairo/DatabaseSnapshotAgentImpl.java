@@ -338,7 +338,7 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent {
                 int version = TableNameRegistryStore.findLastTablesFileVersion(ff, dstPath, nameSink);
                 dstPath.trimTo(rootLen).concat(WalUtils.TABLE_REGISTRY_NAME_FILE).putAscii('.').put(version).$();
                 LOG.info().$("backup removing table name registry file [dst=").$(dstPath).I$();
-                if (!ff.remove(dstPath)) {
+                if (!ff.removeQuiet(dstPath)) {
                     LOG.error()
                             .$("could not remove tables.d file [dst=").$(dstPath)
                             .$(", errno=").$(ff.errno())

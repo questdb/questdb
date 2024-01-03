@@ -1176,12 +1176,12 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public boolean remove(LPSZ name) {
+                public boolean removeQuiet(LPSZ name) {
                     if (Utf8s.endsWithAscii(name, ".lock")) {
                         invoked = true;
                         return false;
                     }
-                    return super.remove(name);
+                    return super.removeQuiet(name);
                 }
 
                 @Override
@@ -1441,9 +1441,9 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public boolean remove(LPSZ name) {
+                public boolean removeQuiet(LPSZ name) {
                     // fail to remove file for good measure
-                    return !Utf8s.endsWithAscii(name, fileUnderAttack) && super.remove(name);
+                    return !Utf8s.endsWithAscii(name, fileUnderAttack) && super.removeQuiet(name);
                 }
             };
 
