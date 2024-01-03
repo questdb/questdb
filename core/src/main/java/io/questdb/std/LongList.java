@@ -136,7 +136,7 @@ public class LongList implements Mutable, LongVec, Sinkable {
         int low = 0;
         int high = pos - 1;
         while (high - low > 65) {
-            final int mid = (low + high) / 2;
+            final int mid = (low + high) >>> 1;
             final long midVal = data[mid];
 
             if (midVal < value) {
@@ -177,7 +177,7 @@ public class LongList implements Mutable, LongVec, Sinkable {
         int low = offset >> shl;
         int high = (pos - 1) >> shl;
         while (high - low > 65) {
-            final int mid = (low + high) / 2;
+            final int mid = (low + high) >>> 1;
             final long midVal = data[mid << shl];
 
             if (midVal < value) {
