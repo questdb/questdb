@@ -123,15 +123,8 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
             ConcurrentHashMap<ReverseTableMapItem> dirNameToTokenMap,
             @Nullable ObjList<TableToken> convertedTables
     ) {
-        int lastFileVersion = reloadFromTablesFile(tableNameToTokenMap, dirNameToTokenMap, convertedTables);
-        boolean newTablesFound = reloadFromRootDirectory(tableNameToTokenMap, dirNameToTokenMap);
-
-        if (isLocked() && (newTablesFound || lastFileVersion > 0)) {
-            LOG.info().$("rewriting tables names file").$();
-            FilesFacade ff = configuration.getFilesFacade();
-            Path path = Path.getThreadLocal(configuration.getRoot());
-            compactTableNameFile(tableNameToTokenMap, dirNameToTokenMap, Math.abs(lastFileVersion) - 1, ff, path);
-        }
+        reloadFromTablesFile(tableNameToTokenMap, dirNameToTokenMap, convertedTables);
+        reloadFromRootDirectory(tableNameToTokenMap, dirNameToTokenMap);
     }
 
     @TestOnly
@@ -325,7 +318,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
         }
     }
 
-    private boolean reloadFromRootDirectory(
+    private void reloadFromRootDirectory(
             ConcurrentHashMap<TableToken> tableNameToTableTokenMap,
             ConcurrentHashMap<ReverseTableMapItem> dirNameToTableTokenMap
     ) {
@@ -333,7 +326,6 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
         int plimit = path.size();
         FilesFacade ff = configuration.getFilesFacade();
         long findPtr = ff.findFirst(path);
-        boolean foundNewTables = false;
         try {
             Utf8StringSink dirNameSink = Misc.getThreadLocalUtf8Sink();
             do {
@@ -387,7 +379,6 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
 
                             tableNameToTableTokenMap.put(tableName, token);
                             dirNameToTableTokenMap.put(dirName, ReverseTableMapItem.of(token));
-                            foundNewTables = true;
                         }
                     }
                 }
@@ -398,10 +389,9 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                 longBuffer = Unsafe.free(longBuffer, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
             }
         }
-        return foundNewTables;
     }
 
-    private int reloadFromTablesFile(
+    private void reloadFromTablesFile(
             ConcurrentHashMap<TableToken> tableNameToTableTokenMap,
             ConcurrentHashMap<ReverseTableMapItem> dirNameToTableTokenMap,
             @Nullable ObjList<TableToken> convertedTables
@@ -429,7 +419,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                     if (e.errnoReadPathDoesNotExist()) {
                         if (lastFileVersion == 0) {
                             // This is RO mode and file and tables.d.0 does not exist.
-                            return -lastFileVersion - 1;
+                            return;
                         } else {
                             // This is RO mode and file we want to read was just swapped to new one by the RW instance.
                             continue;
@@ -444,8 +434,6 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
         long currentOffset = Long.BYTES;
         memory.extend(mapMem);
         int forceCompact = Integer.MAX_VALUE / 2;
-        final int compactReturn = lastFileVersion + 1;
-        final int doNotCompactReturn = -lastFileVersion - 1;
 
         int tableToCompact = 0;
         while (currentOffset < mapMem) {
@@ -494,7 +482,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                                 dirName,
                                 existing
                         );
-                        return compactReturn;
+                        return;
                     }
                     tableNameToTableTokenMap.put(tableName, token);
                     if (!Chars.startsWith(token.getDirName(), token.getTableName())) {
@@ -524,11 +512,16 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                                 token.getDirName(),
                                 existing
                         );
-                        return compactReturn;
+                        return;
                     }
 
-                    tableNameToTableTokenMap.put(token.getTableName(), token);
-                    dirNameToTableTokenMap.put(token.getDirName(), ReverseTableMapItem.of(token));
+                    if (token.isWal()) {
+                        tableNameToTableTokenMap.put(token.getTableName(), token);
+                        dirNameToTableTokenMap.put(token.getDirName(), ReverseTableMapItem.of(token));
+                    } else {
+                        tableNameToTableTokenMap.remove(token.getTableName());
+                        dirNameToTableTokenMap.remove(token.getDirName());
+                    }
 
                     // Force the compaction
                     tableToCompact = forceCompact;
@@ -536,11 +529,15 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
             }
 
             int tableRegistryCompactionThreshold = configuration.getTableRegistryCompactionThreshold();
-            boolean needsRewrite = (tableRegistryCompactionThreshold > -1 && tableToCompact > tableRegistryCompactionThreshold) || tableToCompact >= forceCompact;
-            return needsRewrite ? compactReturn : doNotCompactReturn;
+            if ((tableRegistryCompactionThreshold > -1 && tableToCompact > tableRegistryCompactionThreshold) || tableToCompact >= forceCompact) {
+                path.trimTo(plimit);
+                LOG.info().$("compacting tables file").$();
+                compactTableNameFile(tableNameToTableTokenMap, dirNameToTableTokenMap, lastFileVersion, ff, path);
+            } else {
+                tableNameMemory.jumpTo(currentOffset);
+            }
         } else {
             tableNameRoMemory.close();
-            return -1;
         }
     }
 

@@ -562,6 +562,34 @@ public class TableNameRegistryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDropNonWalTable() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableNonWal("tab1");
+            drop("drop table tab1");
+            createTableNonWal("tab2");
+
+            simulateEngineRestart();
+            engine.reconcileTableNameRegistryState();
+
+            try {
+                drop("drop table tab1");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist");
+            }
+            drop("drop table tab2");
+
+            simulateEngineRestart();
+            engine.reconcileTableNameRegistryState();
+
+            try {
+                drop("drop table tab2");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist");
+            }
+        });
+    }
+
+    @Test
     public void testFuzz() {
         int threadCount = 4;
         CyclicBarrier barrier = new CyclicBarrier(threadCount);
@@ -608,7 +636,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                 store.reload(new ConcurrentHashMap<>(1), new ConcurrentHashMap<>(1), null);
                 store.writeEntry(new TableToken("tab1", "tab1~1", 1, true, false, false), OPERATION_ADD);
             }
-            
+
             simulateEngineRestart();
             engine.reconcileTableNameRegistryState();
 
