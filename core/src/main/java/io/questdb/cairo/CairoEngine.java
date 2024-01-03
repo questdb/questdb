@@ -462,7 +462,9 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public TableReader getReader(CharSequence tableName) {
-        return getReader(verifyTableNameForRead(tableName));
+        TableToken tableToken = verifyTableNameForRead(tableName);
+        // Do not call getReader(TableToken tableToken), it will do unnecessary token verification
+        return readerPool.get(tableToken);
     }
 
     public TableReader getReader(TableToken tableToken) {
@@ -661,7 +663,13 @@ public class CairoEngine implements Closeable, WriterSource {
 
     @Override
     public TableWriterAPI getTableWriterAPI(CharSequence tableName, @NotNull String lockReason) {
-        return getTableWriterAPI(verifyTableNameForRead(tableName), lockReason);
+        TableToken tableToken = verifyTableNameForRead(tableName);
+        // Do not call getTableWriterAPI(TableToken tableToken, String lockReason),
+        // it will do unnecessary token verification
+        if (!tableToken.isWal()) {
+            return writerPool.get(tableToken, lockReason);
+        }
+        return walWriterPool.get(tableToken);
     }
 
     public Telemetry<TelemetryTask> getTelemetry() {
@@ -1100,7 +1108,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void verifyTableToken(TableToken tableToken) {
         TableToken tt = tableNameRegistry.getTableToken(tableToken.getTableName());
-        if (tt == null) {
+        if (tt == null || tt == TableNameRegistry.LOCKED_TOKEN) {
             throw CairoException.tableDoesNotExist(tableToken.getTableName());
         }
         if (!tt.equals(tableToken)) {
@@ -1323,7 +1331,7 @@ public class CairoEngine implements Closeable, WriterSource {
     @NotNull
     private TableToken verifyTableNameForRead(CharSequence tableName) {
         TableToken token = getTableTokenIfExists(tableName);
-        if (token == null) {
+        if (token == null || token == TableNameRegistry.LOCKED_TOKEN) {
             throw CairoException.tableDoesNotExist(tableName);
         }
         return token;
