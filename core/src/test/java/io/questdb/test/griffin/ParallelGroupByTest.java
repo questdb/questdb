@@ -222,7 +222,7 @@ public class ParallelGroupByTest extends AbstractCairoTest {
 
     @Test
     public void testParallelCountOverMultiKeyGroupBy() throws Exception {
-        testParallelMultiKeyGroupBy(
+        testParallelMultiSymbolKeyGroupBy(
                 "SELECT count(*) FROM (SELECT key1, key2 FROM tab GROUP BY key1, key2 ORDER BY key1, key2)",
                 "count\n" +
                         "5\n"
@@ -383,7 +383,7 @@ public class ParallelGroupByTest extends AbstractCairoTest {
 
     @Test
     public void testParallelMultiKeyGroupBy() throws Exception {
-        testParallelMultiKeyGroupBy(
+        testParallelMultiSymbolKeyGroupBy(
                 "SELECT key1, key2, avg(value), sum(colTop) FROM tab ORDER BY key1, key2",
                 "key1\tkey2\tavg\tsum\n" +
                         "k0\tk0\t2027.5\t1642000.0\n" +
@@ -396,7 +396,7 @@ public class ParallelGroupByTest extends AbstractCairoTest {
 
     @Test
     public void testParallelMultiKeyGroupBySubQuery() throws Exception {
-        testParallelMultiKeyGroupBy(
+        testParallelMultiSymbolKeyGroupBy(
                 "SELECT key1, key2, avg + sum from (" +
                         "  SELECT key1, key2, avg(value), sum(colTop) FROM tab" +
                         ") ORDER BY key1, key2",
@@ -411,7 +411,7 @@ public class ParallelGroupByTest extends AbstractCairoTest {
 
     @Test
     public void testParallelMultiKeyGroupByWithFilter() throws Exception {
-        testParallelMultiKeyGroupBy(
+        testParallelMultiSymbolKeyGroupBy(
                 "SELECT key1, key2, avg(value), sum(colTop) FROM tab WHERE value < 80 ORDER BY key1, key2",
                 "key1\tkey2\tavg\tsum\n" +
                         "k0\tk0\t46.25\t325.0\n" +
@@ -424,7 +424,7 @@ public class ParallelGroupByTest extends AbstractCairoTest {
 
     @Test
     public void testParallelMultiKeyGroupByWithLimit() throws Exception {
-        testParallelMultiKeyGroupBy(
+        testParallelMultiSymbolKeyGroupBy(
                 "SELECT key1, key2, avg(value), sum(colTop) FROM tab ORDER BY key1, key2 LIMIT 3",
                 "key1\tkey2\tavg\tsum\n" +
                         "k0\tk0\t2027.5\t1642000.0\n" +
@@ -440,7 +440,7 @@ public class ParallelGroupByTest extends AbstractCairoTest {
 
     @Test
     public void testParallelMultiKeyGroupByWithNestedFilter() throws Exception {
-        testParallelMultiKeyGroupBy(
+        testParallelMultiSymbolKeyGroupBy(
                 "SELECT avg(v), sum(ct), k1, k2 " +
                         "FROM (SELECT value v, colTop ct, key2 k2, key1 k1 FROM tab WHERE value < 80) ORDER BY k1, k2",
                 "avg\tsum\tk1\tk2\n" +
@@ -454,7 +454,7 @@ public class ParallelGroupByTest extends AbstractCairoTest {
 
     @Test
     public void testParallelMultiKeyGroupByWithNoFunctions() throws Exception {
-        testParallelMultiKeyGroupBy(
+        testParallelMultiSymbolKeyGroupBy(
                 "SELECT key1, key2 FROM tab GROUP BY key1, key2 ORDER BY key1, key2",
                 "key1\tkey2\n" +
                         "k0\tk0\n" +
@@ -467,7 +467,7 @@ public class ParallelGroupByTest extends AbstractCairoTest {
 
     @Test
     public void testParallelMultiKeyGroupByWithNoFunctionsAndFilter() throws Exception {
-        testParallelMultiKeyGroupBy(
+        testParallelMultiSymbolKeyGroupBy(
                 "SELECT key1, key2 FROM tab WHERE key1 != 'k1' and key2 != 'k2' GROUP BY key1, key2 ORDER BY key1, key2",
                 "key1\tkey2\n" +
                         "k0\tk0\n" +
@@ -478,7 +478,7 @@ public class ParallelGroupByTest extends AbstractCairoTest {
 
     @Test
     public void testParallelMultiKeyGroupByWithNoFunctionsAndTooStrictFilter() throws Exception {
-        testParallelMultiKeyGroupBy(
+        testParallelMultiSymbolKeyGroupBy(
                 "SELECT key1, key2 FROM tab WHERE value < 0 GROUP BY key1, key2 ORDER BY key1, key2",
                 "key1\tkey2\n"
         );
@@ -486,7 +486,7 @@ public class ParallelGroupByTest extends AbstractCairoTest {
 
     @Test
     public void testParallelMultiKeyGroupByWithTooStrictFilter() throws Exception {
-        testParallelMultiKeyGroupBy(
+        testParallelMultiSymbolKeyGroupBy(
                 "SELECT key1, key2, avg(value), sum(colTop) FROM tab WHERE value < 0 ORDER BY key1, key2",
                 "key1\tkey2\tavg\tsum\n"
         );
@@ -587,11 +587,29 @@ public class ParallelGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelNonKeyedGroupByWithCountDistinctLongFunction() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT count_distinct(j2) FROM tab",
+                "count_distinct\n" +
+                        "3700\n"
+        );
+    }
+
+    @Test
     public void testParallelNonKeyedGroupByWithFilter() throws Exception {
         testParallelNonKeyedGroupBy(
                 "SELECT vwap(price, quantity), sum(colTop) FROM tab WHERE quantity < 100",
                 "vwap\tsum\n" +
                         "1981.006198090988\t3675.0\n"
+        );
+    }
+
+    @Test
+    public void testParallelNonKeyedGroupByWithMinMaxStrFunction() throws Exception {
+        testParallelStringKeyGroupBy(
+                "SELECT min(key), max(key) FROM tab",
+                "min\tmax\n" +
+                        "k0\tk4\n"
         );
     }
 
@@ -629,6 +647,15 @@ public class ParallelGroupByTest extends AbstractCairoTest {
                 "SELECT vwap(price, quantity), sum(colTop) FROM tab WHERE quantity < 0",
                 "vwap\tsum\n" +
                         "NaN\tNaN\n"
+        );
+    }
+
+    @Test
+    public void testParallelNonKeyedGroupByWithTwoCountDistinctLongFunctions() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT count_distinct(j), count_distinct(j2) FROM tab",
+                "count_distinct\tcount_distinct1\n" +
+                        "4000\t3700\n"
         );
     }
 
@@ -745,6 +772,19 @@ public class ParallelGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelSingleKeyGroupByWithCountDistinctLongFunction() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT key, count_distinct(j) FROM tab ORDER BY key",
+                "key\tcount_distinct\n" +
+                        "k0\t800\n" +
+                        "k1\t800\n" +
+                        "k2\t800\n" +
+                        "k3\t800\n" +
+                        "k4\t800\n"
+        );
+    }
+
+    @Test
     public void testParallelSingleKeyGroupByWithFilter() throws Exception {
         testParallelStringKeyGroupBy(
                 "SELECT key, avg(value), sum(colTop), count() FROM tab WHERE value < 80 ORDER BY key",
@@ -799,6 +839,19 @@ public class ParallelGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelSingleKeyGroupByWithTwoCountDistinctLongFunctions() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT key, count_distinct(j), count_distinct(j2) FROM tab ORDER BY key",
+                "key\tcount_distinct\tcount_distinct1\n" +
+                        "k0\t800\t745\n" +
+                        "k1\t800\t740\n" +
+                        "k2\t800\t746\n" +
+                        "k3\t800\t732\n" +
+                        "k4\t800\t737\n"
+        );
+    }
+
+    @Test
     public void testParallelStringKeyGroupBy() throws Exception {
         testParallelStringKeyGroupBy(
                 "SELECT key, avg(value), sum(colTop), count() FROM tab ORDER BY key",
@@ -824,6 +877,19 @@ public class ParallelGroupByTest extends AbstractCairoTest {
                         "k2\t2024.5\t1639600.0\n" +
                         "k3\t2025.5\t1640400.0\n" +
                         "k4\t2026.5\t1641200.0\n"
+        );
+    }
+
+    @Test
+    public void testParallelStringKeyGroupByWithMinMaxStrFunction() throws Exception {
+        testParallelMultiStringKeyGroupBy(
+                "SELECT key1, min(key2), max(key2) FROM tab ORDER BY key1",
+                "key1\tmin\tmax\n" +
+                        "k0\tk0\tk0\n" +
+                        "k1\tk1\tk1\n" +
+                        "k2\tk2\tk2\n" +
+                        "k3\tk3\tk3\n" +
+                        "k4\tk4\tk4\n"
         );
     }
 
@@ -893,6 +959,19 @@ public class ParallelGroupByTest extends AbstractCairoTest {
                         "k2\t2683.4065201284266\t1639600.0\n" +
                         "k3\t2684.081214514935\t1640400.0\n" +
                         "k4\t2684.756229953121\t1641200.0\n"
+        );
+    }
+
+    @Test
+    public void testParallelSymbolKeyGroupByWithMinMaxStrFunction() throws Exception {
+        testParallelMultiSymbolKeyGroupBy(
+                "SELECT key1, min(key2), max(key2) FROM tab ORDER BY key1",
+                "key1\tmin\tmax\n" +
+                        "k0\tk0\tk0\n" +
+                        "k1\tk1\tk1\n" +
+                        "k2\tk2\tk2\n" +
+                        "k3\tk3\tk3\n" +
+                        "k4\tk4\tk4\n"
         );
     }
 
@@ -975,6 +1054,49 @@ public class ParallelGroupByTest extends AbstractCairoTest {
                     expected
             );
         }
+    }
+
+    private void testParallelGroupByAllTypes(String... queriesAndExpectedResults) throws Exception {
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool((() -> 4));
+            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                        ddl(
+                                compiler,
+                                "create table tab as (select" +
+                                        " 'k' || ((50 + x) % 5) key," +
+                                        " cast(x as int) kk," +
+                                        " rnd_int() a," +
+                                        " rnd_boolean() b," +
+                                        " rnd_str(1,1,2) c," +
+                                        " rnd_double(2) d," +
+                                        " rnd_float(2) e," +
+                                        " rnd_short(10,1024) f," +
+                                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                                        " rnd_symbol(4,4,4,2) i," +
+                                        " rnd_long() j," +
+                                        " rnd_long(0, 10000000, 5) j2," +
+                                        " timestamp_sequence(400000000000, 500000000) ts," +
+                                        " rnd_byte(2,50) l," +
+                                        " rnd_bin(10, 20, 2) m," +
+                                        " rnd_str(5,16,2) n," +
+                                        " rnd_char() cc," +
+                                        " rnd_long256() l2," +
+                                        " rnd_geohash(1) hash1b," +
+                                        " rnd_geohash(2) hash2b," +
+                                        " rnd_geohash(3) hash3b," +
+                                        " rnd_geohash(5) hash1c," +
+                                        " rnd_geohash(10) hash2c," +
+                                        " rnd_geohash(20) hash4c," +
+                                        " rnd_geohash(40) hash8c" +
+                                        " from long_sequence(" + ROW_COUNT + ")) timestamp(ts) partition by day",
+                                sqlExecutionContext
+                        );
+                        assertQueries(engine, sqlExecutionContext, queriesAndExpectedResults);
+                    },
+                    configuration,
+                    LOG
+            );
+        });
     }
 
     private void testParallelGroupByFaultTolerance(String query) throws Exception {
@@ -1070,7 +1192,41 @@ public class ParallelGroupByTest extends AbstractCairoTest {
         });
     }
 
-    private void testParallelMultiKeyGroupBy(String... queriesAndExpectedResults) throws Exception {
+    private void testParallelMultiStringKeyGroupBy(String... queriesAndExpectedResults) throws Exception {
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool((() -> 4));
+            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                        ddl(
+                                compiler,
+                                "CREATE TABLE tab (\n" +
+                                        "  ts TIMESTAMP," +
+                                        "  key1 STRING," +
+                                        "  key2 STRING," +
+                                        "  value DOUBLE) timestamp (ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        insert(
+                                compiler,
+                                "insert into tab select (x * 864000000)::timestamp, 'k' || (x % 5), 'k' || (x % 5), x from long_sequence(" + ROW_COUNT + ")",
+                                sqlExecutionContext
+                        );
+                        ddl(compiler, "ALTER TABLE tab ADD COLUMN colTop DOUBLE", sqlExecutionContext);
+                        insert(
+                                compiler,
+                                "insert into tab " +
+                                        "select ((50 + x) * 864000000)::timestamp, 'k' || ((50 + x) % 5), 'k' || ((50 + x) % 5), 50 + x, 50 + x " +
+                                        "from long_sequence(" + ROW_COUNT + ")",
+                                sqlExecutionContext
+                        );
+                        assertQueries(engine, sqlExecutionContext, queriesAndExpectedResults);
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    private void testParallelMultiSymbolKeyGroupBy(String... queriesAndExpectedResults) throws Exception {
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool((() -> 4));
             TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {

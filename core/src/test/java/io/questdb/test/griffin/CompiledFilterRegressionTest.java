@@ -573,8 +573,6 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     private void assertJitQuery(CharSequence query, boolean notNull) throws SqlException {
-//        compiler.setEnableJitNullChecks(true);
-
         sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_FORCE_SCALAR);
         runJitQuery(query);
         TestUtils.assertEquals("[scalar mode] result mismatch for query: " + query, sink, jitSink);
@@ -586,8 +584,6 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // At the moment, there is no way for users to disable null checks in the
         // JIT compiler output. Yet, we want to test this part of the compiler.
         if (notNull) {
-            //          compiler.setEnableJitNullChecks(false);
-
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_FORCE_SCALAR);
             runJitQuery(query);
             TestUtils.assertEquals("[scalar mode, not null] result mismatch for query: " + query, sink, jitSink);

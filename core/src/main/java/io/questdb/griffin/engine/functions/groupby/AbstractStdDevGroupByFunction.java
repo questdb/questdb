@@ -75,6 +75,11 @@ public abstract class AbstractStdDevGroupByFunction extends DoubleFunction imple
     }
 
     @Override
+    public int getValueIndex() {
+        return valueIndex;
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }
@@ -98,6 +103,11 @@ public abstract class AbstractStdDevGroupByFunction extends DoubleFunction imple
         mapValue.putDouble(valueIndex, Double.NaN);
         mapValue.putDouble(valueIndex + 1, Double.NaN);
         mapValue.putLong(valueIndex + 2, 0);
+    }
+
+    @Override
+    public void setValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
     }
 
     protected void aggregate(MapValue mapValue, double value) {

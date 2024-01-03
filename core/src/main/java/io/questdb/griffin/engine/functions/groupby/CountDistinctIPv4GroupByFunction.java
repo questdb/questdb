@@ -106,6 +106,11 @@ public class CountDistinctIPv4GroupByFunction extends LongFunction implements Un
     }
 
     @Override
+    public int getValueIndex() {
+        return valueIndex;
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }
@@ -135,6 +140,11 @@ public class CountDistinctIPv4GroupByFunction extends LongFunction implements Un
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.IPv4_NULL);
+    }
+
+    @Override
+    public void setValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
     }
 
     @Override

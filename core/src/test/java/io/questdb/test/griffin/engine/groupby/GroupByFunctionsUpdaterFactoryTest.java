@@ -93,6 +93,11 @@ public class GroupByFunctionsUpdaterFactoryTest {
         }
 
         @Override
+        public int getValueIndex() {
+            return 0;
+        }
+
+        @Override
         public void merge(MapValue destValue, MapValue srcValue) {
             long value = srcValue.getLong(0);
             destValue.putLong(0, value);
@@ -105,6 +110,10 @@ public class GroupByFunctionsUpdaterFactoryTest {
         @Override
         public void setNull(MapValue mapValue) {
             mapValue.putLong(0, -1);
+        }
+
+        @Override
+        public void setValueIndex(int valueIndex) {
         }
     }
 }

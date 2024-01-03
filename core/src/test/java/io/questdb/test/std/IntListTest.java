@@ -43,6 +43,24 @@ public class IntListTest {
         testBinarySearchFuzz0(1, 0);
     }
 
+    @Test
+    public void testRestoreInitialCapacity() {
+        final int N = 1000;
+        IntList list = new IntList();
+        int initialCapacity = list.capacity();
+
+        for (int i = 0; i < N; i++) {
+            list.add(i);
+        }
+
+        Assert.assertEquals(N, list.size());
+        Assert.assertTrue(list.capacity() >= N);
+
+        list.restoreInitialCapacity();
+        Assert.assertEquals(0, list.size());
+        Assert.assertEquals(initialCapacity, list.capacity());
+    }
+
     private void testBinarySearchFuzz0(int N, int skipRate) {
         final Rnd rnd = new Rnd();
         final IntList list = new IntList();

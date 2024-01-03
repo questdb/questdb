@@ -477,6 +477,39 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return null;
     }
 
+    private @Nullable ObjList<ObjList<GroupByFunction>> compileWorkerGroupByFunctionsConditionally(
+            QueryModel model,
+            @NotNull ObjList<GroupByFunction> groupByFunctions,
+            int workerCount,
+            RecordMetadata metadata,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        boolean threadSafe = true;
+        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+            if (!groupByFunctions.getQuick(i).isReadThreadSafe()) {
+                threadSafe = false;
+                break;
+            }
+        }
+        if (!threadSafe) {
+            ObjList<ObjList<GroupByFunction>> allWorkerGroupByFunctions = new ObjList<>();
+            for (int i = 0; i < workerCount; i++) {
+                ObjList<GroupByFunction> workerGroupByFunctions = new ObjList<>(groupByFunctions.size());
+                allWorkerGroupByFunctions.extendAndSet(i, workerGroupByFunctions);
+                GroupByUtils.prepareWorkerGroupByFunctions(
+                        model,
+                        metadata,
+                        functionParser,
+                        executionContext,
+                        groupByFunctions,
+                        workerGroupByFunctions
+                );
+            }
+            return allWorkerGroupByFunctions;
+        }
+        return null;
+    }
+
     private @Nullable ObjList<ObjList<Function>> compileWorkerKeyFunctionsConditionally(
             @NotNull ObjList<Function> keyFunctions,
             int workerCount,
@@ -2675,6 +2708,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (keyTypes.getColumnCount() == 0) {
                     return new SampleByFillPrevNotKeyedRecordCursorFactory(
                             asm,
+                            configuration,
                             factory,
                             timestampSampler,
                             groupByMetadata,
@@ -2713,6 +2747,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     // this sample by is not keyed
                     return new SampleByFillNoneNotKeyedRecordCursorFactory(
                             asm,
+                            configuration,
                             factory,
                             timestampSampler,
                             groupByMetadata,
@@ -2750,6 +2785,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (keyTypes.getColumnCount() == 0) {
                     return new SampleByFillNullNotKeyedRecordCursorFactory(
                             asm,
+                            configuration,
                             factory,
                             timestampSampler,
                             groupByMetadata,
@@ -2790,6 +2826,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (keyTypes.getColumnCount() == 0) {
                 return new SampleByFillValueNotKeyedRecordCursorFactory(
                         asm,
+                        configuration,
                         factory,
                         timestampSampler,
                         sampleByFill,
@@ -3425,6 +3462,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 factory,
                                 groupByMetadata,
                                 groupByFunctions,
+                                compileWorkerGroupByFunctionsConditionally(
+                                        model,
+                                        groupByFunctions,
+                                        executionContext.getSharedWorkerCount(),
+                                        factory.getMetadata(),
+                                        executionContext
+                                ),
                                 valueTypesCopy.getColumnCount(),
                                 nestedFilter,
                                 reduceTaskFactory,
@@ -3449,6 +3493,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             keyTypesCopy,
                             valueTypesCopy,
                             groupByFunctions,
+                            compileWorkerGroupByFunctionsConditionally(
+                                    model,
+                                    groupByFunctions,
+                                    executionContext.getSharedWorkerCount(),
+                                    factory.getMetadata(),
+                                    executionContext
+                            ),
                             keyFunctions,
                             compileWorkerKeyFunctionsConditionally(
                                     keyFunctions,
@@ -3476,6 +3527,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 assert recordFunctions.size() == groupByFunctions.size();
                 return new GroupByNotKeyedRecordCursorFactory(
                         asm,
+                        configuration,
                         factory,
                         groupByMetadata,
                         groupByFunctions,

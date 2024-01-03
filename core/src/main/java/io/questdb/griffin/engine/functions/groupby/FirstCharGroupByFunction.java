@@ -68,6 +68,11 @@ public class FirstCharGroupByFunction extends CharFunction implements GroupByFun
     }
 
     @Override
+    public int getValueIndex() {
+        return valueIndex;
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.SHORT);
@@ -80,5 +85,10 @@ public class FirstCharGroupByFunction extends CharFunction implements GroupByFun
     @Override
     public void setNull(MapValue mapValue) {
         setChar(mapValue, (char) 0);
+    }
+
+    @Override
+    public void setValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
     }
 }

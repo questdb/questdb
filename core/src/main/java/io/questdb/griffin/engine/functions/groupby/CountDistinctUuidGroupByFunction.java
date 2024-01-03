@@ -109,6 +109,11 @@ public final class CountDistinctUuidGroupByFunction extends LongFunction impleme
     }
 
     @Override
+    public int getValueIndex() {
+        return valueIndex;
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }
@@ -128,6 +133,11 @@ public final class CountDistinctUuidGroupByFunction extends LongFunction impleme
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NaN);
+    }
+
+    @Override
+    public void setValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
     }
 
     @Override

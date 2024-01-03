@@ -177,6 +177,24 @@ public class LongListTest {
         assertOrderedAsc(list);
     }
 
+    @Test
+    public void testRestoreInitialCapacity() {
+        final int N = 1000;
+        LongList list = new LongList();
+        int initialCapacity = list.capacity();
+
+        for (int i = 0; i < N; i++) {
+            list.add(i);
+        }
+
+        Assert.assertEquals(N, list.size());
+        Assert.assertTrue(list.capacity() >= N);
+
+        list.restoreInitialCapacity();
+        Assert.assertEquals(0, list.size());
+        Assert.assertEquals(initialCapacity, list.capacity());
+    }
+
     private void assertOrderedAsc(LongList list) {
         for (int i = 0, n = list.size() - 1; i < n; i++) {
             try {

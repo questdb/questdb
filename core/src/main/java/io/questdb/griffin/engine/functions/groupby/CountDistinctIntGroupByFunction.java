@@ -106,6 +106,11 @@ public class CountDistinctIntGroupByFunction extends LongFunction implements Una
     }
 
     @Override
+    public int getValueIndex() {
+        return valueIndex;
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }
@@ -135,6 +140,11 @@ public class CountDistinctIntGroupByFunction extends LongFunction implements Una
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NaN);
+    }
+
+    @Override
+    public void setValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
     }
 
     @Override

@@ -68,6 +68,11 @@ public class FirstByteGroupByFunction extends ByteFunction implements GroupByFun
     }
 
     @Override
+    public int getValueIndex() {
+        return valueIndex;
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.BYTE);
@@ -80,5 +85,10 @@ public class FirstByteGroupByFunction extends ByteFunction implements GroupByFun
     @Override
     public void setNull(MapValue mapValue) {
         setByte(mapValue, (byte) 0);
+    }
+
+    @Override
+    public void setValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
     }
 }

@@ -32,61 +32,52 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.CompactLongHashSet;
+import io.questdb.griffin.engine.groupby.GroupByAllocator;
+import io.questdb.griffin.engine.groupby.GroupByLongHashSet;
 import io.questdb.std.Numbers;
-import io.questdb.std.ObjList;
 
 public class CountDistinctLongGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
     private final Function arg;
-    private final int setInitialCapacity;
-    private final double setLoadFactor;
-    private final ObjList<CompactLongHashSet> sets = new ObjList<>();
-    private int setIndex;
+    private final GroupByLongHashSet setA;
+    private final GroupByLongHashSet setB;
     private int valueIndex;
 
     public CountDistinctLongGroupByFunction(Function arg, int setInitialCapacity, double setLoadFactor) {
         this.arg = arg;
-        this.setInitialCapacity = setInitialCapacity;
-        this.setLoadFactor = setLoadFactor;
+        setA = new GroupByLongHashSet(setInitialCapacity, setLoadFactor, Numbers.LONG_NaN);
+        setB = new GroupByLongHashSet(setInitialCapacity, setLoadFactor, Numbers.LONG_NaN);
     }
 
     @Override
     public void clear() {
-        sets.clear();
-        setIndex = 0;
+        setA.resetPtr();
+        setB.resetPtr();
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        final CompactLongHashSet set;
-        if (sets.size() <= setIndex) {
-            sets.extendAndSet(setIndex, set = new CompactLongHashSet(setInitialCapacity, setLoadFactor, Numbers.LONG_NaN));
-        } else {
-            set = sets.getQuick(setIndex);
-            set.clear();
-        }
-
         final long val = arg.getLong(record);
         if (val != Numbers.LONG_NaN) {
-            set.add(val);
-            mapValue.putLong(valueIndex, 1L);
+            mapValue.putLong(valueIndex, 1);
+            setA.of(0).add(val);
+            mapValue.putLong(valueIndex + 1, setA.ptr());
         } else {
-            mapValue.putLong(valueIndex, 0L);
+            mapValue.putLong(valueIndex, 0);
+            mapValue.putLong(valueIndex + 1, 0);
         }
-        mapValue.putInt(valueIndex + 1, setIndex++);
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        final CompactLongHashSet set = sets.getQuick(mapValue.getInt(valueIndex + 1));
         final long val = arg.getLong(record);
         if (val != Numbers.LONG_NaN) {
-            final int index = set.keyIndex(val);
-            if (index < 0) {
-                return;
+            long ptr = mapValue.getLong(valueIndex + 1);
+            final int index = setA.of(ptr).keyIndex(val);
+            if (index >= 0) {
+                setA.addAt(index, val);
+                mapValue.addLong(valueIndex, 1);
+                mapValue.putLong(valueIndex + 1, setA.ptr());
             }
-            set.addAt(index, val);
-            mapValue.addLong(valueIndex, 1);
         }
     }
 
@@ -106,8 +97,18 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
     }
 
     @Override
+    public int getValueIndex() {
+        return valueIndex;
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
+    }
+
+    @Override
+    public boolean isParallelismSupported() {
+        return true;
     }
 
     @Override
@@ -116,10 +117,50 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
     }
 
     @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        long srcCount = srcValue.getLong(valueIndex);
+        if (srcCount == 0 || srcCount == Numbers.LONG_NaN) {
+            return;
+        }
+        long srcPtr = srcValue.getLong(valueIndex + 1);
+
+        long destCount = destValue.getLong(valueIndex);
+        if (destCount == 0 || destCount == Numbers.LONG_NaN) {
+            destValue.putLong(valueIndex, srcCount);
+            destValue.putLong(valueIndex + 1, srcPtr);
+            return;
+        }
+        long destPtr = destValue.getLong(valueIndex + 1);
+
+        setA.of(destPtr);
+        setB.of(srcPtr);
+
+        long added = 0;
+        for (int i = 0, n = setB.capacity(); i < n; i++) {
+            long val = setB.keyAt(i);
+            if (val != Numbers.LONG_NaN) {
+                final int index = setA.keyIndex(val);
+                if (index >= 0) {
+                    setA.addAt(index, val);
+                    added++;
+                }
+            }
+        }
+        destValue.addLong(valueIndex, added);
+        destValue.putLong(valueIndex + 1, setA.ptr());
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.LONG);
-        columnTypes.add(ColumnType.INT);
+        columnTypes.add(ColumnType.LONG); // count
+        columnTypes.add(ColumnType.LONG); // GroupByLongHashSet pointer
+    }
+
+    @Override
+    public void setAllocator(GroupByAllocator allocator) {
+        setA.setAllocator(allocator);
+        setB.setAllocator(allocator);
     }
 
     @Override
@@ -135,11 +176,16 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NaN);
+        mapValue.putLong(valueIndex + 1, 0);
+    }
+
+    @Override
+    public void setValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
     }
 
     @Override
     public void toTop() {
         UnaryFunction.super.toTop();
-        setIndex = 0;
     }
 }

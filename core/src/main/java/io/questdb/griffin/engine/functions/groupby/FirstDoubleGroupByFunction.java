@@ -68,6 +68,11 @@ public class FirstDoubleGroupByFunction extends DoubleFunction implements GroupB
     }
 
     @Override
+    public int getValueIndex() {
+        return valueIndex;
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.DOUBLE);
@@ -81,5 +86,10 @@ public class FirstDoubleGroupByFunction extends DoubleFunction implements GroupB
     @Override
     public void setNull(MapValue mapValue) {
         setDouble(mapValue, Double.NaN);
+    }
+
+    @Override
+    public void setValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
     }
 }

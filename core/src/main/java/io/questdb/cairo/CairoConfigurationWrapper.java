@@ -271,6 +271,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getGroupByAllocatorChunkSize() {
+        return delegate.getGroupByAllocatorChunkSize();
+    }
+
+    @Override
     public int getGroupByMapCapacity() {
         return delegate.getGroupByMapCapacity();
     }

@@ -68,6 +68,11 @@ public class FirstBooleanGroupByFunction extends BooleanFunction implements Grou
     }
 
     @Override
+    public int getValueIndex() {
+        return valueIndex;
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.BOOLEAN);
@@ -80,5 +85,10 @@ public class FirstBooleanGroupByFunction extends BooleanFunction implements Grou
     @Override
     public void setNull(MapValue mapValue) {
         setBool(mapValue, false);
+    }
+
+    @Override
+    public void setValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
     }
 }

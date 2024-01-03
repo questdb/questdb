@@ -28,6 +28,7 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.std.Mutable;
 
 public interface GroupByFunction extends Function, Mutable {
@@ -44,6 +45,8 @@ public interface GroupByFunction extends Function, Mutable {
     default boolean earlyExit(MapValue mapValue) {
         return false;
     }
+
+    int getValueIndex();
 
     default void interpolateBoundary(
             MapValue mapValue1,
@@ -91,6 +94,9 @@ public interface GroupByFunction extends Function, Mutable {
 
     void pushValueTypes(ArrayColumnTypes columnTypes);
 
+    default void setAllocator(GroupByAllocator allocator) {
+    }
+
     default void setByte(MapValue mapValue, byte value) {
         throw new UnsupportedOperationException();
     }
@@ -120,4 +126,6 @@ public interface GroupByFunction extends Function, Mutable {
     default void setShort(MapValue mapValue, short value) {
         throw new UnsupportedOperationException();
     }
+
+    void setValueIndex(int valueIndex);
 }

@@ -36,10 +36,7 @@ import io.questdb.griffin.engine.functions.columns.*;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
-import io.questdb.std.Chars;
-import io.questdb.std.IntList;
-import io.questdb.std.ObjList;
-import io.questdb.std.Transient;
+import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -239,6 +236,54 @@ public class GroupByUtils {
             }
         }
         validateGroupByColumns(sqlNodeStack, model, inferredKeyColumnCount);
+    }
+
+    public static void prepareWorkerGroupByFunctions(
+            @NotNull QueryModel model,
+            @NotNull RecordMetadata metadata,
+            @NotNull FunctionParser functionParser,
+            @NotNull SqlExecutionContext executionContext,
+            @NotNull ObjList<GroupByFunction> groupByFunctions,
+            @NotNull ObjList<GroupByFunction> workerGroupByFunctions
+    ) throws SqlException {
+        final ObjList<QueryColumn> columns = model.getColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final QueryColumn column = columns.getQuick(i);
+            final ExpressionNode node = column.getAst();
+
+            if (node.type != ExpressionNode.LITERAL) {
+                // this can fail
+                final Function function = functionParser.parseFunction(
+                        node,
+                        metadata,
+                        executionContext
+                );
+
+                if (function instanceof GroupByFunction) {
+                    // configure map value columns for group-by functions
+                    // some functions may need more than one column in values,
+                    // so we have them do all the work
+                    GroupByFunction func = (GroupByFunction) function;
+                    workerGroupByFunctions.add(func);
+                } else {
+                    // it's a key function; we don't need it
+                    Misc.free(function);
+                }
+            }
+        }
+
+        assert groupByFunctions.size() == workerGroupByFunctions.size();
+        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+            final GroupByFunction workerGroupByFunction = workerGroupByFunctions.getQuick(i);
+            final GroupByFunction groupByFunction = groupByFunctions.getQuick(i);
+            workerGroupByFunction.setValueIndex(groupByFunction.getValueIndex());
+        }
+    }
+
+    public static void setAllocator(ObjList<GroupByFunction> functions, GroupByAllocator allocator) {
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            functions.getQuick(i).setAllocator(allocator);
+        }
     }
 
     public static boolean supportParallelism(ObjList<GroupByFunction> groupByFunctions) {

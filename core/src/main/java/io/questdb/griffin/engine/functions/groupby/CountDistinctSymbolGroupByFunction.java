@@ -118,6 +118,11 @@ public class CountDistinctSymbolGroupByFunction extends LongFunction implements 
     }
 
     @Override
+    public int getValueIndex() {
+        return valueIndex;
+    }
+
+    @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         arg.init(symbolTableSource, executionContext);
         knownSymbolCount = -1;
@@ -165,6 +170,11 @@ public class CountDistinctSymbolGroupByFunction extends LongFunction implements 
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NaN);
+    }
+
+    @Override
+    public void setValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
     }
 
     @Override

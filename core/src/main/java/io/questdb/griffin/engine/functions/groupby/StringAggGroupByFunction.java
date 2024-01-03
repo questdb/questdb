@@ -130,6 +130,11 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
     }
 
     @Override
+    public int getValueIndex() {
+        return valueIndex;
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }
@@ -149,6 +154,11 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putBool(valueIndex + 1, true);
+    }
+
+    @Override
+    public void setValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
     }
 
     @Override
