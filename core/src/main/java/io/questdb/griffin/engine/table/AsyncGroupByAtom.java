@@ -90,7 +90,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             functionUpdater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
             perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
 
-            shardCount = Math.min(configuration.getGroupByShardCount(), MAX_SHARDS);
+            shardCount = Math.min(Numbers.ceilPow2(workerCount), MAX_SHARDS);
             shardCountShr = 32 - Numbers.msb(shardCount);
             ownerParticle = new Particle();
             perWorkerParticles = new ObjList<>(workerCount);
@@ -261,7 +261,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             destMap.merge(srcMap, functionUpdater);
         }
 
-        for (int i = 0, n = perWorkerParticles.size(); i < n; i++) {
+        for (int i = 0, n = perWorkerMapCount; i < n; i++) {
             final Particle srcParticle = perWorkerParticles.getQuick(i);
             final Map srcMap = srcParticle.getShardMaps().getQuick(shardIndex);
             srcMap.close();
