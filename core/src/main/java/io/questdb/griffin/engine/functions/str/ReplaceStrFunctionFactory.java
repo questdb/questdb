@@ -32,6 +32,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrFunction;
+import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -77,7 +78,7 @@ public class ReplaceStrFunctionFactory implements FunctionFactory {
         return new Func(value, term, withWhat, maxLength);
     }
 
-    private static class Func extends StrFunction {
+    private static class Func extends StrFunction implements TernaryFunction {
 
         private final int maxLength;
         private final Function newSubStr;
@@ -91,6 +92,21 @@ public class ReplaceStrFunctionFactory implements FunctionFactory {
             this.oldSubStr = oldSubStr;
             this.newSubStr = newSubStr;
             this.maxLength = maxLength;
+        }
+
+        @Override
+        public Function getCenter() {
+            return oldSubStr;
+        }
+
+        @Override
+        public Function getLeft() {
+            return value;
+        }
+
+        @Override
+        public Function getRight() {
+            return newSubStr;
         }
 
         @Override

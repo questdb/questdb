@@ -73,7 +73,7 @@ public class FirstNotNullGeoHashGroupByFunctionFactory implements FunctionFactor
 
         @Override
         public void computeNext(MapValue mapValue, Record record) {
-            if (GeoHashes.BYTE_NULL == mapValue.getGeoByte(valueIndex)) {
+            if (mapValue.getGeoByte(valueIndex) == GeoHashes.BYTE_NULL) {
                 computeFirst(mapValue, record);
             }
         }
@@ -91,7 +91,7 @@ public class FirstNotNullGeoHashGroupByFunctionFactory implements FunctionFactor
 
         @Override
         public void computeNext(MapValue mapValue, Record record) {
-            if (GeoHashes.INT_NULL == mapValue.getGeoInt(valueIndex)) {
+            if (mapValue.getGeoInt(valueIndex) == GeoHashes.INT_NULL) {
                 computeFirst(mapValue, record);
             }
         }
@@ -109,7 +109,7 @@ public class FirstNotNullGeoHashGroupByFunctionFactory implements FunctionFactor
 
         @Override
         public void computeNext(MapValue mapValue, Record record) {
-            if (GeoHashes.NULL == mapValue.getGeoLong(valueIndex)) {
+            if (mapValue.getGeoLong(valueIndex) == GeoHashes.NULL) {
                 computeFirst(mapValue, record);
             }
         }
@@ -127,7 +127,7 @@ public class FirstNotNullGeoHashGroupByFunctionFactory implements FunctionFactor
 
         @Override
         public void computeNext(MapValue mapValue, Record record) {
-            if (GeoHashes.SHORT_NULL == mapValue.getGeoShort(valueIndex)) {
+            if (mapValue.getGeoShort(valueIndex) == GeoHashes.SHORT_NULL) {
                 computeFirst(mapValue, record);
             }
         }

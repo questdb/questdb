@@ -105,7 +105,7 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractLatestByValueReco
             final BitmapIndexReader indexReader = frame.getBitmapIndexReader(frameColumnIndex, BitmapIndexReader.DIR_BACKWARD);
             final long rowLo = frame.getRowLo();
             final long rowHi = frame.getRowHi() - 1;
-            this.recordA.jumpTo(partitionIndex, 0);
+            recordA.jumpTo(partitionIndex, 0);
 
             RowCursor cursor = indexReader.getCursor(false, symbolKey, rowLo, rowHi);
             while (cursor.hasNext()) {

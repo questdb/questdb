@@ -651,6 +651,24 @@ public class SqlUtil {
     }
 
     /**
+     * Returns true if the model stands for a SELECT ... FROM tab; or a SELECT ... FROM tab WHERE ...; query.
+     * We're aiming for potential page frame support with this check.
+     */
+    public static boolean isPlainSelect(QueryModel model) {
+        while (model != null) {
+            if (model.getSelectModelType() != QueryModel.SELECT_MODEL_NONE
+                    || model.getGroupBy().size() > 0
+                    || model.getJoinModels().size() > 1
+                    || model.getLatestByType() != QueryModel.LATEST_BY_NONE
+                    || model.getUnionModel() != null) {
+                return false;
+            }
+            model = model.getNestedModel();
+        }
+        return true;
+    }
+
+    /**
      * Parses partial representation of timestamp with time zone.
      *
      * @param value      the characters representing timestamp

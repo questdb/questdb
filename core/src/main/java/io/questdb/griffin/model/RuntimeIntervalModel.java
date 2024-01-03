@@ -102,7 +102,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                     sink.val("\")");
                 }
             } catch (SqlException e) {
-                LOG.error().$("Can't calculate intervals: ").$(e.getMessage()).$();
+                LOG.error().$("Can't calculate intervals: ").$(e.getFlyweightMessage()).$();
             }
             sink.val(']');
         }

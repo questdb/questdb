@@ -104,6 +104,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static TestCairoEngineFactory engineFactory;
     protected static FactoryProvider factoryProvider;
     protected static FilesFacade ff;
+    protected static int groupByShardingThreshold = -1;
     protected static String inputRoot = null;
     protected static String inputWorkRoot = null;
     protected static IOURingFacade ioURingFacade = IOURingFacadeImpl.INSTANCE;
@@ -1206,6 +1207,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
         node1.getConfigurationOverrides().setO3QuickSortEnabled(o3QuickSortEnabled);
     }
 
+    protected static void configOverrideParallelGroupByEnabled(boolean parallelGroupByEnabled) {
+        node1.getConfigurationOverrides().setParallelGroupByEnabled(parallelGroupByEnabled);
+    }
+
     protected static void configOverrideParallelImportStatusLogKeepNDays(int parallelImportStatusLogKeepNDays) {
         node1.getConfigurationOverrides().setParallelImportStatusLogKeepNDays(parallelImportStatusLogKeepNDays);
     }
@@ -1615,7 +1620,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         sink.put("EXPLAIN ").put(query);
 
         try (ExplainPlanFactory planFactory = getPlanFactory(sink); RecordCursor cursor = planFactory.getCursor(sqlExecutionContext)) {
-
             if (!JitUtil.isJitSupported()) {
                 expectedPlan = Chars.toString(expectedPlan).replace("Async JIT", "Async");
             }

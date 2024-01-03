@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.CharFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.constants.CharConstant;
 import org.jetbrains.annotations.NotNull;
 
 public class MaxCharGroupByFunction extends CharFunction implements GroupByFunction, UnaryFunction {
@@ -69,6 +70,20 @@ public class MaxCharGroupByFunction extends CharFunction implements GroupByFunct
     @Override
     public String getName() {
         return "max";
+    }
+
+    @Override
+    public boolean isParallelismSupported() {
+        return arg.isReadThreadSafe();
+    }
+
+    @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        char srcMax = srcValue.getChar(valueIndex);
+        char destMax = destValue.getChar(valueIndex);
+        if (srcMax > destMax || destMax == CharConstant.ZERO.getChar(null)) {
+            destValue.putChar(valueIndex, srcMax);
+        }
     }
 
     @Override

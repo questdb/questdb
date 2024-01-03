@@ -29,5 +29,4 @@ public interface SymbolFunctionRowCursorFactory extends FunctionBasedRowCursorFa
     int getSymbolKey();
 
     void of(int symbolKey);
-
 }

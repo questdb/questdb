@@ -88,7 +88,6 @@ public class ExpressionNode implements Mutable, Sinkable {
         }
 
         if (!Chars.equals(groupByExpr.token, columnExpr.token)) {
-
             int index = translatingModel.getAliasToColumnMap().keyIndex(columnExpr.token);
             if (index > -1) {
                 return false;
@@ -102,11 +101,9 @@ public class ExpressionNode implements Mutable, Sinkable {
             }
 
             int dot = Chars.indexOf(tok, '.');
-
-            if (dot > -1 &&
-                    translatingModel.getModelAliasIndex(tok, 0, dot) > -1
-                    && Chars.equals(qcTok, tok, dot + 1, tok.length())
-            ) {
+            if (dot > -1
+                    && translatingModel.getModelAliasIndex(tok, 0, dot) > -1
+                    && Chars.equals(qcTok, tok, dot + 1, tok.length())) {
                 return compareArgs(groupByExpr, columnExpr, translatingModel);
             }
 

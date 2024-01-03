@@ -197,6 +197,11 @@ public class CompactMapValue implements MapValue {
     }
 
     @Override
+    public void maxLong(int index, long value) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void putBool(int index, boolean value) {
         entries.putBool(getValueColumnOffset(index), value);
     }

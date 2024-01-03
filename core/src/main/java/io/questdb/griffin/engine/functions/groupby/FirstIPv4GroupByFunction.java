@@ -36,12 +36,10 @@ import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 public class FirstIPv4GroupByFunction extends IPv4Function implements GroupByFunction, UnaryFunction {
-
     protected final Function arg;
     protected int valueIndex;
 
     public FirstIPv4GroupByFunction(@NotNull Function arg) {
-        super();
         this.arg = arg;
     }
 

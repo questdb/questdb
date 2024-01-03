@@ -36,26 +36,30 @@ import java.io.Closeable;
 
 public class PageFrameReduceTask implements Closeable {
 
+    public static final byte TYPE_FILTER = 0;
+    public static final byte TYPE_GROUP_BY = 1;
+    public static final byte TYPE_GROUP_BY_NOT_KEYED = 2;
     private static final String exceptionMessage = "unexpected filter error";
 
     // Used to pass the list of column page frame addresses to a JIT-compiled filter.
     private final DirectLongList columns;
     private final StringSink errorMsg = new StringSink();
+    private final DirectLongList filteredRows; // Used for TYPE_FILTER.
     private final long pageFrameQueueCapacity;
-    private final DirectLongList rows;
     private int frameIndex = Integer.MAX_VALUE;
     private PageFrameSequence<?> frameSequence;
     private long frameSequenceId;
+    private byte type;
 
     public PageFrameReduceTask(CairoConfiguration configuration, int memoryTag) {
-        this.rows = new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), memoryTag);
+        this.filteredRows = new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), memoryTag);
         this.columns = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), memoryTag);
         this.pageFrameQueueCapacity = configuration.getPageFrameReduceQueueCapacity();
     }
 
     @Override
     public void close() {
-        Misc.free(rows);
+        Misc.free(filteredRows);
         Misc.free(columns);
     }
 
@@ -65,6 +69,10 @@ public class PageFrameReduceTask implements Closeable {
 
     public CharSequence getErrorMsg() {
         return errorMsg;
+    }
+
+    public DirectLongList getFilteredRows() {
+        return filteredRows;
     }
 
     public int getFrameIndex() {
@@ -92,8 +100,8 @@ public class PageFrameReduceTask implements Closeable {
         return frameSequence.getPageAddressCache();
     }
 
-    public DirectLongList getRows() {
-        return rows;
+    public byte getType() {
+        return type;
     }
 
     public boolean hasError() {
@@ -103,13 +111,16 @@ public class PageFrameReduceTask implements Closeable {
     public void of(PageFrameSequence<?> frameSequence, int frameIndex) {
         this.frameSequence = frameSequence;
         this.frameSequenceId = frameSequence.getId();
+        this.type = frameSequence.getTaskType();
         this.frameIndex = frameIndex;
         errorMsg.clear();
-        rows.clear();
+        if (type == TYPE_FILTER) {
+            filteredRows.clear();
+        }
     }
 
     public void resetCapacities() {
-        rows.resetCapacity();
+        filteredRows.resetCapacity();
         columns.resetCapacity();
     }
 
@@ -120,6 +131,10 @@ public class PageFrameReduceTask implements Closeable {
             final String msg = th.getMessage();
             errorMsg.put(msg != null ? msg : exceptionMessage);
         }
+    }
+
+    public void setType(byte type) {
+        this.type = type;
     }
 
     void collected() {

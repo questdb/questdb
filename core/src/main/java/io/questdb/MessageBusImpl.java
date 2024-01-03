@@ -40,6 +40,9 @@ public class MessageBusImpl implements MessageBus {
     private final RingQueue<ColumnPurgeTask> columnPurgeQueue;
     private final SCSequence columnPurgeSubSeq;
     private final CairoConfiguration configuration;
+    private final MPSequence groupByMergeShardPubSeq;
+    private final RingQueue<GroupByMergeShardTask> groupByMergeShardQueue;
+    private final MCSequence groupByMergeShardSubSeq;
     private final MPSequence indexerPubSeq;
     private final RingQueue<ColumnIndexerTask> indexerQueue;
     private final MCSequence indexerSubSeq;
@@ -150,7 +153,7 @@ public class MessageBusImpl implements MessageBus {
 
         int reduceQueueCapacity = configuration.getPageFrameReduceQueueCapacity();
         for (int i = 0; i < pageFrameReduceShardCount; i++) {
-            final RingQueue<PageFrameReduceTask> queue = new RingQueue<PageFrameReduceTask>(
+            final RingQueue<PageFrameReduceTask> queue = new RingQueue<>(
                     () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD),
                     reduceQueueCapacity
             );
@@ -178,10 +181,15 @@ public class MessageBusImpl implements MessageBus {
         this.textImportRequestSubSeq = new SCSequence();
         textImportRequestPubSeq.then(textImportRequestSubSeq).then(textImportRequestPubSeq);
 
-        walTxnNotificationQueue = new RingQueue<>(WalTxnNotificationTask::new, configuration.getWalTxnNotificationQueueCapacity());
-        walTxnNotificationPubSequence = new MPSequence(walTxnNotificationQueue.getCycle());
-        walTxnNotificationSubSequence = new MCSequence(walTxnNotificationQueue.getCycle());
+        this.walTxnNotificationQueue = new RingQueue<>(WalTxnNotificationTask::new, configuration.getWalTxnNotificationQueueCapacity());
+        this.walTxnNotificationPubSequence = new MPSequence(walTxnNotificationQueue.getCycle());
+        this.walTxnNotificationSubSequence = new MCSequence(walTxnNotificationQueue.getCycle());
         walTxnNotificationPubSequence.then(walTxnNotificationSubSequence).then(walTxnNotificationPubSequence);
+
+        this.groupByMergeShardQueue = new RingQueue<>(GroupByMergeShardTask::new, configuration.getGroupByMergeShardQueueCapacity());
+        this.groupByMergeShardPubSeq = new MPSequence(groupByMergeShardQueue.getCycle());
+        this.groupByMergeShardSubSeq = new MCSequence(groupByMergeShardQueue.getCycle());
+        groupByMergeShardPubSeq.then(groupByMergeShardSubSeq).then(groupByMergeShardPubSeq);
     }
 
     @Override
@@ -214,6 +222,21 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public MPSequence getCopyRequestPubSeq() {
         return textImportRequestPubSeq;
+    }
+
+    @Override
+    public MPSequence getGroupByMergeShardPubSeq() {
+        return groupByMergeShardPubSeq;
+    }
+
+    @Override
+    public RingQueue<GroupByMergeShardTask> getGroupByMergeShardQueue() {
+        return groupByMergeShardQueue;
+    }
+
+    @Override
+    public MCSequence getGroupByMergeShardSubSeq() {
+        return groupByMergeShardSubSeq;
     }
 
     @Override
