@@ -35,8 +35,10 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -50,7 +52,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static io.questdb.cairo.CairoEngine.EMPTY_RESOLVER;
+import static io.questdb.cairo.GrowOnlyTableNameRegistryStore.OPERATION_ADD;
 import static io.questdb.cairo.wal.WalUtils.TABLE_REGISTRY_NAME_FILE;
+import static io.questdb.std.Files.FILES_RENAME_OK;
 
 public class TableNameRegistryTest extends AbstractCairoTest {
 
@@ -225,7 +230,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             for (int i = 0; i < threadCount; i++) {
                 threads.add(new Thread(() -> {
                     try {
-                        try (TableNameRegistryRO ro = new TableNameRegistryRO(configuration, CairoEngine.EMPTY_RESOLVER)) {
+                        try (TableNameRegistryRO ro = new TableNameRegistryRO(configuration, EMPTY_RESOLVER)) {
                             startBarrier.await();
                             while (!done.get()) {
                                 ro.reload();
@@ -253,7 +258,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                 // Add / remove tables
                 engine.closeNameRegistry();
                 Rnd rnd = TestUtils.generateRandom(LOG);
-                try (TableNameRegistryRW rw = new TableNameRegistryRW(configuration, CairoEngine.EMPTY_RESOLVER)) {
+                try (TableNameRegistryRW rw = new TableNameRegistryRW(configuration, EMPTY_RESOLVER)) {
                     rw.reload();
                     startBarrier.await();
                     int iteration = 0;
@@ -429,6 +434,38 @@ public class TableNameRegistryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConvertDropRecreateNonWalCannotCompactRegistry() throws Exception {
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                if (Utf8s.containsAscii(to, TABLE_REGISTRY_NAME_FILE)) {
+                    return FILES_RENAME_OK - 1;
+                }
+                return super.rename(from, to);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            TableToken tt1;
+            tt1 = createTableWal("tab1");
+            Assert.assertTrue(engine.isWalTable(tt1));
+
+            ddl("alter table tab1 set type bypass wal");
+            drop("drop table tab1");
+            createTableNonWal("tab1");
+
+            simulateEngineRestart();
+            engine.reconcileTableNameRegistryState();
+
+            compile("drop table tab1");
+            createTableWal("tab1");
+
+            simulateEngineRestart();
+            engine.reconcileTableNameRegistryState();
+        });
+    }
+
+    @Test
     public void testConvertDropRestartRecreate() throws Exception {
         assertMemoryLeak(() -> {
             TableToken tt1;
@@ -552,6 +589,35 @@ public class TableNameRegistryTest extends AbstractCairoTest {
         engine.reconcileTableNameRegistryState();
 
         Assert.assertEquals(0, errorCounter.get());
+    }
+
+    @Test
+    public void testMalformedTableRegistryFileIsIgnored() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tt1;
+            tt1 = createTableWal("tab1");
+            Assert.assertTrue(engine.isWalTable(tt1));
+
+            ddl("alter table tab1 set type bypass wal");
+            drop("drop table tab1");
+            createTableWal("tab1");
+
+            engine.closeNameRegistry();
+            try (TableNameRegistryStore store = new TableNameRegistryStore(engine.getConfiguration(), EMPTY_RESOLVER)) {
+                store.lock();
+                store.reload(new ConcurrentHashMap<>(1), new ConcurrentHashMap<>(1), null);
+                store.writeEntry(new TableToken("tab1", "tab1~1", 1, true, false, false), OPERATION_ADD);
+            }
+            
+            simulateEngineRestart();
+            engine.reconcileTableNameRegistryState();
+
+            compile("drop table tab1");
+            createTableWal("tab1");
+
+            simulateEngineRestart();
+            engine.reconcileTableNameRegistryState();
+        });
     }
 
     @Test
