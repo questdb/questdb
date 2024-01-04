@@ -8897,7 +8897,7 @@ create table tab as (
                 mayDrainWalQueue();
 
                 try (ResultSet result = stat.executeQuery("tb")) {
-                    StringSink sink = new StringSink();
+                    sink.clear();
                     assertResultSet("i[INTEGER],b[BIT],ts[TIMESTAMP]\n" +
                             "12,true,1970-01-01 00:00:00.0\n" +
                             "12,true,2022-09-28 17:00:00.0\n", sink, result);

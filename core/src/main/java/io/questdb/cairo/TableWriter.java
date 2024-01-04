@@ -297,14 +297,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             this.ddlMem = Vm.getMARInstance(configuration.getCommitMode());
             this.metaMem = Vm.getMRInstance();
-            this.columnVersionWriter = openColumnVersionFile(configuration, path, rootLen);
-
             openMetaFile(ff, path, rootLen, metaMem);
             this.metadata = new TableWriterMetadata(this.tableToken, metaMem);
             this.partitionBy = metadata.getPartitionBy();
             this.txWriter = new TxWriter(ff, configuration).ofRW(path.concat(TXN_FILE_NAME).$(), partitionBy);
             this.txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount()).ofRW(path.trimTo(rootLen));
             path.trimTo(rootLen);
+            this.columnVersionWriter = openColumnVersionFile(configuration, path, rootLen, partitionBy != PartitionBy.NONE);
             this.o3ColumnOverrides = metadata.isWalEnabled() ? new ObjList<>() : null;
             // we have to do truncate repair at this stage of constructor
             // because this operation requires metadata
@@ -1516,7 +1515,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     public boolean inTransaction() {
-        return txWriter != null && (txWriter.inTransaction() || hasO3() || columnVersionWriter.hasChanges());
+        return txWriter != null && (txWriter.inTransaction() || hasO3() || (columnVersionWriter != null && columnVersionWriter.hasChanges()));
     }
 
     public boolean isDeduplicationEnabled() {
@@ -2446,10 +2445,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private static ColumnVersionWriter openColumnVersionFile(CairoConfiguration configuration, Path path, int rootLen) {
+    private static ColumnVersionWriter openColumnVersionFile(
+            CairoConfiguration configuration,
+            Path path,
+            int rootLen,
+            boolean partitioned
+    ) {
         path.concat(COLUMN_VERSION_FILE_NAME).$();
         try {
-            return new ColumnVersionWriter(configuration, path);
+            return new ColumnVersionWriter(configuration, path, partitioned);
         } finally {
             path.trimTo(rootLen);
         }
@@ -2855,6 +2859,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (attachColumnVersionReader == null) {
                     attachColumnVersionReader = new ColumnVersionReader();
                 }
+                // attach partition is only possible on partitioned table
                 attachColumnVersionReader.ofRO(ff, detachedPath);
                 attachColumnVersionReader.readUnsafe();
             }
@@ -3743,7 +3748,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return;
         }
         boolean asyncOnly = checkScoreboardHasReadersBeforeLastCommittedTxn();
-        purgingOperator.purge(path.trimTo(rootLen), tableToken, partitionBy, asyncOnly, metadata, getTruncateVersion(), getTxn());
+        purgingOperator.purge(
+                path.trimTo(rootLen),
+                tableToken,
+                partitionBy,
+                asyncOnly,
+                metadata,
+                getTruncateVersion(),
+                getTxn()
+        );
         purgingOperator.clear();
     }
 
