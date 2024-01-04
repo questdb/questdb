@@ -57,11 +57,6 @@ public class EngineMigrationTest extends AbstractCairoTest {
         engine.releaseInactive();
         engine.closeNameRegistry();
 
-        final CairoConfiguration configuration = engine.getConfiguration();
-        Path path1 = Path.getThreadLocal(root);
-        configuration.getFilesFacade().rmdir(path1);
-        configuration.getFilesFacade().mkdirs(path1, 0777);
-
         final byte[] buffer = new byte[1024 * 1024];
         URL resource = EngineMigrationTest.class.getResource(path);
         Assert.assertNotNull(resource);
@@ -78,6 +73,8 @@ public class EngineMigrationTest extends AbstractCairoTest {
                 }
             }
         }
+
+        engine.reloadTableNames();
     }
 
     @BeforeClass
