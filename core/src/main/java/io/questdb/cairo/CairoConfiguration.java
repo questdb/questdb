@@ -293,6 +293,8 @@ public interface CairoConfiguration {
         return DefaultQueryLogger.INSTANCE;
     }
 
+    int getQueryRegistryPoolSize();
+
     @NotNull
     default Rnd getRandom() {
         Rnd rnd = RANDOM.get();

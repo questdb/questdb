@@ -25,6 +25,7 @@
 package io.questdb.cairo.sql.async;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.PageAddressCache;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.std.DirectLongList;
@@ -49,6 +50,7 @@ public class PageFrameReduceTask implements Closeable {
     private int frameIndex = Integer.MAX_VALUE;
     private PageFrameSequence<?> frameSequence;
     private long frameSequenceId;
+    private boolean isCancelled;
     private byte type;
 
     public PageFrameReduceTask(CairoConfiguration configuration, int memoryTag) {
@@ -108,12 +110,17 @@ public class PageFrameReduceTask implements Closeable {
         return errorMsg.length() > 0;
     }
 
+    public boolean isCancelled() {
+        return isCancelled;
+    }
+
     public void of(PageFrameSequence<?> frameSequence, int frameIndex) {
         this.frameSequence = frameSequence;
         this.frameSequenceId = frameSequence.getId();
         this.type = frameSequence.getTaskType();
         this.frameIndex = frameIndex;
         errorMsg.clear();
+        isCancelled = false;
         if (type == TYPE_FILTER) {
             filteredRows.clear();
         }
@@ -130,6 +137,10 @@ public class PageFrameReduceTask implements Closeable {
         } else {
             final String msg = th.getMessage();
             errorMsg.put(msg != null ? msg : exceptionMessage);
+        }
+
+        if (th instanceof CairoException) {
+            isCancelled = ((CairoException) th).isCancellation();
         }
     }
 
