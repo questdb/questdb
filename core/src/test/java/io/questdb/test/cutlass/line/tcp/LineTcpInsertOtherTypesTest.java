@@ -987,7 +987,7 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
             } while (!recvBuffer.isEmpty());
             closeContext();
             mayDrainWalQueue();
-            try (TableReader reader = newTableReader(new DefaultTestCairoConfiguration(root), TABLE)) {
+            try (TableReader reader = newOffPoolReader(new DefaultTestCairoConfiguration(root), TABLE)) {
                 TestUtils.assertReader(expected, reader, sink);
             }
         });
@@ -1018,7 +1018,7 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
             } while (!recvBuffer.isEmpty());
             closeContext();
             mayDrainWalQueue();
-            try (TableReader reader = newTableReader(new DefaultTestCairoConfiguration(root), TABLE)) {
+            try (TableReader reader = newOffPoolReader(new DefaultTestCairoConfiguration(root), TABLE)) {
                 TestUtils.assertReader(expected, reader, sink);
             }
         });

@@ -174,7 +174,7 @@ public class CompactMapTest extends AbstractCairoTest {
             CreateTableTestUtils.createTestTable(10, new Rnd(), binarySequence);
             SingleColumnType columnTypes = new SingleColumnType();
 
-            try (TableReader reader = newTableReader(configuration, "x")) {
+            try (TableReader reader = newOffPoolReader(configuration, "x")) {
                 try {
                     new CompactMap(1024, reader.getMetadata(), columnTypes.of(ColumnType.LONG), 16, 0.75, 1, Integer.MAX_VALUE);
                     Assert.fail();
@@ -200,7 +200,7 @@ public class CompactMapTest extends AbstractCairoTest {
             BytecodeAssembler asm = new BytecodeAssembler();
             final int N = 1000;
             final Rnd rnd = new Rnd();
-            try (TableWriter writer = newTableWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newOffPoolWriter(configuration, "x", metrics)) {
                 for (int i = 0; i < N; i++) {
                     TableWriter.Row row = writer.newRow();
                     long rndGeohash = GeoHashes.fromCoordinatesDeg(rnd.nextDouble() * 180 - 90, rnd.nextDouble() * 360 - 180, precisionBits);
@@ -211,7 +211,7 @@ public class CompactMapTest extends AbstractCairoTest {
                 writer.commit();
             }
 
-            try (TableReader reader = newTableReader(configuration, "x")) {
+            try (TableReader reader = newOffPoolReader(configuration, "x")) {
                 EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
                 entityColumnFilter.of(reader.getMetadata().getColumnCount());
 
@@ -320,7 +320,7 @@ public class CompactMapTest extends AbstractCairoTest {
 
             BytecodeAssembler asm = new BytecodeAssembler();
 
-            try (TableReader keyReader = newTableReader(configuration, "x")) {
+            try (TableReader keyReader = newOffPoolReader(configuration, "x")) {
                 EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
                 entityColumnFilter.of(keyReader.getMetadata().getColumnCount());
 
@@ -524,7 +524,7 @@ public class CompactMapTest extends AbstractCairoTest {
 
             BytecodeAssembler asm = new BytecodeAssembler();
 
-            try (TableReader reader = newTableReader(configuration, "x")) {
+            try (TableReader reader = newOffPoolReader(configuration, "x")) {
                 EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
                 entityColumnFilter.of(reader.getMetadata().getColumnCount());
 
@@ -603,7 +603,7 @@ public class CompactMapTest extends AbstractCairoTest {
 
             BytecodeAssembler asm = new BytecodeAssembler();
 
-            try (TableReader reader = newTableReader(configuration, "x")) {
+            try (TableReader reader = newOffPoolReader(configuration, "x")) {
                 EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
                 entityColumnFilter.of(reader.getMetadata().getColumnCount());
 

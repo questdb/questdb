@@ -93,7 +93,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
             }
             end.await();
 
-            if (errors.size() > 0) {
+            if (!errors.isEmpty()) {
                 for (Map.Entry<Integer, Throwable> entry : errors.entrySet()) {
                     LOG.error().$("Error in thread [id=").$(entry.getKey()).$("] ").$(entry.getValue()).$();
                 }
@@ -319,7 +319,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                 CreateTableTestUtils.create(model);
             }
 
-            try (TableWriter w = newTableWriter(configuration, name, metrics)) {
+            try (TableWriter w = newOffPoolWriter(configuration, name, metrics)) {
                 for (int k = 0; k < 10; k++) {
                     TableWriter.Row r = w.newRow();
                     r.putDate(0, dataRnd.nextLong());
@@ -329,7 +329,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
             }
 
             sink.clear();
-            try (TableReader r = newTableReader(configuration, name)) {
+            try (TableReader r = newOffPoolReader(configuration, name)) {
                 printer.print(r.getCursor(), r.getMetadata(), true, sink);
             }
             expectedRows[i] = sink.toString();
@@ -360,7 +360,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                             // 2. it will read from one of readers it has opened
                             // 3. it will close one of readers it has opened
                             for (int i = 0; i < iterations; i++) {
-                                if (readers.size() == 0 || (readers.size() < 40 && rnd.nextPositiveInt() % 4 == 0)) {
+                                if (readers.isEmpty() || (readers.size() < 40 && rnd.nextPositiveInt() % 4 == 0)) {
                                     name = names[rnd.nextPositiveInt() % readerCount];
                                     try {
                                         Assert.assertTrue(readers.add(pool.get(name)));
@@ -370,7 +370,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
                                 Os.pause();
 
-                                if (readers.size() == 0) {
+                                if (readers.isEmpty()) {
                                     continue;
                                 }
 
@@ -389,7 +389,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
                                 Os.pause();
 
-                                if (readers.size() > 0 && rnd.nextPositiveInt() % 4 == 0) {
+                                if (!readers.isEmpty() && rnd.nextPositiveInt() % 4 == 0) {
                                     TableReader r2 = readers.get(rnd.nextPositiveInt() % readers.size());
                                     Assert.assertTrue(r2.isOpen());
                                     r2.close();

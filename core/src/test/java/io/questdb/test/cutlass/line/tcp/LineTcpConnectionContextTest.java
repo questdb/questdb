@@ -83,7 +83,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             String expected = "location\ttemperature\ttimestamp\tcast\thumidity\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\t\tNaN\n" +
                     "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\tcast\t23.0\n";
-            try (TableReader reader = newTableReader(configuration, tableName)) {
+            try (TableReader reader = newOffPoolReader(configuration, tableName)) {
                 TableReaderMetadata meta = reader.getMetadata();
                 assertCursorTwoPass(expected, reader.getCursor(), meta);
                 Assert.assertEquals(5, meta.getColumnCount());
@@ -1930,7 +1930,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     }
 
     private void assertTableCount(CharSequence tableName, int nExpectedRows, long maxExpectedTimestampNanos) {
-        try (TableReader reader = newTableReader(configuration, tableName)) {
+        try (TableReader reader = newOffPoolReader(configuration, tableName)) {
             Assert.assertEquals(maxExpectedTimestampNanos / 1000, reader.getMaxTimestamp());
             int timestampColIndex = reader.getMetadata().getTimestampIndex();
             TableReaderRecordCursor recordCursor = reader.getCursor();
@@ -1980,7 +1980,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             String expected = "location\ttemperature\ttimestamp\tnewcol\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\t" + emptyValue + "\n" +
                     "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\t" + tableValue + "\n";
-            try (TableReader reader = newTableReader(configuration, table)) {
+            try (TableReader reader = newOffPoolReader(configuration, table)) {
                 assertCursorTwoPass(expected, reader.getCursor(), reader.getMetadata());
                 Assert.assertEquals(expectedType, ColumnType.tagOf(reader.getMetadata().getColumnType("newcol")));
             }

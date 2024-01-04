@@ -26,9 +26,9 @@ package io.questdb.test;
 
 import io.questdb.FactoryProvider;
 import io.questdb.MessageBus;
+import io.questdb.MessageBusImpl;
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -1425,12 +1425,20 @@ public abstract class AbstractCairoTest extends AbstractTest {
         return node;
     }
 
-    protected static TableReader newTableReader(CairoConfiguration configuration, CharSequence tableName) {
+    protected static TableReader newOffPoolReader(CairoConfiguration configuration, CharSequence tableName) {
         return new TableReader(configuration, engine.verifyTableName(tableName));
     }
 
-    protected static TableWriter newTableWriter(CairoConfiguration configuration, CharSequence tableName, Metrics metrics) {
-        return new TableWriter(configuration, engine.verifyTableName(tableName), metrics);
+    protected static TableWriter newOffPoolWriter(CairoConfiguration configuration, CharSequence tableName, Metrics metrics) {
+        return TestUtils.newOffPoolWriter(configuration, engine.verifyTableName(tableName), metrics, new MessageBusImpl(configuration));
+    }
+
+    protected static TableWriter newOffPoolWriter(CairoConfiguration configuration, CharSequence tableName) {
+        return TestUtils.newOffPoolWriter(configuration, engine.verifyTableName(tableName));
+    }
+
+    protected static TableWriter newOffPoolWriter(CharSequence tableName) {
+        return TestUtils.newOffPoolWriter(configuration, engine.verifyTableName(tableName));
     }
 
     protected static void printSql(CharSequence sql) throws SqlException {
@@ -1874,8 +1882,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
         return engine.isWalTable(engine.verifyTableName(tableName));
     }
 
-    protected TableWriter newTableWriter(CairoConfiguration configuration, CharSequence tableName, MessageBus messageBus, Metrics metrics) {
-        return new TableWriter(configuration, engine.verifyTableName(tableName), messageBus, metrics);
+    protected TableWriter newOffPoolWriter(CairoConfiguration configuration, CharSequence tableName, Metrics metrics, MessageBus messageBus) {
+        return TestUtils.newOffPoolWriter(configuration, engine.verifyTableName(tableName), metrics, messageBus);
     }
 
     protected TableToken registerTableName(CharSequence tableName) {

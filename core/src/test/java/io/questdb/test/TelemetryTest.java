@@ -147,7 +147,7 @@ public class TelemetryTest extends AbstractCairoTest {
                 expectedClasses.add(TelemetrySystemEvent.SYSTEM_TABLE_COUNT_CLASS_BASE);
 
                 HashSet<Short> actualClasses = new HashSet<>();
-                try (TableReader reader = newTableReader(configuration, TELEMETRY)) {
+                try (TableReader reader = newOffPoolReader(configuration, TELEMETRY)) {
                     final RecordCursor cursor = reader.getCursor();
                     final Record record = cursor.getRecord();
                     while (cursor.hasNext()) {
@@ -245,7 +245,7 @@ public class TelemetryTest extends AbstractCairoTest {
 
     @SuppressWarnings("SameParameterValue")
     private void assertEventAndOrigin(CharSequence expected) {
-        try (TableReader reader = newTableReader(configuration, TELEMETRY)) {
+        try (TableReader reader = newOffPoolReader(configuration, TELEMETRY)) {
             sink.clear();
             printEventAndOrigin(reader.getCursor(), reader.getMetadata());
             TestUtils.assertEquals(expected, sink);

@@ -1067,7 +1067,7 @@ public class SnapshotTest extends AbstractCairoTest {
                 path.concat(tableToken);
                 int tableNameLen = path.size();
                 FilesFacade ff = configuration.getFilesFacade();
-                try (TableReader tableReader = newTableReader(configuration, "t")) {
+                try (TableReader tableReader = newOffPoolReader(configuration, "t")) {
                     try (TableReaderMetadata metadata0 = tableReader.getMetadata()) {
                         path.concat(TableUtils.META_FILE_NAME).$();
                         try (TableReaderMetadata metadata = new TableReaderMetadata(configuration)) {

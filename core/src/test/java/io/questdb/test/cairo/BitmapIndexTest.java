@@ -720,7 +720,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
             // prepare the data
             long timestamp = 0;
-            try (TableWriter writer = newTableWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newOffPoolWriter(configuration, "x", metrics)) {
                 for (int i = 0; i < M; i++) {
                     TableWriter.Row row = writer.newRow(timestamp += timestampIncrement);
                     row.putStr(0, rnd.nextChars(20));
@@ -753,7 +753,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                     rows.setPos(rows.getCapacity());
                     GeoHashNative.iota(rows.getAddress(), rows.getCapacity(), 0);
 
-                    try (TableReader tableReader = newTableReader(configuration, "x")) {
+                    try (TableReader tableReader = newOffPoolReader(configuration, "x")) {
                         tableReader.openPartition(0);
                         final int columnBase = tableReader.getColumnBase(0);
                         final int columnIndex = tableReader.getMetadata().getColumnIndex("c");

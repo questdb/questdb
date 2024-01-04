@@ -53,7 +53,7 @@ import static io.questdb.cairo.wal.WalUtils.*;
 import static io.questdb.cairo.wal.seq.TableTransactionLog.MAX_TXN_OFFSET;
 import static io.questdb.griffin.engine.functions.catalogue.ShowTablesFunctionFactory.ShowTablesCursorFactory;
 
-public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent {
+public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCloseable {
 
     private final static Log LOG = LogFactory.getLog(DatabaseSnapshotAgentImpl.class);
     private final CairoConfiguration configuration;

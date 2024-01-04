@@ -5751,24 +5751,7 @@ public class IODispatcherTest extends AbstractTest {
                     final AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
                     final AtomicBoolean stopDelayThread = new AtomicBoolean();
 
-                    final Thread delayThread = new Thread(() -> {
-                        while (!stopDelayThread.get()) {
-                            SuspendEvent event = eventRef.getAndSet(null);
-                            if (event != null) {
-                                Os.sleep(1);
-                                try {
-                                    event.trigger();
-                                    event.close();
-                                    totalEvents.incrementAndGet();
-                                } catch (Exception e) {
-                                    e.printStackTrace();
-                                }
-                            } else {
-                                Os.pause();
-                            }
-                        }
-                    });
-                    delayThread.start();
+                    final Thread delayThread = createDelayThread(stopDelayThread, eventRef, totalEvents);
 
                     TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
                     testHttpClient.assertGet(
@@ -6908,24 +6891,7 @@ public class IODispatcherTest extends AbstractTest {
                     final AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
                     final AtomicBoolean stopDelayThread = new AtomicBoolean();
 
-                    final Thread delayThread = new Thread(() -> {
-                        while (!stopDelayThread.get()) {
-                            SuspendEvent event = eventRef.getAndSet(null);
-                            if (event != null) {
-                                Os.sleep(1);
-                                try {
-                                    event.trigger();
-                                    event.close();
-                                    totalEvents.incrementAndGet();
-                                } catch (Exception e) {
-                                    e.printStackTrace();
-                                }
-                            } else {
-                                Os.pause();
-                            }
-                        }
-                    });
-                    delayThread.start();
+                    final Thread delayThread = createDelayThread(stopDelayThread, eventRef, totalEvents);
 
                     TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
 
@@ -7881,6 +7847,29 @@ public class IODispatcherTest extends AbstractTest {
         }
     }
 
+    @NotNull
+    private static Thread createDelayThread(AtomicBoolean stopDelayThread, AtomicReference<SuspendEvent> eventRef, AtomicInteger totalEvents) {
+        final Thread delayThread = new Thread(() -> {
+            while (!stopDelayThread.get()) {
+                SuspendEvent event = eventRef.getAndSet(null);
+                if (event != null) {
+                    Os.sleep(1);
+                    try {
+                        event.trigger();
+                        event.close();
+                        totalEvents.incrementAndGet();
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    }
+                } else {
+                    Os.pause();
+                }
+            }
+        });
+        delayThread.start();
+        return delayThread;
+    }
+
     private static HttpServer createHttpServer(
             HttpServerConfiguration configuration,
             CairoEngine cairoEngine,
@@ -7901,7 +7890,7 @@ public class IODispatcherTest extends AbstractTest {
             TestUtils.create(model, engine);
         }
 
-        try (TableWriter writer = new TableWriter(engine.getConfiguration(), engine.verifyTableName("y"), metrics)) {
+        try (TableWriter writer = TestUtils.newOffPoolWriter(engine.getConfiguration(), engine.verifyTableName("y"))) {
             for (int i = 0; i < 20; i++) {
                 TableWriter.Row row = writer.newRow();
                 row.putSym(0, "ok\0ok");
@@ -8807,13 +8796,6 @@ public class IODispatcherTest extends AbstractTest {
             super();
             this.bytes = bytes;
             this.len = len;
-        }
-
-        public byte byteAt(int index) {
-            if (index >= len) {
-                throw new IndexOutOfBoundsException();
-            }
-            return bytes[index];
         }
 
         @Override
