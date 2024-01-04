@@ -1207,17 +1207,17 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     " from long_sequence(1)" +
                     ") timestamp(ts) partition by DAY WAL"
             );
-            TableToken sysTableName = engine.verifyTableName(tableName);
+            TableToken tableToken = engine.verifyTableName(tableName);
 
             drop("drop table " + tableName);
             drainWalQueue();
 
-            refreshTablesInBaseEngine();
-            engine.notifyWalTxnCommitted(sysTableName);
+            engine.reloadTableNames();
+            engine.notifyWalTxnCommitted(tableToken);
             drainWalQueue();
 
-            checkTableFilesExist(sysTableName, "2022-02-24", "x.d", false);
-            checkWalFilesRemoved(sysTableName);
+            checkTableFilesExist(tableToken, "2022-02-24", "x.d", false);
+            checkWalFilesRemoved(tableToken);
         });
     }
 

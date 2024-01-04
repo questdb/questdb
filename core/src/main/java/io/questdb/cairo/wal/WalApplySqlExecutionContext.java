@@ -27,15 +27,22 @@ package io.questdb.cairo.wal;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.NotNull;
 
 class WalApplySqlExecutionContext extends SqlExecutionContextImpl {
     private TableToken tableToken;
 
     WalApplySqlExecutionContext(CairoEngine cairoEngine, int workerCount, int sharedWorkerCount) {
         super(cairoEngine, workerCount, sharedWorkerCount);
+    }
+
+    @Override
+    public @NotNull SqlExecutionCircuitBreaker getCircuitBreaker() {
+        return getSimpleCircuitBreaker();//wal operations should use cancellable circuit breaker instead of noop
     }
 
     public TableMetadata getMetadataForWrite(TableToken tableToken, long desiredVersion) {

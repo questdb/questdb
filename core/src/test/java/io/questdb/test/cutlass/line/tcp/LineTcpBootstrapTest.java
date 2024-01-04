@@ -40,6 +40,7 @@ import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 import org.postgresql.util.PSQLException;
 
@@ -76,6 +77,7 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
         });
     }
 
+    @Ignore// update statements don't time out anymore but can be cancelled manually
     @Test
     public void testUpdateTimeout() throws Exception {
         TestUtils.assertMemoryLeak(() -> {

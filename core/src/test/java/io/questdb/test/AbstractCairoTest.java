@@ -726,29 +726,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
-    private void assertQuery(
-            SqlCompiler compiler,
-            String expected,
-            String query,
-            String expectedTimestamp,
-            SqlExecutionContext sqlExecutionContext,
-            boolean supportsRandomAccess,
-            boolean expectSize
-    ) throws SqlException {
-        snapshotMemoryUsage();
-        try (final RecordCursorFactory factory = CairoEngine.select(compiler, query, sqlExecutionContext)) {
-            assertFactoryCursor(
-                    expected,
-                    expectedTimestamp,
-                    factory,
-                    supportsRandomAccess,
-                    sqlExecutionContext,
-                    expectSize,
-                    false
-            );
-        }
-    }
-
     protected static void addColumn(TableWriterAPI writer, String columnName, int columnType) {
         AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, writer.getTableToken(), 0);
         addColumnC.ofAddColumn(columnName, 1, columnType, 0, false, false, 0);
@@ -909,6 +886,21 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static void assertException(CharSequence sql, int errorPos, CharSequence contains, boolean fullFatJoins) throws Exception {
         try {
             assertException(sql, sqlExecutionContext, fullFatJoins);
+        } catch (Throwable e) {
+            if (e instanceof FlyweightMessageContainer) {
+                TestUtils.assertContains(((FlyweightMessageContainer) e).getFlyweightMessage(), contains);
+                if (errorPos > -1) {
+                    Assert.assertEquals(errorPos, ((FlyweightMessageContainer) e).getPosition());
+                }
+            } else {
+                throw e;
+            }
+        }
+    }
+
+    protected static void assertException(CharSequence sql, int errorPos, CharSequence contains, SqlExecutionContext sqlExecutionContext) throws Exception {
+        try {
+            assertException(sql, sqlExecutionContext);
         } catch (Throwable e) {
             if (e instanceof FlyweightMessageContainer) {
                 TestUtils.assertContains(((FlyweightMessageContainer) e).getFlyweightMessage(), contains);
@@ -1648,6 +1640,29 @@ public abstract class AbstractCairoTest extends AbstractTest {
             }
 
             TestUtils.assertCursor(expectedPlan, cursor, planFactory.getMetadata(), false, sink);
+        }
+    }
+
+    protected void assertQuery(
+            SqlCompiler compiler,
+            String expected,
+            String query,
+            String expectedTimestamp,
+            SqlExecutionContext sqlExecutionContext,
+            boolean supportsRandomAccess,
+            boolean expectSize
+    ) throws SqlException {
+        snapshotMemoryUsage();
+        try (final RecordCursorFactory factory = CairoEngine.select(compiler, query, sqlExecutionContext)) {
+            assertFactoryCursor(
+                    expected,
+                    expectedTimestamp,
+                    factory,
+                    supportsRandomAccess,
+                    sqlExecutionContext,
+                    expectSize,
+                    false
+            );
         }
     }
 

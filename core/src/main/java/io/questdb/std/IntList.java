@@ -65,7 +65,7 @@ public class IntList implements Mutable, Sinkable {
         int low = 0;
         int high = pos - 1;
         while (high - low > 65) {
-            int mid = (low + high) / 2;
+            int mid = (low + high) >>> 1;
             int midVal = buffer[mid];
 
             if (midVal < v)

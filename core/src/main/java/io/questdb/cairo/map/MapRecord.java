@@ -29,19 +29,14 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.IntList;
 
 public interface MapRecord extends Record {
-    default void copyToKey(MapKey destKey) {
-        throw new UnsupportedOperationException();
-    }
 
-    default void copyValue(MapValue destValue) {
-        throw new UnsupportedOperationException();
-    }
+    void copyToKey(MapKey destKey);
+
+    void copyValue(MapValue destValue);
 
     MapValue getValue();
 
-    default int keyHashCode() {
-        throw new UnsupportedOperationException();
-    }
+    int keyHashCode();
 
     void setSymbolTableResolver(RecordCursor resolver, IntList symbolTableIndex);
 }

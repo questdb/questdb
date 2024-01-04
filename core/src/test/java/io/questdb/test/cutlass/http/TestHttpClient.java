@@ -96,7 +96,7 @@ public class TestHttpClient implements QuietCloseable {
                 }
             }
 
-            reqToSink(req, sink, username, password, token, null);
+            reqToSink(req, sink, username, password, token, null, null);
             TestUtils.assertEquals(expectedResponse, sink);
         } finally {
             if (!keepConnection) {
@@ -124,7 +124,7 @@ public class TestHttpClient implements QuietCloseable {
             @Nullable CharSequence token
     ) {
         try {
-            toSink0(url, sql, sink, username, password, token, null);
+            toSink0(url, sql, sink, username, password, token, null, null);
             TestUtils.assertEquals(expectedResponse, sink);
         } finally {
             if (!keepConnection) {
@@ -140,10 +140,11 @@ public class TestHttpClient implements QuietCloseable {
             @Nullable CharSequence username,
             @Nullable CharSequence password,
             @Nullable CharSequence token,
+            @Nullable CharSequenceObjHashMap<String> queryParams,
             CharSequence expectedStatus
     ) {
         try {
-            toSink0(url, sql, sink, username, password, token, expectedStatus);
+            toSink0(url, sql, sink, username, password, token, queryParams, expectedStatus);
             Pattern pattern = Pattern.compile(expectedResponseRegexp);
             String message = "Expected response to match regexp " + expectedResponseRegexp + " but got " + sink + " which does not match";
             Assert.assertTrue(message, pattern.matcher(sink).matches());
@@ -154,9 +155,24 @@ public class TestHttpClient implements QuietCloseable {
         }
     }
 
+    public void assertGetRegexp(
+            CharSequence url,
+            String expectedResponseRegexp,
+            CharSequence sql,
+            @Nullable CharSequence username,
+            @Nullable CharSequence password,
+            CharSequence expectedStatus
+    ) {
+        assertGetRegexp(url, expectedResponseRegexp, sql, username, password, expectedStatus, null, null);
+    }
+
     @Override
     public void close() {
         Misc.free(httpClient);
+    }
+
+    public StringSink getSink() {
+        return sink;
     }
 
     public void setKeepConnection(boolean keepConnection) {
@@ -165,7 +181,7 @@ public class TestHttpClient implements QuietCloseable {
 
     public void toSink(CharSequence url, CharSequence sql, StringSink sink) {
         try {
-            toSink0(url, sql, sink, null, null, null, null);
+            toSink0(url, sql, sink, null, null, null, null, null);
         } finally {
             if (!keepConnection) {
                 httpClient.disconnect();
@@ -179,8 +195,16 @@ public class TestHttpClient implements QuietCloseable {
             @Nullable CharSequence username,
             @Nullable CharSequence password,
             @Nullable CharSequence token,
+            CharSequenceObjHashMap<String> queryParams,
             CharSequence expectedStatus
     ) {
+        if (queryParams != null) {
+            for (int i = 0, n = queryParams.size(); i < n; i++) {
+                CharSequence name = queryParams.keys().getQuick(i);
+                req.query(name, queryParams.get(name));
+            }
+        }
+
         if (username != null) {
             if (password != null) {
                 req.authBasic(username, password);
@@ -214,6 +238,7 @@ public class TestHttpClient implements QuietCloseable {
             @Nullable CharSequence username,
             @Nullable CharSequence password,
             @Nullable CharSequence token,
+            CharSequenceObjHashMap<String> queryParams,
             CharSequence expectedStatus
     ) {
         HttpClient.Request req = httpClient.newRequest();
@@ -222,6 +247,6 @@ public class TestHttpClient implements QuietCloseable {
                 .url(url)
                 .query("query", sql);
 
-        reqToSink(req, sink, username, password, token, expectedStatus);
+        reqToSink(req, sink, username, password, token, queryParams, expectedStatus);
     }
 }

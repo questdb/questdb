@@ -28,7 +28,6 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
-import io.questdb.cutlass.text.AtomicBooleanCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -472,7 +471,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                         sharedCircuitBreaker
                 );
                 // we can't reallocate rosti until tasks are complete because some other thread could be using it
-                if (sharedCircuitBreaker.isCanceled()) {
+                if (sharedCircuitBreaker.checkIfTripped()) {
                     resetRostiMemorySize();
                 }
             }

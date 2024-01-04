@@ -596,10 +596,10 @@ public class FastMapTest extends AbstractCairoTest {
 
             try (TableReader reader = newOffPoolReader(configuration, "x")) {
                 try {
-                    new CompactMap(1024, reader.getMetadata(), new SingleColumnType(ColumnType.LONG), 16, 0.75, 1, Integer.MAX_VALUE);
+                    new FastMap(1024, reader.getMetadata(), new SingleColumnType(ColumnType.STRING), 16, 0.75, Integer.MAX_VALUE);
                     Assert.fail();
                 } catch (Exception e) {
-                    TestUtils.assertContains(e.getMessage(), "Unsupported column type");
+                    TestUtils.assertContains(e.getMessage(), "value type is not supported: STRING");
                 }
             }
         });
