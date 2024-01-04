@@ -2565,12 +2565,6 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testJoinOnGeohashCompactMap() throws Exception {
-        configOverrideDefaultMapType("compact");
-        testJoinOnGeohash();
-    }
-
-    @Test
     public void testJoinOnGeohashFastMap() throws Exception {
         configOverrideDefaultMapType("fast");
         testJoinOnGeohash();
@@ -2805,18 +2799,6 @@ public class JoinTest extends AbstractCairoTest {
                     "ts"
             );
         });
-    }
-
-    @Test
-    public void testJoinWithGeohashCompactMap() throws Exception {
-        configOverrideDefaultMapType("compact");
-        testJoinWithGeoHash();
-    }
-
-    @Test
-    public void testJoinWithGeohashCompactMap2() throws Exception {
-        configOverrideDefaultMapType("compact");
-        testJoinWithGeohash2();
     }
 
     @Test

@@ -177,8 +177,6 @@ public interface CairoConfiguration {
 
     int getGroupByPoolCapacity();
 
-    int getGroupByShardCount();
-
     int getGroupByShardingThreshold();
 
     @NotNull
@@ -350,8 +348,6 @@ public interface CairoConfiguration {
     int getSqlCharacterStoreSequencePoolCapacity();
 
     int getSqlColumnPoolCapacity();
-
-    double getSqlCompactMapLoadFactor();
 
     int getSqlCompilerPoolCapacity();
 
