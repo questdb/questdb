@@ -32,7 +32,10 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.log.Log;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.std.*;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
@@ -85,7 +88,7 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
     protected Rnd random;
     protected LowerCaseCharSequenceObjHashMap<TableData> tables;
     protected long waitBetweenIterationsMillis;
-    private int batchSize = 10;
+    private final int batchSize = 10;
     private int columnReorderingFactor = -1;
     private int columnSkipFactor = -1;
     private boolean diffCasesInColNames = false;
@@ -191,8 +194,8 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
     public void setUp2() {
         long s0 = System.currentTimeMillis();
         long s1 = System.nanoTime();
-        random = new Rnd(s0, s1);
-        getLog().info().$("random seed : ").$(random.getSeed0()).$(", ").$(random.getSeed1()).$();
+        random = new Rnd(1703000361373L, 670022186190375L);
+        getLog().info().$("random seed : ").$(random.getSeed0()).$("L, ").$(random.getSeed1()).$('L').$();
     }
 
     private CharSequence addColumn(LineData line, int colIndex) {

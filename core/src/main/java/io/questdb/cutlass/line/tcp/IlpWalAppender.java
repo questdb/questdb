@@ -47,10 +47,6 @@ public class IlpWalAppender {
     private final boolean stringToCharCastAllowed;
     private LineTcpTimestampAdapter timestampAdapter;
 
-    public IlpWalAppender(boolean autoCreateNewColumns, boolean stringToCharCastAllowed, int maxFileNameLength, MicrosecondClock microsecondClock) {
-        this(autoCreateNewColumns, stringToCharCastAllowed, LineTcpTimestampAdapter.DEFAULT_TS_INSTANCE, maxFileNameLength, microsecondClock);
-    }
-
     public IlpWalAppender(boolean autoCreateNewColumns, boolean stringToCharCastAllowed, LineTcpTimestampAdapter timestampAdapter, int maxFileNameLength, MicrosecondClock microsecondClock) {
         this.autoCreateNewColumns = autoCreateNewColumns;
         this.stringToCharCastAllowed = stringToCharCastAllowed;
@@ -150,7 +146,7 @@ public class IlpWalAppender {
                         columnWriterIndex = metadata.getColumnIndexQuiet(columnNameUtf16);
                         if (columnWriterIndex < 0) {
                             securityContext.authorizeAlterTableAddColumn(writer.getTableToken());
-                            tud.commit(false);
+//                            tud.commit(false);
                             try {
                                 writer.addColumn(columnNameUtf16, ld.getColumnType(ld.getColNameUtf8(), ent.getType()), securityContext);
                                 columnWriterIndex = metadata.getColumnIndexQuiet(columnNameUtf16);

@@ -204,10 +204,10 @@ public class WalWriter implements TableWriterAPI {
 
     @Override
     public long apply(AlterOperation alterOp, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
-        if (inTransaction()) {
-            throw CairoException.critical(0).put("cannot alter table with uncommitted inserts [table=")
-                    .put(tableToken.getTableName()).put(']');
-        }
+//        if (inTransaction()) {
+//            throw CairoException.critical(0).put("cannot alter table with uncommitted inserts [table=")
+//                    .put(tableToken.getTableName()).put(']');
+//        }
         if (alterOp.isStructural()) {
             return applyStructural(alterOp);
         } else {
@@ -270,7 +270,9 @@ public class WalWriter implements TableWriterAPI {
                     sync(commitMode);
                 }
                 final long seqTxn = getSequencerTxn();
-                LOG.info().$("committed data block [wal=").$(path).$(Files.SEPARATOR).$(segmentId).$(", seqTxn=").$(seqTxn)
+                LOG.info().$("committed data block [wal=").$(path).$(Files.SEPARATOR).$(segmentId)
+                        .$(", segmentTxn=").$(lastSegmentTxn)
+                        .$(", seqTxn=").$(seqTxn)
                         .$(", rowLo=").$(currentTxnStartRowNum).$(", roHi=").$(segmentRowCount)
                         .$(", minTimestamp=").$ts(txnMinTimestamp).$(", maxTimestamp=").$ts(txnMaxTimestamp).I$();
                 resetDataTxnProperties();
@@ -1692,6 +1694,7 @@ public class WalWriter implements TableWriterAPI {
                         // this will close old _meta file and create the new one
                         metadata.switchTo(path, path.size(), isTruncateFilesOnClose());
                         openColumnFiles(columnName, columnIndex, path.size());
+                        path.trimTo(rootLen);
                     }
                     // if we did not have to roll uncommitted rows to a new segment
                     // it will add the column file and switch metadata file on next row write
