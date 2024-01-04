@@ -75,6 +75,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final MessageBusImpl messageBus;
     private final Metrics metrics;
     private final Predicate<CharSequence> protectedTableResolver;
+    private final QueryRegistry queryRegistry;
     private final ReaderPool readerPool;
     private final SequencerMetadataPool sequencerMetadataPool;
     private final DatabaseSnapshotAgentImpl snapshotAgent;
@@ -121,6 +122,7 @@ public class CairoEngine implements Closeable, WriterSource {
         this.telemetryWal = new Telemetry<>(TelemetryWalTask.WAL_TELEMETRY, configuration);
         this.tableIdGenerator = new IDGenerator(configuration, TableUtils.TAB_INDEX_FILE_NAME);
         this.snapshotAgent = new DatabaseSnapshotAgentImpl(this);
+        this.queryRegistry = new QueryRegistry(configuration);
 
         try {
             tableIdGenerator.open();
@@ -459,6 +461,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public Predicate<CharSequence> getProtectedTableResolver() {
         return protectedTableResolver;
+    }
+
+    public QueryRegistry getQueryRegistry() {
+        return queryRegistry;
     }
 
     public TableReader getReader(CharSequence tableName) {

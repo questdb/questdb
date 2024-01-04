@@ -194,7 +194,11 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     private void throwTimeoutException() {
-        throw CairoException.nonCritical().put(AsyncFilteredRecordCursor.exceptionMessage).setInterruption(true);
+        if (frameSequence.getCancelReason() == SqlExecutionCircuitBreaker.STATE_CANCELLED) {
+            throw CairoException.queryCancelled();
+        } else {
+            throw CairoException.queryTimedOut();
+        }
     }
 
     void of(PageFrameSequence<AsyncGroupByNotKeyedAtom> frameSequence, SqlExecutionContext executionContext) throws SqlException {

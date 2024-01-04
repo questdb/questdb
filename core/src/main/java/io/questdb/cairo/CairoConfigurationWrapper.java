@@ -476,6 +476,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getQueryRegistryPoolSize() {
+        return delegate.getQueryRegistryPoolSize();
+    }
+
+    @Override
     public int getReaderPoolMaxSegments() {
         return delegate.getReaderPoolMaxSegments();
     }

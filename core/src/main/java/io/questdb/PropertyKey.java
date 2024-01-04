@@ -121,6 +121,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_GROUPBY_POOL_CAPACITY("cairo.sql.groupby.pool.capacity"),
     CAIRO_SQL_MAX_SYMBOL_NOT_EQUALS_COUNT("cairo.sql.max.symbol.not.equals.count"),
     CAIRO_SQL_BIND_VARIABLE_POOL_SIZE("cairo.sql.bind.variable.pool.size"),
+    CAIRO_SQL_QUERY_REGISTRY_POOL_SIZE("cairo.sql.query.registry.pool.size"),
     CAIRO_SQL_COUNT_DISTINCT_CAPACITY("cairo.sql.count.distinct.capacity"),
     CAIRO_SQL_COUNT_DISTINCT_LOAD_FACTOR("cairo.sql.count.distinct.load.factor"),
     CAIRO_DATE_LOCALE("cairo.date.locale"),

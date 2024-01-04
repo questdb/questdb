@@ -480,6 +480,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getQueryRegistryPoolSize() {
+        return 8;
+    }
+
+    @Override
     public int getReaderPoolMaxSegments() {
         return 5;
     }

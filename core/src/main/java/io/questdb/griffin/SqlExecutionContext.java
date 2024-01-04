@@ -39,6 +39,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public interface SqlExecutionContext extends Closeable {
 
@@ -134,6 +135,8 @@ public interface SqlExecutionContext extends Closeable {
         return getWorkerCount();
     }
 
+    SqlExecutionCircuitBreaker getSimpleCircuitBreaker();
+
     default int getTableStatus(Path path, CharSequence tableName) {
         return getCairoEngine().getTableStatus(path, tableName);
     }
@@ -180,6 +183,8 @@ public interface SqlExecutionContext extends Closeable {
 
     void pushTimestampRequiredFlag(boolean flag);
 
+    void setCancelledFlag(AtomicBoolean cancelled);
+
     void setCloneSymbolTables(boolean cloneSymbolTables);
 
     void setColumnPreTouchEnabled(boolean columnPreTouchEnabled);
@@ -191,6 +196,8 @@ public interface SqlExecutionContext extends Closeable {
     void setParallelFilterEnabled(boolean parallelFilterEnabled);
 
     void setRandom(Rnd rnd);
+
+    void setUseSimpleCircuitBreaker(boolean value);
 
     default void storeTelemetry(short event, short origin) {
     }
