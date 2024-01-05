@@ -76,6 +76,16 @@ public class RegisteredRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public String getBaseColumnName(int idx) {
+        return base.getBaseColumnName(idx);
+    }
+
+    @Override
+    public String getBaseColumnNameNoRemap(int idx) {
+        return base.getBaseColumnNameNoRemap(idx);
+    }
+
+    @Override
     public RecordCursorFactory getBaseFactory() {
         return base;
     }
