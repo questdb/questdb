@@ -642,6 +642,15 @@ public class ParallelGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelNonKeyedGroupByWithCountDistinctIPv4Function() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT count_distinct(ip2) FROM tab",
+                "count_distinct\n" +
+                        "3265\n"
+        );
+    }
+
+    @Test
     public void testParallelNonKeyedGroupByWithCountDistinctIntFunction() throws Exception {
         testParallelGroupByAllTypes(
                 "SELECT count_distinct(a2) FROM tab",
@@ -674,6 +683,15 @@ public class ParallelGroupByTest extends AbstractCairoTest {
                 "SELECT min(key), max(key) FROM tab",
                 "min\tmax\n" +
                         "k0\tk4\n"
+        );
+    }
+
+    @Test
+    public void testParallelNonKeyedGroupByWithMultipleCountDistinctIntFunctions() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT count_distinct(a), count_distinct(a2), count_distinct(ip), count_distinct(ip2) FROM tab",
+                "count_distinct\tcount_distinct1\tcount_distinct2\tcount_distinct3\n" +
+                        "4000\t3306\t4000\t3265\n"
         );
     }
 
@@ -711,15 +729,6 @@ public class ParallelGroupByTest extends AbstractCairoTest {
                 "SELECT vwap(price, quantity), sum(colTop) FROM tab WHERE quantity < 0",
                 "vwap\tsum\n" +
                         "NaN\tNaN\n"
-        );
-    }
-
-    @Test
-    public void testParallelNonKeyedGroupByWithTwoCountDistinctIntFunctions() throws Exception {
-        testParallelGroupByAllTypes(
-                "SELECT count_distinct(a), count_distinct(a2) FROM tab",
-                "count_distinct\tcount_distinct1\n" +
-                        "4000\t3347\n"
         );
     }
 
@@ -847,13 +856,13 @@ public class ParallelGroupByTest extends AbstractCairoTest {
     @Test
     public void testParallelSingleKeyGroupByWithCountDistinctIntFunction() throws Exception {
         testParallelGroupByAllTypes(
-                "SELECT key, count_distinct(a) FROM tab ORDER BY key",
-                "key\tcount_distinct\n" +
-                        "k0\t800\n" +
-                        "k1\t800\n" +
-                        "k2\t800\n" +
-                        "k3\t800\n" +
-                        "k4\t800\n"
+                "SELECT key, count_distinct(a), count_distinct(ip) FROM tab ORDER BY key",
+                "key\tcount_distinct\tcount_distinct1\n" +
+                        "k0\t800\t800\n" +
+                        "k1\t800\t800\n" +
+                        "k2\t800\t800\n" +
+                        "k3\t800\t800\n" +
+                        "k4\t800\t800\n"
         );
     }
 
@@ -1153,6 +1162,8 @@ public class ParallelGroupByTest extends AbstractCairoTest {
                                         " cast(x as int) kk," +
                                         " rnd_int() a," +
                                         " rnd_int(0, 1000000, 2) a2," +
+                                        " rnd_ipv4() ip," +
+                                        " rnd_ipv4('10.5/16', 2) ip2," +
                                         " rnd_boolean() b," +
                                         " rnd_str(1,1,2) c," +
                                         " rnd_double(2) d," +

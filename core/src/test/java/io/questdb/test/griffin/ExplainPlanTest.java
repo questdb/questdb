@@ -6615,6 +6615,21 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectCountDistinct5() throws Exception {
         assertPlan(
+                "create table tab ( s string, ip ipv4 )",
+                "select s, count_distinct(ip) from tab",
+                "Async Group By workers: 1\n" +
+                        "  keys: [s]\n" +
+                        "  values: [count_distinct(ip)]\n" +
+                        "  filter: null\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: tab\n"
+        );
+    }
+
+    @Test
+    public void testSelectCountDistinct6() throws Exception {
+        assertPlan(
                 "create table tab ( s string, l long )",
                 "select s, count_distinct(l) from tab",
                 "Async Group By workers: 1\n" +
