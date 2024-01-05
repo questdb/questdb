@@ -340,7 +340,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
 
         List<String> lines = new ArrayList<>(Arrays.asList(allColumns.split("\n")));
 
-        while (lines.size() > 0) {
+        while (!lines.isEmpty()) {
             int removeIndex = rnd.nextInt() % lines.size();
             if (removeIndex >= 0 && removeIndex < lines.size()) {
                 String line = lines.get(removeIndex);
@@ -348,7 +348,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
 
                 lines.remove(removeIndex);
                 String expected = String.join("\n", lines);
-                if (lines.size() > 0) {
+                if (!lines.isEmpty()) {
                     expected += "\n";
                 }
 
@@ -420,7 +420,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 tableId = metadata.getTableId();
                 for (ColumnManipulator manipulator : manipulators) {
                     long structVersion;
-                    try (TableWriter writer = newTableWriter(configuration, tableName, metrics)) {
+                    try (TableWriter writer = newOffPoolWriter(configuration, tableName, metrics)) {
                         manipulator.restructure(writer);
                         structVersion = writer.getMetadataVersion();
                     }
@@ -438,7 +438,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
 
                 TestUtils.assertEquals(expected, sink);
 
-                if (expected.length() > 0) {
+                if (!expected.isEmpty()) {
                     String[] lines = expected.split("\n");
                     Assert.assertEquals(lines.length, metadata.getColumnCount());
 

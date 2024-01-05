@@ -108,7 +108,7 @@ public class DropIndexOperator {
                     final long pTimestamp = rollbackColumnVersions.getQuick(i + 2);
                     final long partitionNameTxn = rollbackColumnVersions.getQuick(i + 3);
                     partitionDFile(other, rootLen, partitionBy, pTimestamp, partitionNameTxn, columnName, columnDropIndexVersion);
-                    if (!ff.remove(other)) {
+                    if (!ff.removeQuiet(other)) {
                         LOG.info().$("Please remove this file \"").$(other).$('"').I$();
                     }
                 }

@@ -31,9 +31,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Files;
-import io.questdb.std.Os;
-import io.questdb.std.Vect;
+import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -454,6 +452,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                         SqlCompiler compiler,
                         SqlExecutionContext executionContext
                 ) -> {
+                    FilesFacade ff = FilesFacadeImpl.INSTANCE;
                     compiler.compile(
                             "create table x as (" +
                                     "select" +
@@ -470,11 +469,11 @@ public class O3SplitPartitionTest extends AbstractO3Test {
 
                     LPSZ colVer = dFile(Path.getThreadLocal(engine.getConfiguration().getRoot()).concat(engine.verifyTableName("x")).concat("2020-02-04"), "str", -1);
                     LOG.info().$("deleting ").$(colVer).$();
-                    Assert.assertTrue(Os.isWindows() || Files.remove(colVer));
+                    Assert.assertTrue(Os.isWindows() || ff.removeQuiet(colVer));
 
                     colVer = iFile(Path.getThreadLocal(engine.getConfiguration().getRoot()).concat(engine.verifyTableName("x")).concat("2020-02-04"), "str", -1);
                     LOG.info().$("deleting ").$(colVer).$();
-                    Assert.assertTrue(Os.isWindows() || Files.remove(colVer));
+                    Assert.assertTrue(Os.isWindows() || ff.removeQuiet(colVer));
 
                     engine.releaseInactive();
 

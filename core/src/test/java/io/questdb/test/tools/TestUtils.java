@@ -24,12 +24,10 @@
 
 package io.questdb.test.tools;
 
-import io.questdb.Bootstrap;
-import io.questdb.Metrics;
-import io.questdb.ServerMain;
+import io.questdb.*;
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
@@ -1357,6 +1355,34 @@ public final class TestUtils {
         }
     }
 
+    public static TableWriter newOffPoolWriter(CairoConfiguration configuration, TableToken tableToken) {
+        return newOffPoolWriter(configuration, tableToken, Metrics.disabled());
+    }
+
+    public static TableWriter newOffPoolWriter(CairoConfiguration configuration, TableToken tableToken, Metrics metrics) {
+        return newOffPoolWriter(configuration, tableToken, metrics, new MessageBusImpl(configuration));
+    }
+
+    public static TableWriter newOffPoolWriter(
+            CairoConfiguration configuration,
+            TableToken tableToken,
+            Metrics metrics,
+            MessageBus messageBus
+    ) {
+        return new TableWriter(
+                configuration,
+                tableToken,
+                null,
+                messageBus,
+                true,
+                DefaultLifecycleManager.INSTANCE,
+                configuration.getRoot(),
+                DefaultDdlListener.INSTANCE,
+                () -> false,
+                metrics
+        );
+    }
+
     public static void printColumn(Record r, RecordMetadata m, int i, CharSink sink) {
         printColumn(r, m, i, sink, false, false);
     }
@@ -1739,12 +1765,6 @@ public final class TestUtils {
         }
     }
 
-    private static StringSink getTlSink() {
-        StringSink ss = tlSink.get();
-        ss.clear();
-        return ss;
-    }
-
 /*
     private static RecordMetadata copySymAstStr(RecordMetadata src) {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
@@ -1760,6 +1780,12 @@ public final class TestUtils {
         return metadata;
     }
 */
+
+    private static StringSink getTlSink() {
+        StringSink ss = tlSink.get();
+        ss.clear();
+        return ss;
+    }
 
     private static long partitionIncrement(int partitionBy, long fromTimestamp, int totalRows, int partitionCount) {
         long increment = 0;

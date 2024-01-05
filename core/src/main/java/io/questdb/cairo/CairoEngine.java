@@ -388,7 +388,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 DefaultLifecycleManager.INSTANCE,
                 backupDirName,
                 getDdlListener(tableToken),
-                NoOpDatabaseSnapshotAgent.INSTANCE,
+                snapshotAgent,
                 Metrics.disabled()
         );
     }
@@ -802,6 +802,21 @@ public class CairoEngine implements Closeable, WriterSource {
         return lockReadersByTableToken(tableToken);
     }
 
+    public boolean lockReadersAndMetadata(TableToken tableToken) {
+        if (snapshotAgent.isInProgress()) {
+            // prevent reader locking while a snapshot is ongoing
+            return false;
+        }
+        if (readerPool.lock(tableToken)) {
+            if (tableMetadataPool.lock(tableToken)) {
+                return true;
+            } else {
+                readerPool.unlock(tableToken);
+            }
+        }
+        return false;
+    }
+
     public boolean lockReadersByTableToken(TableToken tableToken) {
         if (snapshotAgent.isInProgress()) {
             // prevent reader locking while a snapshot is ongoing
@@ -906,10 +921,6 @@ public class CairoEngine implements Closeable, WriterSource {
     public void releaseInactiveTableSequencers() {
         walWriterPool.releaseInactive();
         tableSequencerAPI.releaseInactive();
-    }
-
-    public void releaseReadersByTableToken(TableToken tableToken) {
-        readerPool.unlock(tableToken);
     }
 
     @TestOnly
@@ -1091,8 +1102,47 @@ public class CairoEngine implements Closeable, WriterSource {
         readerPool.unlock(tableToken);
     }
 
+    public void unlockReadersAndMetadata(TableToken tableToken) {
+        readerPool.unlock(tableToken);
+        tableMetadataPool.unlock(tableToken);
+    }
+
     public void unlockTableName(TableToken tableToken) {
         tableNameRegistry.unlockTableName(tableToken);
+    }
+
+    public long update(CharSequence updateSql, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        return update(updateSql, sqlExecutionContext, null);
+    }
+
+    public long update(CharSequence updateSql, SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException {
+        try (SqlCompiler compiler = getSqlCompiler()) {
+            while (true) {
+                try {
+                    CompiledQuery cc = compiler.compile(updateSql, sqlExecutionContext);
+                    switch (cc.getType()) {
+                        case UPDATE:
+                            try (OperationFuture future = cc.execute(eventSubSeq)) {
+                                future.await();
+                                return future.getAffectedRowsCount();
+                            }
+                        case INSERT:
+                            throw SqlException.$(0, "use insert()");
+                        case DROP:
+                            throw SqlException.$(0, "use drop()");
+                        case SELECT:
+                            throw SqlException.$(0, "use select()");
+                    }
+                } catch (TableReferenceOutOfDateException ex) {
+                    // retry, e.g. continue
+                } catch (SqlException ex) {
+                    if (Chars.contains(ex.getFlyweightMessage(), "cached query plan cannot be used because table schema has changed")) {
+                        continue;
+                    }
+                    throw ex;
+                }
+            }
+        }
     }
 
     public TableToken verifyTableName(final CharSequence tableName) {

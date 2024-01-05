@@ -88,7 +88,7 @@ public class TableReadFailTest extends AbstractCairoTest {
 
             try (
                     Path path = new Path();
-                    TableReader reader = newTableReader(configuration, x);
+                    TableReader reader = newOffPoolReader(configuration, x);
                     MemoryCMARW mem = Vm.getCMARWInstance()
             ) {
 
@@ -99,7 +99,7 @@ public class TableReadFailTest extends AbstractCairoTest {
                 TableToken tableToken = engine.verifyTableName(x);
                 path.of(configuration.getRoot()).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$();
 
-                try (TableWriter w = newTableWriter(configuration, x, metrics)) {
+                try (TableWriter w = newOffPoolWriter(configuration, x, metrics)) {
                     for (int i = 0; i < N; i++) {
                         TableWriter.Row r = w.newRow();
                         r.putInt(0, rnd.nextInt());
@@ -157,7 +157,7 @@ public class TableReadFailTest extends AbstractCairoTest {
                 // make sure reload functions correctly. Txn changed from 1 to 3, reload should return true
                 Assert.assertTrue(reader.reload());
 
-                try (TableWriter w = newTableWriter(configuration, x, metrics)) {
+                try (TableWriter w = newOffPoolWriter(configuration, x, metrics)) {
                     // add more data
                     for (int i = 0; i < N; i++) {
                         TableWriter.Row r = w.newRow();
@@ -215,7 +215,7 @@ public class TableReadFailTest extends AbstractCairoTest {
         CreateTableTestUtils.createAllTable(engine, PartitionBy.DAY);
         TestUtils.assertMemoryLeak(() -> {
             try {
-                newTableReader(new DefaultTestCairoConfiguration(root) {
+                newOffPoolReader(new DefaultTestCairoConfiguration(root) {
                     @Override
                     public @NotNull FilesFacade getFilesFacade() {
                         return ff;

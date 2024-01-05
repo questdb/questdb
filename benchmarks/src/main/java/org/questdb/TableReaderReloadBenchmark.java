@@ -24,6 +24,7 @@
 
 package org.questdb;
 
+import io.questdb.MessageBusImpl;
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
@@ -85,7 +86,18 @@ public class TableReaderReloadBenchmark {
     @Setup(Level.Iteration)
     public void setup() throws NumericException {
         TableToken tableToken = new TableToken("test", "test", 0, false, false, false);
-        writer = new TableWriter(configuration, tableToken, Metrics.disabled());
+        writer = new TableWriter(
+                configuration,
+                tableToken,
+                null,
+                new MessageBusImpl(configuration),
+                true,
+                DefaultLifecycleManager.INSTANCE,
+                configuration.getRoot(),
+                DefaultDdlListener.INSTANCE,
+                () -> false,
+                Metrics.disabled()
+        );
         writer.truncate();
         // create 10 partitions
         appendRow(TimestampFormatUtils.parseTimestamp("2012-03-01T00:00:00.000000Z"));

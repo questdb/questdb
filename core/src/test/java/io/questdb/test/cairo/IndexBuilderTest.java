@@ -69,11 +69,11 @@ public class IndexBuilderTest extends AbstractCairoTest {
 
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public boolean remove(LPSZ path) {
+                public boolean removeQuiet(LPSZ path) {
                     if (Utf8s.endsWithAscii(path, ".v") || Utf8s.endsWithAscii(path, ".k")) {
                         return false;
                     }
-                    return super.remove(path);
+                    return super.removeQuiet(path);
                 }
             };
 
@@ -86,7 +86,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
                         indexBuilder -> indexBuilder.reindexColumn(ff, "sym2"));
                 Assert.fail();
             } catch (CairoException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(), "cannot remove index file");
+                TestUtils.assertContains(ex.getFlyweightMessage(), "could not remove index file");
             }
         });
     }

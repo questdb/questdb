@@ -25,11 +25,8 @@
 package io.questdb.test.cutlass.http.line;
 
 import io.questdb.DefaultHttpClientConfiguration;
-import io.questdb.ServerMain;
-import io.questdb.cairo.TableToken;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
-import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractBootstrapTest;
@@ -45,10 +42,7 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.List;
 
 import static io.questdb.PropertyKey.*;
 import static io.questdb.test.cutlass.http.line.IlpHttpUtils.getHttpPort;

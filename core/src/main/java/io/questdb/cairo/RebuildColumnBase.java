@@ -343,9 +343,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
             try {
                 path.trimTo(rootLen);
                 lockName(path);
-                if (ff.exists(path) && !ff.remove(path)) {
-                    throw CairoException.critical(ff.errno()).put("Cannot remove ").put(path);
-                }
+                ff.remove(path);
             } finally {
                 path.trimTo(rootLen);
             }
