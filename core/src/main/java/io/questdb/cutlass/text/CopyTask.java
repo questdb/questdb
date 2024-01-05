@@ -1187,7 +1187,7 @@ public class CopyTask {
                         long diff = nextOffset - offset - bytesToRead;
                         int nextBytesToRead = (int) (diff + nextLineLength);
                         if (diff > -1 && diff < 2 && bytesToRead + nextBytesToRead <= fileBufSize) {
-                            bytesToRead += ((int) diff) + nextLineLength;
+                            bytesToRead += nextBytesToRead;
                             additionalLines++;
                         } else {
                             break;
