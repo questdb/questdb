@@ -322,7 +322,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         };
 
         // open writer so that pool cannot have it
-        try (TableWriter ignored = newTableWriter(configuration, "x", metrics)) {
+        try (TableWriter ignored = newOffPoolWriter(configuration, "x", metrics)) {
             assertThat(expected, lines, "x", configuration);
         }
     }
@@ -911,7 +911,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
 
     private void assertTable(CharSequence expected, CharSequence tableName) {
         refreshTablesInBaseEngine();
-        try (TableReader reader = newTableReader(configuration, tableName)) {
+        try (TableReader reader = newOffPoolReader(configuration, tableName)) {
             assertCursorTwoPass(expected, reader.getCursor(), reader.getMetadata());
         }
     }
@@ -963,7 +963,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
             }
         });
 
-        try (TableReader reader = newTableReader(configuration, "tab")) {
+        try (TableReader reader = newOffPoolReader(configuration, "tab")) {
             Assert.assertEquals(colType, reader.getMetadata().getColumnType("f5"));
         }
     }
@@ -988,7 +988,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         });
 
         refreshTablesInBaseEngine();
-        try (TableReader reader = newTableReader(configuration, "tab")) {
+        try (TableReader reader = newOffPoolReader(configuration, "tab")) {
             Assert.assertEquals(colType, reader.getMetadata().getColumnType("f5"));
         }
     }

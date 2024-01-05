@@ -526,7 +526,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             Assert.assertTrue(engine.isWalTable(tt1));
 
             engine.closeNameRegistry();
-            Assert.assertTrue(TestFilesFacadeImpl.INSTANCE.remove(Path.getThreadLocal(root).concat(TABLE_REGISTRY_NAME_FILE).putAscii(".0").$()));
+            Assert.assertTrue(TestFilesFacadeImpl.INSTANCE.removeQuiet(Path.getThreadLocal(root).concat(TABLE_REGISTRY_NAME_FILE).putAscii(".0").$()));
             engine.reloadTableNames();
             engine.reconcileTableNameRegistryState();
 
@@ -748,7 +748,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
 
             engine.closeNameRegistry();
 
-            Assert.assertTrue(TestFilesFacadeImpl.INSTANCE.remove(Path.getThreadLocal(root).concat(TABLE_REGISTRY_NAME_FILE).putAscii(".0").$()));
+            Assert.assertTrue(TestFilesFacadeImpl.INSTANCE.removeQuiet(Path.getThreadLocal(root).concat(TABLE_REGISTRY_NAME_FILE).putAscii(".0").$()));
 
             engine.reloadTableNames();
 

@@ -394,7 +394,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
             CharSequence fileName = logFileNameSink.subSequence(startOffset, endOffset);
             path.trimTo(logDir.length()).concat(fileName).$();
             if ((totalSize += Files.length(path)) > nSizeLimit) {
-                if (!ff.remove(path)) {
+                if (!ff.removeQuiet(path)) {
                     throw new LogError("cannot remove: " + path);
                 }
             }
@@ -421,7 +421,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
             logFileName.of(filePointer);
             if (Utf8s.containsAscii(logFileName, logFileTemplate)
                     && clock.getTicks() - ff.getLastModified(path.$()) * Timestamps.MILLI_MICROS > nLifeDuration) {
-                if (!ff.remove(path)) {
+                if (!ff.removeQuiet(path)) {
                     throw new LogError("cannot remove: " + path);
                 }
             }

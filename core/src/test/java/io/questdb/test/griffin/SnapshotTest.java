@@ -453,7 +453,7 @@ public class SnapshotTest extends AbstractCairoTest {
             TableToken tableToken = engine.verifyTableName(tableName);
 
             engine.releaseInactive();
-            Assert.assertTrue(ff.remove(path.of(root).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$()));
+            Assert.assertTrue(ff.removeQuiet(path.of(root).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$()));
 
             assertException("snapshot prepare", 0, "Cannot append. File does not exist");
         });
@@ -1067,7 +1067,7 @@ public class SnapshotTest extends AbstractCairoTest {
                 path.concat(tableToken);
                 int tableNameLen = path.size();
                 FilesFacade ff = configuration.getFilesFacade();
-                try (TableReader tableReader = newTableReader(configuration, "t")) {
+                try (TableReader tableReader = newOffPoolReader(configuration, "t")) {
                     try (TableReaderMetadata metadata0 = tableReader.getMetadata()) {
                         path.concat(TableUtils.META_FILE_NAME).$();
                         try (TableReaderMetadata metadata = new TableReaderMetadata(configuration)) {

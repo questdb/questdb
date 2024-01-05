@@ -130,7 +130,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             CreateTableTestUtils.create(model);
         }
 
-        try (TableWriter writer = newTableWriter(configuration, "v", Metrics.disabled())) {
+        try (TableWriter writer = newOffPoolWriter(configuration, "v", Metrics.disabled())) {
             TableWriter.Row row = writer.newRow(0);
             row.putSym(0, "sym1");
             row.putSym(5, "mode1");
@@ -144,19 +144,19 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             writer.commit();
         }
 
-        reader = newTableReader(configuration, "x");
+        reader = newOffPoolReader(configuration, "x");
         metadata = reader.getMetadata();
 
-        noTimestampReader = newTableReader(configuration, "y");
+        noTimestampReader = newOffPoolReader(configuration, "y");
         noTimestampMetadata = noTimestampReader.getMetadata();
 
-        unindexedReader = newTableReader(configuration, "z");
+        unindexedReader = newOffPoolReader(configuration, "z");
         unindexedMetadata = unindexedReader.getMetadata();
 
-        noDesignatedTimestampNorIdxReader = newTableReader(configuration, "w");
+        noDesignatedTimestampNorIdxReader = newOffPoolReader(configuration, "w");
         noDesignatedTimestampNorIdxMetadata = noDesignatedTimestampNorIdxReader.getMetadata();
 
-        nonEmptyReader = newTableReader(configuration, "v");
+        nonEmptyReader = newOffPoolReader(configuration, "v");
         nonEmptyMetadata = nonEmptyReader.getMetadata();
     }
 

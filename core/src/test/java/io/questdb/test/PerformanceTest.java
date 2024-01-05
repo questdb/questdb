@@ -81,7 +81,7 @@ public class PerformanceTest extends AbstractCairoTest {
                 CreateTableTestUtils.create(model);
             }
 
-            try (TableWriter w = newTableWriter(configuration, "quote", Metrics.disabled())) {
+            try (TableWriter w = newOffPoolWriter(configuration, "quote", Metrics.disabled())) {
                 for (int i = -count; i < count; i++) {
                     if (i == 0) {
                         t = System.nanoTime();
@@ -108,7 +108,7 @@ public class PerformanceTest extends AbstractCairoTest {
             }
             long appendDuration = result / count;
 
-            try (TableReader reader = newTableReader(configuration, "quote")) {
+            try (TableReader reader = newOffPoolReader(configuration, "quote")) {
                 for (int i = -count; i < count; i++) {
                     if (i == 0) {
                         t = System.nanoTime();
@@ -169,8 +169,8 @@ public class PerformanceTest extends AbstractCairoTest {
 
         SOCountDownLatch stopLatch = new SOCountDownLatch(2);
         SOCountDownLatch startLatch = new SOCountDownLatch(2);
-        try (TableWriter w = newTableWriter(configuration, "quote", Metrics.disabled());
-             TableReader reader = newTableReader(configuration, "quote")) {
+        try (TableWriter w = newOffPoolWriter(configuration, "quote", Metrics.disabled());
+             TableReader reader = newOffPoolReader(configuration, "quote")) {
             // Writing
             new Thread(() -> {
                 try {

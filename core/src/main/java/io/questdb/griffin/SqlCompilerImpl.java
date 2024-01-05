@@ -1730,7 +1730,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         DefaultLifecycleManager.INSTANCE,
                         configuration.getRoot(),
                         engine.getDdlListener(tableToken),
-                        NoOpDatabaseSnapshotAgent.INSTANCE,
+                        getEngine().getSnapshotAgent(),
                         engine.getMetrics()
                 );
             } else {
