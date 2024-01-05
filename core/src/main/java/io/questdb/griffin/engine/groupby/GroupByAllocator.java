@@ -51,6 +51,18 @@ public class GroupByAllocator implements QuietCloseable {
         this.defaultChunkSize = configuration.getGroupByAllocatorChunkSize();
     }
 
+    // Useful for debugging.
+    @SuppressWarnings("unused")
+    public long allocated() {
+        long allocated = 0;
+        synchronized (lock) {
+            for (int i = 0, n = arenas.size(); i < n; i++) {
+                allocated += arenas.getQuick(i).allocated();
+            }
+        }
+        return allocated;
+    }
+
     @Override
     public void close() {
         synchronized (lock) {
@@ -81,6 +93,16 @@ public class GroupByAllocator implements QuietCloseable {
         private final IntList chunkSizes = new IntList();
         private int allocatedChunks;
         private long ptr;
+
+        // Useful for debugging.
+        @SuppressWarnings("unused")
+        public long allocated() {
+            long allocated = 0;
+            for (int i = 0; i < allocatedChunks; i++) {
+                allocated += chunkSizes.getQuick(i);
+            }
+            return allocated;
+        }
 
         @Override
         public void close() {

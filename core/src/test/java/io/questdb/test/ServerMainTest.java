@@ -335,7 +335,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.float.cast.scale\tQDB_CAIRO_SQL_FLOAT_CAST_SCALE\t4\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.groupby.map.capacity\tQDB_CAIRO_SQL_GROUPBY_MAP_CAPACITY\t1024\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.groupby.pool.capacity\tQDB_CAIRO_SQL_GROUPBY_POOL_CAPACITY\t1024\tdefault\tfalse\tfalse\n" +
-                                    "cairo.sql.groupby.allocator.chunk.size\tQDB_CAIRO_SQL_GROUPBY_ALLOCATOR_CHUNK_SIZE\t32768\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.groupby.allocator.chunk.size\tQDB_CAIRO_SQL_GROUPBY_ALLOCATOR_CHUNK_SIZE\t65536\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.hash.join.light.value.max.pages\tQDB_CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_MAX_PAGES\t2147483647\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.hash.join.light.value.page.size\tQDB_CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_PAGE_SIZE\t1048576\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.hash.join.value.max.pages\tQDB_CAIRO_SQL_HASH_JOIN_VALUE_MAX_PAGES\t2147483647\tdefault\tfalse\tfalse\n" +
