@@ -66,7 +66,12 @@ public abstract class AbstractCountGroupByFunction extends LongFunction implemen
 
     @Override
     public boolean isParallelismSupported() {
-        return arg.isReadThreadSafe();
+        return true;
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return UnaryFunction.super.isReadThreadSafe();
     }
 
     @Override

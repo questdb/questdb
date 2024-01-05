@@ -74,6 +74,11 @@ public class FirstTimestampGroupByFunction extends TimestampFunction implements 
     }
 
     @Override
+    public boolean isParallelismSupported() {
+        return false;
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.TIMESTAMP);

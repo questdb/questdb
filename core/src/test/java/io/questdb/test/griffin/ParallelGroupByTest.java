@@ -284,44 +284,44 @@ public class ParallelGroupByTest extends AbstractCairoTest {
     @Test
     public void testParallelFunctionKeyGroupByMultipleKeys() throws Exception {
         testParallelSymbolKeyGroupBy(
-                "SELECT vwap(price, quantity), day_of_week(ts) day, sum(colTop), concat(key, 'abc')::symbol key " +
+                "SELECT vwap(price, quantity), day_of_week(ts) day, sum(colTop), regexp_replace(key, 'k0', 'k42') key " +
                         "FROM tab ORDER BY day, key",
                 "vwap\tday\tsum\tkey\n" +
-                        "2848.23852863102\t1\t263700.0\tk0abc\n" +
-                        "2848.94253657797\t1\t263820.0\tk1abc\n" +
-                        "2849.6468136697736\t1\t263940.0\tk2abc\n" +
-                        "2850.3513595394984\t1\t264060.0\tk3abc\n" +
-                        "2851.05617382088\t1\t264180.0\tk4abc\n" +
-                        "2624.4694763291645\t2\t239025.0\tk0abc\n" +
-                        "2598.96097084443\t2\t235085.0\tk1abc\n" +
-                        "2599.691650489951\t2\t235195.0\tk2abc\n" +
-                        "2600.4225929755667\t2\t235305.0\tk3abc\n" +
-                        "2601.153797916691\t2\t235415.0\tk4abc\n" +
-                        "2526.5384615384614\t3\t204750.0\tk0abc\n" +
-                        "2527.3046131315596\t3\t204850.0\tk1abc\n" +
-                        "2528.070992925104\t3\t204950.0\tk2abc\n" +
-                        "2528.8376005852233\t3\t205050.0\tk3abc\n" +
-                        "2529.6044357786986\t3\t205150.0\tk4abc\n" +
-                        "2594.679907219484\t4\t215425.0\tk0abc\n" +
-                        "2595.0011126435716\t4\t215585.0\tk1abc\n" +
-                        "2595.617813662006\t4\t215695.0\tk2abc\n" +
-                        "2596.234922950459\t4\t215805.0\tk3abc\n" +
-                        "2596.8524398569757\t4\t215915.0\tk4abc\n" +
-                        "2651.1220904699167\t5\t227700.0\tk0abc\n" +
-                        "2651.7251338776227\t5\t227820.0\tk1abc\n" +
-                        "2652.3285952443625\t5\t227940.0\tk2abc\n" +
-                        "2652.9324739103745\t5\t228060.0\tk3abc\n" +
-                        "2653.5367692172845\t5\t228180.0\tk4abc\n" +
-                        "2713.3938256153524\t6\t239700.0\tk0abc\n" +
-                        "2714.035610040864\t6\t239820.0\tk1abc\n" +
-                        "2714.6777527715262\t6\t239940.0\tk2abc\n" +
-                        "2715.3202532700157\t6\t240060.0\tk3abc\n" +
-                        "2715.9631110000832\t6\t240180.0\tk4abc\n" +
-                        "2779.263011521653\t7\t251700.0\tk0abc\n" +
-                        "2779.938130410611\t7\t251820.0\tk1abc\n" +
-                        "2780.6135587838376\t7\t251940.0\tk2abc\n" +
-                        "2781.2892961993175\t7\t252060.0\tk3abc\n" +
-                        "2781.9653422158776\t7\t252180.0\tk4abc\n"
+                        "2848.94253657797\t1\t263820.0\tk1\n" +
+                        "2849.6468136697736\t1\t263940.0\tk2\n" +
+                        "2850.3513595394984\t1\t264060.0\tk3\n" +
+                        "2851.05617382088\t1\t264180.0\tk4\n" +
+                        "2848.23852863102\t1\t263700.0\tk42\n" +
+                        "2598.96097084443\t2\t235085.0\tk1\n" +
+                        "2599.691650489951\t2\t235195.0\tk2\n" +
+                        "2600.4225929755667\t2\t235305.0\tk3\n" +
+                        "2601.153797916691\t2\t235415.0\tk4\n" +
+                        "2624.4694763291645\t2\t239025.0\tk42\n" +
+                        "2527.3046131315596\t3\t204850.0\tk1\n" +
+                        "2528.070992925104\t3\t204950.0\tk2\n" +
+                        "2528.8376005852233\t3\t205050.0\tk3\n" +
+                        "2529.6044357786986\t3\t205150.0\tk4\n" +
+                        "2526.5384615384614\t3\t204750.0\tk42\n" +
+                        "2595.0011126435716\t4\t215585.0\tk1\n" +
+                        "2595.617813662006\t4\t215695.0\tk2\n" +
+                        "2596.234922950459\t4\t215805.0\tk3\n" +
+                        "2596.8524398569757\t4\t215915.0\tk4\n" +
+                        "2594.679907219484\t4\t215425.0\tk42\n" +
+                        "2651.7251338776227\t5\t227820.0\tk1\n" +
+                        "2652.3285952443625\t5\t227940.0\tk2\n" +
+                        "2652.9324739103745\t5\t228060.0\tk3\n" +
+                        "2653.5367692172845\t5\t228180.0\tk4\n" +
+                        "2651.1220904699167\t5\t227700.0\tk42\n" +
+                        "2714.035610040864\t6\t239820.0\tk1\n" +
+                        "2714.6777527715262\t6\t239940.0\tk2\n" +
+                        "2715.3202532700157\t6\t240060.0\tk3\n" +
+                        "2715.9631110000832\t6\t240180.0\tk4\n" +
+                        "2713.3938256153524\t6\t239700.0\tk42\n" +
+                        "2779.938130410611\t7\t251820.0\tk1\n" +
+                        "2780.6135587838376\t7\t251940.0\tk2\n" +
+                        "2781.2892961993175\t7\t252060.0\tk3\n" +
+                        "2781.9653422158776\t7\t252180.0\tk4\n" +
+                        "2779.263011521653\t7\t251700.0\tk42\n"
         );
     }
 
@@ -371,6 +371,21 @@ public class ParallelGroupByTest extends AbstractCairoTest {
     @Test
     public void testParallelFunctionKeyGroupByThreadUnsafe() throws Exception {
         testParallelSymbolKeyGroupBy(
+                "SELECT regexp_replace(key, 'k0', 'k42') key, vwap(price, quantity), sum(colTop) FROM tab ORDER BY key",
+                "key\tvwap\tsum\n" +
+                        "k1\t2682.7321472695826\t1638800.0\n" +
+                        "k2\t2683.4065201284266\t1639600.0\n" +
+                        "k3\t2684.081214514935\t1640400.0\n" +
+                        "k4\t2684.756229953121\t1641200.0\n" +
+                        "k42\t2685.431565967941\t1642000.0\n"
+        );
+    }
+
+    @Test
+    public void testParallelFunctionKeyGroupByThreadUnsafe2() throws Exception {
+        // This query shouldn't be executed in parallel,
+        // so this test verifies that nothing breaks.
+        testParallelSymbolKeyGroupBy(
                 "SELECT concat(key, 'abc')::symbol key, vwap(price, quantity), sum(colTop) FROM tab ORDER BY key",
                 "key\tvwap\tsum\n" +
                         "k0abc\t2685.431565967941\t1642000.0\n" +
@@ -379,6 +394,46 @@ public class ParallelGroupByTest extends AbstractCairoTest {
                         "k3abc\t2684.081214514935\t1640400.0\n" +
                         "k4abc\t2684.756229953121\t1641200.0\n"
         );
+    }
+
+    @Test
+    public void testParallelGroupByCastToSymbol() throws Exception {
+        // This query shouldn't be executed in parallel,
+        // so this test verifies that nothing breaks.
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool((() -> 4));
+            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                        ddl(
+                                compiler,
+                                "create table x as (select * from (select rnd_symbol('a','b','c') a, 'x' || x b from long_sequence(" + ROW_COUNT + ")))",
+                                sqlExecutionContext
+                        );
+                        assertQueries(
+                                engine,
+                                sqlExecutionContext,
+                                "select a, ct, c\n" +
+                                        "from \n" +
+                                        "(\n" +
+                                        "  select a, cast(b as SYMBOL) as ct, count(*) c\n" +
+                                        "  from x\n" +
+                                        ") order by a, ct limit 10",
+                                "a\tct\tc\n" +
+                                        "a\tx1\t1\n" +
+                                        "a\tx100\t1\n" +
+                                        "a\tx1001\t1\n" +
+                                        "a\tx1005\t1\n" +
+                                        "a\tx1007\t1\n" +
+                                        "a\tx1008\t1\n" +
+                                        "a\tx1009\t1\n" +
+                                        "a\tx101\t1\n" +
+                                        "a\tx1010\t1\n" +
+                                        "a\tx1011\t1\n"
+                        );
+                    },
+                    configuration,
+                    LOG
+            );
+        });
     }
 
     @Test

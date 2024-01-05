@@ -97,6 +97,11 @@ public abstract class AbstractCovarGroupByFunction extends DoubleFunction implem
     }
 
     @Override
+    public boolean isParallelismSupported() {
+        return false;
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.DOUBLE);

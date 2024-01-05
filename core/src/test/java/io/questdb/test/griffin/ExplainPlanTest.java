@@ -2927,10 +2927,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a (l long, s string)",
                 "select s::symbol, avg(l) a from a",
-                "Async Group By workers: 1\n" +
+                "GroupBy vectorized: false\n" +
                         "  keys: [cast]\n" +
                         "  values: [avg(l)]\n" +
-                        "  filter: null\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"

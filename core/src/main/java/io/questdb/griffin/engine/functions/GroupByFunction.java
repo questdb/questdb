@@ -75,7 +75,7 @@ public interface GroupByFunction extends Function, Mutable {
         return false;
     }
 
-    // returns whether the function can be used in parallel GROUP BY
+    @Override
     default boolean isParallelismSupported() {
         return false;
     }

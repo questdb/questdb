@@ -119,6 +119,11 @@ public final class CountDistinctUuidGroupByFunction extends LongFunction impleme
     }
 
     @Override
+    public boolean isParallelismSupported() {
+        return false;
+    }
+
+    @Override
     public boolean isReadThreadSafe() {
         return false;
     }

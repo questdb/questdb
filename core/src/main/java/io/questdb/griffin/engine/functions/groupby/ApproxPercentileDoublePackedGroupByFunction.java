@@ -140,6 +140,11 @@ public class ApproxPercentileDoublePackedGroupByFunction extends DoubleFunction 
     }
 
     @Override
+    public boolean isParallelismSupported() {
+        return false;
+    }
+
+    @Override
     public boolean isReadThreadSafe() {
         return false;
     }

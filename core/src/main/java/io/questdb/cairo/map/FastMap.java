@@ -314,9 +314,7 @@ public class FastMap implements Map, Reopenable {
 
     @Override
     public void setKeyCapacity(int newKeyCapacity) {
-        if (newKeyCapacity > keyCapacity) {
-            rehash(Numbers.ceilPow2((int) (newKeyCapacity / loadFactor)));
-        }
+        rehash(Numbers.ceilPow2((int) (newKeyCapacity / loadFactor)));
     }
 
     @Override

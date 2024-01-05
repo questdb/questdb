@@ -146,6 +146,11 @@ public class CountDistinctSymbolGroupByFunction extends LongFunction implements 
     }
 
     @Override
+    public boolean isParallelismSupported() {
+        return false;
+    }
+
+    @Override
     public boolean isReadThreadSafe() {
         return false;
     }

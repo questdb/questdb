@@ -116,6 +116,11 @@ public class CountDistinctIntGroupByFunction extends LongFunction implements Una
     }
 
     @Override
+    public boolean isParallelismSupported() {
+        return false;
+    }
+
+    @Override
     public boolean isReadThreadSafe() {
         return false;
     }

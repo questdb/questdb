@@ -3407,7 +3407,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             final boolean enableParallelGroupBy = configuration.isSqlParallelGroupByEnabled();
-            if (enableParallelGroupBy && GroupByUtils.supportParallelism(groupByFunctions)) {
+            if (enableParallelGroupBy
+                    && SqlUtil.isParallelismSupported(keyFunctions)
+                    && GroupByUtils.isParallelismSupported(groupByFunctions)) {
                 boolean supportsParallelism = factory.supportPageFrameCursor();
                 Function nestedFilter = null;
                 ArrayColumnTypes keyTypesCopy = keyTypes;

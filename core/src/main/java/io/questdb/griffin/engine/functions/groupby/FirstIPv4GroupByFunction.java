@@ -78,6 +78,11 @@ public class FirstIPv4GroupByFunction extends IPv4Function implements GroupByFun
     }
 
     @Override
+    public boolean isParallelismSupported() {
+        return false;
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.IPv4);

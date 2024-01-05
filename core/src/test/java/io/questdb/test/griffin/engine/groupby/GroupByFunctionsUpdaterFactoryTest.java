@@ -98,6 +98,11 @@ public class GroupByFunctionsUpdaterFactoryTest {
         }
 
         @Override
+        public boolean isParallelismSupported() {
+            return false;
+        }
+
+        @Override
         public void merge(MapValue destValue, MapValue srcValue) {
             long value = srcValue.getLong(0);
             destValue.putLong(0, value);

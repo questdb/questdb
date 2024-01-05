@@ -116,6 +116,11 @@ public class CountDistinctIPv4GroupByFunction extends LongFunction implements Un
     }
 
     @Override
+    public boolean isParallelismSupported() {
+        return false;
+    }
+
+    @Override
     public boolean isReadThreadSafe() {
         return false;
     }

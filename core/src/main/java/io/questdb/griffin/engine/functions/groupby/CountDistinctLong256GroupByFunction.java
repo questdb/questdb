@@ -114,6 +114,11 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
     }
 
     @Override
+    public boolean isParallelismSupported() {
+        return false;
+    }
+
+    @Override
     public boolean isReadThreadSafe() {
         return false;
     }
