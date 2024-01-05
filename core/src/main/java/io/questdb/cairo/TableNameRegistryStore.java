@@ -40,7 +40,8 @@ import org.jetbrains.annotations.TestOnly;
 import java.util.Map;
 import java.util.function.Predicate;
 
-import static io.questdb.cairo.wal.WalUtils.TABLE_REGISTRY_NAME_FILE;
+import static io.questdb.cairo.TableUtils.META_FILE_NAME;
+import static io.questdb.cairo.wal.WalUtils.*;
 import static io.questdb.std.Files.DT_FILE;
 
 public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
@@ -48,9 +49,9 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
     private final CairoConfiguration configuration;
     private final StringSink nameSink = new StringSink();
     private final Predicate<CharSequence> protectedTableResolver;
-    private final IntHashSet tableIds = new IntHashSet();
     private final MemoryCMR tableNameRoMemory = Vm.getCMRInstance();
     private int lockFd = -1;
+    private long longBuffer;
 
     public TableNameRegistryStore(CairoConfiguration configuration, Predicate<CharSequence> protectedTableResolver) {
         super(configuration.getFilesFacade());
@@ -117,6 +118,15 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
         return lockFd != -1;
     }
 
+    public void reload(
+            ConcurrentHashMap<TableToken> tableNameToTokenMap,
+            ConcurrentHashMap<ReverseTableMapItem> dirNameToTokenMap,
+            @Nullable ObjList<TableToken> convertedTables
+    ) {
+        reloadFromTablesFile(tableNameToTokenMap, dirNameToTokenMap, convertedTables);
+        reloadFromRootDirectory(tableNameToTokenMap, dirNameToTokenMap);
+    }
+
     @TestOnly
     public synchronized void resetMemory() {
         if (!isLocked()) {
@@ -132,60 +142,156 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
         tableNameMemory.smallFile(configuration.getFilesFacade(), path, MemoryTag.MMAP_DEFAULT);
     }
 
+    @Override
+    public void writeEntry(TableToken tableToken, int operation) {
+        if (!isLocked()) {
+            throw CairoException.critical(0).put("table registry is not locked");
+        }
+        super.writeEntry(tableToken, operation);
+    }
+
+    private boolean checkWalTableInPendingDropState(TableToken tableToken, FilesFacade ff, Path path, int plimit) {
+        if (longBuffer == 0) {
+            // lazy init
+            longBuffer = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        }
+
+        path.trimTo(plimit).concat(tableToken.getDirName()).concat(SEQ_DIR).concat(META_FILE_NAME).$();
+        int seqMetaFd = ff.openRO(path);
+        if (seqMetaFd == -1) {
+            LOG.error().$("cannot open seq meta file, assume table is being dropped [path=").$(path).I$();
+            return true;
+        }
+
+        try {
+            if (ff.read(seqMetaFd, longBuffer, Long.BYTES, SEQ_META_OFFSET_STRUCTURE_VERSION) == Long.BYTES) {
+                long structureVersion = Unsafe.getUnsafe().getLong(longBuffer);
+                return structureVersion == DROP_TABLE_STRUCTURE_VERSION;
+            } else {
+                LOG.error().$("cannot read structure version, assume table is being dropped [path=").$(path).I$();
+                // cannot read structure version, assume table is being dropped
+                return true;
+            }
+        } finally {
+            ff.close(seqMetaFd);
+        }
+    }
+
+    private void clearRegistryToReloadFromFileSystem(
+            ConcurrentHashMap<TableToken> tableNameToTableTokenMap,
+            ConcurrentHashMap<ReverseTableMapItem> dirNameToTableTokenMap,
+            int lastFileVersion,
+            String errorTableName,
+            String errorDirName,
+            TableToken conflictTableToken
+    ) {
+        LOG.critical().$("duplicate table dir to name mapping found [tableName=").utf8(errorTableName)
+                .$(", dirName1=").utf8(conflictTableToken.getDirName())
+                .$(", dirName2=").utf8(errorDirName)
+                .I$();
+        dumpTableRegistry(lastFileVersion);
+        if (isLocked()) {
+            // Reset existing registry to empty state
+            tableNameMemory.putLong(0, Long.BYTES);
+            tableNameMemory.jumpTo(Long.BYTES);
+        }
+        tableNameToTableTokenMap.clear();
+        dirNameToTableTokenMap.clear();
+    }
+
     private void compactTableNameFile(
             Map<CharSequence, TableToken> nameTableTokenMap,
             Map<CharSequence, ReverseTableMapItem> reverseNameMap,
             int lastFileVersion,
             FilesFacade ff,
-            Path path,
-            long currentOffset
+            Path path
     ) {
         // compact the memory, remove deleted entries.
         // write to the tmp file.
         int pathRootLen = path.size();
         path.concat(TABLE_REGISTRY_NAME_FILE).putAscii(".tmp").$();
+        long currentOffset;
 
-        try {
-            tableNameMemory.close(false);
-            tableNameMemory.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
-            tableNameMemory.putLong(0L);
+        tableNameMemory.close(false);
+        tableNameMemory.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
+        tableNameMemory.putLong(0L);
 
-            // Save tables not fully deleted yet to complete the deletion.
-            for (ReverseTableMapItem reverseMapItem : reverseNameMap.values()) {
-                if (reverseMapItem.isDropped()) {
-                    writeEntry(reverseMapItem.getToken(), OPERATION_ADD);
-                    writeEntry(reverseMapItem.getToken(), OPERATION_REMOVE);
-                }
+        // Save tables not fully deleted yet to complete the deletion.
+        for (ReverseTableMapItem reverseMapItem : reverseNameMap.values()) {
+            if (reverseMapItem.isDropped()) {
+                writeEntry(reverseMapItem.getToken(), OPERATION_ADD);
+                writeEntry(reverseMapItem.getToken(), OPERATION_REMOVE);
             }
+        }
 
-            for (TableToken token : nameTableTokenMap.values()) {
-                writeEntry(token, OPERATION_ADD);
-            }
+        for (TableToken token : nameTableTokenMap.values()) {
+            writeEntry(token, OPERATION_ADD);
+        }
 
-            tableNameMemory.sync(false);
-            long newAppendOffset = tableNameMemory.getAppendOffset();
-            tableNameMemory.close();
+        tableNameMemory.sync(false);
+        long newAppendOffset = tableNameMemory.getAppendOffset();
+        tableNameMemory.close();
 
-            // rename tmp to next version file, everyone will automatically switch to new file
-            Path path2 = Path.getThreadLocal2(configuration.getRoot())
-                    .concat(TABLE_REGISTRY_NAME_FILE).put('.').put(lastFileVersion + 1).$();
-            if (ff.rename(path, path2) == Files.FILES_RENAME_OK) {
-                LOG.info().$("compacted tables file [path=").$(path2).I$();
-                lastFileVersion++;
-                currentOffset = newAppendOffset;
-                // best effort to remove old files, but we don't care if it fails
-                path.trimTo(pathRootLen).concat(TABLE_REGISTRY_NAME_FILE).putAscii('.').put(lastFileVersion - 1).$();
-                ff.remove(path);
-            } else {
-                // Not critical, if rename fails, compaction will be done next time
-                LOG.error().$("could not rename tables file, tables file will not be compacted [from=").$(path)
-                        .$(", to=").$(path2).I$();
-            }
-        } finally {
+        // rename tmp to next version file, everyone will automatically switch to new file
+        Path path2 = Path.getThreadLocal2(configuration.getRoot())
+                .concat(TABLE_REGISTRY_NAME_FILE).put('.').put(lastFileVersion + 1).$();
+        if (ff.rename(path, path2) == Files.FILES_RENAME_OK) {
+            LOG.info().$("compacted tables file [path=").$(path2).I$();
+            lastFileVersion++;
+            currentOffset = newAppendOffset;
+            // best effort to remove old files, but we don't care if it fails
+            path.trimTo(pathRootLen).concat(TABLE_REGISTRY_NAME_FILE).putAscii('.').put(lastFileVersion - 1).$();
+            ff.remove(path);
+
             path.trimTo(pathRootLen).concat(TABLE_REGISTRY_NAME_FILE).putAscii('.').put(lastFileVersion).$();
             tableNameMemory.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
             tableNameMemory.jumpTo(currentOffset);
+        } else {
+            // Not critical, if rename fails, compaction will be done next time
+            // Reopen the existing, non-compacted file
+            path2 = Path.getThreadLocal2(configuration.getRoot())
+                    .concat(TABLE_REGISTRY_NAME_FILE).put('.').put(lastFileVersion).$();
+            tableNameMemory.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
+            long appendOffset = tableNameMemory.getLong(0);
+            tableNameMemory.jumpTo(appendOffset);
+
+            LOG.error().$("could not rename tables file, tables file will not be compacted [from=").$(path)
+                    .$(", to=").$(path2).I$();
         }
+    }
+
+    private void dumpTableRegistry(int lastFileVersion) {
+        MemoryMR memory = isLocked() ? tableNameMemory : tableNameRoMemory;
+        long mapMem = memory.getLong(0);
+        long currentOffset = Long.BYTES;
+
+        LOG.advisoryW().$("dumping table registry [file=").$(TABLE_REGISTRY_NAME_FILE).$('.').$(lastFileVersion)
+                .$(", size=").$(mapMem).I$();
+
+        while (currentOffset < mapMem) {
+            int operation = memory.getInt(currentOffset);
+            currentOffset += Integer.BYTES;
+            String tableName = Chars.toString(memory.getStr(currentOffset));
+            currentOffset += Vm.getStorageLength(tableName);
+            String dirName = Chars.toString(memory.getStr(currentOffset));
+            currentOffset += Vm.getStorageLength(dirName);
+            int tableId = memory.getInt(currentOffset);
+            currentOffset += Integer.BYTES;
+            int tableType = memory.getInt(currentOffset);
+            currentOffset += Integer.BYTES;
+
+            LOG.advisoryW().$("operation=").$(operation == OPERATION_ADD ? "add (" : "remove (").$(operation)
+                    .$("), tableName=").utf8(tableName)
+                    .$(", dirName=").utf8(dirName)
+                    .$(", tableId=").$(tableId)
+                    .$(", tableType=").$(tableType)
+                    .$(']').$();
+
+            if (operation == OPERATION_ADD) {
+                currentOffset += TABLE_NAME_ENTRY_RESERVED_LONGS * Long.BYTES;
+            }
+        }
+        LOG.advisoryW().$("table registry dump complete").$();
     }
 
     private int findLastTablesFileVersion(FilesFacade ff, Path path) {
@@ -193,7 +299,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
     }
 
     private int readTableId(Path path, CharSequence dirName, FilesFacade ff) {
-        path.of(configuration.getRoot()).concat(dirName).concat(TableUtils.META_FILE_NAME).$();
+        path.of(configuration.getRoot()).concat(dirName).concat(META_FILE_NAME).$();
         int fd = ff.openRO(path);
         if (fd < 1) {
             return 0;
@@ -213,8 +319,8 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
     }
 
     private void reloadFromRootDirectory(
-            ConcurrentHashMap<TableToken> nameTableTokenMap,
-            ConcurrentHashMap<ReverseTableMapItem> reverseTableNameTokenMap
+            ConcurrentHashMap<TableToken> tableNameToTableTokenMap,
+            ConcurrentHashMap<ReverseTableMapItem> dirNameToTableTokenMap
     ) {
         Path path = Path.getThreadLocal(configuration.getRoot()).$();
         int plimit = path.size();
@@ -226,7 +332,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                 if (ff.isDirOrSoftLinkDirNoDots(path, plimit, ff.findName(findPtr), ff.findType(findPtr), dirNameSink)) {
                     String dirName = Utf8s.toString(dirNameSink);
                     if (
-                            !reverseTableNameTokenMap.containsKey(dirName)
+                            !dirNameToTableTokenMap.containsKey(dirName)
                                     && TableUtils.exists(ff, path, configuration.getRoot(), dirNameSink) == TableUtils.TABLE_EXISTS
                     ) {
                         int tableId;
@@ -250,47 +356,44 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                         }
 
                         if (tableName == null) {
-                            if (isWal) {
-                                LOG.error().$("could not read table name, table will not be available [dirName=").$(dirNameSink).I$();
-                                continue;
-                            } else {
-                                // Non-wal tables may not have _name file.
-                                tableName = Chars.toString(TableUtils.getTableNameFromDirName(dirName));
-                            }
+                            LOG.info().$("could not read table name, table will use directory name [dirName=").$(dirNameSink).I$();
+                            tableName = Chars.toString(TableUtils.getTableNameFromDirName(dirName));
                         }
 
                         if (tableId > -1L) {
-                            if (tableIds.contains(tableId)) {
-                                LOG.critical().$("duplicate table id found, table will not be available " +
-                                        "[dirName=").$(dirNameSink).$(", id=").$(tableId).I$();
-                                continue;
-                            }
-
-                            if (nameTableTokenMap.containsKey(tableName)) {
-                                LOG.critical().$("duplicate table name found, table will not be available [dirName=").$(dirNameSink)
-                                        .$(", name=").utf8(tableName)
-                                        .$(", existingTableDir=").utf8(nameTableTokenMap.get(tableName).getDirName())
-                                        .I$();
-                                continue;
-                            }
-
                             boolean isProtected = protectedTableResolver.test(tableName);
                             boolean isSystem = TableUtils.isSystemTable(tableName, configuration);
                             TableToken token = new TableToken(tableName, dirName, tableId, isWal, isSystem, isProtected);
-                            nameTableTokenMap.put(tableName, token);
-                            reverseTableNameTokenMap.put(dirName, ReverseTableMapItem.of(token));
+                            TableToken existingTableToken = tableNameToTableTokenMap.get(tableName);
+
+                            if (existingTableToken != null) {
+                                // One of the tables can be in pending drop state.
+                                if (!resolveTableNameConflict(tableNameToTableTokenMap, dirNameToTableTokenMap, token, existingTableToken, ff, path, plimit)) {
+                                    LOG.critical().$("duplicate table name found, table will not be available [dirName=").$(dirNameSink)
+                                            .$(", name=").utf8(tableName)
+                                            .$(", existingTableDir=").utf8(tableNameToTableTokenMap.get(tableName).getDirName())
+                                            .I$();
+                                }
+                                continue;
+                            }
+
+                            tableNameToTableTokenMap.put(tableName, token);
+                            dirNameToTableTokenMap.put(dirName, ReverseTableMapItem.of(token));
                         }
                     }
                 }
             } while (ff.findNext(findPtr) > 0);
         } finally {
             ff.findClose(findPtr);
+            if (longBuffer != 0) {
+                longBuffer = Unsafe.free(longBuffer, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            }
         }
     }
 
     private void reloadFromTablesFile(
-            ConcurrentHashMap<TableToken> nameTableTokenMap,
-            ConcurrentHashMap<ReverseTableMapItem> reverseTableNameTokenMap,
+            ConcurrentHashMap<TableToken> tableNameToTableTokenMap,
+            ConcurrentHashMap<ReverseTableMapItem> dirNameToTableTokenMap,
             @Nullable ObjList<TableToken> convertedTables
     ) {
         int lastFileVersion;
@@ -304,7 +407,10 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
             path.trimTo(plimit).concat(TABLE_REGISTRY_NAME_FILE).putAscii('.').put(lastFileVersion).$();
             try {
                 memory.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
-                LOG.info().$("reloading tables file [path=").$(path).I$();
+                LOG.info()
+                        .$("reloading tables file [path=").$(path)
+                        .$(", threadId=").$(Thread.currentThread().getId())
+                        .I$();
                 if (memory.size() >= 2 * Long.BYTES) {
                     break;
                 }
@@ -327,6 +433,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
         long mapMem = memory.getLong(0);
         long currentOffset = Long.BYTES;
         memory.extend(mapMem);
+        int forceCompact = Integer.MAX_VALUE / 2;
 
         int tableToCompact = 0;
         while (currentOffset < mapMem) {
@@ -342,70 +449,82 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
             currentOffset += Integer.BYTES;
 
             if (operation == OPERATION_REMOVE) {
-                // remove from registry
-                final TableToken token = nameTableTokenMap.remove(tableName);
-                if (token != null) {
-                    if (!ff.exists(path.trimTo(plimit).concat(dirName).$())) {
-                        // table already fully removed
-                        tableToCompact++;
-                        reverseTableNameTokenMap.remove(token.getDirName());
-                    } else {
-                        reverseTableNameTokenMap.put(dirName, ReverseTableMapItem.ofDropped(token));
-                    }
-                } else {
-                    reverseTableNameTokenMap.remove(dirName);
+                TableToken token = tableNameToTableTokenMap.remove(tableName);
+                if (!ff.exists(path.trimTo(plimit).concat(dirName).$())) {
+                    // table already fully removed
                     tableToCompact++;
+                    dirNameToTableTokenMap.remove(dirName);
+                } else {
+                    if (token == null) {
+                        boolean isProtected = protectedTableResolver.test(tableName);
+                        boolean isSystem = TableUtils.isSystemTable(tableName, configuration);
+                        token = new TableToken(tableName, dirName, tableId, tableType == TableUtils.TABLE_TYPE_WAL, isSystem, isProtected);
+                    }
+                    dirNameToTableTokenMap.put(dirName, ReverseTableMapItem.ofDropped(token));
                 }
             } else {
-                if (tableIds.contains(tableId)) {
-                    LOG.critical().$("duplicate table id found, table will not be accessible " +
-                                    "[dirName=").utf8(dirName)
-                            .$(", id=").$(tableId)
-                            .I$();
-                    continue;
-                }
+                assert operation == OPERATION_ADD;
+                if (TableUtils.exists(ff, path, configuration.getRoot(), dirName) != TableUtils.TABLE_EXISTS) {
+                    // This can be BAU, remove record will follow
+                    tableToCompact++;
+                } else {
+                    boolean isProtected = protectedTableResolver.test(tableName);
+                    boolean isSystem = TableUtils.isSystemTable(tableName, configuration);
+                    final TableToken token = new TableToken(tableName, dirName, tableId, tableType == TableUtils.TABLE_TYPE_WAL, isSystem, isProtected);
+                    TableToken existing = tableNameToTableTokenMap.get(tableName);
 
-                boolean isProtected = protectedTableResolver.test(tableName);
-                boolean isSystem = TableUtils.isSystemTable(tableName, configuration);
-                final TableToken token = new TableToken(tableName, dirName, tableId, tableType == TableUtils.TABLE_TYPE_WAL, isSystem, isProtected);
-                nameTableTokenMap.put(tableName, token);
-                if (!Chars.startsWith(token.getDirName(), token.getTableName())) {
-                    // This table is renamed, log system to real table name mapping
-                    LOG.advisory().$("table dir name does not match logical name [table=").utf8(tableName).$(", dirName=").utf8(dirName).I$();
+                    if (existing != null) {
+                        clearRegistryToReloadFromFileSystem(
+                                tableNameToTableTokenMap,
+                                dirNameToTableTokenMap,
+                                lastFileVersion,
+                                tableName,
+                                dirName,
+                                existing
+                        );
+                        return;
+                    }
+                    tableNameToTableTokenMap.put(tableName, token);
+                    if (!Chars.startsWith(token.getDirName(), token.getTableName())) {
+                        // This table is renamed, log system to real table name mapping
+                        LOG.info().$("table dir name does not match logical name [table=").utf8(tableName).$(", dirName=").utf8(dirName).I$();
+                    }
+                    dirNameToTableTokenMap.put(token.getDirName(), ReverseTableMapItem.of(token));
                 }
-
-                reverseTableNameTokenMap.put(token.getDirName(), ReverseTableMapItem.of(token));
                 currentOffset += TABLE_NAME_ENTRY_RESERVED_LONGS * Long.BYTES;
             }
         }
 
-        int forceCompact = Integer.MAX_VALUE / 2;
         if (isLocked()) {
-            // Check that the table directories exist
-            for (TableToken token : nameTableTokenMap.values()) {
-                if (TableUtils.exists(ff, path, configuration.getRoot(), token.getDirName()) != TableUtils.TABLE_EXISTS) {
-                    LOG.error().$("table directory directly removed from File System, table will not be available [path=").$(path)
-                            .$(", dirName=").utf8(token.getDirName())
-                            .$(", table=").utf8(token.getTableName())
-                            .I$();
-
-                    nameTableTokenMap.remove(token.getTableName());
-                    reverseTableNameTokenMap.remove(token.getDirName());
-                    tableToCompact++;
-                }
-            }
-
+            tableNameMemory.jumpTo(currentOffset);
             if (convertedTables != null) {
                 for (int i = 0, n = convertedTables.size(); i < n; i++) {
                     final TableToken token = convertedTables.get(i);
-                    if (token.isWal()) {
-                        nameTableTokenMap.put(token.getTableName(), token);
-                        reverseTableNameTokenMap.put(token.getDirName(), ReverseTableMapItem.of(token));
-                    } else {
-                        nameTableTokenMap.remove(token.getTableName());
-                        reverseTableNameTokenMap.remove(token.getDirName());
+                    final TableToken existing = tableNameToTableTokenMap.get(token.getTableName());
+
+                    if (existing != null && !Chars.equals(existing.getDirName(), token.getDirName())) {
+                        // Table with different directory already exists pointing to the same name
+                        clearRegistryToReloadFromFileSystem(
+                                tableNameToTableTokenMap,
+                                dirNameToTableTokenMap,
+                                lastFileVersion,
+                                token.getTableName(),
+                                token.getDirName(),
+                                existing
+                        );
+                        return;
                     }
-                    tableToCompact = Integer.MAX_VALUE / 2;
+
+                    if (token.isWal()) {
+                        tableNameToTableTokenMap.put(token.getTableName(), token);
+                        dirNameToTableTokenMap.put(token.getDirName(), ReverseTableMapItem.of(token));
+                    } else {
+                        tableNameToTableTokenMap.remove(token.getTableName());
+                        dirNameToTableTokenMap.remove(token.getDirName());
+                    }
+
+                    // Force the compaction
+                    tableToCompact = forceCompact;
                 }
             }
 
@@ -413,7 +532,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
             if ((tableRegistryCompactionThreshold > -1 && tableToCompact > tableRegistryCompactionThreshold) || tableToCompact >= forceCompact) {
                 path.trimTo(plimit);
                 LOG.info().$("compacting tables file").$();
-                compactTableNameFile(nameTableTokenMap, reverseTableNameTokenMap, lastFileVersion, ff, path, currentOffset);
+                compactTableNameFile(tableNameToTableTokenMap, dirNameToTableTokenMap, lastFileVersion, ff, path);
             } else {
                 tableNameMemory.jumpTo(currentOffset);
             }
@@ -422,21 +541,43 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
         }
     }
 
-    void reload(
-            ConcurrentHashMap<TableToken> nameTableTokenMap,
-            ConcurrentHashMap<ReverseTableMapItem> reverseTableNameTokenMap,
-            @Nullable ObjList<TableToken> convertedTables
+    private boolean resolveTableNameConflict(
+            ConcurrentHashMap<TableToken> tableNameToTableTokenMap,
+            ConcurrentHashMap<ReverseTableMapItem> dirNameToTableTokenMap,
+            TableToken newToken,
+            TableToken existingTableToken,
+            FilesFacade ff,
+            Path path,
+            int plimit
     ) {
-        tableIds.clear();
-        reloadFromTablesFile(nameTableTokenMap, reverseTableNameTokenMap, convertedTables);
-        reloadFromRootDirectory(nameTableTokenMap, reverseTableNameTokenMap);
-    }
+        boolean existingDropped = false;
+        boolean newDropped = false;
 
-    @Override
-    protected void writeEntry(TableToken tableToken, int operation) {
-        if (!isLocked()) {
-            throw CairoException.critical(0).put("table registry is not locked");
+        if (existingTableToken.isWal()) {
+            existingDropped = checkWalTableInPendingDropState(existingTableToken, ff, path, plimit);
         }
-        super.writeEntry(tableToken, operation);
+
+        if (!existingDropped) {
+            // Check if new table is dropped
+            if (newToken.isWal()) {
+                newDropped = checkWalTableInPendingDropState(newToken, ff, path, plimit);
+            }
+        } else {
+            // existing table token table is partially dropped
+            tableNameToTableTokenMap.remove(existingTableToken.getTableName());
+            dirNameToTableTokenMap.remove(existingTableToken.getDirName());
+
+            // mark existing as pending dropped
+            dirNameToTableTokenMap.put(existingTableToken.getDirName(), ReverseTableMapItem.ofDropped(existingTableToken));
+
+            // add new table
+            tableNameToTableTokenMap.put(newToken.getTableName(), newToken);
+            dirNameToTableTokenMap.put(newToken.getDirName(), ReverseTableMapItem.of(newToken));
+
+            return true;
+        }
+
+        // don't add new table to registry
+        return newDropped;
     }
 }

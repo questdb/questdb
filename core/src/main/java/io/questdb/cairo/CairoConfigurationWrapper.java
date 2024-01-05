@@ -286,11 +286,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getGroupByShardCount() {
-        return delegate.getGroupByShardCount();
-    }
-
-    @Override
     public int getGroupByShardingThreshold() {
         return delegate.getGroupByShardingThreshold();
     }
@@ -476,6 +471,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getQueryRegistryPoolSize() {
+        return delegate.getQueryRegistryPoolSize();
+    }
+
+    @Override
     public int getReaderPoolMaxSegments() {
         return delegate.getReaderPoolMaxSegments();
     }
@@ -543,11 +543,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getSqlColumnPoolCapacity() {
         return delegate.getSqlColumnPoolCapacity();
-    }
-
-    @Override
-    public double getSqlCompactMapLoadFactor() {
-        return delegate.getSqlCompactMapLoadFactor();
     }
 
     @Override

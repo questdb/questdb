@@ -1025,7 +1025,6 @@ public class SqlKeywords {
                 && (tok.charAt(10) | 32) == 'd';
     }
 
-
     public static boolean isMillisecondsKeyword(CharSequence tok) {
         return tok.length() == 12
                 && (tok.charAt(0) | 32) == 'm'
@@ -1237,6 +1236,24 @@ public class SqlKeywords {
                 && (tok.charAt(4) | 32) == 'm';
     }
 
+    public static boolean isParametersKeyword(CharSequence tok) {
+        if (tok.length() != 10) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'p'
+                && (tok.charAt(i++) | 32) == 'a'
+                && (tok.charAt(i++) | 32) == 'r'
+                && (tok.charAt(i++) | 32) == 'a'
+                && (tok.charAt(i++) | 32) == 'm'
+                && (tok.charAt(i++) | 32) == 'e'
+                && (tok.charAt(i++) | 32) == 't'
+                && (tok.charAt(i++) | 32) == 'e'
+                && (tok.charAt(i++) | 32) == 'r'
+                && (tok.charAt(i++) | 32) == 's';
+    }
+
     public static boolean isPartitionKeyword(CharSequence tok) {
         return tok.length() == 9
                 && (tok.charAt(0) | 32) == 'p'
@@ -1307,6 +1324,19 @@ public class SqlKeywords {
                 && (tok.charAt(4) | 32) == 't'
                 && (tok.charAt(5) | 32) == 'e'
                 && (tok.charAt(6) | 32) == 'r';
+    }
+
+    public static boolean isQueryKeyword(CharSequence tok) {
+        if (tok.length() != 5) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'q'
+                && (tok.charAt(i++) | 32) == 'u'
+                && (tok.charAt(i++) | 32) == 'e'
+                && (tok.charAt(i++) | 32) == 'r'
+                && (tok.charAt(i) | 32) == 'y';
     }
 
     public static boolean isQuote(CharSequence tok) {
@@ -1428,22 +1458,22 @@ public class SqlKeywords {
                 && token.charAt(0) == ';';
     }
 
-    public static boolean isParametersKeyword(CharSequence tok) {
-        if (tok.length() != 10) {
-            return false;
-        }
-
-        int i = 0;
-        return (tok.charAt(i++) | 32) == 'p'
-                && (tok.charAt(i++) | 32) == 'a'
-                && (tok.charAt(i++) | 32) == 'r'
-                && (tok.charAt(i++) | 32) == 'a'
-                && (tok.charAt(i++) | 32) == 'm'
-                && (tok.charAt(i++) | 32) == 'e'
-                && (tok.charAt(i++) | 32) == 't'
-                && (tok.charAt(i++) | 32) == 'e'
-                && (tok.charAt(i++) | 32) == 'r'
-                && (tok.charAt(i++) | 32) == 's';
+    public static boolean isServerVersionKeyword(CharSequence tok) {
+        return tok.length() == 14
+                && (tok.charAt(0) | 32) == 's'
+                && (tok.charAt(1) | 32) == 'e'
+                && (tok.charAt(2) | 32) == 'r'
+                && (tok.charAt(3) | 32) == 'v'
+                && (tok.charAt(4) | 32) == 'e'
+                && (tok.charAt(5) | 32) == 'r'
+                && (tok.charAt(6)) == '_'
+                && (tok.charAt(7) | 32) == 'v'
+                && (tok.charAt(8) | 32) == 'e'
+                && (tok.charAt(9) | 32) == 'r'
+                && (tok.charAt(10) | 32) == 's'
+                && (tok.charAt(11) | 32) == 'i'
+                && (tok.charAt(12) | 32) == 'o'
+                && (tok.charAt(13) | 32) == 'n';
     }
 
     public static boolean isSetKeyword(CharSequence tok) {
@@ -1808,24 +1838,6 @@ public class SqlKeywords {
                 && (tok.charAt(4) | 32) == 'a'
                 && (tok.charAt(5) | 32) == 's'
                 && (tok.charAt(6) | 32) == 'h';
-    }
-
-    public static boolean isServerVersionKeyword(CharSequence tok) {
-        return tok.length() == 14
-                && (tok.charAt(0) | 32) == 's'
-                && (tok.charAt(1) | 32) == 'e'
-                && (tok.charAt(2) | 32) == 'r'
-                && (tok.charAt(3) | 32) == 'v'
-                && (tok.charAt(4) | 32) == 'e'
-                && (tok.charAt(5) | 32) == 'r'
-                && (tok.charAt(6)) == '_'
-                && (tok.charAt(7) | 32) == 'v'
-                && (tok.charAt(8) | 32) == 'e'
-                && (tok.charAt(9) | 32) == 'r'
-                && (tok.charAt(10) | 32) == 's'
-                && (tok.charAt(11) | 32) == 'i'
-                && (tok.charAt(12) | 32) == 'o'
-                && (tok.charAt(13) | 32) == 'n';
     }
 
     static void assertTableNameIsQuotedOrNotAKeyword(CharSequence keyword, int position) throws SqlException {

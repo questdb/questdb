@@ -37,12 +37,13 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class Worker extends Thread {
-    public final static int NO_THREAD_AFFINITY = -1;
     public final static MicrosecondClock CLOCK_MICROS = MicrosecondClockImpl.INSTANCE;
+    public final static int NO_THREAD_AFFINITY = -1;
     private final int affinity;
     private final String criticalErrorLine;
     private final SOCountDownLatch haltLatch;
     private final boolean haltOnError;
+    private final AtomicLong jobStartMicros = new AtomicLong();
     private final ObjHashSet<? extends Job> jobs;
     private final AtomicReference<Lifecycle> lifecycle = new AtomicReference<>(Lifecycle.BORN);
     private final Log log;
@@ -54,7 +55,6 @@ public class Worker extends Thread {
     private final long sleepThreshold;
     private final int workerId;
     private final long yieldThreshold;
-    private final AtomicLong jobStartMicros = new AtomicLong();
 
     public Worker(
             String poolName,
@@ -87,16 +87,16 @@ public class Worker extends Thread {
         this.log = log;
     }
 
+    public String getPoolName() {
+        return poolName;
+    }
+
     public int getWorkerId() {
         return workerId;
     }
 
     public void halt() {
         lifecycle.set(Lifecycle.HALTED);
-    }
-
-    long getJobStartMicros() {
-        return jobStartMicros.get();
     }
 
     @Override
@@ -203,6 +203,10 @@ public class Worker extends Thread {
     private void stdErrCritical(Throwable e) {
         System.err.println(criticalErrorLine);
         e.printStackTrace();
+    }
+
+    long getJobStartMicros() {
+        return jobStartMicros.get();
     }
 
     private enum Lifecycle {

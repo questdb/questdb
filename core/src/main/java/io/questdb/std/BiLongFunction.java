@@ -22,29 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.text;
+package io.questdb.std;
 
-import io.questdb.cairo.sql.ExecutionCircuitBreaker;
-
-import java.util.concurrent.atomic.AtomicBoolean;
-
-public class AtomicBooleanCircuitBreaker implements ExecutionCircuitBreaker {
-    private final AtomicBoolean canceledFlag = new AtomicBoolean(false);
-
-    public void cancel() {
-        canceledFlag.set(true);
-    }
-
-    @Override
-    public boolean checkIfTripped() {
-        return isCanceled();
-    }
-
-    public boolean isCanceled() {
-        return canceledFlag.get();
-    }
-
-    public void reset() {
-        canceledFlag.set(false);
-    }
+@FunctionalInterface
+public interface BiLongFunction<U, R> {
+    R apply(long val1, U val2);
 }

@@ -14,6 +14,7 @@ public final class DefaultQueryLogger implements QueryLogger {
     public LogRecord logQuery(Log logger, int fd, CharSequence query, SecurityContext securityContext, String logText) {
         return logger.info().$(logText)
                 .$(" [fd=").$(fd)
+                .$(", thread=").$(Thread.currentThread().getId())
                 .$(", q=").utf8(query);
     }
 }

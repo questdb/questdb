@@ -33,6 +33,7 @@ import io.questdb.griffin.QueryFutureUpdateListener;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.RegisteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
@@ -53,6 +54,7 @@ import org.junit.Assume;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ANY;
@@ -82,7 +84,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
             snapshotMemoryUsage();
             final String sql = "select * from x where s in ('C','D') limit 10";
             try (final RecordCursorFactory factory = (compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory())) {
-                Assert.assertEquals(AsyncFilteredRecordCursorFactory.class, factory.getClass());
+                Assert.assertEquals(AsyncFilteredRecordCursorFactory.class, factory.getBaseFactory().getClass());
 
                 assertCursor(
                         "s\tt\n",
@@ -338,7 +340,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
             compiler.compile("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour", sqlExecutionContext);
             final String sql = "x where a > 0.345747032 and a < 0.34575 limit $1";
             try (RecordCursorFactory f = (compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory())) {
-                Assert.assertEquals(AsyncFilteredRecordCursorFactory.class, f.getClass());
+                Assert.assertEquals(AsyncFilteredRecordCursorFactory.class, f.getBaseFactory().getClass());
             }
 
             sqlExecutionContext.getBindVariableService().setLong(0, 3);
@@ -405,7 +407,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
             compiler.compile("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour", sqlExecutionContext);
             final String sql = "x where a > 0.345747032 and a < 0.34575 limit -5";
             try (RecordCursorFactory f = (compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory())) {
-                Assert.assertEquals(AsyncFilteredRecordCursorFactory.class, f.getClass());
+                Assert.assertEquals(AsyncFilteredRecordCursorFactory.class, f.getBaseFactory().getClass());
             }
 
             assertQuery(compiler,
@@ -469,7 +471,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
             compiler.compile("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour", sqlExecutionContext);
             final String sql = "x where a > 0.345747032 and a < 0.34575 limit 5";
             try (RecordCursorFactory f = (compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory())) {
-                Assert.assertEquals(AsyncFilteredRecordCursorFactory.class, f.getClass());
+                Assert.assertEquals(AsyncFilteredRecordCursorFactory.class, f.getBaseFactory().getClass());
             }
 
             assertQuery(
@@ -551,7 +553,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
 
             final String sql = "select * from x where s ~ $1 limit 10";
             try (RecordCursorFactory f = (compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory())) {
-                Assert.assertEquals(AsyncFilteredRecordCursorFactory.class, f.getClass());
+                Assert.assertEquals(AsyncFilteredRecordCursorFactory.class, f.getBaseFactory().getClass());
             }
 
             bindVariableService.clear();
@@ -603,7 +605,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         snapshotMemoryUsage();
         final String sql = "select * from x where s in ('C','D') limit 10";
         try (final RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-            Assert.assertEquals(AsyncFilteredRecordCursorFactory.class, factory.getClass());
+            Assert.assertEquals(AsyncFilteredRecordCursorFactory.class, factory.getBaseFactory().getClass());
 
             assertCursor(
                     "s\tt\n",
@@ -654,8 +656,8 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     RecordCursorFactory f1 = (compiler.compile(query, sqlExecutionContext).getRecordCursorFactory());
                     RecordCursorFactory f2 = (compiler.compile(query, sqlExecutionContext).getRecordCursorFactory())
             ) {
-                Assert.assertEquals(AsyncFilteredRecordCursorFactory.class, f1.getClass());
-                Assert.assertEquals(AsyncFilteredRecordCursorFactory.class, f2.getClass());
+                Assert.assertEquals(AsyncFilteredRecordCursorFactory.class, f1.getBaseFactory().getClass());
+                Assert.assertEquals(AsyncFilteredRecordCursorFactory.class, f2.getBaseFactory().getClass());
 
                 try (
                         RecordCursor c1 = f1.getCursor(sqlExecutionContext);
@@ -694,7 +696,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
             compiler.compile("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour", sqlExecutionContext);
             final String sql = "x where a > 0.345747032 and a < 0.34575";
             try (RecordCursorFactory f = (compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory())) {
-                Assert.assertEquals(expectedFactoryClass, f.getClass());
+                Assert.assertEquals(expectedFactoryClass, f.getBaseFactory().getClass());
             }
 
             assertQuery(
@@ -720,7 +722,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
             compiler.compile("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour", sqlExecutionContext);
             try (RecordCursorFactory f = (compiler.compile("x where a > 0.34", sqlExecutionContext).getRecordCursorFactory())) {
 
-                Assert.assertEquals(expectedFactoryClass, f.getClass());
+                Assert.assertEquals(expectedFactoryClass, f.getBaseFactory().getClass());
                 SCSequence subSeq = new SCSequence();
                 PageFrameSequence<?> frameSequence = f.execute(sqlExecutionContext, subSeq, ORDER_ANY);
 
@@ -750,7 +752,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
 
             final String sql = "select * from x where s = $1 limit 10";
             try (RecordCursorFactory f = (compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory())) {
-                Assert.assertEquals(expectedFactoryClass, f.getClass());
+                Assert.assertEquals(expectedFactoryClass, f.getBaseFactory().getClass());
             }
 
             bindVariableService.clear();
@@ -973,6 +975,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public SqlExecutionCircuitBreaker getSimpleCircuitBreaker() {
+            return sqlExecutionContext.getSimpleCircuitBreaker();
+        }
+
+        @Override
         public WindowContext getWindowContext() {
             return sqlExecutionContext.getWindowContext();
         }
@@ -1018,6 +1025,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public void setCancelledFlag(AtomicBoolean cancelled) {
+            sqlExecutionContext.setCancelledFlag(cancelled);
+        }
+
+        @Override
         public void setCloneSymbolTables(boolean cloneSymbolTables) {
             sqlExecutionContext.setCloneSymbolTables(cloneSymbolTables);
         }
@@ -1045,6 +1057,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         @Override
         public void setRandom(Rnd rnd) {
             sqlExecutionContext.setRandom(rnd);
+        }
+
+        @Override
+        public void setUseSimpleCircuitBreaker(boolean value) {
+            sqlExecutionContext.setUseSimpleCircuitBreaker(value);
         }
 
         @Override

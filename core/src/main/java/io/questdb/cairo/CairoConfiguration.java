@@ -177,8 +177,6 @@ public interface CairoConfiguration {
 
     int getGroupByPoolCapacity();
 
-    int getGroupByShardCount();
-
     int getGroupByShardingThreshold();
 
     @NotNull
@@ -293,6 +291,8 @@ public interface CairoConfiguration {
         return DefaultQueryLogger.INSTANCE;
     }
 
+    int getQueryRegistryPoolSize();
+
     @NotNull
     default Rnd getRandom() {
         Rnd rnd = RANDOM.get();
@@ -348,8 +348,6 @@ public interface CairoConfiguration {
     int getSqlCharacterStoreSequencePoolCapacity();
 
     int getSqlColumnPoolCapacity();
-
-    double getSqlCompactMapLoadFactor();
 
     int getSqlCompilerPoolCapacity();
 
