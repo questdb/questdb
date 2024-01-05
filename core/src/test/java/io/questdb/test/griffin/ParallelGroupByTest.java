@@ -382,6 +382,19 @@ public class ParallelGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelFunctionKeyGroupByThreadUnsafe2() throws Exception {
+        testParallelStringKeyGroupBy(
+                "SELECT regexp_replace(key, 'k0', 'k42') key, sum(value), sum(colTop) FROM tab ORDER BY key",
+                "key\tsum\tsum1\n" +
+                        "k1\t3237600.0\t1638800.0\n" +
+                        "k2\t3239200.0\t1639600.0\n" +
+                        "k3\t3240800.0\t1640400.0\n" +
+                        "k4\t3242400.0\t1641200.0\n" +
+                        "k42\t3244000.0\t1642000.0\n"
+        );
+    }
+
+    @Test
     public void testParallelMultiKeyGroupBy() throws Exception {
         testParallelMultiKeyGroupBy(
                 "SELECT key1, key2, avg(value), sum(colTop) FROM tab ORDER BY key1, key2",
@@ -584,6 +597,15 @@ public class ParallelGroupByTest extends AbstractCairoTest {
     @Test
     public void testParallelNonKeyedGroupByThrowsOnTimeout() throws Exception {
         testParallelGroupByThrowsOnTimeout("select vwap(price, quantity) from tab");
+    }
+
+    @Test
+    public void testParallelNonKeyedGroupByWithCountDistinctLongFunction() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT count_distinct(j2) FROM tab",
+                "count_distinct\n" +
+                        "3700\n"
+        );
     }
 
     @Test
@@ -975,6 +997,49 @@ public class ParallelGroupByTest extends AbstractCairoTest {
                     expected
             );
         }
+    }
+
+    private void testParallelGroupByAllTypes(String... queriesAndExpectedResults) throws Exception {
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool((() -> 4));
+            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                        ddl(
+                                compiler,
+                                "create table tab as (select" +
+                                        " 'k' || ((50 + x) % 5) key," +
+                                        " cast(x as int) kk," +
+                                        " rnd_int() a," +
+                                        " rnd_boolean() b," +
+                                        " rnd_str(1,1,2) c," +
+                                        " rnd_double(2) d," +
+                                        " rnd_float(2) e," +
+                                        " rnd_short(10,1024) f," +
+                                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                                        " rnd_symbol(4,4,4,2) i," +
+                                        " rnd_long() j," +
+                                        " rnd_long(0, 10000000, 5) j2," +
+                                        " timestamp_sequence(400000000000, 500000000) ts," +
+                                        " rnd_byte(2,50) l," +
+                                        " rnd_bin(10, 20, 2) m," +
+                                        " rnd_str(5,16,2) n," +
+                                        " rnd_char() cc," +
+                                        " rnd_long256() l2," +
+                                        " rnd_geohash(1) hash1b," +
+                                        " rnd_geohash(2) hash2b," +
+                                        " rnd_geohash(3) hash3b," +
+                                        " rnd_geohash(5) hash1c," +
+                                        " rnd_geohash(10) hash2c," +
+                                        " rnd_geohash(20) hash4c," +
+                                        " rnd_geohash(40) hash8c" +
+                                        " from long_sequence(" + ROW_COUNT + ")) timestamp(ts) partition by day",
+                                sqlExecutionContext
+                        );
+                        assertQueries(engine, sqlExecutionContext, queriesAndExpectedResults);
+                    },
+                    configuration,
+                    LOG
+            );
+        });
     }
 
     private void testParallelGroupByFaultTolerance(String query) throws Exception {

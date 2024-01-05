@@ -81,6 +81,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     protected final GenericLexer lexer;
     protected final SqlOptimiser optimiser;
     protected final Path path = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
+    protected final QueryRegistry queryRegistry;
     private final BytecodeAssembler asm = new BytecodeAssembler();
     private final DatabaseBackupAgent backupAgent;
     private final CharacterStore characterStore;
@@ -90,7 +91,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final FilesFacade ff;
     private final FunctionParser functionParser;
     private final ListColumnFilter listColumnFilter = new ListColumnFilter();
-    private final ExecutableMethod insertAsSelectMethod = this::insertAsSelect;
     private final MemoryMARW mem = Vm.getMARWInstance();
     private final MessageBus messageBus;
     private final SqlParser parser;
@@ -99,7 +99,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final QueryLogger queryLogger;
     private final ObjectPool<QueryModel> queryModelPool;
-    private final QueryRegistry queryRegistry;
     private final IndexBuilder rebuildIndex;
     private final Path renamePath = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
     private final ObjectPool<ExpressionNode> sqlNodePool;
@@ -108,6 +107,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final IntIntHashMap typeCast = new IntIntHashMap();
     private final VacuumColumnVersions vacuumColumnVersions;
     protected CharSequence query;
+    private final ExecutableMethod insertAsSelectMethod = this::insertAsSelect;
     protected boolean queryContainsSecret;
     protected int queryFd;
     protected boolean queryLogged;
@@ -1467,8 +1467,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             switch (executionModel.getModelType()) {
                 case ExecutionModel.QUERY:
                     LOG.info().$("plan [q=`").$((QueryModel) executionModel).$("`, fd=").$(executionContext.getRequestFd()).$(']').$();
-                    RecordCursorFactory generatedFactory = generateWithRetries((QueryModel) executionModel, executionContext);
-                    compiledQuery.of(new RegisteredRecordCursorFactory(queryRegistry, query, generatedFactory));
+                    RecordCursorFactory factory = generateWithRetries((QueryModel) executionModel, executionContext, true);
+                    compiledQuery.of(factory);
                     break;
                 case ExecutionModel.CREATE_TABLE:
                     queryId = queryRegistry.register(query, executionContext);
@@ -2454,7 +2454,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final IntList tableColumnTypes = selectQueryModel.getUpdateTableColumnTypes();
         final ObjList<CharSequence> tableColumnNames = selectQueryModel.getUpdateTableColumnNames();
 
-        RecordCursorFactory updateToDataCursorFactory = generateFactory(selectQueryModel, executionContext);
+        RecordCursorFactory updateToDataCursorFactory = generateFactory(selectQueryModel, executionContext, false);
         try {
             if (!updateToDataCursorFactory.supportsUpdateRowId(tableToken)) {
                 // in theory this should never happen because all valid UPDATE statements should result in
@@ -2830,22 +2830,32 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             @Transient QueryModel queryModel,
             @Transient SqlExecutionContext executionContext
     ) throws SqlException {
-        return generateFactory(queryModel, executionContext);
+        return generateFactory(queryModel, executionContext, false);
     }
 
-    protected RecordCursorFactory generateFactory(QueryModel selectQueryModel, SqlExecutionContext executionContext) throws SqlException {
-        return codeGenerator.generate(selectQueryModel, executionContext);
+    protected RecordCursorFactory generateFactory(
+            QueryModel selectQueryModel,
+            SqlExecutionContext executionContext,
+            boolean isSelect
+    ) throws SqlException {
+        RecordCursorFactory factory = codeGenerator.generate(selectQueryModel, executionContext);
+        if (isSelect) {
+            return new RegisteredRecordCursorFactory(queryRegistry, query, factory);
+        } else {
+            return factory;
+        }
     }
 
     RecordCursorFactory generateWithRetries(
             @Transient QueryModel initialQueryModel,
-            @Transient SqlExecutionContext executionContext
+            @Transient SqlExecutionContext executionContext,
+            boolean isSelect
     ) throws SqlException {
         QueryModel queryModel = initialQueryModel;
         int remainingRetries = TableReferenceOutOfDateException.MAX_RETRY_ATTEMPTS;
         for (; ; ) {
             try {
-                return generateFactory(queryModel, executionContext);
+                return generateFactory(queryModel, executionContext, isSelect);
             } catch (TableReferenceOutOfDateException e) {
                 if (--remainingRetries < 0) {
                     throw SqlException.$(0, e.getFlyweightMessage());
