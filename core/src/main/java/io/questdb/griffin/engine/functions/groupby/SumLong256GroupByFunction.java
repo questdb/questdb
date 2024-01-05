@@ -106,20 +106,7 @@ public class SumLong256GroupByFunction extends Long256Function implements GroupB
 
     @Override
     public boolean isParallelismSupported() {
-        return true;
-    }
-
-    @Override
-    public boolean isReadThreadSafe() {
-        return UnaryFunction.super.isReadThreadSafe();
-    }
-
-    @Override
-    public void merge(MapValue destValue, MapValue srcValue) {
-        Long256 srcSum = srcValue.getLong256A(valueIndex);
-        long srcCount = srcValue.getLong(valueIndex + 1);
-        destValue.addLong256(valueIndex, srcSum);
-        destValue.addLong(valueIndex + 1, srcCount);
+        return false;
     }
 
     @Override

@@ -30,13 +30,14 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class LongLongHashMapTest {
-    @Test
-    public void testAll() {
 
+    @Test
+    public void testSmoke() {
         Rnd rnd = new Rnd();
         // populate map
         LongLongHashMap map = new LongLongHashMap();
         final int N = 1000;
+        final int initialCapacity = map.capacity();
         for (int i = 0; i < N; i++) {
             long value = i + 1;
             map.put(i, value);
@@ -105,5 +106,21 @@ public class LongLongHashMapTest {
                 Assert.assertEquals(rnd3.nextLong(), map.get(i));
             }
         }
+
+        rnd3.reset();
+
+        for (int i = 0; i < map.capacity(); i++) {
+            long key = map.keyAtRaw(i);
+            if (key == -1) {
+                Assert.assertTrue(map.excludes(i));
+            } else {
+                Assert.assertFalse(map.excludes(i));
+                Assert.assertEquals(rnd3.nextLong(), map.valueAtRaw(i));
+            }
+        }
+
+        map.restoreInitialCapacity();
+        Assert.assertEquals(0, map.size());
+        Assert.assertEquals(initialCapacity, map.capacity());
     }
 }

@@ -655,7 +655,7 @@ public class ParallelGroupByTest extends AbstractCairoTest {
         testParallelGroupByAllTypes(
                 "SELECT count_distinct(a2) FROM tab",
                 "count_distinct\n" +
-                        "3347\n"
+                        "3306\n"
         );
     }
 
@@ -664,7 +664,7 @@ public class ParallelGroupByTest extends AbstractCairoTest {
         testParallelGroupByAllTypes(
                 "SELECT count_distinct(j2) FROM tab",
                 "count_distinct\n" +
-                        "3300\n"
+                        "3342\n"
         );
     }
 
@@ -737,7 +737,7 @@ public class ParallelGroupByTest extends AbstractCairoTest {
         testParallelGroupByAllTypes(
                 "SELECT count_distinct(j), count_distinct(j2) FROM tab",
                 "count_distinct\tcount_distinct1\n" +
-                        "4000\t3300\n"
+                        "4000\t3342\n"
         );
     }
 
@@ -938,11 +938,11 @@ public class ParallelGroupByTest extends AbstractCairoTest {
         testParallelGroupByAllTypes(
                 "SELECT key, count_distinct(j), count_distinct(j2) FROM tab ORDER BY key",
                 "key\tcount_distinct\tcount_distinct1\n" +
-                        "k0\t800\t665\n" +
-                        "k1\t800\t671\n" +
-                        "k2\t800\t638\n" +
-                        "k3\t800\t661\n" +
-                        "k4\t800\t666\n"
+                        "k0\t800\t680\n" +
+                        "k1\t800\t655\n" +
+                        "k2\t800\t670\n" +
+                        "k3\t800\t670\n" +
+                        "k4\t800\t672\n"
         );
     }
 

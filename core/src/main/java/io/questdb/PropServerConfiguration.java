@@ -924,7 +924,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlDoubleToStrCastScale = getInt(properties, env, PropertyKey.CAIRO_SQL_DOUBLE_CAST_SCALE, 12);
             this.sqlFloatToStrCastScale = getInt(properties, env, PropertyKey.CAIRO_SQL_FLOAT_CAST_SCALE, 4);
             this.sqlGroupByMapCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_GROUPBY_MAP_CAPACITY, 1024);
-            this.sqlGroupByAllocatorChunkSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_GROUPBY_ALLOCATOR_CHUNK_SIZE, 64 * 1024);
+            this.sqlGroupByAllocatorChunkSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_GROUPBY_ALLOCATOR_CHUNK_SIZE, 128 * 1024);
             this.sqlGroupByPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_GROUPBY_POOL_CAPACITY, 1024);
             this.sqlMaxSymbolNotEqualsCount = getInt(properties, env, PropertyKey.CAIRO_SQL_MAX_SYMBOL_NOT_EQUALS_COUNT, 100);
             this.sqlBindVariablePoolSize = getInt(properties, env, PropertyKey.CAIRO_SQL_BIND_VARIABLE_POOL_SIZE, 8);

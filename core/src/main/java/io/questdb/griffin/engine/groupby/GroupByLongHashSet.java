@@ -125,7 +125,7 @@ public class GroupByLongHashSet {
 
     public GroupByLongHashSet of(long ptr) {
         if (ptr == 0) {
-            this.ptr = allocator.malloc(8L * initialCapacity + HEADER_SIZE);
+            this.ptr = allocator.malloc(HEADER_SIZE + 8L * initialCapacity);
             zero(this.ptr, initialCapacity);
             Unsafe.getUnsafe().putInt(this.ptr, initialCapacity);
             Unsafe.getUnsafe().putInt(this.ptr + SIZE_OFFSET, 0);
@@ -193,6 +193,8 @@ public class GroupByLongHashSet {
                 setKeyAt(index, key);
             }
         }
+
+        allocator.free(oldPtr, HEADER_SIZE + 8L * oldCapacity);
     }
 
     private void setKeyAt(int index, long key) {

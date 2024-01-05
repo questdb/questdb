@@ -36,7 +36,6 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
 
 public abstract class AbstractCountGroupByFunction extends LongFunction implements GroupByFunction, UnaryFunction {
-
     protected final Function arg;
     protected int valueIndex;
 

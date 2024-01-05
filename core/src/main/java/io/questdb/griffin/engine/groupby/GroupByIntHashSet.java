@@ -125,7 +125,7 @@ public class GroupByIntHashSet {
 
     public GroupByIntHashSet of(long ptr) {
         if (ptr == 0) {
-            this.ptr = allocator.malloc(4L * initialCapacity + HEADER_SIZE);
+            this.ptr = allocator.malloc(HEADER_SIZE + 4L * initialCapacity);
             zero(this.ptr, initialCapacity);
             Unsafe.getUnsafe().putInt(this.ptr, initialCapacity);
             Unsafe.getUnsafe().putInt(this.ptr + SIZE_OFFSET, 0);
@@ -179,7 +179,7 @@ public class GroupByIntHashSet {
         }
 
         long oldPtr = ptr;
-        ptr = allocator.malloc(4L * newCapacity + HEADER_SIZE);
+        ptr = allocator.malloc(HEADER_SIZE + 4L * newCapacity);
         zero(ptr, newCapacity);
         Unsafe.getUnsafe().putInt(ptr, newCapacity);
         Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, size);
@@ -193,6 +193,8 @@ public class GroupByIntHashSet {
                 setKeyAt(index, key);
             }
         }
+
+        allocator.free(oldPtr, HEADER_SIZE + 4L * oldCapacity);
     }
 
     private void setKeyAt(int index, int key) {

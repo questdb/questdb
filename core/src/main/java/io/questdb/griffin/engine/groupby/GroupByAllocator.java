@@ -34,9 +34,9 @@ import io.questdb.std.bytes.Bytes;
  * {@link io.questdb.griffin.engine.functions.GroupByFunction}s that require
  * additional off-heap state, e.g. min(str) or count_distinct().
  * <p>
- * Does not free memory until closed. This is fine for GROUP BY functions since
- * they grow their state as power of 2. In practice this means that the memory
- * overhead will be around 2x.
+ * free method is best-effort, i.e. the only way to free all memory is to close
+ * the allocator. This is fine for GROUP BY functions since they start small and
+ * grow their state as power of 2.
  * <p>
  * The purpose of this allocator is to amortize the cost of frequent alloc/free
  * calls.
@@ -51,8 +51,9 @@ public class GroupByAllocator implements QuietCloseable {
         this.defaultChunkSize = configuration.getGroupByAllocatorChunkSize();
     }
 
-    // Useful for debugging.
-    @SuppressWarnings("unused")
+    /**
+     * Returns allocated chunks total, in bytes.
+     */
     public long allocated() {
         long allocated = 0;
         synchronized (lock) {
@@ -70,6 +71,13 @@ public class GroupByAllocator implements QuietCloseable {
                 arenas.getQuick(i).close();
             }
         }
+    }
+
+    /**
+     * Best-effort free memory operation. The memory shouldn't be used after it was called.
+     */
+    public void free(long ptr, long size) {
+        tlArena.get().free(ptr, size);
     }
 
     public long malloc(long size) {
@@ -91,34 +99,51 @@ public class GroupByAllocator implements QuietCloseable {
     private class Arena implements QuietCloseable {
         private final LongList chunkPtrs = new LongList();
         private final IntList chunkSizes = new IntList();
-        private int allocatedChunks;
+        // Holds <ptr, size> pairs.
+        private final LongLongHashMap chunks = new LongLongHashMap();
+        private long allocated;
+        private long lim;
         private long ptr;
 
-        // Useful for debugging.
-        @SuppressWarnings("unused")
+        // Allocated chunks total (bytes).
         public long allocated() {
-            long allocated = 0;
-            for (int i = 0; i < allocatedChunks; i++) {
-                allocated += chunkSizes.getQuick(i);
-            }
             return allocated;
         }
 
         @Override
         public void close() {
-            for (int i = 0; i < allocatedChunks; i++) {
-                Unsafe.free(chunkPtrs.getQuick(i), chunkSizes.getQuick(i), MemoryTag.NATIVE_GROUP_BY_FUNCTION);
+            for (int i = 0, n = chunks.capacity(); i < n; i++) {
+                long ptr = chunks.keyAtRaw(i);
+                if (ptr != -1) {
+                    long size = chunks.valueAtRaw(i);
+                    Unsafe.free(ptr, size, MemoryTag.NATIVE_GROUP_BY_FUNCTION);
+                }
             }
-            chunkPtrs.restoreInitialCapacity();
-            chunkSizes.restoreInitialCapacity();
-            allocatedChunks = 0;
-            ptr = 0;
+            chunks.restoreInitialCapacity();
+            allocated = 0;
+            ptr = lim = 0;
+        }
+
+        // Best-effort free operation.
+        public void free(long ptr, long size) {
+            int index = chunks.keyIndex(ptr);
+            if (index < 0) {
+                long chunkSize = chunks.valueAt(index);
+                if (size == chunkSize) {
+                    // We're lucky! We can free the whole chunk.
+                    Unsafe.free(ptr, chunkSize, MemoryTag.NATIVE_GROUP_BY_FUNCTION);
+                    chunks.removeAt(index);
+                    allocated -= chunkSize;
+                    if (this.ptr == Bytes.align8b(ptr + chunkSize)) {
+                        this.ptr = lim = 0;
+                    }
+                }
+            }
         }
 
         public long malloc(long size) {
             assert size < Integer.MAX_VALUE;
-            long chunkLim = allocatedChunks > 0 ? chunkPtrs.getQuick(allocatedChunks - 1) + chunkSizes.getQuick(allocatedChunks - 1) : 0;
-            if (ptr + size <= chunkLim) {
+            if (ptr + size <= lim) {
                 long allocatedPtr = ptr;
                 ptr = Bytes.align8b(allocatedPtr + size);
                 return allocatedPtr;
@@ -126,35 +151,44 @@ public class GroupByAllocator implements QuietCloseable {
 
             int chunkSize = (int) Math.max(size, defaultChunkSize);
             long allocatedPtr = Unsafe.malloc(chunkSize, MemoryTag.NATIVE_GROUP_BY_FUNCTION);
-            chunkPtrs.extendAndSet(allocatedChunks, allocatedPtr);
-            chunkSizes.extendAndSet(allocatedChunks, chunkSize);
-            allocatedChunks++;
+            chunks.put(allocatedPtr, chunkSize);
+            allocated += chunkSize;
             ptr = Bytes.align8b(allocatedPtr + size);
+            lim = allocatedPtr + chunkSize;
             return allocatedPtr;
         }
 
         public long realloc(long ptr, long oldSize, long newSize) {
             assert newSize < Integer.MAX_VALUE;
             assert oldSize < newSize;
-            if (ptr == this.ptr - oldSize) {
-                // Potential fast path for realloc:
+            if (this.ptr == Bytes.align8b(ptr + oldSize)) {
+                // Potential fast path:
                 // we've just allocated this memory, so maybe we don't need to do anything?
-                assert allocatedChunks > 0;
-                long chunkPtr = chunkPtrs.getQuick(allocatedChunks - 1);
-                int chunkSize = chunkSizes.getQuick(allocatedChunks - 1);
-                if (ptr + newSize <= chunkPtr + chunkSize) {
-                    // Great, we can simply use remaining part of the chunk.
+                if (ptr + newSize <= lim) {
+                    // Great, we can simply use the remaining part of the chunk.
                     this.ptr = Bytes.align8b(ptr + newSize);
                     return ptr;
-                } else if (ptr == chunkPtr) {
+                }
+            }
+
+            // Check another potential fast path:
+            // maybe we can reallocate the whole chunk?
+            int index = chunks.keyIndex(ptr);
+            if (index < 0) {
+                long chunkSize = chunks.valueAt(index);
+                if (chunkSize == oldSize) {
                     // Nice, we can reallocate the whole chunk.
-                    chunkPtr = Unsafe.realloc(chunkPtr, chunkSize, newSize, MemoryTag.NATIVE_GROUP_BY_FUNCTION);
-                    chunkPtrs.setQuick(allocatedChunks - 1, chunkPtr);
-                    chunkSizes.setQuick(allocatedChunks - 1, (int) newSize);
-                    this.ptr = Bytes.align8b(chunkPtr + newSize);
+                    long chunkPtr = Unsafe.realloc(ptr, chunkSize, newSize, MemoryTag.NATIVE_GROUP_BY_FUNCTION);
+                    allocated += newSize - chunkSize;
+                    chunks.removeAt(index);
+                    chunks.put(chunkPtr, newSize);
+                    lim = chunkPtr + newSize;
+                    this.ptr = Bytes.align8b(lim);
                     return chunkPtr;
                 }
             }
+
+            // Slow path.
             long allocatedPtr = malloc(newSize);
             Vect.memcpy(allocatedPtr, ptr, oldSize);
             return allocatedPtr;

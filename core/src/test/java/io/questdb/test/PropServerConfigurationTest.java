@@ -248,7 +248,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(256, configuration.getCairoConfiguration().getPageFrameReduceRowIdListCapacity());
         Assert.assertEquals(16, configuration.getCairoConfiguration().getPageFrameReduceColumnListCapacity());
         Assert.assertEquals(10000, configuration.getCairoConfiguration().getGroupByShardingThreshold());
-        Assert.assertEquals(64 * 1024, configuration.getCairoConfiguration().getGroupByAllocatorChunkSize());
+        Assert.assertEquals(128 * 1024, configuration.getCairoConfiguration().getGroupByAllocatorChunkSize());
 
         Assert.assertEquals(SqlJitMode.JIT_MODE_ENABLED, configuration.getCairoConfiguration().getSqlJitMode());
         Assert.assertEquals(8192, configuration.getCairoConfiguration().getSqlJitIRMemoryPageSize());
