@@ -146,7 +146,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
     private static boolean removeOrLog(Path path, FilesFacade ff) {
         if (!ff.removeQuiet(path.$())) {
-            LOG.info().$("could not remove, will retry [path=").$(path).$(", errno=").$(ff.errno()).I$();
+            LOG.info().$("could not remove, will retry [path=").utf8(", errno=").$(ff.errno()).I$();
             return false;
         }
         return true;

@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.Os;
 import io.questdb.std.Utf8SequenceIntHashMap;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8Sequence;
@@ -108,7 +109,9 @@ public class TestFilesFacadeImpl extends FilesFacadeImpl {
     private static synchronized boolean checkRemove(LPSZ name) {
         if (openPaths.keyIndex(name) < 0) {
             LOG.info().$("cannot remove, file is open: ").$(name).$(", fd=").$(getFdByPath(name)).$();
-            return true;
+            // For reproducing test failures which happen on Windows only while debugging on another OS, change this to
+            // return true;
+            return Os.isWindows();
         }
         return false;
     }
