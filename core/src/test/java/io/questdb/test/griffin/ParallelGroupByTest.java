@@ -642,11 +642,20 @@ public class ParallelGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelNonKeyedGroupByWithCountDistinctIntFunction() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT count_distinct(a2) FROM tab",
+                "count_distinct\n" +
+                        "3347\n"
+        );
+    }
+
+    @Test
     public void testParallelNonKeyedGroupByWithCountDistinctLongFunction() throws Exception {
         testParallelGroupByAllTypes(
                 "SELECT count_distinct(j2) FROM tab",
                 "count_distinct\n" +
-                        "3700\n"
+                        "3300\n"
         );
     }
 
@@ -706,11 +715,20 @@ public class ParallelGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelNonKeyedGroupByWithTwoCountDistinctIntFunctions() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT count_distinct(a), count_distinct(a2) FROM tab",
+                "count_distinct\tcount_distinct1\n" +
+                        "4000\t3347\n"
+        );
+    }
+
+    @Test
     public void testParallelNonKeyedGroupByWithTwoCountDistinctLongFunctions() throws Exception {
         testParallelGroupByAllTypes(
                 "SELECT count_distinct(j), count_distinct(j2) FROM tab",
                 "count_distinct\tcount_distinct1\n" +
-                        "4000\t3700\n"
+                        "4000\t3300\n"
         );
     }
 
@@ -827,6 +845,19 @@ public class ParallelGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelSingleKeyGroupByWithCountDistinctIntFunction() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT key, count_distinct(a) FROM tab ORDER BY key",
+                "key\tcount_distinct\n" +
+                        "k0\t800\n" +
+                        "k1\t800\n" +
+                        "k2\t800\n" +
+                        "k3\t800\n" +
+                        "k4\t800\n"
+        );
+    }
+
+    @Test
     public void testParallelSingleKeyGroupByWithCountDistinctLongFunction() throws Exception {
         testParallelGroupByAllTypes(
                 "SELECT key, count_distinct(j) FROM tab ORDER BY key",
@@ -898,11 +929,11 @@ public class ParallelGroupByTest extends AbstractCairoTest {
         testParallelGroupByAllTypes(
                 "SELECT key, count_distinct(j), count_distinct(j2) FROM tab ORDER BY key",
                 "key\tcount_distinct\tcount_distinct1\n" +
-                        "k0\t800\t745\n" +
-                        "k1\t800\t740\n" +
-                        "k2\t800\t746\n" +
-                        "k3\t800\t732\n" +
-                        "k4\t800\t737\n"
+                        "k0\t800\t665\n" +
+                        "k1\t800\t671\n" +
+                        "k2\t800\t638\n" +
+                        "k3\t800\t661\n" +
+                        "k4\t800\t666\n"
         );
     }
 
@@ -1121,6 +1152,7 @@ public class ParallelGroupByTest extends AbstractCairoTest {
                                         " 'k' || ((50 + x) % 5) key," +
                                         " cast(x as int) kk," +
                                         " rnd_int() a," +
+                                        " rnd_int(0, 1000000, 2) a2," +
                                         " rnd_boolean() b," +
                                         " rnd_str(1,1,2) c," +
                                         " rnd_double(2) d," +
@@ -1129,7 +1161,7 @@ public class ParallelGroupByTest extends AbstractCairoTest {
                                         " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                                         " rnd_symbol(4,4,4,2) i," +
                                         " rnd_long() j," +
-                                        " rnd_long(0, 10000000, 5) j2," +
+                                        " rnd_long(0, 1000000, 2) j2," +
                                         " timestamp_sequence(400000000000, 500000000) ts," +
                                         " rnd_byte(2,50) l," +
                                         " rnd_bin(10, 20, 2) m," +

@@ -135,17 +135,7 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
         setA.of(destPtr);
         setB.of(srcPtr);
 
-        long added = 0;
-        for (int i = 0, n = setB.capacity(); i < n; i++) {
-            long val = setB.keyAt(i);
-            if (val != Numbers.LONG_NaN) {
-                final int index = setA.keyIndex(val);
-                if (index >= 0) {
-                    setA.addAt(index, val);
-                    added++;
-                }
-            }
-        }
+        long added = setA.merge(setB);
         destValue.addLong(valueIndex, added);
         destValue.putLong(valueIndex + 1, setA.ptr());
     }
@@ -166,11 +156,13 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
     @Override
     public void setEmpty(MapValue mapValue) {
         mapValue.putLong(valueIndex, 0L);
+        mapValue.putLong(valueIndex + 1, 0);
     }
 
     @Override
     public void setLong(MapValue mapValue, long value) {
         mapValue.putLong(valueIndex, value);
+        mapValue.putLong(valueIndex + 1, 0);
     }
 
     @Override
