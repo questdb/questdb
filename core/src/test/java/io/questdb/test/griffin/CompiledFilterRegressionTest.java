@@ -298,9 +298,10 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
 
     @Test
     public void testGroupBy() throws Exception {
-        final String query = "select sum(price)/count(sym) from x where price > 0";
+        // We don't want parallel GROUP BY to kick in, so we cast string column to symbol to avoid that.
+        final String query = "select str::symbol, sum(price)/count() from x where price > 0";
         final String ddl = "create table x as " +
-                "(select rnd_symbol('ABB','HBC','DXR') sym, \n" +
+                "(select rnd_str('ABB','HBC','DXR') str, \n" +
                 " rnd_double() price, \n" +
                 " timestamp_sequence(172800000000, 360000000) ts \n" +
                 "from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp (ts)";
