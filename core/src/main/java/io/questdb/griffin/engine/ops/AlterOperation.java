@@ -29,6 +29,7 @@ import io.questdb.cairo.vm.MemoryFCRImpl;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.wal.MetadataService;
+import io.questdb.griffin.QueryRegistry;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -95,7 +96,12 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     // todo: supply bitset to indicate which ops are supported and which arent
     //     "structural changes" doesn't cover is as "add column" is supported
     public long apply(MetadataService svc, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
+        QueryRegistry queryRegistry = sqlExecutionContext != null ? sqlExecutionContext.getCairoEngine().getQueryRegistry() : null;
+        long queryId = -1;
         try {
+            if (queryRegistry != null) {
+                queryId = queryRegistry.register(sqlText, sqlExecutionContext);
+            }
             switch (command) {
                 case ADD_COLUMN:
                     applyAddColumn(svc);
@@ -168,6 +174,10 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                     .$(", message=`").$(e.getFlyweightMessage()).$('`')
                     .I$();
             throw e;
+        } finally {
+            if (queryRegistry != null) {
+                queryRegistry.unregister(queryId, sqlExecutionContext);
+            }
         }
         return 0;
     }

@@ -31,13 +31,9 @@ import io.questdb.cairo.sql.Record;
 public interface MapKey extends RecordSinkSPI {
 
     // Updates key size for var-sized keys and returns the size.
-    default int commit() {
-        throw new UnsupportedOperationException();
-    }
+    int commit();
 
-    default void copyFrom(MapKey srcKey) {
-        throw new UnsupportedOperationException();
-    }
+    void copyFrom(MapKey srcKey);
 
     default boolean create() {
         return createValue().isNew();
@@ -46,27 +42,20 @@ public interface MapKey extends RecordSinkSPI {
     // Commits implicitly.
     MapValue createValue();
 
-    default MapValue createValue(int hashCode) {
-        throw new UnsupportedOperationException();
-    }
+    // Same as createValue(), but doesn't calculate hash code.
+    MapValue createValue(int hashCode);
 
     // Commits implicitly.
     MapValue findValue();
 
     // Commits implicitly.
-    default MapValue findValue2() {
-        throw new UnsupportedOperationException();
-    }
+    MapValue findValue2();
 
     // Commits implicitly.
-    default MapValue findValue3() {
-        throw new UnsupportedOperationException();
-    }
+    MapValue findValue3();
 
     // Must be called after commit.
-    default int hash() {
-        throw new UnsupportedOperationException();
-    }
+    int hash();
 
     default boolean notFound() {
         return findValue() == null;

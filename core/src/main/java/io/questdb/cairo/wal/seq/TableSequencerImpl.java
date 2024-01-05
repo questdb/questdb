@@ -60,7 +60,7 @@ public class TableSequencerImpl implements TableSequencer {
     private final WalDirectoryPolicy walDirectoryPolicy;
     private final IDGenerator walIdGenerator;
     private volatile boolean closed = false;
-    private boolean distressed;
+    private boolean distressed = false;
     private TableToken tableToken;
 
     TableSequencerImpl(CairoEngine engine, TableToken tableToken, SeqTxnTracker txnTracker) {

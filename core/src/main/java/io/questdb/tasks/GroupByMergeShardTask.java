@@ -24,7 +24,7 @@
 
 package io.questdb.tasks;
 
-import io.questdb.cutlass.text.AtomicBooleanCircuitBreaker;
+import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.griffin.engine.table.AsyncGroupByAtom;
 import io.questdb.mp.CountDownLatchSPI;
 import io.questdb.std.Mutable;

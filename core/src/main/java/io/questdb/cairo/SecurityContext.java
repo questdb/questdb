@@ -64,6 +64,9 @@ public interface SecurityContext {
 
     void authorizeAlterTableSetType(TableToken tableToken);
 
+    default void authorizeCancelQuery() {
+    }
+
     void authorizeCopyCancel(SecurityContext cancellingSecurityContext);
 
     void authorizeDatabaseSnapshot();
