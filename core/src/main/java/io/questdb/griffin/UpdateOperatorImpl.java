@@ -81,8 +81,11 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
 
         TableToken tableToken = tableWriter.getTableToken();
         LOG.info().$("updating [table=").$(tableToken).$(" instance=").$(op.getCorrelationId()).I$();
-
+        QueryRegistry queryRegistry = sqlExecutionContext.getCairoEngine().getQueryRegistry();
+        long queryId = -1L;
         try {
+            sqlExecutionContext.setUseSimpleCircuitBreaker(true);
+            queryId = queryRegistry.register(op.getSqlText(), sqlExecutionContext);
             final int tableId = op.getTableId();
             final long tableVersion = op.getTableVersion();
             final RecordCursorFactory factory = op.getFactory();
@@ -268,7 +271,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
         } catch (SqlException e) {
             throw CairoException.critical(0).put("could not apply update on SPI side [e=").put((CharSequence) e).put(']');
         } catch (CairoException e) {
-            if (e.isAuthorizationError()) {
+            if (e.isAuthorizationError() || e.isCancellation()) {
                 LOG.error().$(e.getFlyweightMessage()).$();
             } else {
                 LOG.error().$("could not update").$((Throwable) e).$();
@@ -278,6 +281,8 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
             LOG.error().$("could not update").$(th).$();
             throw th;
         } finally {
+            sqlExecutionContext.setUseSimpleCircuitBreaker(false);
+            queryRegistry.unregister(queryId, sqlExecutionContext);
             op.closeWriter();
         }
     }

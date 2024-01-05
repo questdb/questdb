@@ -25,7 +25,7 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.MessageBus;
-import io.questdb.cutlass.text.AtomicBooleanCircuitBreaker;
+import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.griffin.engine.table.AsyncGroupByAtom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;

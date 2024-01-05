@@ -35,8 +35,8 @@ import java.io.Closeable;
 import static io.questdb.cairo.wal.WalUtils.TABLE_REGISTRY_NAME_FILE;
 
 public class GrowOnlyTableNameRegistryStore implements Closeable {
-    protected static final int OPERATION_ADD = 0;
-    protected static final int OPERATION_REMOVE = -1;
+    public static final int OPERATION_ADD = 0;
+    public static final int OPERATION_REMOVE = -1;
     protected final static long TABLE_NAME_ENTRY_RESERVED_LONGS = 8;
     protected final MemoryMARW tableNameMemory = Vm.getCMARWInstance();
     private final FilesFacade ff;

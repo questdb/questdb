@@ -293,7 +293,7 @@ public final class IntervalUtils {
         int left = 0;
         int right = intervals.size() / 2 - 1;
         while (left <= right) {
-            int mid = (left + right) / 2;
+            int mid = (left + right) >>> 1;
             long lo = getEncodedPeriodLo(intervals, mid * 2);
             long hi = getEncodedPeriodHi(intervals, mid * 2);
             if (lo > timestamp) {

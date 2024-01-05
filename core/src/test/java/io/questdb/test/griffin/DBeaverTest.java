@@ -159,19 +159,19 @@ public class DBeaverTest extends AbstractCairoTest {
     @Test
     public void testListTypes() throws SqlException {
         assertQuery(
-                "oid1\toid\ttypname\ttypbasetype\ttyparray\ttypnamespace\ttypnotnull\ttyptypmod\ttyptype\ttyprelid\ttypelem\ttypreceive\ttypdelim\ttypinput\trelkind\tbase_type_name\tdescription\n" +
-                        "16\t16\tbool\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\t\t\t\n" +
-                        "17\t17\tbinary\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\t\t\t\n" +
-                        "18\t18\tchar\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\t\t\t\n" +
-                        "20\t20\tint8\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\t\t\t\n" +
-                        "21\t21\tint2\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\t\t\t\n" +
-                        "23\t23\tint4\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\t\t\t\n" +
-                        "700\t700\tfloat4\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\t\t\t\n" +
-                        "701\t701\tfloat8\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\t\t\t\n" +
-                        "1043\t1043\tvarchar\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\t\t\t\n" +
-                        "1082\t1082\tdate\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\t\t\t\n" +
-                        "1114\t1114\ttimestamp\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\t\t\t\n" +
-                        "2950\t2950\tuuid\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\t\t\t\n",
+                "oid1\toid\ttypname\ttypbasetype\ttyparray\ttypnamespace\ttypnotnull\ttyptypmod\ttyptype\ttypcategory\ttyprelid\ttypelem\ttypreceive\ttypdelim\ttypinput\ttypowner\ttyplen\ttypbyval\ttypispreferred\ttypisdefined\ttypalign\ttypstorage\ttypndims\ttypcollation\ttypdefault\trelkind\tbase_type_name\tdescription\n" +
+                        "16\t16\tbool\t0\t0\t2200\tfalse\t0\tb\tB\tNaN\t0\t0\t0\t0\t0\t1\tfalse\tfalse\ttrue\tc\tp\t0\t0\tfalse\t\t\t\n" +
+                        "17\t17\tbinary\t0\t0\t2200\tfalse\t0\tb\tU\tNaN\t0\t0\t0\t0\t0\t-1\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
+                        "18\t18\tchar\t0\t0\t2200\tfalse\t0\tb\tZ\tNaN\t0\t0\t0\t0\t0\t2\tfalse\tfalse\ttrue\tc\tp\t0\t0\t0\t\t\t\n" +
+                        "20\t20\tint8\t0\t0\t2200\tfalse\t0\tb\tN\tNaN\t0\t0\t0\t0\t0\t8\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
+                        "21\t21\tint2\t0\t0\t2200\tfalse\t0\tb\tN\tNaN\t0\t0\t0\t0\t0\t2\tfalse\tfalse\ttrue\tc\tp\t0\t0\t0\t\t\t\n" +
+                        "23\t23\tint4\t0\t0\t2200\tfalse\t0\tb\tN\tNaN\t0\t0\t0\t0\t0\t4\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
+                        "700\t700\tfloat4\t0\t0\t2200\tfalse\t0\tb\tN\tNaN\t0\t0\t0\t0\t0\t4\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
+                        "701\t701\tfloat8\t0\t0\t2200\tfalse\t0\tb\tN\tNaN\t0\t0\t0\t0\t0\t8\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
+                        "1043\t1043\tvarchar\t0\t0\t2200\tfalse\t0\tb\tS\tNaN\t0\t0\t0\t0\t0\t-1\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
+                        "1082\t1082\tdate\t0\t0\t2200\tfalse\t0\tb\tD\tNaN\t0\t0\t0\t0\t0\t8\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
+                        "1114\t1114\ttimestamp\t0\t0\t2200\tfalse\t0\tb\tD\tNaN\t0\t0\t0\t0\t0\t8\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
+                        "2950\t2950\tuuid\t0\t0\t2200\tfalse\t0\tb\tU\tNaN\t0\t0\t0\t0\t0\t16\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n",
                 "SELECT t.oid as oid1,t.*,c.relkind,format_type(nullif(t.typbasetype, 0), t.typtypmod) as base_type_name, d.description\n" +
                         "FROM pg_catalog.pg_type t\n" +
                         "LEFT OUTER JOIN pg_catalog.pg_class c ON c.oid=t.typrelid\n" +

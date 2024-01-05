@@ -176,7 +176,8 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
                     sqlSink.put("select key1, key2, ").put(function).put("(val) agg from test group by key1, key2;");
 
                     try {
-                        Assert.assertTrue(Chars.contains(getPlanSink(sqlSink).getSink(), "vectorized: false"));
+                        StringSink planSink = getPlanSink(sqlSink).getSink();
+                        Assert.assertTrue(Chars.contains(planSink, "vectorized: false"));
                     } catch (Exception ae) {
                         throwWithContext(typeName, function, ae);
                     }

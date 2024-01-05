@@ -181,6 +181,10 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         of(BEGIN);
     }
 
+    public void ofCancelQuery() {
+        of(CANCEL_QUERY);
+    }
+
     public void ofCommit() {
         of(COMMIT);
     }
@@ -226,6 +230,8 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     }
 
     // although executor was there it had to fail back to the model
+    // used in enterprise version . Do NOT remove.
+    @SuppressWarnings("unused")
     public void ofNone() {
         of(NONE);
     }
