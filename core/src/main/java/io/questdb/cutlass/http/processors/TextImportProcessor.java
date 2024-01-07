@@ -169,6 +169,18 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                 }
             }
 
+            DirectUtf8Sequence createTableChars = rh.getUrlParam(URL_PARAM_CREATE_TABLE);
+            if (createTableChars != null) {
+                try {
+                    boolean createTable = Booleans.parseBoolean(createTableChars);
+                    transientState.textLoader.setCreateTable(createTable);
+                }
+                catch (BooleanException e) {
+                    sendErrorAndThrowDisconnect("invalid createTable, must be a boolean");
+                }
+            }
+
+
             boolean forceHeader = Utf8s.equalsNcAscii("true", rh.getUrlParam(URL_PARAM_FORCE_HEADER));
             transientState.textLoader.setForceHeaders(forceHeader);
             transientState.textLoader.setSkipLinesWithExtraValues(Utf8s.equalsNcAscii("true", rh.getUrlParam(URL_PARAM_SKIP_LEV)));

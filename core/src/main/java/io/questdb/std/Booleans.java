@@ -24,11 +24,15 @@
 
 package io.questdb.std;
 
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8s;
+
 public final class Booleans {
-    public static boolean parseBoolean(CharSequence sequence) throws BooleanException {
+
+    public static boolean parseBoolean(Utf8Sequence sequence) throws BooleanException {
         if (sequence != null) {
-            boolean trueStr = Chars.equalsNc("true", sequence);
-            boolean falseStr = Chars.equalsNc("false", sequence);
+            boolean trueStr = Utf8s.equalsNcAscii("true", sequence);
+            boolean falseStr = Utf8s.equalsNcAscii("false", sequence);
             if (trueStr || falseStr) {
                 return trueStr;
             }
