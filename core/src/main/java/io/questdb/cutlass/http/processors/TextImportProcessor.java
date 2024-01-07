@@ -171,6 +171,17 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                 }
             }
 
+            CharSequence createTableChars = rh.getUrlParam("createTable");
+            if (createTableChars != null) {
+                try {
+                    boolean createTable = Booleans.parseBoolean(createTableChars);
+                    transientState.textLoader.setCreateTable(createTable);
+                }
+                catch (BooleanException bex) {
+                    sendErrorAndThrowDisconnect("invalid createTable, must be a boolean");
+                }
+            }
+
             transientState.textLoader.setForceHeaders(Chars.equalsNc("true", rh.getUrlParam("forceHeader")));
             transientState.textLoader.setSkipLinesWithExtraValues(Chars.equalsNc("true", rh.getUrlParam("skipLev")));
             CharSequence delimiter = rh.getUrlParam("delimiter");

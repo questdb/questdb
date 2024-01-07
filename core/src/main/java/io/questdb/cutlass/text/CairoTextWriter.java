@@ -57,6 +57,7 @@ public class CairoTextWriter implements Closeable, Mutable {
     private RecordMetadata metadata;
     private long o3MaxLag = -1;
     private boolean overwrite;
+    private boolean createTable = true;
     private int partitionBy;
     private CharSequence tableName;
     private TimestampAdapter timestampAdapter;
@@ -89,6 +90,7 @@ public class CairoTextWriter implements Closeable, Mutable {
         maxUncommittedRows = -1;
         o3MaxLag = -1;
         remapIndex.clear();
+        createTable = true;
     }
 
     @Override
@@ -126,6 +128,10 @@ public class CairoTextWriter implements Closeable, Mutable {
 
     public int getPartitionBy() {
         return partitionBy;
+    }
+
+    public boolean getCreateTable() {
+        return createTable;
     }
 
     public CharSequence getTableName() {
@@ -203,6 +209,10 @@ public class CairoTextWriter implements Closeable, Mutable {
 
     public void setO3MaxLag(long o3MaxLag) {
         this.o3MaxLag = o3MaxLag;
+    }
+
+    public void setCreateTable(boolean createTable) {
+        this.createTable = createTable;
     }
 
     private void checkUncommittedRowCount() {
@@ -350,6 +360,9 @@ public class CairoTextWriter implements Closeable, Mutable {
         boolean tableReCreated = false;
         switch (engine.getTableStatus(path, tableToken)) {
             case TableUtils.TABLE_DOES_NOT_EXIST:
+                if (getCreateTable() == false) {
+                    throw CairoException.tableDoesNotExist(tableName).put(" and createTable was set to false.");
+                }
                 tableToken = createTable(names, detectedTypes, securityContext, path);
                 tableReCreated = true;
                 writer = engine.getTableWriterAPI(tableToken, WRITER_LOCK_REASON);
