@@ -3608,6 +3608,55 @@ public class TextLoaderTest extends AbstractCairoTest {
         );
     }
 
+    @Test(expected = CairoException.class)
+    public void testCheckTableParamFalseAndNoTableShouldThrowError() throws Exception {
+        assertNoLeak(
+                textLoader -> {
+                    configureLoaderDefaults(
+                            textLoader
+                    );
+                    textLoader.setForceHeaders(true);
+                    textLoader.setCreateTable(false);
+                    textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
+                    playText0(
+                            textLoader,
+                            "ts,int\n" +
+                                    "2021-01-02T00:00:30.000000Z,1\n",
+                            512,
+                            ENTITY_MANIPULATOR
+                    );
+                }
+        );
+    }
+
+    @Test
+    public void testCheckTableParamTrueAndNoTableShouldSucceed() throws Exception {
+        assertNoLeak(
+                textLoader -> {
+                    configureLoaderDefaults(
+                            textLoader
+                    );
+                    textLoader.setForceHeaders(true);
+                    textLoader.setCreateTable(true);
+                    textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
+                    playText0(
+                            textLoader,
+                            "ts,int\n" +
+                                    "2021-01-02T00:00:30.000000Z,1\n",
+                            512,
+                            ENTITY_MANIPULATOR
+                    );
+
+                    assertTable("ts\tint\n" +
+                            "2021-01-02T00:00:30.000000Z\t1\n");
+
+                    Assert.assertEquals("test", textLoader.getTableName());
+                    Assert.assertEquals(TextLoadWarning.NONE, textLoader.getWarnings());
+                    Assert.assertEquals(true, textLoader.getCreateTable());
+                }
+        );
+    }
+
     protected void assertTable(String expected) throws SqlException {
         refreshTablesInBaseEngine();
         assertSql(expected, "test");

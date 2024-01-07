@@ -758,6 +758,65 @@ public class ImportIODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testImportWithCreateTableFalseAndNoTable() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(root).withWorkerCount(2)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run((engine) -> {
+                    String request = ValidImportRequest1
+                            .replace("POST /upload?name=trips HTTP", "POST /upload?name=trips&timestamp=Pickup_DateTime&createTable=false HTTP");
+
+                    String response = WarningValidImportResponse1
+                            .replace(
+                                    "\r\n" +
+                                            "|   Partition by  |                                              NONE  |                 |         |  From Table  |\r\n" +
+                                            "|      Timestamp  |                                              NONE  |                 |         |  From Table  |",
+                                    "\r\n" +
+                                            "|   Partition by  |                                              NONE  |                 |         |              |\r\n" +
+                                            "|      Timestamp  |                                   Pickup_DateTime  |                 |         |              |"
+                            );
+                    new SendAndReceiveRequestBuilder().withExpectSendDisconnect(true).execute(request, response);
+                });
+    }
+
+    @Test()
+    public void testImportWithCreateTableTrueAndNoTable() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(root).withWorkerCount(2)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run((engine) -> {
+
+                    try (SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                        String request = ValidImportRequest1
+                                .replace("POST /upload?name=trips HTTP", "POST /upload?name=trips&timestamp=Pickup_DateTime&createTable=true HTTP");
+
+                        String response = WarningValidImportResponse1
+                                .replace(
+                                        "\r\n" +
+                                                "|   Partition by  |                                              NONE  |                 |         |  From Table  |\r\n" +
+                                                "|      Timestamp  |                                              NONE  |                 |         |  From Table  |",
+                                        "\r\n" +
+                                                "|   Partition by  |                                              NONE  |                 |         |              |\r\n" +
+                                                "|      Timestamp  |                                   Pickup_DateTime  |                 |         |              |"
+                                );
+                        new SendAndReceiveRequestBuilder().execute(request, response);
+
+
+                        drainWalQueue(engine);
+                        assertSql(
+                                engine,
+                                sqlExecutionContext,
+                                "select count() from trips",
+                                Misc.getThreadLocalSink(),
+                                "count\n24\n"
+                        );
+                    }
+                });
+    }
+
+    @Test
     public void testImportWithDedupEnabled() throws Exception {
         new HttpQueryTestBuilder()
                 .withTempFolder(root)
