@@ -35,6 +35,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Sinkable;
 
 import java.io.Closeable;
 
@@ -134,7 +135,6 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
 
     @Override
     public void onEvent(CachedCharSequence token, int eventType, CharSequenceCache cache) {
-
         switch (eventType) {
             case EVT_MEASUREMENT:
                 int wrtIndex = writerCache.keyIndex(token);

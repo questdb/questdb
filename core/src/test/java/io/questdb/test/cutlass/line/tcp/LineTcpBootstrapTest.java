@@ -24,17 +24,27 @@
 
 package io.questdb.test.cutlass.line.tcp;
 
+import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
+import io.questdb.std.Chars;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
+import org.postgresql.util.PSQLException;
+
+import java.sql.Connection;
 
 public class LineTcpBootstrapTest extends AbstractBootstrapTest {
     @Before
@@ -63,6 +73,62 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                     Assert.fail();
                 } catch (LineSenderException expected) {
                 }
+            }
+        });
+    }
+
+    @Ignore// update statements don't time out anymore but can be cancelled manually
+    @Test
+    public void testUpdateTimeout() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+
+            try (final ServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.QUERY_TIMEOUT_SEC.getEnvVarName(), "0.015"
+            )) {
+                serverMain.start();
+                CairoEngine engine = serverMain.getEngine();
+                try (SqlCompiler sqlCompiler = engine.getSqlCompiler();
+                     SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                    sqlCompiler.compile("create table abc as " +
+                            "(select rnd_symbol('a', 'b', 'c', null) sym1," +
+                            " rnd_symbol('a', 'b', 'c', null) sym2," +
+                            " rnd_symbol('a', 'b', 'c', null) sym3," +
+                            " timestamp_sequence('2022-02-24T04', 1000000L) ts" +
+                            " from long_sequence(100 * 60 * 60)), " +
+                            "index(sym1), index(sym2), index(sym3) timestamp(ts) partition by HOUR BYPASS WAL", sqlExecutionContext);
+                }
+
+                int port = serverMain.getConfiguration().getLineTcpReceiverConfiguration().getDispatcherConfiguration().getBindPort();
+                Thread th = new Thread(() -> {
+                    try (Sender sender = Sender.builder().address("localhost").port(port).build()) {
+                        for (int i = 0; i < 100; i++) {
+                            sender.table("abc").symbol("sym1", "10").atNow();
+                        }
+                    }
+                });
+                th.start();
+
+                int pgPort = serverMain.getConfiguration().getPGWireConfiguration().getDispatcherConfiguration().getBindPort();
+                try (Connection conn = getConnection("admin", "quest", pgPort)) {
+                    conn.createStatement().execute("update abc set sym1 = '0', sym2='2', sym3='3'");
+                } catch (PSQLException e) {
+                    if (!Chars.contains(e.getMessage(), "timeout")) {
+                        // No timeout, shame, will happen another time
+                        return;
+                    }
+                }
+
+                LOG.info().$("HURRAY! TIMEOUT REPRODUCED").$();
+
+                // The update should be rolled back and no rows with sym1 = '0' should be present
+                TestUtils.assertSql(serverMain.getEngine(),
+                        new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE, new BindVariableServiceImpl(engine.getConfiguration())),
+                        "select count() from abc where sym1 = '0'",
+                        new StringSink(),
+                        "count\n" +
+                                "0\n"
+                );
+                th.join();
             }
         });
     }

@@ -24,6 +24,7 @@
 
 package io.questdb.test.log;
 
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.*;
 import io.questdb.mp.*;
@@ -31,8 +32,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.*;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -44,6 +44,8 @@ import org.junit.rules.TemporaryFolder;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.lang.reflect.Field;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Paths;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -81,6 +83,34 @@ public class LogFactoryTest {
             assertEnabled(logger.critical());
             assertEnabled(logger.debug());
             assertEnabled(logger.advisory());
+        }
+    }
+
+    @Test
+    public void testDirectUtf8Sequence() throws Exception {
+        final File x = temp.newFile();
+        final String orig = "Здравей свят";
+        final GcUtf8String src = new GcUtf8String(orig);
+
+        try (LogFactory factory = new LogFactory()) {
+            factory.add(new LogWriterConfig(LogLevel.ERROR, (ring, seq, level) -> {
+                LogFileWriter w = new LogFileWriter(ring, seq, level);
+                w.setLocation(x.getAbsolutePath());
+                return w;
+            }));
+
+            factory.bind();
+            factory.startThread();
+
+            final Log logger = factory.create("x");
+            logger.xerror().$(src).$();
+
+            System.err.println(x.getAbsolutePath());
+
+            Os.sleep(100);
+            final String expected = orig + "\r\n";
+            final String actual = new String(java.nio.file.Files.readAllBytes(x.toPath()), StandardCharsets.UTF_8);
+            Assert.assertEquals(expected, actual);
         }
     }
 
@@ -134,6 +164,61 @@ public class LogFactoryTest {
             factory.close(true);
         }
         Assert.assertEquals(messageCount, counter.get());
+    }
+
+    @Test
+    public void testGuaranteedLogging() throws Exception {
+        final File x = temp.newFile();
+        try (LogFactory factory = new LogFactory()) {
+            factory.add(new LogWriterConfig(LogLevel.ERROR, (ring, seq, level) -> {
+                LogFileWriter w = new LogFileWriter(ring, seq, level);
+                w.setLocation(x.getAbsolutePath());
+                return w;
+            }));
+
+            factory.bind();
+            factory.startThread();
+
+            final Log logger = factory.create("x");
+            Assert.assertEquals(Logger.class, logger.getClass());
+
+            LogFactory.enableGuaranteedLogging();
+
+            final Log guaranteedLogger = factory.create("x");
+            Assert.assertEquals(GuaranteedLogger.class, guaranteedLogger.getClass());
+
+            LogFactory.disableGuaranteedLogging();
+
+            final Log logger2 = factory.create("x");
+            Assert.assertEquals(Logger.class, logger2.getClass());
+        }
+    }
+
+    @Test
+    public void testGuaranteedLoggingForClasses() {
+        try (LogFactory factory = new LogFactory()) {
+            factory.add(new LogWriterConfig(LogLevel.ERROR, (ring, seq, level) -> {
+                LogFileWriter w = new LogFileWriter(ring, seq, level);
+                w.setLocation("io");
+                return w;
+            }));
+
+            factory.bind();
+            factory.startThread();
+
+            Assert.assertEquals(Logger.class, getLogger(SqlCompilerImpl.class).getClass());
+
+            LogFactory.enableGuaranteedLogging(SqlCompilerImpl.class);
+            Assert.assertEquals(GuaranteedLogger.class, getLogger(SqlCompilerImpl.class).getClass());
+
+            LogFactory.disableGuaranteedLogging(SqlCompilerImpl.class);
+            Assert.assertEquals(Logger.class, getLogger(SqlCompilerImpl.class).getClass());
+        } finally {
+            final Path ioPath = Path.getThreadLocal("io");
+            if (Files.exists(ioPath)) {
+                Files.remove(ioPath);
+            }
+        }
     }
 
     @Test
@@ -218,7 +303,7 @@ public class LogFactoryTest {
 
                 private void log(LogRecordSink record) {
                     sink.clear();
-                    sink.put(record);
+                    sink.put((Sinkable) record);
                     latch.countDown();
                 }
             }));
@@ -913,6 +998,16 @@ public class LogFactoryTest {
         r.$();
     }
 
+    private static Log getLogger(Class<?> clazz) {
+        try {
+            final Field field = clazz.getDeclaredField("LOG");
+            field.setAccessible(true);
+            return (Log) field.get(null);
+        } catch (NoSuchFieldException | IllegalAccessException e) {
+            throw new RuntimeException("Could not set logger", e);
+        }
+    }
+
     private void assertFileLength(String file) {
         long len = new File(file).length();
         Assert.assertTrue("oops: " + len, len > 0L && len < 1073741824L);
@@ -1003,7 +1098,7 @@ public class LogFactoryTest {
                 Assert.assertNotEquals(0, pFind);
                 do {
                     fileNameSink.clear();
-                    Chars.utf8ToUtf16Z(Files.findName(pFind), fileNameSink);
+                    Utf8s.utf8ToUtf16Z(Files.findName(pFind), fileNameSink);
                     if (Files.isDots(fileNameSink)) {
                         continue;
                     }
@@ -1087,7 +1182,7 @@ public class LogFactoryTest {
                 Assert.assertNotEquals(0, pFind);
                 do {
                     fileNameSink.clear();
-                    Chars.utf8ToUtf16Z(Files.findName(pFind), fileNameSink);
+                    Utf8s.utf8ToUtf16Z(Files.findName(pFind), fileNameSink);
                     if (Files.isDots(fileNameSink)) {
                         continue;
                     }

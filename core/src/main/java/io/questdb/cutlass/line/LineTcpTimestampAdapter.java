@@ -28,8 +28,14 @@ import io.questdb.cutlass.line.tcp.LineTcpParser;
 import org.jetbrains.annotations.TestOnly;
 
 public class LineTcpTimestampAdapter {
+    public static final LineTcpTimestampAdapter DEFAULT_TS_HOUR_INSTANCE = new LineTcpTimestampAdapter(LineHourTimestampAdapter.INSTANCE);
     // Default adapter for line timestamps (nano).
     public static final LineTcpTimestampAdapter DEFAULT_TS_INSTANCE = new LineTcpTimestampAdapter(LineNanoTimestampAdapter.INSTANCE);
+    public static final LineTcpTimestampAdapter DEFAULT_TS_MICRO_INSTANCE = new LineTcpTimestampAdapter(LineMicroTimestampAdapter.INSTANCE);
+    public static final LineTcpTimestampAdapter DEFAULT_TS_MILLI_INSTANCE = new LineTcpTimestampAdapter(LineMilliTimestampAdapter.INSTANCE);
+    public static final LineTcpTimestampAdapter DEFAULT_TS_MINUTE_INSTANCE = new LineTcpTimestampAdapter(LineMinuteTimestampAdapter.INSTANCE);
+    public static final LineTcpTimestampAdapter DEFAULT_TS_NANO_INSTANCE = new LineTcpTimestampAdapter(LineNanoTimestampAdapter.INSTANCE);
+    public static final LineTcpTimestampAdapter DEFAULT_TS_SECOND_INSTANCE = new LineTcpTimestampAdapter(LineSecondTimestampAdapter.INSTANCE);
     // Adapter for line timestamp columns (micro).
     public static final LineTcpTimestampAdapter TS_COLUMN_INSTANCE = new LineTcpTimestampAdapter(LineMicroTimestampAdapter.INSTANCE);
     private final LineTimestampAdapter defaultAdapter;

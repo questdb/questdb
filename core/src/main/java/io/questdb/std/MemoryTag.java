@@ -46,12 +46,14 @@ public final class MemoryTag {
     public static final int NATIVE_CB3 = 30;
     public static final int NATIVE_CB4 = 31;
     public static final int NATIVE_CB5 = 32;
+    public static final int NATIVE_CIRCULAR_BUFFER = 56;
     public static final int NATIVE_COMPACT_MAP = 8;
     public static final int NATIVE_DEFAULT = 1;
     public static final int NATIVE_DIRECT_BYTE_SINK = 54;
     public static final int NATIVE_DIRECT_CHAR_SINK = 51;
+    public static final int NATIVE_DIRECT_UTF8_SINK = 55;
     public static final int NATIVE_FAST_MAP = 9;
-    public static final int NATIVE_FAST_MAP_LONG_LIST = 10;
+    public static final int NATIVE_FAST_MAP_INT_LIST = 10;
     public static final int NATIVE_FUNC_RSS = 50;
     public static final int NATIVE_HTTP_CONN = 11;
     public static final int NATIVE_ILP_RSS = 46;
@@ -80,7 +82,7 @@ public final class MemoryTag {
     public static final int NATIVE_TEXT_PARSER_RSS = 48;
     public static final int NATIVE_TLS_RSS = 47;
     public static final int NATIVE_TREE_CHAIN = 6;
-    public static final int SIZE = NATIVE_DIRECT_BYTE_SINK + 1;
+    public static final int SIZE = NATIVE_CIRCULAR_BUFFER + 1;
     private static final ObjList<String> tagNameMap = new ObjList<>(SIZE);
 
     public static String nameOf(int tag) {
@@ -98,7 +100,7 @@ public final class MemoryTag {
         tagNameMap.extendAndSet(MMAP_TABLE_READER, "MMAP_TABLE_READER");
         tagNameMap.extendAndSet(NATIVE_COMPACT_MAP, "NATIVE_COMPACT_MAP");
         tagNameMap.extendAndSet(NATIVE_FAST_MAP, "NATIVE_FAST_MAP");
-        tagNameMap.extendAndSet(NATIVE_FAST_MAP_LONG_LIST, "NATIVE_FAST_MAP_LONG_LIST");
+        tagNameMap.extendAndSet(NATIVE_FAST_MAP_INT_LIST, "NATIVE_FAST_MAP_INT_LIST");
         tagNameMap.extendAndSet(NATIVE_HTTP_CONN, "NATIVE_HTTP_CONN");
         tagNameMap.extendAndSet(NATIVE_PGW_CONN, "NATIVE_PGW_CONN");
         tagNameMap.extendAndSet(MMAP_INDEX_READER, "MMAP_INDEX_READER");
@@ -139,9 +141,11 @@ public final class MemoryTag {
         tagNameMap.extendAndSet(NATIVE_IO_DISPATCHER_RSS, "NATIVE_IO_DISPATCHER_RSS");
         tagNameMap.extendAndSet(NATIVE_FUNC_RSS, "NATIVE_FUNC_RSS");
         tagNameMap.extendAndSet(NATIVE_DIRECT_CHAR_SINK, "NATIVE_DIRECT_CHAR_SINK");
+        tagNameMap.extendAndSet(NATIVE_DIRECT_UTF8_SINK, "NATIVE_DIRECT_UTF8_SINK");
         tagNameMap.extendAndSet(NATIVE_DIRECT_BYTE_SINK, "NATIVE_DIRECT_BYTE_SINK");
         tagNameMap.extendAndSet(MMAP_TX_LOG_CURSOR, "MMAP_TX_LOG_CURSOR");
         tagNameMap.extendAndSet(MMAP_TX_LOG, "MMAP_TX_LOG");
         tagNameMap.extendAndSet(NATIVE_SQL_COMPILER, "NATIVE_SQL_COMPILER");
+        tagNameMap.extendAndSet(NATIVE_CIRCULAR_BUFFER, "NATIVE_CIRCULAR_BUFFER");
     }
 }

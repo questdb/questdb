@@ -33,12 +33,12 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory;
-import io.questdb.griffin.engine.groupby.vect.GroupByJob;
+import io.questdb.griffin.engine.groupby.vect.GroupByVectorAggregateJob;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cutlass.text.SqlExecutionContextStub;
@@ -821,7 +821,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         ")",
                 null,
                 true,
-                true
+                false
         );
     }
 
@@ -3600,7 +3600,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             FilesFacade ff = new TestFilesFacadeImpl() {
                 @Override
                 public int openRO(LPSZ name) {
-                    if (Chars.endsWith(name, "b.d")) {
+                    if (Utf8s.endsWithAscii(name, "b.d")) {
                         return -1;
                     }
                     return super.openRO(name);
@@ -4468,7 +4468,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             assertSql(
                     "id\tname\tvalue\tts\tother_ts\n" +
                             "d1\tc1\t111\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000003Z\n" +
-                            "d2\tc1\t211\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000003Z\n", "(tab where name in ('c1') order by other_ts) latest on other_ts partition by id"
+                            "d2\tc1\t212\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000003Z\n",
+                    "(tab where name in ('c1') order by other_ts) latest on other_ts partition by id"
             );
 
             // latest by non-designated timestamp, no order
@@ -4944,7 +4945,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "        timestamp_sequence(0, 1000000000) ts" +
                 "    from long_sequence(10)" +
                 ") timestamp(ts) partition by DAY";
-        CharSequence expectedTail = "invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST BY";
+        CharSequence expectedTail = "invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON";
         ddl(createTableDDL);
         for (String[] nameType : new String[][]{
                 {"binary", "BINARY"}}) {
@@ -5746,65 +5747,69 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testOrderByNonUnique() throws Exception {
         final String expected = "a\tc\tk\tn\n" +
-                "-1182156192\t\t1970-01-01T04:43:20.000000Z\tGLUOHNZHZS\n" +
-                "-1470806499\t\t1970-01-01T03:53:20.000000Z\t\n" +
                 "-1966408995\t\t1970-01-01T02:30:00.000000Z\tBZXIOVIKJSMSS\n" +
+                "-1470806499\t\t1970-01-01T03:53:20.000000Z\t\n" +
+                "-1182156192\t\t1970-01-01T04:43:20.000000Z\tGLUOHNZHZS\n" +
                 "-2105201404\tB\t1970-01-01T04:10:00.000000Z\tGHWVDKFL\n" +
-                "1431775887\tC\t1970-01-01T05:16:40.000000Z\tEHNOMVELLKKHT\n" +
                 "852921272\tC\t1970-01-01T02:13:20.000000Z\tLSUWDSWUGSHOLN\n" +
+                "1431775887\tC\t1970-01-01T05:16:40.000000Z\tEHNOMVELLKKHT\n" +
                 "-147343840\tD\t1970-01-01T05:00:00.000000Z\tOGIFOUSZMZVQEB\n" +
-                "1907911110\tE\t1970-01-01T03:36:40.000000Z\tPHRIPZIMNZ\n" +
                 "-1715058769\tE\t1970-01-01T00:33:20.000000Z\tQEHBHFOWL\n" +
+                "1907911110\tE\t1970-01-01T03:36:40.000000Z\tPHRIPZIMNZ\n" +
                 "-514934130\tH\t1970-01-01T03:20:00.000000Z\t\n" +
                 "116799613\tI\t1970-01-01T03:03:20.000000Z\tZEPIHVLTOVLJUML\n" +
-                "-1204245663\tJ\t1970-01-01T04:26:40.000000Z\tPKRGIIHYHBOQMY\n" +
                 "-1148479920\tJ\t1970-01-01T00:00:00.000000Z\tPSWHYRXPEH\n" +
+                "-1204245663\tJ\t1970-01-01T04:26:40.000000Z\tPKRGIIHYHBOQMY\n" +
                 "410717394\tO\t1970-01-01T01:06:40.000000Z\tGETJR\n" +
-                "1743740444\tS\t1970-01-01T02:46:40.000000Z\tTKVVSJ\n" +
                 "326010667\tS\t1970-01-01T01:23:20.000000Z\tRFBVTMHGOOZZVDZ\n" +
+                "1743740444\tS\t1970-01-01T02:46:40.000000Z\tTKVVSJ\n" +
                 "1876812930\tV\t1970-01-01T01:56:40.000000Z\tSDOTSEDYYCTGQOLY\n" +
-                "-938514914\tX\t1970-01-01T00:50:00.000000Z\tBEOUOJSHRUEDRQQ\n" +
                 "1545253512\tX\t1970-01-01T00:16:40.000000Z\tSXUXIBBTGPGWFFY\n" +
+                "-938514914\tX\t1970-01-01T00:50:00.000000Z\tBEOUOJSHRUEDRQQ\n" +
                 "-235358133\tY\t1970-01-01T01:40:00.000000Z\tCXZOUICWEK\n";
 
-        assertQuery(expected, "x order by c", "create table x as " +
-                "(" +
-                "select" +
-                " rnd_int() a," +
-                " rnd_str(1,1,2) c," +
-                " timestamp_sequence(0, 1000000000) k," +
-                " rnd_str(5,16,2) n" +
-                " from" +
-                " long_sequence(20)" +
-                ") timestamp(k) partition by NONE", null, "insert into x select * from (" +
-                "select" +
-                " rnd_int()," +
-                " 'J'," +
-                " to_timestamp('1971', 'yyyy') t," +
-                " 'APPC'" +
-                " from long_sequence(1)" +
-                ") timestamp(t)", "a\tc\tk\tn\n" +
-                "-1182156192\t\t1970-01-01T04:43:20.000000Z\tGLUOHNZHZS\n" +
-                "-1470806499\t\t1970-01-01T03:53:20.000000Z\t\n" +
-                "-1966408995\t\t1970-01-01T02:30:00.000000Z\tBZXIOVIKJSMSS\n" +
-                "-2105201404\tB\t1970-01-01T04:10:00.000000Z\tGHWVDKFL\n" +
-                "1431775887\tC\t1970-01-01T05:16:40.000000Z\tEHNOMVELLKKHT\n" +
-                "852921272\tC\t1970-01-01T02:13:20.000000Z\tLSUWDSWUGSHOLN\n" +
-                "-147343840\tD\t1970-01-01T05:00:00.000000Z\tOGIFOUSZMZVQEB\n" +
-                "1907911110\tE\t1970-01-01T03:36:40.000000Z\tPHRIPZIMNZ\n" +
-                "-1715058769\tE\t1970-01-01T00:33:20.000000Z\tQEHBHFOWL\n" +
-                "-514934130\tH\t1970-01-01T03:20:00.000000Z\t\n" +
-                "116799613\tI\t1970-01-01T03:03:20.000000Z\tZEPIHVLTOVLJUML\n" +
-                "1570930196\tJ\t1971-01-01T00:00:00.000000Z\tAPPC\n" +
-                "-1204245663\tJ\t1970-01-01T04:26:40.000000Z\tPKRGIIHYHBOQMY\n" +
-                "-1148479920\tJ\t1970-01-01T00:00:00.000000Z\tPSWHYRXPEH\n" +
-                "410717394\tO\t1970-01-01T01:06:40.000000Z\tGETJR\n" +
-                "1743740444\tS\t1970-01-01T02:46:40.000000Z\tTKVVSJ\n" +
-                "326010667\tS\t1970-01-01T01:23:20.000000Z\tRFBVTMHGOOZZVDZ\n" +
-                "1876812930\tV\t1970-01-01T01:56:40.000000Z\tSDOTSEDYYCTGQOLY\n" +
-                "-938514914\tX\t1970-01-01T00:50:00.000000Z\tBEOUOJSHRUEDRQQ\n" +
-                "1545253512\tX\t1970-01-01T00:16:40.000000Z\tSXUXIBBTGPGWFFY\n" +
-                "-235358133\tY\t1970-01-01T01:40:00.000000Z\tCXZOUICWEK\n", true, true, false);
+        assertQuery(expected, "x order by c",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_int() a," +
+                        " rnd_str(1,1,2) c," +
+                        " timestamp_sequence(0, 1000000000) k," +
+                        " rnd_str(5,16,2) n" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                null,
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_int()," +
+                        " 'J'," +
+                        " to_timestamp('1971', 'yyyy') t," +
+                        " 'APPC'" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)",
+                "a\tc\tk\tn\n" +
+                        "-1966408995\t\t1970-01-01T02:30:00.000000Z\tBZXIOVIKJSMSS\n" +
+                        "-1470806499\t\t1970-01-01T03:53:20.000000Z\t\n" +
+                        "-1182156192\t\t1970-01-01T04:43:20.000000Z\tGLUOHNZHZS\n" +
+                        "-2105201404\tB\t1970-01-01T04:10:00.000000Z\tGHWVDKFL\n" +
+                        "852921272\tC\t1970-01-01T02:13:20.000000Z\tLSUWDSWUGSHOLN\n" +
+                        "1431775887\tC\t1970-01-01T05:16:40.000000Z\tEHNOMVELLKKHT\n" +
+                        "-147343840\tD\t1970-01-01T05:00:00.000000Z\tOGIFOUSZMZVQEB\n" +
+                        "-1715058769\tE\t1970-01-01T00:33:20.000000Z\tQEHBHFOWL\n" +
+                        "1907911110\tE\t1970-01-01T03:36:40.000000Z\tPHRIPZIMNZ\n" +
+                        "-514934130\tH\t1970-01-01T03:20:00.000000Z\t\n" +
+                        "116799613\tI\t1970-01-01T03:03:20.000000Z\tZEPIHVLTOVLJUML\n" +
+                        "-1148479920\tJ\t1970-01-01T00:00:00.000000Z\tPSWHYRXPEH\n" +
+                        "-1204245663\tJ\t1970-01-01T04:26:40.000000Z\tPKRGIIHYHBOQMY\n" +
+                        "1570930196\tJ\t1971-01-01T00:00:00.000000Z\tAPPC\n" +
+                        "410717394\tO\t1970-01-01T01:06:40.000000Z\tGETJR\n" +
+                        "326010667\tS\t1970-01-01T01:23:20.000000Z\tRFBVTMHGOOZZVDZ\n" +
+                        "1743740444\tS\t1970-01-01T02:46:40.000000Z\tTKVVSJ\n" +
+                        "1876812930\tV\t1970-01-01T01:56:40.000000Z\tSDOTSEDYYCTGQOLY\n" +
+                        "1545253512\tX\t1970-01-01T00:16:40.000000Z\tSXUXIBBTGPGWFFY\n" +
+                        "-938514914\tX\t1970-01-01T00:50:00.000000Z\tBEOUOJSHRUEDRQQ\n" +
+                        "-235358133\tY\t1970-01-01T01:40:00.000000Z\tCXZOUICWEK\n", true, true, false);
     }
 
     @Test
@@ -5990,44 +5995,50 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "1876812930\tV\t1970-01-01T00:00:01.000000Z\tSDOTSEDYYCTGQOLY\n" +
                 "1907911110\tE\t1970-01-01T00:00:01.000000Z\tPHRIPZIMNZ\n";
 
-        assertQuery(expected, "x order by k,a", "create table x as " +
-                "(" +
-                "select" +
-                " rnd_int() a," +
-                " rnd_str(1,1,2) c," +
-                " cast(1000000 as timestamp) k," +
-                " rnd_str(5,16,2) n" +
-                " from" +
-                " long_sequence(20)" +
-                ") timestamp(k) partition by NONE", "k", "insert into x select * from (" +
-                "select" +
-                " 852921272," +
-                " 'J'," +
-                " cast(1000000 as timestamp) t," +
-                " 'APPC'" +
-                " from long_sequence(1)" +
-                ") timestamp(t)", "a\tc\tk\tn\n" +
-                "-2105201404\tB\t1970-01-01T00:00:01.000000Z\tGHWVDKFL\n" +
-                "-1966408995\t\t1970-01-01T00:00:01.000000Z\tBZXIOVIKJSMSS\n" +
-                "-1715058769\tE\t1970-01-01T00:00:01.000000Z\tQEHBHFOWL\n" +
-                "-1470806499\t\t1970-01-01T00:00:01.000000Z\t\n" +
-                "-1204245663\tJ\t1970-01-01T00:00:01.000000Z\tPKRGIIHYHBOQMY\n" +
-                "-1182156192\t\t1970-01-01T00:00:01.000000Z\tGLUOHNZHZS\n" +
-                "-1148479920\tJ\t1970-01-01T00:00:01.000000Z\tPSWHYRXPEH\n" +
-                "-938514914\tX\t1970-01-01T00:00:01.000000Z\tBEOUOJSHRUEDRQQ\n" +
-                "-514934130\tH\t1970-01-01T00:00:01.000000Z\t\n" +
-                "-235358133\tY\t1970-01-01T00:00:01.000000Z\tCXZOUICWEK\n" +
-                "-147343840\tD\t1970-01-01T00:00:01.000000Z\tOGIFOUSZMZVQEB\n" +
-                "116799613\tI\t1970-01-01T00:00:01.000000Z\tZEPIHVLTOVLJUML\n" +
-                "326010667\tS\t1970-01-01T00:00:01.000000Z\tRFBVTMHGOOZZVDZ\n" +
-                "410717394\tO\t1970-01-01T00:00:01.000000Z\tGETJR\n" +
-                "852921272\tJ\t1970-01-01T00:00:01.000000Z\tAPPC\n" +
-                "852921272\tC\t1970-01-01T00:00:01.000000Z\tLSUWDSWUGSHOLN\n" +
-                "1431775887\tC\t1970-01-01T00:00:01.000000Z\tEHNOMVELLKKHT\n" +
-                "1545253512\tX\t1970-01-01T00:00:01.000000Z\tSXUXIBBTGPGWFFY\n" +
-                "1743740444\tS\t1970-01-01T00:00:01.000000Z\tTKVVSJ\n" +
-                "1876812930\tV\t1970-01-01T00:00:01.000000Z\tSDOTSEDYYCTGQOLY\n" +
-                "1907911110\tE\t1970-01-01T00:00:01.000000Z\tPHRIPZIMNZ\n", true, true, false);
+        assertQuery(expected,
+                "x order by k,a",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_int() a," +
+                        " rnd_str(1,1,2) c," +
+                        " cast(1000000 as timestamp) k," +
+                        " rnd_str(5,16,2) n" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                "insert into x select * from (" +
+                        "select" +
+                        " 852921272," +
+                        " 'J'," +
+                        " cast(1000000 as timestamp) t," +
+                        " 'APPC'" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)",
+                "a\tc\tk\tn\n" +
+                        "-2105201404\tB\t1970-01-01T00:00:01.000000Z\tGHWVDKFL\n" +
+                        "-1966408995\t\t1970-01-01T00:00:01.000000Z\tBZXIOVIKJSMSS\n" +
+                        "-1715058769\tE\t1970-01-01T00:00:01.000000Z\tQEHBHFOWL\n" +
+                        "-1470806499\t\t1970-01-01T00:00:01.000000Z\t\n" +
+                        "-1204245663\tJ\t1970-01-01T00:00:01.000000Z\tPKRGIIHYHBOQMY\n" +
+                        "-1182156192\t\t1970-01-01T00:00:01.000000Z\tGLUOHNZHZS\n" +
+                        "-1148479920\tJ\t1970-01-01T00:00:01.000000Z\tPSWHYRXPEH\n" +
+                        "-938514914\tX\t1970-01-01T00:00:01.000000Z\tBEOUOJSHRUEDRQQ\n" +
+                        "-514934130\tH\t1970-01-01T00:00:01.000000Z\t\n" +
+                        "-235358133\tY\t1970-01-01T00:00:01.000000Z\tCXZOUICWEK\n" +
+                        "-147343840\tD\t1970-01-01T00:00:01.000000Z\tOGIFOUSZMZVQEB\n" +
+                        "116799613\tI\t1970-01-01T00:00:01.000000Z\tZEPIHVLTOVLJUML\n" +
+                        "326010667\tS\t1970-01-01T00:00:01.000000Z\tRFBVTMHGOOZZVDZ\n" +
+                        "410717394\tO\t1970-01-01T00:00:01.000000Z\tGETJR\n" +
+                        "852921272\tC\t1970-01-01T00:00:01.000000Z\tLSUWDSWUGSHOLN\n" +
+                        "852921272\tJ\t1970-01-01T00:00:01.000000Z\tAPPC\n" +
+                        "1431775887\tC\t1970-01-01T00:00:01.000000Z\tEHNOMVELLKKHT\n" +
+                        "1545253512\tX\t1970-01-01T00:00:01.000000Z\tSXUXIBBTGPGWFFY\n" +
+                        "1743740444\tS\t1970-01-01T00:00:01.000000Z\tTKVVSJ\n" +
+                        "1876812930\tV\t1970-01-01T00:00:01.000000Z\tSDOTSEDYYCTGQOLY\n" +
+                        "1907911110\tE\t1970-01-01T00:00:01.000000Z\tPHRIPZIMNZ\n",
+                true, true, false);
     }
 
     @Test
@@ -6544,6 +6555,53 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByOnTimestampOverriddenByOtherColumnAlias() throws Exception {
+        assertQuery(
+                "min\ttimestamp\n" +
+                        "1\tA\n" +
+                        "3\tB\n" +
+                        "16\tA\n" +
+                        "18\tB\n",
+                "select min(x), sym timestamp from test1 sample by 15s",
+                "create table test1 as (" +
+                        "select rnd_symbol('A', 'B') sym, x, timestamp_sequence('2023-07-20', 1000000) timestamp " +
+                        "from long_sequence(20)) " +
+                        "timestamp(timestamp)",
+                null,
+                false,
+                false
+        );
+
+        assertPlan("select min(x), sym timestamp  from test1 sample by 15s",
+                "SampleBy\n" +
+                        "  keys: [timestamp]\n" +
+                        "  values: [min(x)]\n" +
+                        "    SelectedRecord\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: test1\n");
+
+        assertQuery(
+                "min\ttimestamp\ttimestamp0\n" +
+                        "1\tB\tB\n" +
+                        "2\tA\tB\n" +
+                        "16\tA\tB\n" +
+                        "17\tB\tB\n",
+                "select min(x), sym1 timestamp, sym2 timestamp0 from test2 sample by 15s",
+                "create table test2 as (" +
+                        "select rnd_symbol('A', 'B') sym1, " +
+                        "       rnd_symbol('B') sym2, " +
+                        "       x, " +
+                        "       timestamp_sequence('2023-07-20', 1000000) timestamp " +
+                        "from long_sequence(20)) " +
+                        "timestamp(timestamp)",
+                null,
+                false,
+                false
+        );
+    }
+
+    @Test
     public void testSelectColumns() throws Exception {
         assertQuery(
                 "a\ta1\tb\tc\td\te\tf1\tf\tg\th\ti\tj\tj1\tk\tl\tm\n" +
@@ -6736,17 +6794,27 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "YYQE\n" +
                 "ZSXU\n";
 
-        assertQuery(expected, "select distinct a from x order by a", "create table x as " +
-                "(" +
-                "select" +
-                " rnd_symbol(20,4,6,2) a" +
-                " from" +
-                " long_sequence(10000)" +
-                ")", null, "insert into x select * from (" +
-                "select" +
-                " rnd_symbol(10,3,5,0) a" +
-                " from long_sequence(1000000)" +
-                ") ", expected2, true, true, false);
+        assertQuery(
+                expected,
+                "select distinct a from x order by a",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_symbol(20,4,6,2) a" +
+                        " from" +
+                        " long_sequence(10000)" +
+                        ")",
+                null,
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_symbol(10,3,5,0) a" +
+                        " from long_sequence(1000000)" +
+                        ") ",
+                expected2,
+                true,
+                false,
+                false
+        );
     }
 
     @Test
@@ -7309,7 +7377,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testVectorSumAvgDoubleRndColumnWithNullsParallel() throws Exception {
         final AtomicBoolean running = new AtomicBoolean(true);
         final SOCountDownLatch haltLatch = new SOCountDownLatch(1);
-        final GroupByJob job = new GroupByJob(engine.getMessageBus());
+        final GroupByVectorAggregateJob job = new GroupByVectorAggregateJob(engine.getMessageBus());
         new Thread(() -> {
             while (running.get()) {
                 job.run(0);

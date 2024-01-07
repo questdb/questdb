@@ -69,6 +69,11 @@ public class LatestByAllIndexedRecordCursorFactory extends AbstractTreeSetRecord
     }
 
     @Override
+    public boolean usesIndex() {
+        return true;
+    }
+
+    @Override
     protected void _close() {
         super._close();
         prefixes.close();

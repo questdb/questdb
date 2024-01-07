@@ -118,7 +118,7 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
         this.securityContext = securityContext;
     }
 
-    public void withSqlStatement(String sqlStatement) {
+    public void withSqlStatement(CharSequence sqlStatement) {
         this.sqlText = sqlStatement;
     }
 

@@ -907,6 +907,12 @@ public class InsertCastTest extends AbstractCairoTest {
                 bindVariableService.setStr(0, "2012-04-11 10:45:11.344Z");
                 insert.execute(sqlExecutionContext);
 
+                bindVariableService.setStr(0, "2012-04-11 Z");
+                insert.execute(sqlExecutionContext);
+
+                bindVariableService.setStr(0, "2013-05-12");
+                insert.execute(sqlExecutionContext);
+
                 bindVariableService.setStr(0, null);
                 insert.execute(sqlExecutionContext);
 
@@ -917,11 +923,14 @@ public class InsertCastTest extends AbstractCairoTest {
                 } catch (ImplicitCastException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
                 }
+
             }
             assertSql(
                     "a\n" +
                             "2012-04-11T10:45:11.000Z\n" +
                             "2012-04-11T10:45:11.344Z\n" +
+                            "2012-04-11T00:00:00.000Z\n" +
+                            "2013-05-12T00:00:00.000Z\n" +
                             "\n", "y"
             );
         });

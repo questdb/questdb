@@ -68,7 +68,7 @@ public final class PurgingOperator {
     }
 
     public void purge(Path path, TableToken tableToken, int partitionBy, boolean asyncOnly, TableRecordMetadata tableMetadata, long truncateVersion, long txn) {
-        int rootLen = path.length();
+        int rootLen = path.size();
 
         try {
             // Process updated column by column, one at the time
@@ -92,31 +92,31 @@ public final class PurgingOperator {
                             if (partitionTimestamp != TABLE_ROOT_PARTITION) {
                                 path.trimTo(rootLen);
                                 TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, partitionNameTxn);
-                                int pathPartitionLen = path.length();
+                                int pathPartitionLen = path.size();
                                 TableUtils.dFile(path, columnName, columnVersion);
-                                columnPurged = ff.remove(path.$()) || !ff.exists(path);
+                                columnPurged = ff.removeQuiet(path.$());
 
                                 if (ColumnType.isVariableLength(columnType)) {
                                     TableUtils.iFile(path.trimTo(pathPartitionLen), columnName, columnVersion);
-                                    columnPurged &= ff.remove(path.$()) || !ff.exists(path);
+                                    columnPurged &= ff.removeQuiet(path.$());
                                 }
 
                                 if (tableMetadata.isColumnIndexed(columnIndex)) {
                                     BitmapIndexUtils.valueFileName(path.trimTo(pathPartitionLen), columnName, columnVersion);
-                                    columnPurged &= ff.remove(path.$()) || !ff.exists(path);
+                                    columnPurged &= ff.removeQuiet(path.$());
                                     BitmapIndexUtils.keyFileName(path.trimTo(pathPartitionLen), columnName, columnVersion);
-                                    columnPurged &= ff.remove(path.$()) || !ff.exists(path);
+                                    columnPurged &= ff.removeQuiet(path.$());
                                 }
                             } else {
                                 // This is removal of symbol files from the table root directory
                                 TableUtils.charFileName(path.trimTo(rootLen), columnName, columnVersion);
-                                columnPurged = ff.remove(path.$()) || !ff.exists(path);
+                                columnPurged = ff.removeQuiet(path.$());
                                 TableUtils.offsetFileName(path.trimTo(rootLen), columnName, columnVersion);
-                                columnPurged &= ff.remove(path.$()) || !ff.exists(path);
+                                columnPurged &= ff.removeQuiet(path.$());
                                 BitmapIndexUtils.keyFileName(path.trimTo(rootLen), columnName, columnVersion);
-                                columnPurged &= ff.remove(path.$()) || !ff.exists(path);
+                                columnPurged &= ff.removeQuiet(path.$());
                                 BitmapIndexUtils.valueFileName(path.trimTo(rootLen), columnName, columnVersion);
-                                columnPurged &= ff.remove(path.$()) || !ff.exists(path);
+                                columnPurged &= ff.removeQuiet(path.$());
                             }
                         }
 

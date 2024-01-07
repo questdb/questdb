@@ -339,7 +339,7 @@ public class GenericLexerTest {
         CharSequence tok1 = ts.next();
         GenericLexer.FloatingSequencePair pair = (GenericLexer.FloatingSequencePair) ts.immutablePairOf(tok0, tok1);
         Assert.assertEquals(culprit.length() - 1, pair.length());
-        StringSink sink = Misc.getThreadLocalBuilder();
+        StringSink sink = Misc.getThreadLocalSink();
         for (int i = 0; i < pair.length(); i++) {
             sink.put(pair.charAt(i));
         }
@@ -359,7 +359,7 @@ public class GenericLexerTest {
         GenericLexer.FloatingSequencePair pair = (GenericLexer.FloatingSequencePair)
                 lex.immutablePairOf(geohashTok, '/', bitsTok);
         Assert.assertEquals(culprit, pair.toString());
-        StringSink sink = Misc.getThreadLocalBuilder();
+        StringSink sink = Misc.getThreadLocalSink();
         for (int i = 0; i < pair.length(); i++) {
             sink.put(pair.charAt(i));
         }

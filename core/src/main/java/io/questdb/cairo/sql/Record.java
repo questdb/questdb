@@ -27,6 +27,7 @@ package io.questdb.cairo.sql;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
 
 /**
  * Access the value of columns of a table record by column index.
@@ -205,9 +206,9 @@ public interface Record {
      * Gets the value of a long256 column by index
      *
      * @param col  numeric index of the column
-     * @param sink a character sink
+     * @param sink an ASCII sink
      */
-    default void getLong256(int col, CharSink sink) {
+    default void getLong256(int col, CharSinkBase<?> sink) {
         throw new UnsupportedOperationException();
     }
 
@@ -240,7 +241,6 @@ public interface Record {
      * @param col numeric index of the column
      * @return 64-bit integer
      */
-
     default long getLongIPv4(int col) {
         throw new UnsupportedOperationException();
     }

@@ -33,7 +33,7 @@ import static io.questdb.cliutil.RebuildColumnCommandArgs.parseCommandArgs;
 
 public class RecoverVarIndex {
     public static void main(String[] args)  {
-        LogFactory.configureSync();
+        LogFactory.enableGuaranteedLogging();
         RebuildColumnCommandArgs params = parseCommandArgs(args, RecoverVarIndex.class.getName());
         if (params == null) {
             // Invalid params, usage already printed

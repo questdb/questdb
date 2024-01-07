@@ -26,6 +26,7 @@ package io.questdb.cutlass.pgwire;
 
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cutlass.auth.Authenticator;
 import io.questdb.cutlass.auth.AuthenticatorException;
@@ -36,12 +37,13 @@ import io.questdb.log.LogFactory;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.Socket;
 import io.questdb.std.*;
-import io.questdb.std.str.AbstractCharSink;
-import io.questdb.std.str.CharSink;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
-public final class CleartextPasswordPgWireAuthenticator implements Authenticator {
+public class CleartextPasswordPgWireAuthenticator implements Authenticator {
     public static final char STATUS_IDLE = 'I';
     private static final int INIT_CANCEL_REQUEST = 80877102;
     private static final int INIT_GSS_REQUEST = 80877104;
@@ -56,7 +58,7 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
     private final CharacterStore characterStore;
     private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
     private final int circuitBreakerId;
-    private final DirectByteCharSequence dbcs = new DirectByteCharSequence();
+    private final DirectUtf8String dus = new DirectUtf8String();
     private final boolean matcherOwned;
     private final OptionsListener optionsListener;
     private final CircuitBreakerRegistry registry;
@@ -111,6 +113,18 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
         if (matcherOwned) {
             matcher = Misc.freeIfCloseable(matcher);
         }
+    }
+
+    @Override
+    public int denyAccess(CharSequence message) throws AuthenticatorException {
+        prepareErrorResponse(message);
+        state = State.WRITE_AND_AUTH_FAILURE;
+        return handleIO();
+    }
+
+    @Override
+    public byte getAuthType() {
+        return SecurityContext.AUTH_TYPE_CREDENTIALS;
     }
 
     public CharSequence getPrincipal() {
@@ -216,6 +230,14 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
         return state == State.AUTH_SUCCESS;
     }
 
+    @Override
+    public int loginOK() throws AuthenticatorException {
+        compactRecvBuf();
+        prepareLoginOk();
+        state = State.WRITE_AND_AUTH_SUCCESS;
+        return handleIO();
+    }
+
     private static int getIntUnsafe(long address) {
         return Numbers.bswap(Unsafe.getUnsafe().getInt(address));
     }
@@ -242,7 +264,7 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
         sendBufWritePos = sendBufStart + len;
     }
 
-    private void ensureCapacity(int capacity) {
+    private void ensureCapacity(long capacity) {
         if (sendBufWritePos + capacity > sendBufEnd) {
             throw NoSpaceLeftInResponseBufferException.INSTANCE;
         }
@@ -253,6 +275,19 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
         responseSink.putInt(Integer.BYTES * 3); // length of this message
         responseSink.putInt(circuitBreakerId);
         responseSink.putInt(circuitBreaker.getSecret());
+    }
+
+    private void prepareErrorResponse(CharSequence errorMessage) {
+        sink.put(MESSAGE_TYPE_ERROR_RESPONSE);
+        long addr = sink.skip();
+        sink.put('C');
+        sink.encodeUtf8Z("00000");
+        sink.put('M');
+        sink.encodeUtf8Z(errorMessage);
+        sink.put('S');
+        sink.encodeUtf8Z("ERROR");
+        sink.put((char) 0);
+        sink.putLen(addr);
     }
 
     private void prepareGssResponse() {
@@ -296,19 +331,6 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
         sink.put('N');
     }
 
-    private void prepareWrongUsernamePasswordResponse() {
-        sink.put(MESSAGE_TYPE_ERROR_RESPONSE);
-        long addr = sink.skip();
-        sink.put('C');
-        sink.encodeUtf8Z("00000");
-        sink.put('M');
-        sink.encodeUtf8Z("invalid username/password");
-        sink.put('S');
-        sink.encodeUtf8Z("ERROR");
-        sink.put((char) 0);
-        sink.putLen(addr);
-    }
-
     private void processCancelMessage() {
         // From https://www.postgresql.org/docs/current/protocol-flow.html :
         // To issue a cancel request, the frontend opens a new connection to the server and sends a CancelRequest message, rather than the StartupMessage message
@@ -322,7 +344,7 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
         try {
             registry.cancel(pid, secret);
         } catch (CairoException e) { // error message should not be sent to client
-            LOG.error().$(e.getMessage()).$();
+            LOG.error().$(e.getFlyweightMessage()).$();
         }
     }
 
@@ -384,12 +406,10 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
         long hi = PGConnectionContext.getStringLength(recvBufReadPos, msgLimit, "bad password length");
         if (matcher.verifyPassword(username, recvBufReadPos, (int) (hi - recvBufReadPos))) {
             recvBufReadPos = msgLimit;
-            compactRecvBuf();
-            prepareLoginOk();
-            state = State.WRITE_AND_AUTH_SUCCESS;
+            state = State.AUTH_SUCCESS;
         } else {
             LOG.info().$("bad password for user [user=").$(username).$(']').$();
-            prepareWrongUsernamePasswordResponse();
+            prepareErrorResponse("invalid username/password");
             state = State.WRITE_AND_AUTH_FAILURE;
         }
         return Authenticator.OK;
@@ -410,15 +430,15 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
             // store user
             if (PGKeywords.isUser(nameLo, nameHi - nameLo)) {
                 CharacterStoreEntry e = characterStore.newEntry();
-                e.put(dbcs.of(valueLo, valueHi));
+                e.put(dus.of(valueLo, valueHi));
                 this.username = e.toImmutable();
             }
             boolean parsed = true;
             if (PGKeywords.isOptions(nameLo, nameHi - nameLo)) {
                 if (PGKeywords.startsWithTimeoutOption(valueLo, valueHi - valueLo)) {
                     try {
-                        dbcs.of(valueLo + 21, valueHi);
-                        long statementTimeout = Numbers.parseLong(dbcs);
+                        dus.of(valueLo + 21, valueHi);
+                        long statementTimeout = Numbers.parseLong(dus);
                         optionsListener.setStatementTimeout(statementTimeout);
                     } catch (NumericException ex) {
                         parsed = false;
@@ -428,9 +448,9 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
                 }
             }
             if (parsed) {
-                LOG.debug().$("property [name=").$(dbcs.of(nameLo, nameHi)).$(", value=").$(dbcs.of(valueLo, valueHi)).$(']').$();
+                LOG.debug().$("property [name=").$(dus.of(nameLo, nameHi)).$(", value=").$(dus.of(valueLo, valueHi)).$(']').$();
             } else {
-                LOG.info().$("invalid property [name=").$(dbcs.of(nameLo, nameHi)).$(", value=").$(dbcs.of(valueLo, valueHi)).$(']').$();
+                LOG.info().$("invalid property [name=").$(dus.of(nameLo, nameHi)).$(", value=").$(dus.of(valueLo, valueHi)).$(']').$();
             }
         }
         characterStore.clear();
@@ -479,17 +499,27 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
         AUTH_FAILED
     }
 
-    private class ResponseSink extends AbstractCharSink {
+    private class ResponseSink implements Utf8Sink {
+
         @Override
-        public CharSink put(char c) {
-            ensureCapacity(Byte.BYTES);
-            Unsafe.getUnsafe().putByte(sendBufWritePos++, (byte) c);
+        public Utf8Sink put(long lo, long hi) {
+            final long size = hi - lo;
+            ensureCapacity(size);
+            Vect.memcpy(sendBufWritePos, lo, size);
+            sendBufWritePos += size;
             return this;
         }
 
-        public void put(byte c) {
+        @Override
+        public Utf8Sink put(@Nullable Utf8Sequence us) {
+            return this;
+        }
+
+        @Override
+        public Utf8Sink put(byte b) {
             ensureCapacity(Byte.BYTES);
-            Unsafe.getUnsafe().putByte(sendBufWritePos++, c);
+            Unsafe.getUnsafe().putByte(sendBufWritePos++, b);
+            return this;
         }
 
         public void putInt(int i) {
@@ -504,7 +534,7 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
         }
 
         void encodeUtf8Z(CharSequence value) {
-            encodeUtf8(value);
+            put(value);
             ensureCapacity(Byte.BYTES);
             put((byte) 0);
         }

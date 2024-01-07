@@ -58,7 +58,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
     private int plen;
 
     public static void create(CairoConfiguration configuration, Path path, CharSequence name, int valueBlockCapacity) {
-        int plen = path.length();
+        int plen = path.size();
         try {
             final FilesFacade ff = configuration.getFilesFacade();
             try (
@@ -81,7 +81,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
     @Before
     public void setUp() {
         path = new Path().of(configuration.getRoot());
-        plen = path.length();
+        plen = path.size();
         super.setUp();
     }
 
@@ -720,7 +720,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
             // prepare the data
             long timestamp = 0;
-            try (TableWriter writer = newTableWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newOffPoolWriter(configuration, "x", metrics)) {
                 for (int i = 0; i < M; i++) {
                     TableWriter.Row row = writer.newRow(timestamp += timestampIncrement);
                     row.putStr(0, rnd.nextChars(20));
@@ -753,7 +753,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                     rows.setPos(rows.getCapacity());
                     GeoHashNative.iota(rows.getAddress(), rows.getCapacity(), 0);
 
-                    try (TableReader tableReader = newTableReader(configuration, "x")) {
+                    try (TableReader tableReader = newOffPoolReader(configuration, "x")) {
                         tableReader.openPartition(0);
                         final int columnBase = tableReader.getColumnBase(0);
                         final int columnIndex = tableReader.getMetadata().getColumnIndex("c");
@@ -1023,7 +1023,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             assertValuesMatchBitmapWriter(count, writer, values);
 
             writer.close();
-            int plen = path.length();
+            int plen = path.size();
             FilesFacade ff = configuration.getFilesFacade();
 
             // Make x.k dirty, write random data
@@ -1052,7 +1052,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
     @Test
     public void testIntIndex() throws Exception {
-        final int plen = path.length();
+        final int plen = path.size();
         final Rnd rnd = new Rnd();
         int N = 100000000;
         final int MOD = 1024;

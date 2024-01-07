@@ -41,6 +41,7 @@ import io.questdb.std.datetime.millitime.DateFormatCompiler;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.fastdouble.FastFloatParser;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.DirectUtf8Sequence;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.std.datetime.millitime.DateFormatUtils.*;
@@ -48,10 +49,8 @@ import static io.questdb.std.datetime.millitime.DateFormatUtils.*;
 public class SqlUtil {
 
     static final CharSequenceHashSet disallowedAliases = new CharSequenceHashSet();
-    private static final DateFormat[] DATE_FORMATS;
     private static final DateFormat[] DATE_FORMATS_FOR_TIMESTAMP;
     private static final int DATE_FORMATS_FOR_TIMESTAMP_SIZE;
-    private static final int DATE_FORMATS_SIZE;
     private static final ThreadLocal<Long256ConstantFactory> LONG256_FACTORY = new ThreadLocal<>(Long256ConstantFactory::new);
 
     public static void addSelectStar(
@@ -129,6 +128,50 @@ public class SqlUtil {
                         return interval;
                     }
                     break;
+                default:
+                    break;
+            }
+        } catch (NumericException ex) {
+            // Ignored
+        }
+
+        throw SqlException.$(position + len, "invalid interval qualifier ").put(tok);
+    }
+
+    public static long expectSeconds(CharSequence tok, int position) throws SqlException {
+        int k = -1;
+
+        final int len = tok.length();
+
+        // look for end of digits
+        for (int i = 0; i < len; i++) {
+            char c = tok.charAt(i);
+            if (c < '0' || c > '9') {
+                k = i;
+                break;
+            }
+        }
+
+        if (k == -1) {
+            throw SqlException.$(position + len, "expected interval qualifier in ").put(tok);
+        }
+
+        try {
+            long interval = Numbers.parseLong(tok, 0, k);
+            int nChars = len - k;
+            if (nChars > 1) {
+                throw SqlException.$(position + k, "expected single letter interval qualifier in ").put(tok);
+            }
+
+            switch (tok.charAt(k)) {
+                case 's': // seconds
+                    return interval;
+                case 'm': // minutes
+                    return interval * Timestamps.MINUTE_SECONDS;
+                case 'h': // hours
+                    return interval * Timestamps.HOUR_SECONDS;
+                case 'd': // days
+                    return interval * Timestamps.DAY_SECONDS;
                 default:
                     break;
             }
@@ -451,21 +494,11 @@ public class SqlUtil {
     }
 
     public static long implicitCastStrAsDate(CharSequence value) {
-        if (value != null) {
-            final int hi = value.length();
-            for (int i = 0; i < DATE_FORMATS_SIZE; i++) {
-                try {
-                    return DATE_FORMATS[i].parse(value, 0, hi, DateFormatUtils.enLocale);
-                } catch (NumericException ignore) {
-                }
-            }
-            try {
-                return Numbers.parseLong(value, 0, hi);
-            } catch (NumericException e) {
-                throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.DATE);
-            }
+        try {
+            return DateFormatUtils.parseDate(value);
+        } catch (NumericException e) {
+            throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.DATE);
         }
-        return Numbers.LONG_NaN;
     }
 
     public static double implicitCastStrAsDouble(CharSequence value) {
@@ -575,7 +608,7 @@ public class SqlUtil {
             for (int i = 0; i < DATE_FORMATS_FOR_TIMESTAMP_SIZE; i++) {
                 try {
                     //
-                    return DATE_FORMATS_FOR_TIMESTAMP[i].parse(value, 0, hi, enLocale) * 1000L;
+                    return DATE_FORMATS_FOR_TIMESTAMP[i].parse(value, 0, hi, EN_LOCALE) * 1000L;
                 } catch (NumericException ignore) {
                 }
             }
@@ -597,11 +630,41 @@ public class SqlUtil {
         }
     }
 
+    public static void implicitCastStrAsUuid(DirectUtf8Sequence str, Uuid uuid) {
+        if (str == null || str.size() == 0) {
+            uuid.ofNull();
+            return;
+        }
+        try {
+            uuid.of(str);
+        } catch (NumericException e) {
+            throw ImplicitCastException.inconvertibleValue(str, ColumnType.STRING, ColumnType.UUID);
+        }
+    }
+
     public static boolean implicitCastUuidAsStr(long lo, long hi, CharSink sink) {
         if (Uuid.isNull(lo, hi)) {
             return false;
         }
         Numbers.appendUuid(lo, hi, sink);
+        return true;
+    }
+
+    /**
+     * Returns true if the model stands for a SELECT ... FROM tab; or a SELECT ... FROM tab WHERE ...; query.
+     * We're aiming for potential page frame support with this check.
+     */
+    public static boolean isPlainSelect(QueryModel model) {
+        while (model != null) {
+            if (model.getSelectModelType() != QueryModel.SELECT_MODEL_NONE
+                    || model.getGroupBy().size() > 0
+                    || model.getJoinModels().size() > 1
+                    || model.getLatestByType() != QueryModel.LATEST_BY_NONE
+                    || model.getUnionModel() != null) {
+                return false;
+            }
+            model = model.getNestedModel();
+        }
         return true;
     }
 
@@ -713,15 +776,6 @@ public class SqlUtil {
 
         final DateFormatCompiler milliCompiler = new DateFormatCompiler();
         final DateFormat pgDateTimeFormat = milliCompiler.compile("y-MM-dd HH:mm:ssz");
-
-        DATE_FORMATS = new DateFormat[]{
-                pgDateTimeFormat,
-                PG_DATE_Z_FORMAT,
-                PG_DATE_MILLI_TIME_Z_FORMAT,
-                UTC_FORMAT
-        };
-
-        DATE_FORMATS_SIZE = DATE_FORMATS.length;
 
         // we are using "millis" compiler deliberately because clients encode millis into strings
         DATE_FORMATS_FOR_TIMESTAMP = new DateFormat[]{

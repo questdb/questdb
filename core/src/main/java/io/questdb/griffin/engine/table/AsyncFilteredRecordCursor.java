@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
@@ -38,7 +39,6 @@ import io.questdb.std.Rows;
 
 class AsyncFilteredRecordCursor implements RecordCursor {
 
-    static final String exceptionMessage = "timeout, query aborted";
     private static final Log LOG = LogFactory.getLog(AsyncFilteredRecordCursor.class);
     private final Function filter;
     private final boolean hasDescendingOrder;
@@ -63,6 +63,57 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         this.filter = filter;
         this.hasDescendingOrder = scanDirection == RecordCursorFactory.SCAN_DIRECTION_BACKWARD;
         record = new PageAddressCacheRecord();
+    }
+
+    @Override
+    public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor.Counter counter) {
+        if (frameIndex == -1) {
+            fetchNextFrame();
+            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+        }
+
+        if (rowsRemaining < 1) {
+            return;
+        }
+
+        // We have rows in the current frame we still need to dispatch
+        if (frameRowIndex < frameRowCount) {
+            long frameRowsLeft = Math.min(frameRowCount - frameRowIndex, rowsRemaining);
+            rowsRemaining -= frameRowsLeft;
+            frameRowIndex += frameRowsLeft;
+            counter.add(frameRowsLeft);
+            if (rowsRemaining < 1) {
+                frameSequence.cancel(SqlExecutionCircuitBreaker.STATE_OK);
+                return;
+            }
+        }
+
+        // Release the previous queue item.
+        // There is no identity check here because this check
+        // had been done when 'cursor' was assigned.
+        collectCursor(false);
+
+        while (frameIndex < frameLimit) {
+            fetchNextFrame();
+            if (frameRowCount > 0 && frameRowIndex < frameRowCount) {
+                long frameRowsLeft = Math.min(frameRowCount - frameRowIndex, rowsRemaining);
+                rowsRemaining -= frameRowsLeft;
+                frameRowIndex += frameRowsLeft;
+                counter.add(frameRowsLeft);
+                if (rowsRemaining < 1) {
+                    frameSequence.cancel(SqlExecutionCircuitBreaker.STATE_OK);
+                    return;
+                } else {
+                    collectCursor(false);
+                }
+            }
+
+            if (!allFramesActive) {
+                throwTimeoutException();
+            }
+
+            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+        }
     }
 
     @Override
@@ -168,6 +219,52 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     }
 
     @Override
+    public void skipRows(Counter rowCount) throws DataUnavailableException {
+        if (frameIndex == -1) {
+            fetchNextFrame();
+        }
+
+        long rowCountLeft = Math.min(rowsRemaining, rowCount.get());
+
+        // We have rows in the current frame we still need to dispatch
+        if (frameRowIndex < frameRowCount) {
+            long frameRowsLeft = Math.min(frameRowCount - frameRowIndex, rowCountLeft);
+            rowsRemaining -= frameRowsLeft;
+            frameRowIndex += frameRowsLeft;
+            rowCountLeft -= frameRowsLeft;
+            rowCount.dec(frameRowsLeft);
+            if (rowCountLeft == 0) {
+                return;
+            }
+        }
+
+        // Release the previous queue item.
+        // There is no identity check here because this check
+        // had been done when 'cursor' was assigned.
+        collectCursor(false);
+
+        while (frameIndex < frameLimit) {
+            fetchNextFrame();
+            if (frameRowCount > 0 && frameRowIndex < frameRowCount) {
+                long frameRowsLeft = Math.min(frameRowCount - frameRowIndex, rowCountLeft);
+                rowsRemaining -= frameRowsLeft;
+                frameRowIndex += frameRowsLeft;
+                rowCountLeft -= frameRowsLeft;
+                rowCount.dec(frameRowsLeft);
+                if (rowCountLeft == 0) {
+                    return;
+                }
+            }
+
+            collectCursor(false);
+
+            if (!allFramesActive) {
+                throwTimeoutException();
+            }
+        }
+    }
+
+    @Override
     public void toTop() {
         // Check if we at the top already and there is nothing to do.
         if (frameIndex == 0 && frameRowIndex == 0) {
@@ -183,7 +280,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
 
     private boolean checkLimit() {
         if (--rowsRemaining < 0) {
-            frameSequence.cancel();
+            frameSequence.cancel(SqlExecutionCircuitBreaker.STATE_OK);
             return false;
         }
         return true;
@@ -218,12 +315,14 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                             .$(", active=").$(frameSequence.isActive())
                             .$(", cursor=").$(cursor)
                             .I$();
+
                     if (task.hasError()) {
-                        throw CairoException.nonCritical().put(task.getErrorMsg());
+                        throw CairoException.nonCritical().put(task.getErrorMsg())
+                                .setCancellation(task.isCancelled()).setInterruption(task.isCancelled());
                     }
 
                     allFramesActive &= frameSequence.isActive();
-                    rows = task.getRows();
+                    rows = task.getFilteredRows();
                     frameRowCount = rows.size();
                     frameIndex = task.getFrameIndex();
                     frameRowIndex = 0;
@@ -242,15 +341,17 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                 }
             } while (frameIndex < frameLimit);
         } catch (Throwable e) {
-            LOG.error().$("filter error [ex=").$(e).I$();
             if (e instanceof CairoException) {
                 CairoException ce = (CairoException) e;
-                if (ce.isInterruption()) {
+                if (ce.isInterruption() || ce.isCancellation()) {
+                    LOG.error().$("filter error [ex=").$(((CairoException) e).getFlyweightMessage()).I$();
                     throwTimeoutException();
                 } else {
+                    LOG.error().$("filter error [ex=").$(e).I$();
                     throw ce;
                 }
             }
+            LOG.error().$("filter error [ex=").$(e).I$();
             throw CairoException.nonCritical().put(e.getMessage());
         }
     }
@@ -260,7 +361,11 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     }
 
     private void throwTimeoutException() {
-        throw CairoException.nonCritical().put(exceptionMessage).setInterruption(true);
+        if (frameSequence.getCancelReason() == SqlExecutionCircuitBreaker.STATE_CANCELLED) {
+            throw CairoException.queryCancelled();
+        } else {
+            throw CairoException.queryTimedOut();
+        }
     }
 
     void of(PageFrameSequence<?> frameSequence, long rowsRemaining) {

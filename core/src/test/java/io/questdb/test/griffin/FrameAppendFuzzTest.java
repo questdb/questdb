@@ -24,10 +24,11 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.cairo.*;
-import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.std.*;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.griffin.wal.AbstractFuzzTest;
@@ -35,6 +36,9 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class FrameAppendFuzzTest extends AbstractFuzzTest {
+
+    private int partitionCount;
+
     @Test
     public void testFullRandom() throws Exception {
         Rnd rnd = generateRandom(LOG);
@@ -49,9 +53,12 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
                 rnd.nextDouble(),
                 rnd.nextDouble(),
                 rnd.nextDouble(),
-                0.1 * rnd.nextDouble(), 0.01
+                0.1 * rnd.nextDouble(),
+                0.01,
+                0.0
         );
 
+        partitionCount = 5 + rnd.nextInt(10);
         setFuzzCounts(
                 rnd.nextBoolean(),
                 rnd.nextInt(2_000_000),
@@ -60,7 +67,7 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
                 rnd.nextInt(1000),
                 rnd.nextInt(1000),
                 rnd.nextInt(1_000_000),
-                5 + rnd.nextInt(10)
+                partitionCount
         );
 
         runFuzz(rnd);
@@ -80,9 +87,13 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
                 0,
                 0,
                 1,
-                0.1 * rnd.nextDouble(), 0.01
+                0.1 * rnd.nextDouble(),
+                0.01,
+                0.0
         );
 
+
+        partitionCount = 5 + rnd.nextInt(10);
         setFuzzCounts(
                 rnd.nextBoolean(),
                 20_000,
@@ -91,7 +102,7 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
                 rnd.nextInt(1000),
                 rnd.nextInt(1000),
                 rnd.nextInt(1_000_000),
-                5 + rnd.nextInt(10)
+                partitionCount
         );
 
         runFuzz(rnd);
@@ -134,37 +145,30 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
     protected void runFuzz(Rnd rnd) throws Exception {
         configOverrideO3ColumnMemorySize(rnd.nextInt(16 * 1024 * 1024));
 
+        String tableName = testName.getMethodName();
+        String tableNameMerged = testName.getMethodName() + "_merged";
+        TableToken merged = fuzzer.createInitialTable(tableNameMerged, false, 0);
+
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
-            String tableNameMerged = testName.getMethodName() + "_merged";
+            TableToken src = fuzzer.createInitialTable(tableName, false);
+            ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableName, rnd);
 
-            TableToken src = createInitialTable(tableName, false, initialRowCount);
-            TableToken merged = createInitialTable(tableNameMerged, false, 0);
-
-            ObjList<FuzzTransaction> transactions;
-            try (TableReader reader = newTableReader(configuration, tableName)) {
-                TableReaderMetadata metadata = reader.getMetadata();
-                long start = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T17");
-                long end = start + partitionCount * Timestamps.DAY_MICROS;
-                transactions = generateSet(rnd, metadata, start, end, tableName);
-            }
-
-            applyNonWal(transactions, tableName, rnd);
+            fuzzer.applyNonWal(transactions, tableName, rnd);
             engine.releaseInactive();
 
             copyTableDir(src, merged);
             mergeAllPartitions(merged);
-
-            String limit = "";
-            TestUtils.assertSqlCursors(
-                    engine,
-                    sqlExecutionContext,
-                    tableName + limit,
-                    tableNameMerged + limit,
-                    LOG
-            );
-            assertRandomIndexes(tableName, tableNameMerged, rnd);
         });
+
+        String limit = "";
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                tableName + limit,
+                tableNameMerged + limit,
+                LOG
+        );
+        fuzzer.assertRandomIndexes(tableName, tableNameMerged, rnd);
     }
 
 }

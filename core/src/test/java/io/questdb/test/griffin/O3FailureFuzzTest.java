@@ -37,6 +37,7 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -78,7 +79,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
     private static final FilesFacade ffOpenFailure = new TestFilesFacadeImpl() {
         @Override
         public int openRW(LPSZ name, long opts) {
-            if ((Chars.endsWith(name, Files.SEPARATOR + "ts.d") && Chars.contains(name, "1970-01-06") && counter.decrementAndGet() == 0) && failNextAllocOrOpen.get()) {
+            if ((Utf8s.endsWithAscii(name, Files.SEPARATOR + "ts.d") && Utf8s.containsAscii(name, "1970-01-06") && counter.decrementAndGet() == 0) && failNextAllocOrOpen.get()) {
                 failNextAllocOrOpen.set(false);
                 return -1;
             }
@@ -153,7 +154,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
             @Override
             public int openRW(LPSZ name, long opts) {
                 int fd = super.openRW(name, opts);
-                if (Chars.endsWith(name, "1970-01-06" + Files.SEPARATOR + "m.d") && counter.decrementAndGet() == 0) {
+                if (Utf8s.endsWithAscii(name, "1970-01-06" + Files.SEPARATOR + "m.d") && counter.decrementAndGet() == 0) {
                     this.fd = fd;
                     failNextAllocOrOpen.set(true);
                 }

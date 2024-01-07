@@ -71,19 +71,19 @@ public class IndexBuilder extends RebuildColumnBase {
         try {
             BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName, columnNameTxn);
             try {
-                LOG.info().$("writing ").utf8(path).$();
+                LOG.info().$("writing ").$(path).$();
                 ddlMem.smallFile(ff, path, MemoryTag.MMAP_TABLE_WRITER);
                 BitmapIndexWriter.initKeyMemory(ddlMem, indexValueBlockCapacity);
             } catch (CairoException e) {
                 // looks like we could not create key file properly
                 // lets not leave half-baked file sitting around
                 LOG.error()
-                        .$("could not create index [name=").utf8(path)
+                        .$("could not create index [name=").$(path)
                         .$(", errno=").$(e.getErrno())
                         .$(']').$();
-                if (!ff.remove(path)) {
+                if (!ff.removeQuiet(path)) {
                     LOG.error()
-                            .$("could not remove '").utf8(path).$("'. Please remove MANUALLY.")
+                            .$("could not remove '").$(path).$("'. Please remove MANUALLY.")
                             .$("[errno=").$(ff.errno())
                             .$(']').$();
                 }
@@ -93,29 +93,30 @@ public class IndexBuilder extends RebuildColumnBase {
                 ddlMem.close();
             }
             if (!ff.touch(BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn))) {
-                LOG.error().$("could not create index [name=").utf8(path).$(']').$();
+                LOG.error().$("could not create index [name=").$(path).$(']').$();
                 throw CairoException.critical(ff.errno()).put("could not create index [name=").put(path).put(']');
             }
-            LOG.info().$("writing ").utf8(path).$();
+            LOG.info().$("writing ").$(path).$();
         } finally {
             path.trimTo(plen);
         }
     }
 
     private void removeFile(FilesFacade ff, Path path) {
-        LOG.info().$("deleting ").utf8(path).$();
-        if (!ff.remove(this.path)) {
+        LOG.info().$("deleting ").$(path).$();
+        if (!ff.removeQuiet(this.path)) {
+            int errno = ff.errno();
             if (!ff.exists(this.path)) {
                 // This is fine, index can be corrupt, rewriting is what we try to do here
-                LOG.info().$("index file did not exist, file will be re-written [path=").utf8(path).I$();
+                LOG.info().$("index file did not exist, file will be re-written [path=").$(path).I$();
             } else {
-                throw CairoException.critical(ff.errno()).put("cannot remove index file");
+                throw CairoException.critical(errno).put("could not remove index file [file=").put(this.path).put(']');
             }
         }
     }
 
     private void removeIndexFiles(FilesFacade ff, CharSequence columnName, long columnNameTxn) {
-        final int plen = path.length();
+        final int plen = path.size();
         BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName, columnNameTxn);
         removeFile(ff, path);
 
@@ -134,10 +135,10 @@ public class IndexBuilder extends RebuildColumnBase {
             int partitionBy,
             int indexValueBlockCapacity
     ) {
-        final int trimTo = path.length();
+        final int trimTo = path.size();
         TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, partitionNameTxn);
         try {
-            final int plen = path.length();
+            final int plen = path.size();
 
             if (ff.exists(path.$())) {
                 try (final MemoryMR roMem = indexMem) {
@@ -149,7 +150,7 @@ public class IndexBuilder extends RebuildColumnBase {
                     if (columnTop > -1L) {
 
                         if (partitionSize > columnTop) {
-                            LOG.info().$("indexing [path=").utf8(path).I$();
+                            LOG.info().$("indexing [path=").$(path).I$();
                             createIndexFiles(ff, columnName, indexValueBlockCapacity, plen, columnNameTxn);
                             TableUtils.dFile(path.trimTo(plen), columnName, columnNameTxn);
                             roMem.of(

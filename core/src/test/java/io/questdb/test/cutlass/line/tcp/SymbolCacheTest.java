@@ -40,7 +40,7 @@ import io.questdb.mp.SPSequence;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
@@ -109,7 +109,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
 
             Thread readerThread = new Thread(() -> {
                 ObjList<SymbolCache> symbolCacheObjList = new ObjList<>();
-                DirectByteCharSequence dbcs = new DirectByteCharSequence();
+                DirectUtf8String dus = new DirectUtf8String();
                 long mem = Unsafe.malloc(DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
                 TableToken tableToken = engine.verifyTableName(tableName);
                 try (Path path = new Path();
@@ -141,10 +141,10 @@ public class SymbolCacheTest extends AbstractCairoTest {
                         }
 
                         int symCount = symbolCacheObjList.size();
-                        copyUtf8StringChars("val" + ((newColsAdded - 1) * rowsAdded), mem, dbcs);
+                        copyUtf8StringChars("val" + ((newColsAdded - 1) * rowsAdded), mem, dus);
                         boolean found = false;
                         for (int sym = 0; sym < symCount; sym++) {
-                            if (symbolCacheObjList.getQuick(sym).keyOf(dbcs) != SymbolTable.VALUE_NOT_FOUND) {
+                            if (symbolCacheObjList.getQuick(sym).keyOf(dus) != SymbolTable.VALUE_NOT_FOUND) {
                                 found = true;
                             }
                         }
@@ -196,11 +196,11 @@ public class SymbolCacheTest extends AbstractCairoTest {
                  })
             ) {
                 CreateTableTestUtils.create(model);
-                DirectByteCharSequence dbcs = new DirectByteCharSequence();
+                DirectUtf8String dus = new DirectUtf8String();
                 long mem = Unsafe.malloc(DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
                 TableToken tableToken = engine.verifyTableName(tableName);
                 try (
-                        TableWriter writer = newTableWriter(configuration, tableName, metrics);
+                        TableWriter writer = newOffPoolWriter(configuration, tableName, metrics);
                         TxReader txReader = new TxReader(ff).ofRO(
                                 path.of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
                                 PartitionBy.DAY
@@ -230,8 +230,8 @@ public class SymbolCacheTest extends AbstractCairoTest {
                     writer.commit();
 
                     for (int i = 0; i < N; i++) {
-                        copyUtf8StringChars("sym" + i, mem, dbcs);
-                        int rc = cache.keyOf(dbcs);
+                        copyUtf8StringChars("sym" + i, mem, dus);
+                        int rc = cache.keyOf(dus);
                         Assert.assertNotEquals(SymbolTable.VALUE_NOT_FOUND, rc);
                     }
 
@@ -259,8 +259,8 @@ public class SymbolCacheTest extends AbstractCairoTest {
             final long incrementUs = 10_000;
             final String constValue = "hello";
             long constMem = Unsafe.malloc(DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
-            DirectByteCharSequence constDbcs = new DirectByteCharSequence();
-            copyUtf8StringChars(constValue, constMem, constDbcs);
+            DirectUtf8String constDus = new DirectUtf8String();
+            copyUtf8StringChars(constValue, constMem, constDus);
             FilesFacade ff = new TestFilesFacadeImpl();
 
             ddl("create table x(a symbol, c int, b symbol capacity 10000000, ts timestamp) timestamp(ts) partition by DAY");
@@ -287,21 +287,21 @@ public class SymbolCacheTest extends AbstractCairoTest {
 
                     new Thread(() -> {
                         long mem = Unsafe.malloc(DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
-                        DirectByteCharSequence dbcs = new DirectByteCharSequence();
+                        DirectUtf8String dus = new DirectUtf8String();
                         try {
                             barrier.await();
                             for (int i = 0; i < N; i++) {
                                 // All keys should not be found, but we keep looking them up because
                                 // we pretend we don't know this upfront. The aim is to cause
                                 // race condition between lookup and table writer
-                                copyUtf8StringChars(rndCache.nextString(5), mem, dbcs);
-                                symbolCache.keyOf(constDbcs);
-                                symbolCache.keyOf(dbcs);
+                                copyUtf8StringChars(rndCache.nextString(5), mem, dus);
+                                symbolCache.keyOf(constDus);
+                                symbolCache.keyOf(dus);
                                 final long cursor = pubSeq.nextBully();
                                 final Holder h = wheel.get(cursor);
                                 // publish the value2 to the table writer
                                 h.value1 = constValue;
-                                h.value2 = Chars.toString(dbcs);
+                                h.value2 = dus.toString();
                                 pubSeq.done(cursor);
                             }
                         } catch (Throwable e) {
@@ -377,11 +377,11 @@ public class SymbolCacheTest extends AbstractCairoTest {
                  })
             ) {
                 CreateTableTestUtils.create(model);
-                DirectByteCharSequence dbcs = new DirectByteCharSequence();
+                DirectUtf8String dus = new DirectUtf8String();
                 long mem = Unsafe.malloc(DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
                 TableToken tableToken = engine.verifyTableName(tableName);
                 try (
-                        TableWriter writer = new TableWriter(configuration, tableToken, metrics);
+                        TableWriter writer = TestUtils.newOffPoolWriter(configuration, tableToken, metrics);
                         TxReader txReader = new TxReader(ff).ofRO(
                                 path.of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
                                 PartitionBy.DAY
@@ -411,8 +411,8 @@ public class SymbolCacheTest extends AbstractCairoTest {
                     writer.commit();
 
                     for (int i = 0; i < N; i++) {
-                        copyUtf8StringChars(symbolPrefix + i, mem, dbcs);
-                        int rc = cache.keyOf(dbcs);
+                        copyUtf8StringChars(symbolPrefix + i, mem, dus);
+                        int rc = cache.keyOf(dus);
                         Assert.assertNotEquals(SymbolTable.VALUE_NOT_FOUND, rc);
                     }
 
@@ -442,10 +442,10 @@ public class SymbolCacheTest extends AbstractCairoTest {
             ) {
                 CreateTableTestUtils.create(model);
                 long mem = Unsafe.malloc(DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
-                DirectByteCharSequence dbcs = new DirectByteCharSequence();
+                DirectUtf8String dus = new DirectUtf8String();
                 TableToken tableToken = engine.verifyTableName(tableName);
                 try (
-                        TableWriter writer = newTableWriter(configuration, tableName, metrics);
+                        TableWriter writer = newOffPoolWriter(configuration, tableName, metrics);
                         MemoryMR txMem = Vm.getMRInstance();
                         TxReader txReader = new TxReader(ff).ofRO(
                                 path.of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
@@ -486,10 +486,10 @@ public class SymbolCacheTest extends AbstractCairoTest {
                     Assert.assertEquals(1, txReader.unsafeReadSymbolCount(1));
                     Assert.assertEquals(1, txReader.unsafeReadSymbolTransientCount(1));
 
-                    int rc = cache.keyOf(copyUtf8StringChars("missing", mem, dbcs));
+                    int rc = cache.keyOf(copyUtf8StringChars("missing", mem, dus));
                     Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, rc);
                     Assert.assertEquals(0, cache.getCacheValueCount());
-                    rc = cache.keyOf(copyUtf8StringChars("sym21", mem, dbcs));
+                    rc = cache.keyOf(copyUtf8StringChars("sym21", mem, dus));
                     Assert.assertEquals(0, rc);
                     Assert.assertEquals(1, cache.getCacheValueCount());
 
@@ -500,10 +500,10 @@ public class SymbolCacheTest extends AbstractCairoTest {
                     writer.commit();
                     Assert.assertEquals(1, txReader.unsafeReadSymbolCount(1));
                     Assert.assertEquals(1, txReader.unsafeReadSymbolTransientCount(1));
-                    rc = cache.keyOf(copyUtf8StringChars("missing", mem, dbcs));
+                    rc = cache.keyOf(copyUtf8StringChars("missing", mem, dus));
                     Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, rc);
                     Assert.assertEquals(1, cache.getCacheValueCount());
-                    rc = cache.keyOf(copyUtf8StringChars("sym21", mem, dbcs));
+                    rc = cache.keyOf(copyUtf8StringChars("sym21", mem, dus));
                     Assert.assertEquals(0, rc);
                     Assert.assertEquals(1, cache.getCacheValueCount());
 
@@ -516,10 +516,10 @@ public class SymbolCacheTest extends AbstractCairoTest {
                     writer.commit();
                     Assert.assertEquals(1, txReader.unsafeReadSymbolCount(1));
                     Assert.assertEquals(2, txReader.unsafeReadSymbolTransientCount(1));
-                    rc = cache.keyOf(copyUtf8StringChars("sym21", mem, dbcs));
+                    rc = cache.keyOf(copyUtf8StringChars("sym21", mem, dus));
                     Assert.assertEquals(0, rc);
                     Assert.assertEquals(1, cache.getCacheValueCount());
-                    rc = cache.keyOf(copyUtf8StringChars("sym22", mem, dbcs));
+                    rc = cache.keyOf(copyUtf8StringChars("sym22", mem, dus));
                     Assert.assertEquals(1, rc);
                     Assert.assertEquals(2, cache.getCacheValueCount());
 
@@ -538,10 +538,10 @@ public class SymbolCacheTest extends AbstractCairoTest {
                     r.putSym(symColIndex2, "sym25");
                     r.append();
 
-                    rc = cache.keyOf(copyUtf8StringChars("sym22", mem, dbcs));
+                    rc = cache.keyOf(copyUtf8StringChars("sym22", mem, dus));
                     Assert.assertEquals(1, rc);
                     Assert.assertEquals(2, cache.getCacheValueCount());
-                    rc = cache.keyOf(copyUtf8StringChars("sym24", mem, dbcs));
+                    rc = cache.keyOf(copyUtf8StringChars("sym24", mem, dus));
                     Assert.assertEquals(3, rc);
                     Assert.assertEquals(3, cache.getCacheValueCount());
                     writer.commit();
@@ -563,18 +563,18 @@ public class SymbolCacheTest extends AbstractCairoTest {
                             -1
                     );
 
-                    rc = cache.keyOf(copyUtf8StringChars("sym24", mem, dbcs));
+                    rc = cache.keyOf(copyUtf8StringChars("sym24", mem, dus));
                     Assert.assertEquals(3, rc);
                     Assert.assertEquals(1, cache.getCacheValueCount());
 
                     r = writer.newRow();
                     r.putSym(symColIndex2, "sym26");
                     r.append();
-                    rc = cache.keyOf(copyUtf8StringChars("sym26", mem, dbcs));
+                    rc = cache.keyOf(copyUtf8StringChars("sym26", mem, dus));
                     Assert.assertEquals(5, rc);
                     Assert.assertEquals(2, cache.getCacheValueCount());
                     writer.commit();
-                    rc = cache.keyOf(copyUtf8StringChars("sym26", mem, dbcs));
+                    rc = cache.keyOf(copyUtf8StringChars("sym26", mem, dus));
                     Assert.assertEquals(5, rc);
                     Assert.assertEquals(2, cache.getCacheValueCount());
                 } finally {
@@ -601,10 +601,10 @@ public class SymbolCacheTest extends AbstractCairoTest {
             ) {
                 CreateTableTestUtils.create(model);
                 long mem = Unsafe.malloc(DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
-                DirectByteCharSequence dbcs = new DirectByteCharSequence();
+                DirectUtf8String dus = new DirectUtf8String();
                 TableToken tableToken = engine.verifyTableName(tableName);
                 try (
-                        TableWriter writer = newTableWriter(configuration, tableName, metrics);
+                        TableWriter writer = newOffPoolWriter(configuration, tableName, metrics);
                         MemoryMR txMem = Vm.getMRInstance();
                         TxReader txReader = new TxReader(ff).ofRO(
                                 path.of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
@@ -641,10 +641,10 @@ public class SymbolCacheTest extends AbstractCairoTest {
                             -1
                     );
 
-                    int rc = cache.keyOf(copyUtf8StringChars("missing", mem, dbcs));
+                    int rc = cache.keyOf(copyUtf8StringChars("missing", mem, dus));
                     Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, rc);
                     Assert.assertEquals(0, cache.getCacheValueCount());
-                    rc = cache.keyOf(copyUtf8StringChars("sym1", mem, dbcs));
+                    rc = cache.keyOf(copyUtf8StringChars("sym1", mem, dus));
                     Assert.assertEquals(0, rc);
                     Assert.assertEquals(1, cache.getCacheValueCount());
 
@@ -654,10 +654,10 @@ public class SymbolCacheTest extends AbstractCairoTest {
                     writer.commit();
                     Assert.assertEquals(1, txReader.unsafeReadSymbolCount(0));
                     Assert.assertEquals(2, txReader.unsafeReadSymbolTransientCount(0));
-                    rc = cache.keyOf(copyUtf8StringChars("missing", mem, dbcs));
+                    rc = cache.keyOf(copyUtf8StringChars("missing", mem, dus));
                     Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, rc);
                     Assert.assertEquals(1, cache.getCacheValueCount());
-                    rc = cache.keyOf(copyUtf8StringChars("sym2", mem, dbcs));
+                    rc = cache.keyOf(copyUtf8StringChars("sym2", mem, dus));
                     Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, rc);
                     Assert.assertEquals(1, cache.getCacheValueCount());
                 } finally {
@@ -684,10 +684,10 @@ public class SymbolCacheTest extends AbstractCairoTest {
             ) {
                 CreateTableTestUtils.create(model);
                 long mem = Unsafe.malloc(DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
-                DirectByteCharSequence dbcs = new DirectByteCharSequence();
+                DirectUtf8String dus = new DirectUtf8String();
                 TableToken tableToken = engine.verifyTableName(tableName);
                 try (
-                        TableWriter writer = newTableWriter(configuration, tableName, metrics);
+                        TableWriter writer = newOffPoolWriter(configuration, tableName, metrics);
                         MemoryMR txMem = Vm.getMRInstance();
                         TxReader txReader = new TxReader(ff).ofRO(
                                 path.of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
@@ -724,7 +724,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                             -1
                     );
 
-                    int rc = cache.keyOf(copyUtf8StringChars("sym1", mem, dbcs));
+                    int rc = cache.keyOf(copyUtf8StringChars("sym1", mem, dus));
                     Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, rc);
                     Assert.assertEquals(0, cache.getCacheValueCount());
                 } finally {
@@ -734,19 +734,17 @@ public class SymbolCacheTest extends AbstractCairoTest {
         });
     }
 
-    private static DirectByteCharSequence copyUtf8StringChars(String value, long mem, DirectByteCharSequence dbcs) {
+    private static DirectUtf8String copyUtf8StringChars(String value, long mem, DirectUtf8String dus) {
         byte[] utf8Bytes = value.getBytes(StandardCharsets.UTF_8);
         Assert.assertTrue(utf8Bytes.length <= DBCS_MAX_SIZE);
         for (int i = 0, n = utf8Bytes.length; i < n; i++) {
             Unsafe.getUnsafe().putByte(mem + i, utf8Bytes[i]);
         }
-        return dbcs.of(mem, mem + utf8Bytes.length);
+        return dus.of(mem, mem + utf8Bytes.length);
     }
 
     private void createTable(String tableName) {
-        try (
-                TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
-        ) {
+        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)) {
             model.timestamp();
             TestUtils.create(model, engine);
         }

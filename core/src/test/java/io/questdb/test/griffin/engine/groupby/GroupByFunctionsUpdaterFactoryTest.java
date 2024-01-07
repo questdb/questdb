@@ -25,18 +25,18 @@
 package io.questdb.test.griffin.engine.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
-import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
-import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdaterFactory;
-import io.questdb.griffin.engine.groupby.SimpleMapValue;
-import io.questdb.test.cairo.TestRecord;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
+import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdaterFactory;
+import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.ObjList;
+import io.questdb.test.cairo.TestRecord;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -61,6 +61,12 @@ public class GroupByFunctionsUpdaterFactoryTest {
 
         updater.updateEmpty(value);
         Assert.assertEquals(-1, value.getLong(0));
+
+        MapValue destValue = new SimpleMapValue(1);
+        MapValue srcValue = new SimpleMapValue(1);
+        srcValue.putLong(0, 42);
+        updater.merge(destValue, srcValue);
+        Assert.assertEquals(42, destValue.getLong(0));
     }
 
     private static class TestGroupByFunction extends LongFunction implements GroupByFunction, UnaryFunction {
@@ -84,6 +90,12 @@ public class GroupByFunctionsUpdaterFactoryTest {
         @Override
         public long getLong(Record rec) {
             return 0;
+        }
+
+        @Override
+        public void merge(MapValue destValue, MapValue srcValue) {
+            long value = srcValue.getLong(0);
+            destValue.putLong(0, value);
         }
 
         @Override

@@ -34,12 +34,15 @@ import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.log.LogRecord;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.Job;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.TelemetryTask;
 import io.questdb.tasks.TelemetryWalTask;
 import io.questdb.tasks.WalTxnNotificationTask;
@@ -100,7 +103,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         boolean allClean = true;
         FilesFacade ff = engine.getConfiguration().getFilesFacade();
         tempPath.of(engine.getConfiguration().getRoot()).concat(tableToken);
-        int rootLen = tempPath.length();
+        int rootLen = tempPath.size();
 
         long p = ff.findFirst(tempPath.$());
         if (p > 0) {
@@ -123,18 +126,16 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             continue;
                         }
 
-                        if (!ff.remove(tempPath.$())) {
-                            allClean = false;
-                            LOG.info().$("could not remove [tempPath=").utf8(tempPath).$(", errno=").$(ff.errno()).I$();
-                        }
+                        allClean &= removeOrLog(tempPath, ff);
                     }
                 } while (ff.findNext(p) > 0);
 
                 if (allClean) {
                     // Remove _txn and _meta files when all other files are removed
-                    ff.remove(tempPath.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).$());
-                    ff.remove(tempPath.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$());
-                    return true;
+                    if (!removeOrLog(tempPath.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME), ff)) {
+                        return false;
+                    }
+                    return ff.removeQuiet(tempPath.trimTo(rootLen).concat(TableUtils.META_FILE_NAME));
                 }
             } finally {
                 ff.findClose(p);
@@ -143,19 +144,27 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         return false;
     }
 
-    private static boolean matchesWalLock(CharSequence name) {
-        if (Chars.endsWith(name, ".lock")) {
-            for (int i = name.length() - ".lock".length() - 1; i > 0; i--) {
-                char c = name.charAt(i);
-                if (c < '0' || c > '9') {
-                    return Chars.equals(name, i - WAL_NAME_BASE.length() + 1, i + 1, WAL_NAME_BASE, 0, WAL_NAME_BASE.length());
+    private static boolean removeOrLog(Path path, FilesFacade ff) {
+        if (!ff.removeQuiet(path.$())) {
+            LOG.info().$("could not remove, will retry [path=").utf8(", errno=").$(ff.errno()).I$();
+            return false;
+        }
+        return true;
+    }
+
+    private static boolean matchesWalLock(Utf8Sequence name) {
+        if (Utf8s.endsWithAscii(name, ".lock")) {
+            for (int i = name.size() - ".lock".length() - 1; i > 0; i--) {
+                byte b = name.byteAt(i);
+                if (b < '0' || b > '9') {
+                    return Utf8s.equalsAscii(WAL_NAME_BASE, 0, WAL_NAME_BASE.length(), name, i - WAL_NAME_BASE.length() + 1, i + 1);
                 }
             }
         }
 
-        for (int i = 0, n = name.length(); i < n; i++) {
-            char c = name.charAt(i);
-            if (c < '0' || c > '9') {
+        for (int i = 0, n = name.size(); i < n; i++) {
+            byte b = name.byteAt(i);
+            if (b < '0' || b > '9') {
                 return false;
             }
         }
@@ -163,7 +172,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     }
 
     private static boolean tryDestroyDroppedTable(TableToken tableToken, TableWriter writer, CairoEngine engine, Path tempPath) {
-        if (engine.lockReadersByTableToken(tableToken)) {
+        if (engine.lockReadersAndMetadata(tableToken)) {
             TableWriter writerToClose = null;
             try {
                 final CairoConfiguration configuration = engine.getConfiguration();
@@ -186,7 +195,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 if (writerToClose != null) {
                     writerToClose.close();
                 }
-                engine.releaseReadersByTableToken(tableToken);
+                engine.unlockReadersAndMetadata(tableToken);
             }
         } else {
             LOG.info().$("table '").utf8(tableToken.getDirName())
@@ -257,7 +266,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             boolean hasNext;
                             if (structuralChangeCursor == null || !(hasNext = structuralChangeCursor.hasNext())) {
                                 Misc.free(structuralChangeCursor);
-                                structuralChangeCursor = tableSequencerAPI.getMetadataChangeLog(tableToken, newStructureVersion - 1);
+                                // Re-read the sequencer files to get the metadata change cursor.
+                                structuralChangeCursor = tableSequencerAPI.getMetadataChangeLogSlow(tableToken, newStructureVersion - 1);
                                 hasNext = structuralChangeCursor.hasNext();
                             }
 
@@ -290,22 +300,23 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         default:
                             // Always set full path when using thread static path
                             operationExecutor.setNowAndFixClock(commitTimestamp);
-                            tempPath.of(engine.getConfiguration().getRoot()).concat(tableToken).slash().put(WAL_NAME_BASE).put(walId).slash().put(segmentId);
+                            tempPath.of(engine.getConfiguration().getRoot()).concat(tableToken).slash().putAscii(WAL_NAME_BASE).put(walId).slash().put(segmentId);
                             final long start = microClock.getTicks();
 
-                            if (!writer.getWalTnxDetails().hasRecord(seqTxn + lookAheadTransactionCount)) {
+                            long lastLoadedTxnDetails = writer.getWalTnxDetails().getLastSeqTxn();
+                            if (seqTxn > lastLoadedTxnDetails
+                                    || (lastLoadedTxnDetails < seqTxn + lookAheadTransactionCount && (transactionLogCursor.getMaxTxn() > lastLoadedTxnDetails || transactionLogCursor.extend()))
+                            ) {
                                 // Last few transactions left to process from the list
                                 // of observed transactions built upfront in the beginning of the loop.
-                                // Check if more transaction exist, exit restart the loop to have better picture
-                                // of the future transactions and optimise the application.
-                                if (transactionLogCursor.setPosition()) {
-                                    writer.readWalTxnDetails(transactionLogCursor);
-                                    transactionLogCursor.toTop();
-                                    totalTransactionCount += iTransaction;
-                                    iTransaction = 0;
-                                    continue;
-                                }
+                                // Read more transactions from the sequencer into readWalTxnDetails to continue
+                                writer.readWalTxnDetails(transactionLogCursor);
+                                transactionLogCursor.setPosition(seqTxn);
                             }
+
+                            long walSegment = writer.getWalTnxDetails().getWalSegmentId(seqTxn);
+                            assert walId == Numbers.decodeHighInt(walSegment);
+                            assert segmentId == Numbers.decodeLowInt(walSegment);
 
                             isTerminating = runStatus.isTerminating();
                             final long added = processWalCommit(
@@ -439,18 +450,23 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     throw new UnsupportedOperationException("Unsupported command type: " + cmdType);
             }
         } catch (SqlException ex) {
-            // This is fine, some syntax error, we should not block WAL processing if SQL is not valid
-            LOG.error().$("error applying SQL to wal table [table=")
-                    .utf8(tableWriter.getTableToken().getTableName()).$(", sql=").$(sql).$(", error=").$(ex.getFlyweightMessage()).I$();
-            return -1;
+            throw CairoException.nonCritical().put("error applying SQL to wal table [table=")
+                    .put(tableWriter.getTableToken().getTableName()).put(", sql=").put(sql)
+                    .put(", position=").put(ex.getPosition())
+                    .put(", error=").put(ex.getFlyweightMessage());
         } catch (CairoException e) {
-            if (e.isWALTolerable()) {
-                // This is fine, some syntax error, we should not block WAL processing if SQL is not valid
-                LOG.error().$("error applying SQL to wal table [table=")
-                        .utf8(tableWriter.getTableToken().getTableName()).$(", sql=").$(sql).$(", error=").$(e.getFlyweightMessage()).I$();
-                return -1;
-            } else {
+            LogRecord log = !e.isWALTolerable() ? LOG.error() : LOG.info();
+            log.$("error applying SQL to wal table [table=")
+                    .utf8(tableWriter.getTableToken().getTableName()).$(", sql=").$(sql)
+                    .$(", error=").$(e.getFlyweightMessage())
+                    .$(", errno=").$(e.getErrno()).I$();
+
+            if (!e.isWALTolerable()) {
                 throw e;
+            } else {
+                // Mark as applied.
+                tableWriter.commitSeqTxn(seqTxn);
+                return -1;
             }
         }
     }
@@ -517,6 +533,12 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             LOG.critical().$("job failed, table suspended [table=").utf8(tableToken.getDirName())
                     .$(", error=").$(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno())
+                    .I$();
+            return WAL_APPLY_FAILED;
+        } catch (Throwable ex) {
+            telemetryFacade.store(TelemetrySystemEvent.WAL_APPLY_SUSPEND, TelemetryOrigin.WAL_APPLY);
+            LOG.critical().$("job failed, table suspended [table=").utf8(tableToken.getDirName())
+                    .$(", error=").$(ex)
                     .I$();
             return WAL_APPLY_FAILED;
         }

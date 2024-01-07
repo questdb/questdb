@@ -35,7 +35,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.ObjList;
 
-import static io.questdb.cairo.ColumnType.GEO_HASH_MAX_BITS_LENGTH;
+import static io.questdb.cairo.ColumnType.GEOLONG_MAX_BITS;
 
 public class TypeOfFunctionFactory implements FunctionFactory {
     static final Function NULL = new StrConstant("NULL");
@@ -88,7 +88,7 @@ public class TypeOfFunctionFactory implements FunctionFactory {
         TYPE_NAMES.put(ColumnType.GEOINT, new StrConstant("null(GEOINT)"));
         TYPE_NAMES.put(ColumnType.GEOLONG, new StrConstant("null(GEOLONG)"));
 
-        for (int b = 1; b <= GEO_HASH_MAX_BITS_LENGTH; b++) {
+        for (int b = 1; b <= GEOLONG_MAX_BITS; b++) {
             final int type = ColumnType.getGeoHashTypeWithBits(b);
             TYPE_NAMES.put(type, new StrConstant(ColumnType.nameOf(type)));
         }

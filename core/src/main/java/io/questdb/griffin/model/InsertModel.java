@@ -26,7 +26,9 @@ package io.questdb.griffin.model;
 
 import io.questdb.griffin.SqlException;
 import io.questdb.std.*;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.Sinkable;
+import org.jetbrains.annotations.NotNull;
 
 public class InsertModel implements ExecutionModel, Mutable, Sinkable {
     public static final ObjectFactory<InsertModel> FACTORY = InsertModel::new;
@@ -153,42 +155,42 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        sink.put("insert");
+    public void toSink(@NotNull CharSinkBase<?> sink) {
+        sink.putAscii("insert");
         if (batchSize != -1) {
-            sink.put(" batch ").put(batchSize);
+            sink.putAscii(" batch ").put(batchSize);
         }
 
         if (o3MaxLag != 0) {
-            sink.put(" lag ").put(o3MaxLag);
+            sink.putAscii(" lag ").put(o3MaxLag);
         }
 
-        sink.put(" into ").put(tableNameExpr.token).put(' ');
+        sink.putAscii(" into ").put(tableNameExpr.token).putAscii(' ');
         int n = columnNameList.size();
         if (n > 0) {
-            sink.put('(');
+            sink.putAscii('(');
             for (int i = 0; i < n; i++) {
                 if (i > 0) {
-                    sink.put(", ");
+                    sink.putAscii(", ");
                 }
                 sink.put(columnNameList.getQuick(i));
             }
-            sink.put(") ");
+            sink.putAscii(") ");
         }
         if (queryModel != null) {
             queryModel.toSink(sink);
         } else {
-            sink.put("values ");
+            sink.putAscii("values ");
             for (int t = 0, s = rowTupleValues.size(); t < s; t++) {
                 ObjList<ExpressionNode> rowValues = rowTupleValues.get(t);
-                sink.put('(');
+                sink.putAscii('(');
                 for (int i = 0, m = rowValues.size(); i < m; i++) {
                     if (i > 0) {
-                        sink.put(", ");
+                        sink.putAscii(", ");
                     }
                     sink.put(rowValues.getQuick(i));
                 }
-                sink.put(')');
+                sink.putAscii(')');
             }
         }
     }

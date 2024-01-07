@@ -38,6 +38,11 @@ public class DefaultHttpContextConfiguration implements HttpContextConfiguration
     }
 
     @Override
+    public boolean areCookiesEnabled() {
+        return true;
+    }
+
+    @Override
     public MillisecondClock getClock() {
         return MillisecondClockImpl.INSTANCE;
     }
@@ -60,6 +65,16 @@ public class DefaultHttpContextConfiguration implements HttpContextConfiguration
     @Override
     public FactoryProvider getFactoryProvider() {
         return DefaultFactoryProvider.INSTANCE;
+    }
+
+    @Override
+    public int getForceRecvFragmentationChunkSize() {
+        return Integer.MAX_VALUE;
+    }
+
+    @Override
+    public int getForceSendFragmentationChunkSize() {
+        return Integer.MAX_VALUE;
     }
 
     @Override

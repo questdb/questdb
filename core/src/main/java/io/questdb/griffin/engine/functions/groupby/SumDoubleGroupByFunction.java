@@ -89,6 +89,19 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
     }
 
     @Override
+    public boolean isParallelismSupported() {
+        return arg.isReadThreadSafe();
+    }
+
+    @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        double srcSum = srcValue.getDouble(valueIndex);
+        long srcCount = srcValue.getLong(valueIndex + 1);
+        destValue.addDouble(valueIndex, srcSum);
+        destValue.addLong(valueIndex + 1, srcCount);
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.DOUBLE);

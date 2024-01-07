@@ -29,6 +29,7 @@ import io.questdb.cairo.vm.MemoryFCRImpl;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.wal.MetadataService;
+import io.questdb.griffin.QueryRegistry;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -36,7 +37,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.LongList;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.DirectCharSequence;
+import io.questdb.std.str.DirectString;
 import io.questdb.tasks.TableWriterTask;
 
 public class AlterOperation extends AbstractOperation implements Mutable {
@@ -95,7 +96,12 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     // todo: supply bitset to indicate which ops are supported and which arent
     //     "structural changes" doesn't cover is as "add column" is supported
     public long apply(MetadataService svc, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
+        QueryRegistry queryRegistry = sqlExecutionContext != null ? sqlExecutionContext.getCairoEngine().getQueryRegistry() : null;
+        long queryId = -1;
         try {
+            if (queryRegistry != null) {
+                queryId = queryRegistry.register(sqlText, sqlExecutionContext);
+            }
             switch (command) {
                 case ADD_COLUMN:
                     applyAddColumn(svc);
@@ -168,6 +174,10 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                     .$(", message=`").$(e.getFlyweightMessage()).$('`')
                     .I$();
             throw e;
+        } finally {
+            if (queryRegistry != null) {
+                queryRegistry.unregister(queryId, sqlExecutionContext);
+            }
         }
         return 0;
     }
@@ -424,7 +434,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         for (int i = 0, n = extraInfo.size() / 2; i < n; i++) {
             long partitionTimestamp = extraInfo.getQuick(i * 2);
             if (!svc.removePartition(partitionTimestamp)) {
-                throw CairoException.nonCritical()
+                throw CairoException.partitionManipulationRecoverable()
                         .put("could not remove partition [table=").put(tableToken != null ? tableToken.getTableName() : "<null>")
                         .put(", partitionTimestamp=").ts(partitionTimestamp)
                         .put(", partitionBy=").put(PartitionBy.toString(svc.getPartitionBy()))
@@ -499,8 +509,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
 
     private static class DirectCharSequenceList implements CharSequenceList {
         private final LongList offsets = new LongList();
-        private final DirectCharSequence strA = new DirectCharSequence();
-        private final DirectCharSequence strB = new DirectCharSequence();
+        private final DirectString strA = new DirectString();
+        private final DirectString strB = new DirectString();
 
         @Override
         public void clear() {

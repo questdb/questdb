@@ -31,6 +31,7 @@ import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -614,7 +615,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                 }
                 path.of(configuration.getRoot()).concat(dstTableToken);
                 TableUtils.setPathForPartition(path, PartitionBy.DAY, IntervalUtils.parseFloorPartialTimestamp("2022-08-01"), txn);
-                int pathLen = path.length();
+                int pathLen = path.size();
 
                 // Extra columns not deleted
                 Assert.assertTrue(Files.exists(path.concat("s.d").$()));
@@ -963,7 +964,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
             @Override
             public int openRO(LPSZ name) {
                 int fd = super.openRO(name);
-                if (Chars.endsWith(name, "ts.d") && counter.decrementAndGet() == 0) {
+                if (Utf8s.endsWithAscii(name, "ts.d") && counter.decrementAndGet() == 0) {
                     this.fd = fd;
                 }
                 return fd;
@@ -979,7 +980,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
         FilesFacadeImpl ff = new TestFilesFacadeImpl() {
             @Override
             public int openRO(LPSZ name) {
-                if (Chars.endsWith(name, "ts.d") && counter.decrementAndGet() == 0) {
+                if (Utf8s.endsWithAscii(name, "ts.d") && counter.decrementAndGet() == 0) {
                     return -1;
                 }
                 return super.openRO(name);
@@ -995,7 +996,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
         FilesFacadeImpl ff = new TestFilesFacadeImpl() {
             @Override
             public int openRO(LPSZ name) {
-                if (Chars.endsWith(name, "ts.d") && counter.decrementAndGet() == 0) {
+                if (Utf8s.endsWithAscii(name, "ts.d") && counter.decrementAndGet() == 0) {
                     return -1;
                 }
                 return super.openRO(name);
@@ -1011,7 +1012,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
         FilesFacadeImpl ff = new TestFilesFacadeImpl() {
             @Override
             public int rename(LPSZ from, LPSZ to) {
-                if (Chars.contains(to, "2020-01-01") && counter.decrementAndGet() == 0) {
+                if (Utf8s.containsAscii(to, "2020-01-01") && counter.decrementAndGet() == 0) {
                     return Files.FILES_RENAME_ERR_OTHER;
                 }
                 return super.rename(from, to);
@@ -1027,7 +1028,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
         FilesFacadeImpl ff = new TestFilesFacadeImpl() {
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.contains(name, "dst" + testName.getMethodName()) && Chars.contains(name, "2020-01-01") && counter.decrementAndGet() == 0) {
+                if (Utf8s.containsAscii(name, "dst" + testName.getMethodName()) && Utf8s.containsAscii(name, "2020-01-01") && counter.decrementAndGet() == 0) {
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -1069,7 +1070,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                         "2020-01-09",
                         2);
 
-                try (TableReader dstReader = newTableReader(configuration, dst.getTableName())) {
+                try (TableReader dstReader = newOffPoolReader(configuration, dst.getTableName())) {
                     dstReader.openPartition(0);
                     dstReader.openPartition(1);
                     dstReader.goPassive();
@@ -1208,12 +1209,11 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
 
         TableToken tableToken = engine.verifyTableName(src.getName());
         path.of(configuration.getRoot()).concat(tableToken);
-        int pathLen = path.length();
+        int pathLen = path.size();
 
         TableToken tableToken0 = engine.verifyTableName(dst.getName());
         other.of(configuration.getRoot()).concat(tableToken0);
-        int otherLen = other.length();
-
+        int otherLen = other.size();
 
         int hi = -1;
         switch (dst.getPartitionBy()) {

@@ -29,12 +29,12 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
-import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -50,7 +50,7 @@ public class TableReadFailTest extends AbstractCairoTest {
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public int openRO(LPSZ name) {
-                if (Chars.endsWith(name, TableUtils.META_FILE_NAME)) {
+                if (Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME)) {
                     return -1;
                 }
                 return super.openRO(name);
@@ -65,7 +65,7 @@ public class TableReadFailTest extends AbstractCairoTest {
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public int openRO(LPSZ path) {
-                if (Chars.endsWith(path, TableUtils.META_FILE_NAME)) {
+                if (Utf8s.endsWithAscii(path, TableUtils.META_FILE_NAME)) {
                     return -1;
                 }
                 return super.openRO(path);
@@ -88,7 +88,7 @@ public class TableReadFailTest extends AbstractCairoTest {
 
             try (
                     Path path = new Path();
-                    TableReader reader = newTableReader(configuration, x);
+                    TableReader reader = newOffPoolReader(configuration, x);
                     MemoryCMARW mem = Vm.getCMARWInstance()
             ) {
 
@@ -99,7 +99,7 @@ public class TableReadFailTest extends AbstractCairoTest {
                 TableToken tableToken = engine.verifyTableName(x);
                 path.of(configuration.getRoot()).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$();
 
-                try (TableWriter w = newTableWriter(configuration, x, metrics)) {
+                try (TableWriter w = newOffPoolWriter(configuration, x, metrics)) {
                     for (int i = 0; i < N; i++) {
                         TableWriter.Row r = w.newRow();
                         r.putInt(0, rnd.nextInt());
@@ -157,7 +157,7 @@ public class TableReadFailTest extends AbstractCairoTest {
                 // make sure reload functions correctly. Txn changed from 1 to 3, reload should return true
                 Assert.assertTrue(reader.reload());
 
-                try (TableWriter w = newTableWriter(configuration, x, metrics)) {
+                try (TableWriter w = newOffPoolWriter(configuration, x, metrics)) {
                     // add more data
                     for (int i = 0; i < N; i++) {
                         TableWriter.Row r = w.newRow();
@@ -191,7 +191,7 @@ public class TableReadFailTest extends AbstractCairoTest {
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public int openRO(LPSZ name) {
-                if (Chars.endsWith(name, TableUtils.TXN_FILE_NAME)) {
+                if (Utf8s.endsWithAscii(name, TableUtils.TXN_FILE_NAME)) {
                     return -1;
                 }
                 return super.openRO(name);
@@ -205,7 +205,7 @@ public class TableReadFailTest extends AbstractCairoTest {
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public boolean exists(LPSZ path) {
-                return !Chars.endsWith(path, TableUtils.TXN_FILE_NAME) && super.exists(path);
+                return !Utf8s.endsWithAscii(path, TableUtils.TXN_FILE_NAME) && super.exists(path);
             }
         };
         assertConstructorFail(ff);
@@ -215,7 +215,7 @@ public class TableReadFailTest extends AbstractCairoTest {
         CreateTableTestUtils.createAllTable(engine, PartitionBy.DAY);
         TestUtils.assertMemoryLeak(() -> {
             try {
-                newTableReader(new DefaultTestCairoConfiguration(root) {
+                newOffPoolReader(new DefaultTestCairoConfiguration(root) {
                     @Override
                     public @NotNull FilesFacade getFilesFacade() {
                         return ff;

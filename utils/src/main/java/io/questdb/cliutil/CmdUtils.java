@@ -28,11 +28,12 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.RebuildColumnBase;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.str.Utf8String;
 
 public class CmdUtils {
     static void runColumnRebuild(RebuildColumnCommandArgs params, RebuildColumnBase ri) {
         final Log log = LogFactory.getLog("recover-var-index");
-        ri.of(params.tablePath);
+        ri.of(new Utf8String(params.tablePath));
         try {
             ri.reindex(params.partition, params.column);
         } catch (CairoException ex) {

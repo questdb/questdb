@@ -24,19 +24,18 @@
 
 package io.questdb.cairo;
 
-import io.questdb.std.LongList;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
-@SuppressWarnings("unused")
 public interface SecurityContext {
-
-    void assumeServiceAccount(CharSequence serviceAccountName);
-
-    void authorizeAddPassword(CharSequence userOrServiceAccountName);
-
-    void authorizeAddUser();
+    // Implementations are free to define unique authentication types.
+    // The user authenticated with credentials.
+    byte AUTH_TYPE_CREDENTIALS = 1;
+    // The user authenticated with a JWK token.
+    byte AUTH_TYPE_JWK_TOKEN = 2;
+    // The context is not aware of authentication types.
+    byte AUTH_TYPE_NONE = 0;
 
     void authorizeAdminAction();
 
@@ -65,67 +64,26 @@ public interface SecurityContext {
 
     void authorizeAlterTableSetType(TableToken tableToken);
 
-    void authorizeAssignServiceAccount(CharSequence serviceAccountName);
+    default void authorizeCancelQuery() {
+    }
 
     void authorizeCopyCancel(SecurityContext cancellingSecurityContext);
 
-    void authorizeCreateGroup();
-
-    void authorizeCreateJwk(CharSequence userOrServiceAccountName);
-
-    void authorizeCreateServiceAccount();
-
-    void authorizeCreateUser();
-
     void authorizeDatabaseSnapshot();
 
-    void authorizeDisableUser();
-
-    void authorizeDropGroup();
-
-    void authorizeDropJwk(CharSequence userOrServiceAccountName);
-
-    void authorizeDropServiceAccount();
-
-    void authorizeDropUser();
-
-    void authorizeEnableUser();
-
-    void authorizeGrant(LongList permissions, CharSequence tableName, @NotNull ObjList<CharSequence> columns);
-
-    void authorizeHTTP();
-
-    void authorizeILP();
+    void authorizeHttp();
 
     void authorizeInsert(TableToken tableToken);
 
-    void authorizePGWIRE();
+    void authorizeLineTcp();
 
-    void authorizeRemovePassword(CharSequence userOrServiceAccountName);
-
-    void authorizeRemoveUser();
+    void authorizePGWire();
 
     void authorizeResumeWal(TableToken tableToken);
 
     void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
     void authorizeSelectOnAnyColumn(TableToken tableToken);
-
-    void authorizeShowGroups();
-
-    void authorizeShowGroups(CharSequence userName);
-
-    void authorizeShowPermissions(CharSequence entityName);
-
-    void authorizeShowServiceAccount(CharSequence serviceAccountName);
-
-    void authorizeShowServiceAccounts();
-
-    void authorizeShowServiceAccounts(CharSequence userOrGroupName);
-
-    void authorizeShowUser(CharSequence userName);
-
-    void authorizeShowUsers();
 
     void authorizeTableBackup(ObjHashSet<TableToken> tableTokens);
 
@@ -144,18 +102,21 @@ public interface SecurityContext {
 
     void authorizeTableVacuum(TableToken tableToken);
 
-    void authorizeUnassignServiceAccount(CharSequence serviceAccountName);
-
     /**
      * Should throw an exception if:
-     * - logged in as a user and the user has been disabled,
-     * - logged in as a service account and the service account has been disabled,
+     * - logged in as a user and the user has been disabled, or it has no permissions to connect via the endpoint used,
+     * - logged in as a service account and the service account has been disabled, or it has no permissions to connect via the endpoint used,
      * - logged in as a user, then assumed a service account and either the user or the service account has been disabled,
-     *      or access to the service account has been revoked from the user
+     * or either the user or the service account has no permissions to connect via the endpoint used,
+     * or access to the service account has been revoked from the user
      */
     void checkEntityEnabled();
 
-    void exitServiceAccount(CharSequence serviceAccountName);
+    default CharSequence getAssumedServiceAccount() {
+        final CharSequence principal = getPrincipal();
+        final CharSequence sessionPrincipal = getSessionPrincipal();
+        return sessionPrincipal == null || sessionPrincipal.equals(principal) ? null : principal;
+    }
 
     /**
      * User account used for permission checks, i.e. the session user account

@@ -22,7 +22,7 @@ English | [简体中文](./i18n/README.zh-cn.md) | [繁體中文](./i18n/README.
 QuestDB is an open-source [time-series database](https://questdb.io/glossary/time-series-database/) for high throughput
 ingestion and fast SQL queries with operational simplicity.
 
-QuestDB is well-suited for financial market data, IoT sensor data, application metrics, real-time dashboards, and fast analytics.
+QuestDB is well-suited for financial market data, IoT sensor data, application metrics, ad-tech, real-time dashboards, and fast analytics.
 
 QuestDB implements ANSI SQL with native time-series SQL extensions. These SQL extensions make it simple to filter and downsample data, 
 or correlate data from multiple sources using relational and time-series joins. We achieve high performance by adopting a
@@ -46,6 +46,8 @@ We provide a [live demo](https://demo.questdb.io/) provisioned with the latest Q
 - Trips: 10 years of NYC taxi trips with 1.6 billion rows
 - Trades: live crypto market data with 30M+ rows per month
 - Pos: geolocations of 250k unique ships over time
+
+> Checkout our [interactive real-time market data dashboards](https://questdb.io/dashboards/crypto/) powered by QuestDB and Grafana.
 
 | Query                                                                         | Execution time                                                                                                                                                                                      |
 |-------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -132,7 +134,7 @@ results using the `cpu-only` use case with 6 to 16 workers on 32 CPUs and 64GB R
 
 - [QuestDB documentation:](https://questdb.io/docs/introduction/) understand how to run and configure QuestDB.
 - [Tutorials:](https://questdb.io/tutorial/) learn what's possible with QuestDB step by step.
-- [Product roadmap:](https://github.com/questdb/questdb/projects) check out our plan for upcoming releases.
+- [Product roadmap:](https://github.com/orgs/questdb/projects/1/views/5) check out our plan for upcoming releases.
 
 ### ❓ Get support
 

@@ -28,10 +28,10 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.VirtualRecord;
-import io.questdb.griffin.engine.analytic.AnalyticContext;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
+import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
@@ -39,21 +39,32 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public interface SqlExecutionContext extends Closeable {
 
-    void clearAnalyticContext();
+    void clearWindowContext();
 
     @Override
     default void close() {
     }
 
-    void configureAnalyticContext(
+    void configureWindowContext(
             @Nullable VirtualRecord partitionByRecord,
             @Nullable RecordSink partitionBySink,
             @Transient @Nullable ColumnTypes keyTypes,
             boolean isOrdered,
-            boolean baseSupportsRandomAccess
+            int scanDirection,
+            int orderByDirection,
+            boolean baseSupportsRandomAccess,
+            int framingMode,
+            long rowsLo,
+            int rowsLoExprPos,
+            long rowsHi,
+            int rowsHiExprPos,
+            int exclusionKind,
+            int exclusionKindPos,
+            int timestampIndex
     );
 
     default void containsSecret(boolean b) {
@@ -62,9 +73,6 @@ public interface SqlExecutionContext extends Closeable {
     default boolean containsSecret() {
         return false;
     }
-
-
-    AnalyticContext getAnalyticContext();
 
     default Rnd getAsyncRandom() {
         return SharedRandom.getAsyncRandom(getCairoEngine().getConfiguration());
@@ -86,12 +94,20 @@ public interface SqlExecutionContext extends Closeable {
         return getCairoEngine().getMessageBus();
     }
 
-    default TableRecordMetadata getMetadata(TableToken tableToken) {
-        return getCairoEngine().getMetadata(tableToken);
+    default TableMetadata getMetadataForRead(TableToken tableToken) {
+        return getMetadataForRead(tableToken, TableUtils.ANY_TABLE_VERSION);
     }
 
-    default TableRecordMetadata getMetadata(TableToken tableToken, long structureVersion) {
-        return getCairoEngine().getMetadata(tableToken, structureVersion);
+    default TableMetadata getMetadataForRead(TableToken tableToken, long desiredVersion) {
+        return getCairoEngine().getTableMetadata(tableToken, desiredVersion);
+    }
+
+    default TableMetadata getMetadataForWrite(TableToken tableToken, long desiredVersion) {
+        return getCairoEngine().getLegacyMetadata(tableToken, desiredVersion);
+    }
+
+    default TableMetadata getMetadataForWrite(TableToken tableToken) {
+        return getMetadataForWrite(tableToken, TableUtils.ANY_TABLE_VERSION);
     }
 
     long getMicrosecondTimestamp();
@@ -110,7 +126,7 @@ public interface SqlExecutionContext extends Closeable {
         return getCairoEngine().getReader(tableName);
     }
 
-    long getRequestFd();
+    int getRequestFd();
 
     @NotNull
     SecurityContext getSecurityContext();
@@ -119,8 +135,14 @@ public interface SqlExecutionContext extends Closeable {
         return getWorkerCount();
     }
 
-    default int getTableStatus(Path path, TableToken tableName) {
+    SqlExecutionCircuitBreaker getSimpleCircuitBreaker();
+
+    default int getTableStatus(Path path, CharSequence tableName) {
         return getCairoEngine().getTableStatus(path, tableName);
+    }
+
+    default int getTableStatus(Path path, TableToken tableToken) {
+        return getCairoEngine().getTableStatus(path, tableToken);
     }
 
     default TableToken getTableToken(CharSequence tableName) {
@@ -138,6 +160,8 @@ public interface SqlExecutionContext extends Closeable {
     default TableToken getTableTokenIfExists(CharSequence tableName, int lo, int hi) {
         return getCairoEngine().getTableTokenIfExists(tableName, lo, hi);
     }
+
+    WindowContext getWindowContext();
 
     int getWorkerCount();
 
@@ -159,6 +183,8 @@ public interface SqlExecutionContext extends Closeable {
 
     void pushTimestampRequiredFlag(boolean flag);
 
+    void setCancelledFlag(AtomicBoolean cancelled);
+
     void setCloneSymbolTables(boolean cloneSymbolTables);
 
     void setColumnPreTouchEnabled(boolean columnPreTouchEnabled);
@@ -170,6 +196,8 @@ public interface SqlExecutionContext extends Closeable {
     void setParallelFilterEnabled(boolean parallelFilterEnabled);
 
     void setRandom(Rnd rnd);
+
+    void setUseSimpleCircuitBreaker(boolean value);
 
     default void storeTelemetry(short event, short origin) {
     }

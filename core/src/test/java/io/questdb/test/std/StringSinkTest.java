@@ -25,9 +25,12 @@
 package io.questdb.test.std;
 
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.nio.charset.StandardCharsets;
 
 public class StringSinkTest {
 
@@ -63,6 +66,29 @@ public class StringSinkTest {
             Assert.assertEquals("index: " + i, sb.lastIndexOf("baz", i), ss.lastIndexOf("baz", i));
             Assert.assertEquals("index: " + i, sb.lastIndexOf("abc", i), ss.lastIndexOf("abc", i));
         }
+    }
+
+    @Test
+    public void testPutUtf8Sequence() {
+        StringSink utf16Sink = new StringSink();
+
+        Utf8StringSink utf8Sink = new Utf8StringSink();
+        utf8Sink.put("добре дошли у дома");
+
+        utf16Sink.put(utf8Sink);
+        TestUtils.assertEquals("добре дошли у дома", utf16Sink);
+
+        utf16Sink.clear();
+        utf16Sink.put(utf8Sink, 0, "добре дошли".getBytes(StandardCharsets.UTF_8).length);
+        TestUtils.assertEquals("добре дошли", utf16Sink);
+    }
+
+    @Test
+    public void testTrimTo() {
+        StringSink ss = new StringSink();
+        ss.put("1234567890");
+        ss.trimTo(5);
+        TestUtils.assertEquals("12345", ss);
     }
 
     @Test

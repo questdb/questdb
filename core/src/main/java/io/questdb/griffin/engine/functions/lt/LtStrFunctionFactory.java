@@ -111,7 +111,7 @@ public class LtStrFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val(constant);
+            sink.val('\'').val(constant).val('\'');
             if (negated) {
                 sink.val(">=");
             } else {
@@ -161,7 +161,7 @@ public class LtStrFunctionFactory implements FunctionFactory {
             } else {
                 sink.val("<");
             }
-            sink.val(constant);
+            sink.val('\'').val(constant).val('\'');
         }
     }
 

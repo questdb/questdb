@@ -40,6 +40,7 @@ import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestRecord;
@@ -852,7 +853,7 @@ public class O3Test extends AbstractO3Test {
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.contains(name, "2020-02-05.") && Chars.contains(name, Files.SEPARATOR + "last.d")) {
+                if (Utf8s.containsAscii(name, "2020-02-05.") && Utf8s.containsAscii(name, Files.SEPARATOR + "last.d")) {
                     try {
                         TestUtils.assertSqlCursors(
                                 compilerRef.get(),
@@ -7507,7 +7508,8 @@ public class O3Test extends AbstractO3Test {
         compiler.compile("create table z as (x union all y)", executionContext);
 
         // create another compiler to be used by second pool
-        try (SqlCompiler compiler2 = engine.getSqlCompiler()) {
+        try (SqlCompiler compiler2 = engine.getSqlCompiler();
+             final SqlExecutionContext executionContext2 = TestUtils.createSqlExecutionCtx(engine)) {
 
             final CyclicBarrier barrier = new CyclicBarrier(2);
             final SOCountDownLatch haltLatch = new SOCountDownLatch(2);
@@ -7549,7 +7551,7 @@ public class O3Test extends AbstractO3Test {
                         try {
                             toRun = false;
                             barrier.await();
-                            compiler2.compile("insert into x1 select * from y1", executionContext);
+                            compiler2.compile("insert into x1 select * from y1", executionContext2);
                         } catch (Throwable e) {
                             //noinspection CallToPrintStackTrace
                             e.printStackTrace();

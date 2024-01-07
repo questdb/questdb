@@ -28,9 +28,9 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.test.AbstractCairoTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Rnd;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -38,7 +38,6 @@ public class LastDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAllNull() throws SqlException {
-
         ddl("create table tab (f double)");
 
         try (TableWriter w = getWriter("tab")) {
@@ -87,7 +86,6 @@ public class LastDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testNonNull() throws SqlException {
-
         ddl("create table tab (f double)");
 
         final Rnd rnd = new Rnd();
@@ -111,7 +109,8 @@ public class LastDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFill() throws Exception {
-        assertQuery("b\tlast\tk\n" +
+        assertQuery(
+                "b\tlast\tk\n" +
                         "\t0.44804689668613573\t1970-01-03T00:00:00.000000Z\n" +
                         "VTJW\t0.8685154305419587\t1970-01-03T00:00:00.000000Z\n" +
                         "RXGZ\t0.5659429139861241\t1970-01-03T00:00:00.000000Z\n" +
@@ -135,7 +134,9 @@ public class LastDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "VTJW\t0.7732229848518976\t1970-01-03T09:00:00.000000Z\n" +
                         "PEHN\t0.13271564102902209\t1970-01-03T09:00:00.000000Z\n" +
                         "HYRX\t0.4182912727422209\t1970-01-03T09:00:00.000000Z\n" +
-                        "CPSW\t0.7317695244811556\t1970-01-03T09:00:00.000000Z\n", "select b, last(a), k from x sample by 3h fill(linear)", "create table x as " +
+                        "CPSW\t0.7317695244811556\t1970-01-03T09:00:00.000000Z\n",
+                "select b, last(a), k from x sample by 3h fill(linear)",
+                "create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(0) a," +
@@ -143,14 +144,17 @@ public class LastDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                         " timestamp_sequence(172800000000, 360000000) k" +
                         " from" +
                         " long_sequence(100)" +
-                        ") timestamp(k) partition by NONE", "k", "insert into x select * from (" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                "insert into x select * from (" +
                         "select" +
                         " rnd_double(0) a," +
                         " rnd_symbol(5,4,4,1) b," +
                         " timestamp_sequence(277200000000, 360000000) k" +
                         " from" +
                         " long_sequence(35)" +
-                        ") timestamp(k)", "b\tlast\tk\n" +
+                        ") timestamp(k)",
+                "b\tlast\tk\n" +
                         "\t0.44804689668613573\t1970-01-03T00:00:00.000000Z\n" +
                         "VTJW\t0.8685154305419587\t1970-01-03T00:00:00.000000Z\n" +
                         "RXGZ\t0.5659429139861241\t1970-01-03T00:00:00.000000Z\n" +
@@ -271,6 +275,10 @@ public class LastDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "RXGZ\t0.19947046128810061\t1970-01-04T06:00:00.000000Z\n" +
                         "PEHN\t-1.9805699408189095\t1970-01-04T06:00:00.000000Z\n" +
                         "HYRX\t1.7017646298154117\t1970-01-04T06:00:00.000000Z\n" +
-                        "CPSW\t0.8636461872776237\t1970-01-04T06:00:00.000000Z\n", true, true, false);
+                        "CPSW\t0.8636461872776237\t1970-01-04T06:00:00.000000Z\n",
+                true,
+                true,
+                false
+        );
     }
 }

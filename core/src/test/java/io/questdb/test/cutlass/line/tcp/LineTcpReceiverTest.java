@@ -52,6 +52,7 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.mp.TestWorkerPool;
@@ -347,9 +348,9 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             @Override
             public int openRW(LPSZ name, long opts) {
                 if (
-                        Chars.endsWith(name, Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock") &&
-                                Chars.contains(name, weather) &&
-                                --count == 0
+                        Utf8s.endsWithAscii(name, Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock")
+                                && Utf8s.containsAscii(name, weather)
+                                && --count == 0
                 ) {
                     dropWeatherTable();
                 }
@@ -687,7 +688,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             @Override
             public int openRW(LPSZ name, long opts) {
                 if (
-                        Chars.endsWith(name, Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock")
+                        Utf8s.endsWithAscii(name, Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock")
                                 && count.decrementAndGet() == 0
                 ) {
                     mayDrainWalQueue();
@@ -707,7 +708,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     weather + ",location=north,source=sensor4 temp=70 1465839830101000200\n" +
                     meteorology + ",location=south temperature=80 1465839830101000200\n";
 
-            sendWaitWalReleaseCount(lineData, 3);
+            sendWaitWalReleaseCount(lineData, 4);
 
             mayDrainWalQueue();
 
@@ -743,9 +744,9 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             @Override
             public int openRW(LPSZ name, long opts) {
                 if (
-                        Chars.endsWith(name, Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock") &&
-                                Chars.contains(name, weather) &&
-                                --count == 0
+                        Utf8s.endsWithAscii(name, Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock")
+                                && Utf8s.containsAscii(name, weather)
+                                && --count == 0
                 ) {
                     renameTable(weather, meteorology);
                 }
@@ -1563,7 +1564,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         runInContext((receiver) -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public boolean rmdir(Path path) {
+                public boolean rmdir(Path path, boolean lazy) {
                     return false;
                 }
             };

@@ -511,6 +511,16 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         memory.putLong(0L);
     }
 
+    private void rejectSymbol(final CharSequence token, int position) throws SqlException {
+        PredicateType typeCode = predicateContext.type;
+        // >, >=, < and <= for symbols should use string and not int value comparison
+        // since string is not supported in JIT, we reject it here and allow code generator to fall back to non-JIT implementation
+        if (typeCode == PredicateType.SYMBOL) {
+            throw SqlException.position(position)
+                    .put("operator: ").put(token).put(" is not supported for SYMBOL type");
+        }
+    }
+
     private void serializeBindVariable(final ExpressionNode node) throws SqlException {
         if (!predicateContext.isActive()) {
             throw SqlException.position(node.position)
@@ -808,18 +818,22 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             return;
         }
         if (Chars.equals(token, "<")) {
+            rejectSymbol(token, position);
             putOperator(LT);
             return;
         }
         if (Chars.equals(token, "<=")) {
+            rejectSymbol(token, position);
             putOperator(LE);
             return;
         }
         if (Chars.equals(token, ">")) {
+            rejectSymbol(token, position);
             putOperator(GT);
             return;
         }
         if (Chars.equals(token, ">=")) {
+            rejectSymbol(token, position);
             putOperator(GE);
             return;
         }

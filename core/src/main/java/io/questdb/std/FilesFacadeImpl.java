@@ -27,8 +27,8 @@ package io.questdb.std;
 import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.MutableUtf8Sink;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
 public class FilesFacadeImpl implements FilesFacade {
@@ -61,10 +61,18 @@ public class FilesFacadeImpl implements FilesFacade {
 
     @Override
     public boolean closeRemove(int fd, LPSZ path) {
-        if (fd > -1) {
+        // On Windows we cannot remove file that is open, close it first
+        if (isRestrictedFileSystem() && fd > -1) {
             Files.close(fd);
         }
-        return remove(path);
+
+        // On other file systems we can remove file that is open, and sometimes we want to close the file descriptor
+        // after the removal, in case when file descriptor is the lock FD.
+        boolean ok = removeQuiet(path);
+        if (!isRestrictedFileSystem() && fd > -1) {
+            Files.close(fd);
+        }
+        return ok;
     }
 
     @Override
@@ -224,7 +232,7 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public boolean isDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type, StringSink nameSink) {
+    public boolean isDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type, MutableUtf8Sink nameSink) {
         return Files.isDirOrSoftLinkDirNoDots(path, rootLen, pUtf8NameZ, type, nameSink);
     }
 
@@ -362,8 +370,15 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public boolean remove(LPSZ name) {
-        return Files.remove(name);
+    public void remove(LPSZ name) {
+        if (!removeQuiet(name)) {
+            throw CairoException.critical(errno()).put("could not remove [file=").put(name).put(']');
+        }
+    }
+
+    @Override
+    public boolean removeQuiet(LPSZ name) {
+        return !Files.exists(name) || Files.remove(name);
     }
 
     @Override
@@ -372,8 +387,8 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public boolean rmdir(Path name) {
-        return Files.rmdir(name, true);
+    final public boolean rmdir(Path name) {
+        return rmdir(name, true);
     }
 
     @Override
@@ -402,7 +417,7 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public int typeDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type, @Nullable StringSink nameSink) {
+    public int typeDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type, @Nullable MutableUtf8Sink nameSink) {
         return Files.typeDirOrSoftLinkDirNoDots(path, rootLen, pUtf8NameZ, type, nameSink);
     }
 
@@ -425,18 +440,18 @@ public class FilesFacadeImpl implements FilesFacade {
             // systems we can simply unlink, which deletes the link and leaves
             // the contents of the target intact
             if (unlink(path) == 0) {
-                LOG.debug().$("removed by unlink [path=").utf8(path).I$();
+                LOG.debug().$("removed by unlink [path=").$(path).I$();
                 return true;
             } else {
-                LOG.debug().$("failed to unlink, will remove [path=").utf8(path).I$();
+                LOG.debug().$("failed to unlink, will remove [path=").$(path).I$();
             }
         }
 
         if (rmdir(path)) {
-            LOG.debug().$("removed [path=").utf8(path).I$();
+            LOG.debug().$("removed [path=").$(path).I$();
             return true;
         }
-        LOG.debug().$("cannot remove [path=").utf8(path).$(", errno=").$(errno()).I$();
+        LOG.debug().$("cannot remove [path=").$(path).$(", errno=").$(errno()).I$();
         return false;
     }
 
@@ -463,9 +478,9 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     private int runRecursive(Path src, Path dst, int dirMode, FsOperation operation) {
-        int dstLen = dst.length();
-        int srcLen = src.length();
-        int len = src.length();
+        int dstLen = dst.size();
+        int srcLen = src.size();
+        int len = src.size();
         long p = findFirst(src.$());
 
         if (!exists(dst.$()) && -1 == mkdir(dst, dirMode)) {
@@ -487,14 +502,12 @@ public class FilesFacadeImpl implements FilesFacade {
                                 return res;
                             }
                         } else {
-
                             // Ignore if subfolder already exists
                             mkdir(dst.$(), dirMode);
 
                             if ((res = runRecursive(src, dst, dirMode, operation)) < 0) {
                                 return res;
                             }
-
                         }
                         src.trimTo(srcLen);
                         dst.trimTo(dstLen);

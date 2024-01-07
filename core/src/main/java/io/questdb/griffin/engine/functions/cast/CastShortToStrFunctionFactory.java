@@ -47,7 +47,7 @@ public class CastShortToStrFunctionFactory implements FunctionFactory {
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         Function intFunc = args.getQuick(0);
         if (intFunc.isConstant()) {
-            final StringSink sink = Misc.getThreadLocalBuilder();
+            final StringSink sink = Misc.getThreadLocalSink();
             sink.put(intFunc.getShort(null));
             return new StrConstant(Chars.toString(sink));
         }

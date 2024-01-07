@@ -49,11 +49,11 @@ public class Long256HashSet implements Mutable {
         }
     }
 
-    private Long256HashSet(int initialCapacity) {
+    public Long256HashSet(int initialCapacity) {
         this(initialCapacity, 0.4);
     }
 
-    private Long256HashSet(int initialCapacity, double loadFactor) {
+    public Long256HashSet(int initialCapacity, double loadFactor) {
         if (loadFactor <= 0d || loadFactor >= 1d) {
             throw new IllegalArgumentException("0 < loadFactor < 1");
         }

@@ -33,9 +33,7 @@ import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
-import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.*;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
@@ -61,7 +59,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     private final int level;
     private final NetworkFacade nf;
     private final CharSequenceObjHashMap<CharSequence> properties;
-    private final StringSink sink = new StringSink();
+    private final Utf8StringSink sink = new Utf8StringSink();
     private final SCSequence writeSequence;
     private HttpLogRecordSink alertSink;
     private String alertTargets;
@@ -109,7 +107,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     }
 
     @TestOnly
-    public static void readFile(String location, long address, long addressSize, FilesFacade ff, CharSink sink) {
+    public static void readFile(String location, long address, long addressSize, FilesFacade ff, Utf8Sink sink) {
         int templateFd = -1;
         try (Path path = new Path()) {
             // Paths for logger are typically derived from resources.
@@ -140,7 +138,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
                         size
                 ));
             }
-            Chars.utf8toUtf16(address, address + size, sink);
+            Utf8s.strCpy(address, address + size, sink);
         } finally {
             ff.close(templateFd);
         }
@@ -248,7 +246,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
 
     @TestOnly
     public void onLogRecord(LogRecordSink logRecord) {
-        final int len = logRecord.length();
+        final int len = logRecord.size();
         if ((logRecord.getLevel() & level) != 0 && len > 0) {
             alertTemplate.setDateValue(clock.getTicks());
             alertSink.rewindToMark();
@@ -261,8 +259,8 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
                 }
             }
             sink.clear();
-            sink.put(logRecord);
-            sink.clear(sink.length() - Misc.EOL.length());
+            sink.put((Utf8Sequence) logRecord);
+            sink.clear(sink.size() - Misc.EOL.length());
             log.info().$("Sending: ").$(sink).$();
             socket.send(alertSink.$());
         }
@@ -340,7 +338,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
                     sink
             );
             // originalTxt needs to be a static text and not a mutable sink because it's referred to in template nodes 
-            alertTemplate.parse(Chars.toString(sink), now, properties);
+            alertTemplate.parse(Utf8s.toString(sink), now, properties);
         }
         if (alertTemplate.getKeyOffset(MESSAGE_ENV) < 0) {
             throw new LogError(String.format(

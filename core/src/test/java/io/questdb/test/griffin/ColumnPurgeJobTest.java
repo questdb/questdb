@@ -28,12 +28,12 @@ import io.questdb.cairo.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.mp.Sequence;
-import io.questdb.std.Chars;
 import io.questdb.std.LongList;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.ColumnPurgeTask;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -145,12 +145,12 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             currentMicros = 0;
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
-                TableToken tn1 = new TableToken("tbl_name", "tbl_name", 123, false, false);
+                TableToken tn1 = new TableToken("tbl_name", "tbl_name", 123, false, false, false);
                 ColumnPurgeTask task = createTask(tn1, "col", 1, ColumnType.INT, 43, 11, "2022-03-29", -1);
                 task.appendColumnInfo(-1, IntervalUtils.parseFloorPartialTimestamp("2022-04-05"), 2);
                 appendTaskToQueue(task);
 
-                TableToken tn2 = new TableToken("tbl_name2", "tbl_name2", 123, false, false);
+                TableToken tn2 = new TableToken("tbl_name2", "tbl_name2", 123, false, false, false);
                 ColumnPurgeTask task2 = createTask(tn2, "col2", 2, ColumnType.SYMBOL, 33, -1, "2022-02-13", 3);
                 appendTaskToQueue(task2);
 
@@ -186,7 +186,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
 
                 public int openRW(LPSZ name, long opts) {
                     int fd = super.openRW(name, opts);
-                    if (Chars.endsWith(name, "completed.d")) {
+                    if (Utf8s.endsWithAscii(name, "completed.d")) {
                         this.fd = fd;
                     }
                     return fd;
@@ -316,13 +316,13 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                 int count = 0;
 
                 @Override
-                public boolean remove(LPSZ name) {
-                    if (Chars.endsWith(name, "str.i")) {
+                public boolean removeQuiet(LPSZ name) {
+                    if (Utf8s.endsWithAscii(name, "str.i")) {
                         if (count++ < 6) {
                             return false;
                         }
                     }
-                    return super.remove(name);
+                    return super.removeQuiet(name);
                 }
             };
 
@@ -351,7 +351,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                     // Delete failure
                     TableToken tableToken = engine.verifyTableName("up_part");
                     path.of(configuration.getRoot()).concat(tableToken).concat("1970-01-02").concat("str.i").$();
-                    Assert.assertTrue(Chars.toString(path), TestFilesFacadeImpl.INSTANCE.exists(path));
+                    Assert.assertTrue(Utf8s.toString(path), TestFilesFacadeImpl.INSTANCE.exists(path));
 
                     // Should retry
                     runPurgeJob(purgeJob);
@@ -803,13 +803,13 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             currentMicros = 0;
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
-                TableToken tn1 = new TableToken("tbl_name", "tbl_name", 123, false, false);
+                TableToken tn1 = new TableToken("tbl_name", "tbl_name", 123, false, false, false);
                 ColumnPurgeTask task = createTask(tn1, "col", 1, ColumnType.INT, 43, 11, "2022-03-29", -1);
                 task.appendColumnInfo(-1, IntervalUtils.parseFloorPartialTimestamp("2022-04-05"), 2);
                 appendTaskToQueue(task);
 
 
-                TableToken tn2 = new TableToken("tbl_name2", "tbl_name2", 123, false, false);
+                TableToken tn2 = new TableToken("tbl_name2", "tbl_name2", 123, false, false, false);
                 ColumnPurgeTask task2 = createTask(tn2, "col2", 2, ColumnType.SYMBOL, 33, -1, "2022-02-13", 3);
                 appendTaskToQueue(task2);
 
@@ -851,22 +851,22 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
     private void assertFilesExist(Path path, String up_part, String partition, String colSuffix, boolean exist) {
         TableToken tableToken = engine.verifyTableName(up_part);
         path.of(configuration.getRoot()).concat(tableToken).concat(partition).concat("x.d").put(colSuffix).$();
-        Assert.assertEquals(Chars.toString(path), exist, TestFilesFacadeImpl.INSTANCE.exists(path));
+        Assert.assertEquals(Utf8s.toString(path), exist, TestFilesFacadeImpl.INSTANCE.exists(path));
 
         path.of(configuration.getRoot()).concat(tableToken).concat(partition).concat("str.d").put(colSuffix).$();
-        Assert.assertEquals(Chars.toString(path), exist, TestFilesFacadeImpl.INSTANCE.exists(path));
+        Assert.assertEquals(Utf8s.toString(path), exist, TestFilesFacadeImpl.INSTANCE.exists(path));
 
         path.of(configuration.getRoot()).concat(tableToken).concat(partition).concat("str.i").put(colSuffix).$();
-        Assert.assertEquals(Chars.toString(path), exist, TestFilesFacadeImpl.INSTANCE.exists(path));
+        Assert.assertEquals(Utf8s.toString(path), exist, TestFilesFacadeImpl.INSTANCE.exists(path));
 
         path.of(configuration.getRoot()).concat(tableToken).concat(partition).concat("sym2.d").put(colSuffix).$();
-        Assert.assertEquals(Chars.toString(path), exist, TestFilesFacadeImpl.INSTANCE.exists(path));
+        Assert.assertEquals(Utf8s.toString(path), exist, TestFilesFacadeImpl.INSTANCE.exists(path));
 
         path.of(configuration.getRoot()).concat(tableToken).concat(partition).concat("sym2.k").put(colSuffix).$();
-        Assert.assertEquals(Chars.toString(path), exist, TestFilesFacadeImpl.INSTANCE.exists(path));
+        Assert.assertEquals(Utf8s.toString(path), exist, TestFilesFacadeImpl.INSTANCE.exists(path));
 
         path.of(configuration.getRoot()).concat(tableToken).concat(partition).concat("sym2.v").put(colSuffix).$();
-        Assert.assertEquals(Chars.toString(path), exist, TestFilesFacadeImpl.INSTANCE.exists(path));
+        Assert.assertEquals(Utf8s.toString(path), exist, TestFilesFacadeImpl.INSTANCE.exists(path));
     }
 
     @NotNull
@@ -900,12 +900,5 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
 
     private void update(String updateSql) throws SqlException {
         ddl(updateSql);
-//        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-//            final CompiledQuery cq = compiler.compile(updateSql, sqlExecutionContext);
-//            Assert.assertEquals(CompiledQuery.UPDATE, cq.getType());
-//            try (OperationFuture fut = cq.execute(null)) {
-//                fut.await();
-//            }
-//        }
     }
 }

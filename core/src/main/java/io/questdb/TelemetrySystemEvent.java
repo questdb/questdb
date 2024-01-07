@@ -31,6 +31,8 @@ public final class TelemetrySystemEvent {
     // DB size classes: -30 - <10GB, -31 - (10GB,50GB], -32 - (50GB,100GB], -33 - (100GB,500GB], -34 - (500GB,1TB], -35 - (1TB,5TB], -36 - (5TB,10TB], -37 - >10TB
     public static final short SYSTEM_DB_SIZE_CLASS_BASE = -30;
     public static final short SYSTEM_DOWN = 101;
+    // Environment types: -50 - Unknown, -51 - AWS, -52 - Azure, -53 - GCP, -54 - WSL2
+    public static final short SYSTEM_ENV_TYPE_BASE = -50;
     // OS classes: -10 - Linux, -11 - OS X, -12 - Windows, -13 - BSD
     public static final short SYSTEM_OS_CLASS_BASE = -10;
     // Table count classes: -40 - 0-10 tables, -41 - 11-25 tables, -42 - 26-50 tables, -43 - 51-100 tables, -44 - 101-250 tables, -45 - 251-1000 tables, -46 - 1001+ tables

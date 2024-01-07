@@ -32,7 +32,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -135,10 +135,15 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        sink.put("{\"name\":\"DataFrameRecordCursorFactory\", \"cursorFactory\":");
+    public void toSink(@NotNull CharSinkBase<?> sink) {
+        sink.putAscii("{\"name\":\"DataFrameRecordCursorFactory\", \"cursorFactory\":");
         dataFrameCursorFactory.toSink(sink);
-        sink.put('}');
+        sink.putAscii('}');
+    }
+
+    @Override
+    public boolean usesIndex() {
+        return rowCursorFactory.isUsingIndex();
     }
 
     @Override

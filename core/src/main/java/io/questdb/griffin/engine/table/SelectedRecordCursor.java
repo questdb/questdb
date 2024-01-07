@@ -24,8 +24,10 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.IntList;
 
@@ -43,6 +45,11 @@ class SelectedRecordCursor implements RecordCursor {
             this.recordB = null;
         }
         this.columnCrossIndex = columnCrossIndex;
+    }
+
+    @Override
+    public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor.Counter counter) {
+        baseCursor.calculateSize(circuitBreaker, counter);
     }
 
     @Override
@@ -86,6 +93,11 @@ class SelectedRecordCursor implements RecordCursor {
     @Override
     public long size() {
         return baseCursor.size();
+    }
+
+    @Override
+    public void skipRows(Counter rowCount) throws DataUnavailableException {
+        baseCursor.skipRows(rowCount);
     }
 
     @Override

@@ -22,7 +22,6 @@
  *
  ******************************************************************************/
 
-
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.ColumnType;
@@ -34,8 +33,6 @@ import io.questdb.griffin.*;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
-import io.questdb.griffin.engine.functions.analytic.RankFunctionFactory;
-import io.questdb.griffin.engine.functions.analytic.RowNumberFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InCharFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InDoubleFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InTimestampStrFunctionFactory;
@@ -43,6 +40,7 @@ import io.questdb.griffin.engine.functions.bool.InTimestampTimestampFunctionFact
 import io.questdb.griffin.engine.functions.cast.CastStrToRegClassFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToStrArrayFunctionFactory;
 import io.questdb.griffin.engine.functions.catalogue.StringToStringArrayFunction;
+import io.questdb.griffin.engine.functions.catalogue.WalTransactionsFunctionFactory;
 import io.questdb.griffin.engine.functions.columns.*;
 import io.questdb.griffin.engine.functions.conditional.CoalesceFunctionFactory;
 import io.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory;
@@ -52,6 +50,8 @@ import io.questdb.griffin.engine.functions.eq.*;
 import io.questdb.griffin.engine.functions.rnd.LongSequenceFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.RndIPv4CCFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestSumXDoubleGroupByFunctionFactory;
+import io.questdb.griffin.engine.table.DataFrameRecordCursorFactory;
+import io.questdb.griffin.model.WindowColumn;
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -275,50 +275,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAnalytic0() throws Exception {
-        assertPlan(
-                "create table t as ( select x l, x::string str, x::timestamp ts from long_sequence(100))",
-                "select ts, str,  row_number() over (order by l), row_number() over (partition by l) from t",
-                "CachedAnalytic\n" +
-                        "  functions: [row_number(),row_number()]\n" +
-                        "    DataFrame\n" +
-                        "        Row forward scan\n" +
-                        "        Frame forward scan on: t\n"
-        );
-    }
-
-    @Test
-    public void testAnalytic1() throws Exception {
-        assertPlan(
-                "create table t as ( select x l, x::string str, x::timestamp ts from long_sequence(100))",
-                "select str, ts, l, 10, row_number() over ( partition by l order by ts) from t",
-                "CachedAnalytic\n" +
-                        "  functions: [row_number()]\n" +
-                        "    VirtualRecord\n" +
-                        "      functions: [str,ts,l,10]\n" +
-                        "        DataFrame\n" +
-                        "            Row forward scan\n" +
-                        "            Frame forward scan on: t\n"
-        );
-    }
-
-    @Test
-    public void testAnalytic2() throws Exception {
-        assertPlan(
-                "create table t as ( select x l, x::string str, x::timestamp ts from long_sequence(100))",
-                "select str, ts, l as l1, ts::long+l as tsum, row_number() over ( partition by l, ts order by str) from t",
-                "CachedAnalytic\n" +
-                        "  functions: [row_number()]\n" +
-                        "    VirtualRecord\n" +
-                        "      functions: [str,ts,l1,ts::long+l1]\n" +
-                        "        SelectedRecord\n" +
-                        "            DataFrame\n" +
-                        "                Row forward scan\n" +
-                        "                Frame forward scan on: t\n"
-        );
-    }
-
-    @Test
     public void testAsOfJoin0() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table a ( i int, ts timestamp) timestamp(ts)");
@@ -529,7 +485,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCachedAnalyticRecordCursorFactoryWithLimit() throws Exception {
+    public void testCachedWindowRecordCursorFactoryWithLimit() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table x as ( " +
                     "  select " +
@@ -539,21 +495,26 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "   from long_sequence(100)" +
                     ") timestamp(ts) partition by hour");
 
-            String sql = "select i, row_number() over (partition by sym) from x limit 3";
+            String sql = "select i, " +
+                    "row_number() over (partition by sym), " +
+                    "avg(i) over (), " +
+                    "sum(i) over (), " +
+                    "first_value(i) over (), " +
+                    "from x limit 3";
             assertPlan(
                     sql,
                     "Limit lo: 3\n" +
-                            "    CachedAnalytic\n" +
-                            "      functions: [row_number()]\n" +
+                            "    CachedWindow\n" +
+                            "      unorderedFunctions: [row_number() over (partition by [sym]),avg(i) over (),sum(i) over (),first_value(i) over ()]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: x\n"
             );
 
-            assertSql("i\trow_number\n" +
-                    "1\t1\n" +
-                    "2\t2\n" +
-                    "3\t1\n", sql);
+            assertSql("i\trow_number\tavg\tsum\tfirst_value\n" +
+                    "1\t1\t50.5\t5050.0\t1.0\n" +
+                    "2\t2\t50.5\t5050.0\t1.0\n" +
+                    "3\t1\t50.5\t5050.0\t1.0\n", sql);
         });
     }
 
@@ -781,6 +742,27 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "            Row forward scan\n" +
                             "            Frame forward scan on: t\n"
             );
+        });
+    }
+
+    @Test
+    public void testDistinctOverWindowFunction() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table test (event double )");
+            insert("insert into test select x from long_sequence(3)");
+
+            String query = "select * from ( SELECT DISTINCT avg(event) OVER (PARTITION BY 1) FROM test )";
+            assertPlan(query,
+                    "Distinct\n" +
+                            "  keys: avg\n" +
+                            "    CachedWindow\n" +
+                            "      unorderedFunctions: [avg(event) over (partition by [1])]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: test\n");
+
+            assertSql("avg\n2.0\n", query);
+            assertSql("avg\n2.0\n", "select * from ( " + query + " )");
         });
     }
 
@@ -1412,6 +1394,34 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExplainWindowFunctionWithCharConstantFrameBounds() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab ( key int, value double, ts timestamp) timestamp(ts)");
+
+            assertPlan("select avg(value) over (PARTITION BY key ORDER BY ts RANGE BETWEEN '1' MINUTES PRECEDING AND CURRENT ROW) from tab",
+                    "Window\n" +
+                            "  functions: [avg(value) over (partition by [key] range between 60000000 preceding and current row)]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n");
+
+            assertPlan("select avg(value) over (PARTITION BY key ORDER BY ts RANGE BETWEEN '4' MINUTES PRECEDING AND '3' MINUTES PRECEDING) from tab",
+                    "Window\n" +
+                            "  functions: [avg(value) over (partition by [key] range between 240000000 preceding and 180000000 preceding)]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n");
+
+            assertPlan("select avg(value) over (PARTITION BY key ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND '10' MINUTES PRECEDING) from tab",
+                    "Window\n" +
+                            "  functions: [avg(value) over (partition by [key] range between unbounded preceding and 600000000 preceding)]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n");
+        });
+    }
+
+    @Test
     public void testExplainWithJsonFormat1() throws Exception {
         assertQuery("QUERY PLAN\n" +
                 "[\n" +
@@ -1646,7 +1656,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "((select last(timestamp) as x, last(price) as btcusd " +
                         "from trades " +
                         "where symbol = 'BTC-USD' " +
-                        "and timestamp > dateadd('m', -30, now()) ) " +
+                        "and timestamp > dateadd('m', -30, now())) " +
                         "timestamp(x))",
                 "SelectedRecord\n" +
                         "    GroupBy vectorized: false\n" +
@@ -1659,7 +1669,265 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "                  intervals: [(\"1969-12-31T23:30:00.000001Z\",\"MAX\")]\n"
         );
     }
-    
+
+    @Test
+    public void testFilterOnExcludedIndexedSymbolManyValues() throws Exception {
+        assertMemoryLeak(() -> {
+            drop("drop table if exists trips");
+            ddl("CREATE TABLE trips(l long, s symbol index capacity 5, ts TIMESTAMP) " +
+                    "timestamp(ts) partition by month");
+
+            assertPlan("select s, count() from trips where s is not null order by count desc",
+                    "Sort light\n" +
+                            "  keys: [count desc]\n" +
+                            "    GroupBy vectorized: false\n" +
+                            "      keys: [s]\n" +
+                            "      values: [count(*)]\n" +
+                            "        FilterOnExcludedValues symbolOrder: desc\n" +
+                            "          symbolFilter: s not in [null]\n" +
+                            "            Cursor-order scan\n" +
+                            "            Frame forward scan on: trips\n"
+            );
+
+            insert("insert into trips " +
+                    "  select x, 'A' || ( x%3000 )," +
+                    "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 1000000) " +
+                    "  from long_sequence(10000);");
+            insert("insert into trips " +
+                    "  select x, null," +
+                    "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 1000000) " +
+                    "  from long_sequence(4000);"
+            );
+
+            assertPlan("select s, count() from trips where s is not null",
+                    "Async Group By workers: 1\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "  filter: s is not null\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trips\n"
+            );
+
+            assertPlan("select s, count() from trips where s is not null and s != 'A1000'",
+                    "Async Group By workers: 1\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "  filter: (s is not null and s!='A1000')\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trips\n"
+            );
+
+            bindVariableService.clear();
+            bindVariableService.setStr("s1", "A100");
+            assertPlan("select s, count() from trips where s is not null and s != :s1",
+                    "Async Group By workers: 1\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "  filter: (s is not null and s!=:s1::string)\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trips\n"
+            );
+
+            assertPlan("select s, count() from trips where s is not null and l != 0",
+                    "Async Group By workers: 1\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "  filter: (s is not null and l!=0)\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trips\n"
+            );
+
+            assertPlan("select s, count() from trips where s is not null or l != 0",
+                    "Async Group By workers: 1\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "  filter: (s is not null or l!=0)\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trips\n"
+            );
+
+            assertPlan("select s, count() from trips where l != 0 and s is not null",
+                    "Async Group By workers: 1\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "  filter: (l!=0 and s is not null)\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trips\n"
+            );
+
+            assertPlan("select s, count() from trips where l != 0 or s is not null",
+                    "Async Group By workers: 1\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "  filter: (l!=0 or s is not null)\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trips\n"
+            );
+
+            assertPlan("select s, count() from trips where l > 100 or l != 0 and s is not null",
+                    "Async Group By workers: 1\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "  filter: ((100<l or l!=0) and s is not null)\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trips\n"
+            );
+
+            assertPlan("select s, count() from trips where l > 100 or l != 0 and s not in (null, 'A1000', 'A2000')",
+                    "Async Group By workers: 1\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "  filter: ((100<l or l!=0) and not (s in [null,A1000,A2000]))\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trips\n"
+            );
+
+            bindVariableService.clear();
+            bindVariableService.setStr("s1", "A500");
+            assertPlan("select s, count() from trips where l > 100 or l != 0 and s not in (null, 'A1000', :s1)",
+                    "Async Group By workers: 1\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "  filter: ((100<l or l!=0) and not (s in [null,A1000] or s in [:s1::string]))\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trips\n"
+            );
+        });
+    }
+
+    @Test
+    public void testFilterOnExcludedNonIndexedSymbolManyValues() throws Exception {
+        assertMemoryLeak(() -> {
+            drop("drop table if exists trips");
+            ddl("CREATE TABLE trips(l long, s symbol capacity 5, ts TIMESTAMP) " +
+                    "timestamp(ts) partition by month");
+
+            assertPlan("select s, count() from trips where s is not null",
+                    "Async Group By workers: 1\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "  filter: s is not null\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trips\n"
+            );
+
+            insert("insert into trips " +
+                    "  select x, 'A' || ( x%3000 )," +
+                    "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 1000000) " +
+                    "  from long_sequence(10000);");
+            insert("insert into trips " +
+                    "  select x, null," +
+                    "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 1000000) " +
+                    "  from long_sequence(4000);"
+            );
+
+            assertPlan("select s, count() from trips where s is not null",
+                    "Async Group By workers: 1\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "  filter: s is not null\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trips\n"
+            );
+
+            assertPlan("select s, count() from trips where s is not null and s != 'A1000'",
+                    "Async Group By workers: 1\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "  filter: (s is not null and s!='A1000')\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trips\n"
+            );
+
+            bindVariableService.clear();
+            bindVariableService.setStr("s1", "A100");
+            assertPlan("select s, count() from trips where s is not null and s != :s1",
+                    "Async Group By workers: 1\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "  filter: (s is not null and s!=:s1::string)\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trips\n"
+            );
+
+            assertPlan("select s, count() from trips where s is not null and l != 0",
+                    "Async Group By workers: 1\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "  filter: (s is not null and l!=0)\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trips\n"
+            );
+
+            assertPlan("select s, count() from trips where s is not null or l != 0",
+                    "Async Group By workers: 1\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "  filter: (s is not null or l!=0)\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trips\n"
+            );
+
+            assertPlan("select s, count() from trips where l != 0 and s is not null",
+                    "Async Group By workers: 1\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "  filter: (l!=0 and s is not null)\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trips\n"
+            );
+
+            assertPlan("select s, count() from trips where l != 0 or s is not null",
+                    "Async Group By workers: 1\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "  filter: (l!=0 or s is not null)\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trips\n"
+            );
+
+            assertPlan("select s, count() from trips where l > 100 or l != 0 and s is not null",
+                    "Async Group By workers: 1\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "  filter: ((100<l or l!=0) and s is not null)\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trips\n"
+            );
+
+            bindVariableService.clear();
+            bindVariableService.setStr("s1", "A500");
+            assertPlan("select s, count() from trips where l > 100 or l != 0 and s not in (null, 'A1000', :s1)",
+                    "Async Group By workers: 1\n" +
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "  filter: ((100<l or l!=0) and not (s in [null,A1000] or s in [:s1::string]))\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trips\n"
+            );
+        });
+    }
+
     @Test
     public void testFiltersOnIndexedSymbolColumns() throws SqlException {
         ddl("CREATE TABLE reference_prices (\n" +
@@ -1804,7 +2072,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         constFuncs.put(ColumnType.DATE, list(new DateConstant(0)));
         constFuncs.put(ColumnType.TIMESTAMP, list(new TimestampConstant(86400000000L)));
         constFuncs.put(ColumnType.FLOAT, list(new FloatConstant(5f)));
-        constFuncs.put(ColumnType.DOUBLE, list(new DoubleConstant(6)));
+        constFuncs.put(ColumnType.DOUBLE, list(new DoubleConstant(1))); // has to be [0.0, 1.0] for approx_percentile
         constFuncs.put(ColumnType.STRING, list(new StrConstant("bbb"), new StrConstant("1"), new StrConstant("1.1.1.1"), new StrConstant("1.1.1.1/24")));
         constFuncs.put(ColumnType.SYMBOL, list(new SymbolConstant("symbol", 0)));
         constFuncs.put(ColumnType.LONG256, list(new Long256Constant(0, 1, 2, 3)));
@@ -1876,6 +2144,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         FunctionFactoryCache cache = engine.getFunctionFactoryCache();
         LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> factories = cache.getFactories();
         factories.forEach((key, value) -> {
+            FUNCTIONS:
             for (int i = 0, n = value.size(); i < n; i++) {
                 planSink.clear();
 
@@ -1993,6 +2262,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 args.add(new IntConstant(2));
                             } else if (!useConst) {
                                 args.add(colFuncs.get(sigArgType));
+                            } else if (factory instanceof WalTransactionsFunctionFactory && sigArgType == ColumnType.STRING) {
+                                // Skip it, it requires a WAL table to exist
+                                break FUNCTIONS;
                             } else {
                                 args.add(getConst(constFuncs, sigArgType, p, no));
                             }
@@ -2004,12 +2276,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
                         argPositions.setAll(args.size(), 0);
 
-                        if (factory instanceof RowNumberFunctionFactory || factory instanceof RankFunctionFactory) {
-                            sqlExecutionContext.configureAnalyticContext(null, null, null, true, true);
+                        //TODO: test with partition by, order by and various frame modes
+                        if (factory.isWindow()) {
+                            sqlExecutionContext.configureWindowContext(null, null, null, false, DataFrameRecordCursorFactory.SCAN_DIRECTION_FORWARD, -1, true, WindowColumn.FRAMING_RANGE, Long.MIN_VALUE, 10, 0, 20, WindowColumn.EXCLUDE_NO_OTHERS, 0, -1);
+                        }
+                        Function function = null;
+                        try {
+                            function = factory.newInstance(0, args, argPositions, engine.getConfiguration(), sqlExecutionContext);
+                            function.toPlan(planSink);
+                        } finally {
+                            sqlExecutionContext.clearWindowContext();
                         }
 
-                        Function function = factory.newInstance(0, args, argPositions, engine.getConfiguration(), sqlExecutionContext);
-                        function.toPlan(planSink);
                         goodArgsFound = true;
 
                         Assert.assertFalse("function " + factory.getSignature() + " should serialize to text properly. current text: " + planSink.getSink(), Chars.contains(planSink.getSink(), "io.questdb"));
@@ -2044,11 +2322,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test // only none, single int|symbol key cases are vectorized
     public void testGroupByBoolean() throws Exception {
         assertPlan(
-                "create table a ( l long, b boolean)",
+                "create table a (l long, b boolean)",
                 "select b, min(l)  from a group by b",
-                "GroupBy vectorized: false\n" +
+                "Async Group By workers: 1\n" +
                         "  keys: [b]\n" +
                         "  values: [min(l)]\n" +
+                        "  filter: null\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
@@ -2058,27 +2337,42 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testGroupByBooleanFunction() throws Exception {
         assertPlan(
-                "create table a ( l long, b1 boolean, b2 boolean)",
+                "create table a (l long, b1 boolean, b2 boolean)",
                 "select b1||b2, min(l) from a group by b1||b2",
-                "GroupBy vectorized: false\n" +
+                "Async Group By workers: 1\n" +
                         "  keys: [concat]\n" +
                         "  values: [min(l)]\n" +
-                        "    VirtualRecord\n" +
-                        "      functions: [concat([b1,b2]),l]\n" +
-                        "        DataFrame\n" +
-                        "            Row forward scan\n" +
-                        "            Frame forward scan on: a\n"
+                        "  filter: null\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+    }
+
+    @Test // only none, single int|symbol key cases are vectorized
+    public void testGroupByBooleanWithFilter() throws Exception {
+        assertPlan(
+                "create table a (l long, b boolean)",
+                "select b, min(l)  from a where b = true group by b",
+                "Async Group By workers: 1\n" +
+                        "  keys: [b]\n" +
+                        "  values: [min(l)]\n" +
+                        "  filter: b=true\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
         );
     }
 
     @Test // only none, single int|symbol key cases are vectorized
     public void testGroupByDouble() throws Exception {
         assertPlan(
-                "create table a ( l long, d double)",
+                "create table a (l long, d double)",
                 "select d, min(l) from a group by d",
-                "GroupBy vectorized: false\n" +
+                "Async Group By workers: 1\n" +
                         "  keys: [d]\n" +
                         "  values: [min(l)]\n" +
+                        "  filter: null\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
@@ -2088,11 +2382,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test // only none, single int|symbol key cases are vectorized
     public void testGroupByFloat() throws Exception {
         assertPlan(
-                "create table a ( l long, f float)",
+                "create table a (l long, f float)",
                 "select f, min(l) from a group by f",
-                "GroupBy vectorized: false\n" +
+                "Async Group By workers: 1\n" +
                         "  keys: [f]\n" +
                         "  values: [min(l)]\n" +
+                        "  filter: null\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
@@ -2102,7 +2397,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test //special case
     public void testGroupByHour() throws Exception {
         assertPlan(
-                "create table a ( ts timestamp, d double)",
+                "create table a (ts timestamp, d double)",
                 "select hour(ts), min(d) from a group by hour(ts)",
                 "GroupBy vectorized: true workers: 1\n" +
                         "  keys: [ts]\n" +
@@ -2116,7 +2411,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testGroupByInt1() throws Exception {
         assertPlan(
-                "create table a ( i int, d double)",
+                "create table a (i int, d double)",
                 "select min(d), i from a group by i",
                 "VirtualRecord\n" +
                         "  functions: [min,i]\n" +
@@ -2129,11 +2424,29 @@ public class ExplainPlanTest extends AbstractCairoTest {
         );
     }
 
-    @Test//repeated group by keys get merged at group by level
+    @Test // repeated group by keys get merged at group by level
     public void testGroupByInt2() throws Exception {
-        assertPlan("create table a ( i int, d double)", "select i, i, min(d) from a group by i, i",
+        assertPlan(
+                "create table a (i int, d double)",
+                "select i, i, min(d) from a group by i, i",
                 "VirtualRecord\n" +
                         "  functions: [i,i,min]\n" +
+                        "    GroupBy vectorized: true workers: 1\n" +
+                        "      keys: [i]\n" +
+                        "      values: [min(d)]\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: a\n"
+        );
+    }
+
+    @Test
+    public void testGroupByIntOperation() throws Exception {
+        assertPlan(
+                "create table a (i int, d double)",
+                "select min(d), i * 42 from a group by i",
+                "VirtualRecord\n" +
+                        "  functions: [min,i*42]\n" +
                         "    GroupBy vectorized: true workers: 1\n" +
                         "      keys: [i]\n" +
                         "      values: [min(d)]\n" +
@@ -2255,9 +2568,136 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( l long, d double)",
                 "select l, min(d) from a group by l",
-                "GroupBy vectorized: false\n" +
+                "Async Group By workers: 1\n" +
                         "  keys: [l]\n" +
                         "  values: [min(d)]\n" +
+                        "  filter: null\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+    }
+
+    @Test
+    public void testGroupByNoFunctions1() throws Exception {
+        assertPlan(
+                "create table a (i int, d double)",
+                "select i from a group by i",
+                "GroupBy vectorized: true workers: 1\n" +
+                        "  keys: [i]\n" +
+                        "  values: [count(*)]\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+    }
+
+    @Test
+    public void testGroupByNoFunctions2() throws Exception {
+        assertPlan(
+                "create table a (i int, d double)",
+                "select i from a where d < 42 group by i",
+                "Async Group By workers: 1\n" +
+                        "  keys: [i]\n" +
+                        "  filter: d<42\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+    }
+
+    @Test
+    public void testGroupByNoFunctions3() throws Exception {
+        assertPlan(
+                "create table a (i short, d double)",
+                "select i from a group by i",
+                "Async Group By workers: 1\n" +
+                        "  keys: [i]\n" +
+                        "  filter: null\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+    }
+
+    @Test
+    public void testGroupByNoFunctions4() throws Exception {
+        assertPlan(
+                "create table a (i long, j long)",
+                "select i, j from a group by i, j",
+                "Async Group By workers: 1\n" +
+                        "  keys: [i,j]\n" +
+                        "  filter: null\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+    }
+
+    @Test
+    public void testGroupByNoFunctions5() throws Exception {
+        assertPlan(
+                "create table a (i long, j long, d double)",
+                "select i, j from a where d > 42 group by i, j",
+                "Async Group By workers: 1\n" +
+                        "  keys: [i,j]\n" +
+                        "  filter: 42<d\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+    }
+
+    @Test
+    public void testGroupByNoFunctions6() throws Exception {
+        assertPlan(
+                "create table a (s symbol)",
+                "select s from a group by s",
+                "GroupBy vectorized: true workers: 1\n" +
+                        "  keys: [s]\n" +
+                        "  values: [count(*)]\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+    }
+
+    @Test
+    public void testGroupByNoFunctions7() throws Exception {
+        assertPlan(
+                "create table a (s symbol, d double)",
+                "select s from a where d = 42 group by s",
+                "Async Group By workers: 1\n" +
+                        "  keys: [s]\n" +
+                        "  filter: d=42\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+    }
+
+    @Test
+    public void testGroupByNoFunctions8() throws Exception {
+        assertPlan(
+                "create table a (s string)",
+                "select s from a group by s",
+                "Async Group By workers: 1\n" +
+                        "  keys: [s]\n" +
+                        "  filter: null\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+    }
+
+    @Test
+    public void testGroupByNoFunctions9() throws Exception {
+        assertPlan(
+                "create table a (s string)",
+                "select s from a where s like '%foobar%' group by s",
+                "Async Group By workers: 1\n" +
+                        "  keys: [s]\n" +
+                        "  filter: s like %foobar%\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
@@ -2310,13 +2750,29 @@ public class ExplainPlanTest extends AbstractCairoTest {
         );
     }
 
+    @Test
+    public void testGroupByNotKeyed12() throws Exception {
+        assertPlan(
+                "create table a ( gb geohash(4b), gs geohash(12b), gi geohash(24b), gl geohash(40b), i int)",
+                "select first(gb), last(gb), first(gs), last(gs), first(gi), last(gi), first(gl), last(gl) from a where i > 42",
+                "GroupBy vectorized: false\n" +
+                        "  values: [first(gb),last(gb),first(gs),last(gs),first(gi),last(gi),first(gl),last(gl)]\n" +
+                        "    Async JIT Filter workers: 1\n" +
+                        "      filter: 42<i\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: a\n"
+        );
+    }
+
     @Test // expressions in aggregates disable vectorized impl
     public void testGroupByNotKeyed2() throws Exception {
         assertPlan(
                 "create table a ( i int, d double)",
                 "select min(d), max(d*d) from a",
-                "GroupBy vectorized: false\n" +
+                "Async Group By workers: 1\n" +
                         "  values: [min(d),max(d*d)]\n" +
+                        "  filter: null\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
@@ -2328,8 +2784,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( i int, d double)",
                 "select max(d+1) from a",
-                "GroupBy vectorized: false\n" +
+                "Async Group By workers: 1\n" +
                         "  values: [max(d+1)]\n" +
+                        "  filter: null\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
@@ -2367,13 +2824,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( i int, d double)",
                 "select max(i) from a where i < 10",
-                "GroupBy vectorized: false\n" +
+                "Async Group By workers: 1\n" +
                         "  values: [max(i)]\n" +
-                        "    Async JIT Filter workers: 1\n" +
-                        "      filter: i<10\n" +
-                        "        DataFrame\n" +
-                        "            Row forward scan\n" +
-                        "            Frame forward scan on: a\n"
+                        "  filter: i<10\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
         );
     }
 
@@ -2419,6 +2875,84 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "        DataFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n"
+        );
+    }
+
+    @Test
+    public void testGroupByStringFunction() throws Exception {
+        assertPlan(
+                "create table a (l long, s1 string, s2 string)",
+                "select s1||s2 s, avg(l) a from a",
+                "Async Group By workers: 1\n" +
+                        "  keys: [s]\n" +
+                        "  values: [avg(l)]\n" +
+                        "  filter: null\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+    }
+
+    @Test
+    public void testGroupByStringFunctionWithFilter() throws Exception {
+        assertPlan(
+                "create table a (l long, s1 string, s2 string)",
+                "select s1||s2 s, avg(l) a from a where l > 42",
+                "Async Group By workers: 1\n" +
+                        "  keys: [s]\n" +
+                        "  values: [avg(l)]\n" +
+                        "  filter: 42<l\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+    }
+
+    @Test
+    public void testGroupBySymbol() throws Exception {
+        assertPlan(
+                "create table a (l long, s symbol)",
+                "select s, avg(l) a from a",
+                "GroupBy vectorized: true workers: 1\n" +
+                        "  keys: [s]\n" +
+                        "  values: [avg(l)]\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+    }
+
+    @Test
+    public void testGroupBySymbolFunction() throws Exception {
+        assertPlan(
+                "create table a (l long, s string)",
+                "select s::symbol, avg(l) a from a",
+                "Async Group By workers: 1\n" +
+                        "  keys: [cast]\n" +
+                        "  values: [avg(l)]\n" +
+                        "  filter: null\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+    }
+
+    @Test
+    public void testGroupBySymbolWithSubQueryFilter() throws Exception {
+        assertPlan(
+                "create table a (l long, s symbol)",
+                "select s, avg(l) a from a where s in (select s from a where s = 'key')",
+                "Async Group By workers: 1\n" +
+                        "  keys: [s]\n" +
+                        "  values: [avg(l)]\n" +
+                        "  filter: s in cursor \n" +
+                        "    Filter filter: s='key'\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: a\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
         );
     }
 
@@ -2490,14 +3024,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long)",
                 "select x, count(*) from di where y = 5 group by x limit 10",
                 "Limit lo: 10\n" +
-                        "    GroupBy vectorized: false\n" +
+                        "    Async Group By workers: 1\n" +
                         "      keys: [x]\n" +
                         "      values: [count(*)]\n" +
-                        "        Async JIT Filter workers: 1\n" +
-                        "          filter: y=5\n" +
-                        "            DataFrame\n" +
-                        "                Row forward scan\n" +
-                        "                Frame forward scan on: di\n"
+                        "      filter: y=5\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n"
         );
     }
 
@@ -2507,14 +3040,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long)",
                 "select x, count(*) from di where y = 5 group by x limit -10",
                 "Limit lo: -10\n" +
-                        "    GroupBy vectorized: false\n" +
+                        "    Async Group By workers: 1\n" +
                         "      keys: [x]\n" +
                         "      values: [count(*)]\n" +
-                        "        Async JIT Filter workers: 1\n" +
-                        "          filter: y=5\n" +
-                        "            DataFrame\n" +
-                        "                Row forward scan\n" +
-                        "                Frame forward scan on: di\n"
+                        "      filter: y=5\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n"
         );
     }
 
@@ -2524,14 +3056,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long)",
                 "select x, count(*) from di where abs(y) = 5 group by x limit 10",
                 "Limit lo: 10\n" +
-                        "    GroupBy vectorized: false\n" +
+                        "    Async Group By workers: 1\n" +
                         "      keys: [x]\n" +
                         "      values: [count(*)]\n" +
-                        "        Async Filter workers: 1\n" +
-                        "          filter: abs(y)=5\n" +
-                        "            DataFrame\n" +
-                        "                Row forward scan\n" +
-                        "                Frame forward scan on: di\n"
+                        "      filter: abs(y)=5\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n"
         );
     }
 
@@ -2541,14 +3072,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long)",
                 "select x, count(*) from di where abs(y) = 5 group by x limit -10",
                 "Limit lo: -10\n" +
-                        "    GroupBy vectorized: false\n" +
+                        "    Async Group By workers: 1\n" +
                         "      keys: [x]\n" +
                         "      values: [count(*)]\n" +
-                        "        Async Filter workers: 1\n" +
-                        "          filter: abs(y)=5\n" +
-                        "            DataFrame\n" +
-                        "                Row forward scan\n" +
-                        "                Frame forward scan on: di\n"
+                        "      filter: abs(y)=5\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n"
         );
     }
 
@@ -2558,14 +3088,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long)",
                 "select x, count(*) from di where abs(y) = 5 group by x limit 10, 20",
                 "Limit lo: 10 hi: 20\n" +
-                        "    GroupBy vectorized: false\n" +
+                        "    Async Group By workers: 1\n" +
                         "      keys: [x]\n" +
                         "      values: [count(*)]\n" +
-                        "        Async Filter workers: 1\n" +
-                        "          filter: abs(y)=5\n" +
-                        "            DataFrame\n" +
-                        "                Row forward scan\n" +
-                        "                Frame forward scan on: di\n"
+                        "      filter: abs(y)=5\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n"
         );
     }
 
@@ -2573,17 +3102,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testGroupByWithLimit8() throws Exception {
         assertPlan(
                 "create table di (x int, y long, ts timestamp) timestamp(ts)",
-                "select ts, count(*) from di where y=5 group by ts  order by ts desc limit 10",
+                "select ts, count(*) from di where y = 5 group by ts order by ts desc limit 10",
                 "Sort light lo: 10\n" +
                         "  keys: [ts desc]\n" +
-                        "    GroupBy vectorized: false\n" +
+                        "    Async Group By workers: 1\n" +
                         "      keys: [ts]\n" +
                         "      values: [count(*)]\n" +
-                        "        Async JIT Filter workers: 1\n" +
-                        "          filter: y=5\n" +
-                        "            DataFrame\n" +
-                        "                Row forward scan\n" +
-                        "                Frame forward scan on: di\n"
+                        "      filter: y=5\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n"
         );
     }
 
@@ -3073,20 +3601,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
         );
     }
 
-    @Test // TODO: subquery should just read symbols from map
+    @Test
     public void testLatestOn12() throws Exception {
         assertPlan(
                 "create table a ( i int, s symbol, ts timestamp) timestamp(ts);",
                 "select s, i, ts from a where s in (select distinct s from a) and length(s) = 2 latest on ts partition by s",
                 "LatestBySubQuery\n" +
                         "    Subquery\n" +
-                        "        DistinctKey\n" +
-                        "            GroupBy vectorized: true workers: 1\n" +
-                        "              keys: [s]\n" +
-                        "              values: [count(*)]\n" +
-                        "                DataFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: a\n" +
+                        "        DistinctSymbol\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: a\n" +
                         "    Row backward scan on: s\n" +
                         "      filter: length(s)=2\n" +
                         "    Frame backward scan on: a\n"
@@ -3094,60 +3619,51 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     }
 
-    @Test // TODO: subquery should just read symbols from map
+    @Test
     public void testLatestOn12a() throws Exception {
         assertPlan(
                 "create table a ( i int, s symbol, ts timestamp) timestamp(ts);",
                 "select s, i, ts from a where s in (select distinct s from a) latest on ts partition by s",
                 "LatestBySubQuery\n" +
                         "    Subquery\n" +
-                        "        DistinctKey\n" +
-                        "            GroupBy vectorized: true workers: 1\n" +
-                        "              keys: [s]\n" +
-                        "              values: [count(*)]\n" +
-                        "                DataFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: a\n" +
+                        "        DistinctSymbol\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: a\n" +
                         "    Row backward scan on: s\n" +
                         "    Frame backward scan on: a\n"
         );
 
     }
 
-    @Test // TODO: subquery should just read symbols from map
+    @Test
     public void testLatestOn13() throws Exception {
         assertPlan(
                 "create table a ( i int, s symbol index, ts timestamp) timestamp(ts);",
                 "select i, ts, s from a where s in (select distinct s from a) and length(s) = 2 latest on ts partition by s",
                 "LatestBySubQuery\n" +
                         "    Subquery\n" +
-                        "        DistinctKey\n" +
-                        "            GroupBy vectorized: true workers: 1\n" +
-                        "              keys: [s]\n" +
-                        "              values: [count(*)]\n" +
-                        "                DataFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: a\n" +
+                        "        DistinctSymbol\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: a\n" +
                         "    Index backward scan on: s\n" +
                         "      filter: length(s)=2\n" +
                         "    Frame backward scan on: a\n"
         );
     }
 
-    @Test // TODO: subquery should just read symbols from map
+    @Test
     public void testLatestOn13a() throws Exception {
         assertPlan(
                 "create table a ( i int, s symbol index, ts timestamp) timestamp(ts);",
                 "select i, ts, s from a where s in (select distinct s from a) latest on ts partition by s",
                 "LatestBySubQuery\n" +
                         "    Subquery\n" +
-                        "        DistinctKey\n" +
-                        "            GroupBy vectorized: true workers: 1\n" +
-                        "              keys: [s]\n" +
-                        "              values: [count(*)]\n" +
-                        "                DataFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: a\n" +
+                        "        DistinctSymbol\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: a\n" +
                         "    Index backward scan on: s\n" +
                         "    Frame backward scan on: a\n"
         );
@@ -3818,7 +4334,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             compile("  CREATE TABLE tab ( created timestamp, value int ) timestamp(created)");
 
-
             String[] joinTypes = {"LEFT", "LT", "ASOF"};
             String[] joinFactoryTypes = {"Hash Outer Join Light", "Lt Join", "AsOf Join"};
 
@@ -4011,6 +4526,25 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "                DataFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: tab\n"
+            );
+        });
+    }
+
+    @Test
+    public void testLikeFilters() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab (s1 string, s2 string, s3 string, s4 string, s5 string, s6 string);");
+
+            assertPlan(
+                    "select * from tab " +
+                            "where s1 like '%a'  and s2 ilike '%a' " +
+                            "  and s3 like 'a%'  and s4 ilike 'a%' " +
+                            "  and s5 like '%a%' and s6 ilike '%a%';",
+                    "Async Filter workers: 1\n" +
+                            "  filter: (((((s1 like %a and s2 ilike %a) and s3 like a%) and s4 ilike a%) and s5 like %a%) and s6 ilike %a%)\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n"
             );
         });
     }
@@ -4365,6 +4899,91 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNoArgFalseConstantExpressionUsedInJoinIsOptimizedAway() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab (b boolean, ts timestamp)");
+            //true
+            assertPlan("update tab t1 set b=true from tab t2 where 1>2 and t1.b = t2.b",
+                    "Update table: tab\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [true]\n" +
+                            "        Empty table\n");
+            //false
+            assertPlan("update tab t1 set b=true from tab t2 where 1<2 and t1.b = t2.b",
+                    "Update table: tab\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [true]\n" +
+                            "        Hash Join Light\n" +
+                            "          condition: t2.b=t1.b\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: tab\n" +
+                            "            Hash\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: tab\n");
+        });
+    }
+
+    @Test
+    public void testNoArgNonConstantExpressionUsedInJoinClauseIsUsedAsPostJoinFilter() throws Exception {
+        assertPlan("create table tab (b boolean, ts timestamp)",
+                "update tab t1 set b=true from tab t2 where not sleep(60000) and t1.b = t2.b",
+                "Update table: tab\n" +
+                        "    VirtualRecord\n" +
+                        "      functions: [true]\n" +
+                        "        Filter filter: not (sleep(60000))\n" +
+                        "            Hash Join Light\n" +
+                        "              condition: t2.b=t1.b\n" +
+                        "                DataFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: tab\n" +
+                        "                Hash\n" +
+                        "                    DataFrame\n" +
+                        "                        Row forward scan\n" +
+                        "                        Frame forward scan on: tab\n");
+    }
+
+    @Test
+    public void testNoArgRuntimeConstantExpressionUsedInJoinClauseIsUsedAsPostJoinFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab (b boolean, ts timestamp)");
+
+            //true
+            assertPlan("update tab t1 set b=true from tab t2 where now()::long > -1 and t1.b = t2.b",
+                    "Update table: tab\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [true]\n" +
+                            "        Filter filter: -1<now()::long\n" +
+                            "            Hash Join Light\n" +
+                            "              condition: t2.b=t1.b\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: tab\n" +
+                            "                Hash\n" +
+                            "                    DataFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: tab\n");
+
+            //false
+            assertPlan("update tab t1 set b=true from tab t2 where now()::long < 0 and t1.b = t2.b",
+                    "Update table: tab\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [true]\n" +
+                            "        Filter filter: now()::long<0\n" +
+                            "            Hash Join Light\n" +
+                            "              condition: t2.b=t1.b\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: tab\n" +
+                            "                Hash\n" +
+                            "                    DataFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: tab\n");
+        });
+    }
+
+    @Test
     public void testOrderByAdvicePushdown() throws SqlException {
         // TODO: improve :
         // - limit propagation to async filter factory
@@ -4385,16 +5004,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "WHERE device_data.id = '12345678' " +
                         "ORDER BY timestamp DESC " +
                         "LIMIT 1",
-                "Limit lo: 1\n" +
-                        "    VirtualRecord\n" +
-                        "      functions: [date,val,val+1]\n" +
-                        "        SelectedRecord\n" +
-                        "            Async JIT Filter workers: 1\n" +
-                        "              limit: 1\n" +
-                        "              filter: id='12345678'\n" +
-                        "                DataFrame\n" +
-                        "                    Row backward scan\n" +
-                        "                    Frame backward scan on: device_data\n",
+                "VirtualRecord\n" +
+                        "  functions: [date,val,val+1]\n" +
+                        "    SelectedRecord\n" +
+                        "        Async JIT Filter workers: 1\n" +
+                        "          limit: 1\n" +
+                        "          filter: id='12345678'\n" +
+                        "            DataFrame\n" +
+                        "                Row backward scan\n" +
+                        "                Frame backward scan on: device_data\n",
                 "date\tval\tcolumn\n" +
                         "1970-01-01T00:00:00.000010Z\t10.0\t11.0\n");
 
@@ -4403,16 +5021,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "WHERE device_data.id = '12345678' " +
                         "ORDER BY timestamp  " +
                         "LIMIT -1",
-                "Limit lo: -1\n" +
-                        "    VirtualRecord\n" +
-                        "      functions: [date,val,val+1]\n" +
-                        "        SelectedRecord\n" +
-                        "            Async JIT Filter workers: 1\n" +
-                        "              limit: 1\n" +
-                        "              filter: id='12345678'\n" +
-                        "                DataFrame\n" +
-                        "                    Row backward scan\n" +
-                        "                    Frame backward scan on: device_data\n",
+                "VirtualRecord\n" +
+                        "  functions: [date,val,val+1]\n" +
+                        "    SelectedRecord\n" +
+                        "        Async JIT Filter workers: 1\n" +
+                        "          limit: 1\n" +
+                        "          filter: id='12345678'\n" +
+                        "            DataFrame\n" +
+                        "                Row backward scan\n" +
+                        "                Frame backward scan on: device_data\n",
                 "date\tval\tcolumn\n" +
                         "1970-01-01T00:00:00.000010Z\t10.0\t11.0\n");
 
@@ -4421,16 +5038,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "WHERE device_data.id = '12345678' " +
                         "ORDER BY timestamp DESC " +
                         "LIMIT -2",
-                "Limit lo: -2\n" +
-                        "    VirtualRecord\n" +
-                        "      functions: [date,val,val+1]\n" +
-                        "        SelectedRecord\n" +
-                        "            Async JIT Filter workers: 1\n" +
-                        "              limit: 2\n" +
-                        "              filter: id='12345678'\n" +
-                        "                DataFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: device_data\n",
+                "VirtualRecord\n" +
+                        "  functions: [date,val,val+1]\n" +
+                        "    SelectedRecord\n" +
+                        "        Async JIT Filter workers: 1\n" +
+                        "          limit: 2\n" +
+                        "          filter: id='12345678'\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: device_data\n",
                 "date\tval\tcolumn\n" +
                         "1970-01-01T00:00:00.000002Z\t2.0\t3.0\n" +
                         "1970-01-01T00:00:00.000001Z\t1.0\t2.0\n");
@@ -4638,7 +5254,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab (i int, ts timestamp) timestamp(ts)",
                 "select * from (select * from tab order by ts, i desc limit 10) order by ts",
-                "Sort light lo: 10\n" +
+                "Sort light lo: 10 partiallySorted: true\n" +
                         "  keys: [ts, i desc]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
@@ -4660,43 +5276,138 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRewriteAggregateWithAddition() throws Exception {
+    public void testPostJoinConditionColumnsAreResolved() throws Exception {
         assertMemoryLeak(() -> {
-            compile("  CREATE TABLE tab ( x int );");
+            String query = "SELECT count(*)\n" +
+                    "FROM test as T1\n" +
+                    "JOIN ( SELECT * FROM test ) as T2 ON T1.event < T2.event\n" +
+                    "JOIN test as T3 ON T2.created = T3.created";
 
-            assertPlan(
-                    "SELECT sum(x), sum(x+10) FROM tab",
-                    "VirtualRecord\n" +
-                            "  functions: [sum,sum+COUNT*10]\n" +
-                            "    GroupBy vectorized: true\n" +
-                            "      values: [sum(x),count(x)]\n" +
-                            "        DataFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: tab\n"
+            ddl("create table test (event int, created timestamp)");
+            insert("insert into test values (1, 1), (2, 2)");
+
+            assertPlan(query,
+                    "Count\n" +
+                            "    Filter filter: T1.event<T2.event\n" +
+                            "        Cross Join\n" +
+                            "            Hash Join Light\n" +
+                            "              condition: T3.created=T2.created\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: test\n" +
+                            "                Hash\n" +
+                            "                    DataFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: test\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: test\n"
             );
 
-            assertPlan(
-                    "SELECT sum(x), sum(10+x) FROM tab",
-                    "VirtualRecord\n" +
-                            "  functions: [sum,COUNT*10+sum]\n" +
-                            "    GroupBy vectorized: true\n" +
-                            "      values: [sum(x),count(x)]\n" +
+            assertSql("count\n1\n", query);
+        });
+    }
+
+    @Test
+    public void testPredicatesArentPushedIntoWindowModel() throws Exception {
+        assertMemoryLeak(() -> {
+            String query = "SELECT * " +
+                    "FROM ( " +
+                    "  SELECT *, ROW_NUMBER() OVER ( PARTITION BY a ORDER BY b ) rownum " +
+                    "  FROM (" +
+                    "    SELECT 1 a, 2 b, 4 c " +
+                    "    UNION " +
+                    "    SELECT 1, 3, 5 " +
+                    "  ) o " +
+                    ") ra " +
+                    "WHERE ra.rownum = 1 " +
+                    "AND   c = 5";
+
+            assertPlan(query,
+                    "Filter filter: (rownum=1 and c=5)\n" +
+                            "    CachedWindow\n" +
+                            "      orderedFunctions: [[b] => [row_number() over (partition by [a])]]\n" +
+                            "        Union\n" +
+                            "            VirtualRecord\n" +
+                            "              functions: [1,2,4]\n" +
+                            "                long_sequence count: 1\n" +
+                            "            VirtualRecord\n" +
+                            "              functions: [1,3,5]\n" +
+                            "                long_sequence count: 1\n");
+            assertSql("a\tb\tc\trownum\n", query);
+
+            ddl("CREATE TABLE tab AS (SELECT x FROM long_sequence(10))");
+
+            assertPlan("SELECT *, ROW_NUMBER() OVER () FROM tab WHERE x = 10",
+                    "Window\n" +
+                            "  functions: [row_number()]\n" +
+                            "    Async JIT Filter workers: 1\n" +
+                            "      filter: x=10\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
-                            "            Frame forward scan on: tab\n"
-            );
+                            "            Frame forward scan on: tab\n");
+
+            assertPlan("SELECT * FROM (SELECT *, ROW_NUMBER() OVER () FROM tab ) WHERE x = 10",
+                    "Filter filter: x=10\n" +
+                            "    Window\n" +
+                            "      functions: [row_number()]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n");
+
+            assertPlan("SELECT * FROM (SELECT *, ROW_NUMBER() OVER () FROM tab UNION ALL select 11, 11  ) WHERE x = 10",
+                    "Filter filter: x=10\n" +
+                            "    Union All\n" +
+                            "        Window\n" +
+                            "          functions: [row_number()]\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: tab\n" +
+                            "        VirtualRecord\n" +
+                            "          functions: [11,11]\n" +
+                            "            long_sequence count: 1\n");
+
+            assertPlan("SELECT * FROM (SELECT *, ROW_NUMBER() OVER () FROM tab cross join (select 11, 11)  ) WHERE x = 10",
+                    "Filter filter: x=10\n" +
+                            "    Window\n" +
+                            "      functions: [row_number()]\n" +
+                            "        SelectedRecord\n" +
+                            "            Cross Join\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: tab\n" +
+                            "                VirtualRecord\n" +
+                            "                  functions: [11,11]\n" +
+                            "                    long_sequence count: 1\n");
+
+            assertPlan("SELECT * FROM (SELECT *, ROW_NUMBER() OVER () FROM tab ) join (select 11L y, 11) on x=y WHERE x = 10",
+                    "SelectedRecord\n" +
+                            "    Hash Join Light\n" +
+                            "      condition: y=x\n" +
+                            "        Filter filter: x=10\n" +
+                            "            Window\n" +
+                            "              functions: [row_number()]\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: tab\n" +
+                            "        Hash\n" +
+                            "            Filter filter: y=10\n" +
+                            "                VirtualRecord\n" +
+                            "                  functions: [11L,11]\n" +
+                            "                    long_sequence count: 1\n");
         });
     }
 
     @Test
     public void testRewriteAggregateWithAdditionIsDisabledForNonIntegerType() throws Exception {
         assertMemoryLeak(() -> {
-            compile("  CREATE TABLE tab ( x double );");
+            compile("CREATE TABLE tab ( x double );");
 
             assertPlan(
                     "SELECT sum(x), sum(x+10) FROM tab",
-                    "GroupBy vectorized: false\n" +
+                    "Async Group By workers: 1\n" +
                             "  values: [sum(x),sum(x+10)]\n" +
+                            "  filter: null\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n"
@@ -4704,8 +5415,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlan(
                     "SELECT sum(x), sum(10+x) FROM tab",
-                    "GroupBy vectorized: false\n" +
+                    "Async Group By workers: 1\n" +
                             "  values: [sum(x),sum(10+x)]\n" +
+                            "  filter: null\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n"
@@ -4716,8 +5428,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregateWithAdditionOnJoin() throws Exception {
         assertMemoryLeak(() -> {
-            compile("  CREATE TABLE taba ( x int, id int );");
-            compile("  CREATE TABLE tabb ( x int, id int );");
+            compile("CREATE TABLE taba ( x int, id int );");
+            compile("CREATE TABLE tabb ( x int, id int );");
 
             assertPlan(
                     "SELECT sum(taba.x),sum(tabb.x), sum(taba.x+10), sum(tabb.x+10) " +
@@ -4762,9 +5474,38 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRewriteAggregateWithMultiplication() throws Exception {
+    public void testRewriteAggregateWithIntAddition() throws Exception {
         assertMemoryLeak(() -> {
-            compile("  CREATE TABLE tab ( x int );");
+            compile("CREATE TABLE tab ( x int );");
+
+            assertPlan(
+                    "SELECT sum(x), sum(x+10) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,sum+COUNT*10]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x),count(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+
+            assertPlan(
+                    "SELECT sum(x), sum(10+x) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,COUNT*10+sum]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x),count(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+        });
+    }
+
+    @Test
+    public void testRewriteAggregateWithIntMultiplication() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE tab ( x int );");
 
             assertPlan(
                     "SELECT sum(x), sum(x*10) FROM tab",
@@ -4791,14 +5532,131 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRewriteAggregateWithMultiplicationIsDisabledForNonIntegerColumnType() throws Exception {
+    public void testRewriteAggregateWithIntSubtraction() throws Exception {
         assertMemoryLeak(() -> {
-            compile("  CREATE TABLE tab ( x double );");
+            compile("CREATE TABLE tab ( x int );");
+
+            assertPlan(
+                    "SELECT sum(x), sum(x-10) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,sum-COUNT*10]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x),count(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+
+            assertPlan(
+                    "SELECT sum(x), sum(10-x) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,COUNT*10-sum]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x),count(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+        });
+    }
+
+    @Test
+    public void testRewriteAggregateWithLongAddition() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE tab ( x long );");
+
+            assertPlan(
+                    "SELECT sum(x), sum(x+2) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,sum+COUNT*2]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x),count(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+
+            assertPlan(
+                    "SELECT sum(x), sum(2+x) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,COUNT*2+sum]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x),count(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+        });
+    }
+
+    @Test
+    public void testRewriteAggregateWithLongMultiplication() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE tab ( x long );");
 
             assertPlan(
                     "SELECT sum(x), sum(x*10) FROM tab",
-                    "GroupBy vectorized: false\n" +
+                    "VirtualRecord\n" +
+                            "  functions: [sum,sum*10]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+
+            assertPlan(
+                    "SELECT sum(x), sum(10*x) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,10*sum]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+        });
+    }
+
+    @Test
+    public void testRewriteAggregateWithLongSubtraction() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE tab ( x long );");
+
+            assertPlan(
+                    "SELECT sum(x), sum(x-10) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,sum-COUNT*10]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x),count(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+
+            assertPlan(
+                    "SELECT sum(x), sum(10-x) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,COUNT*10-sum]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x),count(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+        });
+    }
+
+    @Test
+    public void testRewriteAggregateWithMultiplicationIsDisabledForNonIntegerColumnType() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE tab ( x double );");
+
+            assertPlan(
+                    "SELECT sum(x), sum(x*10) FROM tab",
+                    "Async Group By workers: 1\n" +
                             "  values: [sum(x),sum(x*10)]\n" +
+                            "  filter: null\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n"
@@ -4806,8 +5664,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlan(
                     "SELECT sum(x), sum(10*x) FROM tab",
-                    "GroupBy vectorized: false\n" +
+                    "Async Group By workers: 1\n" +
                             "  values: [sum(x),sum(10*x)]\n" +
+                            "  filter: null\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n"
@@ -4818,12 +5677,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregateWithMultiplicationIsDisabledForNonIntegerConstantType() throws Exception {
         assertMemoryLeak(() -> {
-            compile("  CREATE TABLE tab ( x double );");
+            compile("CREATE TABLE tab ( x double );");
 
             assertPlan(
                     "SELECT sum(x), sum(x*10.0) FROM tab",
-                    "GroupBy vectorized: false\n" +
+                    "Async Group By workers: 1\n" +
                             "  values: [sum(x),sum(x*10.0)]\n" +
+                            "  filter: null\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n"
@@ -4831,8 +5691,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlan(
                     "SELECT sum(x), sum(10.0*x) FROM tab",
-                    "GroupBy vectorized: false\n" +
+                    "Async Group By workers: 1\n" +
                             "  values: [sum(x),sum(10.0*x)]\n" +
+                            "  filter: null\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n"
@@ -4843,8 +5704,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregateWithMultiplicationOnJoin() throws Exception {
         assertMemoryLeak(() -> {
-            compile("  CREATE TABLE taba ( x int, id int );");
-            compile("  CREATE TABLE tabb ( x int, id int );");
+            compile("CREATE TABLE taba ( x int, id int );");
+            compile("CREATE TABLE tabb ( x int, id int );");
 
             assertPlan(
                     "SELECT sum(taba.x),sum(tabb.x),sum(taba.x*10), sum(tabb.x*10) " +
@@ -4889,16 +5750,74 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRewriteAggregateWithSubtraction() throws Exception {
+    public void testRewriteAggregateWithShortAddition() throws Exception {
         assertMemoryLeak(() -> {
-            compile("  CREATE TABLE tab ( x int );");
+            compile("CREATE TABLE tab ( x short );");
+
+            assertPlan(
+                    "SELECT sum(x), sum(x+42) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,sum+COUNT*42]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x),count(*)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+
+            assertPlan(
+                    "SELECT sum(x), sum(42+x) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,COUNT*42+sum]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x),count(*)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+        });
+    }
+
+    @Test
+    public void testRewriteAggregateWithShortMultiplication() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE tab ( x short );");
+
+            assertPlan(
+                    "SELECT sum(x), sum(x*10) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,sum*10]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+
+            assertPlan(
+                    "SELECT sum(x), sum(10*x) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,10*sum]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+        });
+    }
+
+    @Test
+    public void testRewriteAggregateWithShortSubtraction() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE tab ( x short );");
 
             assertPlan(
                     "SELECT sum(x), sum(x-10) FROM tab",
                     "VirtualRecord\n" +
                             "  functions: [sum,sum-COUNT*10]\n" +
                             "    GroupBy vectorized: true\n" +
-                            "      values: [sum(x),count(x)]\n" +
+                            "      values: [sum(x),count(*)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: tab\n"
@@ -4909,7 +5828,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "VirtualRecord\n" +
                             "  functions: [sum,COUNT*10-sum]\n" +
                             "    GroupBy vectorized: true\n" +
-                            "      values: [sum(x),count(x)]\n" +
+                            "      values: [sum(x),count(*)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: tab\n"
@@ -4920,12 +5839,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregateWithSubtractionIsDisabledForNonIntegerType() throws Exception {
         assertMemoryLeak(() -> {
-            compile("  CREATE TABLE tab ( x double );");
+            compile("CREATE TABLE tab ( x double );");
 
             assertPlan(
                     "SELECT sum(x), sum(x-10) FROM tab",
-                    "GroupBy vectorized: false\n" +
+                    "Async Group By workers: 1\n" +
                             "  values: [sum(x),sum(x-10)]\n" +
+                            "  filter: null\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n"
@@ -4933,8 +5853,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlan(
                     "SELECT sum(x), sum(10-x) FROM tab",
-                    "GroupBy vectorized: false\n" +
+                    "Async Group By workers: 1\n" +
                             "  values: [sum(x),sum(10-x)]\n" +
+                            "  filter: null\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n"
@@ -4945,8 +5866,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregateWithSubtractionOnJoin() throws Exception {
         assertMemoryLeak(() -> {
-            compile("  CREATE TABLE taba ( x int, id int );");
-            compile("  CREATE TABLE tabb ( x int, id int );");
+            compile("CREATE TABLE taba ( x int, id int );");
+            compile("CREATE TABLE tabb ( x int, id int );");
 
             assertPlan(
                     "SELECT sum(taba.x),sum(tabb.x),sum(taba.x-10), sum(tabb.x-10) " +
@@ -4993,7 +5914,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregates() throws Exception {
         assertMemoryLeak(() -> {
-            compile("  CREATE TABLE hits\n" +
+            compile("CREATE TABLE hits\n" +
                     "(\n" +
                     "    EventTime timestamp,\n" +
                     "    ResolutionWidth int,\n" +
@@ -5018,7 +5939,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregatesOnJoin() throws Exception {
         assertMemoryLeak(() -> {
-            compile("  CREATE TABLE hits1" +
+            compile("CREATE TABLE hits1" +
                     "(" +
                     "    EventTime timestamp, " +
                     "    ResolutionWidth int, " +
@@ -5047,6 +5968,124 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "                        Row forward scan\n" +
                             "                        Frame forward scan on: hits2\n"
             );
+        });
+    }
+
+    @Test
+    public void testRewriteSelectCountDistinct() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table test(s string, x long, ts timestamp, substring string) timestamp(ts) partition by day");
+            insert("insert into test " +
+                    "select 's' || (x%10), " +
+                    " x, " +
+                    " (x*86400000000)::timestamp, " +
+                    " 'substring' " +
+                    "from long_sequence(10)");
+
+            // multiple count_distinct, no re-write
+            assertPlan("SELECT count_distinct(s), count_distinct(x) FROM test",
+                    "GroupBy vectorized: false\n" +
+                            "  values: [count_distinct(s),count_distinct(x)]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: test\n");
+
+            // no where clause, distinct constant
+            assertPlan("SELECT count_distinct(10) FROM test",
+                    "Count\n" +
+                            "    GroupBy vectorized: false\n" +
+                            "      keys: [10]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: test\n");
+
+            // no where clause, distinct column
+            assertPlan("SELECT count_distinct(s) FROM test",
+                    "Count\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [s]\n" +
+                            "      filter: s is not null \n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: test\n");
+
+            // with where clause, distinct column
+            assertPlan("SELECT count_distinct(s) FROM test where s like '%abc%'",
+                    "Count\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [s]\n" +
+                            "      filter: (s like %abc% and s is not null )\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: test\n");
+
+            // no where clause, distinct expression 1
+            assertPlan("SELECT count_distinct(substring(s,1,1)) FROM test ",
+                    "Count\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [substring]\n" +
+                            "      filter: substring(s,1,1) is not null \n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: test\n");
+
+            // where clause, distinct expression 2
+            assertPlan("SELECT count_distinct(substring(s,1,1)) FROM test where s like '%abc%'",
+                    "Count\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [substring]\n" +
+                            "      filter: (s like %abc% and substring(s,1,1) is not null )\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: test\n");
+
+            // where clause, distinct expression 3, function name clash with column name
+            assertPlan("SELECT count_distinct(substring(s,1,1)) FROM test where s like '%abc%' and substring != null",
+                    "Count\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [substring]\n" +
+                            "      filter: ((s like %abc% and substring is not null ) and substring(s,1,1) is not null )\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: test\n");
+
+            // where clause, distinct expression 3
+            assertPlan("SELECT count_distinct(x+1) FROM test where x > 5",
+                    "Count\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [column]\n" +
+                            "      filter: (5<x and null!=x+1)\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: test\n");
+
+            // where clause, distinct expression, col alias
+            assertPlan("SELECT count_distinct(x+1) cnt_dst FROM test where x > 5",
+                    "Count\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [column]\n" +
+                            "      filter: (5<x and null!=x+1)\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: test\n");
+
+            assertSql("cnt_dst\n" +
+                            "5\n",
+                    "SELECT count_distinct(x+1) cnt_dst FROM test where x > 5");
+
+            // where clause, distinct expression, table alias
+            assertPlan("SELECT count_distinct(x+1) FROM test tab where x > 5",
+                    "Count\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [column]\n" +
+                            "      filter: (5<x and null!=x+1)\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: test\n");
+
+            assertSql("count_distinct\n" +
+                            "5\n",
+                    "SELECT count_distinct(x+1) FROM test tab where x > 5");
         });
     }
 
@@ -5380,6 +6419,36 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSelectCount16() throws Exception {
+        assertPlan(
+                "create table a (i long, j long)",
+                "select count(*) from (select i, j from a group by i, j)",
+                "Count\n" +
+                        "    Async Group By workers: 1\n" +
+                        "      keys: [i,j]\n" +
+                        "      filter: null\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: a\n"
+        );
+    }
+
+    @Test
+    public void testSelectCount17() throws Exception {
+        assertPlan(
+                "create table a (i long, j long, d double)",
+                "select count(*) from (select i, j from a where d > 42 group by i, j)",
+                "Count\n" +
+                        "    Async Group By workers: 1\n" +
+                        "      keys: [i,j]\n" +
+                        "      filter: 42<d\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: a\n"
+        );
+    }
+
+    @Test
     public void testSelectCount2() throws Exception {
         assertPlan(
                 "create table a ( i int, d double)",
@@ -5488,7 +6557,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         );
     }
 
-    @Test // TODO: should use symbol list
+    @Test
     public void testSelectCountDistinct1() throws Exception {
         assertPlan(
                 "create table tab ( s symbol, ts timestamp);",
@@ -5501,7 +6570,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         );
     }
 
-    @Test // TODO: should use symbol list
+    @Test
     public void testSelectCountDistinct2() throws Exception {
         assertPlan(
                 "create table tab ( s symbol index, ts timestamp);",
@@ -5517,13 +6586,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectCountDistinct3() throws Exception {
         assertPlan(
-                "create table tab ( s string, l long );",
+                "create table tab ( s string, l long )",
                 "select count_distinct(l) from tab",
-                "GroupBy vectorized: false\n" +
-                        "  values: [count_distinct(l)]\n" +
-                        "    DataFrame\n" +
-                        "        Row forward scan\n" +
-                        "        Frame forward scan on: tab\n"
+                "Count\n" +
+                        "    Async Group By workers: 1\n" +
+                        "      keys: [l]\n" +
+                        "      filter: null!=l\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: tab\n"
         );
     }
 
@@ -5609,34 +6680,26 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    // TODO: should scan symbols table (note: some symbols from the symbol table may be
-    //  not present in the end table due to, say, UPDATE)
     public void testSelectDistinct2() throws Exception {
         assertPlan(
                 "create table tab ( s symbol, ts timestamp);",
                 "select distinct(s) from tab",
-                "DistinctKey\n" +
-                        "    GroupBy vectorized: true workers: 1\n" +
-                        "      keys: [s]\n" +
-                        "      values: [count(*)]\n" +
-                        "        DataFrame\n" +
-                        "            Row forward scan\n" +
-                        "            Frame forward scan on: tab\n"
+                "DistinctSymbol\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: tab\n"
         );
     }
 
-    @Test // TODO: should scan symbols table
+    @Test
     public void testSelectDistinct3() throws Exception {
         assertPlan(
                 "create table tab ( s symbol index, ts timestamp);",
                 "select distinct(s) from tab",
-                "DistinctKey\n" +
-                        "    GroupBy vectorized: true workers: 1\n" +
-                        "      keys: [s]\n" +
-                        "      values: [count(*)]\n" +
-                        "        DataFrame\n" +
-                        "            Row forward scan\n" +
-                        "            Frame forward scan on: tab\n"
+                "DistinctSymbol\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: tab\n"
         );
     }
 
@@ -5756,7 +6819,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSelectFromAllTables() throws Exception {
         assertPlan(
                 "select * from all_tables()",
-                "all_tables\n"
+                "all_tables()\n"
         );
     }
 
@@ -6739,6 +7802,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSelectWalTransactions() throws Exception {
+        assertPlan(
+                "create table tab ( s string, sy symbol, i int, ts timestamp) timestamp(ts) partition by day WAL",
+                "select * from wal_transactions('tab')",
+                "wal_transactions of: tab\n"
+        );
+    }
+
+    @Test
     public void testSelectWhereOrderByLimit() throws Exception {
         assertPlan(
                 "create table xx ( x long, str string) ",
@@ -7613,7 +8685,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "where i1*i2 != 0",
                 "SelectedRecord\n" +
                         "    Filter filter: i1*i2!=0\n" +
-                        "        Sort light lo: 100\n" +
+                        "        Sort light lo: 100 partiallySorted: true\n" +
                         "          keys: [ts1, l1]\n" +
                         "            SelectedRecord\n" +
                         "                SelectedRecord\n" +
@@ -7701,7 +8773,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * from (select * from a order by ts asc, l limit 10) lt join (select * from a) order by ts asc",
                     "SelectedRecord\n" +
                             "    Lt Join\n" +
-                            "        Sort light lo: 10\n" +
+                            "        Sort light lo: 10 partiallySorted: true\n" +
                             "          keys: [ts, l]\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
@@ -8111,6 +9183,621 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindow0() throws Exception {
+        assertPlan(
+                "create table t as ( select x l, x::string str, x::timestamp ts from long_sequence(100))",
+                "select ts, str,  row_number() over (order by l), row_number() over (partition by l) from t",
+                "CachedWindow\n" +
+                        "  orderedFunctions: [[l] => [row_number()]]\n" +
+                        "  unorderedFunctions: [row_number() over (partition by [l])]\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: t\n"
+        );
+    }
+
+    @Test
+    public void testWindow1() throws Exception {
+        assertPlan(
+                "create table t as ( select x l, x::string str, x::timestamp ts from long_sequence(100))",
+                "select str, ts, l, 10, row_number() over ( partition by l order by ts) from t",
+                "CachedWindow\n" +
+                        "  orderedFunctions: [[ts] => [row_number() over (partition by [l])]]\n" +
+                        "    VirtualRecord\n" +
+                        "      functions: [str,ts,l,10]\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: t\n"
+        );
+    }
+
+    @Test
+    public void testWindow2() throws Exception {
+        assertPlan(
+                "create table t as ( select x l, x::string str, x::timestamp ts from long_sequence(100))",
+                "select str, ts, l as l1, ts::long+l as tsum, row_number() over ( partition by l, ts order by str) from t",
+                "CachedWindow\n" +
+                        "  orderedFunctions: [[str] => [row_number() over (partition by [l1,ts])]]\n" +
+                        "    VirtualRecord\n" +
+                        "      functions: [str,ts,l1,ts::long+l1]\n" +
+                        "        SelectedRecord\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: t\n"
+        );
+    }
+
+    @Test
+    public void testWindow3() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
+
+            assertPlan("select ts, i, j, " +
+                            "avg(j) over (order by i, j rows unbounded preceding), " +
+                            "sum(j) over (order by i, j rows unbounded preceding), " +
+                            "first_value(j) over (order by i, j rows unbounded preceding), " +
+                            "from tab",
+                    "CachedWindow\n" +
+                            "  orderedFunctions: [[i, j] => [avg(j) over (rows between unbounded preceding and current row)," +
+                            "sum(j) over (rows between unbounded preceding and current row),first_value(j) over ()]]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n");
+
+            assertPlan("select ts, i, j, " +
+                            "avg(j) over (partition by i order by ts rows between 1 preceding and current row), " +
+                            "sum(j) over (partition by i order by ts rows between 1 preceding and current row), " +
+                            "first_value(j) over (partition by i order by ts rows between 1 preceding and current row) " +
+                            "from tab",
+                    "Window\n" +
+                            "  functions: [avg(j) over (partition by [i] rows between 1 preceding and current row)," +
+                            "sum(j) over (partition by [i] rows between 1 preceding and current row),first_value(j) over (partition by [i] rows between 1 preceding and current row)]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n");
+
+            assertPlan("select row_number() over (partition by i order by i desc, j asc), " +
+                            "avg(j) over (partition by i order by j, i desc rows unbounded preceding), " +
+                            "sum(j) over (partition by i order by j, i desc rows unbounded preceding), " +
+                            "first_value(j) over (partition by i order by j, i desc rows unbounded preceding) " +
+                            "from tab " +
+                            "order by ts desc",
+                    "SelectedRecord\n" +
+                            "    CachedWindow\n" +
+                            "      orderedFunctions: [[i desc, j] => [row_number() over (partition by [i])]," +
+                            "[j, i desc] => [avg(j) over (partition by [i] rows between unbounded preceding and current row )," +
+                            "sum(j) over (partition by [i] rows between unbounded preceding and current row )," +
+                            "first_value(j) over (partition by [i] rows between unbounded preceding and current row )]]\n" +
+                            "        DataFrame\n" +
+                            "            Row backward scan\n" +
+                            "            Frame backward scan on: tab\n");
+
+            assertPlan("select row_number() over (partition by i order by i desc, j asc), " +
+                            "        avg(j) over (partition by i, j order by i desc, j asc rows unbounded preceding), " +
+                            "        sum(j) over (partition by i, j order by i desc, j asc rows unbounded preceding), " +
+                            "        first_value(j) over (partition by i, j order by i desc, j asc rows unbounded preceding), " +
+                            "        rank() over (partition by j, i) " +
+                            "from tab order by ts desc",
+                    "SelectedRecord\n" +
+                            "    CachedWindow\n" +
+                            "      orderedFunctions: [[i desc, j] => [row_number() over (partition by [i]),avg(j) over (partition by [i,j] rows between unbounded preceding and current row )," +
+                            "sum(j) over (partition by [i,j] rows between unbounded preceding and current row )," +
+                            "first_value(j) over (partition by [i,j] rows between unbounded preceding and current row )]]\n" +
+                            "      unorderedFunctions: [rank() over (partition by [j,i])]\n" +
+                            "        DataFrame\n" +
+                            "            Row backward scan\n" +
+                            "            Frame backward scan on: tab\n");
+        });
+    }
+
+    @Test
+    public void testWindowModelOrderByIsNotIgnored() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table  cpu_ts ( hostname symbol, usage_system double, ts timestamp ) timestamp(ts);");
+
+            assertPlan("select sum(avg), sum(sum), sum(first_value) from (\n" +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over (partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over (partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over (partition by hostname order by ts desc rows between 100 preceding and current row) first_value " +
+                            "from cpu_ts " +
+                            "order by ts desc\n" +
+                            ") ",
+                    "GroupBy vectorized: false\n" +
+                            "  values: [sum(avg),sum(sum),sum(first_value)]\n" +
+                            "    Window\n" +
+                            "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "        DataFrame\n" +
+                            "            Row backward scan\n" +
+                            "            Frame backward scan on: cpu_ts\n");
+
+            assertPlan("select sum(avg), sum(sum), sum(first_value) from (\n" +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
+                            "from cpu_ts " +
+                            ") ",
+                    "GroupBy vectorized: false\n" +
+                            "  values: [sum(avg),sum(sum),sum(first_value)]\n" +
+                            "    Window\n" +
+                            "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: cpu_ts\n");
+
+            assertPlan("select sum(avg), sum(sum) sm, sum(first_value) fst from (\n" +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
+                            "from cpu_ts " +
+                            "order by ts asc\n" +
+                            ") order by sm ",
+                    "Sort\n" +
+                            "  keys: [sm]\n" +
+                            "    GroupBy vectorized: false\n" +
+                            "      values: [sum(avg),sum(sum),sum(first_value)]\n" +
+                            "        Window\n" +
+                            "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)" +
+                            "]\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: cpu_ts\n");
+        });
+    }
+
+    @Test
+    public void testWindowOrderByUnderWindowModelIsPreserved() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table  cpu_ts ( hostname symbol, usage_system double, ts timestamp ) timestamp(ts);");
+
+            assertPlan("select sum(avg), sum(sum), first(first_value) from ( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over (partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over (partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over (partition by hostname order by ts desc rows between 100 preceding and current row) first_value " +
+                            "from cpu_ts " +
+                            "order by ts desc" +
+                            ") ",
+                    "GroupBy vectorized: false\n" +
+                            "  values: [sum(avg),sum(sum),first(first_value)]\n" +
+                            "    Window\n" +
+                            "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "        DataFrame\n" +
+                            "            Row backward scan\n" +
+                            "            Frame backward scan on: cpu_ts\n");
+
+            assertPlan("select sum(avg), sum(sum), first(first_value) from ( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " +
+                            "from (select * from cpu_ts order by ts desc) " +
+                            ") order by 1 desc",
+                    "Sort\n" +
+                            "  keys: [sum desc]\n" +
+                            "    GroupBy vectorized: false\n" +
+                            "      values: [sum(avg),sum(sum),first(first_value)]\n" +
+                            "        CachedWindow\n" +
+                            "          orderedFunctions: [[ts desc] => [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]]\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: cpu_ts\n");
+        });
+    }
+
+    //TODO: remove artificial limit models used to force ordering on window models (and avoid unnecessary sorts)
+    @Test
+    public void testWindowParentModelOrderPushdownIsBlockedWhenWindowModelSpecifiesOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table  cpu_ts ( hostname symbol, usage_system double, ts timestamp ) timestamp(ts);");
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value, " +
+                            "from cpu_ts " +
+                            "order by ts desc " +
+                            ") order by ts asc",
+                    "Sort\n" +
+                            "  keys: [ts]\n" +
+                            "    Limit lo: 9223372036854775807L\n" +
+                            "        Window\n" +
+                            "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "            DataFrame\n" +
+                            "                Row backward scan\n" +
+                            "                Frame backward scan on: cpu_ts\n");
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
+                            "from cpu_ts " +
+                            "order by ts asc " +
+                            ") order by ts desc",
+                    "Sort\n" +
+                            "  keys: [ts desc]\n" +
+                            "    Limit lo: 9223372036854775807L\n" +
+                            "        Window\n" +
+                            "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: cpu_ts\n");
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
+                            "from cpu_ts " +
+                            "order by ts asc " +
+                            ") order by hostname",
+                    "Sort\n" +
+                            "  keys: [hostname]\n" +
+                            "    Limit lo: 9223372036854775807L\n" +
+                            "        Window\n" +
+                            "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: cpu_ts\n");
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " +
+                            "from (select * from cpu_ts order by ts desc) " +
+                            ") order by ts asc ",
+                    "CachedWindow\n" +
+                            "  orderedFunctions: [[ts desc] => [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: cpu_ts\n");
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
+                            "from (select * from cpu_ts order by ts asc) " +
+                            ") order by ts desc ",
+                    "CachedWindow\n" +
+                            "  orderedFunctions: [[ts] => [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]]\n" +
+                            "    DataFrame\n" +
+                            "        Row backward scan\n" +
+                            "        Frame backward scan on: cpu_ts\n");
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
+                            "from (select * from cpu_ts order by ts asc) " +
+                            ") order by hostname ",
+                    "Sort\n" +
+                            "  keys: [hostname]\n" +
+                            "    Window\n" +
+                            "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: cpu_ts\n");
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
+                            "from (select * from cpu_ts order by ts desc) " +
+                            ") order by hostname ",
+                    "Sort\n" +
+                            "  keys: [hostname]\n" +
+                            "    Window\n" +
+                            "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: cpu_ts\n");
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " +
+                            "from (select * from cpu_ts order by ts asc) " +
+                            "order by ts desc " +
+                            ") order by ts asc ",
+                    "Sort\n" +
+                            "  keys: [ts]\n" +
+                            "    Limit lo: 9223372036854775807L\n" +
+                            "        Window\n" +
+                            "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "            DataFrame\n" +
+                            "                Row backward scan\n" +
+                            "                Frame backward scan on: cpu_ts\n");
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
+                            "from (select * from cpu_ts order by ts desc) " +
+                            "order by ts asc " +
+                            ") order by ts desc ",
+                    "Sort\n" +
+                            "  keys: [ts desc]\n" +
+                            "    Limit lo: 9223372036854775807L\n" +
+                            "        Window\n" +
+                            "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: cpu_ts\n");
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
+                            "from (select * from cpu_ts order by ts desc ) " +
+                            "order by ts asc " +
+                            ") order by hostname ",
+                    "Sort\n" +
+                            "  keys: [hostname]\n" +
+                            "    Limit lo: 9223372036854775807L\n" +
+                            "        Window\n" +
+                            "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: cpu_ts\n");
+
+
+        });
+    }
+
+    @Test
+    public void testWindowParentModelOrderPushdownIsDoneWhenNestedModelsSpecifyNoneOrMatchingOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table  cpu_ts ( hostname symbol, usage_system double, ts timestamp ) timestamp(ts);");
+
+            String expectedForwardPlan = "Window\n" +
+                    "  functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                    "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                    "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                    "    DataFrame\n" +
+                    "        Row forward scan\n" +
+                    "        Frame forward scan on: cpu_ts\n";
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
+                            "from cpu_ts " +
+                            ") order by ts asc",
+                    expectedForwardPlan);
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value, " +
+                            "from (select * from cpu_ts order by ts asc) " +
+                            ") order by ts asc",
+                    expectedForwardPlan);
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
+                            "from (select * from cpu_ts order by ts desc) " +
+                            ") order by ts asc",
+                    expectedForwardPlan);
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
+                            "from (select * from cpu_ts order by hostname) " +
+                            ") order by ts asc",
+                    expectedForwardPlan);
+
+            String expectedForwardLimitPlan =
+                    "Limit lo: 9223372036854775807L\n" +
+                            "    Window\n" +
+                            "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                            "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: cpu_ts\n";
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
+                            "from cpu_ts " +
+                            "order by ts asc  " +
+                            ") order by ts asc",
+                    expectedForwardLimitPlan);
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
+                            "from (select * from cpu_ts order by ts asc) " +
+                            "order by ts asc  " +
+                            ") order by ts asc",
+                    expectedForwardLimitPlan);
+
+            String expectedBackwardPlan = "Window\n" +
+                    "  functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                    "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                    "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                    "    DataFrame\n" +
+                    "        Row backward scan\n" +
+                    "        Frame backward scan on: cpu_ts\n";
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " +
+                            "from cpu_ts " +
+                            ") order by ts desc",
+                    expectedBackwardPlan);
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " +
+                            "from (select * from cpu_ts order by ts desc) " +
+                            ") order by ts desc",
+                    expectedBackwardPlan);
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " +
+                            "from (select * from cpu_ts order by ts asc) " +
+                            ") order by ts desc",
+                    expectedBackwardPlan);
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " +
+                            "from (select * from cpu_ts order by hostname) " +
+                            ") order by ts desc",
+                    expectedBackwardPlan);
+
+            String expectedBackwardLimitPlan = "Limit lo: 9223372036854775807L\n" +
+                    "    Window\n" +
+                    "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                    "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
+                    "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                    "        DataFrame\n" +
+                    "            Row backward scan\n" +
+                    "            Frame backward scan on: cpu_ts\n";
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " +
+                            "from cpu_ts " +
+                            "order by ts desc  " +
+                            ") order by ts desc",
+                    expectedBackwardLimitPlan);
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " +
+                            "from (select * from cpu_ts order by ts desc) " +
+                            "order by ts desc  " +
+                            ") order by ts desc",
+                    expectedBackwardLimitPlan);
+        });
+    }
+
+    @Test
+    public void testWindowRecordCursorFactoryWithLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x as ( " +
+                    "  select " +
+                    "    cast(x as int) i, " +
+                    "    rnd_symbol('a','b','c') sym, " +
+                    "    timestamp_sequence(0, 100000000) ts " +
+                    "   from long_sequence(100)" +
+                    ") timestamp(ts) partition by hour");
+
+            String sql = "select i, " +
+                    "row_number() over (partition by sym), " +
+                    "avg(i) over (partition by i rows unbounded preceding), " +
+                    "sum(i) over (partition by i rows unbounded preceding), " +
+                    "first_value(i) over (partition by i rows unbounded preceding) " +
+                    "from x limit 3";
+            assertPlan(
+                    sql,
+                    "Limit lo: 3\n" +
+                            "    Window\n" +
+                            "      functions: [row_number() over (partition by [sym])," +
+                            "avg(i) over (partition by [i] rows between unbounded preceding and current row )," +
+                            "sum(i) over (partition by [i] rows between unbounded preceding and current row )," +
+                            "first_value(i) over (partition by [i] rows between unbounded preceding and current row )]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: x\n"
+            );
+
+            assertSql("i\trow_number\tavg\tsum\tfirst_value\n" +
+                    "1\t1\t1.0\t1.0\t1.0\n" +
+                    "2\t2\t2.0\t2.0\t2.0\n" +
+                    "3\t1\t3.0\t3.0\t3.0\n", sql);
+        });
+    }
+
+    @Test
     public void testWithBindVariables() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table t ( x int );");
@@ -8430,3 +10117,4 @@ public class ExplainPlanTest extends AbstractCairoTest {
         });
     }
 }
+

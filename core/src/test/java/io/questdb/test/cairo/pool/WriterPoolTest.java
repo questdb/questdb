@@ -30,11 +30,11 @@ import io.questdb.cairo.pool.WriterPool;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.pool.ex.PoolClosedException;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
@@ -155,7 +155,7 @@ public class WriterPoolTest extends AbstractCairoTest {
 
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, zTableToken.getDirName() + ".lock") && count-- > 0) {
+                if (Utf8s.endsWithAscii(name, zTableToken.getDirName() + ".lock") && count-- > 0) {
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -199,7 +199,7 @@ public class WriterPoolTest extends AbstractCairoTest {
             // check that we can't create standalone writer either
             try {
                 //noinspection resource
-                newTableWriter(configuration, "z", metrics);
+                newOffPoolWriter(configuration, "z", metrics);
                 Assert.fail();
             } catch (CairoException ignored) {
             }
@@ -207,7 +207,7 @@ public class WriterPoolTest extends AbstractCairoTest {
             pool.unlock(zTableToken);
 
             // check if we can create standalone writer after pool unlocked it
-            writer = newTableWriter(configuration, "z", metrics);
+            writer = newOffPoolWriter(configuration, "z", metrics);
             Assert.assertNotNull(writer);
             writer.close();
 
@@ -430,7 +430,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                 final CountDownLatch done = new CountDownLatch(1);
                 final AtomicBoolean result = new AtomicBoolean();
 
-                // have new thread try to allocated this writer
+                // have new thread try to allocate this writer
                 new Thread(() -> {
                     try (TableWriter ignored = pool.get(xTableToken, "testing")) {
                         result.set(false);
@@ -548,7 +548,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                 final AtomicInteger writerCount = new AtomicInteger();
 
                 for (int i = 0; i < N; i++) {
-                    TableToken tableName = new TableToken("table_" + i, "table_" + i, i, false, false);
+                    TableToken tableName = new TableToken("table_" + i, "table_" + i, i, false, false, false);
                     new Thread(() -> {
                         try {
                             barrier.await();
@@ -670,7 +670,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                     DefaultLifecycleManager.INSTANCE,
                     configuration.getRoot(),
                     engine.getDdlListener(tableToken),
-                    NoOpDatabaseSnapshotAgent.INSTANCE,
+                    () -> false,
                     metrics
             );
             for (int i = 0; i < 100; i++) {
@@ -857,7 +857,7 @@ public class WriterPoolTest extends AbstractCairoTest {
 
             pool.close();
 
-            TableWriter writer = newTableWriter(configuration, "z", metrics);
+            TableWriter writer = newOffPoolWriter(configuration, "z", metrics);
             Assert.assertNotNull(writer);
             writer.close();
         });
@@ -897,7 +897,7 @@ public class WriterPoolTest extends AbstractCairoTest {
 
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, zTableToken.getDirName() + ".lock") && count-- > 0) {
+                if (Utf8s.endsWithAscii(name, zTableToken.getDirName() + ".lock") && count-- > 0) {
                     return -1;
                 }
                 return super.openRW(name, opts);

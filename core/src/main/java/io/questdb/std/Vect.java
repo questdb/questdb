@@ -34,6 +34,8 @@ public final class Vect {
 
     public static native double avgLongAcc(long pInt, long count, long pCount);
 
+    public static native double avgShortAcc(long pInt, long count, long pCount);
+
     // Note: high is inclusive!
     public static native long binarySearch64Bit(long pData, long value, long low, long high, int scanDirection);
 
@@ -69,6 +71,8 @@ public final class Vect {
     public static native long countInt(long pLong, long count);
 
     public static native long countLong(long pLong, long count);
+
+    public static native long dedupMergeVarColumnLen(long mergeIndexAddr, long mergeIndexSize, long srcDataFixAddr, long srcOooFixAddr);
 
     public static native long dedupSortedTimestampIndex(
             long inIndexAddr,
@@ -141,6 +145,8 @@ public final class Vect {
     public static native int maxInt(long pInt, long count);
 
     public static native long maxLong(long pLong, long count);
+
+    public static native int maxShort(long pLong, long count);
 
     public static void memcpy(long dst, long src, long len) {
         // the split length was determined experimentally
@@ -216,6 +222,8 @@ public final class Vect {
 
     public static native long minLong(long pLong, long count);
 
+    public static native int minShort(long pLong, long count);
+
     public static native void oooCopyIndex(long mergeIndexAddr, long mergeIndexSize, long dstAddr);
 
     public static native void oooMergeCopyBinColumn(
@@ -241,8 +249,6 @@ public final class Vect {
             long dstVarAddr,
             long dstVarOffset
     );
-
-    public static native long dedupMergeVarColumnLen(long mergeIndexAddr, long mergeIndexSize, long srcDataFixAddr, long srcOooFixAddr);
 
     public static native void quickSortLongIndexAscInPlace(long pLongData, long count);
 
@@ -305,6 +311,8 @@ public final class Vect {
 
     public static native long sumLong(long pLong, long count);
 
+    public static native long sumShort(long pLong, long count);
+
     private static native int memcmp(long src, long dst, long len);
 
     private static native void memcpy0(long src, long dst, long len);
@@ -332,4 +340,8 @@ public final class Vect {
 
     // accept externally allocated memory for merged index of proper size
     private static native void mergeLongIndexesAscInner(long pIndexStructArray, int count, long mergedIndexAddr);
+
+    static {
+        Os.init();
+    }
 }

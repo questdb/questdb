@@ -45,6 +45,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
 import java.io.File;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class SecurityTest extends AbstractCairoTest {
@@ -96,6 +97,19 @@ public class SecurityTest extends AbstractCairoTest {
                 return 1024;
             }
 
+            @Override
+            public boolean isSqlParallelFilterEnabled() {
+                // Async factories use a special circuit breaker (see PageFrameSequence),
+                // so we make sure to use a single-threaded factory in this test.
+                return false;
+            }
+
+            @Override
+            public boolean isSqlParallelGroupByEnabled() {
+                // Async factories use a special circuit breaker (see PageFrameSequence),
+                // so we make sure to use a single-threaded factory in this test.
+                return false;
+            }
         };
         memoryRestrictedEngine = new CairoEngine(readOnlyConfiguration);
         SqlExecutionCircuitBreaker dummyCircuitBreaker = new SqlExecutionCircuitBreaker() {
@@ -126,8 +140,13 @@ public class SecurityTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean isCancelled() {
-                return false;
+            public int getState() {
+                return SqlExecutionCircuitBreaker.STATE_OK;
+            }
+
+            @Override
+            public int getState(long millis, int fd) {
+                return SqlExecutionCircuitBreaker.STATE_OK;
             }
 
             @Override
@@ -138,6 +157,11 @@ public class SecurityTest extends AbstractCairoTest {
             @Override
             public void resetTimer() {
                 deadline = circuitBreakerTimeoutDeadline;
+            }
+
+            @Override
+            public void setCancelledFlag(AtomicBoolean cancelledFlag) {
+
             }
 
             @Override
@@ -444,7 +468,17 @@ public class SecurityTest extends AbstractCairoTest {
                     " from long_sequence(1000)) timestamp(ts)");
             assertQuery(
                     memoryRestrictedCompiler,
-                    "sym2\td\nGZ\t0.006817672510656014\nGZ\t0.0014986299883373855\nGZ\t0.007868356216637062\nGZ\t0.007985454958725269\nGZ\t0.0011075361080621349\nRX\t4.016718301054212E-4\nRX\t0.006651203432318287\nRX\t6.503932953429992E-4\nRX\t0.0072398675350549\nRX\t0.0016532800623808575\n",
+                    "sym2\td\n" +
+                            "GZ\t0.0011075361080621349\n" +
+                            "GZ\t0.007985454958725269\n" +
+                            "GZ\t0.007868356216637062\n" +
+                            "GZ\t0.0014986299883373855\n" +
+                            "GZ\t0.006817672510656014\n" +
+                            "RX\t0.0016532800623808575\n" +
+                            "RX\t0.0072398675350549\n" +
+                            "RX\t6.503932953429992E-4\n" +
+                            "RX\t0.006651203432318287\n" +
+                            "RX\t4.016718301054212E-4\n",
                     "select sym2, d from tb1 where d < 0.01 order by sym2",
                     null,
                     true,

@@ -36,32 +36,18 @@ import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 /**
- * The abstract class, in addition, provides a method to aggregate statistics.
- * We use the B. P. Welford algorithm which works by first aggregating sum of squares Sxx = sum[(X - mean) ^ 2].
- * Computation of standard deviation and variance is then simple (e.g. variance = Sxx / (n - 1))
+ * The abstract class, in addition, provides a method to aggregate univariate statistics.
+ * We use the B.P. Welford algorithm which works by first aggregating sum of squares Sxx = sum[(X - mean) ^ 2].
+ * Computation of standard deviation and variance is then simple (e.g. variance = Sxx / (n - 1), standard deviation = sqrt(variance))
  *
  * @see <a href="https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Welford's_online_algorithm">Welford's algorithm</a>
  */
-
 public abstract class AbstractStdDevGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
     protected final Function arg;
     protected int valueIndex;
 
     protected AbstractStdDevGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
-    }
-
-    protected void aggregate(MapValue mapValue, double value) {
-        double mean = mapValue.getDouble(valueIndex);
-        double sum = mapValue.getDouble(valueIndex + 1);
-        long count = mapValue.getLong(valueIndex + 2) + 1;
-
-        double oldMean = mean;
-        mean += (value - mean) / count;
-        sum += (value - mean) * (value - oldMean);
-        mapValue.putDouble(valueIndex, mean);
-        mapValue.putDouble(valueIndex + 1, sum);
-        mapValue.addLong(valueIndex + 2, 1L);
     }
 
     @Override
@@ -112,6 +98,19 @@ public abstract class AbstractStdDevGroupByFunction extends DoubleFunction imple
         mapValue.putDouble(valueIndex, Double.NaN);
         mapValue.putDouble(valueIndex + 1, Double.NaN);
         mapValue.putLong(valueIndex + 2, 0);
+    }
+
+    protected void aggregate(MapValue mapValue, double value) {
+        double mean = mapValue.getDouble(valueIndex);
+        double sum = mapValue.getDouble(valueIndex + 1);
+        long count = mapValue.getLong(valueIndex + 2) + 1;
+
+        double oldMean = mean;
+        mean += (value - mean) / count;
+        sum += (value - mean) * (value - oldMean);
+        mapValue.putDouble(valueIndex, mean);
+        mapValue.putDouble(valueIndex + 1, sum);
+        mapValue.addLong(valueIndex + 2, 1L);
     }
 }
 

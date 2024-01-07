@@ -31,7 +31,9 @@ import io.questdb.std.ObjList;
 import io.questdb.std.datetime.AbstractDateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public class GenericDateFormat extends AbstractDateFormat {
     private final IntList compiledOps;
@@ -43,7 +45,7 @@ public class GenericDateFormat extends AbstractDateFormat {
     }
 
     @Override
-    public void format(long datetime, DateLocale locale, CharSequence timeZoneName, CharSink sink) {
+    public void format(long datetime, @NotNull DateLocale locale, @Nullable CharSequence timeZoneName, @NotNull CharSinkBase<?> sink) {
         int day = -1;
         int month = -1;
         int year = Integer.MIN_VALUE;
@@ -58,7 +60,6 @@ public class GenericDateFormat extends AbstractDateFormat {
         for (int i = 0, n = compiledOps.size(); i < n; i++) {
             int op = compiledOps.getQuick(i);
             switch (op) {
-
                 // AM/PM
                 case DateFormatCompiler.OP_AM_PM:
                     if (hour == -1) {
@@ -99,7 +100,6 @@ public class GenericDateFormat extends AbstractDateFormat {
                     DateFormatUtils.append0(sink, second);
                     break;
 
-
                 // MINUTE
                 case DateFormatCompiler.OP_MINUTE_ONE_DIGIT:
                 case DateFormatCompiler.OP_MINUTE_GREEDY:
@@ -115,7 +115,6 @@ public class GenericDateFormat extends AbstractDateFormat {
                     }
                     DateFormatUtils.append0(sink, minute);
                     break;
-
 
                 // HOUR (0-11)
                 case DateFormatCompiler.OP_HOUR_12_ONE_DIGIT:
@@ -248,7 +247,6 @@ public class GenericDateFormat extends AbstractDateFormat {
                     break;
 
                 // MONTH
-
                 case DateFormatCompiler.OP_MONTH_ONE_DIGIT:
                 case DateFormatCompiler.OP_MONTH_GREEDY:
                     if (month == -1) {
@@ -297,7 +295,6 @@ public class GenericDateFormat extends AbstractDateFormat {
                     break;
 
                 // YEAR
-
                 case DateFormatCompiler.OP_YEAR_ONE_DIGIT:
                 case DateFormatCompiler.OP_YEAR_GREEDY:
                     if (year == Integer.MIN_VALUE) {
@@ -357,7 +354,7 @@ public class GenericDateFormat extends AbstractDateFormat {
     }
 
     @Override
-    public long parse(CharSequence in, int lo, int hi, DateLocale locale) throws NumericException {
+    public long parse(@NotNull CharSequence in, int lo, int hi, @NotNull DateLocale locale) throws NumericException {
         int day = 1;
         int month = 1;
         int year = 1970;
@@ -376,7 +373,6 @@ public class GenericDateFormat extends AbstractDateFormat {
         for (int i = 0, n = compiledOps.size(); i < n; i++) {
             int op = compiledOps.getQuick(i);
             switch (op) {
-
                 // AM/PM
                 case DateFormatCompiler.OP_AM_PM:
                     l = locale.matchAMPM(in, pos, hi);
@@ -556,7 +552,6 @@ public class GenericDateFormat extends AbstractDateFormat {
                     break;
 
                 // MONTH
-
                 case DateFormatCompiler.OP_MONTH_ONE_DIGIT:
                     DateFormatUtils.assertRemaining(pos, hi);
                     month = Numbers.parseInt(in, pos, ++pos);
@@ -579,7 +574,6 @@ public class GenericDateFormat extends AbstractDateFormat {
                     break;
 
                 // YEAR
-
                 case DateFormatCompiler.OP_YEAR_ONE_DIGIT:
                     DateFormatUtils.assertRemaining(pos, hi);
                     year = Numbers.parseInt(in, pos, ++pos);
@@ -590,7 +584,7 @@ public class GenericDateFormat extends AbstractDateFormat {
                     break;
                 case DateFormatCompiler.OP_YEAR_THREE_DIGITS:
                     DateFormatUtils.assertRemaining(pos + 2, hi);
-                    year = DateFormatUtils.adjustYearMillenium(Numbers.parseInt(in, pos, pos += 3));
+                    year = DateFormatUtils.adjustYearMillennium(Numbers.parseInt(in, pos, pos += 3));
                     break;
                 case DateFormatCompiler.OP_YEAR_FOUR_DIGITS:
                     if (pos < hi && in.charAt(pos) == '-') {

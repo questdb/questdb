@@ -32,9 +32,14 @@ public class DefaultColumnTypes {
 
     public DefaultColumnTypes(LineTcpReceiverConfiguration configuration) {
         // if not set it defaults to ColumnType.UNDEFINED
+        this(configuration.getDefaultColumnTypeForFloat(), configuration.getDefaultColumnTypeForInteger());
+    }
+
+    public DefaultColumnTypes(short defaultColumnTypeForFloat, short defaultColumnTypeForInteger) {
+        // if not set it defaults to ColumnType.UNDEFINED
         DEFAULT_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_TAG] = ColumnType.SYMBOL;
-        DEFAULT_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_FLOAT] = configuration.getDefaultColumnTypeForFloat();
-        DEFAULT_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_INTEGER] = configuration.getDefaultColumnTypeForInteger();
+        DEFAULT_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_FLOAT] = defaultColumnTypeForFloat;
+        DEFAULT_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_INTEGER] = defaultColumnTypeForInteger;
         DEFAULT_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_STRING] = ColumnType.STRING;
         DEFAULT_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_SYMBOL] = ColumnType.SYMBOL;
         DEFAULT_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_BOOLEAN] = ColumnType.BOOLEAN;

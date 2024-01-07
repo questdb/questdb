@@ -27,12 +27,17 @@ package io.questdb.cairo;
 import io.questdb.cairo.ptt.IsoDatePartitionFormat;
 import io.questdb.cairo.ptt.IsoWeekPartitionFormat;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
+import io.questdb.std.LowerCaseUtf8SequenceIntHashMap;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
+import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.TableUtils.DEFAULT_PARTITION_NAME;
 import static io.questdb.std.datetime.microtime.TimestampFormatUtils.*;
@@ -66,17 +71,17 @@ public final class PartitionBy {
     private static final PartitionCeilMethod CEIL_YYYY = Timestamps::ceilYYYY;
     private final static DateFormat DEFAULT_FORMAT = new DateFormat() {
         @Override
-        public void format(long datetime, DateLocale locale, CharSequence timeZoneName, CharSink sink) {
-            sink.put(DEFAULT_PARTITION_NAME);
+        public void format(long datetime, @NotNull DateLocale locale, @Nullable CharSequence timeZoneName, @NotNull CharSinkBase<?> sink) {
+            sink.putAscii(DEFAULT_PARTITION_NAME);
         }
 
         @Override
-        public long parse(CharSequence in, DateLocale locale) {
+        public long parse(@NotNull CharSequence in, @NotNull DateLocale locale) {
             return parse(in, 0, in.length(), locale);
         }
 
         @Override
-        public long parse(CharSequence in, int lo, int hi, DateLocale locale) {
+        public long parse(@NotNull CharSequence in, int lo, int hi, @NotNull DateLocale locale) {
             return 0;
         }
     };
@@ -91,12 +96,17 @@ public final class PartitionBy {
     private static final DateFormat PARTITION_WEEK_FORMAT = new IsoWeekPartitionFormat();
     private static final DateFormat PARTITION_YEAR_FORMAT = new IsoDatePartitionFormat(FLOOR_YYYY, YEAR_FORMAT);
     private final static LowerCaseCharSequenceIntHashMap nameToIndexMap = new LowerCaseCharSequenceIntHashMap();
+    private final static LowerCaseUtf8SequenceIntHashMap nameToIndexMapUtf8 = new LowerCaseUtf8SequenceIntHashMap();
 
     private PartitionBy() {
     }
 
     public static int fromString(CharSequence name) {
         return nameToIndexMap.get(name);
+    }
+
+    public static int fromUtf8String(Utf8Sequence name) {
+        return nameToIndexMapUtf8.get(name);
     }
 
     public static PartitionAddMethod getPartitionAddMethod(int partitionBy) {
@@ -217,7 +227,7 @@ public final class PartitionBy {
             if (hi - lo < limit) {
                 throw expectedPartitionDirNameFormatCairoException(partitionName, lo, hi, partitionBy);
             }
-            return fmtMethod.parse(partitionName, lo, hi, null);
+            return fmtMethod.parse(partitionName, lo, hi, DateFormatUtils.EN_LOCALE);
         } catch (NumericException e) {
             if (partitionBy == PartitionBy.WEEK) {
                 // maybe the user used a timestamp, or a date, string.
@@ -225,7 +235,7 @@ public final class PartitionBy {
                 try {
                     // trim to lowest precision needed and get the timestamp
                     // convert timestamp to first day of the week
-                    return Timestamps.floorDOW(DAY_FORMAT.parse(partitionName, 0, localLimit, null));
+                    return Timestamps.floorDOW(DAY_FORMAT.parse(partitionName, 0, localLimit, DateFormatUtils.EN_LOCALE));
                 } catch (NumericException ignore) {
                     throw expectedPartitionDirNameFormatCairoException(partitionName, 0, Math.min(partitionName.length(), localLimit), partitionBy);
                 }
@@ -234,12 +244,12 @@ public final class PartitionBy {
         }
     }
 
-    public static void setSinkForPartition(CharSink path, int partitionBy, long timestamp) {
+    public static void setSinkForPartition(CharSinkBase<?> path, int partitionBy, long timestamp) {
         if (partitionBy != PartitionBy.NONE) {
-            getPartitionDirFormatMethod(partitionBy).format(timestamp, null, null, path);
+            getPartitionDirFormatMethod(partitionBy).format(timestamp, DateFormatUtils.EN_LOCALE, null, path);
             return;
         }
-        path.put(DEFAULT_PARTITION_NAME);
+        path.putAscii(DEFAULT_PARTITION_NAME);
     }
 
     public static String toString(int partitionBy) {
@@ -307,5 +317,12 @@ public final class PartitionBy {
         nameToIndexMap.put("hour", HOUR);
         nameToIndexMap.put("week", WEEK);
         nameToIndexMap.put("none", NONE);
+
+        nameToIndexMapUtf8.put(new Utf8String("day"), DAY);
+        nameToIndexMapUtf8.put(new Utf8String("month"), MONTH);
+        nameToIndexMapUtf8.put(new Utf8String("year"), YEAR);
+        nameToIndexMapUtf8.put(new Utf8String("hour"), HOUR);
+        nameToIndexMapUtf8.put(new Utf8String("week"), WEEK);
+        nameToIndexMapUtf8.put(new Utf8String("none"), NONE);
     }
 }

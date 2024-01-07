@@ -29,9 +29,10 @@ import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjStack;
-import io.questdb.std.Sinkable;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 public abstract class BasePlanSink implements PlanSink {
@@ -85,6 +86,10 @@ public abstract class BasePlanSink implements PlanSink {
         return sink;
     }
 
+    public boolean getUseBaseMetadata() {
+        return useBaseMetadata;
+    }
+
     public PlanSink optAttr(CharSequence name, Sinkable value) {
         if (value != null) {
             attr(name).val(value);
@@ -99,6 +104,13 @@ public abstract class BasePlanSink implements PlanSink {
             }
             attr(name).val(value);
         }
+        return this;
+    }
+
+    public PlanSink optAttr(CharSequence name, Plannable value, boolean useBaseMetadata) {
+        this.useBaseMetadata = useBaseMetadata;
+        optAttr(name, value);
+        this.useBaseMetadata = false;
         return this;
     }
 
@@ -131,6 +143,11 @@ public abstract class BasePlanSink implements PlanSink {
             val(factoryStack.peek().getMetadata().getColumnName(columnIdx));
         }
         return this;
+    }
+
+    @Override
+    public void useBaseMetadata(boolean useBaseMetdata) {
+        this.useBaseMetadata = useBaseMetdata;
     }
 
     public PlanSink val(ObjList<?> list) {
@@ -171,12 +188,15 @@ public abstract class BasePlanSink implements PlanSink {
 
     static class EscapingStringSink extends StringSink {
         @Override
-        public CharSink put(CharSequence cs) {
-            return put(cs, 0, cs.length());
+        public StringSink put(@Nullable CharSequence cs) {
+            if (cs != null) {
+                put(cs, 0, cs.length());
+            }
+            return this;
         }
 
         @Override
-        public CharSink put(CharSequence cs, int lo, int hi) {
+        public StringSink put(@NotNull CharSequence cs, int lo, int hi) {
             for (int i = lo; i < hi; i++) {
                 escape(cs.charAt(i));
             }
@@ -184,20 +204,20 @@ public abstract class BasePlanSink implements PlanSink {
         }
 
         @Override
-        public CharSink put(char c) {
+        public StringSink put(char c) {
             escape(c);
             return this;
         }
 
         @Override
-        public CharSink put(char[] chars, int start, int len) {
+        public StringSink put(char @NotNull [] chars, int start, int len) {
             for (int i = start; i < start + len; i++) {
                 escape(chars[i]);
             }
             return this;
         }
 
-        public CharSink putNoEsc(CharSequence cs) {
+        public StringSink putNoEsc(CharSequence cs) {
             super.put(cs);
             return this;
         }
@@ -243,5 +263,4 @@ public abstract class BasePlanSink implements PlanSink {
             }
         }
     }
-
 }

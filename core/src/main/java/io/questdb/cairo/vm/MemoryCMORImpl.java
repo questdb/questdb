@@ -84,9 +84,37 @@ public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
     }
 
     @Override
-    public void ofOffset(FilesFacade ff, LPSZ name, long lo, long hi, int memoryTag, long opts) {
+    public int detachFdClose() {
+        int lfd = fd;
+        fd = -1;
+        close();
+        return lfd;
+    }
+
+    @Override
+    public void ofOffset(FilesFacade ff, int fd, LPSZ name, long lo, long hi, int memoryTag, long opts) {
         this.memoryTag = memoryTag;
-        openFile(ff, name);
+        if (fd > -1) {
+            close();
+            this.ff = ff;
+            this.fd = fd;
+        } else {
+            openFile(ff, name);
+        }
+        map0(ff, name, lo, hi);
+    }
+
+    @Override
+    public void ofOffset(FilesFacade ff, LPSZ name, long lo, long hi, int memoryTag, long opts) {
+        ofOffset(ff, -1, name, lo, hi, memoryTag, opts);
+    }
+
+    @Override
+    public long size() {
+        return size + mapFileOffset - offset;
+    }
+
+    private void map0(FilesFacade ff, LPSZ name, long lo, long hi) {
         if (hi < 0) {
             hi = ff.length(fd);
             if (hi < 0) {
@@ -105,11 +133,6 @@ public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
         } else {
             this.size = 0;
         }
-    }
-
-    @Override
-    public long size() {
-        return size + mapFileOffset - offset;
     }
 
     private void openFile(FilesFacade ff, LPSZ name) {

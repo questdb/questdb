@@ -24,12 +24,13 @@
 
 package io.questdb.griffin.engine.join;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnFilter;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.*;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -150,6 +151,11 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
             this.slaveTimestampIndex = slaveTimestampIndex;
             this.valueSink = valueSink;
             this.isOpen = true;
+        }
+
+        @Override
+        public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
+            masterCursor.calculateSize(circuitBreaker, counter);
         }
 
         @Override

@@ -38,6 +38,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -423,7 +424,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                         Assert.fail();
                     }
 
-                    TableToken tableToken = new TableToken("syms", "syms", 0, false, false);
+                    TableToken tableToken = new TableToken("syms", "syms", 0, false, false, false);
                     try (TableReader reader = new TableReader(engine.getConfiguration(), tableToken)) {
                         TableReaderMetadata meta = reader.getMetadata();
                         Assert.assertEquals(5, meta.getColumnCount());
@@ -597,8 +598,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                     engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                         if (event == PoolListener.EV_LOCK_SUCCESS && Chars.equalsNc(name.getTableName(), tableName)) {
                             try (Path path = new Path()) {
-                                TableToken tt = engine.getTableTokenIfExists(tableName);
-                                if (engine.getTableStatus(path, tt) == TableUtils.TABLE_RESERVED) {
+                                if (engine.getTableStatus(path, tableName) == TableUtils.TABLE_RESERVED) {
                                     locked.set(true);
                                 }
                             }
@@ -727,7 +727,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                         Assert.fail();
                     }
 
-                    TableToken tableToken = new TableToken("syms", "syms", 0, false, false);
+                    TableToken tableToken = new TableToken("syms", "syms", 0, false, false, false);
                     try (TableReader reader = new TableReader(engine.getConfiguration(), tableToken)) {
                         TableReaderMetadata meta = reader.getMetadata();
                         Assert.assertEquals(5, meta.getColumnCount());
@@ -795,7 +795,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                                 engine,
                                 sqlExecutionContext,
                                 "select count() from trips",
-                                Misc.getThreadLocalBuilder(),
+                                Misc.getThreadLocalSink(),
                                 "count\n24\n"
                         );
 
@@ -810,7 +810,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                                 engine,
                                 sqlExecutionContext,
                                 "select count() from trips",
-                                Misc.getThreadLocalBuilder(),
+                                Misc.getThreadLocalSink(),
                                 "count\n24\n"
                         );
                     }
@@ -929,7 +929,7 @@ public class ImportIODispatcherTest extends AbstractTest {
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public boolean exists(LPSZ path) {
-                if (Chars.endsWith(path, "x.d") && count.incrementAndGet() == 4) {
+                if (Utf8s.endsWithAscii(path, "x.d") && count.incrementAndGet() == 4) {
                     return false;
                 }
                 return Files.exists(path);

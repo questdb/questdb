@@ -35,8 +35,8 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import org.jetbrains.annotations.NotNull;
 
 public class FirstDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
-    private final Function arg;
-    private int valueIndex;
+    protected final Function arg;
+    protected int valueIndex;
 
     public FirstDoubleGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
@@ -44,7 +44,7 @@ public class FirstDoubleGroupByFunction extends DoubleFunction implements GroupB
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putDouble(this.valueIndex, this.arg.getDouble(record));
+        mapValue.putDouble(valueIndex, arg.getDouble(record));
     }
 
     @Override
@@ -59,7 +59,7 @@ public class FirstDoubleGroupByFunction extends DoubleFunction implements GroupB
 
     @Override
     public double getDouble(Record rec) {
-        return rec.getDouble(this.valueIndex);
+        return rec.getDouble(valueIndex);
     }
 
     @Override
@@ -75,7 +75,7 @@ public class FirstDoubleGroupByFunction extends DoubleFunction implements GroupB
 
     @Override
     public void setDouble(MapValue mapValue, double value) {
-        mapValue.putDouble(this.valueIndex, value);
+        mapValue.putDouble(valueIndex, value);
     }
 
     @Override

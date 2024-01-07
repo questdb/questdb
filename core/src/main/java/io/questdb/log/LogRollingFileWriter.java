@@ -33,8 +33,9 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.DirectCharSink;
-import io.questdb.std.str.NativeLPSZ;
+import io.questdb.std.str.DirectUtf8StringZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
@@ -50,7 +51,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     private final FilesFacade ff;
     private final int level;
     private final TemplateParser locationParser = new TemplateParser();
-    private final NativeLPSZ logFileName = new NativeLPSZ();
+    private final DirectUtf8StringZ logFileName = new DirectUtf8StringZ();
     private final Path path = new Path();
     private final Path renameToPath = new Path();
     private final RingQueue<LogRecordSink> ring;
@@ -269,14 +270,14 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     }
 
     private void copyToBuffer(LogRecordSink sink) {
-        final int l = sink.length();
-        if ((sink.getLevel() & this.level) != 0 && l > 0) {
-            if (_wptr + l >= lim) {
+        final int size = sink.size();
+        if ((sink.getLevel() & this.level) != 0 && size > 0) {
+            if (_wptr + size >= lim) {
                 flush();
             }
 
-            Vect.memcpy(_wptr, sink.getAddress(), l);
-            _wptr += l;
+            Vect.memcpy(_wptr, sink.ptr(), size);
+            _wptr += size;
         }
     }
 
@@ -393,7 +394,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
             CharSequence fileName = logFileNameSink.subSequence(startOffset, endOffset);
             path.trimTo(logDir.length()).concat(fileName).$();
             if ((totalSize += Files.length(path)) > nSizeLimit) {
-                if (!ff.remove(path)) {
+                if (!ff.removeQuiet(path)) {
                     throw new LogError("cannot remove: " + path);
                 }
             }
@@ -403,7 +404,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     private void removeExcessiveLogs(long filePointer, int type) {
         if (type == Files.DT_FILE && Files.notDots(filePointer)) {
             logFileName.of(filePointer);
-            if (Chars.contains(logFileName, logFileTemplate)) {
+            if (Utf8s.containsAscii(logFileName, logFileTemplate)) {
                 path.trimTo(logDir.length()).concat(filePointer).$();
                 int startOffset = logFileNameSink.length();
                 logFileNameSink.put(logFileName);
@@ -418,9 +419,9 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
         if (type == Files.DT_FILE && Files.notDots(filePointer)) {
             path.trimTo(logDir.length()).concat(filePointer).$();
             logFileName.of(filePointer);
-            if (Chars.contains(logFileName, logFileTemplate)
+            if (Utf8s.containsAscii(logFileName, logFileTemplate)
                     && clock.getTicks() - ff.getLastModified(path.$()) * Timestamps.MILLI_MICROS > nLifeDuration) {
-                if (!ff.remove(path)) {
+                if (!ff.removeQuiet(path)) {
                     throw new LogError("cannot remove: " + path);
                 }
             }

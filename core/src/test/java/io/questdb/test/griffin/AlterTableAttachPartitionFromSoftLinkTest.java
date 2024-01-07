@@ -273,7 +273,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                             runO3PartitionPurgeJob();
 
                             path.of(configuration.getRoot()).concat(tableToken);
-                            int plen = path.length();
+                            int plen = path.size();
                             // in Windows if this was a real soft link to a folder, the link would be deleted
                             Assert.assertFalse(ff.exists(path.concat(readOnlyPartitionName).$()));
                             Assert.assertTrue(ff.exists(path.trimTo(plen).concat("2022-10-18").$()));
@@ -729,7 +729,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
             // detach all partitions but last two and them from soft link
             path.of(configuration.getRoot()).concat(tableToken);
-            int pathLen = path.length();
+            int pathLen = path.size();
             for (int i = 0; i < partitionCount - 2; i++) {
                 ddl("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + partitionName[i] + "'", sqlExecutionContext);
                 txn++;
@@ -780,7 +780,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
             // verify cold storage still exists
             other.of(new File(temp.getRoot(), otherLocation).getAbsolutePath()).concat(tableToken);
-            int otherLen = other.length();
+            int otherLen = other.size();
             AtomicInteger fileCount = new AtomicInteger();
             for (int i = 0; i < partitionCount - 2; i++) {
                 other.trimTo(otherLen).concat(partitionName[i]).put(TableUtils.DETACHED_DIR_MARKER).$();
@@ -825,7 +825,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                         });
 
                         // check that the column files still exist within the partition folder (attached from soft link)
-                        final int pathLen = path.length();
+                        final int pathLen = path.size();
                         Assert.assertTrue(ff.exists(path.trimTo(pathLen).concat("s.d").$()));
                         Assert.assertTrue(ff.exists(path.trimTo(pathLen).concat("s.k").$()));
                         Assert.assertTrue(ff.exists(path.trimTo(pathLen).concat("s.v").$()));
@@ -961,7 +961,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                         try {
                             ddl("TRUNCATE TABLE " + tableName, sqlExecutionContext);
                             path.of(configuration.getRoot()).concat(tableToken);
-                            int plen = path.length();
+                            int plen = path.size();
                             Assert.assertFalse(ff.exists(path.concat(readOnlyPartitionName).$()));
                             Assert.assertFalse(ff.exists(path.trimTo(plen).concat("2022-10-18").$()));
                         } catch (SqlException ex) {

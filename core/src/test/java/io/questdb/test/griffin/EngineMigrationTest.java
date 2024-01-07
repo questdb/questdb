@@ -168,7 +168,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
 
         // Remove _txn file for table abc
         abcTxnPath = Path.getThreadLocal(config.getRoot()).concat(tokenAbc).concat(TableUtils.TXN_FILE_NAME).$();
-        Assert.assertTrue(ff.remove(abcTxnPath));
+        Assert.assertTrue(ff.removeQuiet(abcTxnPath));
 
         // Mess, run migration and check
         TestUtils.messTxnUnallocated(ff, Path.getThreadLocal(config.getRoot()), new Rnd(), tokenDef);
@@ -527,26 +527,26 @@ public class EngineMigrationTest extends AbstractCairoTest {
         );
 
         assertSql("x\tm\tts\tдень\tstr\n" +
-                "55\tc\t1970-01-03T07:00:00.000000Z\t\t\n" +
-                "56\ta\t1970-01-03T08:00:00.000000Z\t\t\n" +
-                "57\ta\t1970-01-03T09:00:00.000000Z\t\t\n" +
-                "58\tb\t1970-01-03T10:00:00.000000Z\t\t\n" +
-                "61\ta\t1970-01-03T13:00:00.000000Z\t\t\n" +
-                "62\tc\t1970-01-03T14:00:00.000000Z\t\t\n" +
-                "63\tb\t1970-01-03T15:00:00.000000Z\t\t\n" +
-                "64\ta\t1970-01-03T16:00:00.000000Z\t\t\n" +
-                "65\ta\t1970-01-03T17:00:00.000000Z\t\t\n" +
-                "66\tb\t1970-01-03T18:00:00.000000Z\t\t\n" +
-                "67\ta\t1970-01-03T19:00:00.000000Z\t\t\n" +
-                "68\tc\t1970-01-03T20:00:00.000000Z\t\t\n" +
-                "69\tc\t1970-01-03T21:00:00.000000Z\t\t\n" +
-                "70\ta\t1970-01-03T22:00:00.000000Z\t\t\n" +
-                "71\tc\t1970-01-03T23:00:00.000000Z\t\t\n" +
-                "72\tb\t1970-01-04T00:00:00.000000Z\t\t\n" +
-                "76\tc\t1970-01-04T04:00:00.000000Z\t\t\n" +
-                "77\tc\t1970-01-04T05:00:00.000000Z\t\t\n" +
-                "78\tb\t1970-01-04T06:00:00.000000Z\t\t\n" +
-                "79\ta\t1970-01-04T07:00:00.000000Z\t\t\n", "t_col_top_ooo_day where m != null limit -20"
+                "81\tc\t1970-01-04T09:00:00.000000Z\t\t\n" +
+                "82\tc\t1970-01-04T10:00:00.000000Z\t\t\n" +
+                "84\ta\t1970-01-04T12:00:00.000000Z\t\t\n" +
+                "85\tb\t1970-01-04T13:00:00.000000Z\t\t\n" +
+                "86\tb\t1970-01-04T14:00:00.000000Z\t\t\n" +
+                "87\tb\t1970-01-04T15:00:00.000000Z\t\t\n" +
+                "88\tc\t1970-01-04T16:00:00.000000Z\t\t\n" +
+                "89\tc\t1970-01-04T17:00:00.000000Z\t\t\n" +
+                "90\ta\t1970-01-04T18:00:00.000000Z\t\t\n" +
+                "92\ta\t1970-01-04T20:00:00.000000Z\t\t\n" +
+                "93\tb\t1970-01-04T21:00:00.000000Z\t\t\n" +
+                "94\ta\t1970-01-04T22:00:00.000000Z\t\t\n" +
+                "96\ta\t1970-01-05T00:00:00.000000Z\t\t\n" +
+                "2\ta\t1970-01-05T03:30:00.000000Z\tc\tWTBBMMDB\n" +
+                "3\tb\t1970-01-05T04:30:00.000000Z\tc\tGXIID\n" +
+                "4\tc\t1970-01-05T05:30:00.000000Z\ta\tXRGUOXFH\n" +
+                "6\ta\t1970-01-05T07:30:00.000000Z\tc\tQYDQVLY\n" +
+                "7\tc\t1970-01-05T08:30:00.000000Z\t\tGNVZWJR\n" +
+                "8\tb\t1970-01-05T09:30:00.000000Z\tc\tMLMGICUW\n" +
+                "9\tc\t1970-01-05T10:30:00.000000Z\ta\tLEQD\n", "t_col_top_ooo_day where m != null limit -20"
         );
 
         assertSql("x\tm\tts\tдень\tstr\n" +

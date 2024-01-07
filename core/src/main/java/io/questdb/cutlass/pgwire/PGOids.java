@@ -60,6 +60,10 @@ public class PGOids {
     public static final int PG_PUBLIC_OID = 2200;
     public static final int PG_TIMESTAMP = 1114;
     public static final IntList PG_TYPE_OIDS = new IntList();
+
+    public static final char[] PG_TYPE_TO_CATEGORY = new char[12];
+    public static final CharSequence[] PG_TYPE_TO_DEFAULT = new CharSequence[12];
+    public static final short[] PG_TYPE_TO_LENGTH = new short[12];
     public static final CharSequence[] PG_TYPE_TO_NAME = new CharSequence[12];
     public static final IntIntHashMap PG_TYPE_TO_SIZE_MAP = new IntIntHashMap();
     public static final int PG_UUID = 2950;
@@ -175,5 +179,44 @@ public class PGOids {
         PG_TYPE_TO_NAME[9] = "binary";
         PG_TYPE_TO_NAME[10] = "date";
         PG_TYPE_TO_NAME[11] = "uuid";
+
+        PG_TYPE_TO_CATEGORY[0] = 'S';
+        PG_TYPE_TO_CATEGORY[1] = 'D';
+        PG_TYPE_TO_CATEGORY[2] = 'N';
+        PG_TYPE_TO_CATEGORY[3] = 'N';
+        PG_TYPE_TO_CATEGORY[4] = 'N';
+        PG_TYPE_TO_CATEGORY[5] = 'N';
+        PG_TYPE_TO_CATEGORY[6] = 'Z';
+        PG_TYPE_TO_CATEGORY[7] = 'N';
+        PG_TYPE_TO_CATEGORY[8] = 'B';
+        PG_TYPE_TO_CATEGORY[9] = 'U';
+        PG_TYPE_TO_CATEGORY[10] = 'D';
+        PG_TYPE_TO_CATEGORY[11] = 'U';
+
+        PG_TYPE_TO_LENGTH[0] = -1;
+        PG_TYPE_TO_LENGTH[1] = 8;
+        PG_TYPE_TO_LENGTH[2] = 8;
+        PG_TYPE_TO_LENGTH[3] = 4;
+        PG_TYPE_TO_LENGTH[4] = 4;
+        PG_TYPE_TO_LENGTH[5] = 2;
+        PG_TYPE_TO_LENGTH[6] = 2;
+        PG_TYPE_TO_LENGTH[7] = 8;
+        PG_TYPE_TO_LENGTH[8] = 1;
+        PG_TYPE_TO_LENGTH[9] = -1;
+        PG_TYPE_TO_LENGTH[10] = 8;
+        PG_TYPE_TO_LENGTH[11] = 16;
+
+        PG_TYPE_TO_DEFAULT[0] = null;
+        PG_TYPE_TO_DEFAULT[1] = null;
+        PG_TYPE_TO_DEFAULT[2] = null;
+        PG_TYPE_TO_DEFAULT[3] = null;
+        PG_TYPE_TO_DEFAULT[4] = null;
+        PG_TYPE_TO_DEFAULT[5] = "0";
+        PG_TYPE_TO_DEFAULT[6] = "0";
+        PG_TYPE_TO_DEFAULT[7] = null;
+        PG_TYPE_TO_DEFAULT[8] = "false";
+        PG_TYPE_TO_DEFAULT[9] = null;
+        PG_TYPE_TO_DEFAULT[10] = null;
+        PG_TYPE_TO_DEFAULT[11] = null;
     }
 }

@@ -39,12 +39,16 @@ import io.questdb.std.ObjList;
 
 public class CountDistinctStringGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
     private final Function arg;
+    private final int setInitialCapacity;
+    private final double setLoadFactor;
     private final ObjList<CompactCharSequenceHashSet> sets = new ObjList<>();
     private int setIndex = 0;
     private int valueIndex;
 
-    public CountDistinctStringGroupByFunction(Function arg) {
+    public CountDistinctStringGroupByFunction(Function arg, int setInitialCapacity, double setLoadFactor) {
         this.arg = arg;
+        this.setInitialCapacity = setInitialCapacity;
+        this.setLoadFactor = setLoadFactor;
     }
 
     @Override
@@ -57,11 +61,11 @@ public class CountDistinctStringGroupByFunction extends LongFunction implements 
     public void computeFirst(MapValue mapValue, Record record) {
         final CompactCharSequenceHashSet set;
         if (sets.size() <= setIndex) {
-            sets.extendAndSet(setIndex, set = new CompactCharSequenceHashSet());
+            sets.extendAndSet(setIndex, set = new CompactCharSequenceHashSet(setInitialCapacity, setLoadFactor));
         } else {
             set = sets.getQuick(setIndex);
+            set.clear();
         }
-        set.clear();
 
         final CharSequence val = arg.getStr(record);
         if (val != null) {
@@ -82,7 +86,7 @@ public class CountDistinctStringGroupByFunction extends LongFunction implements 
             if (index < 0) {
                 return;
             }
-            set.addAt(index, Chars.toString(val));
+            set.addAt(index, val);
             mapValue.addLong(valueIndex, 1);
         }
     }

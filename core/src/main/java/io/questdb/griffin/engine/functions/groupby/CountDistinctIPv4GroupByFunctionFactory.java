@@ -43,7 +43,17 @@ public class CountDistinctIPv4GroupByFunctionFactory implements FunctionFactory 
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new CountDistinctIPv4GroupByFunction(args.getQuick(0));
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        return new CountDistinctIPv4GroupByFunction(
+                args.getQuick(0),
+                configuration.getCountDistinctCapacity(),
+                configuration.getCountDistinctLoadFactor()
+        );
     }
 }

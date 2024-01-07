@@ -32,7 +32,7 @@ import org.jetbrains.annotations.TestOnly;
 import java.io.Closeable;
 
 public interface TableNameRegistry extends Closeable {
-    TableToken LOCKED_TOKEN = new TableToken("__locked__", "__locked__", Integer.MAX_VALUE, false, false);
+    TableToken LOCKED_TOKEN = new TableToken("__locked__", "__locked__", Integer.MAX_VALUE, false, false, false);
 
     TableToken addTableAlias(String newName, TableToken tableToken);
 
@@ -120,6 +120,11 @@ public interface TableNameRegistry extends Closeable {
     void purgeToken(TableToken token);
 
     /**
+     * Tests consistency of the internal data structures. This is test-only method
+     */
+    void reconcile();
+
+    /**
      * Registers table name and releases lock. This method must be called after {@link #lockTableName(String, String, int, boolean)}.
      *
      * @param tableToken table token returned by {@link #lockTableName(String, String, int, boolean)}
@@ -129,14 +134,17 @@ public interface TableNameRegistry extends Closeable {
     /**
      * Reloads table name registry from storage.
      */
-    default void reloadTableNameCache() {
-        reloadTableNameCache(null);
+    default void reload() {
+        reload(null);
     }
 
     /**
      * Reloads table name registry from storage, adjusted with converted tables.
+     *
+     * @param convertedTables - list of table tokens for tables that have just been converted from WAL to non-WAL or
+     *                        other way around. This list can be null or empty if no tables have changes the layout.
      */
-    void reloadTableNameCache(@Nullable ObjList<TableToken> convertedTables);
+    void reload(@Nullable ObjList<TableToken> convertedTables);
 
     void removeAlias(TableToken tableToken);
 
@@ -150,7 +158,7 @@ public interface TableNameRegistry extends Closeable {
      */
     TableToken rename(CharSequence oldName, CharSequence newName, TableToken tableToken);
 
-    void replaceAlias(TableToken alias, TableToken replaceWith);
+    void rename(TableToken alias, TableToken replaceWith);
 
     /**
      * Resets table name storage memory to initial value. Used to not false detect memory leaks in tests.

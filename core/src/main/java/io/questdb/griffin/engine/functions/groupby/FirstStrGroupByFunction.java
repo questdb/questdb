@@ -32,13 +32,21 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.str.DirectCharSink;
 import org.jetbrains.annotations.NotNull;
 
 public class FirstStrGroupByFunction extends StrFunction implements GroupByFunction, UnaryFunction {
-    private final Function arg;
-    private final StringSink sink = new StringSink();
-    private int valueIndex;
+
+    private static final int INITIAL_SINK_CAPACITY = 16;
+    private static final int LIST_CLEAR_THRESHOLD = 64;
+
+    protected final Function arg;
+    protected final ObjList<DirectCharSink> sinks = new ObjList<>();
+
+    protected int valueIndex;
+    private int sinkIndex = 0;
 
     public FirstStrGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
@@ -46,13 +54,72 @@ public class FirstStrGroupByFunction extends StrFunction implements GroupByFunct
 
     @Override
     public void clear() {
-        sink.clear();
+        // Free extra sinks.
+        if (sinks.size() > LIST_CLEAR_THRESHOLD) {
+            for (int i = LIST_CLEAR_THRESHOLD, n = sinks.size(); i < n; i++) {
+                sinks.getAndSetQuick(i, null).close();
+            }
+            sinks.setPos(LIST_CLEAR_THRESHOLD);
+        }
+        // Reset capacity on the remaining ones.
+        for (int i = 0, n = sinks.size(); i < n; i++) {
+            DirectCharSink sink = sinks.getQuick(i);
+            if (sink != null) {
+                sink.resetCapacity();
+            }
+        }
+        sinkIndex = 0;
+    }
+
+    @Override
+    public void close() {
+        Misc.freeObjListAndClear(sinks);
+    }
+
+    @Override
+    public void computeFirst(MapValue mapValue, Record record) {
+        final DirectCharSink sink;
+        final CharSequence str = arg.getStr(record);
+        final int strLen = str != null ? str.length() : 0;
+
+        if (sinks.size() <= sinkIndex) {
+            sinks.extendAndSet(sinkIndex, sink = new DirectCharSink(Math.max(INITIAL_SINK_CAPACITY, strLen)));
+        } else {
+            sink = sinks.getQuick(sinkIndex);
+            sink.clear();
+        }
+
+        if (str != null) {
+            sink.put(str);
+            mapValue.putBool(valueIndex + 1, false);
+        } else {
+            mapValue.putBool(valueIndex + 1, true);
+        }
+        mapValue.putInt(valueIndex, sinkIndex++);
+    }
+
+    @Override
+    public void computeNext(MapValue mapValue, Record record) {
+        // empty
+    }
+
+    @Override
+    public Function getArg() {
+        return this.arg;
+    }
+
+    @Override
+    public String getName() {
+        return "first";
     }
 
     @Override
     public CharSequence getStr(Record rec) {
-        boolean hasStr = rec.getBool(valueIndex);
-        return hasStr ? sink : null;
+        final boolean nullValue = rec.getBool(valueIndex + 1);
+        if (nullValue) {
+            return null;
+        }
+        return sinks.getQuick(rec.getInt(valueIndex));
     }
 
     @Override
@@ -73,39 +140,18 @@ public class FirstStrGroupByFunction extends StrFunction implements GroupByFunct
     @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.INT);
-    }
-
-    @Override
-    public void computeFirst(MapValue mapValue, Record record) {
-        CharSequence str = arg.getStr(record);
-        sink.clear();
-        if (null != str) {
-            mapValue.putBool(this.valueIndex, true);
-            sink.put(str);
-        } else {
-            mapValue.putBool(this.valueIndex, false);
-        }
-    }
-
-    @Override
-    public void computeNext(MapValue mapValue, Record record) {
-        // empty
-    }
-
-    @Override
-    public Function getArg() {
-        return this.arg;
-    }
-
-    @Override
-    public String getName() {
-        return "first";
+        columnTypes.add(ColumnType.INT); // sink index
+        columnTypes.add(ColumnType.BOOLEAN); // null flag
     }
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putBool(valueIndex, false);
-        sink.clear();
+        mapValue.putBool(valueIndex + 1, true);
+    }
+
+    @Override
+    public void toTop() {
+        UnaryFunction.super.toTop();
+        sinkIndex = 0;
     }
 }

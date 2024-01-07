@@ -37,12 +37,12 @@ import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.mp.FanOut;
 import io.questdb.mp.SCSequence;
-import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.Misc;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.TableWriterTask;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -165,7 +165,7 @@ public class TableWriterAsyncCmdTest extends AbstractCairoTest {
 
                 @Override
                 public int rename(LPSZ from, LPSZ to) {
-                    if (Chars.endsWith(from, "_meta") && attempt++ < configuration.getFileOperationRetryCount()) {
+                    if (Utf8s.endsWithAscii(from, "_meta") && attempt++ < configuration.getFileOperationRetryCount()) {
                         return Files.FILES_RENAME_ERR_OTHER;
                     }
                     return super.rename(from, to);
@@ -198,11 +198,11 @@ public class TableWriterAsyncCmdTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public boolean rmdir(Path name) {
-                    if (Chars.contains(name, "2020-01-01")) {
+                public boolean rmdir(Path name, boolean lazy) {
+                    if (Utf8s.containsAscii(name, "2020-01-01")) {
                         throw CairoException.critical(11).put("could not remove [path=").put(name).put(']');
                     }
-                    return super.rmdir(name);
+                    return super.rmdir(name, lazy);
                 }
             };
             ddl("create table product as (select x, timestamp_sequence('2020-01-01', 1000000000) ts from long_sequence(100))" +
@@ -234,7 +234,7 @@ public class TableWriterAsyncCmdTest extends AbstractCairoTest {
 
                 @Override
                 public int rename(LPSZ from, LPSZ to) {
-                    if (Chars.endsWith(from, "_meta") && attempt++ < configuration.getFileOperationRetryCount()) {
+                    if (Utf8s.endsWithAscii(from, "_meta") && attempt++ < configuration.getFileOperationRetryCount()) {
                         return Files.FILES_RENAME_ERR_OTHER;
                     }
                     return super.rename(from, to);

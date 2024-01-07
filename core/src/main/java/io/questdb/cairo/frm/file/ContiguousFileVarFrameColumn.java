@@ -259,7 +259,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
         this.columnTop = columnTop;
         this.columnIndex = columnIndex;
 
-        int plen = partitionPath.length();
+        int plen = partitionPath.size();
         try {
             if (!isEmpty) {
                 dFile(partitionPath, columnName, columnTxn);
@@ -282,7 +282,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
         this.columnTop = columnTop;
         this.columnIndex = columnIndex;
 
-        int plen = partitionPath.length();
+        int plen = partitionPath.size();
         try {
             dFile(partitionPath, columnName, columnTxn);
             this.varFd = TableUtils.openRW(ff, partitionPath.$(), LOG, fileOpts);

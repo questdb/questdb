@@ -99,6 +99,11 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
         return base.usesCompiledFilter();
     }
 
+    @Override
+    public boolean usesIndex() {
+        return base.usesIndex();
+    }
+
     private static int toOrder(int filter) {
         if (filter >= 0) {
             return SCAN_DIRECTION_FORWARD;

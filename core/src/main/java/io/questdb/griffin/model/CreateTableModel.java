@@ -29,7 +29,9 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableStructure;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.*;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.Sinkable;
+import org.jetbrains.annotations.NotNull;
 
 public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, TableStructure {
     public static final ObjectFactory<CreateTableModel> FACTORY = CreateTableModel::new;
@@ -280,20 +282,20 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        sink.put("create table ");
+    public void toSink(@NotNull CharSinkBase<?> sink) {
+        sink.putAscii("create table ");
         sink.put(getName().token);
         if (getQueryModel() != null) {
-            sink.put(" as (");
+            sink.putAscii(" as (");
             getQueryModel().toSink(sink);
-            sink.put(')');
+            sink.putAscii(')');
             for (int i = 0, n = getColumnCount(); i < n; i++) {
                 if (isIndexed(i)) {
-                    sink.put(", index(");
+                    sink.putAscii(", index(");
                     sink.put(getColumnName(i));
-                    sink.put(" capacity ");
+                    sink.putAscii(" capacity ");
                     sink.put(getIndexBlockCapacity(i));
-                    sink.put(')');
+                    sink.putAscii(')');
                 }
             }
             final ObjList<CharSequence> castColumns = getColumnCastModels().keys();
@@ -301,77 +303,77 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
                 final CharSequence column = castColumns.getQuick(i);
                 final ColumnCastModel m = getColumnCastModels().get(column);
                 final int type = m.getColumnType();
-                sink.put(", cast(");
+                sink.putAscii(", cast(");
                 sink.put(column);
-                sink.put(" as ");
+                sink.putAscii(" as ");
                 sink.put(ColumnType.nameOf(type));
-                sink.put(':');
+                sink.putAscii(':');
                 sink.put(m.getColumnTypePos());
                 if (ColumnType.isSymbol(type)) {
-                    sink.put(" capacity ");
+                    sink.putAscii(" capacity ");
                     sink.put(m.getSymbolCapacity());
                     if (m.getSymbolCacheFlag()) {
-                        sink.put(" cache");
+                        sink.putAscii(" cache");
                     } else {
-                        sink.put(" nocache");
+                        sink.putAscii(" nocache");
                     }
 
                     if (m.isIndexed()) {
-                        sink.put(" index capacity ");
+                        sink.putAscii(" index capacity ");
                         sink.put(m.getIndexValueBlockSize());
                     }
                 }
-                sink.put(')');
+                sink.putAscii(')');
             }
         } else {
-            sink.put(" (");
+            sink.putAscii(" (");
             if (getLikeTableName() != null) {
-                sink.put("like ");
+                sink.putAscii("like ");
                 sink.put(getLikeTableName().token);
             } else {
                 int count = getColumnCount();
                 for (int i = 0; i < count; i++) {
                     if (i > 0) {
-                        sink.put(", ");
+                        sink.putAscii(", ");
                     }
                     sink.put(getColumnName(i));
-                    sink.put(' ');
+                    sink.putAscii(' ');
                     sink.put(ColumnType.nameOf(getColumnType(i)));
 
                     if (ColumnType.isSymbol(getColumnType(i))) {
-                        sink.put(" capacity ");
+                        sink.putAscii(" capacity ");
                         sink.put(getSymbolCapacity(i));
                         if (getSymbolCacheFlag(i)) {
-                            sink.put(" cache");
+                            sink.putAscii(" cache");
                         } else {
-                            sink.put(" nocache");
+                            sink.putAscii(" nocache");
                         }
                     }
 
                     if (isIndexed(i)) {
-                        sink.put(" index capacity ");
+                        sink.putAscii(" index capacity ");
                         sink.put(getIndexBlockCapacity(i));
                     }
                 }
             }
-            sink.put(')');
+            sink.putAscii(')');
         }
 
         if (getTimestamp() != null) {
-            sink.put(" timestamp(");
+            sink.putAscii(" timestamp(");
             sink.put(getTimestamp().token);
-            sink.put(')');
+            sink.putAscii(')');
         }
 
         if (partitionBy != null) {
-            sink.put(" partition by ").put(partitionBy.token);
+            sink.putAscii(" partition by ").put(partitionBy.token);
             if (walEnabled) {
-                sink.put(" wal");
+                sink.putAscii(" wal");
             }
         }
 
         if (volumeAlias != null) {
-            sink.put(" in volume '").put(volumeAlias).put('\'');
+            sink.putAscii(" in volume '").put(volumeAlias).putAscii('\'');
         }
     }
 

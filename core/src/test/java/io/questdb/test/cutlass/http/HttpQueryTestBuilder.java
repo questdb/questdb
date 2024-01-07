@@ -45,6 +45,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.network.PlainSocketFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.mp.TestWorkerPool;
@@ -70,7 +71,7 @@ public class HttpQueryTestBuilder {
     private QueryFutureUpdateListener queryFutureUpdateListener;
     private long queryTimeout = -1;
     private HttpServerConfigurationBuilder serverConfigBuilder;
-    private SqlExecutionContextImpl sqlExecutionContext;
+    private ObjList<SqlExecutionContextImpl> sqlExecutionContexts;
     private long startWriterWaitTimeout = 500;
     private Boolean staticContentAuthRequired;
     private boolean telemetry;
@@ -78,8 +79,8 @@ public class HttpQueryTestBuilder {
     private HttpRequestProcessorBuilder textImportProcessor;
     private int workerCount = 1;
 
-    public SqlExecutionContextImpl getSqlExecutionContext() {
-        return sqlExecutionContext;
+    public ObjList<SqlExecutionContextImpl> getSqlExecutionContexts() {
+        return sqlExecutionContexts;
     }
 
     public int getWorkerCount() {
@@ -112,10 +113,10 @@ public class HttpQueryTestBuilder {
                     public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
                         return new DefaultSqlExecutionCircuitBreakerConfiguration() {
                             @Override
-                            public long getTimeout() {
+                            public long getQueryTimeout() {
                                 return queryTimeout > 0 || queryTimeout == SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK
                                         ? queryTimeout
-                                        : super.getTimeout();
+                                        : super.getQueryTimeout();
                             }
                         };
                     }
@@ -167,7 +168,7 @@ public class HttpQueryTestBuilder {
             }
             try (
                     CairoEngine engine = new CairoEngine(cairoConfiguration, metrics);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, PlainSocketFactory.INSTANCE)
+                    HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, PlainSocketFactory.INSTANCE)
             ) {
                 TelemetryJob telemetryJob = null;
                 if (telemetry) {
@@ -208,12 +209,7 @@ public class HttpQueryTestBuilder {
                     }
                 });
 
-                this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount) {
-                    @Override
-                    public QueryFutureUpdateListener getQueryFutureUpdateListener() {
-                        return queryFutureUpdateListener != null ? queryFutureUpdateListener : QueryFutureUpdateListener.EMPTY;
-                    }
-                };
+                this.sqlExecutionContexts = new ObjList<>();
 
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -223,10 +219,19 @@ public class HttpQueryTestBuilder {
 
                     @Override
                     public HttpRequestProcessor newInstance() {
+                        SqlExecutionContextImpl newContext = new SqlExecutionContextImpl(engine, workerCount) {
+                            @Override
+                            public QueryFutureUpdateListener getQueryFutureUpdateListener() {
+                                return queryFutureUpdateListener != null ? queryFutureUpdateListener : QueryFutureUpdateListener.EMPTY;
+                            }
+                        };
+
+                        sqlExecutionContexts.add(newContext);
+
                         return new JsonQueryProcessor(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
-                                sqlExecutionContext
+                                newContext
                         );
                     }
                 });

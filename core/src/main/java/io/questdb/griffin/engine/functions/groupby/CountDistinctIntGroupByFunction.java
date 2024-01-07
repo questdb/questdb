@@ -38,12 +38,16 @@ import io.questdb.std.ObjList;
 
 public class CountDistinctIntGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
     private final Function arg;
+    private final int setInitialCapacity;
+    private final double setLoadFactor;
     private final ObjList<CompactIntHashSet> sets = new ObjList<>();
     private int setIndex;
     private int valueIndex;
 
-    public CountDistinctIntGroupByFunction(Function arg) {
+    public CountDistinctIntGroupByFunction(Function arg, int setInitialCapacity, double setLoadFactor) {
         this.arg = arg;
+        this.setInitialCapacity = setInitialCapacity;
+        this.setLoadFactor = setLoadFactor;
     }
 
     @Override
@@ -56,11 +60,11 @@ public class CountDistinctIntGroupByFunction extends LongFunction implements Una
     public void computeFirst(MapValue mapValue, Record record) {
         final CompactIntHashSet set;
         if (sets.size() <= setIndex) {
-            sets.extendAndSet(setIndex, set = new CompactIntHashSet());
+            sets.extendAndSet(setIndex, set = new CompactIntHashSet(setInitialCapacity, setLoadFactor, Numbers.INT_NaN));
         } else {
             set = sets.getQuick(setIndex);
+            set.clear();
         }
-        set.clear();
 
         final int val = arg.getInt(record);
         if (val != Numbers.INT_NaN) {

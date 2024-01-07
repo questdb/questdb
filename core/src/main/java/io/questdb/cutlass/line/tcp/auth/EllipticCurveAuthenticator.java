@@ -25,6 +25,7 @@
 package io.questdb.cutlass.line.tcp.auth;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.auth.Authenticator;
 import io.questdb.cutlass.auth.AuthenticatorException;
@@ -32,11 +33,11 @@ import io.questdb.cutlass.auth.ChallengeResponseMatcher;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.Socket;
-import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 
 import java.security.SecureRandom;
@@ -47,7 +48,7 @@ public class EllipticCurveAuthenticator implements Authenticator {
 
     private static final ThreadLocal<SecureRandom> tlSrand = new ThreadLocal<>(SecureRandom::new);
     private final ChallengeResponseMatcher challengeResponseMatcher;
-    private final DirectByteCharSequence userNameFlyweight = new DirectByteCharSequence();
+    private final DirectUtf8String userNameFlyweight = new DirectUtf8String();
     protected long recvBufPseudoStart;
     private AuthState authState;
     private long challengePtr;
@@ -65,6 +66,11 @@ public class EllipticCurveAuthenticator implements Authenticator {
     @Override
     public void close() {
         challengePtr = Unsafe.free(challengePtr, AuthUtils.CHALLENGE_LEN, MemoryTag.NATIVE_DEFAULT);
+    }
+
+    @Override
+    public byte getAuthType() {
+        return SecurityContext.AUTH_TYPE_JWK_TOKEN;
     }
 
     @Override
@@ -162,7 +168,7 @@ public class EllipticCurveAuthenticator implements Authenticator {
         int lineEnd = findLineEnd();
         if (lineEnd != -1) {
             userNameFlyweight.of(recvBufStart, recvBufStart + lineEnd);
-            principal = Chars.toString(userNameFlyweight);
+            principal = Utf8s.toString(userNameFlyweight);
             LOG.info().$('[').$(socket.getFd()).$("] authentication read key id [keyId=").$(userNameFlyweight).I$();
             recvBufPos = recvBufStart;
             // Generate a challenge with printable ASCII characters 0x20 to 0x7e
@@ -214,7 +220,7 @@ public class EllipticCurveAuthenticator implements Authenticator {
                 throw AuthenticatorException.INSTANCE;
             }
             authState = AuthState.FAILED;
-            boolean verified = challengeResponseMatcher.verifyLineToken(principal, challengePtr, AuthUtils.CHALLENGE_LEN, recvBufStart, lineEnd);
+            boolean verified = challengeResponseMatcher.verifyJwk(principal, challengePtr, AuthUtils.CHALLENGE_LEN, recvBufStart, lineEnd);
             if (!verified) {
                 LOG.info().$('[').$(socket.getFd()).$("] authentication failed, signature was not verified").$();
                 throw AuthenticatorException.INSTANCE;

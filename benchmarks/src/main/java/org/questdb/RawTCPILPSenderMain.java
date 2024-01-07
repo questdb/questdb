@@ -25,10 +25,10 @@
 package org.questdb;
 
 import io.questdb.network.Net;
-import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.Utf8s;
 
 public class RawTCPILPSenderMain {
     public static void main(String[] args) {
@@ -37,7 +37,7 @@ public class RawTCPILPSenderMain {
 
         long mem = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
         try {
-            Chars.asciiStrCpy(ilp, len, mem);
+            Utf8s.strCpyAscii(ilp, len, mem);
             int fd = Net.socketTcp(true);
             if (fd != -1) {
                 if (Net.connect(fd, Net.sockaddr("127.0.0.1", 9009)) == 0) {

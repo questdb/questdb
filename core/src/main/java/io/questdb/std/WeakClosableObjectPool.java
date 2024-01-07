@@ -28,7 +28,7 @@ import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
-public class WeakClosableObjectPool<T extends Closeable> extends WeakObjectPoolBase<T> implements Closeable {
+public class WeakClosableObjectPool<T> extends WeakObjectPoolBase<T> implements Pool<T>, Closeable {
     private final ObjectFactory<T> factory;
 
     public WeakClosableObjectPool(@NotNull ObjectFactory<T> factory, int initSize) {
@@ -46,7 +46,7 @@ public class WeakClosableObjectPool<T extends Closeable> extends WeakObjectPoolB
     @Override
     public void close() {
         while (cache.size() > 0) {
-            Misc.free(cache.pop());
+            Misc.freeIfCloseable(cache.pop());
         }
     }
 
@@ -57,7 +57,7 @@ public class WeakClosableObjectPool<T extends Closeable> extends WeakObjectPoolB
 
     @Override
     void close(T obj) {
-        Misc.free(obj);
+        Misc.freeIfCloseable(obj);
     }
 
     @Override

@@ -102,7 +102,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
             CreateTableTestUtils.create(model);
         }
 
-        try (TableWriter writer = newTableWriter(configuration, "x", metrics)) {
+        try (TableWriter writer = newOffPoolWriter(configuration, "x", metrics)) {
             TableWriter.Row row = writer.newRow();
             row.putSym(writer.getColumnIndex("asymbol"), KNOWN_SYMBOL_1);
             row.putSym(writer.getColumnIndex("anothersymbol"), KNOWN_SYMBOL_2);
@@ -207,7 +207,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         Map<String, String[]> typeToColumn = new HashMap<>();
         typeToColumn.put("i8", new String[]{"aboolean", "abyte", "ageobyte"});
         typeToColumn.put("i16", new String[]{"ashort", "ageoshort", "achar"});
-        typeToColumn.put("i32", new String[]{"anint", "ageoint", "asymbol"});
+        typeToColumn.put("i32", new String[]{"anint", "ageoint"/*, "asymbol"*/});
         typeToColumn.put("i64", new String[]{"along", "ageolong", "adate", "atimestamp"});
         typeToColumn.put("i128", new String[]{"auuid", "along128"});
         typeToColumn.put("f32", new String[]{"afloat"});

@@ -604,7 +604,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
             boolean inVolume,
             boolean addIfNotExists
     ) throws Exception {
-        StringSink sink = Misc.getThreadLocalBuilder();
+        StringSink sink = Misc.getThreadLocalSink();
         sink.put("CREATE TABLE ");
         if (addIfNotExists) {
             sink.put("IF NOT EXISTS ");

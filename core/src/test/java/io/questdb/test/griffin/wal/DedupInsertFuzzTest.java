@@ -116,7 +116,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             ObjList<FuzzTransaction> transactions = new ObjList<>();
             long initialDelta = Timestamps.MINUTE_MICROS * 15;
             int rndCount = rnd.nextInt(10);
-            List<String> distinctSymbols = Arrays.stream(generateSymbols(rnd, 1 + rndCount, 4, tableName)).distinct()
+            List<String> distinctSymbols = Arrays.stream(generateSymbols(rnd, 1 + rndCount, rnd.nextPositiveInt() % 16, tableName)).distinct()
                     .collect(Collectors.toList());
             String[] symbols = new String[distinctSymbols.size()];
             distinctSymbols.toArray(symbols);
@@ -376,7 +376,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 rnd.nextDouble(),
                 rnd.nextDouble(),
                 0.1 * rnd.nextDouble(),
-                0.5
+                0.5,
+                0.0
         );
 
         setFuzzCounts(
@@ -406,7 +407,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 rnd.nextDouble(),
                 rnd.nextDouble(),
                 0.1 * rnd.nextDouble(),
-                0.5
+                0.5,
+                0.0
         );
 
         setFuzzCounts(
@@ -436,6 +438,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 rnd.nextDouble(),
                 rnd.nextDouble(),
                 0.1 * rnd.nextDouble(),
+                0.0,
                 0.0
         );
 
@@ -626,14 +629,14 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     private void runFuzzWithRandomColsDedup(Rnd rnd, int dedupKeys) throws Exception {
         assertMemoryLeak(() -> {
             String tableNameBase = getTestName();
-            String tableNameWal = tableNameBase + "_wal";
+            String tableNameDedup = tableNameBase + "_wal";
             String tableNameWalNoDedup = tableNameBase + "_nodedup";
 
-            createInitialTable(tableNameWalNoDedup, true, initialRowCount);
-            createInitialTable(tableNameWal, true, initialRowCount);
+            fuzzer.createInitialTable(tableNameWalNoDedup, true);
+            fuzzer.createInitialTable(tableNameDedup, true);
 
             // Add long256 type to have to be a chance of a dedup key
-            compile("alter table " + tableNameWal + " add column col256 long256");
+            compile("alter table " + tableNameDedup + " add column col256 long256");
             compile("alter table " + tableNameWalNoDedup + " add column col256 long256");
 
             drainWalQueue();
@@ -642,19 +645,23 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             IntList upsertKeyIndexes = new IntList();
             String comaSeparatedUpsertCols;
             String timestampColumnName;
-            try (TableReader reader = getReader(tableNameWalNoDedup)) {
-                TableReaderMetadata metadata = reader.getMetadata();
-                chooseUpsertKeys(metadata, dedupKeys, rnd, upsertKeyIndexes);
-                timestampColumnName = metadata.getColumnName(metadata.getTimestampIndex());
+
+            try (
+                    TableReader reader = getReader(tableNameWalNoDedup);
+                    TableMetadata sequencerMetadata = engine.getSequencerMetadata(reader.getTableToken())
+            ) {
+                TableReaderMetadata readerMetadata = reader.getMetadata();
+                chooseUpsertKeys(readerMetadata, dedupKeys, rnd, upsertKeyIndexes);
+                timestampColumnName = readerMetadata.getColumnName(readerMetadata.getTimestampIndex());
 
                 long start = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T23:59:59");
                 long end = start + 2 * Timestamps.SECOND_MICROS;
-                transactions = generateSet(rnd, metadata, start, end, tableNameWalNoDedup);
-                comaSeparatedUpsertCols = toCommaSeparatedString(metadata, upsertKeyIndexes);
+                transactions = generateSet(rnd, sequencerMetadata, readerMetadata, start, end, tableNameWalNoDedup);
+                comaSeparatedUpsertCols = toCommaSeparatedString(readerMetadata, upsertKeyIndexes);
             }
             String alterStatement = String.format(
                     "alter table %s dedup upsert keys(%s))",
-                    tableNameWal,
+                    tableNameDedup,
                     comaSeparatedUpsertCols
             );
             compile(alterStatement);
@@ -664,7 +671,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
             try {
                 applyWal(transactions, tableNameWalNoDedup, 1, new Rnd());
-                applyWal(transactions, tableNameWal, 1 + rnd.nextInt(4), rnd);
+                applyWal(transactions, tableNameDedup, 1 + rnd.nextInt(4), rnd);
 
                 String renamedUpsertKeys;
                 ObjList<CharSequence> upsertKeyNames = new ObjList<>();
@@ -677,11 +684,11 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 assertSqlCursorsNoDups(
                         tableNameWalNoDedup,
                         upsertKeyNames,
-                        tableNameWal
+                        tableNameDedup
                 );
 
-                assertCounts(tableNameWal, timestampColumnName);
-                assertStringColDensity(tableNameWal);
+                fuzzer.assertCounts(tableNameDedup, timestampColumnName);
+                fuzzer.assertStringColDensity(tableNameDedup);
             } finally {
                 sharedWorkerPool.halt();
             }
@@ -691,39 +698,39 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     private void runFuzzWithRepeatDedup(Rnd rnd) throws Exception {
         assertMemoryLeak(() -> {
             String tableNameBase = getTestName();
-            String tableNameWal = tableNameBase + "_wal";
+            String tableNameDedup = tableNameBase + "_wal";
             String tableNameNoWal = tableNameBase + "_nonwal";
 
-            createInitialTable(tableNameWal, true, initialRowCount);
-            createInitialTable(tableNameNoWal, false, initialRowCount);
+            TableToken dedupTt = fuzzer.createInitialTable(tableNameDedup, true);
+            fuzzer.createInitialTable(tableNameNoWal, false);
 
-            ObjList<FuzzTransaction> transactions;
             String timestampColumnName;
-            try (TableReader reader = getReader(tableNameWal)) {
-                TableReaderMetadata metadata = reader.getMetadata();
-                timestampColumnName = metadata.getColumnName(metadata.getTimestampIndex());
-
-                long start = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T17");
-                long end = start + partitionCount * Timestamps.DAY_MICROS;
-                transactions = generateSet(rnd, metadata, start, end, tableNameNoWal);
+            try (TableMetadata meta = engine.getSequencerMetadata(dedupTt)) {
+                timestampColumnName = meta.getColumnName(meta.getTimestampIndex());
             }
+
+            long start = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T17");
+            long end = start + fuzzer.partitionCount * Timestamps.DAY_MICROS;
+            ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableNameDedup, rnd, start, end);
 
             transactions = uniqueInserts(transactions);
             O3Utils.setupWorkerPool(sharedWorkerPool, engine, null);
             sharedWorkerPool.start(LOG);
 
             try {
-                applyNonWal(transactions, tableNameNoWal, rnd);
+                fuzzer.applyNonWal(transactions, tableNameNoWal, rnd);
 
                 ObjList<FuzzTransaction> transactionsWithDups = duplicateInserts(transactions, rnd);
-                ddl("alter table " + tableNameWal + " dedup upsert keys(ts)");
-                applyWal(transactionsWithDups, tableNameWal, 1 + rnd.nextInt(4), rnd);
+                ddl("alter table " + tableNameDedup + " dedup upsert keys(ts)", sqlExecutionContext);
+                applyWal(transactionsWithDups, tableNameDedup, 1 + rnd.nextInt(4), rnd);
 
-                TestUtils.assertSqlCursors(engine, sqlExecutionContext, tableNameNoWal, tableNameWal, LOG);
+                String limit = "";
+                TestUtils.assertSqlCursors(engine, sqlExecutionContext, tableNameNoWal + limit, tableNameDedup + limit, LOG);
+                fuzzer.assertRandomIndexes(tableNameNoWal, tableNameDedup, rnd);
                 // assert table count() values
-                assertCounts(tableNameWal, timestampColumnName);
-                assertCounts(tableNameNoWal, timestampColumnName);
-                assertStringColDensity(tableNameWal);
+                fuzzer.assertCounts(tableNameDedup, timestampColumnName);
+                fuzzer.assertCounts(tableNameNoWal, timestampColumnName);
+                fuzzer.assertStringColDensity(tableNameDedup);
             } finally {
                 sharedWorkerPool.halt();
             }
@@ -852,7 +859,11 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                         started = true;
                         sink.putISODate(timestamp).put(',').put(commit);
                         if (symbols != null) {
-                            sink.put(',').put(rec.getSym(2));
+                            sink.put(',');
+                            CharSequence cs = rec.getSym(2);
+                            if (cs != null) {
+                                sink.put(cs);
+                            }
                         }
                         sink.put('\n');
                     }

@@ -41,7 +41,7 @@ public class GeoHashesSwitchOnIntVsCharBenchmark {
     @Benchmark
     public static void isValidBits0() {
         Rnd rnd = new Rnd();
-        StringSink sink = Misc.getThreadLocalBuilder();
+        StringSink sink = Misc.getThreadLocalSink();
         for (int j = 0, m = 10_000_000; j < m; j++) {
             if (!isValidBits0(rnd_geobits(rnd, sink), 0)) {
                 throw new AssertionError();
@@ -52,7 +52,7 @@ public class GeoHashesSwitchOnIntVsCharBenchmark {
     @Benchmark
     public static void isValidBits1() {
         Rnd rnd = new Rnd();
-        StringSink sink = Misc.getThreadLocalBuilder();
+        StringSink sink = Misc.getThreadLocalSink();
         for (int j = 0, m = 10_000_000; j < m; j++) {
             if (!isValidBits1(rnd_geobits(rnd, sink), 0)) {
                 throw new AssertionError();

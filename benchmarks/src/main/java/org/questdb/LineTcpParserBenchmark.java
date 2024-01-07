@@ -28,7 +28,7 @@ import io.questdb.cutlass.line.tcp.LineTcpParser;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.DirectUnboundedByteSink;
+import io.questdb.std.str.FlyweightDirectCharSink;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.infra.Blackhole;
 import org.openjdk.jmh.runner.Runner;
@@ -54,8 +54,8 @@ public class LineTcpParserBenchmark {
 
         Rnd rnd = new Rnd();
         long lineLenEstimate = 0;
-        DirectUnboundedByteSink sink = new DirectUnboundedByteSink();
-        sink.of(bufLo);
+        FlyweightDirectCharSink sink = new FlyweightDirectCharSink();
+        sink.of(bufLo, bufLo + BUFFER_SIZE);
         while (sink.length() < (BUFFER_SIZE - lineLenEstimate)) {
             sink.put("cpu")
                     .put(",hostname=host_").put(String.valueOf(rnd.nextInt(1000)))

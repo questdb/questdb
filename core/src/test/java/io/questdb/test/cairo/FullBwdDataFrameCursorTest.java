@@ -80,7 +80,7 @@ public class FullBwdDataFrameCursorTest extends AbstractCairoTest {
             long increment = 3600000000L * 8;
             int N = 10;
 
-            try (TableWriter w = newTableWriter(configuration, "x", metrics)) {
+            try (TableWriter w = newOffPoolWriter(configuration, "x", metrics)) {
                 for (int i = 0; i < N; i++) {
                     TableWriter.Row row = w.newRow(timestamp);
                     row.putInt(0, rnd.nextInt());

@@ -26,6 +26,9 @@ package io.questdb.std;
 
 import io.questdb.cairo.BinarySearch;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.Sinkable;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.Arrays;
@@ -133,7 +136,7 @@ public class LongList implements Mutable, LongVec, Sinkable {
         int low = 0;
         int high = pos - 1;
         while (high - low > 65) {
-            final int mid = (low + high) / 2;
+            final int mid = (low + high) >>> 1;
             final long midVal = data[mid];
 
             if (midVal < value) {
@@ -174,7 +177,7 @@ public class LongList implements Mutable, LongVec, Sinkable {
         int low = offset >> shl;
         int high = (pos - 1) >> shl;
         while (high - low > 65) {
-            final int mid = (low + high) / 2;
+            final int mid = (low + high) >>> 1;
             final long midVal = data[mid << shl];
 
             if (midVal < value) {
@@ -447,15 +450,15 @@ public class LongList implements Mutable, LongVec, Sinkable {
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        sink.put('[');
+    public void toSink(@NotNull CharSinkBase<?> sink) {
+        sink.putAscii('[');
         for (int i = 0, k = pos; i < k; i++) {
             if (i > 0) {
-                sink.put(',');
+                sink.putAscii(',');
             }
             sink.put(get(i));
         }
-        sink.put(']');
+        sink.putAscii(']');
     }
 
     /**
@@ -463,7 +466,7 @@ public class LongList implements Mutable, LongVec, Sinkable {
      */
     @Override
     public String toString() {
-        final CharSink sb = Misc.getThreadLocalBuilder();
+        final CharSink sb = Misc.getThreadLocalSink();
         toSink(sb);
         return sb.toString();
     }

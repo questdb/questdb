@@ -32,6 +32,8 @@ import io.questdb.std.ObjectPool;
 import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public class CharacterStore extends AbstractCharSink implements CharacterStoreEntry, Mutable {
     private static final Log LOG = LogFactory.getLog(CharacterStore.class);
@@ -76,7 +78,7 @@ public class CharacterStore extends AbstractCharSink implements CharacterStoreEn
     }
 
     @Override
-    public CharSink put(char[] chars, int start, int len) {
+    public CharSink put(char @NotNull [] chars, int start, int len) {
         for (int i = 0; i < len; i++) {
             put(chars[start + i]);
         }
@@ -84,9 +86,11 @@ public class CharacterStore extends AbstractCharSink implements CharacterStoreEn
     }
 
     @Override
-    public CharSink put(CharSequence cs) {
-        assert cs != null;
-        return put(cs, 0, cs.length());
+    public CharSink put(@Nullable CharSequence cs) {
+        if (cs != null) {
+            put(cs, 0, cs.length());
+        }
+        return this;
     }
 
     @Override

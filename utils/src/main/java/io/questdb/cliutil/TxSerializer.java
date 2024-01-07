@@ -58,7 +58,7 @@ public class TxSerializer {
      *  Command line arguments: -s <json_path> <txn_path> | -d <txn_path>
      */
     public static void main(String[] args) throws IOException {
-        LogFactory.configureSync();
+        LogFactory.enableGuaranteedLogging();
         if (args.length < 2 || args.length > 3) {
             printUsage();
             return;
@@ -131,6 +131,11 @@ public class TxSerializer {
             rwTxMem.putLong(baseOffset + TX_OFFSET_TRUNCATE_VERSION_64, tx.TX_OFFSET_TRUNCATE_VERSION);
             rwTxMem.putLong(baseOffset + TX_OFFSET_SEQ_TXN_64, tx.TX_OFFSET_SEQ_TXN);
             rwTxMem.putInt(baseOffset + TX_OFFSET_MAP_WRITER_COUNT_32, tx.TX_OFFSET_MAP_WRITER_COUNT);
+            rwTxMem.putInt(baseOffset + TX_OFFSET_LAG_ROW_COUNT_32, tx.TX_OFFSET_LAG_ROW_COUNT);
+            rwTxMem.putInt(baseOffset + TX_OFFSET_LAG_TXN_COUNT_32, tx.TX_OFFSET_LAG_TXN_COUNT);
+            rwTxMem.putLong(baseOffset + TX_OFFSET_LAG_MAX_TIMESTAMP_64, tx.TX_OFFSET_LAG_MAX_TIMESTAMP);
+            rwTxMem.putLong(baseOffset + TX_OFFSET_LAG_MIN_TIMESTAMP_64, tx.TX_OFFSET_LAG_MIN_TIMESTAMP);
+            rwTxMem.putInt(baseOffset + TX_OFFSET_CHECKSUM_32, tx.TX_OFFSET_CHECKSUM);
 
             if (tx.TX_OFFSET_MAP_WRITER_COUNT != 0) {
                 int isym = 0;
@@ -183,7 +188,12 @@ public class TxSerializer {
                 tx.TX_OFFSET_MAP_WRITER_COUNT = roTxMem.getInt(baseOffset + TX_OFFSET_MAP_WRITER_COUNT_32); // symbolColumnCount
                 tx.TX_OFFSET_PARTITION_TABLE_VERSION = roTxMem.getLong(baseOffset + TX_OFFSET_PARTITION_TABLE_VERSION_64);
                 tx.TX_OFFSET_COLUMN_VERSION = roTxMem.getLong(baseOffset + TX_OFFSET_COLUMN_VERSION_64);
+                tx.TX_OFFSET_LAG_ROW_COUNT = roTxMem.getInt(baseOffset + TX_OFFSET_LAG_ROW_COUNT_32);
+                tx.TX_OFFSET_LAG_TXN_COUNT = roTxMem.getInt(baseOffset + TX_OFFSET_LAG_TXN_COUNT_32);
                 tx.TX_OFFSET_TRUNCATE_VERSION = roTxMem.getLong(baseOffset + TX_OFFSET_TRUNCATE_VERSION_64);
+                tx.TX_OFFSET_LAG_MIN_TIMESTAMP = roTxMem.getLong(baseOffset + TX_OFFSET_LAG_MIN_TIMESTAMP_64);
+                tx.TX_OFFSET_LAG_MAX_TIMESTAMP = roTxMem.getLong(baseOffset + TX_OFFSET_LAG_MAX_TIMESTAMP_64);
+                tx.TX_OFFSET_CHECKSUM = roTxMem.getInt(baseOffset + TX_OFFSET_LAG_MAX_TIMESTAMP_64);
                 tx.TX_OFFSET_SEQ_TXN = roTxMem.getLong(baseOffset + TX_OFFSET_SEQ_TXN_64);
 
                 final int symbolColumnCount = symbolsSize / Long.BYTES;

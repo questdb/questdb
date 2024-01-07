@@ -26,7 +26,6 @@ package io.questdb;
 
 import io.questdb.cairo.TableWriterMetrics;
 import io.questdb.cairo.wal.WalMetrics;
-import io.questdb.metrics.WorkerMetrics;
 import io.questdb.cutlass.http.processors.JsonQueryMetrics;
 import io.questdb.cutlass.line.LineMetrics;
 import io.questdb.cutlass.pgwire.PGWireMetrics;
@@ -34,7 +33,8 @@ import io.questdb.metrics.*;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.BorrowableUtf8Sink;
+import org.jetbrains.annotations.NotNull;
 
 public class Metrics implements Scrapable {
     private final boolean enabled;
@@ -74,6 +74,10 @@ public class Metrics implements Scrapable {
         return new Metrics(true, new MetricsRegistryImpl());
     }
 
+    public MetricsRegistry getRegistry() {
+        return metricsRegistry;
+    }
+
     public HealthMetricsImpl health() {
         return healthCheck;
     }
@@ -95,7 +99,7 @@ public class Metrics implements Scrapable {
     }
 
     @Override
-    public void scrapeIntoPrometheus(CharSink sink) {
+    public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
         metricsRegistry.scrapeIntoPrometheus(sink);
         if (enabled) {
             gcMetrics.scrapeIntoPrometheus(sink);
@@ -114,10 +118,6 @@ public class Metrics implements Scrapable {
         return workerMetrics;
     }
 
-    void addScrapable(Scrapable scrapable){
-        metricsRegistry.addScrapable(scrapable);
-    }
-
     private void createMemoryGauges(MetricsRegistry metricsRegistry) {
         for (int i = 0; i < MemoryTag.SIZE; i++) {
             metricsRegistry.newLongGauge(i);
@@ -131,5 +131,9 @@ public class Metrics implements Scrapable {
         metricsRegistry.newVirtualGauge("memory_jvm_free", jvmFreeMemRef);
         metricsRegistry.newVirtualGauge("memory_jvm_total", jvmTotalMemRef);
         metricsRegistry.newVirtualGauge("memory_jvm_max", jvmMaxMemRef);
+    }
+
+    void addScrapable(Scrapable scrapable) {
+        metricsRegistry.addScrapable(scrapable);
     }
 }

@@ -61,7 +61,7 @@ public class TypeOfFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testTypeOfAllRegularDataTypes() throws SqlException {
-        for (int i = ColumnType.BOOLEAN; i < ColumnType.MAX; i++) {
+        for (int i = ColumnType.BOOLEAN; i < ColumnType.NULL; i++) {
             String name = ColumnType.nameOf(i);
             if (Chars.equals("unknown", name)
                     || i == ColumnType.CURSOR
@@ -83,7 +83,7 @@ public class TypeOfFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testTypeOfGeoHash() throws SqlException {
-        for (int i = 1; i <= ColumnType.GEO_HASH_MAX_BITS_LENGTH; i++) {
+        for (int i = 1; i <= ColumnType.GEOLONG_MAX_BITS; i++) {
             int type = ColumnType.getGeoHashTypeWithBits(i);
             sink.clear();
             sink.put("select typeOf(rnd_geohash(").put(i).put("))");

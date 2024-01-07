@@ -30,6 +30,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
 import java.io.Closeable;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBreaker, Closeable {
     private final int bufferSize;
@@ -40,6 +41,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     private final NetworkFacade nf;
     private final int throttle;
     private long buffer;
+    private AtomicBoolean cancelledFlag;
     private int fd = -1;
     private volatile long powerUpTime = Long.MAX_VALUE;
     private int secret;
@@ -54,7 +56,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         this.memoryTag = memoryTag;
         this.buffer = Unsafe.malloc(this.bufferSize, this.memoryTag);
         this.clock = configuration.getClock();
-        long timeout = configuration.getTimeout();
+        long timeout = configuration.getQueryTimeout();
         if (timeout > 0) {
             this.timeout = timeout;
         } else if (timeout == TIMEOUT_FAIL_ON_FIRST_CHECK) {
@@ -68,6 +70,9 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     @Override
     public void cancel() {
         powerUpTime = Long.MIN_VALUE;
+        if (cancelledFlag != null) {
+            cancelledFlag.set(true);
+        }
     }
 
     @Override
@@ -78,6 +83,9 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     @Override
     public boolean checkIfTripped(long millis, int fd) {
         if (clock.getTicks() - timeout > millis) {
+            return true;
+        }
+        if (cancelledFlag != null && cancelledFlag.get()) {
             return true;
         }
         return testConnection(fd);
@@ -111,8 +119,24 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         return secret;
     }
 
-    public boolean isCancelled() {
-        return powerUpTime == Long.MIN_VALUE;
+    @Override
+    public int getState() {
+        return getState(powerUpTime, fd);
+    }
+
+    @Override
+    public int getState(long millis, int fd) {
+        if (clock.getTicks() - timeout > millis) {
+            return STATE_TIMEOUT;
+        }
+        if (cancelledFlag != null && cancelledFlag.get()) {
+            return STATE_CANCELLED;
+        }
+        if (testConnection(fd)) {
+            return STATE_BROKEN_CONNECTION;
+        }
+
+        return STATE_OK;
     }
 
     @Override
@@ -134,6 +158,11 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     @Override
     public void resetTimer() {
         powerUpTime = clock.getTicks();
+    }
+
+    @Override
+    public void setCancelledFlag(AtomicBoolean cancelledFlag) {
+        this.cancelledFlag = cancelledFlag;
     }
 
     @Override
@@ -173,6 +202,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     public void statefulThrowExceptionIfTrippedNoThrottle() {
         testCount = 0;
         testTimeout();
+        testCancelled();
         if (testConnection(fd)) {
             throw CairoException.nonCritical().put("remote disconnected, query aborted [fd=").put(fd).put(']').setInterruption(true);
         }
@@ -181,6 +211,16 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     @Override
     public void unsetTimer() {
         powerUpTime = Long.MAX_VALUE;
+    }
+
+    private boolean isCancelled() {
+        return powerUpTime == Long.MIN_VALUE;
+    }
+
+    private void testCancelled() {
+        if (cancelledFlag != null && cancelledFlag.get()) {
+            throw CairoException.queryCancelled(fd);
+        }
     }
 
     private void testTimeout() {

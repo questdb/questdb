@@ -25,12 +25,14 @@
 package io.questdb.griffin.model;
 
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.OrderByMnemonic;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.*;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.ArrayDeque;
 import java.util.Iterator;
@@ -61,13 +63,14 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final String NO_ROWID_MARKER = "*!*";
     public static final int ORDER_DIRECTION_ASCENDING = 0;
     public static final int ORDER_DIRECTION_DESCENDING = 1;
-    public static final int SELECT_MODEL_ANALYTIC = 3;
     public static final int SELECT_MODEL_CHOOSE = 1;
     public static final int SELECT_MODEL_CURSOR = 6;
     public static final int SELECT_MODEL_DISTINCT = 5;
     public static final int SELECT_MODEL_GROUP_BY = 4;
     public static final int SELECT_MODEL_NONE = 0;
+    public static final int SELECT_MODEL_SHOW = 7;
     public static final int SELECT_MODEL_VIRTUAL = 2;
+    public static final int SELECT_MODEL_WINDOW = 3;
     public static final int SET_OPERATION_EXCEPT = 2;
     public static final int SET_OPERATION_EXCEPT_ALL = 3;
     public static final int SET_OPERATION_INTERSECT = 4;
@@ -75,6 +78,18 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final int SET_OPERATION_UNION = 1;
     // types of set operations between this and union model
     public static final int SET_OPERATION_UNION_ALL = 0;
+    public static final int SHOW_COLUMNS = 2;
+    public static final int SHOW_DATE_STYLE = 9;
+    public static final int SHOW_MAX_IDENTIFIER_LENGTH = 6;
+    public static final int SHOW_PARAMETERS = 11;
+    public static final int SHOW_PARTITIONS = 3;
+    public static final int SHOW_SEARCH_PATH = 8;
+    public static final int SHOW_SERVER_VERSION = 12;
+    public static final int SHOW_STANDARD_CONFORMING_STRINGS = 7;
+    public static final int SHOW_TABLES = 1;
+    public static final int SHOW_TIME_ZONE = 10;
+    public static final int SHOW_TRANSACTION = 4;
+    public static final int SHOW_TRANSACTION_ISOLATION_LEVEL = 5;
     public static final String SUB_QUERY_ALIAS_PREFIX = "_xQdbA";
     private static final ObjList<String> modelTypeName = new ObjList<>();
     private final LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap = new LowerCaseCharSequenceObjHashMap<>();
@@ -117,6 +132,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     // Used to store a deep copy of the whereClause field
     // since whereClause can be changed during optimization/generation stage.
     private ExpressionNode backupWhereClause;
+
+    // where clause expressions that do not reference any tables, not necessarily constants
     private ExpressionNode constWhereClause;
     private JoinContext context;
     private boolean distinct = false;
@@ -136,7 +153,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private ExpressionNode limitAdviceLo;
     private ExpressionNode limitHi;
     private ExpressionNode limitLo;
-    //position of the limit clause token
+    // position of the limit clause token
     private int limitPosition;
     private long metadataVersion = -1;
     private int modelPosition = 0;
@@ -144,11 +161,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private QueryModel nestedModel;
     private boolean nestedModelIsSubQuery = false;
     private int orderByAdviceMnemonic = OrderByMnemonic.ORDER_BY_UNKNOWN;
-    //position of the order by clause token
+    // position of the order by clause token
     private int orderByPosition;
     private IntList orderedJoinModels = orderedJoinModels2;
-    /* Expression clause that is actually part of left/outer join but not in join model.
-     *  Inner join expressions */
+    // Expression clause that is actually part of left/outer join but not in join model.
+    // Inner join expressions
     private ExpressionNode outerJoinExpressionClause;
     private ExpressionNode postJoinWhereClause;
     private ExpressionNode sampleBy;
@@ -157,9 +174,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private ExpressionNode sampleByUnit;
     private int selectModelType = SELECT_MODEL_NONE;
     private int setOperationType;
+    private int showKind = -1;
     private int tableId = -1;
     private ExpressionNode tableNameExpr;
-    private Function tableNameFunction;
+    private RecordCursorFactory tableNameFunction;
     private ExpressionNode timestamp;
     private QueryModel unionModel;
     private QueryModel updateTableModel;
@@ -170,7 +188,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         joinModels.add(this);
     }
 
-    // Recursively clones the current value of whereClause for the model and its sub-models into the backupWhereClause field.
+    /**
+     * Recursively clones the current value of whereClause for the model and its sub-models into the backupWhereClause field.
+     */
     public static void backupWhereClause(final ObjectPool<ExpressionNode> pool, final QueryModel model) {
         QueryModel current = model;
         while (current != null) {
@@ -191,7 +211,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
     }
 
-    // Recursively restores the whereClause field from backupWhereClause for the model and its sub-models.
+    /**
+     * Recursively restores the whereClause field from backupWhereClause for the model and its sub-models.
+     */
     public static void restoreWhereClause(final ObjectPool<ExpressionNode> pool, final QueryModel model) {
         QueryModel current = model;
         while (current != null) {
@@ -318,14 +340,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
      * If this is a SELECT DISTINCT then we don't push since the parent model contains the necessary columns.
      */
     public boolean allowsNestedColumnsChange() {
-        QueryModel union = this;
-        while (union != null) {
-            if (union.getSelectModelType() == QueryModel.SELECT_MODEL_DISTINCT) {
-                return false;
-            }
-            union = union.getUnionModel();
-        }
-        return true;
+        return this.getSelectModelType() != QueryModel.SELECT_MODEL_DISTINCT;
     }
 
     @Override
@@ -399,6 +414,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         setOperationType = SET_OPERATION_UNION_ALL;
         artificialStar = false;
         explicitTimestamp = false;
+        showKind = -1;
     }
 
     public void clearColumnMapStructs() {
@@ -817,6 +833,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return setOperationType;
     }
 
+    public int getShowKind() {
+        return showKind;
+    }
+
     public int getTableId() {
         return tableId;
     }
@@ -830,7 +850,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return tableNameExpr;
     }
 
-    public Function getTableNameFunction() {
+    public RecordCursorFactory getTableNameFunction() {
         return tableNameFunction;
     }
 
@@ -964,6 +984,30 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public boolean isUpdate() {
         return isUpdateModel;
+    }
+
+    public void mergeInnerColumn(QueryColumn innerQC) {
+        final CharSequence nestedAlias = innerQC.getAlias();
+        final ExpressionNode nestedAst = innerQC.getAst();
+        assert nestedAlias != null;
+        final CharSequence alias = columnNameToAliasMap.get(nestedAlias);
+        if (alias == null) {
+            return;
+        }
+        final QueryColumn oldQC = aliasToColumnMap.get(alias);
+        if (oldQC == null) {
+            return;
+        }
+        final ExpressionNode oldAst = oldQC.getAst();
+        aliasToColumnNameMap.put(alias, nestedAst.token);
+        columnNameToAliasMap.remove(oldAst.token);
+        columnNameToAliasMap.put(nestedAst.token, alias);
+        aliasToColumnMap.put(alias, innerQC);
+        int colIndex = columnAliasIndexes.get(alias);
+        assert colIndex >= 0;
+        bottomUpColumns.set(colIndex, innerQC);
+        bottomUpColumnNames.set(colIndex, alias);
+        innerQC.setAlias(alias);
     }
 
     public void moveGroupByFrom(QueryModel model) {
@@ -1179,16 +1223,20 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.setOperationType = setOperationType;
     }
 
+    public void setShowKind(int showKind) {
+        this.showKind = showKind;
+    }
+
+    public void setTableFactory(RecordCursorFactory function) {
+        this.tableNameFunction = function;
+    }
+
     public void setTableId(int id) {
         this.tableId = id;
     }
 
     public void setTableNameExpr(ExpressionNode tableNameExpr) {
         this.tableNameExpr = tableNameExpr;
-    }
-
-    public void setTableNameFunction(Function function) {
-        this.tableNameFunction = function;
     }
 
     public void setTimestamp(ExpressionNode timestamp) {
@@ -1208,7 +1256,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     }
 
     @Override
-    public void toSink(CharSink sink) {
+    public void toSink(@NotNull CharSinkBase<?> sink) {
         if (modelType == ExecutionModel.QUERY) {
             toSink0(sink, false, false);
         } else if (modelType == ExecutionModel.UPDATE) {
@@ -1220,7 +1268,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     // not using toString name to prevent debugger from trying to use it on all model variables (because toSink0 can fail).
     @SuppressWarnings("unused")
     public String toString0() {
-        StringSink sink = Misc.getThreadLocalBuilder();
+        StringSink sink = Misc.getThreadLocalSink();
         this.toSink0(sink, true, true);
         return sink.toString();
     }
@@ -1230,13 +1278,31 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return aliasToColumnNameMap.get(column);
     }
 
-    private static void aliasToSink(CharSequence alias, CharSink sink) {
-        sink.put(' ');
+    private static void aliasToSink(CharSequence alias, CharSinkBase<?> sink) {
+        sink.putAscii(' ');
         boolean quote = Chars.indexOf(alias, ' ') != -1;
         if (quote) {
-            sink.put('\'').put(alias).put('\'');
+            sink.putAscii('\'').put(alias).putAscii('\'');
         } else {
             sink.put(alias);
+        }
+    }
+
+    private static void unitToSink(CharSinkBase<?> sink, long timeUnit) {
+        if (timeUnit == WindowColumn.TIME_UNIT_MICROSECOND) {
+            sink.putAscii(" microsecond");
+        } else if (timeUnit == WindowColumn.TIME_UNIT_MILLISECOND) {
+            sink.putAscii(" millisecond");
+        } else if (timeUnit == WindowColumn.TIME_UNIT_SECOND) {
+            sink.putAscii(" second");
+        } else if (timeUnit == WindowColumn.TIME_UNIT_MINUTE) {
+            sink.putAscii(" minute");
+        } else if (timeUnit == WindowColumn.TIME_UNIT_HOUR) {
+            sink.putAscii(" hour");
+        } else if (timeUnit == WindowColumn.TIME_UNIT_DAY) {
+            sink.putAscii(" day");
+        } else {
+            sink.putAscii(" [unknown unit]");
         }
     }
 
@@ -1244,32 +1310,32 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return modelTypeName.get(selectModelType);
     }
 
-    private void sinkColumns(CharSink sink, ObjList<QueryColumn> columns) {
+    private void sinkColumns(CharSinkBase<?> sink, ObjList<QueryColumn> columns) {
         for (int i = 0, n = columns.size(); i < n; i++) {
             if (i > 0) {
-                sink.put(", ");
+                sink.putAscii(", ");
             }
             QueryColumn column = columns.getQuick(i);
             CharSequence name = column.getName();
             CharSequence alias = column.getAlias();
             ExpressionNode ast = column.getAst();
             ast.toSink(sink);
-            if (column instanceof AnalyticColumn || name == null) {
+            if (column.isWindowColumn() || name == null) {
 
                 if (alias != null) {
                     aliasToSink(alias, sink);
                 }
 
-                // this can only be analytic column
+                // this can only be window column
                 if (name != null) {
-                    AnalyticColumn ac = (AnalyticColumn) column;
-                    sink.put(" over (");
+                    WindowColumn ac = (WindowColumn) column;
+                    sink.putAscii(" over (");
                     final ObjList<ExpressionNode> partitionBy = ac.getPartitionBy();
                     if (partitionBy.size() > 0) {
-                        sink.put("partition by ");
+                        sink.putAscii("partition by ");
                         for (int k = 0, z = partitionBy.size(); k < z; k++) {
                             if (k > 0) {
-                                sink.put(", ");
+                                sink.putAscii(", ");
                             }
                             partitionBy.getQuick(k).toSink(sink);
                         }
@@ -1280,18 +1346,116 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                         if (partitionBy.size() > 0) {
                             sink.put(' ');
                         }
-                        sink.put("order by ");
+                        sink.putAscii("order by ");
                         for (int k = 0, z = orderBy.size(); k < z; k++) {
                             if (k > 0) {
-                                sink.put(", ");
+                                sink.putAscii(", ");
                             }
                             orderBy.getQuick(k).toSink(sink);
                             if (ac.getOrderByDirection().getQuick(k) == 1) {
-                                sink.put(" desc");
+                                sink.putAscii(" desc");
                             }
                         }
                     }
-                    sink.put(')');
+
+                    if (ac.isNonDefaultFrame()) {
+                        switch (ac.getFramingMode()) {
+                            case WindowColumn.FRAMING_ROWS:
+                                sink.putAscii(" rows");
+                                break;
+                            case WindowColumn.FRAMING_RANGE:
+                                sink.putAscii(" range");
+                                break;
+                            case WindowColumn.FRAMING_GROUPS:
+                                sink.putAscii(" groups");
+                                break;
+                            default:
+                                break;
+                        }
+                        sink.put(" between ");
+                        if (ac.getRowsLoExpr() != null) {
+                            ac.getRowsLoExpr().toSink(sink);
+                            if (ac.getFramingMode() == WindowColumn.FRAMING_RANGE) {
+                                unitToSink(sink, ac.getRowsLoExprTimeUnit());
+                            }
+
+                            switch (ac.getRowsLoKind()) {
+                                case WindowColumn.PRECEDING:
+                                    sink.putAscii(" preceding");
+                                    break;
+                                case WindowColumn.FOLLOWING:
+                                    sink.putAscii(" following");
+                                    break;
+                                default:
+                                    break;
+                            }
+                        } else {
+                            switch (ac.getRowsLoKind()) {
+                                case WindowColumn.PRECEDING:
+                                    sink.putAscii("unbounded preceding");
+                                    break;
+                                case WindowColumn.FOLLOWING:
+                                    sink.putAscii("unbounded following");
+                                    break;
+                                default:
+                                    // CURRENT
+                                    sink.putAscii("current row");
+                                    break;
+                            }
+                        }
+                        sink.putAscii(" and ");
+
+                        if (ac.getRowsHiExpr() != null) {
+                            ac.getRowsHiExpr().toSink(sink);
+                            if (ac.getFramingMode() == WindowColumn.FRAMING_RANGE) {
+                                unitToSink(sink, ac.getRowsHiExprTimeUnit());
+                            }
+
+                            switch (ac.getRowsHiKind()) {
+                                case WindowColumn.PRECEDING:
+                                    sink.putAscii(" preceding");
+                                    break;
+                                case WindowColumn.FOLLOWING:
+                                    sink.putAscii(" following");
+                                    break;
+                                default:
+                                    assert false;
+                                    break;
+                            }
+                        } else {
+                            switch (ac.getRowsHiKind()) {
+                                case WindowColumn.PRECEDING:
+                                    sink.putAscii("unbounded preceding");
+                                    break;
+                                case WindowColumn.FOLLOWING:
+                                    sink.putAscii("unbounded following");
+                                    break;
+                                default:
+                                    // CURRENT
+                                    sink.put("current row");
+                                    break;
+                            }
+                        }
+
+                        switch (ac.getExclusionKind()) {
+                            case WindowColumn.EXCLUDE_CURRENT_ROW:
+                                sink.putAscii(" exclude current row");
+                                break;
+                            case WindowColumn.EXCLUDE_GROUP:
+                                sink.putAscii(" exclude group");
+                                break;
+                            case WindowColumn.EXCLUDE_TIES:
+                                sink.putAscii(" exclude ties");
+                                break;
+                            case WindowColumn.EXCLUDE_NO_OTHERS:
+                                sink.putAscii(" exclude no others");
+                                break;
+                            default:
+                                assert false;
+                                break;
+                        }
+                    }
+                    sink.putAscii(')');
                 }
             } else {
                 // do not repeat alias when it is the same as AST token, provided AST is a literal
@@ -1302,139 +1466,143 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
     }
 
-    //returns textual description of this model, e.g. select-choose [top-down-columns] bottom-up-columns from X ...
-    private void toSink0(CharSink sink, boolean joinSlave, boolean showOrderBy) {
-        final boolean hasColumns = this.topDownColumns.size() > 0 || this.bottomUpColumns.size() > 0;
-        if (hasColumns) {
+    // returns textual description of this model, e.g. select-choose [top-down-columns] bottom-up-columns from X ...
+    private void toSink0(CharSinkBase<?> sink, boolean joinSlave, boolean showOrderBy) {
+        if (selectModelType == QueryModel.SELECT_MODEL_SHOW) {
             sink.put(getSelectModelTypeText());
-            if (this.topDownColumns.size() > 0) {
-                sink.put(' ');
-                sink.put('[');
-                sinkColumns(sink, this.topDownColumns);
-                sink.put(']');
-            }
-            if (this.bottomUpColumns.size() > 0) {
-                sink.put(' ');
-                sinkColumns(sink, this.bottomUpColumns);
-            }
-            sink.put(" from ");
-        }
-        if (tableNameExpr != null) {
-            tableNameExpr.toSink(sink);
         } else {
-            sink.put('(');
-            nestedModel.toSink0(sink, false, showOrderBy);
-            sink.put(')');
-        }
-        if (alias != null) {
-            aliasToSink(alias.token, sink);
-        }
-
-        if (getLatestByType() != LATEST_BY_NEW && timestamp != null) {
-            sink.put(" timestamp (");
-            timestamp.toSink(sink);
-            sink.put(')');
-        }
-
-        if (getLatestByType() == LATEST_BY_DEPRECATED && getLatestBy().size() > 0) {
-            sink.put(" latest by ");
-            for (int i = 0, n = getLatestBy().size(); i < n; i++) {
-                if (i > 0) {
-                    sink.put(',');
+            final boolean hasColumns = topDownColumns.size() > 0 || bottomUpColumns.size() > 0;
+            if (hasColumns) {
+                sink.put(getSelectModelTypeText());
+                if (topDownColumns.size() > 0) {
+                    sink.putAscii(' ');
+                    sink.putAscii('[');
+                    sinkColumns(sink, topDownColumns);
+                    sink.putAscii(']');
                 }
-                getLatestBy().getQuick(i).toSink(sink);
+                if (this.bottomUpColumns.size() > 0) {
+                    sink.putAscii(' ');
+                    sinkColumns(sink, bottomUpColumns);
+                }
+                sink.putAscii(" from ");
             }
-        }
+            if (tableNameExpr != null) {
+                tableNameExpr.toSink(sink);
+            } else {
+                sink.putAscii('(');
+                nestedModel.toSink0(sink, false, showOrderBy);
+                sink.putAscii(')');
+            }
+            if (alias != null) {
+                aliasToSink(alias.token, sink);
+            }
 
-        if (orderedJoinModels.size() > 1) {
-            for (int i = 0, n = orderedJoinModels.size(); i < n; i++) {
-                QueryModel model = joinModels.getQuick(orderedJoinModels.getQuick(i));
-                if (model != this) {
-                    switch (model.getJoinType()) {
-                        case JOIN_OUTER:
-                            sink.put(" left join ");
-                            break;
-                        case JOIN_ASOF:
-                            sink.put(" asof join ");
-                            break;
-                        case JOIN_SPLICE:
-                            sink.put(" splice join ");
-                            break;
-                        case JOIN_CROSS:
-                            sink.put(" cross join ");
-                            break;
-                        case JOIN_LT:
-                            sink.put(" lt join ");
-                            break;
-                        default:
-                            sink.put(" join ");
-                            break;
+            if (getLatestByType() != LATEST_BY_NEW && timestamp != null) {
+                sink.putAscii(" timestamp (");
+                timestamp.toSink(sink);
+                sink.putAscii(')');
+            }
+
+            if (getLatestByType() == LATEST_BY_DEPRECATED && getLatestBy().size() > 0) {
+                sink.putAscii(" latest by ");
+                for (int i = 0, n = getLatestBy().size(); i < n; i++) {
+                    if (i > 0) {
+                        sink.putAscii(',');
                     }
+                    getLatestBy().getQuick(i).toSink(sink);
+                }
+            }
 
-                    if (model.getWhereClause() != null) {
-                        sink.put('(');
-                        model.toSink0(sink, true, showOrderBy);
-                        sink.put(')');
-                        if (model.getAlias() != null) {
-                            aliasToSink(model.getAlias().token, sink);
-                        } else if (model.getTableName() != null) {
-                            aliasToSink(model.getTableName(), sink);
+            if (orderedJoinModels.size() > 1) {
+                for (int i = 0, n = orderedJoinModels.size(); i < n; i++) {
+                    QueryModel model = joinModels.getQuick(orderedJoinModels.getQuick(i));
+                    if (model != this) {
+                        switch (model.getJoinType()) {
+                            case JOIN_OUTER:
+                                sink.putAscii(" left join ");
+                                break;
+                            case JOIN_ASOF:
+                                sink.putAscii(" asof join ");
+                                break;
+                            case JOIN_SPLICE:
+                                sink.putAscii(" splice join ");
+                                break;
+                            case JOIN_CROSS:
+                                sink.putAscii(" cross join ");
+                                break;
+                            case JOIN_LT:
+                                sink.putAscii(" lt join ");
+                                break;
+                            default:
+                                sink.putAscii(" join ");
+                                break;
                         }
-                    } else {
-                        model.toSink0(sink, true, showOrderBy);
-                    }
 
-                    JoinContext jc = model.getContext();
-                    if (jc != null && jc.aIndexes.size() > 0) {
-                        // join clause
-                        sink.put(" on ");
-                        for (int k = 0, z = jc.aIndexes.size(); k < z; k++) {
-                            if (k > 0) {
-                                sink.put(" and ");
+                        if (model.getWhereClause() != null) {
+                            sink.putAscii('(');
+                            model.toSink0(sink, true, showOrderBy);
+                            sink.putAscii(')');
+                            if (model.getAlias() != null) {
+                                aliasToSink(model.getAlias().token, sink);
+                            } else if (model.getTableName() != null) {
+                                aliasToSink(model.getTableName(), sink);
                             }
-                            jc.aNodes.getQuick(k).toSink(sink);
-                            sink.put(" = ");
-                            jc.bNodes.getQuick(k).toSink(sink);
+                        } else {
+                            model.toSink0(sink, true, showOrderBy);
                         }
-                    }
 
-                    if (model.getOuterJoinExpressionClause() != null) {
-                        sink.put(" outer-join-expression ");
-                        model.getOuterJoinExpressionClause().toSink(sink);
-                    }
+                        JoinContext jc = model.getContext();
+                        if (jc != null && jc.aIndexes.size() > 0) {
+                            // join clause
+                            sink.putAscii(" on ");
+                            for (int k = 0, z = jc.aIndexes.size(); k < z; k++) {
+                                if (k > 0) {
+                                    sink.putAscii(" and ");
+                                }
+                                jc.aNodes.getQuick(k).toSink(sink);
+                                sink.putAscii(" = ");
+                                jc.bNodes.getQuick(k).toSink(sink);
+                            }
+                        }
 
-                    if (model.getPostJoinWhereClause() != null) {
-                        sink.put(" post-join-where ");
-                        model.getPostJoinWhereClause().toSink(sink);
+                        if (model.getOuterJoinExpressionClause() != null) {
+                            sink.putAscii(" outer-join-expression ");
+                            model.getOuterJoinExpressionClause().toSink(sink);
+                        }
+
+                        if (model.getPostJoinWhereClause() != null) {
+                            sink.putAscii(" post-join-where ");
+                            model.getPostJoinWhereClause().toSink(sink);
+                        }
                     }
                 }
             }
         }
 
         if (getWhereClause() != null) {
-            sink.put(" where ");
+            sink.putAscii(" where ");
             whereClause.toSink(sink);
         }
 
         if (constWhereClause != null) {
-            sink.put(" const-where ");
+            sink.putAscii(" const-where ");
             constWhereClause.toSink(sink);
         }
 
         if (!joinSlave && postJoinWhereClause != null) {
-            sink.put(" post-join-where ");
+            sink.putAscii(" post-join-where ");
             postJoinWhereClause.toSink(sink);
         }
 
         if (!joinSlave && outerJoinExpressionClause != null) {
-            sink.put(" outer-join-expressions ");
+            sink.putAscii(" outer-join-expressions ");
             outerJoinExpressionClause.toSink(sink);
         }
 
         if (getLatestByType() == LATEST_BY_NEW && getLatestBy().size() > 0) {
-            sink.put(" latest on ");
+            sink.putAscii(" latest on ");
             timestamp.toSink(sink);
-            sink.put(" partition by ");
+            sink.putAscii(" partition by ");
             for (int i = 0, n = getLatestBy().size(); i < n; i++) {
                 if (i > 0) {
                     sink.put(',');
@@ -1444,119 +1612,118 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
 
         if (sampleBy != null) {
-            sink.put(" sample by ");
+            sink.putAscii(" sample by ");
             sampleBy.toSink(sink);
 
             final int fillCount = sampleByFill.size();
             if (fillCount > 0) {
-                sink.put(" fill(");
+                sink.putAscii(" fill(");
                 sink.put(sampleByFill.getQuick(0));
 
                 if (fillCount > 1) {
                     for (int i = 1; i < fillCount; i++) {
-                        sink.put(',');
+                        sink.putAscii(',');
                         sink.put(sampleByFill.getQuick(i));
                     }
                 }
-                sink.put(')');
+                sink.putAscii(')');
             }
 
             if (sampleByTimezoneName != null || sampleByOffset != null) {
-                sink.put(" align to calendar");
+                sink.putAscii(" align to calendar");
                 if (sampleByTimezoneName != null) {
-                    sink.put(" time zone ");
+                    sink.putAscii(" time zone ");
                     sink.put(sampleByTimezoneName);
                 }
 
                 if (sampleByOffset != null) {
-                    sink.put(" with offset ");
+                    sink.putAscii(" with offset ");
                     sink.put(sampleByOffset);
                 }
             }
         }
 
         if (showOrderBy && orderBy.size() > 0) {
-            sink.put(" order by ");
+            sink.putAscii(" order by ");
             for (int i = 0, n = orderBy.size(); i < n; i++) {
                 if (i > 0) {
-                    sink.put(", ");
+                    sink.putAscii(", ");
                 }
                 sink.put(orderBy.get(i));
                 if (orderByDirection.get(i) == 1) {
-                    sink.put(" desc");
+                    sink.putAscii(" desc");
                 }
             }
         } else if (orderHash.size() > 0 && orderBy.size() > 0) {
-            sink.put(" order by ");
+            sink.putAscii(" order by ");
 
             ObjList<CharSequence> columnNames = orderHash.keys();
             for (int i = 0, n = columnNames.size(); i < n; i++) {
                 if (i > 0) {
-                    sink.put(", ");
+                    sink.putAscii(", ");
                 }
 
                 CharSequence key = columnNames.getQuick(i);
                 sink.put(key);
                 if (orderHash.get(key) == 1) {
-                    sink.put(" desc");
+                    sink.putAscii(" desc");
                 }
             }
         }
 
         if (getLimitLo() != null || getLimitHi() != null) {
-            sink.put(" limit ");
+            sink.putAscii(" limit ");
             if (getLimitLo() != null) {
                 getLimitLo().toSink(sink);
             }
             if (getLimitHi() != null) {
-                sink.put(',');
+                sink.putAscii(',');
                 getLimitHi().toSink(sink);
             }
         }
 
         if (unionModel != null) {
             if (setOperationType == QueryModel.SET_OPERATION_INTERSECT) {
-                sink.put(" intersect ");
+                sink.putAscii(" intersect ");
             } else if (setOperationType == QueryModel.SET_OPERATION_INTERSECT_ALL) {
-                sink.put(" intersect all ");
+                sink.putAscii(" intersect all ");
             } else if (setOperationType == QueryModel.SET_OPERATION_EXCEPT) {
-                sink.put(" except ");
+                sink.putAscii(" except ");
             } else if (setOperationType == QueryModel.SET_OPERATION_EXCEPT_ALL) {
-                sink.put(" except all ");
+                sink.putAscii(" except all ");
             } else {
-                sink.put(" union ");
+                sink.putAscii(" union ");
                 if (setOperationType == QueryModel.SET_OPERATION_UNION_ALL) {
-                    sink.put("all ");
+                    sink.putAscii("all ");
                 }
             }
             unionModel.toSink0(sink, false, showOrderBy);
         }
     }
 
-    private void updateToSink(CharSink sink) {
-        sink.put("update ");
+    private void updateToSink(CharSinkBase<?> sink) {
+        sink.putAscii("update ");
         tableNameExpr.toSink(sink);
         if (alias != null) {
-            sink.put(" as");
+            sink.putAscii(" as");
             aliasToSink(alias.token, sink);
         }
-        sink.put(" set ");
+        sink.putAscii(" set ");
         for (int i = 0, n = getUpdateExpressions().size(); i < n; i++) {
-
             if (i > 0) {
-                sink.put(',');
+                sink.putAscii(',');
             }
             CharSequence columnExpr = getUpdateExpressions().get(i).token;
             sink.put(columnExpr);
-            sink.put(" = ");
+            sink.putAscii(" = ");
             QueryColumn setColumn = getNestedModel().getColumns().getQuick(i);
             setColumn.getAst().toSink(sink);
         }
 
         if (getNestedModel() != null) {
-            sink.put(" from (");
+            sink.putAscii(" from (");
             getNestedModel().toSink(sink);
-            sink.put(")");
+            sink.putAscii(")");
         }
     }
 
@@ -1571,9 +1738,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         modelTypeName.extendAndSet(SELECT_MODEL_NONE, "select");
         modelTypeName.extendAndSet(SELECT_MODEL_CHOOSE, "select-choose");
         modelTypeName.extendAndSet(SELECT_MODEL_VIRTUAL, "select-virtual");
-        modelTypeName.extendAndSet(SELECT_MODEL_ANALYTIC, "select-analytic");
+        modelTypeName.extendAndSet(SELECT_MODEL_WINDOW, "select-window");
         modelTypeName.extendAndSet(SELECT_MODEL_GROUP_BY, "select-group-by");
         modelTypeName.extendAndSet(SELECT_MODEL_DISTINCT, "select-distinct");
         modelTypeName.extendAndSet(SELECT_MODEL_CURSOR, "select-cursor");
+        modelTypeName.extendAndSet(SELECT_MODEL_SHOW, "show");
     }
 }

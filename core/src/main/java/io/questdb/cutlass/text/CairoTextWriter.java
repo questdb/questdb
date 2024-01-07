@@ -33,7 +33,8 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.std.*;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
@@ -168,30 +169,32 @@ public class CairoTextWriter implements Closeable, Mutable {
         this.importedTimestampColumnName = timestampColumn;
     }
 
-    public void onFieldsNonPartitioned(long line, ObjList<DirectByteCharSequence> values, int valuesLength) {
+    public void onFieldsNonPartitioned(long line, ObjList<DirectUtf8String> values, int valuesLength) {
         final TableWriter.Row w = writer.newRow();
         for (int i = 0; i < valuesLength; i++) {
-            final DirectByteCharSequence dbcs = values.getQuick(i);
-            if (dbcs.length() == 0) {
+            final DirectUtf8String dus = values.getQuick(i);
+            if (dus.size() == 0) {
                 continue;
             }
-            if (onField(line, dbcs, w, i)) return;
+            if (onField(line, dus, w, i)) {
+                return;
+            }
         }
         w.append();
         writtenLineCount++;
     }
 
-    public void onFieldsPartitioned(long line, ObjList<DirectByteCharSequence> values, int valuesLength) {
+    public void onFieldsPartitioned(long line, ObjList<DirectUtf8String> values, int valuesLength) {
         final int timestampIndex = this.timestampIndex;
-        DirectByteCharSequence dbcs = values.getQuick(timestampIndex);
+        DirectUtf8String dus = values.getQuick(timestampIndex);
         try {
-            final TableWriter.Row w = writer.newRow(timestampAdapter.getTimestamp(dbcs));
+            final TableWriter.Row w = writer.newRow(timestampAdapter.getTimestamp(dus));
             for (int i = 0; i < valuesLength; i++) {
-                dbcs = values.getQuick(i);
-                if (i == timestampIndex || dbcs.length() == 0) {
+                dus = values.getQuick(i);
+                if (i == timestampIndex || dus.size() == 0) {
                     continue;
                 }
-                if (onField(line, dbcs, w, i)) {
+                if (onField(line, dus, w, i)) {
                     return;
                 }
             }
@@ -199,7 +202,7 @@ public class CairoTextWriter implements Closeable, Mutable {
             writtenLineCount++;
             checkUncommittedRowCount();
         } catch (Exception e) {
-            logError(line, timestampIndex, dbcs);
+            logError(line, timestampIndex, dus);
         }
     }
 
@@ -306,9 +309,9 @@ public class CairoTextWriter implements Closeable, Mutable {
         this.metadata = metadata;
     }
 
-    private void logError(long line, int i, DirectByteCharSequence dbcs) {
+    private void logError(long line, int i, DirectUtf8Sequence dus) {
         LogRecord logRecord = LOG.error().$("type syntax [type=").$(ColumnType.nameOf(types.getQuick(i).getType())).$("]\n\t");
-        logRecord.$('[').$(line).$(':').$(i).$("] -> ").$(dbcs).$();
+        logRecord.$('[').$(line).$(':').$(i).$("] -> ").$(dus).$();
         columnErrorCounts.increment(i);
     }
 
@@ -320,12 +323,12 @@ public class CairoTextWriter implements Closeable, Mutable {
                 .$(']').$();
     }
 
-    private boolean onField(long line, DirectByteCharSequence dbcs, TableWriter.Row w, int i) {
+    private boolean onField(long line, DirectUtf8Sequence dus, TableWriter.Row w, int i) {
         try {
             final int tableIndex = remapIndex.size() > 0 ? remapIndex.get(i) : i;
-            types.getQuick(i).write(w, tableIndex, dbcs);
+            types.getQuick(i).write(w, tableIndex, dus);
         } catch (Exception ignore) {
-            logError(line, i, dbcs);
+            logError(line, i, dus);
             switch (atomicity) {
                 case Atomicity.SKIP_ALL:
                     writer.rollback();
@@ -355,10 +358,9 @@ public class CairoTextWriter implements Closeable, Mutable {
             throw CairoException.nonCritical().put("cannot determine text structure");
         }
 
-        TableToken tableToken = engine.getTableTokenIfExists(tableName);
-
+        TableToken tableToken;
         boolean tableReCreated = false;
-        switch (engine.getTableStatus(path, tableToken)) {
+        switch (engine.getTableStatus(path, tableName)) {
             case TableUtils.TABLE_DOES_NOT_EXIST:
                 if (getCreateTable() == false) {
                     throw CairoException.tableDoesNotExist(tableName).put(" and createTable was set to false.");
@@ -371,6 +373,7 @@ public class CairoTextWriter implements Closeable, Mutable {
                 designatedTimestampIndex = writer.getMetadata().getTimestampIndex();
                 break;
             case TableUtils.TABLE_EXISTS:
+                tableToken = engine.getTableTokenIfExists(tableName);
                 if (overwrite) {
                     securityContext.authorizeTableDrop(tableToken);
                     engine.drop(path, tableToken);
@@ -382,8 +385,8 @@ public class CairoTextWriter implements Closeable, Mutable {
                     initWriterAndOverrideImportTypes(tableToken, names, detectedTypes, typeManager);
                     designatedTimestampIndex = writer.getMetadata().getTimestampIndex();
                     designatedTimestampColumnName = getDesignatedTimestampColumnName(writer.getMetadata());
-                    if (importedTimestampColumnName != null &&
-                            !Chars.equalsNc(importedTimestampColumnName, designatedTimestampColumnName)) {
+                    if (importedTimestampColumnName != null
+                            && !Chars.equalsNc(importedTimestampColumnName, designatedTimestampColumnName)) {
                         warnings |= TextLoadWarning.TIMESTAMP_MISMATCH;
                     }
                     int tablePartitionBy = TableUtils.getPartitionBy(writer.getMetadata(), engine);

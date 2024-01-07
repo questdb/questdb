@@ -144,7 +144,7 @@ public class InsertNullTest extends AbstractCairoTest {
                         String.format("insert into x select null from long_sequence(%d)", NULL_INSERTS),
                         expectedNullInserts("value\n", type[1], NULL_INSERTS, !isNotNullable(type[0])),
                         !isNotNullable(type[0]),
-                        type[0].equals("long256"),
+                        false,
                         false
                 );
             } finally {
@@ -168,7 +168,7 @@ public class InsertNullTest extends AbstractCairoTest {
                         null,
                         String.format("insert into x select null from long_sequence(%d)", NULL_INSERTS),
                         expectedNullInserts("value\n", type[1], NULL_INSERTS, isNotNullable(type[0])),
-                        !type[0].equals("long256"),
+                        true,
                         isNotNullable(type[0]),
                         false
                 );
@@ -194,7 +194,7 @@ public class InsertNullTest extends AbstractCairoTest {
                         String.format("insert into x select null from long_sequence(%d)", NULL_INSERTS),
                         expectedNullInserts("value\n", type[1], NULL_INSERTS, !isNotNullable(type[0])),
                         !isNotNullable(type[0]),
-                        type[0].equals("long256"),
+                        false,
                         false
                 );
             } finally {
@@ -218,7 +218,7 @@ public class InsertNullTest extends AbstractCairoTest {
                         null,
                         String.format("insert into x select null from long_sequence(%d)", NULL_INSERTS),
                         expectedNullInserts("value\n", type[1], NULL_INSERTS, isNotNullable(type[0])),
-                        !type[0].equals("long256"),
+                        true,
                         isNotNullable(type[0]),
                         false
                 );
@@ -235,7 +235,7 @@ public class InsertNullTest extends AbstractCairoTest {
     }
 
     static String expectedNullInserts(String header, String nullValue, int count, boolean expectsOutput) {
-        StringSink sb = Misc.getThreadLocalBuilder();
+        StringSink sb = Misc.getThreadLocalSink();
         sb.put(header);
         if (expectsOutput) {
             for (int i = 0; i < count; i++) {

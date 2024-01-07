@@ -333,12 +333,12 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         final long mergeLen = mergeType == O3_BLOCK_MERGE ? timestampMergeIndexSize / TIMESTAMP_MERGE_ENTRY_BYTES : mergeOOOHi - mergeOOOLo + 1 + mergeDataHi - mergeDataLo + 1;
         final Path pathToOldPartition = Path.getThreadLocal(pathToTable);
         TableUtils.setPathForPartition(pathToOldPartition, tableWriter.getPartitionBy(), oldPartitionTimestamp, srcNameTxn);
-        int plen = pathToOldPartition.length();
+        int plen = pathToOldPartition.size();
 
         final Path pathToNewPartition = Path.getThreadLocal2(pathToTable);
         boolean partitionAppend = openColumnMode == OPEN_MID_PARTITION_FOR_APPEND || openColumnMode == OPEN_NEW_PARTITION_FOR_APPEND;
         TableUtils.setPathForPartition(pathToNewPartition, tableWriter.getPartitionBy(), partitionTimestamp, partitionAppend ? srcNameTxn : txn);
-        int pplen = pathToNewPartition.length();
+        int pplen = pathToNewPartition.size();
         final long colTopSinkAddr = columnTopAddress(partitionUpdateSinkAddr, columnIndex);
 
         // append jobs do not set value of part counter, we do it here for those

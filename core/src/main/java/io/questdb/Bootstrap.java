@@ -36,8 +36,9 @@ import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.Dates;
-import io.questdb.std.str.NativeLPSZ;
+import io.questdb.std.str.DirectUtf8StringZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import sun.misc.Signal;
 
@@ -62,8 +63,8 @@ public class Bootstrap {
     private final ServerConfiguration config;
     private final Log log;
     private final Metrics metrics;
-    private final String rootDirectory;
     private final MicrosecondClock microsecondClock;
+    private final String rootDirectory;
 
     public Bootstrap(String... args) {
         this(new PropBootstrapConfiguration(), args);
@@ -144,6 +145,8 @@ public class Bootstrap {
         } else {
             log.critical().$(archName).$(sb).I$();
         }
+
+        verifyFileLimits();
 
         try {
             if (bootstrapConfiguration.useSite()) {
@@ -238,14 +241,17 @@ public class Bootstrap {
         final CharSequence dbRoot = cairoConfiguration.getRoot();
         final FilesFacade ff = cairoConfiguration.getFilesFacade();
         final int maxFiles = cairoConfiguration.getMaxCrashFiles();
-        NativeLPSZ name = new NativeLPSZ();
-        try (Path path = new Path().of(dbRoot).slash$(); Path other = new Path().of(dbRoot).slash$()) {
-            int plen = path.length();
+        DirectUtf8StringZ name = new DirectUtf8StringZ();
+        try (
+                Path path = new Path().of(dbRoot).slash$();
+                Path other = new Path().of(dbRoot).slash$()
+        ) {
+            int plen = path.size();
             AtomicInteger counter = new AtomicInteger(0);
             FilesFacadeImpl.INSTANCE.iterateDir(path, (pUtf8NameZ, type) -> {
                 if (Files.notDots(pUtf8NameZ)) {
                     name.of(pUtf8NameZ);
-                    if (Chars.startsWith(name, cairoConfiguration.getOGCrashFilePrefix()) && type == Files.DT_FILE) {
+                    if (Utf8s.startsWithAscii(name, cairoConfiguration.getOGCrashFilePrefix()) && type == Files.DT_FILE) {
                         path.trimTo(plen).concat(pUtf8NameZ).$();
                         boolean shouldRename = false;
                         do {
@@ -316,10 +322,6 @@ public class Bootstrap {
         }
     }
 
-    public MicrosecondClock getMicrosecondClock() {
-        return microsecondClock;
-    }
-
     public String getBanner() {
         return banner;
     }
@@ -338,6 +340,10 @@ public class Bootstrap {
 
     public Metrics getMetrics() {
         return metrics;
+    }
+
+    public MicrosecondClock getMicrosecondClock() {
+        return microsecondClock;
     }
 
     public String getRootDirectory() {
@@ -516,6 +522,41 @@ public class Bootstrap {
         }
     }
 
+    private void verifyFileLimits() {
+        boolean insufficientLimits = false;
+
+        final long fileLimit = Files.getFileLimit();
+        if (fileLimit < 0) {
+            log.error().$("could not read fs.file-max [errno=").$(Os.errno()).I$();
+        }
+        if (fileLimit > 0) {
+            if (fileLimit <= Files.DEFAULT_FILE_LIMIT) {
+                insufficientLimits = true;
+                log.advisoryW().$("fs.file-max limit is too low [limit=").$(fileLimit).$("] (SYSTEM COULD BE UNSTABLE)").$();
+            } else {
+                log.advisoryW().$("fs.file-max checked [limit=").$(fileLimit).I$();
+            }
+        }
+
+        final long mapCountLimit = Files.getMapCountLimit();
+        if (mapCountLimit < 0) {
+            log.error().$("could not read vm.max_map_count [errno=").$(Os.errno()).I$();
+        }
+        if (mapCountLimit > 0) {
+            if (mapCountLimit <= Files.DEFAULT_MAP_COUNT_LIMIT) {
+                insufficientLimits = true;
+                log.advisoryW().$("vm.max_map_count limit is too low [limit=").$(mapCountLimit).$("] (SYSTEM COULD BE UNSTABLE)").$();
+            } else {
+                log.advisoryW().$("vm.max_map_count checked [limit=").$(mapCountLimit).I$();
+            }
+        }
+
+        if (insufficientLimits) {
+            log.advisoryW().$("make sure to increase fs.file-max and vm.max_map_count limits:\n" +
+                    "https://questdb.io/docs/deployment/capacity-planning/#os-configuration").$();
+        }
+    }
+
     private void verifyFileSystem(Path path, CharSequence rootDir, String kind) {
         if (rootDir == null) {
             log.advisoryW().$(" - ").$(kind).$(" root: NOT SET").$();
@@ -533,7 +574,7 @@ public class Bootstrap {
         }
     }
 
-    static void logWebConsoleUrls(ServerConfiguration config, Log log, String banner) {
+    static void logWebConsoleUrls(ServerConfiguration config, Log log, String banner, String schema) {
         if (config.getHttpServerConfiguration().isEnabled()) {
             final LogRecord r = log.infoW().$('\n').$(banner).$("Web Console URL(s):").$("\n\n");
 
@@ -546,7 +587,7 @@ public class Bootstrap {
                         for (Enumeration<InetAddress> addr = ni.nextElement().getInetAddresses(); addr.hasMoreElements(); ) {
                             InetAddress inetAddress = addr.nextElement();
                             if (inetAddress instanceof Inet4Address) {
-                                r.$('\t').$("http://").$(inetAddress.getHostAddress()).$(':').$(bindPort).$('\n');
+                                r.$('\t').$(schema).$(inetAddress.getHostAddress()).$(':').$(bindPort).$('\n');
                             }
                         }
                     }

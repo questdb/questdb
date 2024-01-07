@@ -31,15 +31,16 @@ import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.QueryFutureUpdateListener;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.Net;
-import io.questdb.std.Chars;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.Timeout;
@@ -102,7 +103,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                 .withFilesFacade(new TestFilesFacadeImpl() {
                     @Override
                     public int openRW(LPSZ name, long opts) {
-                        if (Chars.endsWith(name, "default/s.v") || Chars.endsWith(name, "default\\s.v")) {
+                        if (Utf8s.endsWithAscii(name, "default/s.v") || Utf8s.endsWithAscii(name, "default\\s.v")) {
                             alterAckReceived.await();
                             disconnectLatch.countDown();
                         }
@@ -154,7 +155,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                 .withFilesFacade(new TestFilesFacadeImpl() {
                     @Override
                     public int openRW(LPSZ name, long opts) {
-                        if (Chars.endsWith(name, "/default/s.v") || Chars.endsWith(name, "default\\s.v")) {
+                        if (Utf8s.endsWithAscii(name, "/default/s.v") || Utf8s.endsWithAscii(name, "default\\s.v")) {
                             alterAckReceived.await();
                         }
                         return super.openRW(name, opts);
@@ -188,7 +189,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                 .withFilesFacade(new TestFilesFacadeImpl() {
                     @Override
                     public int openRW(LPSZ name, long opts) {
-                        if (Chars.endsWith(name, "/default/s.v") || Chars.endsWith(name, "\\default\\s.v")) {
+                        if (Utf8s.endsWithAscii(name, "/default/s.v") || Utf8s.endsWithAscii(name, "\\default\\s.v")) {
                             alterAckReceived.await();
                             Os.sleep(500);
                         }
@@ -269,6 +270,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                 "alter+table+<x>+drop+column+s");
     }
 
+    @Ignore// update statements don't time out anymore but can be cancelled manually
     @Test
     public void testRestUpdateTimeout() throws Exception {
         HttpQueryTestBuilder queryTestBuilder = new HttpQueryTestBuilder()
@@ -281,7 +283,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                 .withFilesFacade(new TestFilesFacadeImpl() {
                     @Override
                     public int openRW(LPSZ name, long opts) {
-                        if (Chars.endsWith(name, "x.d.1")) {
+                        if (Utf8s.endsWithAscii(name, "x.d.1")) {
                             Os.sleep(50);
                         }
                         return super.openRW(name, opts);
@@ -355,7 +357,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                 .withFilesFacade(new TestFilesFacadeImpl() {
                     @Override
                     public int openRW(LPSZ name, long opts) {
-                        if (Chars.endsWith(name, "x.d.1")) {
+                        if (Utf8s.endsWithAscii(name, "x.d.1")) {
                             disconnectLatch.countDown();
                         }
                         return super.openRW(name, opts);
@@ -628,7 +630,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                 .withFilesFacade(new TestFilesFacadeImpl() {
                     @Override
                     public int openRW(LPSZ name, long opts) {
-                        if (Chars.endsWith(name, "default/ts.d.2") || Chars.endsWith(name, "default\\ts.d.2")) {
+                        if (Utf8s.endsWithAscii(name, "default/ts.d.2") || Utf8s.endsWithAscii(name, "default\\ts.d.2")) {
                             updateAckReceived.await();
                         }
                         return super.openRW(name, opts);

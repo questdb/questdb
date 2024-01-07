@@ -76,7 +76,10 @@
 
 constexpr jdouble D_MAX = std::numeric_limits<jdouble>::infinity();
 constexpr jdouble D_MIN = -std::numeric_limits<jdouble>::infinity();
+constexpr jint S_MIN = std::numeric_limits<jshort>::min();
+constexpr jint S_MAX = std::numeric_limits<jshort>::max();
 constexpr jint I_MIN = std::numeric_limits<jint>::min();
+constexpr jint I_MAX = std::numeric_limits<jint>::max();
 constexpr jlong L_MIN = std::numeric_limits<jlong>::min();
 constexpr jlong L_MAX = std::numeric_limits<jlong>::max();
 constexpr uint64_t UL_MAX = std::numeric_limits<uint64_t>::max();
@@ -147,8 +150,9 @@ inline int64_t scan_down(T* data, V value, int64_t low, int64_t high) {
 // the "high" boundary is inclusive
 template<class T, class V>
 inline int64_t binary_search(T *data, V value, int64_t low, int64_t high, int32_t scan_dir) {
-    while (high - low > 65) {
-        const int64_t mid = (low + high) / 2;
+    int64_t diff;
+    while ((diff = high - low) > 65) {
+        const int64_t mid = low + diff / 2;
         const T midVal = data[mid];
 
         if (midVal < value) {

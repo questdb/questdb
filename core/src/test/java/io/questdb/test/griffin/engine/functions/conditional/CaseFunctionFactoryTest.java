@@ -330,28 +330,28 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testCaseErrors() throws Exception {
-        assertException("select case from long_sequence(1)",  7, "unbalanced 'case'");
-        assertException("select case end from long_sequence(1)",  12, "'when' expected");
-        assertException("select case x end from long_sequence(1)",  14, "'when' expected");
+        assertException("select case from long_sequence(1)", 7, "unbalanced 'case'");
+        assertException("select case end from long_sequence(1)", 12, "'when' expected");
+        assertException("select case x end from long_sequence(1)", 14, "'when' expected");
         assertException("select case 1 end from long_sequence(1)", 14, "'when' expected");
-        assertException("select case false end from long_sequence(1)",  18, "'when' expected");
-        assertException("select case x/2 end from long_sequence(1)",  16, "'when' expected");
-        assertException("select case x/2 z end from long_sequence(1)",  18, "'when' expected");
-        assertException("select case 1+5 end from long_sequence(1)",  16, "'when' expected");
-        assertException("select case rnd_double() end from long_sequence(1)",  25, "'when' expected");
-        assertException("select case x else 2 end from long_sequence(1)",  14, "'when' expected");
-        assertException("select case x when else 2 end from long_sequence(1)",  19, "missing arguments");
-        assertException("select case x when 1 end from long_sequence(1)",  21, "'then' expected");
-        assertException("select case x when 1 else 2 end from long_sequence(1)",  21, "'then' expected");
-        assertException("select case x when 1 then else 2 end from long_sequence(1)",  26, "missing arguments");
-        assertException("select case x when 1 then 1 else else end from long_sequence(1)",  33, "missing arguments");
-        assertException("select case x when 1 then 1 when else 2 end from long_sequence(1)",  33, "missing arguments");
-        assertException("select case x when 1 then 1 when 2 else 2 end from long_sequence(1)",  35, "'then' expected");
+        assertException("select case false end from long_sequence(1)", 18, "'when' expected");
+        assertException("select case x/2 end from long_sequence(1)", 16, "'when' expected");
+        assertException("select case x/2 z end from long_sequence(1)", 18, "'when' expected");
+        assertException("select case 1+5 end from long_sequence(1)", 16, "'when' expected");
+        assertException("select case rnd_double() end from long_sequence(1)", 25, "'when' expected");
+        assertException("select case x else 2 end from long_sequence(1)", 14, "'when' expected");
+        assertException("select case x when else 2 end from long_sequence(1)", 19, "missing arguments");
+        assertException("select case x when 1 end from long_sequence(1)", 21, "'then' expected");
+        assertException("select case x when 1 else 2 end from long_sequence(1)", 21, "'then' expected");
+        assertException("select case x when 1 then else 2 end from long_sequence(1)", 26, "missing arguments");
+        assertException("select case x when 1 then 1 else else end from long_sequence(1)", 33, "missing arguments");
+        assertException("select case x when 1 then 1 when else 2 end from long_sequence(1)", 33, "missing arguments");
+        assertException("select case x when 1 then 1 when 2 else 2 end from long_sequence(1)", 35, "'then' expected");
         assertException("select case when end from long_sequence(1)", 17, "missing arguments");
         assertException("select case when then else end from long_sequence(1)", 17, "missing arguments");
         assertException("select case when else end from long_sequence(1)", 17, "missing arguments");
-        assertException("select case when x end from long_sequence(1)",  19, "'then' expected");
-        assertException("select case when x else end from long_sequence(1)",  19, "'then' expected");
+        assertException("select case when x end from long_sequence(1)", 19, "'then' expected");
+        assertException("select case when x else end from long_sequence(1)", 19, "'then' expected");
         assertException("select case when x else 2 end from long_sequence(1)", 19, "'then' expected");
         assertException("select case when x then end from long_sequence(1)", 24, "missing arguments");
         assertException("select case when x then else end from long_sequence(1)", 24, "missing arguments");
@@ -381,7 +381,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testCaseWithNoElseInWhereClause() throws Exception {
-        assertException("select x from long_sequence(3) where case x when 1 then 0 end",  37, "boolean expression expected");
+        assertException("select x from long_sequence(3) where case x when 1 then 0 end", 37, "boolean expression expected");
 
         assertQuery("x\n1\n",
                 "select x from long_sequence(3) where case when x<2 then true end", null, true, false);
@@ -955,6 +955,36 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSingleCharSymbol() throws Exception {
+        assertQuery(
+                "category\tres\n" +
+                        "V\tfalse\n" +
+                        "T\tfalse\n" +
+                        "J\tfalse\n" +
+                        "W\ttrue\n" +
+                        "C\tfalse\n" +
+                        "P\tfalse\n" +
+                        "S\tfalse\n" +
+                        "W\ttrue\n" +
+                        "H\tfalse\n" +
+                        "Y\tfalse\n",
+                "SELECT category, \n" +
+                        "  CASE\n" +
+                        "    WHEN category = 'W' THEN true\n" +
+                        "    ELSE false\n" +
+                        "  END AS res\n" +
+                        "FROM tab",
+                "create table tab as (" +
+                        "select rnd_char()::symbol as category" +
+                        " from long_sequence(10)" +
+                        ")",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testIntToStringCastOnBranch() throws Exception {
         assertQuery(
                 "x\tcase\n" +
@@ -1011,7 +1041,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
             // however, for int etc, only the value 1 will evaluate to 1
             assertSql("sum\n" +
                     (type.equals("BOOLEAN") ? "10\n" : "1\n"), "select sum(case x when CAST(1 as " + type + ") then 1 else 0 end) " +
-                            "from tt"
+                    "from tt"
             );
 
             drop("drop table tt");

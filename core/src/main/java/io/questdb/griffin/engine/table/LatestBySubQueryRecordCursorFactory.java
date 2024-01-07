@@ -42,6 +42,7 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
     private final int columnIndex;
     private final Function filter;
     private final Record.CharSequenceFunction func;
+    private final boolean indexed;
     private final RecordCursorFactory recordCursorFactory;
     private final IntHashSet symbolKeys;
 
@@ -61,6 +62,7 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
         // factory will be resolving symbols for cursor and if successful
         // symbol keys will be added to this hash set
         symbolKeys = new IntHashSet();
+        this.indexed = indexed;
         DataFrameRecordCursor cursor;
         if (indexed) {
             if (filter != null) {
@@ -96,6 +98,11 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
     }
 
     @Override
+    public boolean usesIndex() {
+        return indexed;
+    }
+
+    @Override
     protected void _close() {
         super._close();
         recordCursorFactory.close();
@@ -109,6 +116,16 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
 
         private DataFrameRecordCursorWrapper(DataFrameRecordCursor delegate) {
             this.delegate = delegate;
+        }
+
+        @Override
+        public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
+            if (baseCursor != null) {
+                buildSymbolKeys();
+                baseCursor = Misc.free(baseCursor);
+            }
+
+            delegate.calculateSize(circuitBreaker, counter);
         }
 
         @Override
@@ -182,8 +199,13 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
         }
 
         @Override
-        public boolean skipTo(long rowCount) {
-            return delegate.skipTo(rowCount);
+        public void skipRows(Counter rowCount) {
+            if (baseCursor != null) {
+                buildSymbolKeys();
+                baseCursor = Misc.free(baseCursor);
+            }
+
+            delegate.skipRows(rowCount);
         }
 
         @Override

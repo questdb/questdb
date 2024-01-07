@@ -27,12 +27,13 @@ package io.questdb.griffin;
 import io.questdb.Telemetry;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.DenyAllSecurityContext;
+import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.VirtualRecord;
-import io.questdb.griffin.engine.analytic.AnalyticContext;
-import io.questdb.griffin.engine.analytic.AnalyticContextImpl;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
+import io.questdb.griffin.engine.window.WindowContext;
+import io.questdb.griffin.engine.window.WindowContextImpl;
 import io.questdb.std.IntStack;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
@@ -41,14 +42,17 @@ import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+
 public class SqlExecutionContextImpl implements SqlExecutionContext {
-    private final AnalyticContextImpl analyticContext = new AnalyticContextImpl();
     private final CairoConfiguration cairoConfiguration;
     private final CairoEngine cairoEngine;
     private final int sharedWorkerCount;
+    private final AtomicBooleanCircuitBreaker simpleCircuitBreaker;
     private final Telemetry<TelemetryTask> telemetry;
     private final TelemetryFacade telemetryFacade;
     private final IntStack timestampRequiredStack = new IntStack();
+    private final WindowContextImpl windowContext = new WindowContextImpl();
     private final int workerCount;
     private BindVariableService bindVariableService;
     private SqlExecutionCircuitBreaker circuitBreaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
@@ -61,8 +65,9 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final MicrosecondClock nowClock = () -> now;
     private boolean parallelFilterEnabled;
     private Rnd random;
-    private long requestFd = -1;
+    private int requestFd = -1;
     private SecurityContext securityContext;
+    private boolean useSimpleCircuitBreaker;
 
     public SqlExecutionContextImpl(CairoEngine cairoEngine, int workerCount, int sharedWorkerCount) {
         assert workerCount > 0;
@@ -79,6 +84,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         telemetry = cairoEngine.getTelemetry();
         telemetryFacade = telemetry.isEnabled() ? this::doStoreTelemetry : this::storeTelemetryNoop;
         this.containsSecret = false;
+        this.useSimpleCircuitBreaker = false;
+        this.simpleCircuitBreaker = new AtomicBooleanCircuitBreaker(cairoEngine.getConfiguration().getCircuitBreakerConfiguration().getCircuitBreakerThrottle());
     }
 
     public SqlExecutionContextImpl(CairoEngine cairoEngine, int workerCount) {
@@ -86,19 +93,44 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public void clearAnalyticContext() {
-        analyticContext.clear();
+    public void clearWindowContext() {
+        windowContext.clear();
     }
 
     @Override
-    public void configureAnalyticContext(
+    public void configureWindowContext(
             @Nullable VirtualRecord partitionByRecord,
             @Nullable RecordSink partitionBySink,
             @Transient @Nullable ColumnTypes partitionByKeyTypes,
             boolean ordered,
-            boolean baseSupportsRandomAccess
+            int orderByDirection,
+            int orderByPos,
+            boolean baseSupportsRandomAccess,
+            int framingMode,
+            long rowsLo,
+            int rowsLoKindPos,
+            long rowsHi,
+            int rowsHiKindPos,
+            int exclusionKind,
+            int exclusionKindPos,
+            int timestampIndex
     ) {
-        analyticContext.of(partitionByRecord, partitionBySink, partitionByKeyTypes, ordered, baseSupportsRandomAccess);
+        windowContext.of(
+                partitionByRecord,
+                partitionBySink,
+                partitionByKeyTypes,
+                ordered,
+                orderByDirection,
+                orderByPos,
+                baseSupportsRandomAccess,
+                framingMode,
+                rowsLo,
+                rowsLoKindPos,
+                rowsHi,
+                rowsHiKindPos,
+                exclusionKind,
+                exclusionKindPos,
+                timestampIndex);
     }
 
     @Override
@@ -109,11 +141,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void containsSecret(boolean containsSecret) {
         this.containsSecret = containsSecret;
-    }
-
-    @Override
-    public AnalyticContext getAnalyticContext() {
-        return analyticContext;
     }
 
     @Override
@@ -128,7 +155,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
 
     @Override
     public @NotNull SqlExecutionCircuitBreaker getCircuitBreaker() {
-        return circuitBreaker;
+        if (useSimpleCircuitBreaker) {
+            return simpleCircuitBreaker;
+        } else {
+            return circuitBreaker;
+        }
     }
 
     @Override
@@ -162,7 +193,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public long getRequestFd() {
+    public int getRequestFd() {
         return requestFd;
     }
 
@@ -174,6 +205,16 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public int getSharedWorkerCount() {
         return sharedWorkerCount;
+    }
+
+    @Override
+    public SqlExecutionCircuitBreaker getSimpleCircuitBreaker() {
+        return simpleCircuitBreaker;
+    }
+
+    @Override
+    public WindowContext getWindowContext() {
+        return windowContext;
     }
 
     @Override
@@ -217,6 +258,12 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public void setCancelledFlag(AtomicBoolean cancelled) {
+        circuitBreaker.setCancelledFlag(cancelled);
+        simpleCircuitBreaker.setCancelledFlag(cancelled);
+    }
+
+    @Override
     public void setCloneSymbolTables(boolean cloneSymbolTables) {
         this.cloneSymbolTables = cloneSymbolTables;
     }
@@ -248,6 +295,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public void setUseSimpleCircuitBreaker(boolean value) {
+        this.useSimpleCircuitBreaker = value;
+    }
+
+    @Override
     public void storeTelemetry(short event, short origin) {
         telemetryFacade.store(event, origin);
     }
@@ -257,10 +309,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.bindVariableService = bindVariableService;
         this.random = rnd;
         this.containsSecret = false;
+        this.useSimpleCircuitBreaker = false;
         return this;
     }
 
-    public void with(long requestFd) {
+    public void with(int requestFd) {
         this.requestFd = requestFd;
     }
 
@@ -280,7 +333,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
             @NotNull SecurityContext securityContext,
             @Nullable BindVariableService bindVariableService,
             @Nullable Rnd rnd,
-            long requestFd,
+            int requestFd,
             @Nullable SqlExecutionCircuitBreaker circuitBreaker
     ) {
         this.securityContext = securityContext;
@@ -289,6 +342,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.requestFd = requestFd;
         this.circuitBreaker = circuitBreaker == null ? SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER : circuitBreaker;
         this.containsSecret = false;
+        this.useSimpleCircuitBreaker = false;
         return this;
     }
 
