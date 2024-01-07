@@ -97,8 +97,6 @@ public class GroupByAllocator implements QuietCloseable {
     }
 
     private class Arena implements QuietCloseable {
-        private final LongList chunkPtrs = new LongList();
-        private final IntList chunkSizes = new IntList();
         // Holds <ptr, size> pairs.
         private final LongLongHashMap chunks = new LongLongHashMap();
         private long allocated;
@@ -126,6 +124,10 @@ public class GroupByAllocator implements QuietCloseable {
 
         // Best-effort free operation.
         public void free(long ptr, long size) {
+            if (size < defaultChunkSize) {
+                // We don't free small allocations.
+                return;
+            }
             int index = chunks.keyIndex(ptr);
             if (index < 0) {
                 long chunkSize = chunks.valueAt(index);
@@ -171,20 +173,22 @@ public class GroupByAllocator implements QuietCloseable {
                 }
             }
 
-            // Check another potential fast path:
-            // maybe we can reallocate the whole chunk?
-            int index = chunks.keyIndex(ptr);
-            if (index < 0) {
-                long chunkSize = chunks.valueAt(index);
-                if (chunkSize == oldSize) {
-                    // Nice, we can reallocate the whole chunk.
-                    long chunkPtr = Unsafe.realloc(ptr, chunkSize, newSize, MemoryTag.NATIVE_GROUP_BY_FUNCTION);
-                    allocated += newSize - chunkSize;
-                    chunks.removeAt(index);
-                    chunks.put(chunkPtr, newSize);
-                    lim = chunkPtr + newSize;
-                    this.ptr = Bytes.align8b(lim);
-                    return chunkPtr;
+            if (oldSize >= defaultChunkSize) {
+                // Check another potential fast path:
+                // maybe we can reallocate the whole chunk?
+                int index = chunks.keyIndex(ptr);
+                if (index < 0) {
+                    long chunkSize = chunks.valueAt(index);
+                    if (chunkSize == oldSize) {
+                        // Nice, we can reallocate the whole chunk.
+                        long chunkPtr = Unsafe.realloc(ptr, chunkSize, newSize, MemoryTag.NATIVE_GROUP_BY_FUNCTION);
+                        allocated += newSize - chunkSize;
+                        chunks.removeAt(index);
+                        chunks.put(chunkPtr, newSize);
+                        lim = chunkPtr + newSize;
+                        this.ptr = Bytes.align8b(lim);
+                        return chunkPtr;
+                    }
                 }
             }
 

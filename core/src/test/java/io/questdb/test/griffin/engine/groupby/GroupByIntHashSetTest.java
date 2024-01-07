@@ -68,8 +68,8 @@ public class GroupByIntHashSetTest extends AbstractCairoTest {
                 Assert.assertEquals(N, setB.size());
                 Assert.assertTrue(setB.capacity() >= N);
 
-                long added = setA.merge(setB);
-                Assert.assertEquals(N, added);
+                setA.merge(setB);
+                Assert.assertEquals(2 * N, setA.size());
                 for (int i = 0; i < 2 * N; i++) {
                     Assert.assertTrue(setA.keyIndex(i) < 0);
                 }
@@ -83,8 +83,8 @@ public class GroupByIntHashSetTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSmokeWithMinusOneAsNoKeyValue() throws Exception {
-        testSmoke(-1);
+    public void testSmokeWithZeroAsNoKeyValue() throws Exception {
+        testSmoke(0);
     }
 
     private void testSmoke(int noKeyValue) throws Exception {

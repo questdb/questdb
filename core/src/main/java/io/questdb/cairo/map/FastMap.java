@@ -76,6 +76,7 @@ public class FastMap implements Map, Reopenable {
 
     static final long VAR_KEY_HEADER_SIZE = 4;
     private static final long MAX_HEAP_SIZE = (Integer.toUnsignedLong(-1) - 1) << 3;
+    private static final long MAX_SAFE_INT_POW_2 = 1L << 31;
     private static final int MIN_INITIAL_CAPACITY = 128;
     private final FastMapCursor cursor;
     private final int heapMemoryTag;
@@ -314,7 +315,11 @@ public class FastMap implements Map, Reopenable {
 
     @Override
     public void setKeyCapacity(int newKeyCapacity) {
-        rehash(Numbers.ceilPow2((int) (newKeyCapacity / loadFactor)));
+        long requiredCapacity = (long) (newKeyCapacity / loadFactor);
+        if (requiredCapacity > MAX_SAFE_INT_POW_2) {
+            throw CairoException.nonCritical().put("map capacity overflow");
+        }
+        rehash(Numbers.ceilPow2((int) requiredCapacity));
     }
 
     @Override
@@ -483,16 +488,19 @@ public class FastMap implements Map, Reopenable {
     }
 
     private void rehash() {
-        rehash(keyCapacity << 1);
+        rehash((long) keyCapacity << 1);
     }
 
-    private void rehash(int newKeyCapacity) {
+    private void rehash(long newKeyCapacity) {
+        if (newKeyCapacity > MAX_SAFE_INT_POW_2) {
+            throw CairoException.nonCritical().put("map capacity overflow");
+        }
         if (newKeyCapacity <= keyCapacity) {
             return;
         }
 
-        mask = newKeyCapacity - 1;
-        DirectIntList newOffsets = new DirectIntList((long) newKeyCapacity << 1, listMemoryTag);
+        mask = (int) newKeyCapacity - 1;
+        DirectIntList newOffsets = new DirectIntList(newKeyCapacity << 1, listMemoryTag);
         newOffsets.setPos((long) newKeyCapacity << 1);
         newOffsets.zero(0);
 
@@ -512,7 +520,7 @@ public class FastMap implements Map, Reopenable {
         offsets.close();
         offsets = newOffsets;
         free += (int) ((newKeyCapacity - keyCapacity) * loadFactor);
-        keyCapacity = newKeyCapacity;
+        keyCapacity = (int) newKeyCapacity;
     }
 
     private void resize(long size) {

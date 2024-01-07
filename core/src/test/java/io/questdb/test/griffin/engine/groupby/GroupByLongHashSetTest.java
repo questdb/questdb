@@ -68,8 +68,8 @@ public class GroupByLongHashSetTest extends AbstractCairoTest {
                 Assert.assertEquals(N, setB.size());
                 Assert.assertTrue(setB.capacity() >= N);
 
-                long added = setA.merge(setB);
-                Assert.assertEquals(N, added);
+                setA.merge(setB);
+                Assert.assertEquals(2 * N, setA.size());
                 for (int i = 0; i < 2 * N; i++) {
                     Assert.assertTrue(setA.keyIndex(i) < 0);
                 }
@@ -83,8 +83,8 @@ public class GroupByLongHashSetTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSmokeWithMinusOneAsNoKeyValue() throws Exception {
-        testSmoke(-1);
+    public void testSmokeWithZeroAsNoKeyValue() throws Exception {
+        testSmoke(0);
     }
 
     private void testSmoke(long noKeyValue) throws Exception {
@@ -104,7 +104,7 @@ public class GroupByLongHashSetTest extends AbstractCairoTest {
                 final int N = 1000;
 
                 for (int i = 0; i < N; i++) {
-                    set.add(rnd.nextPositiveLong());
+                    set.add(rnd.nextPositiveLong() + 1);
                 }
 
                 Assert.assertEquals(N, set.size());
@@ -113,14 +113,14 @@ public class GroupByLongHashSetTest extends AbstractCairoTest {
                 rnd.reset();
 
                 for (int i = 0; i < N; i++) {
-                    Assert.assertTrue(set.keyIndex(rnd.nextPositiveLong()) < 0);
+                    Assert.assertTrue(set.keyIndex(rnd.nextPositiveLong() + 1) < 0);
                 }
 
                 set.of(0);
                 rnd.reset();
 
                 for (int i = 0; i < N; i++) {
-                    long val = rnd.nextPositiveLong();
+                    long val = rnd.nextPositiveLong() + 1;
                     int index = set.keyIndex(val);
                     Assert.assertTrue(index >= 0);
                     set.addAt(index, val);

@@ -44,8 +44,9 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
 
     public CountDistinctLongGroupByFunction(Function arg, int setInitialCapacity, double setLoadFactor) {
         this.arg = arg;
-        setA = new GroupByLongHashSet(setInitialCapacity, setLoadFactor, Numbers.LONG_NaN);
-        setB = new GroupByLongHashSet(setInitialCapacity, setLoadFactor, Numbers.LONG_NaN);
+        // We use zero as the default value to speed up zeroing on rehash.
+        setA = new GroupByLongHashSet(setInitialCapacity, setLoadFactor, 0);
+        setB = new GroupByLongHashSet(setInitialCapacity, setLoadFactor, 0);
     }
 
     @Override
@@ -56,9 +57,11 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        final long val = arg.getLong(record);
+        long val = arg.getLong(record);
         if (val != Numbers.LONG_NaN) {
             mapValue.putLong(valueIndex, 1);
+            // Remap zero since it's used as the no entry key.
+            val = (val == 0) ? Numbers.LONG_NaN : val;
             setA.of(0).add(val);
             mapValue.putLong(valueIndex + 1, setA.ptr());
         } else {
@@ -69,9 +72,11 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        final long val = arg.getLong(record);
+        long val = arg.getLong(record);
         if (val != Numbers.LONG_NaN) {
             long ptr = mapValue.getLong(valueIndex + 1);
+            // Remap zero since it's used as the no entry key.
+            val = (val == 0) ? Numbers.LONG_NaN : val;
             final int index = setA.of(ptr).keyIndex(val);
             if (index >= 0) {
                 setA.addAt(index, val);
@@ -135,9 +140,16 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
         setA.of(destPtr);
         setB.of(srcPtr);
 
-        long added = setA.merge(setB);
-        destValue.addLong(valueIndex, added);
-        destValue.putLong(valueIndex + 1, setA.ptr());
+        if (setA.size() > (setB.size() >> 1)) {
+            setA.merge(setB);
+            destValue.putLong(valueIndex, setA.size());
+            destValue.putLong(valueIndex + 1, setA.ptr());
+        } else {
+            // Set A is significantly smaller than set B, so we merge it into set B.
+            setB.merge(setA);
+            destValue.putLong(valueIndex, setB.size());
+            destValue.putLong(valueIndex + 1, setB.ptr());
+        }
     }
 
     @Override

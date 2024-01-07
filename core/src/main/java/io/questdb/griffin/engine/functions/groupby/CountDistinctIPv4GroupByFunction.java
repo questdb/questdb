@@ -44,6 +44,7 @@ public class CountDistinctIPv4GroupByFunction extends LongFunction implements Un
 
     public CountDistinctIPv4GroupByFunction(Function arg, int setInitialCapacity, double setLoadFactor) {
         this.arg = arg;
+        // Numbers.IPv4_NULL is zero which is nice for faster zeroing on rehash.
         setA = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, Numbers.IPv4_NULL);
         setB = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, Numbers.IPv4_NULL);
     }
@@ -135,9 +136,16 @@ public class CountDistinctIPv4GroupByFunction extends LongFunction implements Un
         setA.of(destPtr);
         setB.of(srcPtr);
 
-        long added = setA.merge(setB);
-        destValue.addLong(valueIndex, added);
-        destValue.putLong(valueIndex + 1, setA.ptr());
+        if (setA.size() > (setB.size() >> 1)) {
+            setA.merge(setB);
+            destValue.putLong(valueIndex, setA.size());
+            destValue.putLong(valueIndex + 1, setA.ptr());
+        } else {
+            // Set A is significantly smaller than set B, so we merge it into set B.
+            setB.merge(setA);
+            destValue.putLong(valueIndex, setB.size());
+            destValue.putLong(valueIndex + 1, setB.ptr());
+        }
     }
 
     @Override

@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.groupby;
 import io.questdb.cairo.CairoException;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 
 /**
  * Specialized flyweight hash set used in {@link io.questdb.griffin.engine.functions.GroupByFunction}s.
@@ -83,7 +84,7 @@ public class GroupByIntHashSet {
         int sizeLimit = sizeLimit();
         Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, ++size);
         if (size >= sizeLimit) {
-            rehash(size, sizeLimit);
+            rehash(capacity() << 1, sizeLimit << 1);
         }
     }
 
@@ -108,19 +109,30 @@ public class GroupByIntHashSet {
         return probe(key, index);
     }
 
-    public long merge(GroupByIntHashSet srcSet) {
-        long added = 0;
+    public void merge(GroupByIntHashSet srcSet) {
+        final int size = size();
+        // Math.max is here for overflow protection.
+        final int newSize = Math.max(size + srcSet.size(), size);
+        final int sizeLimit = sizeLimit();
+        if (sizeLimit < newSize) {
+            int newSizeLimit = sizeLimit;
+            int newCapacity = capacity();
+            while (newSizeLimit < newSize) {
+                newSizeLimit *= 2;
+                newCapacity *= 2;
+            }
+            rehash(newCapacity, newSizeLimit);
+        }
+
         for (long p = srcSet.ptr + HEADER_SIZE, lim = srcSet.ptr + HEADER_SIZE + 4L * srcSet.capacity(); p < lim; p += 4L) {
             int val = Unsafe.getUnsafe().getInt(p);
             if (val != noKeyValue) {
                 final int index = keyIndex(val);
                 if (index >= 0) {
                     addAt(index, val);
-                    added++;
                 }
             }
         }
-        return added;
     }
 
     public GroupByIntHashSet of(long ptr) {
@@ -171,19 +183,20 @@ public class GroupByIntHashSet {
         } while (true);
     }
 
-    private void rehash(int size, int sizeLimit) {
-        int oldCapacity = capacity();
-        int newCapacity = oldCapacity << 1;
-        if (newCapacity < oldCapacity) {
-            throw CairoException.nonCritical().put("hash set capacity overflow");
+    private void rehash(int newCapacity, int newSizeLimit) {
+        if (newCapacity < 0) {
+            throw CairoException.nonCritical().put("set capacity overflow");
         }
+
+        final int oldSize = size();
+        final int oldCapacity = capacity();
 
         long oldPtr = ptr;
         ptr = allocator.malloc(HEADER_SIZE + 4L * newCapacity);
         zero(ptr, newCapacity);
         Unsafe.getUnsafe().putInt(ptr, newCapacity);
-        Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, size);
-        Unsafe.getUnsafe().putInt(ptr + SIZE_LIMIT_OFFSET, sizeLimit << 1);
+        Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, oldSize);
+        Unsafe.getUnsafe().putInt(ptr + SIZE_LIMIT_OFFSET, newSizeLimit);
         mask = newCapacity - 1;
 
         for (long p = oldPtr + HEADER_SIZE, lim = oldPtr + HEADER_SIZE + 4L * oldCapacity; p < lim; p += 4L) {
@@ -202,8 +215,13 @@ public class GroupByIntHashSet {
     }
 
     private void zero(long ptr, int cap) {
-        for (long p = ptr + HEADER_SIZE, lim = ptr + HEADER_SIZE + 4L * cap; p < lim; p += 4L) {
-            Unsafe.getUnsafe().putInt(p, noKeyValue);
+        if (noKeyValue == 0) {
+            // Vectorized fast path for zero default value.
+            Vect.memset(ptr + HEADER_SIZE, 4L * cap, 0);
+        } else {
+            for (long p = ptr + HEADER_SIZE, lim = ptr + HEADER_SIZE + 4L * cap; p < lim; p += 4L) {
+                Unsafe.getUnsafe().putInt(p, noKeyValue);
+            }
         }
     }
 }
