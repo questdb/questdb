@@ -83,6 +83,9 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     ) {
         assert perWorkerFilters == null || perWorkerFilters.size() == workerCount;
         assert perWorkerKeyFunctions == null || perWorkerKeyFunctions.size() == workerCount;
+
+        // We don't want to pay for merging redundant maps, so we limit their number.
+        final int slotCount = Math.min(workerCount, configuration.getPageFrameReduceQueueCapacity());
         try {
             this.configuration = configuration;
             this.shardingThreshold = configuration.getGroupByShardingThreshold();
@@ -96,28 +99,28 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
             functionUpdater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
             if (perWorkerGroupByFunctions != null) {
-                perWorkerFunctionUpdaters = new ObjList<>(workerCount);
-                for (int i = 0; i < workerCount; i++) {
+                perWorkerFunctionUpdaters = new ObjList<>(slotCount);
+                for (int i = 0; i < slotCount; i++) {
                     perWorkerFunctionUpdaters.extendAndSet(i, GroupByFunctionsUpdaterFactory.getInstance(asm, perWorkerGroupByFunctions.getQuick(i)));
                 }
             } else {
                 perWorkerFunctionUpdaters = null;
             }
 
-            perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
+            perWorkerLocks = new PerWorkerLocks(configuration, slotCount);
 
             shardCount = Math.min(Numbers.ceilPow2(2 * workerCount), MAX_SHARDS);
             shardCountShr = Integer.numberOfLeadingZeros(shardCount) + 1;
             ownerParticle = new Particle();
-            perWorkerParticles = new ObjList<>(workerCount);
-            for (int i = 0; i < workerCount; i++) {
+            perWorkerParticles = new ObjList<>(slotCount);
+            for (int i = 0; i < slotCount; i++) {
                 perWorkerParticles.extendAndSet(i, new Particle());
             }
 
             ownerMapSink = RecordSinkFactory.getInstance(asm, columnTypes, listColumnFilter, keyFunctions, false);
             if (perWorkerKeyFunctions != null) {
-                perWorkerMapSinks = new ObjList<>(workerCount);
-                for (int i = 0; i < workerCount; i++) {
+                perWorkerMapSinks = new ObjList<>(slotCount);
+                for (int i = 0; i < slotCount; i++) {
                     RecordSink sink = RecordSinkFactory.getInstance(asm, columnTypes, listColumnFilter, perWorkerKeyFunctions.getQuick(i), false);
                     perWorkerMapSinks.extendAndSet(i, sink);
                 }
@@ -131,9 +134,6 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     }
 
     public int acquire(int workerId, boolean owner, SqlExecutionCircuitBreaker circuitBreaker) {
-        if (perWorkerLocks == null) {
-            return -1;
-        }
         if (workerId == -1 && owner) {
             // Owner thread is free to use the original functions anytime.
             return -1;
@@ -142,9 +142,6 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     }
 
     public int acquire(int workerId, ExecutionCircuitBreaker circuitBreaker) {
-        if (perWorkerLocks == null) {
-            return -1;
-        }
         if (workerId == -1) {
             // Owner thread is free to use the original functions anytime.
             return -1;
@@ -322,9 +319,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     }
 
     public void release(int slotId) {
-        if (perWorkerLocks != null) {
-            perWorkerLocks.releaseSlot(slotId);
-        }
+        perWorkerLocks.releaseSlot(slotId);
     }
 
     @Override

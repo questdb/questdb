@@ -201,8 +201,8 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Planna
         }
     }
 
-    public void release(int filterId) {
-        perWorkerLocks.releaseSlot(filterId);
+    public void release(int slotId) {
+        perWorkerLocks.releaseSlot(slotId);
     }
 
     public void setAllocator(GroupByAllocator allocator) {
