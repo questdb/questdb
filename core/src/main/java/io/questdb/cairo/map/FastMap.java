@@ -663,6 +663,7 @@ public class FastMap implements Map, Reopenable {
 
         @Override
         public long commit() {
+            assert appendAddress <= startAddress + keySize;
             return keySize;
         }
 
@@ -690,21 +691,18 @@ public class FastMap implements Map, Reopenable {
 
         @Override
         public void putBool(boolean value) {
-            assert appendAddress + 1L <= heapLimit;
             Unsafe.getUnsafe().putByte(appendAddress, (byte) (value ? 1 : 0));
             appendAddress += 1L;
         }
 
         @Override
         public void putByte(byte value) {
-            assert appendAddress + 1L <= heapLimit;
             Unsafe.getUnsafe().putByte(appendAddress, value);
             appendAddress += 1L;
         }
 
         @Override
         public void putChar(char value) {
-            assert appendAddress + 2L <= heapLimit;
             Unsafe.getUnsafe().putChar(appendAddress, value);
             appendAddress += 2L;
         }
@@ -716,35 +714,30 @@ public class FastMap implements Map, Reopenable {
 
         @Override
         public void putDouble(double value) {
-            assert appendAddress + 8L <= heapLimit;
             Unsafe.getUnsafe().putDouble(appendAddress, value);
             appendAddress += 8L;
         }
 
         @Override
         public void putFloat(float value) {
-            assert appendAddress + 4L <= heapLimit;
             Unsafe.getUnsafe().putFloat(appendAddress, value);
             appendAddress += 4L;
         }
 
         @Override
         public void putInt(int value) {
-            assert appendAddress + 4L <= heapLimit;
             Unsafe.getUnsafe().putInt(appendAddress, value);
             appendAddress += 4L;
         }
 
         @Override
         public void putLong(long value) {
-            assert appendAddress + 8L <= heapLimit;
             Unsafe.getUnsafe().putLong(appendAddress, value);
             appendAddress += 8L;
         }
 
         @Override
         public void putLong128(long lo, long hi) {
-            assert appendAddress + 16L <= heapLimit;
             Unsafe.getUnsafe().putLong(appendAddress, lo);
             Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, hi);
             appendAddress += 16L;
@@ -752,7 +745,6 @@ public class FastMap implements Map, Reopenable {
 
         @Override
         public void putLong256(Long256 value) {
-            assert appendAddress + 32L <= heapLimit;
             Unsafe.getUnsafe().putLong(appendAddress, value.getLong0());
             Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, value.getLong1());
             Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 2, value.getLong2());
@@ -762,7 +754,6 @@ public class FastMap implements Map, Reopenable {
 
         @Override
         public void putShort(short value) {
-            assert appendAddress + 2L <= heapLimit;
             Unsafe.getUnsafe().putShort(appendAddress, value);
             appendAddress += 2L;
         }

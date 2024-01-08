@@ -95,7 +95,7 @@ public class ParallelGroupByTest extends AbstractCairoTest {
     @Test
     public void testGroupByOverJoin() throws Exception {
         // Parallel GROUP BY shouldn't kick in on this query, yet we want
-        // to make sure result correctness.
+        // to validate the result correctness.
         Assume.assumeTrue(enableParallelGroupBy);
         assertMemoryLeak(() -> {
             ddl(
@@ -124,7 +124,7 @@ public class ParallelGroupByTest extends AbstractCairoTest {
     @Test
     public void testGroupByOverLatestBy() throws Exception {
         // Parallel GROUP BY shouldn't kick in on this query, yet we want
-        // to make sure the result correctness.
+        // to validate the result correctness.
         Assume.assumeTrue(enableParallelGroupBy);
         assertMemoryLeak(() -> {
             ddl(
@@ -157,7 +157,7 @@ public class ParallelGroupByTest extends AbstractCairoTest {
     @Test
     public void testGroupByOverUnion() throws Exception {
         // Parallel GROUP BY shouldn't kick in on this query, yet we want
-        // to make sure the result correctness.
+        // to validate the result correctness.
         Assume.assumeTrue(enableParallelGroupBy);
         assertMemoryLeak(() -> {
             ddl(
@@ -637,6 +637,30 @@ public class ParallelGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelNonKeyedGroupBySubQueryWithReadThreadSafeTimestampFilter() throws Exception {
+        // Parallel GROUP BY shouldn't kick in on this query, yet we want
+        // to validate the result correctness.
+        testParallelGroupByAllTypes(
+                "SELECT count_distinct(ip) FROM " +
+                        "(SELECT * FROM tab WHERE ts in '1970-01-13' and a > 0 LIMIT 10)",
+                "count_distinct\n" +
+                        "10\n"
+        );
+    }
+
+    @Test
+    public void testParallelNonKeyedGroupBySubQueryWithReadThreadUnsafeTimestampFilter() throws Exception {
+        // Parallel GROUP BY shouldn't kick in on this query, yet we want
+        // to validate the result correctness.
+        testParallelGroupByAllTypes(
+                "SELECT count_distinct(ip) FROM " +
+                        "(SELECT * FROM tab WHERE ts in '1970-01-13' and a > 0 and i in (select i from tab where length(i) = 4) LIMIT 10)",
+                "count_distinct\n" +
+                        "10\n"
+        );
+    }
+
+    @Test
     public void testParallelNonKeyedGroupByThrowsOnTimeout() throws Exception {
         testParallelGroupByThrowsOnTimeout("select vwap(price, quantity) from tab");
     }
@@ -724,11 +748,50 @@ public class ParallelGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelNonKeyedGroupByWithReadThreadSafeTimestampFilter1() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT count_distinct(ip) FROM tab WHERE ts in '1970-01-13' and a > 0",
+                "count_distinct\n" +
+                        "84\n"
+        );
+    }
+
+    @Test
+    public void testParallelNonKeyedGroupByWithReadThreadSafeTimestampFilter2() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT min(key), max(key) FROM tab " +
+                        "WHERE ts in '1970-01-13' and a > 0",
+                "min\tmax\n" +
+                        "k0\tk4\n"
+        );
+    }
+
+    @Test
     public void testParallelNonKeyedGroupByWithReadThreadUnsafeFilter() throws Exception {
         testParallelSymbolKeyGroupBy(
                 "SELECT vwap(price, quantity), sum(colTop) FROM tab WHERE key = 'k1'",
                 "vwap\tsum\n" +
                         "2682.7321472695826\t1638800.0\n"
+        );
+    }
+
+    @Test
+    public void testParallelNonKeyedGroupByWithReadThreadUnsafeTimestampFilter1() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT count_distinct(ip) FROM tab " +
+                        "WHERE ts in '1970-01-13' and a > 0 and i in (select i from tab where length(i) = 4)",
+                "count_distinct\n" +
+                        "14\n"
+        );
+    }
+
+    @Test
+    public void testParallelNonKeyedGroupByWithReadThreadUnsafeTimestampFilter2() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT min(i), max(i) FROM tab " +
+                        "WHERE ts in '1970-01-13' and a > 0 and i in (select i from tab where length(i) >= 4 and length(i) <= 6)",
+                "min\tmax\n" +
+                        "NRXGZ\tXUXIBB\n"
         );
     }
 
@@ -931,6 +994,31 @@ public class ParallelGroupByTest extends AbstractCairoTest {
         testParallelSymbolKeyGroupBy(
                 "SELECT key FROM tab WHERE quantity < 0 GROUP BY key ORDER BY key",
                 "key\n"
+        );
+    }
+
+    @Test
+    public void testParallelSingleKeyGroupByWithReadThreadSafeTimestampFilter() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT key, count_distinct(ip) FROM tab " +
+                        "WHERE ts in '1970-01-13' and d < 1000 ORDER BY key DESC",
+                "key\tcount_distinct\n" +
+                        "k4\t28\n" +
+                        "k3\t29\n" +
+                        "k2\t27\n" +
+                        "k1\t31\n" +
+                        "k0\t27\n"
+        );
+    }
+
+    @Test
+    public void testParallelSingleKeyGroupByWithReadThreadUnsafeTimestampFilter() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT key, count_distinct(ip) FROM tab " +
+                        "WHERE ts in '1970-01-13' and d < 1000 and key in ('k1', 'k2') ORDER BY key DESC",
+                "key\tcount_distinct\n" +
+                        "k2\t27\n" +
+                        "k1\t31\n"
         );
     }
 
