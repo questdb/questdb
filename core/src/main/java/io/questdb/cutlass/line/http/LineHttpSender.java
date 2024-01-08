@@ -3,6 +3,7 @@ package io.questdb.cutlass.line.http;
 import io.questdb.cairo.TableUtils;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.http.client.HttpClient;
+import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.std.Misc;
@@ -14,6 +15,7 @@ import java.time.temporal.ChronoUnit;
 
 public final class LineHttpSender implements Sender {
     private static final String URL = "/write";
+    private final String authToken;
     private final String host;
     private final int maxPendingRows;
     private final int port;
@@ -24,9 +26,14 @@ public final class LineHttpSender implements Sender {
     private RequestState state = RequestState.EMPTY;
 
     public LineHttpSender(String host, int port, int initialBufferCapacity, boolean tls, int maxPendingRows) {
+        this(host, port, initialBufferCapacity, tls, maxPendingRows, null);
+    }
+
+    public LineHttpSender(String host, int port, int initialBufferCapacity, boolean tls, int maxPendingRows, String authToken) {
         this.host = host;
         this.port = port;
         this.maxPendingRows = maxPendingRows;
+        this.authToken = authToken;
         this.client = tls ? HttpClientFactory.newTlsInstance() : HttpClientFactory.newPlainTextInstance();
         this.request = newRequest();
     }
@@ -95,11 +102,23 @@ public final class LineHttpSender implements Sender {
             //todo: maybe try to send everything up until the last end of row?
             throw new LineSenderException("cannot flush while row is in progress");
         }
-        HttpClient.ResponseHeaders response = request.send(host, port);
-        response.await();
-        if (!isSuccessResponse(response)) {
-            response.getStatusCode();
-            throw new LineSenderException("unexpected status code: "); //todo: add status code
+        try {
+            HttpClient.ResponseHeaders response = request.send(host, port);
+            response.await();
+            if (!isSuccessResponse(response)) {
+                response.getStatusCode();
+                throw new LineSenderException("unexpected status code: "); //todo: add status code
+            }
+        } catch (HttpClientException e) {
+            // an infrastructure error,
+            // todo: do a proper retrying and option to disable it
+            client.disconnect();
+            HttpClient.ResponseHeaders response = request.send(host, port);
+            response.await();
+            if (!isSuccessResponse(response)) {
+                response.getStatusCode();
+                throw new LineSenderException("unexpected status code: "); //todo: add status code
+            }
         }
         pendingRows = 0;
         request = newRequest();
@@ -233,7 +252,11 @@ public final class LineHttpSender implements Sender {
     }
 
     private HttpClient.Request newRequest() {
-        return client.newRequest().POST().url(URL).withContent();
+        HttpClient.Request r = client.newRequest().POST().url(URL).withContent();
+//        if (authToken != null) {
+//            r.authBearer(authToken);
+//        }
+        return r;
     }
 
     private void validateColumnName(CharSequence name) {

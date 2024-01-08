@@ -273,6 +273,11 @@ public abstract class HttpClient implements QuietCloseable {
             return this;
         }
 
+        public ResponseHeaders getResponse() {
+            responseHeaders.clear();
+            return responseHeaders;
+        }
+
         public Request header(CharSequence name, CharSequence value) {
             beforeHeader();
             put(name).putAsciiInternal(": ").put(value);
