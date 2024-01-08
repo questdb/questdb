@@ -45,6 +45,49 @@ import static io.questdb.griffin.CompiledQuery.TRUNCATE;
 public class TruncateTest extends AbstractCairoTest {
 
     @Test
+    public void testAddColumnTruncate() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(
+                    "create table y as (" +
+                            "select timestamp_sequence(0, 1000000000) timestamp," +
+                            " x " +
+                            " from long_sequence(10)" +
+                            ") timestamp (timestamp)"
+            );
+
+
+            ddl("alter table y add column new_x int", sqlExecutionContext);
+            ddl("truncate table y");
+
+            insert("insert into y values('2022-02-24', 1, 2)");
+
+            assertSql("timestamp\tx\tnew_x\n" +
+                    "2022-02-24T00:00:00.000000Z\t1\t2\n", "select * from y");
+        });
+    }
+
+    @Test
+    public void testUpdateThenTruncate() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(
+                    "create table y as (" +
+                            "select timestamp_sequence(0, 1000000000) timestamp," +
+                            " x " +
+                            " from long_sequence(10)" +
+                            ") timestamp (timestamp)"
+            );
+
+            update("update y set x = 10");
+            ddl("truncate table y");
+
+            insert("insert into y values('2022-02-24', 1)");
+
+            assertSql("timestamp\tx\n" +
+                    "2022-02-24T00:00:00.000000Z\t1\n", "select * from y");
+        });
+    }
+
+    @Test
     public void testDropColumnTruncatePartitionByNone() throws Exception {
         assertMemoryLeak(() -> {
             ddl(
