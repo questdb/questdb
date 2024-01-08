@@ -3,11 +3,13 @@ package io.questdb.test.cutlass.http.line;
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.client.Sender;
+import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.NumericException;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -21,6 +23,59 @@ public class SenderClientTest extends AbstractBootstrapTest {
         super.setUp();
         TestUtils.unchecked(() -> createDummyConfiguration());
         dbPath.parent().$();
+    }
+
+    @Test
+    public void testAppendErrors() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
+            )) {
+                serverMain.start();
+                serverMain.compile("create table ex_tbl(b byte, s short, f float, d double, str string, sym symbol, tss timestamp, " +
+                        "i int, l long, ip ipv4, g geohash(4c), ts timestamp) timestamp(ts) partition by DAY WAL");
+
+                int port = IlpHttpUtils.getHttpPort(serverMain);
+                try (Sender sender = Sender.builder()
+                        .url("http://localhost:" + port)
+                        .build()
+                ) {
+
+                    sender.table("ex_tbl")
+                            .doubleColumn("b", 1234)
+                            .at(1233456, ChronoUnit.NANOS);
+                    flushAndAssertError(sender, "{" +
+                            "\"code\":\"invalid\"," +
+                            "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
+                            "error in line 1: table: ex_tbl, column: b; cast error from protocol type: FLOAT to column type: BYTE\",\"line\":1,\"errorId\":");
+
+                    sender.table("ex_tbl")
+                            .longColumn("b", 1024)
+                            .at(1233456, ChronoUnit.NANOS);
+                    flushAndAssertError(sender, "{" +
+                            "\"code\":\"invalid\"," +
+                            "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
+                            "error in line 1: table: ex_tbl, column: b; line protocol value: 1024 is out bounds of column type: BYTE\",\"line\":1,\"errorId\":");
+
+                    sender.table("ex_tbl")
+                            .doubleColumn("i", 1024.2)
+                            .at(1233456, ChronoUnit.NANOS);
+                    flushAndAssertError(sender, "{" +
+                            "\"code\":\"invalid\"," +
+                            "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
+                            "error in line 1: table: ex_tbl, column: i; cast error from protocol type: FLOAT to column type: INT\",\"line\":1,\"errorId\":");
+
+                    sender.table("ex_tbl")
+                            .doubleColumn("str", 1024.2)
+                            .at(1233456, ChronoUnit.NANOS);
+                    flushAndAssertError(sender, "{" +
+                            "\"code\":\"invalid\"," +
+                            "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
+                            "error in line 1: table: ex_tbl, column: str; cast error from protocol type: FLOAT to column type: STRING\",\"line\":1,\"errorId\":");
+
+                }
+            }
+        });
     }
 
     @Test
@@ -64,6 +119,14 @@ public class SenderClientTest extends AbstractBootstrapTest {
         });
     }
 
+    private static void flushAndAssertError(Sender sender, String expectedError) {
+        try {
+            sender.flush();
+            Assert.fail();
+        } catch (LineSenderException e) {
+            TestUtils.assertContains(e.getMessage(), expectedError);
+        }
+    }
 
     private static void sendIlp(String tableName, int count, ServerMain serverMain) throws NumericException, NoSuchAlgorithmException, KeyManagementException {
         long timestamp = IntervalUtils.parseFloorPartialTimestamp("2023-11-27T18:53:24.834Z");

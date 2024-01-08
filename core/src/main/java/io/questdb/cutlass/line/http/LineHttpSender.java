@@ -2,13 +2,12 @@ package io.questdb.cutlass.line.http;
 
 import io.questdb.cairo.TableUtils;
 import io.questdb.client.Sender;
-import io.questdb.cutlass.http.client.HttpClient;
-import io.questdb.cutlass.http.client.HttpClientException;
-import io.questdb.cutlass.http.client.HttpClientFactory;
+import io.questdb.cutlass.http.client.*;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.std.Misc;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.StringSink;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -118,6 +117,9 @@ public final class LineHttpSender implements Sender {
             //todo: maybe try to send everything up until the last end of row?
             throw new LineSenderException("cannot flush while row is in progress");
         }
+        if (pendingRows == 0) {
+            return;
+        }
 
         int remainingRetries = MAX_RETRY;
         for (; ; ) {
@@ -125,17 +127,28 @@ public final class LineHttpSender implements Sender {
                 HttpClient.ResponseHeaders response = request.send(host, port);
                 response.await();
                 if (!isSuccessResponse(response)) {
-                    response.getStatusCode();
-                    throw new LineSenderException("unexpected status code: "); //todo: add status code
+                    StringSink sink = Misc.getThreadLocalSink();
+                    ChunkedResponse chunkedRsp = response.getChunkedResponse();
+                    Chunk chunk;
+                    while ((chunk = chunkedRsp.recv()) != null) {
+                        sink.putUtf8(chunk.lo(), chunk.hi());
+                    }
+                    pendingRows = 0;
+                    request = newRequest();
+                    throw new LineSenderException(sink.toString()); //todo: add status code
                 }
                 break;
             } catch (HttpClientException e) {
                 // this is a network error, we can retry
+
+                client.disconnect(); // forces reconnect
                 if (remainingRetries-- == 0) {
+                    // we did our best, give up
+                    pendingRows = 0;
+                    request = newRequest();
                     throw new LineSenderException("error while sending data to server", e);
                 }
                 // todo: backoff?
-                client.disconnect(); // forces reconnect
             }
         }
         pendingRows = 0;

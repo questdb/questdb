@@ -148,7 +148,7 @@ public abstract class HttpClient implements QuietCloseable {
     }
 
     private int recvOrDie(long addr, int timeout) {
-        return recvOrDie(addr, (int) (bufferSize - (addr - bufLo)), timeout);
+        return recvOrDie(addr, (int) (responseParserBufSize - (addr - responseParserBufLo)), timeout);
     }
 
     private int remainingTime(int timeoutMillis, long startTimeNanos) {
@@ -673,10 +673,10 @@ public abstract class HttpClient implements QuietCloseable {
 
         public void await(int timeout) {
             while (isIncomplete()) {
-                final int len = recvOrDie(bufLo, timeout);
+                final int len = recvOrDie(responseParserBufLo, timeout);
                 if (len > 0) {
                     // dataLo & dataHi are boundaries of unprocessed data left in the buffer
-                    chunkedResponse.begin(parse(bufLo, bufLo + len, false, true), bufLo + len);
+                    chunkedResponse.begin(parse(responseParserBufLo, responseParserBufLo + len, false, true), responseParserBufLo + len);
                 }
             }
 
