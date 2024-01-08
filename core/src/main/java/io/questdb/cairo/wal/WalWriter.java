@@ -94,6 +94,7 @@ public class WalWriter implements TableWriterAPI {
     private ColumnVersionReader columnVersionReader;
     private long currentTxnStartRowNum = -1;
     private boolean distressed;
+    private boolean isCommittingData;
     private int lastSegmentTxn = -1;
     private long lastSeqTxn = NO_TXN;
     private boolean open;
@@ -262,6 +263,7 @@ public class WalWriter implements TableWriterAPI {
         checkDistressed();
         try {
             if (inTransaction()) {
+                isCommittingData = true;
                 final long rowsToCommit = getUncommittedRowCount();
                 lastSegmentTxn = events.appendData(currentTxnStartRowNum, segmentRowCount, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
                 // flush disk before getting next txn
@@ -289,6 +291,8 @@ public class WalWriter implements TableWriterAPI {
                 rollback();
             }
             throw th;
+        } finally {
+            isCommittingData = false;
         }
         return NO_TXN;
     }
@@ -493,10 +497,13 @@ public class WalWriter implements TableWriterAPI {
 
                 try {
                     final int timestampIndex = metadata.getTimestampIndex();
+
                     LOG.info().$("rolling uncommitted rows to new segment [wal=")
                             .$(path).$(Files.SEPARATOR).$(oldSegmentId)
+                            .$(", segTxn=").$(lastSegmentTxn)
                             .$(", newSegment=").$(newSegmentId)
-                            .$(", rowCount=").$(uncommittedRows).I$();
+                            .$(", rowCount=").$(uncommittedRows)
+                            .I$();
 
                     final int commitMode = configuration.getCommitMode();
                     for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
@@ -1122,12 +1129,23 @@ public class WalWriter implements TableWriterAPI {
 
     private long getSequencerTxn() {
         long seqTxn;
+        boolean retry = false;
+        int firstSegmentId = segmentId;
+        int firstSegmentTxn = lastSegmentTxn;
+
         do {
             seqTxn = sequencer.nextTxn(tableToken, walId, getColumnStructureVersion(), segmentId, lastSegmentTxn);
             if (seqTxn == NO_TXN) {
                 applyMetadataChangeLog(Long.MAX_VALUE);
+                retry = true;
             }
         } while (seqTxn == NO_TXN);
+
+        if (retry && firstSegmentTxn > 0) {
+            assert lastSegmentTxn == 0;
+            assert segmentId == firstSegmentId + 1;
+        }
+
         return lastSeqTxn = seqTxn;
     }
 
@@ -1373,10 +1391,20 @@ public class WalWriter implements TableWriterAPI {
     }
 
     private void rollLastWalEventRecord(int newSegmentId, long uncommittedRows) {
-        events.rollback();
+        if (isCommittingData) {
+            // Sometimes we only want to add a column without committing the data in the current wal segments in ILP.
+            // When this happens the data stays in the WAL column files but is not committed
+            // and the events file don't have a record about the column add transaction.
+            // In this case we DO NOT roll back the last record in the events file.
+            events.rollback();
+        }
         path.trimTo(rootLen).slash().put(newSegmentId);
         events.openEventFile(path, path.size(), isTruncateFilesOnClose());
-        lastSegmentTxn = events.appendData(0, uncommittedRows, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
+        if (isCommittingData) {
+            // When current transaction is not a data transaction but a column add transaction
+            // there is no need to add a record about it to the new segment event file.
+            lastSegmentTxn = events.appendData(0, uncommittedRows, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
+        }
         events.sync();
     }
 
