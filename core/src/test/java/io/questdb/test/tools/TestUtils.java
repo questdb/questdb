@@ -26,8 +26,9 @@ package io.questdb.test.tools;
 
 import io.questdb.*;
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
@@ -1764,22 +1765,6 @@ public final class TestUtils {
             Assert.assertEquals(toHexString(expected), toHexString(actual));
         }
     }
-
-/*
-    private static RecordMetadata copySymAstStr(RecordMetadata src) {
-        final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        for (int i = 0, n = src.getColumnCount(); i < n; i++) {
-            metadata.add(
-                    new TableColumnMetadata(
-                            src.getColumnName(i),
-                            src.getColumnType(i) != ColumnType.SYMBOL ? src.getColumnType(i) : ColumnType.STRING
-                    )
-            );
-        }
-        metadata.setTimestampIndex(src.getTimestampIndex());
-        return metadata;
-    }
-*/
 
     private static StringSink getTlSink() {
         StringSink ss = tlSink.get();
