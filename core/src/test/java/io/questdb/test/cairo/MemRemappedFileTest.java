@@ -111,7 +111,8 @@ public class MemRemappedFileTest extends AbstractTest {
 
                 nanos = System.nanoTime() - nanos;
                 Assert.assertEquals(expectedTotal, actualTotal);
-
+                appMem.close();
+                readMem.close();
                 ff.remove(path);
             }
             readMem.close();

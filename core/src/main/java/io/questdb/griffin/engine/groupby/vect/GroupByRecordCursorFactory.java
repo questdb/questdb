@@ -28,16 +28,15 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
-import io.questdb.cutlass.text.AtomicBooleanCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOUnboundedCountDownLatch;
-import io.questdb.mp.Sequence;
 import io.questdb.mp.Worker;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
@@ -195,6 +194,11 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         return base.usesCompiledFilter();
     }
 
+    @Override
+    public boolean usesIndex() {
+        return base.usesIndex();
+    }
+
     private static void addOffsets(
             IntList columnSkewIndex,
             @Transient ObjList<VectorAggregateFunction> vafList,
@@ -340,7 +344,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         private void buildRosti() {
             final int vafCount = vafList.size();
             final RingQueue<VectorAggregateTask> queue = bus.getVectorAggregateQueue();
-            final Sequence pubSeq = bus.getVectorAggregatePubSeq();
+            final MPSequence pubSeq = bus.getVectorAggregatePubSeq();
 
             sharedCircuitBreaker.reset();
             entryPool.clear();
@@ -384,8 +388,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                         final int columnSizeShr = frame.getColumnShiftBits(pageColIndex);
                         final long valueAddressSize = frame.getPageSize(pageColIndex);
 
-                        long seq = pubSeq.next();
-                        if (seq < 0) {
+                        long cursor = pubSeq.next();
+                        if (cursor < 0) {
                             circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
                             // acquire the slot and DIY the func
                             final int slot = perWorkerLocks.acquireSlot(workerId, circuitBreaker);
@@ -435,8 +439,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                                         sharedCircuitBreaker
                                 );
                             }
-                            queue.get(seq).entry = entry;
-                            pubSeq.done(seq);
+                            queue.get(cursor).entry = entry;
+                            pubSeq.done(cursor);
                         }
                         total++;
                     }
@@ -463,12 +467,11 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                         reclaimed,
                         workerId,
                         doneLatch,
-                        LOG,
                         circuitBreaker,
                         sharedCircuitBreaker
                 );
                 // we can't reallocate rosti until tasks are complete because some other thread could be using it
-                if (sharedCircuitBreaker.isCanceled()) {
+                if (sharedCircuitBreaker.checkIfTripped()) {
                     resetRostiMemorySize();
                 }
             }

@@ -45,6 +45,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
 import java.io.File;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class SecurityTest extends AbstractCairoTest {
@@ -96,6 +97,19 @@ public class SecurityTest extends AbstractCairoTest {
                 return 1024;
             }
 
+            @Override
+            public boolean isSqlParallelFilterEnabled() {
+                // Async factories use a special circuit breaker (see PageFrameSequence),
+                // so we make sure to use a single-threaded factory in this test.
+                return false;
+            }
+
+            @Override
+            public boolean isSqlParallelGroupByEnabled() {
+                // Async factories use a special circuit breaker (see PageFrameSequence),
+                // so we make sure to use a single-threaded factory in this test.
+                return false;
+            }
         };
         memoryRestrictedEngine = new CairoEngine(readOnlyConfiguration);
         SqlExecutionCircuitBreaker dummyCircuitBreaker = new SqlExecutionCircuitBreaker() {
@@ -126,8 +140,13 @@ public class SecurityTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean isCancelled() {
-                return false;
+            public int getState() {
+                return SqlExecutionCircuitBreaker.STATE_OK;
+            }
+
+            @Override
+            public int getState(long millis, int fd) {
+                return SqlExecutionCircuitBreaker.STATE_OK;
             }
 
             @Override
@@ -138,6 +157,11 @@ public class SecurityTest extends AbstractCairoTest {
             @Override
             public void resetTimer() {
                 deadline = circuitBreakerTimeoutDeadline;
+            }
+
+            @Override
+            public void setCancelledFlag(AtomicBoolean cancelledFlag) {
+
             }
 
             @Override

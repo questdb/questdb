@@ -39,6 +39,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class RecordValueSinkFactoryTest extends AbstractCairoTest {
+
     @Test
     public void testAllSupportedTypes() {
         SingleColumnType keyTypes = new SingleColumnType(ColumnType.INT);
@@ -60,8 +61,7 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
 
         final int N = 1024;
         final Rnd rnd = new Rnd();
-        try (TableWriter writer = newTableWriter(configuration, "all", metrics)) {
-
+        try (TableWriter writer = newOffPoolWriter(configuration, "all", metrics)) {
             for (int i = 0; i < N; i++) {
                 TableWriter.Row row = writer.newRow();
                 row.putInt(0, rnd.nextInt());
@@ -80,10 +80,9 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
             writer.commit();
         }
 
-        try (TableReader reader = newTableReader(configuration, "all")) {
+        try (TableReader reader = newOffPoolReader(configuration, "all")) {
             final SymbolAsIntTypes valueTypes = new SymbolAsIntTypes().of(reader.getMetadata());
             try (final Map map = new FastMap(Numbers.SIZE_1MB, keyTypes, valueTypes, N, 0.5, 100)) {
-
                 EntityColumnFilter columnFilter = new EntityColumnFilter();
                 columnFilter.of(reader.getMetadata().getColumnCount());
                 RecordValueSink sink = RecordValueSinkFactory.getInstance(new BytecodeAssembler(), reader.getMetadata(), columnFilter);
@@ -147,8 +146,7 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
 
         final int N = 1024;
         final Rnd rnd = new Rnd();
-        try (TableWriter writer = newTableWriter(configuration, "all", metrics)) {
-
+        try (TableWriter writer = newOffPoolWriter(configuration, "all", metrics)) {
             for (int i = 0; i < N; i++) {
                 TableWriter.Row row = writer.newRow();
                 row.putInt(0, rnd.nextInt());
@@ -167,18 +165,16 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
             writer.commit();
         }
 
-        try (TableReader reader = newTableReader(configuration, "all")) {
+        try (TableReader reader = newOffPoolReader(configuration, "all")) {
             ArrayColumnTypes valueTypes = new ArrayColumnTypes();
             valueTypes.add(ColumnType.BOOLEAN);
             valueTypes.add(ColumnType.TIMESTAMP);
             valueTypes.add(ColumnType.INT);
             try (final Map map = new FastMap(Numbers.SIZE_1MB, keyTypes, valueTypes, N, 0.5, 100)) {
-
                 ListColumnFilter columnFilter = new ListColumnFilter();
                 columnFilter.add(8);
                 columnFilter.add(10);
                 columnFilter.add(7);
-
 
                 RecordValueSink sink = RecordValueSinkFactory.getInstance(new BytecodeAssembler(), reader.getMetadata(), columnFilter);
                 RecordCursor cursor = reader.getCursor();

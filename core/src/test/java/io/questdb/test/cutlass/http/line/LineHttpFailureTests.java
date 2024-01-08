@@ -160,7 +160,6 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
             )) {
                 serverMain.start();
 
-                final List<String> points = new ArrayList<>();
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
                     String line = "line,sym1=123 field1=123i 1234567890000000000\n";
 

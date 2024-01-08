@@ -53,7 +53,7 @@ import static io.questdb.cairo.wal.WalUtils.*;
 import static io.questdb.cairo.wal.seq.TableTransactionLog.MAX_TXN_OFFSET;
 import static io.questdb.griffin.engine.functions.catalogue.ShowTablesFunctionFactory.ShowTablesCursorFactory;
 
-public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent {
+public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCloseable {
 
     private final static Log LOG = LogFactory.getLog(DatabaseSnapshotAgentImpl.class);
     private final CairoConfiguration configuration;
@@ -338,7 +338,7 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent {
                 int version = TableNameRegistryStore.findLastTablesFileVersion(ff, dstPath, nameSink);
                 dstPath.trimTo(rootLen).concat(WalUtils.TABLE_REGISTRY_NAME_FILE).putAscii('.').put(version).$();
                 LOG.info().$("backup removing table name registry file [dst=").$(dstPath).I$();
-                if (!ff.remove(dstPath)) {
+                if (!ff.removeQuiet(dstPath)) {
                     LOG.error()
                             .$("could not remove tables.d file [dst=").$(dstPath)
                             .$(", errno=").$(ff.errno())

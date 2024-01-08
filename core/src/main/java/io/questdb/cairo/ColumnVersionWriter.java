@@ -38,14 +38,17 @@ public class ColumnVersionWriter extends ColumnVersionReader {
     private boolean hasChanges;
     private long size;
     private long version;
+    private final boolean partitioned;
+
 
     // size should be read from the transaction file
     // it can be zero when there are no columns deviating from the main
     // data branch
-    public ColumnVersionWriter(CairoConfiguration configuration, LPSZ fileName) {
+    public ColumnVersionWriter(CairoConfiguration configuration, LPSZ fileName, boolean partitioned) {
         final FilesFacade ff = configuration.getFilesFacade();
         this.mem = Vm.getCMARWInstance(ff, fileName, ff.getPageSize(), 0, MemoryTag.MMAP_TABLE_READER, CairoConfiguration.O_NONE);
         this.configuration = configuration;
+        this.partitioned = partitioned;
         this.size = this.mem.size();
         super.ofRO(mem);
         if (this.size > 0) {
@@ -130,8 +133,9 @@ public class ColumnVersionWriter extends ColumnVersionReader {
     }
 
     public void truncate() {
-        if (cachedColumnVersionList.size() > 0) {
-            int from = cachedColumnVersionList.binarySearchBlock(BLOCK_SIZE_MSB, COL_TOP_DEFAULT_PARTITION + 1, BinarySearch.SCAN_UP);
+        if (cachedColumnVersionList.size() > 0 && partitioned) {
+            final long defaultPartitionTimestamp = COL_TOP_DEFAULT_PARTITION;
+            int from = cachedColumnVersionList.binarySearchBlock(BLOCK_SIZE_MSB, defaultPartitionTimestamp + 1, BinarySearch.SCAN_UP);
             if (from < 0) {
                 from = -from - 1;
             }
@@ -141,7 +145,7 @@ public class ColumnVersionWriter extends ColumnVersionReader {
             }
             // Keep default column version but reset the added timestamp to min
             for (int i = 0, n = cachedColumnVersionList.size(); i < n; i += BLOCK_SIZE) {
-                cachedColumnVersionList.setQuick(i + TIMESTAMP_ADDED_PARTITION_OFFSET, COL_TOP_DEFAULT_PARTITION);
+                cachedColumnVersionList.setQuick(i + TIMESTAMP_ADDED_PARTITION_OFFSET, defaultPartitionTimestamp);
             }
             hasChanges = true;
             commit();
@@ -201,6 +205,9 @@ public class ColumnVersionWriter extends ColumnVersionReader {
     }
 
     public void upsertColumnTop(long partitionTimestamp, int columnIndex, long colTop) {
+
+        assert partitioned;
+
         int recordIndex = getRecordIndex(partitionTimestamp, columnIndex);
         if (recordIndex > -1L) {
             cachedColumnVersionList.setQuick(recordIndex + COLUMN_TOP_OFFSET, colTop);

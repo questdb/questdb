@@ -30,17 +30,13 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
-import io.questdb.cutlass.text.AtomicBooleanCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.RingQueue;
-import io.questdb.mp.SOUnboundedCountDownLatch;
-import io.questdb.mp.Sequence;
-import io.questdb.mp.Worker;
+import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.tasks.VectorAggregateTask;
 
@@ -109,14 +105,18 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
         return base.usesCompiledFilter();
     }
 
+    @Override
+    public boolean usesIndex() {
+        return base.usesIndex();
+    }
+
     static int getRunWhatsLeft(
-            Sequence subSeq,
+            MCSequence subSeq,
             RingQueue<VectorAggregateTask> queue,
             int queuedCount,
             int reclaimed,
             int workerId,
             SOUnboundedCountDownLatch doneLatch,
-            Log log,
             SqlExecutionCircuitBreaker circuitBreaker,
             AtomicBooleanCircuitBreaker sharedCB
     ) {
@@ -299,7 +299,6 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
                         reclaimed,
                         workerId,
                         doneLatch,
-                        LOG,
                         circuitBreaker,
                         sharedCircuitBreaker
                 );

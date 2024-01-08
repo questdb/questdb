@@ -47,7 +47,7 @@ public class FirstSymbolGroupByFunction extends SymbolFunction implements GroupB
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putInt(this.valueIndex, this.arg.getInt(record));
+        mapValue.putInt(valueIndex, arg.getInt(record));
     }
 
     @Override
@@ -61,7 +61,7 @@ public class FirstSymbolGroupByFunction extends SymbolFunction implements GroupB
 
     @Override
     public int getInt(Record rec) {
-        return rec.getInt(this.valueIndex);
+        return rec.getInt(valueIndex);
     }
 
     @Override
@@ -104,7 +104,7 @@ public class FirstSymbolGroupByFunction extends SymbolFunction implements GroupB
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putInt(this.valueIndex, SymbolTable.VALUE_IS_NULL);
+        mapValue.putInt(valueIndex, SymbolTable.VALUE_IS_NULL);
     }
 
     @Override

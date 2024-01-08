@@ -126,24 +126,30 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             continue;
                         }
 
-                        if (!ff.remove(tempPath.$())) {
-                            allClean = false;
-                            LOG.info().$("could not remove [tempPath=").$(tempPath).$(", errno=").$(ff.errno()).I$();
-                        }
+                        allClean &= removeOrLog(tempPath, ff);
                     }
                 } while (ff.findNext(p) > 0);
 
                 if (allClean) {
                     // Remove _txn and _meta files when all other files are removed
-                    ff.remove(tempPath.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).$());
-                    ff.remove(tempPath.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$());
-                    return true;
+                    if (!removeOrLog(tempPath.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME), ff)) {
+                        return false;
+                    }
+                    return ff.removeQuiet(tempPath.trimTo(rootLen).concat(TableUtils.META_FILE_NAME));
                 }
             } finally {
                 ff.findClose(p);
             }
         }
         return false;
+    }
+
+    private static boolean removeOrLog(Path path, FilesFacade ff) {
+        if (!ff.removeQuiet(path.$())) {
+            LOG.info().$("could not remove, will retry [path=").utf8(", errno=").$(ff.errno()).I$();
+            return false;
+        }
+        return true;
     }
 
     private static boolean matchesWalLock(Utf8Sequence name) {
@@ -166,7 +172,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     }
 
     private static boolean tryDestroyDroppedTable(TableToken tableToken, TableWriter writer, CairoEngine engine, Path tempPath) {
-        if (engine.lockReadersByTableToken(tableToken)) {
+        if (engine.lockReadersAndMetadata(tableToken)) {
             TableWriter writerToClose = null;
             try {
                 final CairoConfiguration configuration = engine.getConfiguration();
@@ -189,7 +195,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 if (writerToClose != null) {
                     writerToClose.close();
                 }
-                engine.releaseReadersByTableToken(tableToken);
+                engine.unlockReadersAndMetadata(tableToken);
             }
         } else {
             LOG.info().$("table '").utf8(tableToken.getDirName())

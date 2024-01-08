@@ -28,10 +28,10 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.test.AbstractCairoTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -39,7 +39,6 @@ public class LastTimestampGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAllNull() throws SqlException {
-
         ddl("create table tab (f timestamp)");
 
         try (TableWriter w = getWriter("tab")) {
@@ -62,7 +61,6 @@ public class LastTimestampGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testNonNull() throws SqlException {
-
         ddl("create table tab (f timestamp)");
 
         final Rnd rnd = new Rnd();
@@ -86,7 +84,6 @@ public class LastTimestampGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testSomeNull() throws SqlException {
-
         ddl("create table tab (f timestamp)");
 
         try (TableWriter w = getWriter("tab")) {

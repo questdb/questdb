@@ -158,7 +158,7 @@ public class PathTest {
     @Test
     public void testHugeAppend() {
         final long threeGiB = 3L * 1024 * 1024 * 1024;
-        final long src = Unsafe.calloc(threeGiB, MemoryTag.NATIVE_DEFAULT);
+        final long src = 0;
         try {
             try (Path p0 = new Path()) {
                 p0.put(src, src + threeGiB);

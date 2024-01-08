@@ -24,7 +24,6 @@
 
 package io.questdb.test;
 
-import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
@@ -98,7 +97,7 @@ public class CreateTableTestUtils {
             }
         } catch (RuntimeException e) {
             if ("table already exists: x".equals(e.getMessage())) {
-                try (TableWriter writer = new TableWriter(engine.getConfiguration(), engine.verifyTableName("x"), Metrics.disabled())) {
+                try (TableWriter writer = TestUtils.newOffPoolWriter(engine.getConfiguration(), engine.verifyTableName("x"))) {
                     writer.truncate();
                 }
             } else {
@@ -106,7 +105,7 @@ public class CreateTableTestUtils {
             }
         }
 
-        try (TableWriter writer = new TableWriter(engine.getConfiguration(), engine.verifyTableName("x"), Metrics.disabled())) {
+        try (TableWriter writer = TestUtils.newOffPoolWriter(engine.getConfiguration(), engine.verifyTableName("x"))) {
             for (int i = 0; i < n; i++) {
                 TableWriter.Row row = writer.newRow();
                 row.putByte(0, rnd.nextByte());

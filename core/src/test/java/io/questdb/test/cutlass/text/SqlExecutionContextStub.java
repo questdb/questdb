@@ -38,6 +38,8 @@ import io.questdb.std.Rnd;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+
 public class SqlExecutionContextStub implements SqlExecutionContext {
 
     private final CairoEngine engine;
@@ -111,6 +113,11 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
+    public SqlExecutionCircuitBreaker getSimpleCircuitBreaker() {
+        return null;
+    }
+
+    @Override
     public WindowContext getWindowContext() {
         return null;
     }
@@ -153,6 +160,11 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
+    public void setCancelledFlag(AtomicBoolean cancelled) {
+
+    }
+
+    @Override
     public void setCloneSymbolTables(boolean cloneSymbolTables) {
     }
 
@@ -174,5 +186,10 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
 
     @Override
     public void setRandom(Rnd rnd) {
+    }
+
+    @Override
+    public void setUseSimpleCircuitBreaker(boolean value) {
+
     }
 }

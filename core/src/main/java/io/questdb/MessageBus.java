@@ -45,6 +45,12 @@ public interface MessageBus extends Closeable {
 
     MPSequence getCopyRequestPubSeq();
 
+    MPSequence getGroupByMergeShardPubSeq();
+
+    RingQueue<GroupByMergeShardTask> getGroupByMergeShardQueue();
+
+    MCSequence getGroupByMergeShardSubSeq();
+
     MPSequence getIndexerPubSequence();
 
     RingQueue<ColumnIndexerTask> getIndexerQueue();

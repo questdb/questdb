@@ -36,7 +36,7 @@ import org.jetbrains.annotations.NotNull;
 
 public class FirstShortGroupByFunction extends ShortFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
-    private int valueIndex;
+    protected int valueIndex;
 
     public FirstShortGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
@@ -44,7 +44,7 @@ public class FirstShortGroupByFunction extends ShortFunction implements GroupByF
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putShort(this.valueIndex, this.arg.getShort(record));
+        mapValue.putShort(valueIndex, arg.getShort(record));
     }
 
     @Override
@@ -64,7 +64,7 @@ public class FirstShortGroupByFunction extends ShortFunction implements GroupByF
 
     @Override
     public short getShort(Record rec) {
-        return rec.getShort(this.valueIndex);
+        return rec.getShort(valueIndex);
     }
 
     @Override
@@ -79,6 +79,6 @@ public class FirstShortGroupByFunction extends ShortFunction implements GroupByF
     }
 
     public void setShort(MapValue mapValue, short value) {
-        mapValue.putShort(this.valueIndex, value);
+        mapValue.putShort(valueIndex, value);
     }
 }

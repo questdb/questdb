@@ -101,8 +101,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
 
     @Override
     public int getScanDirection() {
-        if (dataFrameCursorFactory.getOrder() == DataFrameCursorFactory.ORDER_ASC
-                && heapCursorUsed) {
+        if (dataFrameCursorFactory.getOrder() == DataFrameCursorFactory.ORDER_ASC && heapCursorUsed) {
             return SCAN_DIRECTION_FORWARD;
         }
         return SCAN_DIRECTION_OTHER;
@@ -116,11 +115,16 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("FilterOnValues");
-        if (!heapCursorUsed) {//sorting symbols makes no sense for heap factory
+        if (!heapCursorUsed) { // sorting symbols makes no sense for heap factory
             sink.meta("symbolOrder").val(followedOrderByAdvice && orderDirection == QueryModel.ORDER_DIRECTION_ASCENDING ? "asc" : "desc");
         }
         sink.child(rowCursorFactory);
         sink.child(dataFrameCursorFactory);
+    }
+
+    @Override
+    public boolean usesIndex() {
+        return true;
     }
 
     private static int compareStrFunctions(FunctionBasedRowCursorFactory a, FunctionBasedRowCursorFactory b) {
@@ -173,8 +177,8 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
     }
 
     private void findDuplicates() {
-        //bind variable actual values might repeat so remove adjacent duplicates
-        //go through the list and if duplicate is found push it to  end of list
+        // bind variable actual values might repeat, so to remove adjacent duplicates
+        // go through the list and if duplicate is found push it to the end of the list
         int idx = 0;
         int max = cursorFactories.size();
 

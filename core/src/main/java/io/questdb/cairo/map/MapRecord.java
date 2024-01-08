@@ -29,7 +29,14 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.IntList;
 
 public interface MapRecord extends Record {
+
+    void copyToKey(MapKey destKey);
+
+    void copyValue(MapValue destValue);
+
     MapValue getValue();
+
+    int keyHashCode();
 
     void setSymbolTableResolver(RecordCursor resolver, IntList symbolTableIndex);
 }

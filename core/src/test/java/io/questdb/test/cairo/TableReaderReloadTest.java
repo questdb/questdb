@@ -155,16 +155,16 @@ public class TableReaderReloadTest extends AbstractCairoTest {
         }
 
         long timestamp = 0;
-        try (TableWriter writer = newTableWriter(configuration, "all", metrics)) {
+        try (TableWriter writer = newOffPoolWriter(configuration, "all", metrics)) {
 
-            try (TableReader reader = newTableReader(configuration, "all")) {
+            try (TableReader reader = newOffPoolReader(configuration, "all")) {
                 Assert.assertFalse(reader.reload());
             }
 
             populateTable(rnd, buffer, timestamp, increment, writer);
             rnd.reset();
 
-            try (TableReader reader = newTableReader(configuration, "all")) {
+            try (TableReader reader = newOffPoolReader(configuration, "all")) {
                 RecordCursor cursor = reader.getCursor();
                 final Record record = cursor.getRecord();
                 assertTable(rnd, buffer, cursor, record);
@@ -207,16 +207,16 @@ public class TableReaderReloadTest extends AbstractCairoTest {
         }
 
         long timestamp = 0;
-        try (TableWriter writer = newTableWriter(configuration, "all", metrics)) {
+        try (TableWriter writer = newOffPoolWriter(configuration, "all", metrics)) {
 
-            try (TableReader reader = newTableReader(configuration, "all")) {
+            try (TableReader reader = newOffPoolReader(configuration, "all")) {
                 Assert.assertFalse(reader.reload());
             }
 
             populateTable(rnd, buffer, timestamp, increment, writer);
             rnd.reset();
 
-            try (TableReader reader = newTableReader(configuration, "all")) {
+            try (TableReader reader = newOffPoolReader(configuration, "all")) {
                 RecordCursor cursor = reader.getCursor();
                 final Record record = cursor.getRecord();
                 assertTable(rnd, buffer, cursor, record);

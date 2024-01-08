@@ -26,10 +26,11 @@ package io.questdb.test;
 
 import io.questdb.FactoryProvider;
 import io.questdb.MessageBus;
+import io.questdb.MessageBusImpl;
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.*;
@@ -104,6 +105,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static TestCairoEngineFactory engineFactory;
     protected static FactoryProvider factoryProvider;
     protected static FilesFacade ff;
+    protected static int groupByShardingThreshold = -1;
     protected static String inputRoot = null;
     protected static String inputWorkRoot = null;
     protected static IOURingFacade ioURingFacade = IOURingFacadeImpl.INSTANCE;
@@ -724,29 +726,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
-    private void assertQuery(
-            SqlCompiler compiler,
-            String expected,
-            String query,
-            String expectedTimestamp,
-            SqlExecutionContext sqlExecutionContext,
-            boolean supportsRandomAccess,
-            boolean expectSize
-    ) throws SqlException {
-        snapshotMemoryUsage();
-        try (final RecordCursorFactory factory = CairoEngine.select(compiler, query, sqlExecutionContext)) {
-            assertFactoryCursor(
-                    expected,
-                    expectedTimestamp,
-                    factory,
-                    supportsRandomAccess,
-                    sqlExecutionContext,
-                    expectSize,
-                    false
-            );
-        }
-    }
-
     protected static void addColumn(TableWriterAPI writer, String columnName, int columnType) {
         AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, writer.getTableToken(), 0);
         addColumnC.ofAddColumn(columnName, 1, columnType, 0, false, false, 0);
@@ -907,6 +886,21 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static void assertException(CharSequence sql, int errorPos, CharSequence contains, boolean fullFatJoins) throws Exception {
         try {
             assertException(sql, sqlExecutionContext, fullFatJoins);
+        } catch (Throwable e) {
+            if (e instanceof FlyweightMessageContainer) {
+                TestUtils.assertContains(((FlyweightMessageContainer) e).getFlyweightMessage(), contains);
+                if (errorPos > -1) {
+                    Assert.assertEquals(errorPos, ((FlyweightMessageContainer) e).getPosition());
+                }
+            } else {
+                throw e;
+            }
+        }
+    }
+
+    protected static void assertException(CharSequence sql, int errorPos, CharSequence contains, SqlExecutionContext sqlExecutionContext) throws Exception {
+        try {
+            assertException(sql, sqlExecutionContext);
         } catch (Throwable e) {
             if (e instanceof FlyweightMessageContainer) {
                 TestUtils.assertContains(((FlyweightMessageContainer) e).getFlyweightMessage(), contains);
@@ -1206,6 +1200,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
         node1.getConfigurationOverrides().setO3QuickSortEnabled(o3QuickSortEnabled);
     }
 
+    protected static void configOverrideParallelGroupByEnabled(boolean parallelGroupByEnabled) {
+        node1.getConfigurationOverrides().setParallelGroupByEnabled(parallelGroupByEnabled);
+    }
+
     protected static void configOverrideParallelImportStatusLogKeepNDays(int parallelImportStatusLogKeepNDays) {
         node1.getConfigurationOverrides().setParallelImportStatusLogKeepNDays(parallelImportStatusLogKeepNDays);
     }
@@ -1420,12 +1418,20 @@ public abstract class AbstractCairoTest extends AbstractTest {
         return node;
     }
 
-    protected static TableReader newTableReader(CairoConfiguration configuration, CharSequence tableName) {
+    protected static TableReader newOffPoolReader(CairoConfiguration configuration, CharSequence tableName) {
         return new TableReader(configuration, engine.verifyTableName(tableName));
     }
 
-    protected static TableWriter newTableWriter(CairoConfiguration configuration, CharSequence tableName, Metrics metrics) {
-        return new TableWriter(configuration, engine.verifyTableName(tableName), metrics);
+    protected static TableWriter newOffPoolWriter(CairoConfiguration configuration, CharSequence tableName, Metrics metrics) {
+        return TestUtils.newOffPoolWriter(configuration, engine.verifyTableName(tableName), metrics, new MessageBusImpl(configuration));
+    }
+
+    protected static TableWriter newOffPoolWriter(CairoConfiguration configuration, CharSequence tableName) {
+        return TestUtils.newOffPoolWriter(configuration, engine.verifyTableName(tableName));
+    }
+
+    protected static TableWriter newOffPoolWriter(CharSequence tableName) {
+        return TestUtils.newOffPoolWriter(configuration, engine.verifyTableName(tableName));
     }
 
     protected static void printSql(CharSequence sql) throws SqlException {
@@ -1615,7 +1621,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         sink.put("EXPLAIN ").put(query);
 
         try (ExplainPlanFactory planFactory = getPlanFactory(sink); RecordCursor cursor = planFactory.getCursor(sqlExecutionContext)) {
-
             if (!JitUtil.isJitSupported()) {
                 expectedPlan = Chars.toString(expectedPlan).replace("Async JIT", "Async");
             }
@@ -1635,6 +1640,29 @@ public abstract class AbstractCairoTest extends AbstractTest {
             }
 
             TestUtils.assertCursor(expectedPlan, cursor, planFactory.getMetadata(), false, sink);
+        }
+    }
+
+    protected void assertQuery(
+            SqlCompiler compiler,
+            String expected,
+            String query,
+            String expectedTimestamp,
+            SqlExecutionContext sqlExecutionContext,
+            boolean supportsRandomAccess,
+            boolean expectSize
+    ) throws SqlException {
+        snapshotMemoryUsage();
+        try (final RecordCursorFactory factory = CairoEngine.select(compiler, query, sqlExecutionContext)) {
+            assertFactoryCursor(
+                    expected,
+                    expectedTimestamp,
+                    factory,
+                    supportsRandomAccess,
+                    sqlExecutionContext,
+                    expectSize,
+                    false
+            );
         }
     }
 
@@ -1870,8 +1898,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
         return engine.isWalTable(engine.verifyTableName(tableName));
     }
 
-    protected TableWriter newTableWriter(CairoConfiguration configuration, CharSequence tableName, MessageBus messageBus, Metrics metrics) {
-        return new TableWriter(configuration, engine.verifyTableName(tableName), messageBus, metrics);
+    protected TableWriter newOffPoolWriter(CairoConfiguration configuration, CharSequence tableName, Metrics metrics, MessageBus messageBus) {
+        return TestUtils.newOffPoolWriter(configuration, engine.verifyTableName(tableName), metrics, messageBus);
     }
 
     protected TableToken registerTableName(CharSequence tableName) {
@@ -1886,25 +1914,12 @@ public abstract class AbstractCairoTest extends AbstractTest {
         return update(updateSql, sqlExecutionContext, null);
     }
 
-    protected long update(CharSequence updateSql, SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            while (true) {
-                try {
-                    CompiledQuery cc = compiler.compile(updateSql, sqlExecutionContext);
-                    try (OperationFuture future = cc.execute(eventSubSeq)) {
-                        future.await();
-                        return future.getAffectedRowsCount();
-                    }
-                } catch (TableReferenceOutOfDateException ex) {
-                    // retry, e.g. continue
-                } catch (SqlException ex) {
-                    if (Chars.contains(ex.getFlyweightMessage(), "cached query plan cannot be used because table schema has changed")) {
-                        continue;
-                    }
-                    throw new RuntimeException(ex);
-                }
-            }
-        }
+    protected long update(
+            CharSequence updateSql,
+            SqlExecutionContext sqlExecutionContext,
+            @Nullable SCSequence eventSubSeq
+    ) throws SqlException {
+        return engine.update(updateSql, sqlExecutionContext, eventSubSeq);
     }
 
     protected enum StringAsTagMode {

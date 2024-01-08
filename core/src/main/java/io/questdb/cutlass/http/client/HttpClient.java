@@ -37,11 +37,14 @@ import io.questdb.std.str.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.net.HttpURLConnection;
+
 import static io.questdb.cutlass.http.HttpConstants.*;
 import static java.util.concurrent.TimeUnit.NANOSECONDS;
 
 public abstract class HttpClient implements QuietCloseable {
     private static final String HEADER_CONTENT_LENGTH = "Content-Length: ";
+    private static final String HTTP_NO_CONTENT = String.valueOf(HttpURLConnection.HTTP_NO_CONTENT);
     private static final Log LOG = LogFactory.getLog(HttpClient.class);
     protected final NetworkFacade nf;
     protected final Socket socket;
@@ -228,8 +231,8 @@ public abstract class HttpClient implements QuietCloseable {
     }
 
     public class Request implements Utf8Sink {
+        private static final int STATE_CONTENT = 5;
         private static final int STATE_HEADER = 4;
-        private static final int STATE_CONTENT = STATE_HEADER + 1;
         private static final int STATE_QUERY = 3;
         private static final int STATE_REQUEST = 0;
         private static final int STATE_URL = 1;
@@ -276,6 +279,17 @@ public abstract class HttpClient implements QuietCloseable {
         public ResponseHeaders getResponse() {
             responseHeaders.clear();
             return responseHeaders;
+        }
+
+        public Request authToken(CharSequence username, CharSequence token) {
+            beforeHeader();
+            putAsciiInternal("Authorization: Token ");
+            putAsciiInternal(token);
+            eol();
+            if (cookieHandler != null) {
+                cookieHandler.setCookies(this, username);
+            }
+            return this;
         }
 
         public Request header(CharSequence name, CharSequence value) {
@@ -677,6 +691,10 @@ public abstract class HttpClient implements QuietCloseable {
                 if (len > 0) {
                     // dataLo & dataHi are boundaries of unprocessed data left in the buffer
                     chunkedResponse.begin(parse(responseParserBufLo, responseParserBufLo + len, false, true), responseParserBufLo + len);
+                    final Utf8Sequence statusCode = getStatusCode();
+                    if (statusCode != null && Utf8s.equalsNcAscii(HTTP_NO_CONTENT, getStatusCode())) {
+                        incomplete = false;
+                    }
                 }
             }
 

@@ -115,7 +115,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     }
 
     protected void assertTable(CharSequence expected, String tableName) {
-        try (TableReader reader = newTableReader(configuration, tableName)) {
+        try (TableReader reader = newOffPoolReader(configuration, tableName)) {
             assertCursorTwoPass(expected, reader.getCursor(), reader.getMetadata());
         }
     }

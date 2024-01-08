@@ -25,19 +25,19 @@
 package io.questdb.cairo.map;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.Unsafe;
+import io.questdb.std.bytes.Bytes;
 
-public final class FastMapCursor implements RecordCursor {
+public final class FastMapCursor implements MapRecordCursor {
     // Set to -1 when key-value pair is var-size.
-    private final int keyValueSize;
+    private final long alignedKeyValueSize;
     private final FastMap map;
     private final FastMapRecord recordA;
-    private final MapRecord recordB;
+    private final FastMapRecord recordB;
+    private final int valueSize;
     private long address;
     private int count;
-    private long limit;
     private int remaining;
     private long topAddress;
 
@@ -45,10 +45,11 @@ public final class FastMapCursor implements RecordCursor {
         this.recordA = record;
         this.recordB = record.clone();
         this.map = map;
+        this.valueSize = map.valueSize();
         if (map.keySize() != -1) {
-            keyValueSize = map.keySize() + map.valueSize();
+            alignedKeyValueSize = Bytes.align8b(map.keySize() + map.valueSize());
         } else {
-            keyValueSize = -1;
+            alignedKeyValueSize = -1;
         }
     }
 
@@ -62,7 +63,7 @@ public final class FastMapCursor implements RecordCursor {
 
     @Override
     public void close() {
-        map.restoreInitialCapacity();
+        // no-op
     }
 
     @Override
@@ -78,21 +79,14 @@ public final class FastMapCursor implements RecordCursor {
     @Override
     public boolean hasNext() {
         if (remaining > 0) {
-            long address = this.address;
-            if (keyValueSize == -1) {
+            recordA.of(address);
+            if (alignedKeyValueSize == -1) {
                 int keySize = Unsafe.getUnsafe().getInt(address);
-                this.address = address + Integer.BYTES + keySize + map.valueSize();
+                address = Bytes.align8b(address + Integer.BYTES + keySize + valueSize);
             } else {
-                this.address = address + keyValueSize;
+                address += alignedKeyValueSize;
             }
-            // Key-value pairs start at 8 byte aligned addresses, so we may need to align the next pointer.
-            if ((this.address & 0x7) != 0) {
-                this.address |= 0x7;
-                this.address++;
-            }
-
             remaining--;
-            recordA.of(address, limit);
             return true;
         }
         return false;
@@ -100,7 +94,7 @@ public final class FastMapCursor implements RecordCursor {
 
     @Override
     public void recordAt(Record record, long atRowId) {
-        ((FastMapRecord) record).of(atRowId, limit);
+        ((FastMapRecord) record).of(atRowId);
     }
 
     @Override
@@ -116,8 +110,9 @@ public final class FastMapCursor implements RecordCursor {
 
     FastMapCursor init(long address, long limit, int count) {
         this.address = this.topAddress = address;
-        this.limit = limit;
         this.remaining = this.count = count;
+        recordA.setLimit(limit);
+        recordB.setLimit(limit);
         return this;
     }
 }

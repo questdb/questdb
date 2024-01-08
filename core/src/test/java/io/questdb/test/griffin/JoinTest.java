@@ -1852,7 +1852,7 @@ public class JoinTest extends AbstractCairoTest {
             insert("INSERT INTO t VALUES ('2023-09-21T10:00:00.000000Z', 1, 1);");
             insert("INSERT INTO t VALUES ('2023-09-21T11:00:00.000000Z', 1, 1);");
 
-            // The important aspects here are T1.event = 0.0
+            // The important aspects here are T1.event = 1.0
             // in the first query and T1.event = T2.event in the second one. Due to this,
             // transitive filters pass was mistakenly mutating where clause in the second query.
             final String query1 = "SELECT count(1)\n" +
@@ -2565,12 +2565,6 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testJoinOnGeohashCompactMap() throws Exception {
-        configOverrideDefaultMapType("compact");
-        testJoinOnGeohash();
-    }
-
-    @Test
     public void testJoinOnGeohashFastMap() throws Exception {
         configOverrideDefaultMapType("fast");
         testJoinOnGeohash();
@@ -2805,18 +2799,6 @@ public class JoinTest extends AbstractCairoTest {
                     "ts"
             );
         });
-    }
-
-    @Test
-    public void testJoinWithGeohashCompactMap() throws Exception {
-        configOverrideDefaultMapType("compact");
-        testJoinWithGeoHash();
-    }
-
-    @Test
-    public void testJoinWithGeohashCompactMap2() throws Exception {
-        configOverrideDefaultMapType("compact");
-        testJoinWithGeohash2();
     }
 
     @Test

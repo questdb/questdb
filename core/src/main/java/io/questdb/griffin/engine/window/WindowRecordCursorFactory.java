@@ -116,6 +116,11 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
         return base.usesCompiledFilter();
     }
 
+    @Override
+    public boolean usesIndex() {
+        return base.usesIndex();
+    }
+
     private void resetFunctions() {
         for (int i = 0, n = windowFunctions.size(); i < n; i++) {
             windowFunctions.getQuick(i).reset();
