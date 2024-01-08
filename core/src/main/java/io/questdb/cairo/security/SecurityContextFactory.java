@@ -25,6 +25,7 @@
 package io.questdb.cairo.security;
 
 import io.questdb.cairo.SecurityContext;
+import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
 public interface SecurityContextFactory {
@@ -33,6 +34,10 @@ public interface SecurityContextFactory {
     byte PGWIRE = 1;
 
     SecurityContext getInstance(@Transient CharSequence principal, byte authType, byte interfaceId);
+
+    default SecurityContext getInstance(@Transient CharSequence principal, @Transient ObjList<CharSequence> groups, byte authType, byte interfaceId) {
+        throw new UnsupportedOperationException();
+    }
 
     default SecurityContext getRootContext() {
         return AllowAllSecurityContext.INSTANCE;
