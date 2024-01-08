@@ -119,10 +119,83 @@ public class SenderClientTest extends AbstractBootstrapTest {
         });
     }
 
+    @Test
+    public void testRestrictedCreateColumnsError() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048",
+                    PropertyKey.LINE_AUTO_CREATE_NEW_COLUMNS.getEnvVarName(), "false"
+            )) {
+                serverMain.start();
+                serverMain.compile("create table ex_tbl(b byte, s short, f float, d double, str string, sym symbol, tss timestamp, " +
+                        "i int, l long, ip ipv4, g geohash(4c), ts timestamp) timestamp(ts) partition by DAY WAL");
+
+                int port = IlpHttpUtils.getHttpPort(serverMain);
+                try (Sender sender = Sender.builder()
+                        .url("http://localhost:" + port)
+                        .build()
+                ) {
+                    sender.table("ex_tbl")
+                            .symbol("a3", "3")
+                            .at(1222233456, ChronoUnit.NANOS);
+                    flushAndAssertError(sender, "{" +
+                            "\"code\":\"invalid\"," +
+                            "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
+                            "error in line 1: table: ex_tbl, column: a3 does not exist, creating new columns is disabled\",\"line\":1,\"errorId\":");
+
+                    sender.table("ex_tbl2")
+                            .doubleColumn("d", 2)
+                            .at(1222233456, ChronoUnit.NANOS);
+                    flushAndAssertError(sender, "{" +
+                            "\"code\":\"invalid\"," +
+                            "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
+                            "error in line 1: table: ex_tbl2; table does not exist, cannot create table, creating new columns is disabled\",\"line\":1,\"errorId\":");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRestrictedCreateTableError() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048",
+                    PropertyKey.LINE_AUTO_CREATE_NEW_COLUMNS.getEnvVarName(), "false",
+                    PropertyKey.LINE_AUTO_CREATE_NEW_TABLES.getEnvVarName(), "false"
+            )) {
+                serverMain.start();
+                serverMain.compile("create table ex_tbl(b byte, s short, f float, d double, str string, sym symbol, tss timestamp, " +
+                        "i int, l long, ip ipv4, g geohash(4c), ts timestamp) timestamp(ts) partition by DAY WAL");
+
+                int port = IlpHttpUtils.getHttpPort(serverMain);
+                try (Sender sender = Sender.builder()
+                        .url("http://localhost:" + port)
+                        .build()
+                ) {
+                    sender.table("ex_tbl")
+                            .symbol("a3", "2")
+                            .at(1222233456, ChronoUnit.NANOS);
+                    flushAndAssertError(sender, "{" +
+                            "\"code\":\"invalid\"," +
+                            "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
+                            "error in line 1: table: ex_tbl, column: a3 does not exist, creating new columns is disabled\",\"line\":1,\"errorId\":");
+
+                    sender.table("ex_tbl2")
+                            .doubleColumn("d", 2)
+                            .at(1222233456, ChronoUnit.NANOS);
+                    flushAndAssertError(sender, "{" +
+                            "\"code\":\"invalid\"," +
+                            "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
+                            "error in line 1: table: ex_tbl2; table does not exist, creating new tables is disabled\",\"line\":1,\"errorId\":");
+                }
+            }
+        });
+    }
+
     private static void flushAndAssertError(Sender sender, String expectedError) {
         try {
             sender.flush();
-            Assert.fail();
+            Assert.fail("Expected exception");
         } catch (LineSenderException e) {
             TestUtils.assertContains(e.getMessage(), expectedError);
         }
