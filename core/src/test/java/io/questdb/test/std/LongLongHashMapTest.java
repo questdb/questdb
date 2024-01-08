@@ -29,6 +29,8 @@ import io.questdb.std.Rnd;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.HashSet;
+
 public class LongLongHashMapTest {
 
     @Test
@@ -96,6 +98,8 @@ public class LongLongHashMapTest {
         rnd2.reset();
         rnd.reset();
 
+        HashSet<Long> recordedKeys = new HashSet<>();
+
         // assert that keys we didn't remove are still there and
         // keys we removed are not
         for (int i = 0; i < N; i++) {
@@ -103,19 +107,19 @@ public class LongLongHashMapTest {
                 Assert.assertTrue(map.excludes(i));
             } else {
                 Assert.assertFalse(map.excludes(i));
-                Assert.assertEquals(rnd3.nextLong(), map.get(i));
+                long key = rnd3.nextLong();
+                Assert.assertEquals(key, map.get(i));
+                recordedKeys.add(key);
             }
         }
 
-        rnd3.reset();
+        Assert.assertEquals(recordedKeys.size(), map.size());
 
         for (int i = 0; i < map.capacity(); i++) {
             long key = map.keyAtRaw(i);
-            if (key == -1) {
-                Assert.assertTrue(map.excludes(i));
-            } else {
-                Assert.assertFalse(map.excludes(i));
-                Assert.assertEquals(rnd3.nextLong(), map.valueAtRaw(i));
+            if (key != -1) {
+                Assert.assertFalse(map.excludes(key));
+                Assert.assertTrue(recordedKeys.contains(map.valueAtRaw(i)));
             }
         }
 
