@@ -259,6 +259,7 @@ public interface Sender extends Closeable {
         private String host;
         private String keyId;
         private int maxPendingRows = DEFAULT_MAX_PENDING_ROWS;
+        private String password;
         private int port = PORT_DEFAULT;
         private PrivateKey privateKey;
         private int protocol = PROTOCOL_DEFAULT;
@@ -267,6 +268,7 @@ public interface Sender extends Closeable {
         private TlsValidationMode tlsValidationMode = TlsValidationMode.DEFAULT;
         private char[] trustStorePassword;
         private String trustStorePath;
+        private String username;
 
         private LineSenderBuilder() {
 
@@ -362,10 +364,16 @@ public interface Sender extends Closeable {
 
             NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             if (protocol == PROTOCOL_HTTP) {
-                return new LineHttpSender(host, port, bufferCapacity, tlsEnabled, maxPendingRows);
+                return new LineHttpSender(host, port, bufferCapacity, tlsEnabled, maxPendingRows, username, password);
             } else if (protocol != PROTOCOL_TCP) {
                 throw new LineSenderException("unsupported protocol ")
                         .put("[protocol=").put(protocol).put("]");
+            }
+            if (username != null) {
+                throw new LineSenderException("username/password authentication is not supported for TCP protocol");
+            }
+            if (password != null) {
+                throw new LineSenderException("username/password authentication is not supported for TCP protocol");
             }
 
             LineChannel channel = new PlainTcpLineChannel(nf, host, port, bufferCapacity * 2);
@@ -419,6 +427,12 @@ public interface Sender extends Closeable {
             }
             this.keyId = keyId;
             return new LineSenderBuilder.AuthBuilder();
+        }
+
+        public LineSenderBuilder enableAuth(String username, String password) {
+            this.username = username;
+            this.password = password;
+            return this;
         }
 
         /**

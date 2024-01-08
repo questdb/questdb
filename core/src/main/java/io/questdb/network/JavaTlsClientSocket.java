@@ -168,7 +168,9 @@ public final class JavaTlsClientSocket implements Socket {
             int plainBytesReceived = 0;
             for (; ; ) {
                 int n = readFromSocket();
-                if (n < 0) {
+                assert unwrapInputBuffer.position() == 0 : "unwrapInputBuffer is not compacted";
+                int bytesAvailable = unwrapInputBuffer.limit();
+                if (n < 0 && bytesAvailable == 0) {
                     if (plainBytesReceived == 0) {
                         // we didn't manage to read anything from the socket, let's return the error
                         return n;
@@ -177,8 +179,7 @@ public final class JavaTlsClientSocket implements Socket {
                     return plainBytesReceived;
                 }
 
-                assert unwrapInputBuffer.position() == 0 : "unwrapInputBuffer is not compacted";
-                int bytesAvailable = unwrapInputBuffer.limit();
+
                 if (bytesAvailable == 0) {
                     // nothing to unwrap, we are done
                     return plainBytesReceived;

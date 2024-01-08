@@ -14,11 +14,14 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 
 public final class LineHttpSender implements Sender {
+    private static final int MAX_RETRY = 3;
     private static final String URL = "/write";
     private final String authToken;
     private final String host;
     private final int maxPendingRows;
+    private final String password;
     private final int port;
+    private final String username;
     private HttpClient client;
     private boolean closed;
     private long pendingRows;
@@ -34,6 +37,19 @@ public final class LineHttpSender implements Sender {
         this.port = port;
         this.maxPendingRows = maxPendingRows;
         this.authToken = authToken;
+        this.username = null;
+        this.password = null;
+        this.client = tls ? HttpClientFactory.newTlsInstance() : HttpClientFactory.newPlainTextInstance();
+        this.request = newRequest();
+    }
+
+    public LineHttpSender(String host, int port, int initialBufferCapacity, boolean tls, int maxPendingRows, String username, String password) {
+        this.host = host;
+        this.port = port;
+        this.maxPendingRows = maxPendingRows;
+        this.authToken = null;
+        this.username = username;
+        this.password = password;
         this.client = tls ? HttpClientFactory.newTlsInstance() : HttpClientFactory.newPlainTextInstance();
         this.request = newRequest();
     }
@@ -102,22 +118,24 @@ public final class LineHttpSender implements Sender {
             //todo: maybe try to send everything up until the last end of row?
             throw new LineSenderException("cannot flush while row is in progress");
         }
-        try {
-            HttpClient.ResponseHeaders response = request.send(host, port);
-            response.await();
-            if (!isSuccessResponse(response)) {
-                response.getStatusCode();
-                throw new LineSenderException("unexpected status code: "); //todo: add status code
-            }
-        } catch (HttpClientException e) {
-            // an infrastructure error,
-            // todo: do a proper retrying and option to disable it
-            client.disconnect();
-            HttpClient.ResponseHeaders response = request.send(host, port);
-            response.await();
-            if (!isSuccessResponse(response)) {
-                response.getStatusCode();
-                throw new LineSenderException("unexpected status code: "); //todo: add status code
+
+        int remainingRetries = MAX_RETRY;
+        for (; ; ) {
+            try {
+                HttpClient.ResponseHeaders response = request.send(host, port);
+                response.await();
+                if (!isSuccessResponse(response)) {
+                    response.getStatusCode();
+                    throw new LineSenderException("unexpected status code: "); //todo: add status code
+                }
+                break;
+            } catch (HttpClientException e) {
+                // this is a network error, we can retry
+                if (remainingRetries-- == 0) {
+                    throw new LineSenderException("error while sending data to server", e);
+                }
+                // todo: backoff?
+                client.disconnect(); // forces reconnect
             }
         }
         pendingRows = 0;
@@ -252,10 +270,11 @@ public final class LineHttpSender implements Sender {
     }
 
     private HttpClient.Request newRequest() {
-        HttpClient.Request r = client.newRequest().POST().url(URL).withContent();
-//        if (authToken != null) {
-//            r.authBearer(authToken);
-//        }
+        HttpClient.Request r = client.newRequest().POST().url(URL);
+        if (username != null) {
+            r.authBasic(username, password);
+        }
+        r.withContent();
         return r;
     }
 
