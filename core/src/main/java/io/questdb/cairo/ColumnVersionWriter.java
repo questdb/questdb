@@ -151,13 +151,12 @@ public class ColumnVersionWriter extends ColumnVersionReader {
                     cachedColumnVersionList.setQuick(i + TIMESTAMP_ADDED_PARTITION_OFFSET, defaultPartitionTimestamp);
                 }
             } else {
-                // We have to keep all the column name txns of the default partition
-                // because the files are truncated but not re-created. But we want to remove all the column tops.
-                // The column name txn can be added when the column is added via alter table
-                // or when column is updated.
-                // When Alter table add column is executed it creates record in the NaN partition with the column name txn
+                // We have to keep all the column name txns because the files are truncated but not re-created.
+                // But we want to remove all the column tops.
+                // The column name txn can be added when the column is added via alter table or when column is updated.
+                // When ALTER table add column is executed it creates a record in the NaN partition with the column name txn
                 // and a record in 0 (default) partition with the column top.
-                // When the column is updated using UPDATE SQL, the column name txn is only set in 0 (default) partition.
+                // When the column is changed using UPDATE SQL, the column name txn is only set in 0 (default) partition.
                 // These 2 scenarios are test covered in TruncateTest.
 
                 // Result action is to remove all column tops and keep all column name txns.
