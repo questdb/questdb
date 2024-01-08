@@ -16,6 +16,7 @@ steps:
       sudo apt-get update
       sudo apt-get install awscli
       cd "$(Build.SourcesDirectory)"/pkg/ami/marketplace
+      make install_aws_plugin
       make build_release
     env:
       AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
