@@ -168,7 +168,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
 
         // Remove _txn file for table abc
         abcTxnPath = Path.getThreadLocal(config.getRoot()).concat(tokenAbc).concat(TableUtils.TXN_FILE_NAME).$();
-        Assert.assertTrue(ff.remove(abcTxnPath));
+        Assert.assertTrue(ff.removeQuiet(abcTxnPath));
 
         // Mess, run migration and check
         TestUtils.messTxnUnallocated(ff, Path.getThreadLocal(config.getRoot()), new Rnd(), tokenDef);

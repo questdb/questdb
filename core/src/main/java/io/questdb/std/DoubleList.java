@@ -87,7 +87,7 @@ public class DoubleList implements Mutable, Sinkable {
         int low = 0;
         int high = pos - 1;
         while (high - low > 65) {
-            final int mid = (low + high) / 2;
+            final int mid = (low + high) >>> 1;
             final double midVal = data[mid];
             int cmp = Numbers.compare(midVal, value);
 

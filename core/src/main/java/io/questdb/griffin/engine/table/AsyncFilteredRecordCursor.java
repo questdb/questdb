@@ -39,7 +39,6 @@ import io.questdb.std.Rows;
 
 class AsyncFilteredRecordCursor implements RecordCursor {
 
-    static final String exceptionMessage = "timeout, query aborted";
     private static final Log LOG = LogFactory.getLog(AsyncFilteredRecordCursor.class);
     private final Function filter;
     private final boolean hasDescendingOrder;
@@ -84,7 +83,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
             frameRowIndex += frameRowsLeft;
             counter.add(frameRowsLeft);
             if (rowsRemaining < 1) {
-                frameSequence.cancel();
+                frameSequence.cancel(SqlExecutionCircuitBreaker.STATE_OK);
                 return;
             }
         }
@@ -102,7 +101,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                 frameRowIndex += frameRowsLeft;
                 counter.add(frameRowsLeft);
                 if (rowsRemaining < 1) {
-                    frameSequence.cancel();
+                    frameSequence.cancel(SqlExecutionCircuitBreaker.STATE_OK);
                     return;
                 } else {
                     collectCursor(false);
@@ -281,7 +280,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
 
     private boolean checkLimit() {
         if (--rowsRemaining < 0) {
-            frameSequence.cancel();
+            frameSequence.cancel(SqlExecutionCircuitBreaker.STATE_OK);
             return false;
         }
         return true;
@@ -316,12 +315,14 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                             .$(", active=").$(frameSequence.isActive())
                             .$(", cursor=").$(cursor)
                             .I$();
+
                     if (task.hasError()) {
-                        throw CairoException.nonCritical().put(task.getErrorMsg());
+                        throw CairoException.nonCritical().put(task.getErrorMsg())
+                                .setCancellation(task.isCancelled()).setInterruption(task.isCancelled());
                     }
 
                     allFramesActive &= frameSequence.isActive();
-                    rows = task.getRows();
+                    rows = task.getFilteredRows();
                     frameRowCount = rows.size();
                     frameIndex = task.getFrameIndex();
                     frameRowIndex = 0;
@@ -340,15 +341,17 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                 }
             } while (frameIndex < frameLimit);
         } catch (Throwable e) {
-            LOG.error().$("filter error [ex=").$(e).I$();
             if (e instanceof CairoException) {
                 CairoException ce = (CairoException) e;
-                if (ce.isInterruption()) {
+                if (ce.isInterruption() || ce.isCancellation()) {
+                    LOG.error().$("filter error [ex=").$(((CairoException) e).getFlyweightMessage()).I$();
                     throwTimeoutException();
                 } else {
+                    LOG.error().$("filter error [ex=").$(e).I$();
                     throw ce;
                 }
             }
+            LOG.error().$("filter error [ex=").$(e).I$();
             throw CairoException.nonCritical().put(e.getMessage());
         }
     }
@@ -358,7 +361,11 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     }
 
     private void throwTimeoutException() {
-        throw CairoException.nonCritical().put(exceptionMessage).setInterruption(true);
+        if (frameSequence.getCancelReason() == SqlExecutionCircuitBreaker.STATE_CANCELLED) {
+            throw CairoException.queryCancelled();
+        } else {
+            throw CairoException.queryTimedOut();
+        }
     }
 
     void of(PageFrameSequence<?> frameSequence, long rowsRemaining) {

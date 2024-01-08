@@ -22,17 +22,15 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.map;
 
-public class NoOpDatabaseSnapshotAgent implements DatabaseSnapshotAgent {
-    public static final DatabaseSnapshotAgent INSTANCE = new NoOpDatabaseSnapshotAgent();
+import io.questdb.cairo.sql.RecordCursor;
 
-    @Override
-    public void close() {
-    }
+public interface MapRecordCursor extends RecordCursor {
 
     @Override
-    public boolean isInProgress() {
-        return false;
-    }
+    MapRecord getRecord();
+
+    @Override
+    MapRecord getRecordB();
 }

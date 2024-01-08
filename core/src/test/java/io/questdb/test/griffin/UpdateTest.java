@@ -281,11 +281,11 @@ public class UpdateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public boolean remove(LPSZ name) {
+                public boolean removeQuiet(LPSZ name) {
                     if (Utf8s.containsAscii(name, "1970-01-01")) {
                         return false;
                     }
-                    return super.remove(name);
+                    return super.removeQuiet(name);
                 }
             };
             ddl("create table up as" +

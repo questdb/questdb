@@ -94,6 +94,7 @@ class OperationExecutor implements Closeable {
             renameSupportExecutionContext.remapTableNameResolutionTo(tableToken);
             final CompiledQuery compiledQuery = compiler.compile(updateSql, renameSupportExecutionContext);
             try (UpdateOperation updateOperation = compiledQuery.getUpdateOperation()) {
+                updateOperation.withSqlStatement(updateSql);
                 updateOperation.withContext(renameSupportExecutionContext);
                 return tableWriter.apply(updateOperation, seqTxn);
             }

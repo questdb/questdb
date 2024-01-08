@@ -5,6 +5,13 @@ public class Bytes {
     }
 
     /**
+     * Aligns the given pointer to 8 bytes.
+     */
+    public static long align8b(long ptr) {
+        return (ptr + 7) & ~0x7;
+    }
+
+    /**
      * Compute the size of a range, checking for overflow.
      */
     public static int checkedLoHiSize(long lo, long hi, int baseSize) {

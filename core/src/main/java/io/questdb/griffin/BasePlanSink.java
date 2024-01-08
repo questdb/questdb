@@ -107,6 +107,13 @@ public abstract class BasePlanSink implements PlanSink {
         return this;
     }
 
+    public PlanSink optAttr(CharSequence name, Plannable value, boolean useBaseMetadata) {
+        this.useBaseMetadata = useBaseMetadata;
+        optAttr(name, value);
+        this.useBaseMetadata = false;
+        return this;
+    }
+
     public PlanSink optAttr(CharSequence name, ObjList<? extends Plannable> value) {
         if (value != null && value.size() > 0) {
             attr(name).val(value);

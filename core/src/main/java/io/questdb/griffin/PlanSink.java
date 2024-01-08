@@ -70,6 +70,8 @@ public interface PlanSink {
 
     PlanSink optAttr(CharSequence name, Plannable value);
 
+    PlanSink optAttr(CharSequence name, Plannable value, boolean useBaseMetadata);
+
     PlanSink optAttr(CharSequence name, ObjList<? extends Plannable> value, boolean useBaseMetadata);
 
     PlanSink optAttr(CharSequence name, ObjList<? extends Plannable> value);

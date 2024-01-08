@@ -28,9 +28,9 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.test.AbstractCairoTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Rnd;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -38,7 +38,6 @@ public class FirstDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAllNull() throws SqlException {
-
         ddl("create table tab (f double)");
 
         try (TableWriter w = getWriter("tab")) {
@@ -61,7 +60,6 @@ public class FirstDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testFirstNull() throws SqlException {
-
         ddl("create table tab (f double)");
 
         final Rnd rnd = new Rnd();
@@ -88,7 +86,6 @@ public class FirstDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testNonNull() throws SqlException {
-
         ddl("create table tab (f double)");
 
         final Rnd rnd = new Rnd();
@@ -112,7 +109,8 @@ public class FirstDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFill() throws Exception {
-        assertQuery("b\tfirst\tk\n" +
+        assertQuery(
+                "b\tfirst\tk\n" +
                         "\t0.11427984775756228\t1970-01-03T00:00:00.000000Z\n" +
                         "VTJW\t0.4217768841969397\t1970-01-03T00:00:00.000000Z\n" +
                         "RXGZ\t0.2390529010846525\t1970-01-03T00:00:00.000000Z\n" +
@@ -136,7 +134,9 @@ public class FirstDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "VTJW\t0.49199001716312474\t1970-01-03T09:00:00.000000Z\n" +
                         "PEHN\t-0.2663564409677917\t1970-01-03T09:00:00.000000Z\n" +
                         "HYRX\t0.21055995482842357\t1970-01-03T09:00:00.000000Z\n" +
-                        "CPSW\t1.6374149200584662\t1970-01-03T09:00:00.000000Z\n", "select b, first(a), k from x sample by 3h fill(linear)", "create table x as " +
+                        "CPSW\t1.6374149200584662\t1970-01-03T09:00:00.000000Z\n",
+                "select b, first(a), k from x sample by 3h fill(linear)",
+                "create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(0) a," +
@@ -144,14 +144,17 @@ public class FirstDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                         " timestamp_sequence(172800000000, 360000000) k" +
                         " from" +
                         " long_sequence(100)" +
-                        ") timestamp(k) partition by NONE", "k", "insert into x select * from (" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                "insert into x select * from (" +
                         "select" +
                         " rnd_double(0) a," +
                         " rnd_symbol(5,4,4,1) b," +
                         " timestamp_sequence(277200000000, 360000000) k" +
                         " from" +
                         " long_sequence(35)" +
-                        ") timestamp(k)", "b\tfirst\tk\n" +
+                        ") timestamp(k)",
+                "b\tfirst\tk\n" +
                         "\t0.11427984775756228\t1970-01-03T00:00:00.000000Z\n" +
                         "VTJW\t0.4217768841969397\t1970-01-03T00:00:00.000000Z\n" +
                         "RXGZ\t0.2390529010846525\t1970-01-03T00:00:00.000000Z\n" +
@@ -272,6 +275,10 @@ public class FirstDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "RXGZ\t-2.4274841271361405\t1970-01-04T06:00:00.000000Z\n" +
                         "PEHN\t-3.7763943098045716\t1970-01-04T06:00:00.000000Z\n" +
                         "HYRX\t-2.362042754952945\t1970-01-04T06:00:00.000000Z\n" +
-                        "CPSW\t5.177485979761071\t1970-01-04T06:00:00.000000Z\n", true, true, false);
+                        "CPSW\t5.177485979761071\t1970-01-04T06:00:00.000000Z\n",
+                true,
+                true,
+                false
+        );
     }
 }

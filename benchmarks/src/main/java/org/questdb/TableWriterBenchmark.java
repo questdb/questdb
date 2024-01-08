@@ -24,6 +24,7 @@
 
 package org.questdb;
 
+import io.questdb.MessageBusImpl;
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllSecurityContext;
@@ -82,9 +83,42 @@ public class TableWriterBenchmark {
         TableToken tableToken2 = new TableToken("test2", "test2", 0, false, false, false);
         TableToken tableToken3 = new TableToken("test3", "test3", 0, false, false, false);
 
-        writer = new TableWriter(configuration, tableToken1, Metrics.disabled());
-        writer2 = new TableWriter(configuration, tableToken2, Metrics.disabled());
-        writer3 = new TableWriter(configuration, tableToken3, Metrics.disabled());
+        writer = new TableWriter(
+                configuration,
+                tableToken1,
+                null,
+                new MessageBusImpl(configuration),
+                true,
+                DefaultLifecycleManager.INSTANCE,
+                configuration.getRoot(),
+                DefaultDdlListener.INSTANCE,
+                () -> false,
+                Metrics.disabled()
+        );
+        writer2 = new TableWriter(
+                configuration,
+                tableToken2,
+                null,
+                new MessageBusImpl(configuration),
+                true,
+                DefaultLifecycleManager.INSTANCE,
+                configuration.getRoot(),
+                DefaultDdlListener.INSTANCE,
+                () -> false,
+                Metrics.disabled()
+        );
+        writer3 = new TableWriter(
+                configuration,
+                tableToken3,
+                null,
+                new MessageBusImpl(configuration),
+                true,
+                DefaultLifecycleManager.INSTANCE,
+                configuration.getRoot(),
+                DefaultDdlListener.INSTANCE,
+                () -> false,
+                Metrics.disabled()
+        );
         rnd.reset();
     }
 

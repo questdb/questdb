@@ -54,8 +54,8 @@ import io.questdb.std.Rows;
 class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
 
     private static final Log LOG = LogFactory.getLog(AsyncFilteredNegativeLimitRecordCursor.class);
-    private final boolean hasDescendingOrder;
 
+    private final boolean hasDescendingOrder;
     private final PageAddressCacheRecord record;
     private int frameIndex;
     private int frameLimit;
@@ -176,7 +176,7 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
 
                     // Consider frame sequence status only if we haven't accumulated enough rows.
                     allFramesActive &= frameSequence.isActive() || rowCount >= rowLimit;
-                    final DirectLongList frameRows = task.getRows();
+                    final DirectLongList frameRows = task.getFilteredRows();
                     final long frameRowCount = frameRows.size();
                     frameIndex = task.getFrameIndex();
 
@@ -193,7 +193,7 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
                         }
 
                         if (rowCount >= rowLimit) {
-                            frameSequence.cancel();
+                            frameSequence.cancel(SqlExecutionCircuitBreaker.STATE_OK);
                         }
                     }
 
@@ -223,7 +223,11 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
     }
 
     private void throwTimeoutException() {
-        throw CairoException.nonCritical().put(AsyncFilteredRecordCursor.exceptionMessage).setInterruption(true);
+        if (frameSequence.getCancelReason() == SqlExecutionCircuitBreaker.STATE_CANCELLED) {
+            throw CairoException.queryCancelled();
+        } else {
+            throw CairoException.queryTimedOut();
+        }
     }
 
     void of(PageFrameSequence<?> frameSequence, long rowLimit, DirectLongList negativeLimitRows) {

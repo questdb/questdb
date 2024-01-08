@@ -112,9 +112,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private static Log LOG = LogFactory.getLog(PGConnectionContext.class);
     private final BatchCallback batchCallback;
     private final ObjectPool<DirectBinarySequence> binarySequenceParamsPool;
-    //stores result format codes (0=Text,1=Binary) from the latest bind message
-    //we need it in case cursor gets invalidated and bind used non-default binary format for some column(s)
-    //pg clients (like asyncpg) fail when format sent by server is not the same as requested in bind message
+    // stores result format codes (0=Text,1=Binary) from the latest bind message
+    // we need it in case cursor gets invalidated and bind used non-default binary format for some column(s)
+    // pg clients (like asyncpg) fail when format sent by server is not the same as requested in bind message
     private final IntList bindSelectColumnFormats = new IntList();
     private final IntList bindVariableTypes = new IntList();
     private final CharacterStore characterStore;
@@ -149,7 +149,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private final DirectCharSink utf8Sink;
     // this is a reference to types either from the context or named statement, where it is provided
     private IntList activeBindVariableTypes;
-    //list of pair: column types (with format flag stored in first bit) AND additional type flag
+    // list of pair: column types (with format flag stored in first bit) AND additional type flag
     private IntList activeSelectColumnTypes;
     private Authenticator authenticator;
     private BindVariableService bindVariableService;
@@ -167,8 +167,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private long maxSendRows;
     private int parsePhaseBindVariableCount;
     private boolean queryContainsSecret;
-    //command tag used when returning row count to client,
-    //see CommandComplete (B) at https://www.postgresql.org/docs/current/protocol-message-formats.html
+    // command tag used when returning row count to client,
+    // see CommandComplete (B) at https://www.postgresql.org/docs/current/protocol-message-formats.html
     private CharSequence queryTag;
     private CharSequence queryText;
     private long recvBuffer;
@@ -342,6 +342,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         freeBuffers();
         completed = true;
         prepareForNewQuery();
+        clearRecvBuffer();
         clearWriters();
         evictNamedStatementWrappersAndClear();
         clearCursorAndFactory();
@@ -2338,7 +2339,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 try (OperationFuture fut = cq.execute(sqlExecutionContext, tempSequence, true)) {
                     fut.await();
                 }
-                // fall thru
+                // fall through
             default:
                 // DDL
                 queryTag = TAG_OK;

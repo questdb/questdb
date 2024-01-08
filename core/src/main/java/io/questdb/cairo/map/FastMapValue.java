@@ -24,21 +24,20 @@
 
 package io.questdb.cairo.map;
 
-import io.questdb.std.Long256;
-import io.questdb.std.Long256Impl;
-import io.questdb.std.Long256Util;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 
 final class FastMapValue implements MapValue {
     private final Long256Impl long256 = new Long256Impl();
-    private final int[] valueOffsets;
+    private final long[] valueOffsets;
+    private final int valueSize;
     private long limit;
     private boolean newValue;
     private FastMapRecord record; // double-linked
     private long startAddress; // key-value pair start address
     private long valueAddress;
 
-    public FastMapValue(int[] valueOffsets) {
+    public FastMapValue(int valueSize, long[] valueOffsets) {
+        this.valueSize = valueSize;
         this.valueOffsets = valueOffsets;
     }
 
@@ -87,6 +86,12 @@ final class FastMapValue implements MapValue {
     public void addShort(int index, short value) {
         final long p = address0(index);
         Unsafe.getUnsafe().putShort(p, (short) (Unsafe.getUnsafe().getShort(p) + value));
+    }
+
+    @Override
+    public void copyFrom(MapValue value) {
+        FastMapValue other = (FastMapValue) value;
+        Vect.memcpy(valueAddress, other.valueAddress, valueSize);
     }
 
     @Override
@@ -197,6 +202,12 @@ final class FastMapValue implements MapValue {
     }
 
     @Override
+    public void maxLong(int index, long value) {
+        final long p = address0(index);
+        Unsafe.getUnsafe().putLong(p, Math.max(value, Unsafe.getUnsafe().getLong(p)));
+    }
+
+    @Override
     public void putBool(int index, boolean value) {
         putByte(index, (byte) (value ? 1 : 0));
     }
@@ -277,15 +288,20 @@ final class FastMapValue implements MapValue {
 
     @Override
     public void setMapRecordHere() {
-        record.of(startAddress, limit);
+        record.of(startAddress);
     }
 
     private long address0(int index) {
         return valueAddress + valueOffsets[index];
     }
 
+    void copyRawValue(long ptr) {
+        Vect.memcpy(valueAddress, ptr, valueSize);
+    }
+
     void linkRecord(FastMapRecord record) {
         this.record = record;
+        record.setLimit(limit);
     }
 
     FastMapValue of(long startAddress, long valueAddress, long limit, boolean newValue) {

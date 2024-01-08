@@ -81,7 +81,7 @@ public class IndexBuilder extends RebuildColumnBase {
                         .$("could not create index [name=").$(path)
                         .$(", errno=").$(e.getErrno())
                         .$(']').$();
-                if (!ff.remove(path)) {
+                if (!ff.removeQuiet(path)) {
                     LOG.error()
                             .$("could not remove '").$(path).$("'. Please remove MANUALLY.")
                             .$("[errno=").$(ff.errno())
@@ -104,12 +104,13 @@ public class IndexBuilder extends RebuildColumnBase {
 
     private void removeFile(FilesFacade ff, Path path) {
         LOG.info().$("deleting ").$(path).$();
-        if (!ff.remove(this.path)) {
+        if (!ff.removeQuiet(this.path)) {
+            int errno = ff.errno();
             if (!ff.exists(this.path)) {
                 // This is fine, index can be corrupt, rewriting is what we try to do here
                 LOG.info().$("index file did not exist, file will be re-written [path=").$(path).I$();
             } else {
-                throw CairoException.critical(ff.errno()).put("cannot remove index file");
+                throw CairoException.critical(errno).put("could not remove index file [file=").put(this.path).put(']');
             }
         }
     }

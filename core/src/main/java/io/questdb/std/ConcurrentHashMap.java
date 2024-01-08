@@ -529,11 +529,6 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
      */
     private static final int DEFAULT_CAPACITY = 16;
     /**
-     * The default concurrency level for this table. Unused but
-     * defined for compatibility with previous versions of this class.
-     */
-    private static final int DEFAULT_CONCURRENCY_LEVEL = 16;
-    /**
      * The load factor for this table. Overrides of this value in
      * constructors affect only the initial table capacity.  The
      * actual floating point value isn't normally used -- it is
@@ -1212,25 +1207,6 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         if (delta != 0)
             addCount(delta, binCount);
         return val;
-    }
-
-    /**
-     * Legacy method testing if some key maps into the specified value
-     * in this table.  This method is identical in functionality to
-     * {@link #containsValue(Object)}, and exists solely to ensure
-     * full compatibility with class {@link java.util.Hashtable},
-     * which supported this method prior to introduction of the
-     * Java Collections framework.
-     *
-     * @param value a value to search for
-     * @return {@code true} if and only if some key maps to the
-     * {@code value} argument in this table as
-     * determined by the {@code equals} method;
-     * {@code false} otherwise
-     * @throws NullPointerException if the specified value is null
-     */
-    public boolean contains(Object value) {
-        return containsValue(value);
     }
 
     /**

@@ -36,7 +36,7 @@ import org.jetbrains.annotations.NotNull;
 
 public class FirstByteGroupByFunction extends ByteFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
-    private int valueIndex;
+    protected int valueIndex;
 
     public FirstByteGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
@@ -44,7 +44,7 @@ public class FirstByteGroupByFunction extends ByteFunction implements GroupByFun
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putByte(this.valueIndex, this.arg.getByte(record));
+        mapValue.putByte(valueIndex, arg.getByte(record));
     }
 
     @Override
@@ -59,7 +59,7 @@ public class FirstByteGroupByFunction extends ByteFunction implements GroupByFun
 
     @Override
     public byte getByte(Record rec) {
-        return rec.getByte(this.valueIndex);
+        return rec.getByte(valueIndex);
     }
 
     @Override
@@ -74,7 +74,7 @@ public class FirstByteGroupByFunction extends ByteFunction implements GroupByFun
     }
 
     public void setByte(MapValue mapValue, byte value) {
-        mapValue.putByte(this.valueIndex, value);
+        mapValue.putByte(valueIndex, value);
     }
 
     @Override

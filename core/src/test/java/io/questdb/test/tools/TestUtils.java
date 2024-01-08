@@ -24,13 +24,10 @@
 
 package io.questdb.test.tools;
 
-import io.questdb.Bootstrap;
-import io.questdb.Metrics;
-import io.questdb.ServerMain;
+import io.questdb.*;
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllSecurityContext;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
@@ -431,6 +428,15 @@ public final class TestUtils {
     }
 
     public static void assertEquals(LongList expected, LongList actual) {
+        Assert.assertEquals(expected.size(), actual.size());
+        for (int i = 0, n = expected.size(); i < n; i++) {
+            if (expected.getQuick(i) != actual.getQuick(i)) {
+                Assert.assertEquals("index " + i, expected.getQuick(i), actual.getQuick(i));
+            }
+        }
+    }
+
+    public static void assertEquals(IntList expected, IntList actual) {
         Assert.assertEquals(expected.size(), actual.size());
         for (int i = 0, n = expected.size(); i < n; i++) {
             if (expected.getQuick(i) != actual.getQuick(i)) {
@@ -1067,6 +1073,17 @@ public final class TestUtils {
             Metrics metrics,
             Log log
     ) throws Exception {
+        execute(pool, null, runnable, configuration, metrics, log);
+    }
+
+    public static void execute(
+            @Nullable WorkerPool pool,
+            WorkerPoolCallback poolCallback,
+            CustomisableRunnable runnable,
+            CairoConfiguration configuration,
+            Metrics metrics,
+            Log log
+    ) throws Exception {
         final int workerCount = pool != null ? pool.getWorkerCount() : 1;
         try (
                 final CairoEngine engine = new CairoEngine(configuration, metrics);
@@ -1075,6 +1092,9 @@ public final class TestUtils {
         ) {
             try {
                 if (pool != null) {
+                    if (poolCallback != null) {
+                        poolCallback.setupJobs(engine);
+                    }
                     setupWorkerPool(pool, engine);
                     pool.start(log);
                 }
@@ -1096,7 +1116,17 @@ public final class TestUtils {
             CairoConfiguration configuration,
             Log log
     ) throws Exception {
-        execute(pool, runner, configuration, Metrics.disabled(), log);
+        execute(pool, null, runner, configuration, Metrics.disabled(), log);
+    }
+
+    public static void execute(
+            @Nullable WorkerPool pool,
+            WorkerPoolCallback poolCallback,
+            CustomisableRunnable runner,
+            CairoConfiguration configuration,
+            Log log
+    ) throws Exception {
+        execute(pool, poolCallback, runner, configuration, Metrics.disabled(), log);
     }
 
     @NotNull
@@ -1323,6 +1353,34 @@ public final class TestUtils {
             }
             txFile.close(false);
         }
+    }
+
+    public static TableWriter newOffPoolWriter(CairoConfiguration configuration, TableToken tableToken) {
+        return newOffPoolWriter(configuration, tableToken, Metrics.disabled());
+    }
+
+    public static TableWriter newOffPoolWriter(CairoConfiguration configuration, TableToken tableToken, Metrics metrics) {
+        return newOffPoolWriter(configuration, tableToken, metrics, new MessageBusImpl(configuration));
+    }
+
+    public static TableWriter newOffPoolWriter(
+            CairoConfiguration configuration,
+            TableToken tableToken,
+            Metrics metrics,
+            MessageBus messageBus
+    ) {
+        return new TableWriter(
+                configuration,
+                tableToken,
+                null,
+                messageBus,
+                true,
+                DefaultLifecycleManager.INSTANCE,
+                configuration.getRoot(),
+                DefaultDdlListener.INSTANCE,
+                () -> false,
+                metrics
+        );
     }
 
     public static void printColumn(Record r, RecordMetadata m, int i, CharSink sink) {
@@ -1807,5 +1865,9 @@ public final class TestUtils {
     @FunctionalInterface
     public interface LeakProneCode {
         void run() throws Exception;
+    }
+
+    public interface WorkerPoolCallback {
+        void setupJobs(CairoEngine engine);
     }
 }

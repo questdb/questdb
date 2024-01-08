@@ -72,6 +72,20 @@ public class MinDoubleGroupByFunction extends DoubleFunction implements GroupByF
     }
 
     @Override
+    public boolean isParallelismSupported() {
+        return arg.isReadThreadSafe();
+    }
+
+    @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        double srcMin = srcValue.getDouble(valueIndex);
+        double destMin = destValue.getDouble(valueIndex);
+        if (srcMin < destMin || Double.isNaN(destMin)) {
+            destValue.putDouble(valueIndex, srcMin);
+        }
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.DOUBLE);

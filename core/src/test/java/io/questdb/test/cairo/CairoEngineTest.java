@@ -406,7 +406,7 @@ public class CairoEngineTest extends AbstractCairoTest {
     public void testRenameExternallyLockedTable() throws Exception {
         assertMemoryLeak(() -> {
             TableToken x = createX(engine);
-            try (TableWriter ignored1 = newTableWriter(configuration, "x", metrics)) {
+            try (TableWriter ignored1 = newOffPoolWriter(configuration, "x", metrics)) {
 
                 try (CairoEngine engine = new CairoEngine(configuration)) {
                     try {

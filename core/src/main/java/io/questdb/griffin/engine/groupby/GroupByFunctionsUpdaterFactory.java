@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.groupby;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.NotNull;
 
 public class GroupByFunctionsUpdaterFactory {
     private static final int FIELD_POOL_OFFSET = 3;
@@ -44,6 +45,7 @@ public class GroupByFunctionsUpdaterFactory {
      * <li>updateNew(MapValue value, Record record) - calls f0, f1, f2 ... fn.computeFirst(value, record) for each group by function</li>
      * <li>updateExisting(MapValue value, Record record) - calls f0, f1, f2 ... fn.computeNext(value, record) for each group by function</li>
      * <li>updateEmpty(MapValue value) - calls f0, f1, f2 ... fn.setEmpty(value) for each group by function</li>
+     * <li>merge(MapValue destValue, MapValue srcValue) - calls fn.merge(destValue, srcValue) for each group by function</li>
      * <li>setFunctions(ObjList&lt;GroupByFunction&gt; groupByFunctions) - sets the group by functions to the fields. This method is called by the factory and should not be called by the caller.</li>
      * </ul>
      *
@@ -53,14 +55,13 @@ public class GroupByFunctionsUpdaterFactory {
      */
     public static GroupByFunctionsUpdater getInstance(
             BytecodeAssembler asm,
-            ObjList<GroupByFunction> groupByFunctions
+            @NotNull ObjList<GroupByFunction> groupByFunctions
     ) {
         asm.init(GroupByFunctionsUpdater.class);
         asm.setupPool();
         final int thisClassIndex = asm.poolClass(asm.poolUtf8("io/questdb/griffin/engine/groupby/GroupByFunctionsUpdaterAsm"));
         final int superclassIndex = asm.poolClass(Object.class);
         int interfaceClassIndex = asm.poolClass(GroupByFunctionsUpdater.class);
-
 
         final int superIndex = asm.poolMethod(superclassIndex, "<init>", "()V");
 
@@ -83,6 +84,7 @@ public class GroupByFunctionsUpdaterFactory {
         final int computeFirstIndex = asm.poolInterfaceMethod(GroupByFunction.class, "computeFirst", "(Lio/questdb/cairo/map/MapValue;Lio/questdb/cairo/sql/Record;)V");
         final int computeNextIndex = asm.poolInterfaceMethod(GroupByFunction.class, "computeNext", "(Lio/questdb/cairo/map/MapValue;Lio/questdb/cairo/sql/Record;)V");
         final int setEmptyIndex = asm.poolInterfaceMethod(GroupByFunction.class, "setEmpty", "(Lio/questdb/cairo/map/MapValue;)V");
+        final int mergeFunctionIndex = asm.poolInterfaceMethod(GroupByFunction.class, "merge", "(Lio/questdb/cairo/map/MapValue;Lio/questdb/cairo/map/MapValue;)V");
 
         final int updateNewIndex = asm.poolUtf8("updateNew");
         final int updateNewSigIndex = asm.poolUtf8("(Lio/questdb/cairo/map/MapValue;Lio/questdb/cairo/sql/Record;)V");
@@ -92,6 +94,8 @@ public class GroupByFunctionsUpdaterFactory {
         final int updateEmptySigIndex = asm.poolUtf8("(Lio/questdb/cairo/map/MapValue;)V");
         final int setFunctionsIndex = asm.poolUtf8("setFunctions");
         final int setFunctionsSigIndex = asm.poolUtf8("(Lio/questdb/std/ObjList;)V");
+        final int mergeIndex = asm.poolUtf8("merge");
+        final int mergeSigIndex = asm.poolUtf8("(Lio/questdb/cairo/map/MapValue;Lio/questdb/cairo/map/MapValue;)V");
 
         final int getIndex = asm.poolMethod(ObjList.class, "get", "(I)Ljava/lang/Object;");
 
@@ -104,13 +108,14 @@ public class GroupByFunctionsUpdaterFactory {
         for (int i = 0; i < functionSize; i++) {
             asm.defineField(firstFieldNameIndex + (i * FIELD_POOL_OFFSET), typeIndex);
         }
-        asm.methodCount(5);
+        asm.methodCount(6);
         asm.defineDefaultConstructor(superIndex);
 
         generateUpdateNew(asm, functionSize, firstFieldIndex, computeFirstIndex, updateNewIndex, updateNewSigIndex);
         generateUpdateExisting(asm, functionSize, firstFieldIndex, computeNextIndex, updateExistingIndex, updateExistingSigIndex);
         generateUpdateEmpty(asm, functionSize, firstFieldIndex, setEmptyIndex, updateEmptyIndex, updateEmptySigIndex);
-        generateSetFunction(asm, functionSize, firstFieldIndex, setFunctionsIndex, setFunctionsSigIndex, getIndex);
+        generateSetFunctions(asm, functionSize, firstFieldIndex, setFunctionsIndex, setFunctionsSigIndex, getIndex);
+        generateMerge(asm, functionSize, firstFieldIndex, mergeFunctionIndex, mergeIndex, mergeSigIndex);
 
         // class attribute count
         asm.putShort(0);
@@ -121,7 +126,32 @@ public class GroupByFunctionsUpdaterFactory {
         return updater;
     }
 
-    private static void generateSetFunction(BytecodeAssembler asm, int functionSize, int firstFieldIndex, int setFunctionsIndex, int setFunctionsSigIndex, int getIndex) {
+    private static void generateMerge(
+            BytecodeAssembler asm,
+            int fieldCount,
+            int firstFieldIndex,
+            int mergeFunctionIndex,
+            int mergeIndex,
+            int mergeSigIndex
+    ) {
+        asm.startMethod(mergeIndex, mergeSigIndex, 3, 3);
+        for (int i = 0; i < fieldCount; i++) {
+            asm.aload(0);
+            asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+            asm.aload(1); // destValue
+            asm.aload(2); // srcValue
+            asm.invokeInterface(mergeFunctionIndex, 2);
+        }
+        asm.return_();
+        asm.endMethodCode();
+        // exceptions
+        asm.putShort(0);
+        // attributes
+        asm.putShort(0);
+        asm.endMethod();
+    }
+
+    private static void generateSetFunctions(BytecodeAssembler asm, int functionSize, int firstFieldIndex, int setFunctionsIndex, int setFunctionsSigIndex, int getIndex) {
         asm.startMethod(setFunctionsIndex, setFunctionsSigIndex, 3, 3);
         for (int i = 0; i < functionSize; i++) {
             asm.aload(0);

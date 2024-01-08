@@ -22,29 +22,22 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.text;
+package io.questdb.griffin.engine.groupby.vect;
 
-import io.questdb.cairo.sql.ExecutionCircuitBreaker;
+import io.questdb.MessageBus;
+import io.questdb.mp.AbstractQueueConsumerJob;
+import io.questdb.tasks.VectorAggregateTask;
 
-import java.util.concurrent.atomic.AtomicBoolean;
+public class GroupByVectorAggregateJob extends AbstractQueueConsumerJob<VectorAggregateTask> {
 
-public class AtomicBooleanCircuitBreaker implements ExecutionCircuitBreaker {
-    private final AtomicBoolean canceledFlag = new AtomicBoolean(false);
-
-    public void cancel() {
-        canceledFlag.set(true);
+    public GroupByVectorAggregateJob(MessageBus messageBus) {
+        super(messageBus.getVectorAggregateQueue(), messageBus.getVectorAggregateSubSeq());
     }
 
     @Override
-    public boolean checkIfTripped() {
-        return isCanceled();
-    }
-
-    public boolean isCanceled() {
-        return canceledFlag.get();
-    }
-
-    public void reset() {
-        canceledFlag.set(false);
+    protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
+        final VectorAggregateEntry entry = queue.get(cursor).entry;
+        entry.run(workerId, subSeq, cursor);
+        return true;
     }
 }

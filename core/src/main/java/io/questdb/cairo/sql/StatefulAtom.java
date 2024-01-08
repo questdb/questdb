@@ -26,8 +26,18 @@ package io.questdb.cairo.sql;
 
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Mutable;
+import io.questdb.std.QuietCloseable;
 
-public interface StatefulAtom {
+public interface StatefulAtom extends QuietCloseable, Mutable {
+
+    @Override
+    default void clear() {
+    }
+
+    @Override
+    default void close() {
+    }
 
     /**
      * Initializes state required for filtering, such as child atoms, symbol table sources,

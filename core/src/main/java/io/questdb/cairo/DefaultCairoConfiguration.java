@@ -289,8 +289,18 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getGroupByMergeShardQueueCapacity() {
+        return 32;
+    }
+
+    @Override
     public int getGroupByPoolCapacity() {
         return 1024;
+    }
+
+    @Override
+    public int getGroupByShardingThreshold() {
+        return 1000;
     }
 
     @Override
@@ -465,6 +475,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getQueryRegistryPoolSize() {
+        return 8;
+    }
+
+    @Override
     public int getReaderPoolMaxSegments() {
         return 5;
     }
@@ -534,11 +549,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSqlColumnPoolCapacity() {
         return 4096;
-    }
-
-    @Override
-    public double getSqlCompactMapLoadFactor() {
-        return 0.8;
     }
 
     @Override
@@ -1012,6 +1022,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isSqlParallelFilterPreTouchEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isSqlParallelGroupByEnabled() {
         return true;
     }
 

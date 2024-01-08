@@ -38,7 +38,7 @@ public class LastNotNullSymbolGroupByFunction extends FirstSymbolGroupByFunction
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        if (SymbolTable.VALUE_IS_NULL != arg.getInt(record)) {
+        if (arg.getInt(record) != SymbolTable.VALUE_IS_NULL) {
             computeFirst(mapValue, record);
         }
     }

@@ -66,6 +66,9 @@ public interface SecurityContext extends Mutable {
 
     void authorizeAlterTableSetType(TableToken tableToken);
 
+    default void authorizeCancelQuery() {
+    }
+
     void authorizeCopyCancel(SecurityContext cancellingSecurityContext);
 
     void authorizeDatabaseSnapshot();

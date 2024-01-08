@@ -344,7 +344,7 @@ public class CleartextPasswordPgWireAuthenticator implements Authenticator {
         try {
             registry.cancel(pid, secret);
         } catch (CairoException e) { // error message should not be sent to client
-            LOG.error().$(e.getMessage()).$();
+            LOG.error().$(e.getFlyweightMessage()).$();
         }
     }
 

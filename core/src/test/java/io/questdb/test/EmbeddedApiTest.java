@@ -32,7 +32,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.groupby.vect.GroupByJob;
+import io.questdb.griffin.engine.groupby.vect.GroupByVectorAggregateJob;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
@@ -97,7 +97,7 @@ public class EmbeddedApiTest {
             try (
                     final CairoEngine engine = new CairoEngine(configuration)
             ) {
-                workerPool.assign(new GroupByJob(engine.getMessageBus()));
+                workerPool.assign(new GroupByVectorAggregateJob(engine.getMessageBus()));
                 workerPool.start(log);
                 try {
                     // number of cores is current thread + workers in the pool

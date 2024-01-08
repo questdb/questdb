@@ -132,6 +132,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     // Used to store a deep copy of the whereClause field
     // since whereClause can be changed during optimization/generation stage.
     private ExpressionNode backupWhereClause;
+
+    // where clause expressions that do not reference any tables, not necessarily constants
     private ExpressionNode constWhereClause;
     private JoinContext context;
     private boolean distinct = false;
@@ -151,7 +153,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private ExpressionNode limitAdviceLo;
     private ExpressionNode limitHi;
     private ExpressionNode limitLo;
-    //position of the limit clause token
+    // position of the limit clause token
     private int limitPosition;
     private long metadataVersion = -1;
     private int modelPosition = 0;
@@ -159,11 +161,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private QueryModel nestedModel;
     private boolean nestedModelIsSubQuery = false;
     private int orderByAdviceMnemonic = OrderByMnemonic.ORDER_BY_UNKNOWN;
-    //position of the order by clause token
+    // position of the order by clause token
     private int orderByPosition;
     private IntList orderedJoinModels = orderedJoinModels2;
-    /* Expression clause that is actually part of left/outer join but not in join model.
-     *  Inner join expressions */
+    // Expression clause that is actually part of left/outer join but not in join model.
+    // Inner join expressions
     private ExpressionNode outerJoinExpressionClause;
     private ExpressionNode postJoinWhereClause;
     private ExpressionNode sampleBy;
@@ -186,7 +188,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         joinModels.add(this);
     }
 
-    // Recursively clones the current value of whereClause for the model and its sub-models into the backupWhereClause field.
+    /**
+     * Recursively clones the current value of whereClause for the model and its sub-models into the backupWhereClause field.
+     */
     public static void backupWhereClause(final ObjectPool<ExpressionNode> pool, final QueryModel model) {
         QueryModel current = model;
         while (current != null) {
@@ -207,7 +211,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
     }
 
-    // Recursively restores the whereClause field from backupWhereClause for the model and its sub-models.
+    /**
+     * Recursively restores the whereClause field from backupWhereClause for the model and its sub-models.
+     */
     public static void restoreWhereClause(final ObjectPool<ExpressionNode> pool, final QueryModel model) {
         QueryModel current = model;
         while (current != null) {
@@ -980,6 +986,30 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return isUpdateModel;
     }
 
+    public void mergeInnerColumn(QueryColumn innerQC) {
+        final CharSequence nestedAlias = innerQC.getAlias();
+        final ExpressionNode nestedAst = innerQC.getAst();
+        assert nestedAlias != null;
+        final CharSequence alias = columnNameToAliasMap.get(nestedAlias);
+        if (alias == null) {
+            return;
+        }
+        final QueryColumn oldQC = aliasToColumnMap.get(alias);
+        if (oldQC == null) {
+            return;
+        }
+        final ExpressionNode oldAst = oldQC.getAst();
+        aliasToColumnNameMap.put(alias, nestedAst.token);
+        columnNameToAliasMap.remove(oldAst.token);
+        columnNameToAliasMap.put(nestedAst.token, alias);
+        aliasToColumnMap.put(alias, innerQC);
+        int colIndex = columnAliasIndexes.get(alias);
+        assert colIndex >= 0;
+        bottomUpColumns.set(colIndex, innerQC);
+        bottomUpColumnNames.set(colIndex, alias);
+        innerQC.setAlias(alias);
+    }
+
     public void moveGroupByFrom(QueryModel model) {
         groupBy.addAll(model.groupBy);
         // clear the source
@@ -1441,18 +1471,18 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         if (selectModelType == QueryModel.SELECT_MODEL_SHOW) {
             sink.put(getSelectModelTypeText());
         } else {
-            final boolean hasColumns = this.topDownColumns.size() > 0 || this.bottomUpColumns.size() > 0;
+            final boolean hasColumns = topDownColumns.size() > 0 || bottomUpColumns.size() > 0;
             if (hasColumns) {
                 sink.put(getSelectModelTypeText());
-                if (this.topDownColumns.size() > 0) {
+                if (topDownColumns.size() > 0) {
                     sink.putAscii(' ');
                     sink.putAscii('[');
-                    sinkColumns(sink, this.topDownColumns);
+                    sinkColumns(sink, topDownColumns);
                     sink.putAscii(']');
                 }
                 if (this.bottomUpColumns.size() > 0) {
                     sink.putAscii(' ');
-                    sinkColumns(sink, this.bottomUpColumns);
+                    sinkColumns(sink, bottomUpColumns);
                 }
                 sink.putAscii(" from ");
             }
