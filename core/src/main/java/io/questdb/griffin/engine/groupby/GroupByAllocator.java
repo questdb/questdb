@@ -66,6 +66,7 @@ public class GroupByAllocator implements QuietCloseable {
 
     @Override
     public void close() {
+        System.out.println(">>> allocated: " + (allocated() / Numbers.SIZE_1MB) + "MB");
         synchronized (lock) {
             for (int i = 0, n = arenas.size(); i < n; i++) {
                 arenas.getQuick(i).close();
