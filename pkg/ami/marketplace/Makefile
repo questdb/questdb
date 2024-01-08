@@ -9,6 +9,9 @@ git    ?= git
 aws    ?= aws
 jq     ?= jq
 
+install_aws_plugin:
+	$(packer) plugins install github.com/hashicorp/amazon
+
 build: QUESTDB_VERSION?=$(shell $(git) rev-parse --short HEAD)-snapshot
 build:
 	$(packer) build \
