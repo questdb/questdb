@@ -24,8 +24,9 @@
 
 package io.questdb.cairo.map;
 
-interface FastMapRecord extends MapRecord {
-    FastMapRecord clone();
+interface OrderedMapRecord extends MapRecord {
+
+    OrderedMapRecord clone();
 
     void of(long address);
 

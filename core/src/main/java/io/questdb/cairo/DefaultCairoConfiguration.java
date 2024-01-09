@@ -234,11 +234,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public @NotNull CharSequence getDefaultMapType() {
-        return "fast";
-    }
-
-    @Override
     public boolean getDefaultSymbolCacheFlag() {
         return true;
     }

@@ -1157,10 +1157,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         node1.getConfigurationOverrides().setCopyPartitionOnAttach(copyPartitionOnAttach);
     }
 
-    protected static void configOverrideDefaultMapType(CharSequence defaultMapType) {
-        node1.getConfigurationOverrides().setDefaultMapType(defaultMapType);
-    }
-
     protected static void configOverrideDefaultTableWriteMode(int defaultTableWriteMode) {
         node1.getConfigurationOverrides().setDefaultTableWriteMode(defaultTableWriteMode);
     }

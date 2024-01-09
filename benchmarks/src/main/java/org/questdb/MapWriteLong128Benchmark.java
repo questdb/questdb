@@ -26,9 +26,10 @@ package org.questdb;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SingleColumnType;
-import io.questdb.cairo.map.FastMap;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.map.OrderedMap;
+import io.questdb.cairo.map.Unordered16Map;
 import io.questdb.std.Rnd;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
@@ -36,23 +37,22 @@ import org.openjdk.jmh.runner.RunnerException;
 import org.openjdk.jmh.runner.options.Options;
 import org.openjdk.jmh.runner.options.OptionsBuilder;
 
-import java.util.HashMap;
 import java.util.concurrent.TimeUnit;
 
 @State(Scope.Thread)
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
-public class FastMapWriteBenchmark {
+public class MapWriteLong128Benchmark {
 
-    private static final int M = 25;
+    private static final int N = 1_000_000;
     private static final double loadFactor = 0.7;
-    private static final HashMap<String, Long> hmap = new HashMap<>(64, (float) loadFactor);
-    private static final FastMap fmap = new FastMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), 64, loadFactor, 1024);
+    private static final OrderedMap fmap = new OrderedMap(1024 * 1024, new SingleColumnType(ColumnType.LONG128), new SingleColumnType(ColumnType.LONG), 64, loadFactor, 1024);
+    private static final Unordered16Map u16map = new Unordered16Map(new SingleColumnType(ColumnType.LONG128), new SingleColumnType(ColumnType.LONG), 64, loadFactor, 1024);
     private final Rnd rnd = new Rnd();
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
-                .include(FastMapWriteBenchmark.class.getSimpleName())
+                .include(MapWriteLong128Benchmark.class.getSimpleName())
                 .warmupIterations(3)
                 .measurementIterations(3)
                 .forks(1)
@@ -62,27 +62,32 @@ public class FastMapWriteBenchmark {
     }
 
     @Benchmark
-    public CharSequence baseline() {
-        return rnd.nextChars(M);
+    public long baseline() {
+        return rnd.nextLong(N) + rnd.nextLong();
     }
 
     @Setup(Level.Iteration)
     public void reset() {
         fmap.clear();
-        hmap.clear();
+        u16map.clear();
         rnd.reset();
     }
 
     @Benchmark
     public void testFastMap() {
         MapKey key = fmap.withKey();
-        key.putStr(rnd.nextChars(M));
+        long value = rnd.nextLong(N);
+        key.putLong128(value, value);
         MapValue values = key.createValue();
-        values.putLong(0, 20);
+        values.putLong(0, rnd.nextLong());
     }
 
     @Benchmark
-    public void testHashMap() {
-        hmap.put(rnd.nextChars(M).toString(), 20L);
+    public void testUnordered16Map() {
+        MapKey key = u16map.withKey();
+        long value = rnd.nextLong(N);
+        key.putLong128(value, value);
+        MapValue values = key.createValue();
+        values.putLong(0, rnd.nextLong());
     }
 }

@@ -72,7 +72,7 @@ public class FirstAndLastStrGroupByFunctionFactoryTest extends AbstractCairoTest
                         "a\t\t\t\t\n" +
                         "b\t\t\t\t\n" +
                         "c\t\t\t\t\n",
-                "select a, first(s), last(s), first_not_null(s), last_not_null(s) from x",
+                "select a, first(s), last(s), first_not_null(s), last_not_null(s) from x order by a",
                 "create table x as (" +
                         "select * from (" +
                         "   select " +
@@ -143,8 +143,8 @@ public class FirstAndLastStrGroupByFunctionFactoryTest extends AbstractCairoTest
                     "2023-12-18T18:00:00.000000Z\tA\t\tNaN\thot_1\t150.0\t\tNaN\thot_2\t151.0\n" +
                     "2023-12-18T18:00:00.000000Z\tB\t\tNaN\tcold_1\t3.0\t\tNaN\tcold_2\t4.0\n";
 
-            assertSql(expected, query);
-            assertSql(expected, query + " sample by 1h fill(prev)");
+            assertSql(expected, query + " order by ts, device");
+            assertSql(expected, query + " sample by 1h fill(prev) order by ts, device");
         });
     }
 
@@ -179,8 +179,8 @@ public class FirstAndLastStrGroupByFunctionFactoryTest extends AbstractCairoTest
                     "2023-12-18T18:00:00.000000Z\tA\thot_1\t150.0\thot_1\t150.0\thot_3\t152.0\thot_3\t152.0\n" +
                     "2023-12-18T18:00:00.000000Z\tB\tcold_1\t3.0\tcold_1\t3.0\tcold_3\t5.0\tcold_3\t5.0\n";
 
-            assertSql(expected, query);
-            assertSql(expected, query + " sample by 1h fill(prev)");
+            assertSql(expected, query + " order by ts, device");
+            assertSql(expected, query + " sample by 1h fill(prev) order by ts, device");
         });
     }
 }

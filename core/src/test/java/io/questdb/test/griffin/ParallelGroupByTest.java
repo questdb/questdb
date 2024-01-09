@@ -225,7 +225,7 @@ public class ParallelGroupByTest extends AbstractCairoTest {
         testParallelMultiSymbolKeyGroupBy(
                 "SELECT count(*) FROM (SELECT key1, key2 FROM tab GROUP BY key1, key2 ORDER BY key1, key2)",
                 "count\n" +
-                        "5\n"
+                        "20\n"
         );
     }
 
@@ -614,15 +614,98 @@ public class ParallelGroupByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testParallelMultiKeyGroupBy() throws Exception {
+    public void testParallelMultiKeyGroupBy1() throws Exception {
         testParallelMultiSymbolKeyGroupBy(
                 "SELECT key1, key2, avg(value), sum(colTop) FROM tab ORDER BY key1, key2",
                 "key1\tkey2\tavg\tsum\n" +
-                        "k0\tk0\t2027.5\t1642000.0\n" +
-                        "k1\tk1\t2023.5\t1638800.0\n" +
-                        "k2\tk2\t2024.5\t1639600.0\n" +
-                        "k3\tk3\t2025.5\t1640400.0\n" +
-                        "k4\tk4\t2026.5\t1641200.0\n"
+                        "k0\tk0\t2030.0\t410000.0\n" +
+                        "k0\tk1\t2025.0\t411000.0\n" +
+                        "k0\tk2\t2030.0\t412000.0\n" +
+                        "k0\tk3\t2025.0\t409000.0\n" +
+                        "k1\tk0\t2026.0\t409200.0\n" +
+                        "k1\tk1\t2021.0\t410200.0\n" +
+                        "k1\tk2\t2026.0\t411200.0\n" +
+                        "k1\tk3\t2021.0\t408200.0\n" +
+                        "k2\tk0\t2022.0\t408400.0\n" +
+                        "k2\tk1\t2027.0\t409400.0\n" +
+                        "k2\tk2\t2022.0\t410400.0\n" +
+                        "k2\tk3\t2027.0\t411400.0\n" +
+                        "k3\tk0\t2028.0\t411600.0\n" +
+                        "k3\tk1\t2023.0\t408600.0\n" +
+                        "k3\tk2\t2028.0\t409600.0\n" +
+                        "k3\tk3\t2023.0\t410600.0\n" +
+                        "k4\tk0\t2024.0\t410800.0\n" +
+                        "k4\tk1\t2029.0\t411800.0\n" +
+                        "k4\tk2\t2024.0\t408800.0\n" +
+                        "k4\tk3\t2029.0\t409800.0\n"
+        );
+    }
+
+    @Test
+    public void testParallelMultiKeyGroupBy2() throws Exception {
+        testParallelMultiSymbolKeyGroupBy(
+                "SELECT key1, key2, key3, avg(value), sum(colTop) FROM tab ORDER BY key1, key2, key3",
+                "key1\tkey2\tkey3\tavg\tsum\n" +
+                        "k0\tk0\tk0\t2025.1127819548872\t136680.0\n" +
+                        "k0\tk0\tk1\t2034.8872180451128\t135300.0\n" +
+                        "k0\tk0\tk2\t2030.0\t138020.0\n" +
+                        "k0\tk1\tk0\t2025.0\t135630.0\n" +
+                        "k0\tk1\tk1\t2035.0\t138355.0\n" +
+                        "k0\tk1\tk2\t2015.0\t137015.0\n" +
+                        "k0\tk2\tk0\t2040.0\t138690.0\n" +
+                        "k0\tk2\tk1\t2020.0\t137350.0\n" +
+                        "k0\tk2\tk2\t2030.0\t135960.0\n" +
+                        "k0\tk3\tk0\t2025.0\t137685.0\n" +
+                        "k0\tk3\tk1\t2020.1127819548872\t136345.0\n" +
+                        "k0\tk3\tk2\t2029.8872180451128\t134970.0\n" +
+                        "k1\tk0\tk0\t2030.8872180451128\t135036.0\n" +
+                        "k1\tk0\tk1\t2026.0\t137752.0\n" +
+                        "k1\tk0\tk2\t2021.1127819548872\t136412.0\n" +
+                        "k1\tk1\tk0\t2031.0\t138087.0\n" +
+                        "k1\tk1\tk1\t2011.0\t136747.0\n" +
+                        "k1\tk1\tk2\t2021.0\t135366.0\n" +
+                        "k1\tk2\tk0\t2016.0\t137082.0\n" +
+                        "k1\tk2\tk1\t2026.0\t135696.0\n" +
+                        "k1\tk2\tk2\t2036.0\t138422.0\n" +
+                        "k1\tk3\tk0\t2016.1127819548872\t136077.0\n" +
+                        "k1\tk3\tk1\t2025.8872180451128\t134706.0\n" +
+                        "k1\tk3\tk2\t2021.0\t137417.0\n" +
+                        "k2\tk0\tk0\t2022.0\t137484.0\n" +
+                        "k2\tk0\tk1\t2017.1127819548872\t136144.0\n" +
+                        "k2\tk0\tk2\t2026.8872180451128\t134772.0\n" +
+                        "k2\tk1\tk0\t2022.1127819548872\t136479.0\n" +
+                        "k2\tk1\tk1\t2031.8872180451128\t135102.0\n" +
+                        "k2\tk1\tk2\t2027.0\t137819.0\n" +
+                        "k2\tk2\tk0\t2022.0\t135432.0\n" +
+                        "k2\tk2\tk1\t2032.0\t138154.0\n" +
+                        "k2\tk2\tk2\t2012.0\t136814.0\n" +
+                        "k2\tk3\tk0\t2037.0\t138489.0\n" +
+                        "k2\tk3\tk1\t2017.0\t137149.0\n" +
+                        "k2\tk3\tk2\t2027.0\t135762.0\n" +
+                        "k3\tk0\tk0\t2028.0\t135828.0\n" +
+                        "k3\tk0\tk1\t2038.0\t138556.0\n" +
+                        "k3\tk0\tk2\t2018.0\t137216.0\n" +
+                        "k3\tk1\tk0\t2027.8872180451128\t134838.0\n" +
+                        "k3\tk1\tk1\t2023.0\t137551.0\n" +
+                        "k3\tk1\tk2\t2018.1127819548872\t136211.0\n" +
+                        "k3\tk2\tk0\t2028.0\t137886.0\n" +
+                        "k3\tk2\tk1\t2023.1127819548872\t136546.0\n" +
+                        "k3\tk2\tk2\t2032.8872180451128\t135168.0\n" +
+                        "k3\tk3\tk0\t2013.0\t136881.0\n" +
+                        "k3\tk3\tk1\t2023.0\t135498.0\n" +
+                        "k3\tk3\tk2\t2033.0\t138221.0\n" +
+                        "k4\tk0\tk0\t2034.0\t138288.0\n" +
+                        "k4\tk0\tk1\t2014.0\t136948.0\n" +
+                        "k4\tk0\tk2\t2024.0\t135564.0\n" +
+                        "k4\tk1\tk0\t2019.0\t137283.0\n" +
+                        "k4\tk1\tk1\t2029.0\t135894.0\n" +
+                        "k4\tk1\tk2\t2039.0\t138623.0\n" +
+                        "k4\tk2\tk0\t2019.1127819548872\t136278.0\n" +
+                        "k4\tk2\tk1\t2028.8872180451128\t134904.0\n" +
+                        "k4\tk2\tk2\t2024.0\t137618.0\n" +
+                        "k4\tk3\tk0\t2033.8872180451128\t135234.0\n" +
+                        "k4\tk3\tk1\t2029.0\t137953.0\n" +
+                        "k4\tk3\tk2\t2024.1127819548872\t136613.0\n"
         );
     }
 
@@ -633,11 +716,26 @@ public class ParallelGroupByTest extends AbstractCairoTest {
                         "  SELECT key1, key2, avg(value), sum(colTop) FROM tab" +
                         ") ORDER BY key1, key2",
                 "key1\tkey2\tcolumn\n" +
-                        "k0\tk0\t1644027.5\n" +
-                        "k1\tk1\t1640823.5\n" +
-                        "k2\tk2\t1641624.5\n" +
-                        "k3\tk3\t1642425.5\n" +
-                        "k4\tk4\t1643226.5\n"
+                        "k0\tk0\t412030.0\n" +
+                        "k0\tk1\t413025.0\n" +
+                        "k0\tk2\t414030.0\n" +
+                        "k0\tk3\t411025.0\n" +
+                        "k1\tk0\t411226.0\n" +
+                        "k1\tk1\t412221.0\n" +
+                        "k1\tk2\t413226.0\n" +
+                        "k1\tk3\t410221.0\n" +
+                        "k2\tk0\t410422.0\n" +
+                        "k2\tk1\t411427.0\n" +
+                        "k2\tk2\t412422.0\n" +
+                        "k2\tk3\t413427.0\n" +
+                        "k3\tk0\t413628.0\n" +
+                        "k3\tk1\t410623.0\n" +
+                        "k3\tk2\t411628.0\n" +
+                        "k3\tk3\t412623.0\n" +
+                        "k4\tk0\t412824.0\n" +
+                        "k4\tk1\t413829.0\n" +
+                        "k4\tk2\t410824.0\n" +
+                        "k4\tk3\t411829.0\n"
         );
     }
 
@@ -646,11 +744,26 @@ public class ParallelGroupByTest extends AbstractCairoTest {
         testParallelMultiSymbolKeyGroupBy(
                 "SELECT key1, key2, avg(value), sum(colTop) FROM tab WHERE value < 80 ORDER BY key1, key2",
                 "key1\tkey2\tavg\tsum\n" +
-                        "k0\tk0\t46.25\t325.0\n" +
-                        "k1\tk1\t45.31818181818182\t381.0\n" +
-                        "k2\tk2\t46.31818181818182\t387.0\n" +
-                        "k3\tk3\t47.31818181818182\t393.0\n" +
-                        "k4\tk4\t48.31818181818182\t399.0\n"
+                        "k0\tk0\t45.0\t60.0\n" +
+                        "k0\tk1\t41.0\t65.0\n" +
+                        "k0\tk2\t46.0\t70.0\n" +
+                        "k0\tk3\t51.666666666666664\t130.0\n" +
+                        "k1\tk0\t52.666666666666664\t132.0\n" +
+                        "k1\tk1\t37.0\t61.0\n" +
+                        "k1\tk2\t42.0\t66.0\n" +
+                        "k1\tk3\t47.666666666666664\t122.0\n" +
+                        "k2\tk0\t48.666666666666664\t124.0\n" +
+                        "k2\tk1\t53.666666666666664\t134.0\n" +
+                        "k2\tk2\t38.0\t62.0\n" +
+                        "k2\tk3\t43.0\t67.0\n" +
+                        "k3\tk0\t44.0\t68.0\n" +
+                        "k3\tk1\t49.666666666666664\t126.0\n" +
+                        "k3\tk2\t54.666666666666664\t136.0\n" +
+                        "k3\tk3\t39.0\t63.0\n" +
+                        "k4\tk0\t40.0\t64.0\n" +
+                        "k4\tk1\t45.0\t69.0\n" +
+                        "k4\tk2\t50.666666666666664\t128.0\n" +
+                        "k4\tk3\t55.666666666666664\t138.0\n"
         );
     }
 
@@ -659,14 +772,14 @@ public class ParallelGroupByTest extends AbstractCairoTest {
         testParallelMultiSymbolKeyGroupBy(
                 "SELECT key1, key2, avg(value), sum(colTop) FROM tab ORDER BY key1, key2 LIMIT 3",
                 "key1\tkey2\tavg\tsum\n" +
-                        "k0\tk0\t2027.5\t1642000.0\n" +
-                        "k1\tk1\t2023.5\t1638800.0\n" +
-                        "k2\tk2\t2024.5\t1639600.0\n",
+                        "k0\tk0\t2030.0\t410000.0\n" +
+                        "k0\tk1\t2025.0\t411000.0\n" +
+                        "k0\tk2\t2030.0\t412000.0\n",
                 "SELECT key1, key2, avg(value), sum(colTop) FROM tab ORDER BY key1, key2 LIMIT -3",
                 "key1\tkey2\tavg\tsum\n" +
-                        "k2\tk2\t2024.5\t1639600.0\n" +
-                        "k3\tk3\t2025.5\t1640400.0\n" +
-                        "k4\tk4\t2026.5\t1641200.0\n"
+                        "k4\tk1\t2029.0\t411800.0\n" +
+                        "k4\tk2\t2024.0\t408800.0\n" +
+                        "k4\tk3\t2029.0\t409800.0\n"
         );
     }
 
@@ -676,11 +789,26 @@ public class ParallelGroupByTest extends AbstractCairoTest {
                 "SELECT avg(v), sum(ct), k1, k2 " +
                         "FROM (SELECT value v, colTop ct, key2 k2, key1 k1 FROM tab WHERE value < 80) ORDER BY k1, k2",
                 "avg\tsum\tk1\tk2\n" +
-                        "46.25\t325.0\tk0\tk0\n" +
-                        "45.31818181818182\t381.0\tk1\tk1\n" +
-                        "46.31818181818182\t387.0\tk2\tk2\n" +
-                        "47.31818181818182\t393.0\tk3\tk3\n" +
-                        "48.31818181818182\t399.0\tk4\tk4\n"
+                        "45.0\t60.0\tk0\tk0\n" +
+                        "41.0\t65.0\tk0\tk1\n" +
+                        "46.0\t70.0\tk0\tk2\n" +
+                        "51.666666666666664\t130.0\tk0\tk3\n" +
+                        "52.666666666666664\t132.0\tk1\tk0\n" +
+                        "37.0\t61.0\tk1\tk1\n" +
+                        "42.0\t66.0\tk1\tk2\n" +
+                        "47.666666666666664\t122.0\tk1\tk3\n" +
+                        "48.666666666666664\t124.0\tk2\tk0\n" +
+                        "53.666666666666664\t134.0\tk2\tk1\n" +
+                        "38.0\t62.0\tk2\tk2\n" +
+                        "43.0\t67.0\tk2\tk3\n" +
+                        "44.0\t68.0\tk3\tk0\n" +
+                        "49.666666666666664\t126.0\tk3\tk1\n" +
+                        "54.666666666666664\t136.0\tk3\tk2\n" +
+                        "39.0\t63.0\tk3\tk3\n" +
+                        "40.0\t64.0\tk4\tk0\n" +
+                        "45.0\t69.0\tk4\tk1\n" +
+                        "50.666666666666664\t128.0\tk4\tk2\n" +
+                        "55.666666666666664\t138.0\tk4\tk3\n"
         );
     }
 
@@ -690,10 +818,25 @@ public class ParallelGroupByTest extends AbstractCairoTest {
                 "SELECT key1, key2 FROM tab GROUP BY key1, key2 ORDER BY key1, key2",
                 "key1\tkey2\n" +
                         "k0\tk0\n" +
+                        "k0\tk1\n" +
+                        "k0\tk2\n" +
+                        "k0\tk3\n" +
+                        "k1\tk0\n" +
                         "k1\tk1\n" +
+                        "k1\tk2\n" +
+                        "k1\tk3\n" +
+                        "k2\tk0\n" +
+                        "k2\tk1\n" +
                         "k2\tk2\n" +
+                        "k2\tk3\n" +
+                        "k3\tk0\n" +
+                        "k3\tk1\n" +
+                        "k3\tk2\n" +
                         "k3\tk3\n" +
-                        "k4\tk4\n"
+                        "k4\tk0\n" +
+                        "k4\tk1\n" +
+                        "k4\tk2\n" +
+                        "k4\tk3\n"
         );
     }
 
@@ -703,8 +846,17 @@ public class ParallelGroupByTest extends AbstractCairoTest {
                 "SELECT key1, key2 FROM tab WHERE key1 != 'k1' and key2 != 'k2' GROUP BY key1, key2 ORDER BY key1, key2",
                 "key1\tkey2\n" +
                         "k0\tk0\n" +
+                        "k0\tk1\n" +
+                        "k0\tk3\n" +
+                        "k2\tk0\n" +
+                        "k2\tk1\n" +
+                        "k2\tk3\n" +
+                        "k3\tk0\n" +
+                        "k3\tk1\n" +
                         "k3\tk3\n" +
-                        "k4\tk4\n"
+                        "k4\tk0\n" +
+                        "k4\tk1\n" +
+                        "k4\tk3\n"
         );
     }
 
@@ -1349,11 +1501,11 @@ public class ParallelGroupByTest extends AbstractCairoTest {
         testParallelMultiSymbolKeyGroupBy(
                 "SELECT key1, min(key2), max(key2) FROM tab ORDER BY key1",
                 "key1\tmin\tmax\n" +
-                        "k0\tk0\tk0\n" +
-                        "k1\tk1\tk1\n" +
-                        "k2\tk2\tk2\n" +
-                        "k3\tk3\tk3\n" +
-                        "k4\tk4\tk4\n"
+                        "k0\tk0\tk3\n" +
+                        "k1\tk0\tk3\n" +
+                        "k2\tk0\tk3\n" +
+                        "k3\tk0\tk3\n" +
+                        "k4\tk0\tk3\n"
         );
     }
 
@@ -1587,19 +1739,20 @@ public class ParallelGroupByTest extends AbstractCairoTest {
                                         "  ts TIMESTAMP," +
                                         "  key1 SYMBOL," +
                                         "  key2 SYMBOL," +
+                                        "  key3 SYMBOL," +
                                         "  value DOUBLE) timestamp (ts) PARTITION BY DAY",
                                 sqlExecutionContext
                         );
                         insert(
                                 compiler,
-                                "insert into tab select (x * 864000000)::timestamp, 'k' || (x % 5), 'k' || (x % 5), x from long_sequence(" + ROW_COUNT + ")",
+                                "insert into tab select (x * 864000000)::timestamp, 'k' || (x % 5), 'k' || (x % 4), 'k' || (x % 3), x from long_sequence(" + ROW_COUNT + ")",
                                 sqlExecutionContext
                         );
                         ddl(compiler, "ALTER TABLE tab ADD COLUMN colTop DOUBLE", sqlExecutionContext);
                         insert(
                                 compiler,
                                 "insert into tab " +
-                                        "select ((50 + x) * 864000000)::timestamp, 'k' || ((50 + x) % 5), 'k' || ((50 + x) % 5), 50 + x, 50 + x " +
+                                        "select ((50 + x) * 864000000)::timestamp, 'k' || ((50 + x) % 5), 'k' || ((50 + x) % 4), 'k' || ((50 + x) % 3), 50 + x, 50 + x " +
                                         "from long_sequence(" + ROW_COUNT + ")",
                                 sqlExecutionContext
                         );

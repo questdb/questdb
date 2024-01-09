@@ -376,7 +376,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         private boolean sharded;
 
         private Particle() {
-            this.map = MapFactory.createMap(configuration, keyTypes, valueTypes);
+            this.map = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes);
             this.shards = new ObjList<>(shardCount);
         }
 
@@ -415,7 +415,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             int size = shards.size();
             if (size == 0) {
                 for (int i = 0; i < shardCount; i++) {
-                    shards.add(MapFactory.createMap(configuration, keyTypes, valueTypes));
+                    shards.add(MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes));
                 }
             } else {
                 assert size == shardCount;

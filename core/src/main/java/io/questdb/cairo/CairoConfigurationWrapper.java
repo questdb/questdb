@@ -221,11 +221,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public @NotNull CharSequence getDefaultMapType() {
-        return delegate.getDefaultMapType();
-    }
-
-    @Override
     public boolean getDefaultSymbolCacheFlag() {
         return delegate.getDefaultSymbolCacheFlag();
     }

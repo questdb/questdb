@@ -144,9 +144,6 @@ public interface CairoConfiguration {
     @NotNull
     DateLocale getDefaultDateLocale();
 
-    @NotNull
-    CharSequence getDefaultMapType();
-
     boolean getDefaultSymbolCacheFlag();
 
     int getDefaultSymbolCapacity();

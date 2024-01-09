@@ -26,9 +26,9 @@ package org.questdb;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SingleColumnType;
-import io.questdb.cairo.map.FastMap;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.map.OrderedMap;
 import io.questdb.std.Rnd;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
@@ -42,17 +42,17 @@ import java.util.concurrent.TimeUnit;
 @State(Scope.Thread)
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
-public class FastMapWriteLongBenchmark {
+public class MapWriteBenchmark {
 
-    private static final int N = 1_000_000;
-    private static final FastMap fmap = new FastMap(1024 * 1024, new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), 64, 0.5f, 1024);
+    private static final int M = 25;
     private static final double loadFactor = 0.7;
-    private static final HashMap<Long, Long> hmap = new HashMap<>(64, (float) loadFactor);
+    private static final HashMap<String, Long> hmap = new HashMap<>(64, (float) loadFactor);
+    private static final OrderedMap fmap = new OrderedMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), 64, loadFactor, 1024);
     private final Rnd rnd = new Rnd();
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
-                .include(FastMapWriteLongBenchmark.class.getSimpleName())
+                .include(MapWriteBenchmark.class.getSimpleName())
                 .warmupIterations(3)
                 .measurementIterations(3)
                 .forks(1)
@@ -62,8 +62,8 @@ public class FastMapWriteLongBenchmark {
     }
 
     @Benchmark
-    public long baseline() {
-        return rnd.nextLong(N) + rnd.nextLong();
+    public CharSequence baseline() {
+        return rnd.nextChars(M);
     }
 
     @Setup(Level.Iteration)
@@ -76,13 +76,13 @@ public class FastMapWriteLongBenchmark {
     @Benchmark
     public void testFastMap() {
         MapKey key = fmap.withKey();
-        key.putLong(rnd.nextLong(N));
+        key.putStr(rnd.nextChars(M));
         MapValue values = key.createValue();
-        values.putLong(0, rnd.nextLong());
+        values.putLong(0, 20);
     }
 
     @Benchmark
     public void testHashMap() {
-        hmap.put(rnd.nextLong(N), rnd.nextLong());
+        hmap.put(rnd.nextChars(M).toString(), 20L);
     }
 }

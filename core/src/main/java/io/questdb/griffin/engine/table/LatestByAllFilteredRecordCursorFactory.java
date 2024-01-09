@@ -50,7 +50,7 @@ public class LatestByAllFilteredRecordCursorFactory extends AbstractTreeSetRecor
             @NotNull IntList columnIndexes
     ) {
         super(metadata, dataFrameCursorFactory, configuration);
-        Map map = MapFactory.createMap(configuration, columnTypes);
+        Map map = MapFactory.createOrderedMap(configuration, columnTypes);
         if (filter == null) {
             cursor = new LatestByAllRecordCursor(map, rows, recordSink, columnIndexes);
         } else {

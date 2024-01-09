@@ -240,10 +240,10 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         ) {
             super(functions);
             // this is the map itself, which we must not forget to free when factory closes
-            recordKeyMap = MapFactory.createMap(configuration, keyTypes);
+            recordKeyMap = MapFactory.createOrderedMap(configuration, keyTypes);
             // data map will contain rounded timestamp value as last key column
             keyTypes.add(ColumnType.TIMESTAMP);
-            dataMap = MapFactory.createMap(configuration, keyTypes, valueTypes);
+            dataMap = MapFactory.createOrderedMap(configuration, keyTypes, valueTypes);
             allocator = new GroupByAllocator(configuration);
             GroupByUtils.setAllocator(groupByFunctions, allocator);
             isOpen = true;

@@ -51,8 +51,8 @@ public class ExceptRecordCursorFactory extends AbstractSetRecordCursorFactory {
             @Transient @NotNull ColumnTypes mapValueTypes
     ) {
         super(metadata, factoryA, factoryB, castFunctionsA, castFunctionsB);
-        Map mapA = MapFactory.createMap(configuration, mapKeyTypes, mapValueTypes);
-        Map mapB = MapFactory.createMap(configuration, mapKeyTypes, mapValueTypes);
+        Map mapA = MapFactory.createOrderedMap(configuration, mapKeyTypes, mapValueTypes);
+        Map mapB = MapFactory.createOrderedMap(configuration, mapKeyTypes, mapValueTypes);
         if (castFunctionsA == null && castFunctionsB == null) {
             cursor = new ExceptRecordCursor(mapA, mapB, recordSink);
         } else {

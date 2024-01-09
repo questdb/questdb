@@ -40,7 +40,7 @@ public class MinStrGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "a\t42\n" +
                         "b\t42\n" +
                         "c\t42\n",
-                "select a, min('42') from x",
+                "select a, min('42') from x order by a",
                 "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
                 null,
                 true,
@@ -55,7 +55,7 @@ public class MinStrGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "a\taaaaaa\n" +
                         "b\taaaaaa\n" +
                         "c\taaaaaa\n",
-                "select a, min(concat(s, s)) from x",
+                "select a, min(concat(s, s)) from x order by a",
                 "create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_str('aaa','bbb','ccc') s from long_sequence(20)))",
                 null,
                 true,
@@ -70,7 +70,7 @@ public class MinStrGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "a\t111\n" +
                         "b\t111\n" +
                         "c\t111\n",
-                "select a, min(s) from x",
+                "select a, min(s) from x order by a",
                 "create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_str('111','222','333') s, timestamp_sequence(0, 100000) ts from long_sequence(20)) timestamp(ts))",
                 null,
                 true,
@@ -116,7 +116,7 @@ public class MinStrGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "a\t\n" +
                         "b\t\n" +
                         "c\t\n",
-                "select a, min(cast(null as STRING)) from x",
+                "select a, min(cast(null as STRING)) from x order by a",
                 "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
                 null,
                 true,
