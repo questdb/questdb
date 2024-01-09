@@ -24,7 +24,6 @@
 
 package io.questdb.network;
 
-import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.log.Log;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
@@ -147,16 +146,6 @@ public final class JavaTlsClientSocket implements Socket {
         assert state == STATE_EMPTY;
         delegate.of(fd);
         state = STATE_PLAINTEXT;
-        if (startTlsSession() < 0) {
-            throw new HttpClientException("could not start TLS session");
-        }
-        // unwrap input buffer: read mode and empty
-        unwrapInputBuffer.position(0);
-        unwrapInputBuffer.limit(0);
-
-        // write mode and empty
-        unwrapOutputBuffer.clear();
-        wrapOutputBuffer.clear();
     }
 
     @Override
@@ -276,11 +265,11 @@ public final class JavaTlsClientSocket implements Socket {
     }
 
     @Override
-    public int startTlsSession() {
+    public int startTlsSession(String serverName) {
         assert state == STATE_PLAINTEXT;
         prepareInternalBuffers();
         try {
-            this.sslEngine = createSslEngine();
+            this.sslEngine = createSslEngine(serverName);
             this.sslEngine.beginHandshake();
             SSLEngineResult.HandshakeStatus handshakeStatus = sslEngine.getHandshakeStatus();
             while (handshakeStatus != SSLEngineResult.HandshakeStatus.FINISHED) {
@@ -346,6 +335,13 @@ public final class JavaTlsClientSocket implements Socket {
                     break;
                 }
             }
+            // unwrap input buffer: read mode and empty
+            unwrapInputBuffer.position(0);
+            unwrapInputBuffer.limit(0);
+
+            // write mode and empty
+            unwrapOutputBuffer.clear();
+            wrapOutputBuffer.clear();
             state = STATE_TLS;
             return 0;
         } catch (SSLException | KeyManagementException | NoSuchAlgorithmException e) {
@@ -398,13 +394,30 @@ public final class JavaTlsClientSocket implements Socket {
         return newAddress;
     }
 
-    private static SSLEngine createSslEngine() throws KeyManagementException, NoSuchAlgorithmException {
+    private static SSLEngine createSslEngine(String serverName) throws KeyManagementException, NoSuchAlgorithmException {
         // todo: make configurable: CAs, peer advisory, etc.
 
-        SSLContext sslContext;
-        sslContext = SSLContext.getInstance("TLS");
-        sslContext.init(null, BLIND_TRUST_MANAGERS, new SecureRandom());
-        SSLEngine sslEngine = sslContext.createSSLEngine();
+        SSLEngine sslEngine;
+        if (serverName == null) {
+            // no server name, no certificate validation
+            // this is insecure and should only be used for testing
+            SSLContext sslContext = SSLContext.getInstance("TLS");
+            sslContext.init(null, BLIND_TRUST_MANAGERS, new SecureRandom());
+            sslEngine = sslContext.createSSLEngine();
+        } else {
+            SSLContext sslContext = SSLContext.getDefault();
+            sslEngine = sslContext.createSSLEngine(serverName, -1);
+            SSLParameters sslParameters = sslEngine.getSSLParameters();
+            // The https validation algorithm? That looks confusing! After all we are not using any
+            // https here at so what does it mean?
+            // It's actually simple: It just instructs the SSLEngine to perform the same hostname validation
+            // as it does during HTTPS connections. SSLEngine does not do hostname validation by default. Without
+            // this option SSLEngine would happily accept any certificate as long as it's signed by a trusted CA.
+            // This option will make sure certificates are accepted only if they were issued for the
+            // server we are connecting to.
+            sslParameters.setEndpointIdentificationAlgorithm("https");
+            sslEngine.setSSLParameters(sslParameters);
+        }
         sslEngine.setUseClientMode(true);
         return sslEngine;
     }
@@ -422,6 +435,7 @@ public final class JavaTlsClientSocket implements Socket {
         Unsafe.getUnsafe().putLong(buffer, ADDRESS_FIELD_OFFSET, ptr);
         Unsafe.getUnsafe().putLong(buffer, LIMIT_FIELD_OFFSET, len);
         Unsafe.getUnsafe().putLong(buffer, CAPACITY_FIELD_OFFSET, len);
+        buffer.position(0);
     }
 
     private void freeInternalBuffers() {

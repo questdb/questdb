@@ -1,5 +1,6 @@
 package io.questdb.test.cutlass.line.http;
 
+import io.questdb.client.Sender;
 import io.questdb.cutlass.line.http.LineHttpSender;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractBootstrapTest;
@@ -36,7 +37,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
                 int totalCount = 100_000;
                 int maxPendingRows = 1000;
-                try (LineHttpSender sender = new LineHttpSender("localhost", httpPort, -1, false, maxPendingRows)) {
+                try (LineHttpSender sender = new LineHttpSender("localhost", httpPort, -1, false, Sender.TlsValidationMode.DEFAULT, maxPendingRows, null, null, null)) {
                     for (int i = 0; i < totalCount; i++) {
                         if (i != 0 && i % maxPendingRows == 0) {
                             serverMain.waitWalTxnApplied("table with space");
@@ -68,7 +69,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 int httpPort = getHttpPort(serverMain);
 
                 int totalCount = 1_000_000;
-                try (LineHttpSender sender = new LineHttpSender("localhost", httpPort, -1, false, 100_000)) {
+                try (LineHttpSender sender = new LineHttpSender("localhost", httpPort, -1, false, Sender.TlsValidationMode.DEFAULT, 100_000, null, null, null)) {
                     for (int i = 0; i < totalCount; i++) {
                         sender.table("table with space")
                                 .symbol("tag1", "value" + i % 10)

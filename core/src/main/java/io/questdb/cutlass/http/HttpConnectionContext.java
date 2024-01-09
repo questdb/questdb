@@ -280,7 +280,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     @Override
     public void init() {
         if (socket.supportsTls()) {
-            if (socket.startTlsSession() != 0) {
+            if (socket.startTlsSession(null) != 0) {
                 throw CairoException.nonCritical().put("failed to start TLS session");
             }
         }

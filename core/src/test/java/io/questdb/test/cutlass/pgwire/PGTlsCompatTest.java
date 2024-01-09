@@ -164,7 +164,7 @@ public class PGTlsCompatTest extends BasePGTest {
         }
 
         @Override
-        public int startTlsSession() {
+        public int startTlsSession(String serverName) {
             if (!tlsSessionStarted) {
                 createTlsSessionCalls.incrementAndGet();
                 tlsSessionStarted = true;

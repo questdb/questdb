@@ -364,7 +364,7 @@ public interface Sender extends Closeable {
 
             NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             if (protocol == PROTOCOL_HTTP) {
-                return new LineHttpSender(host, port, bufferCapacity, tlsEnabled, maxPendingRows, username, password);
+                return new LineHttpSender(host, port, bufferCapacity, tlsEnabled, tlsValidationMode, maxPendingRows, null, username, password);
             } else if (protocol != PROTOCOL_TCP) {
                 throw new LineSenderException("unsupported protocol ")
                         .put("[protocol=").put(protocol).put("]");

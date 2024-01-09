@@ -51,6 +51,7 @@ public abstract class HttpClient implements QuietCloseable {
     private final HttpClientCookieHandler cookieHandler;
     private final ObjectPool<DirectUtf8String> csPool = new ObjectPool<>(DirectUtf8String.FACTORY, 64);
     private final int defaultTimeout;
+    private final boolean insecureTls;
     private final Request request = new Request();
     private final int responseParserBufSize;
     private long bufLo;
@@ -60,7 +61,8 @@ public abstract class HttpClient implements QuietCloseable {
     private ResponseHeaders responseHeaders;
     private long responseParserBufLo;
 
-    public HttpClient(HttpClientConfiguration configuration, SocketFactory socketFactory) {
+    public HttpClient(HttpClientConfiguration configuration, SocketFactory socketFactory, boolean insecureTls) {
+        this.insecureTls = insecureTls;
         this.nf = configuration.getNetworkFacade();
         this.socket = socketFactory.newInstance(configuration.getNetworkFacade(), LOG);
         this.defaultTimeout = configuration.getTimeout();
@@ -276,11 +278,6 @@ public abstract class HttpClient implements QuietCloseable {
             return this;
         }
 
-        public ResponseHeaders getResponse() {
-            responseHeaders.clear();
-            return responseHeaders;
-        }
-
         public Request authToken(CharSequence username, CharSequence token) {
             beforeHeader();
             putAsciiInternal("Authorization: Token ");
@@ -290,6 +287,11 @@ public abstract class HttpClient implements QuietCloseable {
                 cookieHandler.setCookies(this, username);
             }
             return this;
+        }
+
+        public ResponseHeaders getResponse() {
+            responseHeaders.clear();
+            return responseHeaders;
         }
 
         public Request header(CharSequence name, CharSequence value) {
@@ -502,6 +504,14 @@ public abstract class HttpClient implements QuietCloseable {
                 throw new HttpClientException("could not configure socket to be non-blocking [fd=").put(fd).put(", errno=").put(errno).put(']');
             }
             socket.of(fd);
+            if (socket.supportsTls()) {
+                String serverName = insecureTls ? null : Chars.toString(host);
+                if (socket.startTlsSession(serverName) < 0) {
+                    int errno = nf.errno();
+                    disconnect();
+                    throw new HttpClientException("could not start TLS session [fd=").put(fd).put(", errno=").put(errno).put(']');
+                }
+            }
             setupIoWait();
         }
 

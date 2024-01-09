@@ -25,6 +25,7 @@
 package io.questdb.network;
 
 import io.questdb.std.QuietCloseable;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Abstraction for plain and encrypted TCP sockets. Encrypted sockets use additional buffer
@@ -89,10 +90,15 @@ public interface Socket extends QuietCloseable {
 
     /**
      * Starts a TLS session, if supported.
+     * <p>
+     * The server name is used for SNI and certificate validation for client connections. It has no effect
+     * on server connections. If null, clients will not validate the server certificate. This is insecure
+     * and should only be used for testing.
      *
+     * @param serverName server name to use for SNI and certificate validation.
      * @return 0 if the call is successful; -1 if there was an error.
      */
-    int startTlsSession();
+    int startTlsSession(@Nullable String serverName);
 
     /**
      * @return true if the socket support TLS encryption; false otherwise.

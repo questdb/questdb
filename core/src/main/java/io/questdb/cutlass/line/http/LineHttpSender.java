@@ -27,29 +27,14 @@ public final class LineHttpSender implements Sender {
     private HttpClient.Request request;
     private RequestState state = RequestState.EMPTY;
 
-    public LineHttpSender(String host, int port, int initialBufferCapacity, boolean tls, int maxPendingRows) {
-        this(host, port, initialBufferCapacity, tls, maxPendingRows, null);
-    }
-
-    public LineHttpSender(String host, int port, int initialBufferCapacity, boolean tls, int maxPendingRows, String authToken) {
+    public LineHttpSender(String host, int port, int initialBufferCapacity, boolean tls, TlsValidationMode tlsValidationMode, int maxPendingRows, String authToken, String username, String password) {
         this.host = host;
         this.port = port;
         this.maxPendingRows = maxPendingRows;
         this.authToken = authToken;
-        this.username = null;
-        this.password = null;
-        this.client = tls ? HttpClientFactory.newTlsInstance() : HttpClientFactory.newPlainTextInstance();
-        this.request = newRequest();
-    }
-
-    public LineHttpSender(String host, int port, int initialBufferCapacity, boolean tls, int maxPendingRows, String username, String password) {
-        this.host = host;
-        this.port = port;
-        this.maxPendingRows = maxPendingRows;
-        this.authToken = null;
         this.username = username;
         this.password = password;
-        this.client = tls ? HttpClientFactory.newTlsInstance() : HttpClientFactory.newPlainTextInstance();
+        this.client = tls ? HttpClientFactory.newTlsInstance(tlsValidationMode == TlsValidationMode.INSECURE) : HttpClientFactory.newPlainTextInstance();
         this.request = newRequest();
     }
 

@@ -69,7 +69,7 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
                 serverMain.start();
                 int port = tlsProxy.getListeningPort();
                 String url = "https://localhost:" + port;
-                try (Sender sender = Sender.withDefaultsFromUrl(url)) {
+                try (Sender sender = Sender.builder().url(url).advancedTls().disableCertificateValidation().build()) {
                     for (int i = 0; i < 100_000; i++) {
                         sender.table(tableName).longColumn("value", 42).atNow();
                     }
@@ -89,7 +89,7 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
                 serverMain.start();
                 int port = tlsProxy.getListeningPort();
                 String url = "https://localhost:" + port;
-                try (Sender sender = Sender.withDefaultsFromUrl(url)) {
+                try (Sender sender = Sender.builder().url(url).advancedTls().disableCertificateValidation().build()) {
                     sender.table(tableName).longColumn("value", 42).atNow();
                     sender.flush(); // make sure a connection is established
                     tlsProxy.killConnections();
@@ -110,7 +110,7 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
                 serverMain.start();
                 int port = tlsProxy.getListeningPort();
                 String url = "https://localhost:" + port;
-                try (Sender sender = Sender.withDefaultsFromUrl(url)) {
+                try (Sender sender = Sender.builder().url(url).advancedTls().disableCertificateValidation().build()) {
                     sender.table(tableName).longColumn("value", 42).atNow();
                     sender.flush(); // make sure a connection is established
 
@@ -139,7 +139,7 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
                 serverMain.start();
                 int port = tlsProxy.getListeningPort();
                 String url = "https://localhost:" + port;
-                try (Sender sender = Sender.withDefaultsFromUrl(url)) {
+                try (Sender sender = Sender.builder().url(url).advancedTls().disableCertificateValidation().build()) {
                     // create 'value' as a long column
                     sender.table(tableName).longColumn("value", 42).atNow();
                     sender.flush();

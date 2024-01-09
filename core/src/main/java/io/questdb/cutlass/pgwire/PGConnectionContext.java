@@ -458,7 +458,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     doSend(bufferRemainingOffset, bufferRemainingSize);
                 }
                 tlsSessionStarting = false;
-                if (socket.startTlsSession() != 0) {
+                if (socket.startTlsSession(null) != 0) {
                     LOG.error().$("failed to create new TLS session").$();
                     throw BadProtocolException.INSTANCE;
                 }
