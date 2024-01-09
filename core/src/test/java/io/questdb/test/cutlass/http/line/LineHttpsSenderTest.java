@@ -6,11 +6,13 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.client.Sender;
+import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import io.questdb.test.tools.TlsProxyRule;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -73,6 +75,89 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
                     }
                 }
                 assertTableSizeEventually(serverMain.getEngine(), tableName, 100_000);
+            }
+        });
+    }
+
+    @Test
+    public void testAutoRecoveryAfterInfrastructureError() throws Exception {
+        String tableName = "testAutoRecoveryAfterInfrastructureError";
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
+            )) {
+                serverMain.start();
+                int port = tlsProxy.getListeningPort();
+                String url = "https://localhost:" + port;
+                try (Sender sender = Sender.withDefaultsFromUrl(url)) {
+                    sender.table(tableName).longColumn("value", 42).atNow();
+                    sender.flush(); // make sure a connection is established
+                    tlsProxy.killConnections();
+                    sender.table(tableName).longColumn("value", 42).atNow();
+                }
+                assertTableSizeEventually(serverMain.getEngine(), tableName, 2);
+            }
+        });
+    }
+
+    @Test
+    public void testRecoveryAfterInfrastructureErrorExceededRetryLimit() throws Exception {
+        String tableName = "testAutoRecoveryAfterInfrastructureError";
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
+            )) {
+                serverMain.start();
+                int port = tlsProxy.getListeningPort();
+                String url = "https://localhost:" + port;
+                try (Sender sender = Sender.withDefaultsFromUrl(url)) {
+                    sender.table(tableName).longColumn("value", 42).atNow();
+                    sender.flush(); // make sure a connection is established
+
+                    sender.table(tableName).longColumn("value", 42).atNow();
+                    tlsProxy.killConnections();
+                    tlsProxy.killAfterAccepting();
+                    try {
+                        sender.flush();
+                        Assert.fail("should fail");
+                    } catch (LineSenderException e) {
+                        TestUtils.assertContains(e.getMessage(), "error while sending data to server");
+                    }
+                }
+                assertTableSizeEventually(serverMain.getEngine(), tableName, 1);
+            }
+        });
+    }
+
+    @Test
+    public void testRecoveryAfterStructuralError() throws Exception {
+        String tableName = "testRecoveryAfterStructuralError";
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
+            )) {
+                serverMain.start();
+                int port = tlsProxy.getListeningPort();
+                String url = "https://localhost:" + port;
+                try (Sender sender = Sender.withDefaultsFromUrl(url)) {
+                    // create 'value' as a long column
+                    sender.table(tableName).longColumn("value", 42).atNow();
+                    sender.flush();
+
+                    // try to send a string value to 'value' column. this must fail.
+                    sender.table(tableName).stringColumn("value", "42").atNow();
+                    try {
+                        sender.flush();
+                        Assert.fail("should fail");
+                    } catch (LineSenderException e) {
+                        TestUtils.assertContains(e.getMessage(), "{\"code\":\"invalid\",\"message\":\"failed to parse line protocol:errors encountered on line(s):\\nerror in line 1: table: testRecoveryAfterStructuralError, column: value; cast error from protocol type: STRING to column type: LONG\",\"line\":1,\"errorId\":\"");
+                    }
+
+                    // assert that we can still send new rows after a structural error
+                    sender.table(tableName).longColumn("value", 42).atNow();
+                    sender.flush();
+                }
+                assertTableSizeEventually(serverMain.getEngine(), tableName, 2);
             }
         });
     }

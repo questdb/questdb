@@ -115,10 +115,12 @@ public final class JavaTlsClientSocket implements Socket {
                     log.debug().$("could not send TLS close_notify").$(e).$();
                 }
                 sslEngine = null;
-                freeInternalBuffers();
             } // fall through
             case STATE_PLAINTEXT:
                 state = STATE_CLOSING;
+                // it could be that we allocated buffers but failed to start a TLS session
+                // so we need to free the buffers even in the STATE_PLAINTEXT state
+                freeInternalBuffers();
                 delegate.close();
                 state = STATE_EMPTY;
                 break;
@@ -450,9 +452,6 @@ public final class JavaTlsClientSocket implements Socket {
 
     private void prepareInternalBuffers() {
         int initialCapacity = Integer.getInteger("questdb.experimental.tls.buffersize", INITIAL_BUFFER_CAPACITY_BYTES);
-
-        // we want to track allocated memory hence we just create dummy direct byte buffers
-        // and later reset it to manually allocated memory
         this.wrapOutputBufferPtr = allocateMemoryAndResetBuffer(wrapOutputBuffer, initialCapacity);
         this.unwrapInputBufferPtr = allocateMemoryAndResetBuffer(unwrapInputBuffer, initialCapacity);
         unwrapInputBuffer.flip(); // read mode
