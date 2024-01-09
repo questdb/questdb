@@ -1100,6 +1100,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.artificialStar = artificialStar;
     }
 
+    public void setBackupWhereClause(ExpressionNode backupWhereClause) {
+        this.backupWhereClause = backupWhereClause;
+    }
+
     public void setConstWhereClause(ExpressionNode constWhereClause) {
         this.constWhereClause = constWhereClause;
     }

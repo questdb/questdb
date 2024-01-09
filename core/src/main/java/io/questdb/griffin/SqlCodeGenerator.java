@@ -1434,6 +1434,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     ) throws SqlException {
         final ExpressionNode filterExpr = model.getWhereClause();
 
+        // back up in case if the above factory steals the filter
+        model.setBackupWhereClause(ExpressionNode.deepClone(expressionNodePool, filterExpr));
         // back up in case filters need to be compiled again
         backupWhereClause(filterExpr);
         model.setWhereClause(null);
