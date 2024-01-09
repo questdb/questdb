@@ -3165,6 +3165,30 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testExecuteAndFailedQueryDoesntLeaveItInRegistry() throws Exception {
+        skipOnWalRun();
+
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            ddl("create table trades as (select 'a'::symbol symbol, -1 price from long_sequence(10))");
+
+            try (PreparedStatement pstmt = connection.prepareStatement("SELECT symbol,approx_percentile(price, 50, 2) from trades")) {
+                pstmt.executeQuery();
+                Assert.fail();
+            } catch (PSQLException e) {
+                assertContains(e.getMessage(), "ERROR: percentile must be between 0.0 and 1.0");
+            }
+
+            try (PreparedStatement pstmt = connection.prepareStatement("select * from query_activity() where query = ?")) {
+                pstmt.setString(1, "SELECT symbol,approx_percentile(price, 50, 2) from trades");
+                ResultSet rs = pstmt.executeQuery();
+                sink.clear();
+                assertResultSet("query_id[BIGINT],worker_id[BIGINT],worker_pool[VARCHAR],username[VARCHAR],query_start[TIMESTAMP],state_change[TIMESTAMP],state[VARCHAR],query[VARCHAR]\n",
+                        sink, rs);
+            }
+        });
+    }
+
+    @Test
     public void testExecuteSameQueryManyTimesWithMaxRowsReturnsCorrectResult() throws Exception {
         skipOnWalRun();
         assertWithPgServer(CONN_AWARE_EXTENDED_ALL, (connection, binary, mode, port) -> {
