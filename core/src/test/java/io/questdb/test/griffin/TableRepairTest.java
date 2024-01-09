@@ -43,7 +43,7 @@ public class TableRepairTest extends AbstractCairoTest {
 
             engine.releaseAllWriters();
 
-            try (TableReader reader = newTableReader(configuration, "tst")) {
+            try (TableReader reader = newOffPoolReader(configuration, "tst")) {
                 Assert.assertEquals(100000, reader.size());
 
                 // last and "active" partition is "1970-01-12"
@@ -57,7 +57,7 @@ public class TableRepairTest extends AbstractCairoTest {
 
                 // repair by opening and closing writer
 
-                try (TableWriter w = newTableWriter(configuration, "tst", metrics)) {
+                try (TableWriter w = newOffPoolWriter(configuration, "tst", metrics)) {
                     Assert.assertTrue(reader.reload());
                     Assert.assertEquals(95040, reader.size());
                     Assert.assertEquals(950390000000L, w.getMaxTimestamp());
@@ -82,7 +82,7 @@ public class TableRepairTest extends AbstractCairoTest {
 
             engine.releaseAllWriters();
 
-            try (TableReader reader = newTableReader(configuration, "tst")) {
+            try (TableReader reader = newOffPoolReader(configuration, "tst")) {
 
                 Assert.assertEquals(100000, reader.size());
 
@@ -96,7 +96,7 @@ public class TableRepairTest extends AbstractCairoTest {
 
                 // repair by opening and closing writer
 
-                newTableWriter(configuration, "tst", metrics).close();
+                newOffPoolWriter(configuration, "tst", metrics).close();
 
                 Assert.assertTrue(reader.reload());
                 Assert.assertEquals(91360, reader.size());

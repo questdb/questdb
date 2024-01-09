@@ -24,9 +24,7 @@
 
 package io.questdb.cairo;
 
-import io.questdb.std.QuietCloseable;
-
-public interface DatabaseSnapshotAgent extends QuietCloseable {
+public interface DatabaseSnapshotAgent {
 
     /**
      * Returns true is a snapshot is taking place, i.e.

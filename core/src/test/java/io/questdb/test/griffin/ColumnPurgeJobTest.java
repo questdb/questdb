@@ -316,13 +316,13 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                 int count = 0;
 
                 @Override
-                public boolean remove(LPSZ name) {
+                public boolean removeQuiet(LPSZ name) {
                     if (Utf8s.endsWithAscii(name, "str.i")) {
                         if (count++ < 6) {
                             return false;
                         }
                     }
-                    return super.remove(name);
+                    return super.removeQuiet(name);
                 }
             };
 
@@ -900,12 +900,5 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
 
     private void update(String updateSql) throws SqlException {
         ddl(updateSql);
-//        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-//            final CompiledQuery cq = compiler.compile(updateSql, sqlExecutionContext);
-//            Assert.assertEquals(CompiledQuery.UPDATE, cq.getType());
-//            try (OperationFuture fut = cq.execute(null)) {
-//                fut.await();
-//            }
-//        }
     }
 }

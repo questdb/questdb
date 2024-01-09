@@ -419,7 +419,7 @@ public class ContiguousMemoryMTest extends AbstractCairoTest {
 
                 Assert.assertEquals(ff.length(path), Files.PAGE_SIZE);
             } finally {
-                Assert.assertTrue(ff.remove(path));
+                Assert.assertTrue(ff.removeQuiet(path));
             }
         }
     }
@@ -716,7 +716,7 @@ public class ContiguousMemoryMTest extends AbstractCairoTest {
 
                 Assert.assertEquals(0, ff.length(path));
             } finally {
-                Assert.assertTrue(ff.remove(path));
+                Assert.assertTrue(ff.removeQuiet(path));
             }
         }
     }
@@ -776,7 +776,7 @@ public class ContiguousMemoryMTest extends AbstractCairoTest {
                     }
                 }
             } finally {
-                Assert.assertTrue(ff.remove(path));
+                Assert.assertTrue(ff.removeQuiet(path));
             }
         }
     }

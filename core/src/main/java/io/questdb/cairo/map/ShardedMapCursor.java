@@ -139,6 +139,11 @@ public class ShardedMapCursor implements MapRecordCursor {
         }
 
         @Override
+        public void copyValue(MapValue destValue) {
+            baseRecord.copyValue(destValue);
+        }
+
+        @Override
         public BinarySequence getBin(int columnIndex) {
             return baseRecord.getBin(columnIndex);
         }
@@ -276,6 +281,11 @@ public class ShardedMapCursor implements MapRecordCursor {
         @Override
         public MapValue getValue() {
             return baseRecord.getValue();
+        }
+
+        @Override
+        public int keyHashCode() {
+            return baseRecord.keyHashCode();
         }
 
         @Override

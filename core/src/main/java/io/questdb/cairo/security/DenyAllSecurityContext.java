@@ -41,6 +41,11 @@ public class DenyAllSecurityContext extends ReadOnlySecurityContext {
     }
 
     @Override
+    public void authorizeCancelQuery() {
+        throw CairoException.nonCritical().put("permission denied");
+    }
+
+    @Override
     public void authorizeHttp() {
         throw CairoException.nonCritical().put("permission denied");
     }

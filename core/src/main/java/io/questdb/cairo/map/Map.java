@@ -38,15 +38,11 @@ public interface Map extends Mutable, Closeable, Reopenable {
 
     MapRecord getRecord();
 
-    default void merge(Map srcMap, MapValueMergeFunction mergeFunc) {
-        throw new UnsupportedOperationException();
-    }
+    void merge(Map srcMap, MapValueMergeFunction mergeFunc);
 
     void restoreInitialCapacity();
 
-    default void setKeyCapacity(int keyCapacity) {
-        throw new UnsupportedOperationException();
-    }
+    void setKeyCapacity(int keyCapacity);
 
     long size();
 

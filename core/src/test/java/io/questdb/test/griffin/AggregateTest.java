@@ -24,7 +24,6 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -2078,7 +2077,7 @@ public class AggregateTest extends AbstractCairoTest {
         }
 
         // Insert a lot of empty rows to test function's merge correctness.
-        try (TableWriter writer = new TableWriter(engine.getConfiguration(), engine.verifyTableName("tt1"), Metrics.disabled())) {
+        try (TableWriter writer = TestUtils.newOffPoolWriter(engine.getConfiguration(), engine.verifyTableName("tt1"))) {
             for (int i = 0; i < 2 * PAGE_FRAME_MAX_ROWS; i++) {
                 TableWriter.Row row = writer.newRow();
                 row.append();
@@ -2089,7 +2088,7 @@ public class AggregateTest extends AbstractCairoTest {
         assertGroupByQuery(aggregateFunctions, aggregateColTypes, false);
 
         // Now write one more row with non-empty rows.
-        try (TableWriter writer = new TableWriter(engine.getConfiguration(), engine.verifyTableName("tt1"), Metrics.disabled())) {
+        try (TableWriter writer = newOffPoolWriter(engine.getConfiguration(), "tt1")) {
             TableWriter.Row row = writer.newRow();
             for (int i = 0; i < aggregateColTypes.length; i++) {
                 TypeVal colType = aggregateColTypes[i];

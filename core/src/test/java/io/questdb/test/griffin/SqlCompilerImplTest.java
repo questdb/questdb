@@ -48,7 +48,6 @@ import org.junit.*;
 
 import java.io.File;
 import java.util.Arrays;
-import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
@@ -5228,36 +5227,34 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testSelectConcurrentDDL() throws Exception {
-        engine.ddl("create table x (a int, b int, c int)", sqlExecutionContext);
 
-        CyclicBarrier barrier = new CyclicBarrier(2);
+        ddl("create table x (a int, b int, c int)");
+
+        final AtomicBoolean ddlError = new AtomicBoolean(false);
+        final CyclicBarrier barrier = new CyclicBarrier(2);
         new Thread(() -> {
             try {
                 while (barrier.getNumberWaiting() == 0) {
-                    ddl("alter table x add column d int", sqlExecutionContext);
-                    ddl("alter table x drop column d", sqlExecutionContext);
+                    ddl("alter table x add column d int");
+                    ddl("alter table x drop column d");
                 }
             } catch (SqlException e) {
+                ddlError.set(true);
                 e.printStackTrace();
             } finally {
-                try {
-                    barrier.await();
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    e.printStackTrace();
-                } catch (BrokenBarrierException e) {
-                    e.printStackTrace();
-                }
+                TestUtils.await(barrier);
             }
         }).start();
 
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+        try {
             for (int i = 0; i < 20_000; i++) {
-                Misc.freeIfCloseable(compiler.compile("select * from x", sqlExecutionContext).getRecordCursorFactory());
+                Misc.freeIfCloseable(select("select * from x"));
             }
         } finally {
             barrier.await();
         }
+
+        Assert.assertFalse(ddlError.get());
     }
 
     @Test

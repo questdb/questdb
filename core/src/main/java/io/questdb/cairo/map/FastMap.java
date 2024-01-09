@@ -161,7 +161,7 @@ public class FastMap implements Map, Reopenable {
         heapStart = kPos = Unsafe.malloc(capacity = pageSize, heapMemoryTag);
         heapLimit = heapStart + pageSize;
         this.keyCapacity = (int) (keyCapacity / loadFactor);
-        this.keyCapacity = this.keyCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(this.keyCapacity);
+        this.keyCapacity = Math.max(Numbers.ceilPow2(this.keyCapacity), MIN_INITIAL_CAPACITY);
         mask = this.keyCapacity - 1;
         free = (int) (this.keyCapacity * loadFactor);
         offsets = new DirectIntList((long) this.keyCapacity << 1, listMemoryTag);
@@ -313,9 +313,7 @@ public class FastMap implements Map, Reopenable {
 
     @Override
     public void setKeyCapacity(int newKeyCapacity) {
-        if (newKeyCapacity > keyCapacity) {
-            rehash(Numbers.ceilPow2((int) (newKeyCapacity / loadFactor)));
-        }
+        rehash(Numbers.ceilPow2((int) (newKeyCapacity / loadFactor)));
     }
 
     @Override

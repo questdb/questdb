@@ -55,7 +55,7 @@ public abstract class LineUdpInsertTest extends AbstractCairoTest {
 
     protected static void assertReader(String tableName, String expected, String... expectedExtraStringColumns) {
         refreshTablesInBaseEngine();
-        try (TableReader reader = newTableReader(new DefaultTestCairoConfiguration(root), tableName)) {
+        try (TableReader reader = newOffPoolReader(new DefaultTestCairoConfiguration(root), tableName)) {
             TestUtils.assertReader(expected, reader, sink);
             if (expectedExtraStringColumns != null) {
                 TableReaderMetadata meta = reader.getMetadata();

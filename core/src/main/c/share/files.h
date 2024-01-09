@@ -381,7 +381,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getMapCountLimit
 #define FILES_RENAME_ERR_EXDEV 1
 #define FILES_RENAME_ERR_OTHER 2
 
-#define FLAG_FS_SUPPORTED -1
+#define FLAG_FS_SUPPORTED (-1)
 
 #ifdef __cplusplus
 }

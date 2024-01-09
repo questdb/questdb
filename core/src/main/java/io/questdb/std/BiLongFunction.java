@@ -22,17 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.std;
 
-public class NoOpDatabaseSnapshotAgent implements DatabaseSnapshotAgent {
-    public static final DatabaseSnapshotAgent INSTANCE = new NoOpDatabaseSnapshotAgent();
-
-    @Override
-    public void close() {
-    }
-
-    @Override
-    public boolean isInProgress() {
-        return false;
-    }
+@FunctionalInterface
+public interface BiLongFunction<U, R> {
+    R apply(long val1, U val2);
 }
