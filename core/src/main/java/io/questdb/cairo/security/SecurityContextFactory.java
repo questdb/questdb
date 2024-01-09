@@ -33,11 +33,11 @@ public interface SecurityContextFactory {
     byte ILP = 2;
     byte PGWIRE = 1;
 
-    SecurityContext getInstance(@Transient CharSequence principal, byte authType, byte interfaceId);
-
-    default SecurityContext getInstance(@Transient CharSequence principal, @Transient ObjList<CharSequence> groups, byte authType, byte interfaceId) {
-        throw new UnsupportedOperationException();
+    default SecurityContext getInstance(@Transient CharSequence principal, byte authType, byte interfaceId) {
+        return getInstance(principal, null, authType, interfaceId);
     }
+
+    SecurityContext getInstance(@Transient CharSequence principal, @Transient ObjList<CharSequence> groups, byte authType, byte interfaceId);
 
     default SecurityContext getRootContext() {
         return AllowAllSecurityContext.INSTANCE;

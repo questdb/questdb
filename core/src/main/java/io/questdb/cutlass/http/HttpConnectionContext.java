@@ -433,6 +433,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             }
             securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(
                     authenticator.getPrincipal(),
+                    authenticator.getGroups(),
                     authenticator.getAuthType(),
                     SecurityContextFactory.HTTP
             );
