@@ -1434,8 +1434,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     ) throws SqlException {
         final ExpressionNode filterExpr = model.getWhereClause();
 
-        // back up where clause in case if upper factory decides to steal the filter
-        QueryModel.backupWhereClause(expressionNodePool, model);
         // back up in case filters need to be compiled again
         backupWhereClause(filterExpr);
         model.setWhereClause(null);
@@ -3190,6 +3188,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             boolean pageFramingSupported = false;
             boolean specialCaseKeys = false;
 
+            QueryModel.backupWhereClause(expressionNodePool, model);
+
             // check for special case time function aggregations
             final QueryModel nested = model.getNestedModel();
             assert nested != null;
@@ -3202,7 +3202,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             && columnExpr.rhs.type == LITERAL
             ) {
                 specialCaseKeys = true;
-                QueryModel.backupWhereClause(expressionNodePool, model);
                 factory = generateSubQuery(nested, executionContext);
                 pageFramingSupported = factory.supportPageFrameCursor();
                 if (pageFramingSupported) {
@@ -3431,7 +3430,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
 
                 if (supportsParallelism) {
-                    QueryModel.restoreWhereClause(expressionNodePool, nested);
+                    QueryModel.restoreWhereClause(expressionNodePool, model);
 
                     // back up required lists as generateSubQuery or compileWorkerFilterConditionally may overwrite them
                     ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes().addAll(keyTypes);

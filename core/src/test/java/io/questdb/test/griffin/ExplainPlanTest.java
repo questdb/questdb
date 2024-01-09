@@ -1674,7 +1674,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testFilterOnExcludedIndexedSymbolManyValues() throws Exception {
         assertMemoryLeak(() -> {
             drop("drop table if exists trips");
-            ddl("CREATE TABLE trips(l long, s symbol index capacity 5, ts TIMESTAMP) " +
+            ddl("CREATE TABLE trips (l long, s symbol index capacity 5, ts TIMESTAMP) " +
                     "timestamp(ts) partition by month");
 
             assertPlan("select s, count() from trips where s is not null order by count desc",
@@ -1735,7 +1735,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Async Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
-                            "  filter: (s is not null and l!=0)\n" +
+                            "  filter: (l!=0 and s is not null)\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: trips\n"

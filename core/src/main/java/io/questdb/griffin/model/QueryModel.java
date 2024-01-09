@@ -361,6 +361,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         dependencies.clear();
         parsedWhere.clear();
         whereClause = null;
+        backupWhereClause = null;
         constWhereClause = null;
         nestedModel = null;
         tableNameExpr = null;
