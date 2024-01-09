@@ -32,6 +32,10 @@ import io.questdb.network.SocketFactory;
 import io.questdb.std.Os;
 
 public class HttpClientFactory {
+    public static HttpClient newInsecureTlsInstance() {
+        return newTlsInstance(DefaultHttpClientConfiguration.INSTANCE, true);
+    }
+
     public static HttpClient newInstance(HttpClientConfiguration configuration, SocketFactory socketFactory, boolean insecureTls) {
         switch (Os.type) {
             case Os.LINUX_AMD64:
@@ -48,12 +52,12 @@ public class HttpClientFactory {
         }
     }
 
-    public static HttpClient newPlainTextInstance(HttpClientConfiguration configuration) {
-        return newInstance(configuration, PlainSocketFactory.INSTANCE, true);
-    }
-
     public static HttpClient newPlainTextInstance() {
         return newPlainTextInstance(DefaultHttpClientConfiguration.INSTANCE);
+    }
+
+    public static HttpClient newPlainTextInstance(HttpClientConfiguration configuration) {
+        return newInstance(configuration, PlainSocketFactory.INSTANCE, true);
     }
 
     public static HttpClient newTlsInstance(boolean insecureTls) {
