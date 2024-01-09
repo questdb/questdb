@@ -33,7 +33,6 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.log.Log;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
-import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
@@ -194,7 +193,7 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
     public void setUp2() {
         long s0 = System.currentTimeMillis();
         long s1 = System.nanoTime();
-        random = new Rnd(1703000361373L, 670022186190375L);
+        random = new Rnd(s0, s1);
         getLog().info().$("random seed : ").$(random.getSeed0()).$("L, ").$(random.getSeed1()).$('L').$();
     }
 
@@ -376,15 +375,6 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
         TestUtils.assertCursor(expected, cursor, metadata, true, sink);
         cursor.toTop();
         TestUtils.assertCursor(expected, cursor, metadata, true, sink);
-    }
-
-    protected void clearTables() {
-        final ObjList<CharSequence> names = tables.keys();
-        for (int i = 0, n = names.size(); i < n; i++) {
-            final CharSequence tableName = names.get(i);
-            final TableData table = tables.get(tableName);
-            table.clear();
-        }
     }
 
     protected LineData generateLine() {

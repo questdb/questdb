@@ -205,10 +205,6 @@ public class WalWriter implements TableWriterAPI {
 
     @Override
     public long apply(AlterOperation alterOp, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
-//        if (inTransaction()) {
-//            throw CairoException.critical(0).put("cannot alter table with uncommitted inserts [table=")
-//                    .put(tableToken.getTableName()).put(']');
-//        }
         if (alterOp.isStructural()) {
             return applyStructural(alterOp);
         } else {
@@ -799,9 +795,9 @@ public class WalWriter implements TableWriterAPI {
         try {
             alterOp.apply(metaWriterSvc, true);
         } catch (Throwable th) {
-            // Transaction successful, but writing using this WAL writer should not be possible.
-            LOG.error().$("Exception during alter [ex=").$(th).I$();
+            LOG.critical().$("Exception during alter [ex=").$(th).I$();
             distressed = true;
+            throw th;
         }
         return lastSeqTxn = txn;
     }
@@ -1129,23 +1125,12 @@ public class WalWriter implements TableWriterAPI {
 
     private long getSequencerTxn() {
         long seqTxn;
-        boolean retry = false;
-        int firstSegmentId = segmentId;
-        int firstSegmentTxn = lastSegmentTxn;
-
         do {
             seqTxn = sequencer.nextTxn(tableToken, walId, getColumnStructureVersion(), segmentId, lastSegmentTxn);
             if (seqTxn == NO_TXN) {
                 applyMetadataChangeLog(Long.MAX_VALUE);
-                retry = true;
             }
         } while (seqTxn == NO_TXN);
-
-        if (retry && firstSegmentTxn > 0) {
-            assert lastSegmentTxn == 0;
-            assert segmentId == firstSegmentId + 1;
-        }
-
         return lastSeqTxn = seqTxn;
     }
 

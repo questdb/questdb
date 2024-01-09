@@ -146,11 +146,13 @@ public class IlpWalAppender {
                         columnWriterIndex = metadata.getColumnIndexQuiet(columnNameUtf16);
                         if (columnWriterIndex < 0) {
                             securityContext.authorizeAlterTableAddColumn(writer.getTableToken());
-//                            tud.commit(false);
                             try {
                                 writer.addColumn(columnNameUtf16, ld.getColumnType(ld.getColNameUtf8(), ent.getType()), securityContext);
                                 columnWriterIndex = metadata.getColumnIndexQuiet(columnNameUtf16);
                             } catch (CairoException e) {
+//                                if (e.isTableDropped()) {
+//                                    throw e;
+//                                }
                                 columnWriterIndex = metadata.getColumnIndexQuiet(columnNameUtf16);
                                 if (columnWriterIndex < 0) {
                                     // the column is still not there, something must be wrong
