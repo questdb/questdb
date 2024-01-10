@@ -3609,14 +3609,14 @@ public class TextLoaderTest extends AbstractCairoTest {
     }
 
     @Test(expected = CairoException.class)
-    public void testCheckTableParamFalseAndNoTableShouldThrowError() throws Exception {
+    public void testCheckParamFalseAndNoTableShouldThrowError() throws Exception {
         assertNoLeak(
                 textLoader -> {
                     configureLoaderDefaults(
                             textLoader
                     );
                     textLoader.setForceHeaders(true);
-                    textLoader.setCreateTable(false);
+                    textLoader.setCreate(false);
                     textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
                     playText0(
                             textLoader,
@@ -3630,14 +3630,14 @@ public class TextLoaderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCheckTableParamTrueAndNoTableShouldSucceed() throws Exception {
+    public void testCheckParamTrueAndNoTableShouldSucceed() throws Exception {
         assertNoLeak(
                 textLoader -> {
                     configureLoaderDefaults(
                             textLoader
                     );
                     textLoader.setForceHeaders(true);
-                    textLoader.setCreateTable(true);
+                    textLoader.setCreate(true);
                     textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
                     playText0(
                             textLoader,
@@ -3652,7 +3652,7 @@ public class TextLoaderTest extends AbstractCairoTest {
 
                     Assert.assertEquals("test", textLoader.getTableName());
                     Assert.assertEquals(TextLoadWarning.NONE, textLoader.getWarnings());
-                    Assert.assertEquals(true, textLoader.getCreateTable());
+                    Assert.assertEquals(true, textLoader.getCreate());
                 }
         );
     }
