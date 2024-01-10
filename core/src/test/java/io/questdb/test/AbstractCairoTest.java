@@ -29,8 +29,8 @@ import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.*;
@@ -325,6 +325,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
             }
         }
         assertFactoryMemoryUsage();
+    }
+
+    public static void configOverrideGroupByAllocatorDefaultChunkSize(long groupByAllocatorDefaultChunkSize) {
+        node1.getConfigurationOverrides().setGroupByAllocatorDefaultChunkSize(groupByAllocatorDefaultChunkSize);
     }
 
     public static void configOverrideMangleTableDirNames(boolean mangle) {
