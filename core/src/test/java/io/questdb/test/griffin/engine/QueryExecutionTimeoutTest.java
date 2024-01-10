@@ -62,6 +62,11 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
             public int getCircuitBreakerThrottle() {
                 return 0;
             }
+
+            @Override
+            public long getQueryTimeout() {
+                return NetworkSqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK;
+            }
         };
 
         circuitBreaker = new NetworkSqlExecutionCircuitBreaker(config, MemoryTag.NATIVE_CB5) {
@@ -71,7 +76,7 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
             }
 
             {
-                setTimeout(-100); // trigger timeout on first check
+                setTimeout(NetworkSqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK);
             }
         };
         AbstractCairoTest.setUpStatic();
@@ -586,8 +591,10 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
                     resetTimeout();
                     snapshotMemoryUsage();
                     CompiledQuery cc = compiler.compile(query, context);
-                    try (RecordCursorFactory factory = cc.getRecordCursorFactory();
-                         RecordCursor cursor = factory.getCursor(context)) {
+                    try (
+                            RecordCursorFactory factory = cc.getRecordCursorFactory();
+                            RecordCursor cursor = factory.getCursor(context)
+                    ) {
                         cursor.hasNext();
                     }
                     assertFactoryMemoryUsage();
