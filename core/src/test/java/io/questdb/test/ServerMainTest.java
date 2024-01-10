@@ -58,7 +58,9 @@ public class ServerMainTest extends AbstractBootstrapTest {
     @Before
     public void setUp() {
         super.setUp();
-        unchecked(() -> createDummyConfiguration());
+        unchecked(() -> createDummyConfiguration(
+                PropertyKey.CAIRO_SQL_PARALLEL_GROUP_BY_ENABLED + "=true"
+        ));
         dbPath.parent().$();
     }
 
