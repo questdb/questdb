@@ -363,7 +363,7 @@ public class CairoTextWriter implements Closeable, Mutable {
         switch (engine.getTableStatus(path, tableName)) {
             case TableUtils.TABLE_DOES_NOT_EXIST:
                 if (!create) {
-                    throw CairoException.tableDoesNotExist(tableName).put(" and create was set to false.");
+                    throw CairoException.tableDoesNotExist(tableName).put(" and create param was set to false.");
                 }
                 tableToken = createTable(names, detectedTypes, securityContext, path);
                 tableReCreated = true;
