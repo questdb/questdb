@@ -149,6 +149,18 @@ public class HttpServer implements Closeable {
         server.bind(new HttpRequestProcessorFactory() {
             @Override
             public String getUrl() {
+                return "/settings";
+            }
+
+            @Override
+            public HttpRequestProcessor newInstance() {
+                return new SettingsProcessor(cairoEngine.getConfiguration());
+            }
+        });
+
+        server.bind(new HttpRequestProcessorFactory() {
+            @Override
+            public String getUrl() {
                 return "/exec";
             }
 
