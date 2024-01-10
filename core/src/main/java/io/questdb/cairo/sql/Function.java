@@ -176,6 +176,11 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
      * Returns true if the function supports parallel execution, e.g. parallel filter
      * or GROUP BY. If the method returns false, single-threaded execution plan
      * must be chosen for the query.
+     * <p>
+     * Examples of parallelizable, but thread-unsafe function are regexp_replace() or min(str).
+     * These functions need to maintain a char sink, so they can't be accessed concurrently.
+     * On the other hand, regexp_replace() can be used in parallel filter and min(str)
+     * supports parallel aggregation and subsequent merge.
      *
      * @return true if the function and all of its children functions support parallel execution
      */
