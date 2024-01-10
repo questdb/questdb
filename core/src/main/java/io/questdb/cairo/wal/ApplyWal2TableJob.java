@@ -350,7 +350,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 if (totalTransactionCount > 0) {
                     LOG.info().$("job ")
                             .$(finishedAll ? "finished" : "ejected")
-                            .$(" [table=").$(writer.getTableToken().getDirName())
+                            .$(" [table=").utf8(writer.getTableToken().getDirName())
                             .$(", seqTxn=").$(writer.getAppliedSeqTxn())
                             .$(", transactions=").$(totalTransactionCount)
                             .$(", rows=").$(rowsAdded)
