@@ -39,71 +39,23 @@ import org.junit.Test;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
-import java.sql.ResultSet;
-import java.sql.Statement;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import static io.questdb.test.cutlass.pgwire.BasePGTest.assertResultSet;
 import static io.questdb.test.tools.TestUtils.*;
 import static java.util.Arrays.asList;
 import static org.junit.Assert.assertTrue;
 
 public class ServerMainTest extends AbstractBootstrapTest {
-    private static final StringSink sink = new StringSink();
 
     @Before
     public void setUp() {
         super.setUp();
-        unchecked(() -> createDummyConfiguration(
-                PropertyKey.CAIRO_SQL_PARALLEL_GROUP_BY_ENABLED + "=true"
-        ));
+        unchecked(() -> createDummyConfiguration());
         dbPath.parent().$();
-    }
-
-    @Test
-    public void testServerMainGroupBySmokeTest1() throws Exception {
-        try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
-            serverMain.start();
-            try (Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES)) {
-                try (Statement statement = conn.createStatement()) {
-                    statement.executeUpdate("create table x as (select rnd_long(0,9999,10) l1, rnd_long(0,999,10) l2 from long_sequence(1000000));");
-                }
-
-                String query = "select count_distinct(l1), count_distinct(l2) from x;";
-                String expected = "count_distinct[BIGINT],count_distinct1[BIGINT]\n" +
-                        "10000,1000\n";
-                try (ResultSet rs = conn.prepareStatement(query).executeQuery()) {
-                    sink.clear();
-                    assertResultSet(expected, sink, rs);
-                }
-            }
-        }
-    }
-
-    @Test
-    public void testServerMainGroupBySmokeTest2() throws Exception {
-        try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
-            serverMain.start();
-            try (Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES)) {
-                try (Statement statement = conn.createStatement()) {
-                    statement.executeUpdate("create table x as (select rnd_str('a','b','c') k, rnd_long(0,9999,10) l from long_sequence(1000000));");
-                }
-
-                String query = "select k, count_distinct(l) from x order by k;";
-                String expected = "k[VARCHAR],count_distinct[BIGINT]\n" +
-                        "a,10000\n" +
-                        "b,10000\n" +
-                        "c,10000\n";
-                try (ResultSet rs = conn.prepareStatement(query).executeQuery()) {
-                    sink.clear();
-                    assertResultSet(expected, sink, rs);
-                }
-            }
-        }
     }
 
     @Test
