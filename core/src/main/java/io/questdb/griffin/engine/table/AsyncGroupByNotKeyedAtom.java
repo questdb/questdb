@@ -25,8 +25,8 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
@@ -96,7 +96,7 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Planna
         }
     }
 
-    public int acquire(int workerId, boolean owner, ExecutionCircuitBreaker circuitBreaker) {
+    public int acquire(int workerId, boolean owner, SqlExecutionCircuitBreaker circuitBreaker) {
         if (workerId == -1 && owner) {
             // Owner thread is free to use the original filter anytime.
             return -1;

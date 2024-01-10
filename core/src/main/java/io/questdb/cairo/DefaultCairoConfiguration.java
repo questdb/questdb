@@ -284,8 +284,13 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getGroupByAllocatorChunkSize() {
+    public long getGroupByAllocatorDefaultChunkSize() {
         return 16 * 1024;
+    }
+
+    @Override
+    public long getGroupByAllocatorMaxChunkSize() {
+        return Numbers.SIZE_1GB;
     }
 
     @Override

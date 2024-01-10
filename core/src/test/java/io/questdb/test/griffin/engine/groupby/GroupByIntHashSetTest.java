@@ -41,7 +41,7 @@ public class GroupByIntHashSetTest extends AbstractCairoTest {
     public void testMerge() throws Exception {
         final CairoConfiguration config = new DefaultCairoConfiguration(root) {
             @Override
-            public int getGroupByAllocatorChunkSize() {
+            public long getGroupByAllocatorDefaultChunkSize() {
                 return 64;
             }
         };
@@ -90,7 +90,7 @@ public class GroupByIntHashSetTest extends AbstractCairoTest {
     private void testSmoke(int noKeyValue) throws Exception {
         final CairoConfiguration config = new DefaultCairoConfiguration(root) {
             @Override
-            public int getGroupByAllocatorChunkSize() {
+            public long getGroupByAllocatorDefaultChunkSize() {
                 return 64;
             }
         };

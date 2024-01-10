@@ -266,7 +266,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlExpressionPoolCapacity;
     private final double sqlFastMapLoadFactor;
     private final int sqlFloatToStrCastScale;
-    private final int sqlGroupByAllocatorChunkSize;
+    private final long sqlGroupByAllocatorChunkSize;
+    private final long sqlGroupByAllocatorMaxChunkSize;
     private final int sqlGroupByMapCapacity;
     private final int sqlGroupByPoolCapacity;
     private final int sqlHashJoinLightValueMaxPages;
@@ -924,7 +925,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlDoubleToStrCastScale = getInt(properties, env, PropertyKey.CAIRO_SQL_DOUBLE_CAST_SCALE, 12);
             this.sqlFloatToStrCastScale = getInt(properties, env, PropertyKey.CAIRO_SQL_FLOAT_CAST_SCALE, 4);
             this.sqlGroupByMapCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_GROUPBY_MAP_CAPACITY, 1024);
-            this.sqlGroupByAllocatorChunkSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_GROUPBY_ALLOCATOR_CHUNK_SIZE, 128 * 1024);
+            this.sqlGroupByAllocatorChunkSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_GROUPBY_ALLOCATOR_DEFAULT_CHUNK_SIZE, 128 * 1024);
+            this.sqlGroupByAllocatorMaxChunkSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_GROUPBY_ALLOCATOR_MAX_CHUNK_SIZE, 4 * Numbers.SIZE_1GB);
             this.sqlGroupByPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_GROUPBY_POOL_CAPACITY, 1024);
             this.sqlMaxSymbolNotEqualsCount = getInt(properties, env, PropertyKey.CAIRO_SQL_MAX_SYMBOL_NOT_EQUALS_COUNT, 100);
             this.sqlBindVariablePoolSize = getInt(properties, env, PropertyKey.CAIRO_SQL_BIND_VARIABLE_POOL_SIZE, 8);
@@ -2050,8 +2052,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getGroupByAllocatorChunkSize() {
+        public long getGroupByAllocatorDefaultChunkSize() {
             return sqlGroupByAllocatorChunkSize;
+        }
+
+        @Override
+        public long getGroupByAllocatorMaxChunkSize() {
+            return sqlGroupByAllocatorMaxChunkSize;
         }
 
         @Override

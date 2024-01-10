@@ -48,7 +48,7 @@ public class GroupByLongHashSetBenchmark {
     private static final long N = 1_000_000;
     private static final GroupByAllocator allocator = new GroupByAllocator(new DefaultCairoConfiguration(null) {
         @Override
-        public int getGroupByAllocatorChunkSize() {
+        public int getGroupByAllocatorDefaultChunkSize() {
             return 128 * 1024;
         }
     });

@@ -40,7 +40,7 @@ public class GroupByCharSinkTest extends AbstractCairoTest {
     public void testClear() throws Exception {
         final CairoConfiguration config = new DefaultCairoConfiguration(root) {
             @Override
-            public int getGroupByAllocatorChunkSize() {
+            public long getGroupByAllocatorDefaultChunkSize() {
                 return 64;
             }
         };
@@ -65,7 +65,7 @@ public class GroupByCharSinkTest extends AbstractCairoTest {
         final int N = 1000;
         final CairoConfiguration config = new DefaultCairoConfiguration(root) {
             @Override
-            public int getGroupByAllocatorChunkSize() {
+            public long getGroupByAllocatorDefaultChunkSize() {
                 return 64;
             }
         };
@@ -89,7 +89,7 @@ public class GroupByCharSinkTest extends AbstractCairoTest {
         final int N = 1000;
         final CairoConfiguration config = new DefaultCairoConfiguration(root) {
             @Override
-            public int getGroupByAllocatorChunkSize() {
+            public long getGroupByAllocatorDefaultChunkSize() {
                 return 64;
             }
         };

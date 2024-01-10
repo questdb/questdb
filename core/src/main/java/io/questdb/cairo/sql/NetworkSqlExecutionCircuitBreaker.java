@@ -135,7 +135,6 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         if (testConnection(fd)) {
             return STATE_BROKEN_CONNECTION;
         }
-
         return STATE_OK;
     }
 
@@ -234,7 +233,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     protected boolean testConnection(int fd) {
-        if (!configuration.checkConnection()) {
+        if (fd == -1 || !configuration.checkConnection()) {
             return false;
         }
         return nf.testConnection(fd, buffer, bufferSize);

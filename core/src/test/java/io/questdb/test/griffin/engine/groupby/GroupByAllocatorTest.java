@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.engine.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.mp.SOCountDownLatch;
@@ -43,7 +44,7 @@ public class GroupByAllocatorTest extends AbstractCairoTest {
         final int N = 100;
         final CairoConfiguration config = new DefaultCairoConfiguration(root) {
             @Override
-            public int getGroupByAllocatorChunkSize() {
+            public long getGroupByAllocatorDefaultChunkSize() {
                 return 64;
             }
         };
@@ -71,7 +72,7 @@ public class GroupByAllocatorTest extends AbstractCairoTest {
         final int N = 1000;
         final CairoConfiguration config = new DefaultCairoConfiguration(root) {
             @Override
-            public int getGroupByAllocatorChunkSize() {
+            public long getGroupByAllocatorDefaultChunkSize() {
                 return 64;
             }
         };
@@ -123,7 +124,7 @@ public class GroupByAllocatorTest extends AbstractCairoTest {
         final int minChunkSize = 64;
         final CairoConfiguration config = new DefaultCairoConfiguration(root) {
             @Override
-            public int getGroupByAllocatorChunkSize() {
+            public long getGroupByAllocatorDefaultChunkSize() {
                 return minChunkSize;
             }
         };
@@ -169,7 +170,7 @@ public class GroupByAllocatorTest extends AbstractCairoTest {
         final int N = 10_000;
         final CairoConfiguration config = new DefaultCairoConfiguration(root) {
             @Override
-            public int getGroupByAllocatorChunkSize() {
+            public long getGroupByAllocatorDefaultChunkSize() {
                 return 64;
             }
         };
@@ -193,7 +194,7 @@ public class GroupByAllocatorTest extends AbstractCairoTest {
         final int minChunkSize = 64;
         final CairoConfiguration config = new DefaultCairoConfiguration(root) {
             @Override
-            public int getGroupByAllocatorChunkSize() {
+            public long getGroupByAllocatorDefaultChunkSize() {
                 return minChunkSize;
             }
         };
@@ -229,6 +230,39 @@ public class GroupByAllocatorTest extends AbstractCairoTest {
                         Unsafe.getUnsafe().putByte(ptr + j, (byte) j);
                     }
                 }
+            }
+        });
+    }
+
+    @Test(expected = CairoException.class)
+    public void testThrowsOnTooLargeMallocRequest() throws Exception {
+        final long maxRequest = 64;
+        final CairoConfiguration config = new DefaultCairoConfiguration(root) {
+            @Override
+            public long getGroupByAllocatorMaxChunkSize() {
+                return maxRequest;
+            }
+        };
+        assertMemoryLeak(() -> {
+            try (GroupByAllocator allocator = new GroupByAllocator(config)) {
+                allocator.malloc(maxRequest + 1);
+            }
+        });
+    }
+
+    @Test(expected = CairoException.class)
+    public void testThrowsOnTooLargeReallocRequest() throws Exception {
+        final long maxRequest = 64;
+        final CairoConfiguration config = new DefaultCairoConfiguration(root) {
+            @Override
+            public long getGroupByAllocatorMaxChunkSize() {
+                return maxRequest;
+            }
+        };
+        assertMemoryLeak(() -> {
+            try (GroupByAllocator allocator = new GroupByAllocator(config)) {
+                long ptr = allocator.malloc(maxRequest - 1);
+                allocator.realloc(ptr, maxRequest - 1, maxRequest + 1);
             }
         });
     }

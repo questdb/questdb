@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
 import io.questdb.std.bytes.Bytes;
@@ -43,12 +44,14 @@ import io.questdb.std.bytes.Bytes;
  */
 public class GroupByAllocator implements QuietCloseable {
     private final ObjList<Arena> arenas = new ObjList<>(); // protected by lock
-    private final int defaultChunkSize;
+    private final long defaultChunkSize;
     private final Object lock = new Object();
+    private final long maxChunkSize;
     private final ThreadLocal<Arena> tlArena = new ThreadLocal<>(this::newArena);
 
     public GroupByAllocator(CairoConfiguration configuration) {
-        this.defaultChunkSize = configuration.getGroupByAllocatorChunkSize();
+        this.defaultChunkSize = configuration.getGroupByAllocatorDefaultChunkSize();
+        this.maxChunkSize = configuration.getGroupByAllocatorMaxChunkSize();
     }
 
     /**
@@ -144,14 +147,17 @@ public class GroupByAllocator implements QuietCloseable {
         }
 
         public long malloc(long size) {
-            assert size < Integer.MAX_VALUE;
+            if (size > maxChunkSize) {
+                throw CairoException.nonCritical().put("too large allocation requested: ").put(size);
+            }
+
             if (ptr + size <= lim) {
                 long allocatedPtr = ptr;
                 ptr = Bytes.align8b(allocatedPtr + size);
                 return allocatedPtr;
             }
 
-            int chunkSize = (int) Math.max(size, defaultChunkSize);
+            long chunkSize = Math.max(size, defaultChunkSize);
             long allocatedPtr = Unsafe.malloc(chunkSize, MemoryTag.NATIVE_GROUP_BY_FUNCTION);
             chunks.put(allocatedPtr, chunkSize);
             allocated += chunkSize;
@@ -161,7 +167,10 @@ public class GroupByAllocator implements QuietCloseable {
         }
 
         public long realloc(long ptr, long oldSize, long newSize) {
-            assert newSize < Integer.MAX_VALUE;
+            if (newSize > maxChunkSize) {
+                throw CairoException.nonCritical().put("too large allocation requested: ").put(newSize);
+            }
+
             assert oldSize < newSize;
             if (this.ptr == Bytes.align8b(ptr + oldSize)) {
                 // Potential fast path:
