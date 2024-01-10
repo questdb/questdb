@@ -28,6 +28,7 @@ public final class LineHttpSender implements Sender {
     private RequestState state = RequestState.EMPTY;
 
     public LineHttpSender(String host, int port, int initialBufferCapacity, boolean tls, TlsValidationMode tlsValidationMode, int maxPendingRows, String authToken, String username, String password) {
+        assert authToken == null || (username == null && password == null);
         this.host = host;
         this.port = port;
         this.maxPendingRows = maxPendingRows;
@@ -271,6 +272,8 @@ public final class LineHttpSender implements Sender {
         HttpClient.Request r = client.newRequest().POST().url(URL);
         if (username != null) {
             r.authBasic(username, password);
+        } else if (authToken != null) {
+            r.authToken(null, authToken);
         }
         r.withContent();
         return r;

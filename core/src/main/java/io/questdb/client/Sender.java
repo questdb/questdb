@@ -257,6 +257,7 @@ public interface Sender extends Closeable {
         private static final int PROTOCOL_DEFAULT = PROTOCOL_TCP;
         private int bufferCapacity = BUFFER_CAPACITY_DEFAULT;
         private String host;
+        private String httpToken;
         private String keyId;
         private int maxPendingRows = DEFAULT_MAX_PENDING_ROWS;
         private String password;
@@ -364,7 +365,7 @@ public interface Sender extends Closeable {
 
             NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             if (protocol == PROTOCOL_HTTP) {
-                return new LineHttpSender(host, port, bufferCapacity, tlsEnabled, tlsValidationMode, maxPendingRows, null, username, password);
+                return new LineHttpSender(host, port, bufferCapacity, tlsEnabled, tlsValidationMode, maxPendingRows, httpToken, username, password);
             } else if (protocol != PROTOCOL_TCP) {
                 throw new LineSenderException("unsupported protocol ")
                         .put("[protocol=").put(protocol).put("]");
@@ -429,12 +430,6 @@ public interface Sender extends Closeable {
             return new LineSenderBuilder.AuthBuilder();
         }
 
-        public LineSenderBuilder enableAuth(String username, String password) {
-            this.username = username;
-            this.password = password;
-            return this;
-        }
-
         /**
          * Instruct a client to use TLS when connecting to a QuestDB server
          *
@@ -445,6 +440,38 @@ public interface Sender extends Closeable {
                 throw new LineSenderException("tls was already enabled");
             }
             tlsEnabled = true;
+            return this;
+        }
+
+        public LineSenderBuilder httpAuth(String username, String password) {
+            if (this.username != null) {
+                throw new LineSenderException("authentication username was already configured ")
+                        .put("[configured-username=").put(this.username).put("]");
+            }
+            if (username == null || username.isEmpty()) {
+                throw new LineSenderException("username cannot be empty nor null");
+            }
+            if (password == null || password.isEmpty()) {
+                throw new LineSenderException("password cannot be empty nor null");
+            }
+            if (httpToken != null) {
+                throw new LineSenderException("token authentication is already configured ")
+                        .put("[configured-token=").put(this.httpToken).put("]");
+            }
+            this.username = username;
+            this.password = password;
+            return this;
+        }
+
+        public LineSenderBuilder httpTokenAuth(String token) {
+            if (this.username != null) {
+                throw new LineSenderException("authentication username was already configured ")
+                        .put("[configured-username=").put(this.username).put("]");
+            }
+            if (token == null || token.isEmpty()) {
+                throw new LineSenderException("token cannot be empty nor null");
+            }
+            this.httpToken = token;
             return this;
         }
 
