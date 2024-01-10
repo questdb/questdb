@@ -5228,6 +5228,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testSelectConcurrentDDL() throws Exception {
 
+        // On Windows CI this test can fail with Metadata read timeout with small timeout.
+        node1.getConfigurationOverrides().setSpinLockTimeout(30000);
         ddl("create table x (a int, b int, c int)");
 
         final AtomicBoolean ddlError = new AtomicBoolean(false);
