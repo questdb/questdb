@@ -496,9 +496,9 @@ public class WalWriter implements TableWriterAPI {
 
                     LOG.info().$("rolling uncommitted rows to new segment [wal=")
                             .$(path).$(Files.SEPARATOR).$(oldSegmentId)
-                            .$(", segTxn=").$(lastSegmentTxn)
-                            .$(", newSegment=").$(newSegmentId)
-                            .$(", rowCount=").$(uncommittedRows)
+                            .$(", lastSegmentTxn=").$(lastSegmentTxn)
+                            .$(", newSegmentId=").$(newSegmentId)
+                            .$(", uncommittedRows=").$(uncommittedRows)
                             .I$();
 
                     final int commitMode = configuration.getCommitMode();
