@@ -5,15 +5,21 @@ import io.questdb.client.Sender;
 import io.questdb.cutlass.http.client.*;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.std.Misc;
+import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.StringSink;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.concurrent.ThreadLocalRandom;
 
 public final class LineHttpSender implements Sender {
     private static final int MAX_RETRY = 3;
+    private static final int RETRY_BACKOFF_MULTIPLIER = 2;
+    private static final int RETRY_INITIAL_BACKOFF_MS = 100;
+    private static final int RETRY_MAX_BACKOFF_MS = 1000;
+    private static final int RETRY_MAX_JITTER_MS = 10;
     private static final String URL = "/write";
     private final String authToken;
     private final String host;
@@ -108,6 +114,7 @@ public final class LineHttpSender implements Sender {
         }
 
         int remainingRetries = MAX_RETRY;
+        int retryBackoff = RETRY_INITIAL_BACKOFF_MS;
         for (; ; ) {
             try {
                 HttpClient.ResponseHeaders response = request.send(host, port);
@@ -122,12 +129,11 @@ public final class LineHttpSender implements Sender {
                     }
                     pendingRows = 0;
                     request = newRequest();
-                    throw new LineSenderException(sink.toString()); //todo: add status code
+                    throw new LineSenderException(sink.toString());
                 }
                 break;
             } catch (HttpClientException e) {
                 // this is a network error, we can retry
-
                 client.disconnect(); // forces reconnect
                 if (remainingRetries-- == 0) {
                     // we did our best, give up
@@ -135,7 +141,10 @@ public final class LineHttpSender implements Sender {
                     request = newRequest();
                     throw new LineSenderException("error while sending data to server", e);
                 }
-                // todo: backoff?
+                int jitter = ThreadLocalRandom.current().nextInt(RETRY_MAX_JITTER_MS);
+                int backoff = retryBackoff + jitter;
+                Os.sleep(backoff);
+                retryBackoff = Math.min(RETRY_MAX_BACKOFF_MS, backoff * RETRY_BACKOFF_MULTIPLIER);
             }
         }
         pendingRows = 0;
