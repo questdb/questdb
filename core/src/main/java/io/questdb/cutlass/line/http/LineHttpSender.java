@@ -114,6 +114,7 @@ public final class LineHttpSender implements Sender {
                 response.await();
                 if (!isSuccessResponse(response)) {
                     StringSink sink = Misc.getThreadLocalSink();
+                    sink.put("HTTP status code: ").put(response.getStatusCode()).put("; Message: ");
                     ChunkedResponse chunkedRsp = response.getChunkedResponse();
                     Chunk chunk;
                     while ((chunk = chunkedRsp.recv()) != null) {
