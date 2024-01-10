@@ -91,11 +91,11 @@ public class ServerMainTest extends AbstractBootstrapTest {
                     statement.executeUpdate("create table x as (select rnd_str('a','b','c') k, rnd_long(0,9999,10) l from long_sequence(1000000));");
                 }
 
-                String query = "select k, count_distinct(l) from x;";
+                String query = "select k, count_distinct(l) from x order by k;";
                 String expected = "k[VARCHAR],count_distinct[BIGINT]\n" +
                         "a,10000\n" +
-                        "c,10000\n" +
-                        "b,10000\n";
+                        "b,10000\n" +
+                        "c,10000\n";
                 try (ResultSet rs = conn.prepareStatement(query).executeQuery()) {
                     sink.clear();
                     assertResultSet(expected, sink, rs);
