@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
 import io.questdb.std.bytes.Bytes;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Specialized thread-safe allocator used in
@@ -55,24 +56,26 @@ public class GroupByAllocator implements QuietCloseable {
     }
 
     /**
-     * Returns allocated chunks total, in bytes.
+     * Returns allocated chunks total, in bytes. This method is not thread-safe
+     * and shouldn't be called concurrently with any alloc/free calls.
      */
+    @TestOnly
     public long allocated() {
         long allocated = 0;
-        synchronized (lock) {
-            for (int i = 0, n = arenas.size(); i < n; i++) {
-                allocated += arenas.getQuick(i).allocated();
-            }
+        for (int i = 0, n = arenas.size(); i < n; i++) {
+            allocated += arenas.getQuick(i).allocated();
         }
         return allocated;
     }
 
+    /**
+     * This method is not thread-safe and shouldn't be called concurrently
+     * with any alloc/free calls.
+     */
     @Override
     public void close() {
-        synchronized (lock) {
-            for (int i = 0, n = arenas.size(); i < n; i++) {
-                arenas.getQuick(i).close();
-            }
+        for (int i = 0, n = arenas.size(); i < n; i++) {
+            arenas.getQuick(i).close();
         }
     }
 
