@@ -76,7 +76,7 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
             }
 
             {
-                setTimeout(NetworkSqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK);
+                setTimeout(-1); // fail on first check
             }
         };
         AbstractCairoTest.setUpStatic();
