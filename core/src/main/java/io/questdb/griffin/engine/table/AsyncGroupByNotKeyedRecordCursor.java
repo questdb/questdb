@@ -146,7 +146,7 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
                 final long cursor = frameSequence.next();
                 if (cursor > -1) {
                     PageFrameReduceTask task = frameSequence.getTask(cursor);
-                    LOG.debug()
+                    LOG.info()
                             .$("collected [shard=").$(frameSequence.getShard())
                             .$(", frameIndex=").$(task.getFrameIndex())
                             .$(", frameCount=").$(frameSequence.getFrameCount())

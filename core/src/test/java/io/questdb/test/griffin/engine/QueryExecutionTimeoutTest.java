@@ -638,6 +638,7 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
                             RecordCursorFactory factory = cc.getRecordCursorFactory();
                             RecordCursor cursor = factory.getCursor(context)
                     ) {
+                        System.out.println(">>> " + query + ", " + factory.getBaseFactory());
                         cursor.hasNext();
                     }
                     assertFactoryMemoryUsage();

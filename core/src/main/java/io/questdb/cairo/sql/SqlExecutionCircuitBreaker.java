@@ -47,6 +47,10 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
         }
 
         @Override
+        public void debug() {
+        }
+
+        @Override
         public SqlExecutionCircuitBreakerConfiguration getConfiguration() {
             return null;
         }
@@ -113,6 +117,8 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
     void cancel();
 
     boolean checkIfTripped(long millis, int fd);
+
+    void debug();
 
     @Nullable
     SqlExecutionCircuitBreakerConfiguration getConfiguration();
