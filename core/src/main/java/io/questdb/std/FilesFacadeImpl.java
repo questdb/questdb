@@ -378,7 +378,14 @@ public class FilesFacadeImpl implements FilesFacade {
 
     @Override
     public boolean removeQuiet(LPSZ name) {
-        return !Files.exists(name) || Files.remove(name);
+        boolean ok = Files.remove(name);
+        if (!ok) {
+            int errno = errno();
+            if (errno == CairoException.ERRNO_FILE_DOES_NOT_EXIST || (Os.isWindows() && errno == CairoException.ERRNO_FILE_DOES_NOT_EXIST_WIN)) {
+                return true;
+            }
+        }
+        return ok;
     }
 
     @Override
