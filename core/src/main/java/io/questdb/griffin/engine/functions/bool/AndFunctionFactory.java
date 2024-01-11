@@ -80,7 +80,8 @@ public class AndFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return left.getBool(rec) && right.getBool(rec);
+            // The right branch is usually more specific, so we start from it.
+            return right.getBool(rec) && left.getBool(rec);
         }
 
         @Override

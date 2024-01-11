@@ -124,6 +124,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         this.queryExecutors.extendAndSet(CompiledQuery.TABLE_SET_TYPE, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.CREATE_USER, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.ALTER_USER, sendConfirmation);
+        this.queryExecutors.extendAndSet(CompiledQuery.CANCEL_QUERY, sendConfirmation);
         // Query types start with 1 instead of 0, so we have to add 1 to the expected size.
         assert this.queryExecutors.size() == (CompiledQuery.TYPES_COUNT + 1);
         this.sqlExecutionContext = sqlExecutionContext;
@@ -136,7 +137,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
 
     @Override
     public void close() {
-//        Misc.free(compiler);
         Misc.free(path);
         Misc.free(circuitBreaker);
     }
@@ -601,6 +601,12 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             final long updatedCount = fut.getAffectedRowsCount();
             metrics.jsonQuery().markComplete();
             sendUpdateConfirmation(state, keepAliveHeader, updatedCount);
+        } catch (CairoException e) {
+            // close e.g. when query has been cancelled
+            if (e.isInterruption()) {
+                cq.getUpdateOperation().close();
+            }
+            throw e;
         } finally {
             if (!isAsyncWait && fut != null) {
                 fut.close();

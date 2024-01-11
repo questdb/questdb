@@ -110,6 +110,22 @@ public class MaxStrGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLargeStrings() throws Exception {
+        configOverrideGroupByAllocatorDefaultChunkSize(128);
+        assertQuery(
+                "a\tlength\n" +
+                        "a\t7439\n" +
+                        "c\t3504\n" +
+                        "b\t2740\n",
+                "select a, length(s) from (select a, max(s) s from x)",
+                "create table x as (select rnd_symbol('a','b','c') a, rnd_str(10,10000,2) s from long_sequence(1000))",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testNullConstant() throws Exception {
         assertQuery(
                 "a\tmax\n" +

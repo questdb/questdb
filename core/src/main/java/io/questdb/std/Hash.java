@@ -24,7 +24,6 @@
 
 package io.questdb.std;
 
-import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8String;
 
@@ -58,23 +57,16 @@ public final class Hash {
      * @return the hash
      */
     public static long fastLongMix(long k) {
-        // phi = 2^64 / goldenRatio
-        final long phi = 0x9E3779B97F4A7C15L;
-        long h = k * phi;
-        h ^= h >>> 32;
-        return h ^ (h >>> 16);
+        long h = k * M2;
+        return h ^ h >>> 32;
     }
 
-    public static int hash(long key1, long key2) {
+    public static int hashLong(long k) {
+        return (int) fastLongMix(k);
+    }
+
+    public static int hashLong128(long key1, long key2) {
         return (int) fastLongMix(fastLongMix(key1) + key2);
-    }
-
-    /**
-     * Same as {@link #hashMem32(long, long)}, but with direct UTF8 string
-     * instead of direct unsafe access.
-     */
-    public static int hashMem32(DirectUtf8Sequence seq) {
-        return hashMem32(seq.lo(), seq.size());
     }
 
     /**
@@ -96,7 +88,7 @@ public final class Hash {
             h = h * M2 + us.byteAt(i);
         }
         h *= M2;
-        return (int) h ^ (int) (h >>> 32);
+        return (int) (h ^ h >>> 32);
     }
 
     /**
@@ -125,28 +117,15 @@ public final class Hash {
             h = h * M2 + Unsafe.getUnsafe().getByte(p + i);
         }
         h *= M2;
-        return (int) h ^ (int) (h >>> 32);
+        return (int) (h ^ h >>> 32);
     }
 
     /**
-     * Same as {@link #hashMem32(long, long)}, but with MemoryR instead of direct
-     * unsafe access.
+     * Same as {@link #hashMem32(long, long)}, but with direct UTF8 string
+     * instead of direct unsafe access.
      */
-    public static int hashMem32(long p, long len, MemoryR mem) {
-        long h = 0;
-        int i = 0;
-        for (; i + 7 < len; i += 8) {
-            h = h * M2 + mem.getLong(p + i);
-        }
-        if (i + 3 < len) {
-            h = h * M2 + mem.getInt(p + i);
-            i += 4;
-        }
-        for (; i < len; i++) {
-            h = h * M2 + mem.getByte(p + i);
-        }
-        h *= M2;
-        return (int) h ^ (int) (h >>> 32);
+    public static int hashMem32(DirectUtf8Sequence seq) {
+        return hashMem32(seq.lo(), seq.size());
     }
 
     /**

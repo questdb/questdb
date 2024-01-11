@@ -26,12 +26,12 @@ package io.questdb.test.cairo.vm;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ImplicitCastException;
-import io.questdb.test.cairo.TestRecord;
 import io.questdb.cairo.vm.MemoryPARWImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.cairo.TestRecord;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.BeforeClass;

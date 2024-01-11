@@ -132,6 +132,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     // Used to store a deep copy of the whereClause field
     // since whereClause can be changed during optimization/generation stage.
     private ExpressionNode backupWhereClause;
+
+    // where clause expressions that do not reference any tables, not necessarily constants
     private ExpressionNode constWhereClause;
     private JoinContext context;
     private boolean distinct = false;
@@ -359,6 +361,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         dependencies.clear();
         parsedWhere.clear();
         whereClause = null;
+        backupWhereClause = null;
         constWhereClause = null;
         nestedModel = null;
         tableNameExpr = null;
@@ -1095,6 +1098,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void setArtificialStar(boolean artificialStar) {
         this.artificialStar = artificialStar;
+    }
+
+    public void setBackupWhereClause(ExpressionNode backupWhereClause) {
+        this.backupWhereClause = backupWhereClause;
     }
 
     public void setConstWhereClause(ExpressionNode constWhereClause) {

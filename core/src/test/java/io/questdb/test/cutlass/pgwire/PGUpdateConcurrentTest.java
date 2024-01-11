@@ -31,17 +31,14 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.pgwire.PGWireServer;
-import io.questdb.test.AbstractCairoTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import org.junit.*;
 import org.postgresql.util.PSQLException;
 
 import java.sql.Connection;
@@ -161,6 +158,7 @@ public class PGUpdateConcurrentTest extends BasePGTest {
         });
     }
 
+    @Ignore// CTAS statements don't time out anymore but can be cancelled manually
     @Test
     public void testUpdateWithQueryTimeout() throws Exception {
         assertMemoryLeak(() -> {

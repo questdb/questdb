@@ -49,7 +49,7 @@ public class BinarySearch {
      */
     public static long find(MemoryR column, long value, long low, long high, int scanDirection) {
         while (low < high) {
-            long mid = (low + high) / 2;
+            long mid = (low + high) >>> 1;
             long midVal = column.getLong(mid * Long.BYTES);
 
             if (midVal < value) {

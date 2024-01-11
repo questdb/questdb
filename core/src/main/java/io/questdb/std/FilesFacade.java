@@ -140,7 +140,9 @@ public interface FilesFacade {
 
     long readNonNegativeLong(int fd, long offset);
 
-    boolean remove(LPSZ name);
+    void remove(LPSZ name);
+
+    boolean removeQuiet(LPSZ name);
 
     int rename(LPSZ from, LPSZ to);
 

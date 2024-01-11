@@ -26,8 +26,11 @@ package io.questdb.cairo.sql;
 
 import org.jetbrains.annotations.Nullable;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+
 public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
 
+    int STATE_OK = 0;
     SqlExecutionCircuitBreaker NOOP_CIRCUIT_BREAKER = new SqlExecutionCircuitBreaker() {
         @Override
         public void cancel() {
@@ -53,6 +56,16 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
             return -1;
         }
 
+        @Override
+        public int getState() {
+            return STATE_OK;
+        }
+
+        @Override
+        public int getState(long millis, int fd) {
+            return STATE_OK;
+        }
+
         public boolean isCancelled() {
             return false;
         }
@@ -64,6 +77,11 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
 
         @Override
         public void resetTimer() {
+        }
+
+        @Override
+        public void setCancelledFlag(AtomicBoolean cancelledFlag) {
+
         }
 
         @Override
@@ -82,7 +100,9 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
         public void unsetTimer() {
         }
     };
-
+    int STATE_TIMEOUT = STATE_OK + 1; // 1
+    int STATE_BROKEN_CONNECTION = STATE_TIMEOUT + 1; // 2
+    int STATE_CANCELLED = STATE_BROKEN_CONNECTION + 1;// 3
     // Triggers timeout on first timeout check regardless of how much time elapsed since timer was reset
     // (used mainly for testing)
     long TIMEOUT_FAIL_ON_FIRST_CHECK = Long.MIN_VALUE;
@@ -99,7 +119,27 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
 
     int getFd();
 
-    boolean isCancelled();
+    /**
+     * Similar to checkIfTripped() method but returns int value describing reason for tripping.
+     *
+     * @return circuit breaker state, one of: <br>
+     * - {@link #STATE_OK} <br>
+     * - {@link #STATE_CANCELLED} <br>
+     * - {@link #STATE_BROKEN_CONNECTION} <br>
+     * - {@link #STATE_TIMEOUT} <br>
+     */
+    int getState();
+
+    /**
+     * Similar to checkIfTripped(long millis, int fd) method but returns int value describing reason for tripping.
+     *
+     * @return circuit breaker state, one of: <br>
+     * - {@link #STATE_OK} <br>
+     * - {@link #STATE_CANCELLED} <br>
+     * - {@link #STATE_BROKEN_CONNECTION} <br>
+     * - {@link #STATE_TIMEOUT} <br>
+     */
+    int getState(long millis, int fd);
 
     /**
      * Checks if timer is due.
@@ -109,6 +149,8 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
     boolean isTimerSet();
 
     void resetTimer();
+
+    void setCancelledFlag(AtomicBoolean cancelled);
 
     void setFd(int fd);
 

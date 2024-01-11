@@ -27,7 +27,6 @@ package io.questdb.cairo.map;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnTypes;
-import io.questdb.griffin.EmptyRecordMetadata;
 import io.questdb.std.Chars;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
@@ -54,18 +53,6 @@ public class MapFactory {
                     configuration.getSqlMapMaxResizes()
             );
         }
-
-        if (Chars.equalsLowerCaseAscii(mapType, "compact")) {
-            return new CompactMap(
-                    pageSize,
-                    keyTypes,
-                    EmptyRecordMetadata.INSTANCE,
-                    keyCapacity,
-                    configuration.getSqlCompactMapLoadFactor(),
-                    configuration.getSqlMapMaxResizes(),
-                    configuration.getSqlMapMaxPages()
-            );
-        }
         throw CairoException.critical(0).put("unknown map type: ").put(mapType);
     }
 
@@ -88,19 +75,6 @@ public class MapFactory {
                     keyCapacity,
                     configuration.getSqlFastMapLoadFactor(),
                     configuration.getSqlMapMaxResizes()
-            );
-        }
-
-        if (Chars.equalsLowerCaseAscii(mapType, "compact")) {
-            assert valueTypes != null;
-            return new CompactMap(
-                    pageSize,
-                    keyTypes,
-                    valueTypes,
-                    keyCapacity,
-                    configuration.getSqlCompactMapLoadFactor(),
-                    configuration.getSqlMapMaxResizes(),
-                    configuration.getSqlMapMaxPages()
             );
         }
         throw CairoException.critical(0).put("unknown map type: ").put(mapType);

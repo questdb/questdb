@@ -58,7 +58,7 @@ public class IntHashSet extends AbstractIntHashSet implements Sinkable {
     /**
      * Adds key to hash set preserving key uniqueness.
      *
-     * @param key immutable sequence of characters.
+     * @param key key to be added.
      * @return false if key is already in the set and true otherwise.
      */
     public boolean add(int key) {

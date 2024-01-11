@@ -22,17 +22,22 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.griffin.engine.table;
 
-public class NoOpDatabaseSnapshotAgent implements DatabaseSnapshotAgent {
-    public static final DatabaseSnapshotAgent INSTANCE = new NoOpDatabaseSnapshotAgent();
+import io.questdb.cairo.sql.Function;
 
-    @Override
-    public void close() {
-    }
+public interface StealableFilterRecordCursorFactory {
 
-    @Override
-    public boolean isInProgress() {
-        return false;
-    }
+    Function getFilter();
+
+    /**
+     * Closes everything but base factory and filter.
+     */
+    void halfClose();
+
+    /**
+     * Returns true if the factory stands for nothing more but a filter, so that
+     * the above factory (e.g. a parallel GROUP BY one) can steal the filter.
+     */
+    boolean supportsFilterStealing();
 }

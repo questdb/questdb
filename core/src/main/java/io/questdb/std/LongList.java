@@ -36,6 +36,7 @@ import java.util.Arrays;
 public class LongList implements Mutable, LongVec, Sinkable {
     private static final int DEFAULT_ARRAY_SIZE = 16;
     private static final long DEFAULT_NO_ENTRY_VALUE = -1L;
+    private final int initialCapacity;
     private final long noEntryValue;
     private long[] data;
     private int pos = 0;
@@ -49,19 +50,22 @@ public class LongList implements Mutable, LongVec, Sinkable {
     }
 
     public LongList(int capacity, long noEntryValue) {
+        this.initialCapacity = capacity;
         this.data = new long[capacity];
         this.noEntryValue = noEntryValue;
     }
 
     public LongList(LongList other) {
-        this.data = new long[Math.max(other.size(), DEFAULT_ARRAY_SIZE)];
+        this.initialCapacity = Math.max(other.size(), DEFAULT_ARRAY_SIZE);
+        this.data = new long[initialCapacity];
         setPos(other.size());
         System.arraycopy(other.data, 0, this.data, 0, pos);
         this.noEntryValue = other.noEntryValue;
     }
 
     public LongList(long[] other) {
-        this.data = new long[other.length];
+        this.initialCapacity = other.length;
+        this.data = new long[initialCapacity];
         setPos(other.length);
         System.arraycopy(other, 0, this.data, 0, pos);
         this.noEntryValue = DEFAULT_NO_ENTRY_VALUE;
@@ -136,7 +140,7 @@ public class LongList implements Mutable, LongVec, Sinkable {
         int low = 0;
         int high = pos - 1;
         while (high - low > 65) {
-            final int mid = (low + high) / 2;
+            final int mid = (low + high) >>> 1;
             final long midVal = data[mid];
 
             if (midVal < value) {
@@ -177,7 +181,7 @@ public class LongList implements Mutable, LongVec, Sinkable {
         int low = offset >> shl;
         int high = (pos - 1) >> shl;
         while (high - low > 65) {
-            final int mid = (low + high) / 2;
+            final int mid = (low + high) >>> 1;
             final long midVal = data[mid << shl];
 
             if (midVal < value) {
@@ -194,6 +198,10 @@ public class LongList implements Mutable, LongVec, Sinkable {
         return scanDir == BinarySearch.SCAN_UP ?
                 scanUpBlock(shl, value, low, high + 1) :
                 scanDownBlock(shl, value, low, high + 1);
+    }
+
+    public int capacity() {
+        return data.length;
     }
 
     public void clear() {
@@ -355,6 +363,11 @@ public class LongList implements Mutable, LongVec, Sinkable {
         }
         pos -= slotSize;
         Arrays.fill(data, pos, pos + slotSize, noEntryValue);
+    }
+
+    public void restoreInitialCapacity() {
+        data = new long[initialCapacity];
+        pos = 0;
     }
 
     public void reverse() {

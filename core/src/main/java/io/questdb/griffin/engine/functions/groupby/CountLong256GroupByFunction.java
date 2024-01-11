@@ -54,4 +54,9 @@ public class CountLong256GroupByFunction extends AbstractCountGroupByFunction {
             mapValue.addLong(valueIndex, 1);
         }
     }
+
+    @Override
+    public boolean isParallelismSupported() {
+        return false;
+    }
 }

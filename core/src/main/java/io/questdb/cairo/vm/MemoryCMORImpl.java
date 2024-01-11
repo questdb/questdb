@@ -115,16 +115,7 @@ public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
     }
 
     private void map0(FilesFacade ff, LPSZ name, long lo, long hi) {
-        if (hi < 0) {
-            hi = ff.length(fd);
-            if (hi < 0) {
-                close();
-                throw CairoException.critical(ff.errno()).put("could not get length: ").put(name);
-            }
-        }
-
-        assert hi >= lo : "hi : " + hi + " lo : " + lo;
-
+        assert hi > 0 && hi >= lo : "hi : " + hi + " lo : " + lo;
         if (hi > lo) {
             this.offset = lo;
             this.mapFileOffset = Files.PAGE_SIZE * (lo / Files.PAGE_SIZE);

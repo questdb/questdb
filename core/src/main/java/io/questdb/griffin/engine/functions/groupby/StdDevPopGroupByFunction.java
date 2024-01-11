@@ -49,4 +49,9 @@ public class StdDevPopGroupByFunction extends AbstractStdDevGroupByFunction {
     public String getName() {
         return "stddev_pop";
     }
+
+    @Override
+    public boolean isParallelismSupported() {
+        return false;
+    }
 }

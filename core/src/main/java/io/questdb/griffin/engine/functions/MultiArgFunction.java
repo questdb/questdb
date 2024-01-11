@@ -64,6 +64,18 @@ public interface MultiArgFunction extends Function {
     }
 
     @Override
+    default boolean isParallelismSupported() {
+        final ObjList<Function> args = getArgs();
+        for (int i = 0, n = args.size(); i < n; i++) {
+            final Function function = args.getQuick(i);
+            if (!function.isParallelismSupported()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    @Override
     default boolean isReadThreadSafe() {
         final ObjList<Function> args = getArgs();
         for (int i = 0, n = args.size(); i < n; i++) {

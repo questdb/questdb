@@ -284,6 +284,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getGroupByAllocatorDefaultChunkSize() {
+        return 16 * 1024;
+    }
+
+    @Override
+    public long getGroupByAllocatorMaxChunkSize() {
+        return Numbers.SIZE_1GB;
+    }
+
+    @Override
     public int getGroupByMapCapacity() {
         return 1024;
     }
@@ -296,11 +306,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getGroupByPoolCapacity() {
         return 1024;
-    }
-
-    @Override
-    public int getGroupByShardCount() {
-        return 32;
     }
 
     @Override
@@ -480,6 +485,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getQueryRegistryPoolSize() {
+        return 8;
+    }
+
+    @Override
     public int getReaderPoolMaxSegments() {
         return 5;
     }
@@ -549,11 +559,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSqlColumnPoolCapacity() {
         return 4096;
-    }
-
-    @Override
-    public double getSqlCompactMapLoadFactor() {
-        return 0.8;
     }
 
     @Override

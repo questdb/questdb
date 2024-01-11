@@ -66,7 +66,7 @@ public class WhereClauseSymbolEstimatorTest extends AbstractCairoTest {
             CreateTableTestUtils.create(model);
         }
 
-        reader = newTableReader(configuration, "x");
+        reader = newOffPoolReader(configuration, "x");
         metadata = reader.getMetadata();
     }
 

@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.groupby;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.ObjList;
@@ -34,6 +35,7 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
     private boolean gapFill = false;
 
     public SampleByFillValueNotKeyedRecordCursor(
+            CairoConfiguration configuration,
             ObjList<GroupByFunction> groupByFunctions,
             GroupByFunctionsUpdater groupByFunctionsUpdater,
             ObjList<Function> recordFunctions,
@@ -48,6 +50,7 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
             int offsetFuncPos
     ) {
         super(
+                configuration,
                 recordFunctions,
                 timestampIndex,
                 timestampSampler,

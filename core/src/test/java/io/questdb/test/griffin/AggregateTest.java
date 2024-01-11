@@ -24,7 +24,6 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -483,7 +482,7 @@ public class AggregateTest extends AbstractCairoTest {
                         "22\t1\n" +
                         "23\t2\n",
                 "select hour(ts), count from " +
-                        "(select * from tab where ts in '1970-01-01' union all  select * from tab where ts in '1970-04-26')" +
+                        "(select * from tab where ts in '1970-01-01' union all select * from tab where ts in '1970-04-26')" +
                         "where val < 0.5 order by 1",
                 "create table tab as (select timestamp_sequence(0, 1000000000) ts, rnd_double() val from long_sequence(100000))",
                 null,
@@ -2078,7 +2077,7 @@ public class AggregateTest extends AbstractCairoTest {
         }
 
         // Insert a lot of empty rows to test function's merge correctness.
-        try (TableWriter writer = new TableWriter(engine.getConfiguration(), engine.verifyTableName("tt1"), Metrics.disabled())) {
+        try (TableWriter writer = TestUtils.newOffPoolWriter(engine.getConfiguration(), engine.verifyTableName("tt1"))) {
             for (int i = 0; i < 2 * PAGE_FRAME_MAX_ROWS; i++) {
                 TableWriter.Row row = writer.newRow();
                 row.append();
@@ -2089,7 +2088,7 @@ public class AggregateTest extends AbstractCairoTest {
         assertGroupByQuery(aggregateFunctions, aggregateColTypes, false);
 
         // Now write one more row with non-empty rows.
-        try (TableWriter writer = new TableWriter(engine.getConfiguration(), engine.verifyTableName("tt1"), Metrics.disabled())) {
+        try (TableWriter writer = newOffPoolWriter(engine.getConfiguration(), "tt1")) {
             TableWriter.Row row = writer.newRow();
             for (int i = 0; i < aggregateColTypes.length; i++) {
                 TypeVal colType = aggregateColTypes[i];

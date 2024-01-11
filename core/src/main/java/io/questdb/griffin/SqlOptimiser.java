@@ -791,7 +791,6 @@ public class SqlOptimiser implements Mutable {
                 int rs = refs.size();
                 if (rs == 0) {
                     // condition has no table references
-                    // must evaluate as constant
                     postFilterRemoved.add(k);
                     parent.setConstWhereClause(concatFilters(parent.getConstWhereClause(), node));
                 } else if (rs == 1 && // single table reference and this table is not joined via OUTER or ASOF

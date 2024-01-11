@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Os;
 import io.questdb.std.ThreadLocal;
@@ -36,8 +37,10 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class CairoException extends RuntimeException implements Sinkable, FlyweightMessageContainer {
+
     public static final int ERRNO_FILE_DOES_NOT_EXIST = 2;
     public static final int ERRNO_FILE_DOES_NOT_EXIST_WIN = 3;
+
     public static final int METADATA_VALIDATION = -100;
     public static final int ILLEGAL_OPERATION = METADATA_VALIDATION - 1;
     private static final int TABLE_DROPPED = ILLEGAL_OPERATION - 1;
@@ -51,6 +54,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     protected int errno;
     private boolean authorizationError = false;
     private boolean cacheable;
+    private boolean cancellation; // when query is explicitly cancelled by user
     private boolean entityDisabled; // used when account is disabled and connection should be dropped
     private boolean interruption; // used when a query times out
     private int messagePosition;
@@ -121,11 +125,23 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     public static CairoException queryCancelled(int fd) {
-        return nonCritical().put("cancelling statement due to user request [fd=").put(fd).put(']').setInterruption(true);
+        CairoException exception = nonCritical().put("cancelled by user").setInterruption(true).setCancellation(true);
+        if (fd > -1) {
+            exception.put(" [fd=").put(fd).put(']');
+        }
+        return exception;
+    }
+
+    public static CairoException queryCancelled() {
+        return nonCritical().put("cancelled by user").setInterruption(true).setCancellation(true);
     }
 
     public static CairoException queryTimedOut(int fd) {
         return nonCritical().put("timeout, query aborted [fd=").put(fd).put(']').setInterruption(true);
+    }
+
+    public static CairoException queryTimedOut() {
+        return nonCritical().put("timeout, query aborted").setInterruption(true);
     }
 
     public static CairoException tableDoesNotExist(CharSequence tableName) {
@@ -152,6 +168,16 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return message;
     }
 
+    public int getInterruptionReason() {
+        if (isCancellation()) {
+            return SqlExecutionCircuitBreaker.STATE_CANCELLED;
+        } else if (isInterruption()) {
+            return SqlExecutionCircuitBreaker.STATE_TIMEOUT;
+        } else {
+            return SqlExecutionCircuitBreaker.STATE_OK;
+        }
+    }
+
     @Override
     public String getMessage() {
         return "[" + errno + "] " + message;
@@ -176,6 +202,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     public boolean isCacheable() {
         return cacheable;
+    }
+
+    public boolean isCancellation() {
+        return cancellation;
     }
 
     public boolean isCritical() {
@@ -246,6 +276,11 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     public CairoException setCacheable(boolean cacheable) {
         this.cacheable = cacheable;
+        return this;
+    }
+
+    public CairoException setCancellation(boolean cancellation) {
+        this.cancellation = cancellation;
         return this;
     }
 

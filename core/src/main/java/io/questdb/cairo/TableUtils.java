@@ -1787,7 +1787,7 @@ public final class TableUtils {
                     path.$();
                 }
 
-                if (!ff.exists(path) || ff.remove(path)) {
+                if (ff.removeQuiet(path)) {
                     try {
                         mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
                         mem.jumpTo(0);

@@ -223,11 +223,20 @@ public class GroupByFunctionTest {
         }
 
         @Override
+        public int getValueIndex() {
+            return 0;
+        }
+
+        @Override
         public void pushValueTypes(ArrayColumnTypes columnTypes) {
         }
 
         @Override
         public void setNull(MapValue mapValue) {
+        }
+
+        @Override
+        public void setValueIndex(int valueIndex) {
         }
     };
 

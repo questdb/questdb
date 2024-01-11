@@ -27,13 +27,13 @@ package io.questdb.test.cairo.vm;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TableUtils;
-import io.questdb.test.cairo.TestRecord;
 import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
-import io.questdb.test.griffin.engine.TestBinarySequence;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.cairo.TestRecord;
+import io.questdb.test.griffin.engine.TestBinarySequence;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -245,6 +245,17 @@ public class MemoryCARWImplTest {
             for (char i = n; i > 0; i--) {
                 assertEquals(i, mem.getChar(o));
                 o += 2;
+            }
+        }
+    }
+
+    @Test
+    public void testDeadCodeForUtf8() {
+        try (MemoryARW mem = new MemoryCARWImpl(256, 1, MemoryTag.NATIVE_DEFAULT)) {
+            try {
+                mem.putStrUtf8(null, true);
+                Assert.fail();
+            } catch (UnsupportedOperationException ignored) {
             }
         }
     }
@@ -1033,17 +1044,6 @@ public class MemoryCARWImplTest {
 
             Assert.assertEquals(pageSize, mem.size());
             Assert.assertEquals(0, mem.getAppendOffset());
-        }
-    }
-
-    @Test
-    public void testDeadCodeForUtf8() {
-        try (MemoryARW mem = new MemoryCARWImpl(256, 1, MemoryTag.NATIVE_DEFAULT)) {
-            try {
-                mem.putStrUtf8(null, true);
-                Assert.fail();
-            } catch (UnsupportedOperationException ignored) {
-            }
         }
     }
 

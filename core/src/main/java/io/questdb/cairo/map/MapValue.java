@@ -43,9 +43,7 @@ public interface MapValue extends Record {
 
     void addShort(int index, short value);
 
-    default void copyFrom(MapValue value) {
-        throw new UnsupportedOperationException();
-    }
+    void copyFrom(MapValue value);
 
     boolean getBool(int index);
 

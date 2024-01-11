@@ -200,7 +200,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                 long mem = Unsafe.malloc(DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
                 TableToken tableToken = engine.verifyTableName(tableName);
                 try (
-                        TableWriter writer = newTableWriter(configuration, tableName, metrics);
+                        TableWriter writer = newOffPoolWriter(configuration, tableName, metrics);
                         TxReader txReader = new TxReader(ff).ofRO(
                                 path.of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
                                 PartitionBy.DAY
@@ -381,7 +381,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                 long mem = Unsafe.malloc(DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
                 TableToken tableToken = engine.verifyTableName(tableName);
                 try (
-                        TableWriter writer = new TableWriter(configuration, tableToken, metrics);
+                        TableWriter writer = TestUtils.newOffPoolWriter(configuration, tableToken, metrics);
                         TxReader txReader = new TxReader(ff).ofRO(
                                 path.of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
                                 PartitionBy.DAY
@@ -445,7 +445,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                 DirectUtf8String dus = new DirectUtf8String();
                 TableToken tableToken = engine.verifyTableName(tableName);
                 try (
-                        TableWriter writer = newTableWriter(configuration, tableName, metrics);
+                        TableWriter writer = newOffPoolWriter(configuration, tableName, metrics);
                         MemoryMR txMem = Vm.getMRInstance();
                         TxReader txReader = new TxReader(ff).ofRO(
                                 path.of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
@@ -604,7 +604,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                 DirectUtf8String dus = new DirectUtf8String();
                 TableToken tableToken = engine.verifyTableName(tableName);
                 try (
-                        TableWriter writer = newTableWriter(configuration, tableName, metrics);
+                        TableWriter writer = newOffPoolWriter(configuration, tableName, metrics);
                         MemoryMR txMem = Vm.getMRInstance();
                         TxReader txReader = new TxReader(ff).ofRO(
                                 path.of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
@@ -687,7 +687,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                 DirectUtf8String dus = new DirectUtf8String();
                 TableToken tableToken = engine.verifyTableName(tableName);
                 try (
-                        TableWriter writer = newTableWriter(configuration, tableName, metrics);
+                        TableWriter writer = newOffPoolWriter(configuration, tableName, metrics);
                         MemoryMR txMem = Vm.getMRInstance();
                         TxReader txReader = new TxReader(ff).ofRO(
                                 path.of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),

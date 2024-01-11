@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.griffin;
+package io.questdb.test.griffin.engine.functions.catalogue;
 
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;

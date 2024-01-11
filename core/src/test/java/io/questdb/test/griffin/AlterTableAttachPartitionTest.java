@@ -1070,7 +1070,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                         "2020-01-09",
                         2);
 
-                try (TableReader dstReader = newTableReader(configuration, dst.getTableName())) {
+                try (TableReader dstReader = newOffPoolReader(configuration, dst.getTableName())) {
                     dstReader.openPartition(0);
                     dstReader.openPartition(1);
                     dstReader.goPassive();

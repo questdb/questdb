@@ -170,7 +170,7 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
                 CreateTableTestUtils.create(model);
             }
 
-            TableReader reader = newTableReader(configuration, "x");
+            TableReader reader = newOffPoolReader(configuration, "x");
             IntervalBwdDataFrameCursor cursor = new IntervalBwdDataFrameCursor(
                     new RuntimeIntervalModel(intervals), reader.getMetadata().getTimestampIndex());
             cursor.of(reader, null);
@@ -391,7 +391,7 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
 
                 assertEquals("", record, cursor);
 
-                try (TableWriter writer = newTableWriter(configuration, "x", metrics)) {
+                try (TableWriter writer = newOffPoolWriter(configuration, "x", metrics)) {
                     for (int i = 0; i < rowCount; i++) {
                         TableWriter.Row row = writer.newRow(timestamp);
                         row.putSym(0, rnd.nextChars(4));
@@ -594,7 +594,7 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
 
             final Rnd rnd = new Rnd();
             long timestamp = TimestampFormatUtils.parseTimestamp("1980-01-01T00:00:00.000Z");
-            try (TableWriter writer = newTableWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newOffPoolWriter(configuration, "x", metrics)) {
                 for (int i = 0; i < rowCount; i++) {
                     TableWriter.Row row = writer.newRow(timestamp);
                     row.putSym(0, rnd.nextChars(4));
@@ -617,7 +617,7 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
 
             }
 
-            try (TableReader reader = newTableReader(configuration, "x")) {
+            try (TableReader reader = newOffPoolReader(configuration, "x")) {
                 final TableReaderRecord record = new TableReaderRecord();
                 IntervalBwdDataFrameCursor cursor = new IntervalBwdDataFrameCursor(
                         new RuntimeIntervalModel(IntervalBwdDataFrameCursorTest.intervals),
