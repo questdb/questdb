@@ -708,7 +708,7 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
                 serverMain.waitWalTxnApplied("good", 1);
                 serverMain.assertSql("select count() from good", "count\n" +
                         "1\n");
-                serverMain.waitWalTxnApplied("drop", 1);
+                serverMain.waitWalTxnApplied("drop");
                 serverMain.assertSql("select count() from \"drop\"", "count\n" +
                         "1\n");
             }
