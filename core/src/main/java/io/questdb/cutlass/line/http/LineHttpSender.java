@@ -146,7 +146,7 @@ public final class LineHttpSender implements Sender {
                     // we did our best, give up
                     pendingRows = 0;
                     request = newRequest();
-                    throw new LineSenderException("Could not flush buffer: Error while sending data to server. ", e);
+                    throw new LineSenderException("Could not flush buffer: Error while sending data to server.", e);
                 }
                 retryBackoff = backoff(retryBackoff);
             }

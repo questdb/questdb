@@ -121,7 +121,7 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
                         sender.flush();
                         Assert.fail("should fail");
                     } catch (LineSenderException e) {
-                        TestUtils.assertContains(e.getMessage(), "error while sending data to server");
+                        TestUtils.assertContains(e.getMessage(), "Could not flush buffer: Error while sending data to server.");
                     }
                 }
                 assertTableSizeEventually(serverMain.getEngine(), tableName, 1);
@@ -150,7 +150,9 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
                         sender.flush();
                         Assert.fail("should fail");
                     } catch (LineSenderException e) {
-                        TestUtils.assertContains(e.getMessage(), "{\"code\":\"invalid\",\"message\":\"failed to parse line protocol:errors encountered on line(s):\\nerror in line 1: table: testRecoveryAfterStructuralError, column: value; cast error from protocol type: STRING to column type: LONG\",\"line\":1,\"errorId\":\"");
+                        TestUtils.assertContains(e.getMessage(), "Could not flush buffer");
+                        TestUtils.assertContains(e.getMessage(), "http-status=400");
+                        TestUtils.assertContains(e.getMessage(), "error in line 1: table: testRecoveryAfterStructuralError, column: value; cast error from protocol type: STRING to column type: LONG");
                     }
 
                     // assert that we can still send new rows after a structural error
