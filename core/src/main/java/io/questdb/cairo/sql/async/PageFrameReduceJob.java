@@ -177,7 +177,7 @@ public class PageFrameReduceJob implements Job, Closeable {
                 final PageFrameReduceTask task = queue.get(cursor);
                 final PageFrameSequence<?> frameSequence = task.getFrameSequence();
                 try {
-                    LOG.info()
+                    LOG.debug()
                             .$("reducing [shard=").$(frameSequence.getShard())
                             .$(", id=").$(frameSequence.getId())
                             .$(", taskType=").$(task.getType())
@@ -231,8 +231,6 @@ public class PageFrameReduceJob implements Job, Closeable {
         // we deliberately hold the queue item because
         // processing is daisy-chained. If we were to release item before
         // finishing reduction, next step (job) will be processing an incomplete task
-        System.out.println(">>> frameSequence.getStartTime(): " + frameSequence.getStartTime());
-        circuitBreaker.debug();
         int cbState = circuitBreaker.getState(frameSequence.getStartTime(), frameSequence.getCircuitBreakerFd());
 
         if (cbState == SqlExecutionCircuitBreaker.STATE_OK) {

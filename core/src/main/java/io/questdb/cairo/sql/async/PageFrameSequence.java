@@ -546,7 +546,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         localTask.of(this, dispatchStartFrameIndex++);
 
         try {
-            LOG.info()
+            LOG.debug()
                     .$("reducing locally [shard=").$(shard)
                     .$(", id=").$(id)
                     .$(", taskType=").$(taskType)

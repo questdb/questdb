@@ -130,10 +130,6 @@ public class SecurityTest extends AbstractCairoTest {
             }
 
             @Override
-            public void debug() {
-            }
-
-            @Override
             public SqlExecutionCircuitBreakerConfiguration getConfiguration() {
                 return null;
             }

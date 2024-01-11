@@ -106,11 +106,6 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     @Override
-    public void debug() {
-        System.out.println(">>> clock: " + clock.getTicks() + ", timeout: " + timeout);
-    }
-
-    @Override
     public SqlExecutionCircuitBreakerConfiguration getConfiguration() {
         return configuration;
     }

@@ -65,10 +65,6 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     }
 
     @Override
-    public void debug() {
-    }
-
-    @Override
     public @Nullable SqlExecutionCircuitBreakerConfiguration getConfiguration() {
         return null;
     }
