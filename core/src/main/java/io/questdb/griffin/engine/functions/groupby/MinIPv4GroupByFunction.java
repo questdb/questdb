@@ -73,13 +73,23 @@ public class MinIPv4GroupByFunction extends IPv4Function implements GroupByFunct
     }
 
     @Override
+    public int getValueIndex() {
+        return valueIndex;
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }
 
     @Override
     public boolean isParallelismSupported() {
-        return arg.isReadThreadSafe();
+        return true;
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return UnaryFunction.super.isReadThreadSafe();
     }
 
     @Override
@@ -105,5 +115,10 @@ public class MinIPv4GroupByFunction extends IPv4Function implements GroupByFunct
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putInt(valueIndex, Numbers.IPv4_NULL);
+    }
+
+    @Override
+    public void setValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
     }
 }

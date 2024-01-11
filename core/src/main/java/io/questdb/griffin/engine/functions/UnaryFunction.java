@@ -54,6 +54,11 @@ public interface UnaryFunction extends Function {
     }
 
     @Override
+    default boolean isParallelismSupported() {
+        return getArg().isParallelismSupported();
+    }
+
+    @Override
     default boolean isReadThreadSafe() {
         return getArg().isReadThreadSafe();
     }

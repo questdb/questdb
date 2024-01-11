@@ -482,7 +482,7 @@ public class AggregateTest extends AbstractCairoTest {
                         "22\t1\n" +
                         "23\t2\n",
                 "select hour(ts), count from " +
-                        "(select * from tab where ts in '1970-01-01' union all  select * from tab where ts in '1970-04-26')" +
+                        "(select * from tab where ts in '1970-01-01' union all select * from tab where ts in '1970-04-26')" +
                         "where val < 0.5 order by 1",
                 "create table tab as (select timestamp_sequence(0, 1000000000) ts, rnd_double() val from long_sequence(100000))",
                 null,

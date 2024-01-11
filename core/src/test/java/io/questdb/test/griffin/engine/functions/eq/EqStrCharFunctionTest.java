@@ -69,7 +69,7 @@ public class EqStrCharFunctionTest extends AbstractCairoTest {
             );
 
             String expected = "instrument\tsum\n" +
-                    "ML\t563832\n";
+                    "ML\t488476\n";
 
             assertSql(
                     expected, "select instrument, sum(price) from tanc2  where instrument = 'ML' and side = rnd_char()"
@@ -91,7 +91,7 @@ public class EqStrCharFunctionTest extends AbstractCairoTest {
                     "from long_sequence(100000) x");
 
             String expected = "instrument\tsum\n" +
-                    "ML\t2617153\n";
+                    "ML\t2774183\n";
 
             assertSql(
                     expected, "select instrument, sum(price) from tanc2  where instrument = 'ML' and rnd_symbol('A', 'B', 'C') = 'B'"

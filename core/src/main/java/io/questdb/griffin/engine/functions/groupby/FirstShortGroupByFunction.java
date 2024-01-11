@@ -68,6 +68,16 @@ public class FirstShortGroupByFunction extends ShortFunction implements GroupByF
     }
 
     @Override
+    public int getValueIndex() {
+        return valueIndex;
+    }
+
+    @Override
+    public boolean isParallelismSupported() {
+        return false;
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.SHORT);
@@ -80,5 +90,10 @@ public class FirstShortGroupByFunction extends ShortFunction implements GroupByF
 
     public void setShort(MapValue mapValue, short value) {
         mapValue.putShort(valueIndex, value);
+    }
+
+    @Override
+    public void setValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
     }
 }

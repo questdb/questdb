@@ -59,9 +59,14 @@ public interface BinaryFunction extends Function {
         return getLeft().isConstant() && getRight().isConstant();
     }
 
-    //used in generic toSink implementation
+    // used in generic toSink implementation
     default boolean isOperator() {
         return false;
+    }
+
+    @Override
+    default boolean isParallelismSupported() {
+        return getLeft().isParallelismSupported() && getRight().isParallelismSupported();
     }
 
     @Override

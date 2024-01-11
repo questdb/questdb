@@ -82,6 +82,11 @@ public class SymbolConstant extends SymbolFunction implements ConstantFunction {
     }
 
     @Override
+    public boolean isParallelismSupported() {
+        return true;
+    }
+
+    @Override
     public boolean isSymbolTableStatic() {
         return false;
     }

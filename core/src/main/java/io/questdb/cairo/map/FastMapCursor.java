@@ -35,7 +35,7 @@ public final class FastMapCursor implements MapRecordCursor {
     private final FastMap map;
     private final FastMapRecord recordA;
     private final FastMapRecord recordB;
-    private final int valueSize;
+    private final long valueSize;
     private long address;
     private int count;
     private int remaining;
@@ -82,7 +82,7 @@ public final class FastMapCursor implements MapRecordCursor {
             recordA.of(address);
             if (alignedKeyValueSize == -1) {
                 int keySize = Unsafe.getUnsafe().getInt(address);
-                address = Bytes.align8b(address + Integer.BYTES + keySize + valueSize);
+                address = Bytes.align8b(address + FastMap.VAR_KEY_HEADER_SIZE + keySize + valueSize);
             } else {
                 address += alignedKeyValueSize;
             }
