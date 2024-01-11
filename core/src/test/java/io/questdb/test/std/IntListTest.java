@@ -30,6 +30,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class IntListTest {
+
     @Test
     public void testBinarySearchFuzz() {
         final int N = 997; // prime
