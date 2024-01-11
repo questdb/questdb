@@ -32,8 +32,10 @@ import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.*;
 
 public class OrderByTimeoutTest extends AbstractCairoTest {
@@ -46,6 +48,21 @@ public class OrderByTimeoutTest extends AbstractCairoTest {
             @Override
             public boolean checkConnection() {
                 return breakConnection == 0 || --breakConnection == 0;
+            }
+
+            @Override
+            public @NotNull MillisecondClock getClock() {
+                return () -> {
+                    if (breakConnection == 0 || --breakConnection == 0) {
+                        return 100;
+                    }
+                    return 0;
+                };
+            }
+
+            @Override
+            public long getQueryTimeout() {
+                return 50;
             }
         };
         circuitBreaker = new NetworkSqlExecutionCircuitBreaker(circuitBreakerConfiguration, MemoryTag.NATIVE_HTTP_CONN) {
@@ -84,9 +101,11 @@ public class OrderByTimeoutTest extends AbstractCairoTest {
     @Test
     public void testTimeoutLimitedSizeSortedLightRecordCursor() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE trips as (" +
-                    "select rnd_long() a, rnd_long() b, timestamp_sequence('2022-01-03', 50000000000) ts from long_sequence(20)" +
-                    ") timestamp(ts) partition by day;");
+            compile(
+                    "CREATE TABLE trips as (" +
+                            "select rnd_long() a, rnd_long() b, timestamp_sequence('2022-01-03', 50000000000) ts from long_sequence(20)" +
+                            ") timestamp(ts) partition by day;"
+            );
 
             int breakTestLimit = 20;
             String sql = "select * from trips " +
@@ -99,9 +118,11 @@ public class OrderByTimeoutTest extends AbstractCairoTest {
     @Test
     public void testTimeoutSortedLightRecordCursorFactory() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE trips as (" +
-                    "select rnd_long() a, rnd_long() b, timestamp_sequence('2022-01-03', 50000000) ts from long_sequence(20)" +
-                    ") timestamp(ts) partition by day;");
+            compile(
+                    "CREATE TABLE trips as (" +
+                            "select rnd_long() a, rnd_long() b, timestamp_sequence('2022-01-03', 50000000) ts from long_sequence(20)" +
+                            ") timestamp(ts) partition by day;"
+            );
 
             testSql(5, "select * from trips where a > 1234567890L order by b desc");
         });
@@ -110,13 +131,18 @@ public class OrderByTimeoutTest extends AbstractCairoTest {
     @Test
     public void testTimeoutSortedRecordCursorFactory() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE trips as (" +
-                    "select rnd_long() a, rnd_long() b, timestamp_sequence('2022-01-03', 50000000) ts from long_sequence(20)" +
-                    ") timestamp(ts) partition by day;");
-            testSql(20, "select * from trips where a > 1234567890L " +
-                    "union all " +
-                    "select rnd_long() a, rnd_long() b, timestamp_sequence('2022-01-03', 50000000) ts from long_sequence(20) " +
-                    "order by b desc");
+            compile(
+                    "CREATE TABLE trips as (" +
+                            "select rnd_long() a, rnd_long() b, timestamp_sequence('2022-01-03', 50000000) ts from long_sequence(20)" +
+                            ") timestamp(ts) partition by day;"
+            );
+            testSql(
+                    20,
+                    "select * from trips where a > 1234567890L " +
+                            "union all " +
+                            "select rnd_long() a, rnd_long() b, timestamp_sequence('2022-01-03', 50000000) ts from long_sequence(20) " +
+                            "order by b desc"
+            );
         });
     }
 

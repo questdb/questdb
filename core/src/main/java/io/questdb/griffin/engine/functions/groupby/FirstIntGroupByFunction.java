@@ -69,7 +69,17 @@ public class FirstIntGroupByFunction extends IntFunction implements GroupByFunct
     }
 
     @Override
+    public int getValueIndex() {
+        return valueIndex;
+    }
+
+    @Override
     public boolean isConstant() {
+        return false;
+    }
+
+    @Override
+    public boolean isParallelismSupported() {
         return false;
     }
 
@@ -87,5 +97,10 @@ public class FirstIntGroupByFunction extends IntFunction implements GroupByFunct
     @Override
     public void setNull(MapValue mapValue) {
         setInt(mapValue, Numbers.INT_NaN);
+    }
+
+    @Override
+    public void setValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
     }
 }

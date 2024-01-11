@@ -41,7 +41,7 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
         super(messageBus.getGroupByMergeShardQueue(), messageBus.getGroupByMergeShardSubSeq());
     }
 
-    public static void run(GroupByMergeShardTask task, Sequence subSeq, long cursor) {
+    public static void run(int workerId, GroupByMergeShardTask task, Sequence subSeq, long cursor) {
         final AtomicBooleanCircuitBreaker circuitBreaker = task.getCircuitBreaker();
         final CountDownLatchSPI doneLatch = task.getDoneLatch();
         final AsyncGroupByAtom atom = task.getAtom();
@@ -50,15 +50,17 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
         task.clear();
         subSeq.done(cursor);
 
+        final int slotId = atom.acquire(workerId, circuitBreaker);
         try {
             if (circuitBreaker.checkIfTripped()) {
                 return;
             }
-            atom.mergeShard(shardIndex);
+            atom.mergeShard(slotId, shardIndex);
         } catch (Throwable e) {
             LOG.error().$("merge shard failed [ex=").$(e).I$();
             circuitBreaker.cancel();
         } finally {
+            atom.release(slotId);
             doneLatch.countDown();
         }
     }
@@ -66,7 +68,7 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
     @Override
     protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
         final GroupByMergeShardTask task = queue.get(cursor);
-        run(task, subSeq, cursor);
+        run(workerId, task, subSeq, cursor);
         return true;
     }
 }

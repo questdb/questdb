@@ -60,7 +60,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         if (timeout > 0) {
             this.timeout = timeout;
         } else if (timeout == TIMEOUT_FAIL_ON_FIRST_CHECK) {
-            this.timeout = -1;
+            this.timeout = -100;
         } else {
             this.timeout = Long.MAX_VALUE;
         }
@@ -135,7 +135,6 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         if (testConnection(fd)) {
             return STATE_BROKEN_CONNECTION;
         }
-
         return STATE_OK;
     }
 
@@ -234,7 +233,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     protected boolean testConnection(int fd) {
-        if (!configuration.checkConnection()) {
+        if (fd == -1 || !configuration.checkConnection()) {
             return false;
         }
         return nf.testConnection(fd, buffer, bufferSize);

@@ -104,7 +104,17 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
     }
 
     @Override
+    public int getValueIndex() {
+        return valueIndex;
+    }
+
+    @Override
     public boolean isConstant() {
+        return false;
+    }
+
+    @Override
+    public boolean isParallelismSupported() {
         return false;
     }
 
@@ -133,6 +143,11 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NaN);
+    }
+
+    @Override
+    public void setValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
     }
 
     @Override

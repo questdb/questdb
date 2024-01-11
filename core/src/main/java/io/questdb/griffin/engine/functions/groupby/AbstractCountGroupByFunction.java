@@ -36,7 +36,6 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
 
 public abstract class AbstractCountGroupByFunction extends LongFunction implements GroupByFunction, UnaryFunction {
-
     protected final Function arg;
     protected int valueIndex;
 
@@ -55,13 +54,23 @@ public abstract class AbstractCountGroupByFunction extends LongFunction implemen
     }
 
     @Override
+    public int getValueIndex() {
+        return valueIndex;
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }
 
     @Override
     public boolean isParallelismSupported() {
-        return arg.isReadThreadSafe();
+        return true;
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return UnaryFunction.super.isReadThreadSafe();
     }
 
     @Override
@@ -89,6 +98,11 @@ public abstract class AbstractCountGroupByFunction extends LongFunction implemen
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NaN);
+    }
+
+    @Override
+    public void setValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
     }
 
     @Override

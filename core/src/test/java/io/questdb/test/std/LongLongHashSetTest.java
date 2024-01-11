@@ -196,7 +196,7 @@ public class LongLongHashSetTest {
         longSet.add(2, 1);
         StringSink sink = new StringSink();
         longSet.toSink(sink);
-        assertEquals("[[1,1],[2,1]]", sink.toString());
+        assertEquals("[[2,1],[1,1]]", sink.toString());
     }
 
     @Test
@@ -206,7 +206,7 @@ public class LongLongHashSetTest {
         longSet.add(2, 1);
         StringSink sink = new StringSink();
         longSet.toSink(sink);
-        String expected = "['" + new UUID(1, 1) + "','" + new UUID(1, 2) + "']";
+        String expected = "['" + new UUID(1, 2) + "','" + new UUID(1, 1) + "']";
         assertEquals(expected, sink.toString());
     }
 

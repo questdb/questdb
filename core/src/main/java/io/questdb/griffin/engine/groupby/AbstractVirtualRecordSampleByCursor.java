@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.groupby;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.VirtualRecord;
@@ -35,6 +36,7 @@ public abstract class AbstractVirtualRecordSampleByCursor extends AbstractNoReco
     protected final VirtualRecord record;
 
     public AbstractVirtualRecordSampleByCursor(
+            CairoConfiguration configuration,
             ObjList<Function> recordFunctions,
             int timestampIndex, // index of timestamp column in base cursor
             TimestampSampler timestampSampler,
@@ -46,6 +48,7 @@ public abstract class AbstractVirtualRecordSampleByCursor extends AbstractNoReco
             int offsetFuncPos
     ) {
         super(
+                configuration,
                 recordFunctions,
                 timestampIndex,
                 timestampSampler,

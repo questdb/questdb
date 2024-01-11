@@ -47,10 +47,10 @@ public abstract class AbstractSampleByFillRecordCursorFactory extends AbstractSa
     protected final RecordSink mapSink;
 
     public AbstractSampleByFillRecordCursorFactory(
+            @Transient @NotNull BytecodeAssembler asm,
             CairoConfiguration configuration,
             RecordCursorFactory base,
             @Transient @NotNull ListColumnFilter listColumnFilter,
-            @Transient @NotNull BytecodeAssembler asm,
             @Transient @NotNull ArrayColumnTypes keyTypes,
             @Transient @NotNull ArrayColumnTypes valueTypes,
             RecordMetadata groupByMetadata,

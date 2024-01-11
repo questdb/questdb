@@ -77,7 +77,6 @@ import static io.questdb.griffin.model.QueryModel.*;
 public class SqlCodeGenerator implements Mutable, Closeable {
     public static final int GKK_HOUR_INT = 1;
     public static final int GKK_VANILLA_INT = 0;
-    private static final ModelOperator BACKUP_WHERE_CLAUSE = QueryModel::backupWhereClause;
     private static final VectorAggregateFunctionConstructor COUNT_CONSTRUCTOR = (keyKind, columnIndex, workerCount) -> new CountVectorAggregateFunction(keyKind);
     private static final FullFatJoinGenerator CREATE_FULL_FAT_AS_OF_JOIN = SqlCodeGenerator::createFullFatAsOfJoin;
     private static final FullFatJoinGenerator CREATE_FULL_FAT_LT_JOIN = SqlCodeGenerator::createFullFatLtJoin;
@@ -89,6 +88,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private static final SetRecordCursorFactoryConstructor SET_INTERSECT_CONSTRUCTOR = IntersectRecordCursorFactory::new;
     private static final SetRecordCursorFactoryConstructor SET_UNION_CONSTRUCTOR = UnionRecordCursorFactory::new;
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> avgConstructors = new IntObjHashMap<>();
+    private static final ModelOperator backupWhereClauseRef = QueryModel::backupWhereClause;
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> countConstructors = new IntObjHashMap<>();
     private static final boolean[] joinsRequiringTimestamp = new boolean[JOIN_MAX + 1];
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> ksumConstructors = new IntObjHashMap<>();
@@ -408,7 +408,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private void backupWhereClause(ExpressionNode node) {
-        processNodeQueryModels(node, BACKUP_WHERE_CLAUSE);
+        processNodeQueryModels(node, backupWhereClauseRef);
     }
 
     // Checks if lo, hi is set and lo >= 0 while hi < 0 (meaning - return whole result set except some rows at start and some at the end)
@@ -467,12 +467,48 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             SqlExecutionContext executionContext
     ) throws SqlException {
         if (filter != null && !filter.isReadThreadSafe()) {
+            assert filterExpr != null;
             ObjList<Function> workerFilters = new ObjList<>();
             for (int i = 0; i < workerCount; i++) {
                 restoreWhereClause(filterExpr); // restore original filters in node query models
-                workerFilters.extendAndSet(i, compileBooleanFilter(filterExpr, metadata, executionContext));
+                Function workerFilter = compileBooleanFilter(filterExpr, metadata, executionContext);
+                workerFilters.extendAndSet(i, workerFilter);
+                assert filter.getClass() == workerFilter.getClass();
             }
             return workerFilters;
+        }
+        return null;
+    }
+
+    private @Nullable ObjList<ObjList<GroupByFunction>> compileWorkerGroupByFunctionsConditionally(
+            QueryModel model,
+            @NotNull ObjList<GroupByFunction> groupByFunctions,
+            int workerCount,
+            RecordMetadata metadata,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        boolean threadSafe = true;
+        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+            if (!groupByFunctions.getQuick(i).isReadThreadSafe()) {
+                threadSafe = false;
+                break;
+            }
+        }
+        if (!threadSafe) {
+            ObjList<ObjList<GroupByFunction>> allWorkerGroupByFunctions = new ObjList<>();
+            for (int i = 0; i < workerCount; i++) {
+                ObjList<GroupByFunction> workerGroupByFunctions = new ObjList<>(groupByFunctions.size());
+                allWorkerGroupByFunctions.extendAndSet(i, workerGroupByFunctions);
+                GroupByUtils.prepareWorkerGroupByFunctions(
+                        model,
+                        metadata,
+                        functionParser,
+                        executionContext,
+                        groupByFunctions,
+                        workerGroupByFunctions
+                );
+            }
+            return allWorkerGroupByFunctions;
         }
         return null;
     }
@@ -1387,18 +1423,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private RecordCursorFactory generateFilter(RecordCursorFactory factory, QueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        final ExpressionNode filter = model.getWhereClause();
-        return filter == null ? factory : generateFilter0(factory, model, executionContext, filter);
+        return model.getWhereClause() == null ? factory : generateFilter0(factory, model, executionContext);
     }
 
     @NotNull
     private RecordCursorFactory generateFilter0(
             RecordCursorFactory factory,
             QueryModel model,
-            SqlExecutionContext executionContext,
-            ExpressionNode filterExpr
+            SqlExecutionContext executionContext
     ) throws SqlException {
-        backupWhereClause(filterExpr); // back up in case filters need to be compiled again
+        final ExpressionNode filterExpr = model.getWhereClause();
+
+        // back up in case if the above factory steals the filter
+        model.setBackupWhereClause(ExpressionNode.deepClone(expressionNodePool, filterExpr));
+        // back up in case filters need to be compiled again
+        backupWhereClause(filterExpr);
         model.setWhereClause(null);
 
         final Function filter;
@@ -1448,7 +1487,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                     LOG.info()
                             .$("JIT enabled for (sub)query [tableName=").utf8(model.getName())
-                            .$(", fd=").$(executionContext.getRequestFd()).$(']').$();
+                            .$(", fd=").$(executionContext.getRequestFd())
+                            .I$();
                     return new AsyncJitFilteredRecordCursorFactory(
                             configuration,
                             executionContext.getMessageBus(),
@@ -2675,6 +2715,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (keyTypes.getColumnCount() == 0) {
                     return new SampleByFillPrevNotKeyedRecordCursorFactory(
                             asm,
+                            configuration,
                             factory,
                             timestampSampler,
                             groupByMetadata,
@@ -2713,6 +2754,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     // this sample by is not keyed
                     return new SampleByFillNoneNotKeyedRecordCursorFactory(
                             asm,
+                            configuration,
                             factory,
                             timestampSampler,
                             groupByMetadata,
@@ -2750,6 +2792,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (keyTypes.getColumnCount() == 0) {
                     return new SampleByFillNullNotKeyedRecordCursorFactory(
                             asm,
+                            configuration,
                             factory,
                             timestampSampler,
                             groupByMetadata,
@@ -2790,6 +2833,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (keyTypes.getColumnCount() == 0) {
                 return new SampleByFillValueNotKeyedRecordCursorFactory(
                         asm,
+                        configuration,
                         factory,
                         timestampSampler,
                         sampleByFill,
@@ -3146,6 +3190,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             boolean pageFramingSupported = false;
             boolean specialCaseKeys = false;
 
+            QueryModel.backupWhereClause(expressionNodePool, model);
+
             // check for special case time function aggregations
             final QueryModel nested = model.getNestedModel();
             assert nested != null;
@@ -3158,7 +3204,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             && columnExpr.rhs.type == LITERAL
             ) {
                 specialCaseKeys = true;
-                QueryModel.backupWhereClause(expressionNodePool, model);
                 factory = generateSubQuery(nested, executionContext);
                 pageFramingSupported = factory.supportPageFrameCursor();
                 if (pageFramingSupported) {
@@ -3188,12 +3233,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
 
-            ExpressionNode nestedFilterExpr = null;
             if (factory == null) {
                 if (specialCaseKeys) {
                     QueryModel.restoreWhereClause(expressionNodePool, model);
                 }
-                nestedFilterExpr = ExpressionNode.deepClone(expressionNodePool, nested.getWhereClause());
                 factory = generateSubQuery(model, executionContext);
                 pageFramingSupported = factory.supportPageFrameCursor();
             }
@@ -3370,51 +3413,32 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             final boolean enableParallelGroupBy = configuration.isSqlParallelGroupByEnabled();
-            if (enableParallelGroupBy && GroupByUtils.supportParallelism(groupByFunctions)) {
+            if (enableParallelGroupBy
+                    && SqlUtil.isParallelismSupported(keyFunctions)
+                    && GroupByUtils.isParallelismSupported(groupByFunctions)) {
                 boolean supportsParallelism = factory.supportPageFrameCursor();
-                Function nestedFilter = null;
-                ArrayColumnTypes keyTypesCopy = keyTypes;
-                ArrayColumnTypes valueTypesCopy = valueTypes;
-                ListColumnFilter listColumnFilterCopy = listColumnFilterA;
-                // Try to steal the filter from the nested model, if possible.
+                Function filter = null;
+                // Try to steal the filter from the nested factory, if possible.
                 // We aim for simple cases such as select key, avg(value) from t where value > 0
-                if (
-                        !supportsParallelism
-                                && !factory.usesIndex() // favor index-based access
-                                && SqlUtil.isPlainSelect(nested)
-                                && nested.getWhereClause() == null && nestedFilterExpr != null // filtered factories "steal" the filter
-                ) {
-                    try {
-                        // back up required lists as generateSubQuery or compileWorkerFilterConditionally may overwrite them
-                        keyTypesCopy = new ArrayColumnTypes().addAll(keyTypes);
-                        valueTypesCopy = new ArrayColumnTypes().addAll(valueTypes);
-                        listColumnFilterCopy = listColumnFilterA.copy();
-
-                        RecordCursorFactory candidateFactory = generateSubQuery(model, executionContext);
-                        if (candidateFactory.supportPageFrameCursor()) {
-                            Misc.free(factory);
-                            factory = candidateFactory;
-                            restoreWhereClause(nestedFilterExpr);
-                            nestedFilter = compileBooleanFilter(nestedFilterExpr, factory.getMetadata(), executionContext);
-                            supportsParallelism = true;
-                        } else {
-                            Misc.free(candidateFactory);
-                            // restore the lists
-                            keyTypes.clear();
-                            keyTypes.addAll(keyTypesCopy);
-                            valueTypes.clear();
-                            valueTypes.addAll(valueTypesCopy);
-                            listColumnFilterA.clear();
-                            listColumnFilterA.addAll(listColumnFilterCopy);
-                        }
-                    } catch (Throwable e) {
-                        Misc.freeObjList(recordFunctions); // groupByFunctions are included in recordFunctions
-                        Misc.freeObjList(keyFunctions);
-                        throw e;
+                if (!supportsParallelism && (factory instanceof StealableFilterRecordCursorFactory)) {
+                    StealableFilterRecordCursorFactory filterFactory = (StealableFilterRecordCursorFactory) factory;
+                    if (filterFactory.supportsFilterStealing()) {
+                        factory = factory.getBaseFactory();
+                        assert factory.supportPageFrameCursor();
+                        filter = filterFactory.getFilter();
+                        supportsParallelism = true;
+                        filterFactory.halfClose();
                     }
                 }
 
                 if (supportsParallelism) {
+                    QueryModel.restoreWhereClause(expressionNodePool, model);
+
+                    // back up required lists as generateSubQuery or compileWorkerFilterConditionally may overwrite them
+                    ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes().addAll(keyTypes);
+                    ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes().addAll(valueTypes);
+                    ListColumnFilter listColumnFilterCopy = listColumnFilterA.copy();
+
                     if (keyTypesCopy.getColumnCount() == 0) {
                         assert keyFunctions.size() == 0;
                         assert recordFunctions.size() == groupByFunctions.size();
@@ -3425,13 +3449,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 factory,
                                 groupByMetadata,
                                 groupByFunctions,
+                                compileWorkerGroupByFunctionsConditionally(
+                                        model,
+                                        groupByFunctions,
+                                        executionContext.getSharedWorkerCount(),
+                                        factory.getMetadata(),
+                                        executionContext
+                                ),
                                 valueTypesCopy.getColumnCount(),
-                                nestedFilter,
+                                filter,
                                 reduceTaskFactory,
                                 compileWorkerFilterConditionally(
-                                        nestedFilter,
+                                        filter,
                                         executionContext.getSharedWorkerCount(),
-                                        nestedFilterExpr,
+                                        nested.getWhereClause(),
                                         factory.getMetadata(),
                                         executionContext
                                 ),
@@ -3449,6 +3480,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             keyTypesCopy,
                             valueTypesCopy,
                             groupByFunctions,
+                            compileWorkerGroupByFunctionsConditionally(
+                                    model,
+                                    groupByFunctions,
+                                    executionContext.getSharedWorkerCount(),
+                                    factory.getMetadata(),
+                                    executionContext
+                            ),
                             keyFunctions,
                             compileWorkerKeyFunctionsConditionally(
                                     keyFunctions,
@@ -3458,12 +3496,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     executionContext
                             ),
                             recordFunctions,
-                            nestedFilter,
+                            filter,
                             reduceTaskFactory,
                             compileWorkerFilterConditionally(
-                                    nestedFilter,
+                                    filter,
                                     executionContext.getSharedWorkerCount(),
-                                    nestedFilterExpr,
+                                    nested.getWhereClause(),
                                     factory.getMetadata(),
                                     executionContext
                             ),
@@ -3476,6 +3514,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 assert recordFunctions.size() == groupByFunctions.size();
                 return new GroupByNotKeyedRecordCursorFactory(
                         asm,
+                        configuration,
                         factory,
                         groupByMetadata,
                         groupByFunctions,
