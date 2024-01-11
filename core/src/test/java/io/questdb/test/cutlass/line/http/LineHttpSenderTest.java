@@ -1,11 +1,13 @@
 package io.questdb.test.cutlass.line.http;
 
 import io.questdb.client.Sender;
+import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.http.LineHttpSender;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -13,6 +15,7 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 
 import static io.questdb.PropertyKey.DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE;
+import static io.questdb.PropertyKey.LINE_HTTP_ENABLED;
 import static io.questdb.test.cutlass.http.line.IlpHttpUtils.getHttpPort;
 
 public class LineHttpSenderTest extends AbstractBootstrapTest {
@@ -52,6 +55,36 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     serverMain.waitWalTxnApplied("table with space");
                     serverMain.assertSql("select count() from 'table with space'", "count\n" +
                             totalCount + "\n");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testLineHttpDisabled() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        TestUtils.assertMemoryLeak(() -> {
+            int fragmentation = 1 + rnd.nextInt(5);
+            LOG.info().$("=== fragmentation=").$(fragmentation).$();
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    LINE_HTTP_ENABLED.getEnvVarName(), "false"
+            )) {
+                int httpPort = getHttpPort(serverMain);
+
+                int totalCount = 1_000;
+                try (LineHttpSender sender = new LineHttpSender("localhost", httpPort, -1, false, Sender.TlsValidationMode.DEFAULT, 100_000, null, null, null)) {
+                    for (int i = 0; i < totalCount; i++) {
+                        sender.table("table")
+                                .longColumn("lcol1", i)
+                                .atNow();
+                    }
+                    try {
+                        sender.flush();
+                        Assert.fail("Expected exception");
+                    } catch (LineSenderException e) {
+                        TestUtils.assertContains(e.getMessage(), "http-status=404");
+                        TestUtils.assertContains(e.getMessage(), "Could not flush buffer: HTTP endpoint does not support ILP.");
+                    }
                 }
             }
         });

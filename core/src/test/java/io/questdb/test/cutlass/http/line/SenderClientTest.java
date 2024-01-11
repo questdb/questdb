@@ -44,35 +44,42 @@ public class SenderClientTest extends AbstractBootstrapTest {
                     sender.table("ex_tbl")
                             .doubleColumn("b", 1234)
                             .at(1233456, ChronoUnit.NANOS);
-                    flushAndAssertError(sender, "{" +
-                            "\"code\":\"invalid\"," +
-                            "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
-                            "error in line 1: table: ex_tbl, column: b; cast error from protocol type: FLOAT to column type: BYTE\",\"line\":1,\"errorId\":");
+                    flushAndAssertError(
+                            sender,
+                            "Could not flush buffer",
+                            "http-status=400",
+                            "error in line 1: table: ex_tbl, column: b; cast error from protocol type: FLOAT to column type: BYTE"
+                    );
 
                     sender.table("ex_tbl")
                             .longColumn("b", 1024)
                             .at(1233456, ChronoUnit.NANOS);
-                    flushAndAssertError(sender, "{" +
-                            "\"code\":\"invalid\"," +
-                            "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
-                            "error in line 1: table: ex_tbl, column: b; line protocol value: 1024 is out bounds of column type: BYTE\",\"line\":1,\"errorId\":");
+                    flushAndAssertError(
+                            sender,
+                            "Could not flush buffer",
+                            "http-status=400",
+                            "error in line 1: table: ex_tbl, column: b; line protocol value: 1024 is out bounds of column type: BYTE"
+                    );
 
                     sender.table("ex_tbl")
                             .doubleColumn("i", 1024.2)
                             .at(1233456, ChronoUnit.NANOS);
-                    flushAndAssertError(sender, "{" +
-                            "\"code\":\"invalid\"," +
-                            "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
-                            "error in line 1: table: ex_tbl, column: i; cast error from protocol type: FLOAT to column type: INT\",\"line\":1,\"errorId\":");
+                    flushAndAssertError(
+                            sender,
+                            "Could not flush buffer",
+                            "http-status=400",
+                            "error in line 1: table: ex_tbl, column: i; cast error from protocol type: FLOAT to column type: INT"
+                    );
 
                     sender.table("ex_tbl")
                             .doubleColumn("str", 1024.2)
                             .at(1233456, ChronoUnit.NANOS);
-                    flushAndAssertError(sender, "{" +
-                            "\"code\":\"invalid\"," +
-                            "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
-                            "error in line 1: table: ex_tbl, column: str; cast error from protocol type: FLOAT to column type: STRING\",\"line\":1,\"errorId\":");
-
+                    flushAndAssertError(
+                            sender,
+                            "Could not flush buffer",
+                            "http-status=400",
+                            "error in line 1: table: ex_tbl, column: str; cast error from protocol type: FLOAT to column type: STRING"
+                    );
                 }
             }
         });
@@ -138,18 +145,22 @@ public class SenderClientTest extends AbstractBootstrapTest {
                     sender.table("ex_tbl")
                             .symbol("a3", "3")
                             .at(1222233456, ChronoUnit.NANOS);
-                    flushAndAssertError(sender, "{" +
-                            "\"code\":\"invalid\"," +
-                            "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
-                            "error in line 1: table: ex_tbl, column: a3 does not exist, creating new columns is disabled\",\"line\":1,\"errorId\":");
+                    flushAndAssertError(
+                            sender,
+                            "Could not flush buffer",
+                            "http-status=400",
+                            "error in line 1: table: ex_tbl, column: a3 does not exist, creating new columns is disabled"
+                    );
 
                     sender.table("ex_tbl2")
                             .doubleColumn("d", 2)
                             .at(1222233456, ChronoUnit.NANOS);
-                    flushAndAssertError(sender, "{" +
-                            "\"code\":\"invalid\"," +
-                            "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
-                            "error in line 1: table: ex_tbl2; table does not exist, cannot create table, creating new columns is disabled\",\"line\":1,\"errorId\":");
+                    flushAndAssertError(
+                            sender,
+                            "Could not flush buffer",
+                            "http-status=400",
+                            "error in line 1: table: ex_tbl2; table does not exist, cannot create table, creating new columns is disabled"
+                    );
                 }
             }
         });
@@ -175,29 +186,35 @@ public class SenderClientTest extends AbstractBootstrapTest {
                     sender.table("ex_tbl")
                             .symbol("a3", "2")
                             .at(1222233456, ChronoUnit.NANOS);
-                    flushAndAssertError(sender, "{" +
-                            "\"code\":\"invalid\"," +
-                            "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
-                            "error in line 1: table: ex_tbl, column: a3 does not exist, creating new columns is disabled\",\"line\":1,\"errorId\":");
+                    flushAndAssertError(
+                            sender,
+                            "Could not flush buffer",
+                            "http-status=400",
+                            "error in line 1: table: ex_tbl, column: a3 does not exist, creating new columns is disabled"
+                    );
 
                     sender.table("ex_tbl2")
                             .doubleColumn("d", 2)
                             .at(1222233456, ChronoUnit.NANOS);
-                    flushAndAssertError(sender, "{" +
-                            "\"code\":\"invalid\"," +
-                            "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
-                            "error in line 1: table: ex_tbl2; table does not exist, creating new tables is disabled\",\"line\":1,\"errorId\":");
+                    flushAndAssertError(
+                            sender,
+                            "Could not flush buffer",
+                            "http-status=400",
+                            "error in line 1: table: ex_tbl2; table does not exist, creating new tables is disabled"
+                    );
                 }
             }
         });
     }
 
-    private static void flushAndAssertError(Sender sender, String expectedError) {
+    private static void flushAndAssertError(Sender sender, String... errors) {
         try {
             sender.flush();
             Assert.fail("Expected exception");
         } catch (LineSenderException e) {
-            TestUtils.assertContains(e.getMessage(), expectedError);
+            for (String error : errors) {
+                TestUtils.assertContains(e.getMessage(), error);
+            }
         }
     }
 

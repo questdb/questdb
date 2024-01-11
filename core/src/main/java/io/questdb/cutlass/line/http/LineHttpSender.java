@@ -3,13 +3,19 @@ package io.questdb.cutlass.line.http;
 import io.questdb.cairo.TableUtils;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.http.client.*;
+import io.questdb.cutlass.json.JsonException;
+import io.questdb.cutlass.json.JsonLexer;
+import io.questdb.cutlass.json.JsonParser;
 import io.questdb.cutlass.line.LineSenderException;
+import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.StringSink;
 
+import java.io.Closeable;
+import java.io.IOException;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.concurrent.ThreadLocalRandom;
@@ -29,6 +35,7 @@ public final class LineHttpSender implements Sender {
     private final String username;
     private HttpClient client;
     private boolean closed;
+    private JsonErrorParser jsonErrorParser;
     private long pendingRows;
     private HttpClient.Request request;
     private RequestState state = RequestState.EMPTY;
@@ -91,6 +98,7 @@ public final class LineHttpSender implements Sender {
         try {
             flush();
         } finally {
+            Misc.free(jsonErrorParser);
             closed = true;
             client = Misc.free(client);
         }
@@ -106,8 +114,7 @@ public final class LineHttpSender implements Sender {
     @Override
     public void flush() {
         if (state != RequestState.EMPTY) {
-            //todo: maybe try to send everything up until the last end of row?
-            throw new LineSenderException("cannot flush while row is in progress");
+            throw new LineSenderException("Cannot flush buffer while row is in progress. Use sender.at() or sender.atNow() to finish the current row first.");
         }
         if (pendingRows == 0) {
             return;
@@ -119,19 +126,19 @@ public final class LineHttpSender implements Sender {
             try {
                 HttpClient.ResponseHeaders response = request.send(host, port);
                 response.await();
-                if (!isSuccessResponse(response)) {
-                    StringSink sink = Misc.getThreadLocalSink();
-                    sink.put("HTTP status code: ").put(response.getStatusCode()).put("; Message: ");
-                    ChunkedResponse chunkedRsp = response.getChunkedResponse();
-                    Chunk chunk;
-                    while ((chunk = chunkedRsp.recv()) != null) {
-                        sink.putUtf8(chunk.lo(), chunk.hi());
-                    }
-                    pendingRows = 0;
-                    request = newRequest();
-                    throw new LineSenderException(sink.toString());
+                DirectUtf8Sequence statusCode = response.getStatusCode();
+                if (isSuccessResponse(statusCode)) {
+                    break;
                 }
-                break;
+                if (isRetryableHttpStatus(statusCode)) {
+                    client.disconnect(); // forces reconnect, just in case
+                    if (remainingRetries-- == 0) {
+                        handleHttpErrorResponse(statusCode, response);
+                    }
+                    retryBackoff = backoff(retryBackoff);
+                    continue;
+                }
+                handleHttpErrorResponse(statusCode, response);
             } catch (HttpClientException e) {
                 // this is a network error, we can retry
                 client.disconnect(); // forces reconnect
@@ -139,12 +146,9 @@ public final class LineHttpSender implements Sender {
                     // we did our best, give up
                     pendingRows = 0;
                     request = newRequest();
-                    throw new LineSenderException("error while sending data to server", e);
+                    throw new LineSenderException("Could not flush buffer: Error while sending data to server. ", e);
                 }
-                int jitter = ThreadLocalRandom.current().nextInt(RETRY_MAX_JITTER_MS);
-                int backoff = retryBackoff + jitter;
-                Os.sleep(backoff);
-                retryBackoff = Math.min(RETRY_MAX_BACKOFF_MS, backoff * RETRY_BACKOFF_MULTIPLIER);
+                retryBackoff = backoff(retryBackoff);
             }
         }
         pendingRows = 0;
@@ -222,9 +226,15 @@ public final class LineHttpSender implements Sender {
         return this;
     }
 
-    private static boolean isSuccessResponse(HttpClient.ResponseHeaders response) {
-        DirectUtf8Sequence statusCode = response.getStatusCode();
-        return statusCode.size() == 3 && statusCode.byteAt(0) == '2';
+    private static int backoff(int retryBackoff) {
+        int jitter = ThreadLocalRandom.current().nextInt(RETRY_MAX_JITTER_MS);
+        int backoff = retryBackoff + jitter;
+        Os.sleep(backoff);
+        return Math.min(RETRY_MAX_BACKOFF_MS, backoff * RETRY_BACKOFF_MULTIPLIER);
+    }
+
+    private static boolean isSuccessResponse(DirectUtf8Sequence statusCode) {
+        return statusCode != null && statusCode.size() == 3 && statusCode.byteAt(0) == '2';
     }
 
     private static long unitToNanos(ChronoUnit unit) {
@@ -276,6 +286,59 @@ public final class LineHttpSender implements Sender {
                     break;
             }
         }
+    }
+
+    private void handleHttpErrorResponse(DirectUtf8Sequence statusCode, HttpClient.ResponseHeaders response) {
+        // be ready for next request
+        pendingRows = 0;
+        request = newRequest();
+
+        if (Chars.equals("404", statusCode.asAsciiCharSequence())) {
+            throw new LineSenderException("Could not flush buffer: HTTP endpoint does not support ILP. [http-status=404]");
+        }
+        DirectUtf8Sequence contentType = response.getContentType();
+        if (contentType != null && Chars.equals("application/json", contentType.asAsciiCharSequence())) {
+            if (jsonErrorParser == null) {
+                jsonErrorParser = new JsonErrorParser();
+            }
+            jsonErrorParser.reset();
+            jsonErrorParser.parseAndThrow(response.getChunkedResponse(), statusCode);
+        }
+        // ok, no JSON, let's do something more generic
+        StringSink sink = Misc.getThreadLocalSink();
+        sink.put("Could not flush buffer: ");
+        ChunkedResponse chunkedRsp = response.getChunkedResponse();
+        Chunk chunk;
+        while ((chunk = chunkedRsp.recv()) != null) {
+            sink.putUtf8(chunk.lo(), chunk.hi());
+        }
+        sink.put(" [http-status=").put(statusCode).put(']');
+        throw new LineSenderException(sink);
+    }
+
+    private boolean isRetryableHttpStatus(DirectUtf8Sequence statusCode) {
+        if (statusCode == null || statusCode.size() != 3 || statusCode.byteAt(0) != '5') {
+            return false;
+        }
+        // we know the status bytes are 5xx, but is the HTTP status retryable?
+        // copied from QuestDB Rust client:
+//        Status(500, _) |  // Internal Server Error
+//        Status(503, _) |  // Service Unavailable
+//        Status(504, _) |  // Gateway Timeout
+//
+//        // Unofficial extensions
+//        Status(507, _) | // Insufficient Storage
+//        Status(509, _) | // Bandwidth Limit Exceeded
+//        Status(523, _) | // Origin is Unreachable
+//        Status(524, _) | // A Timeout Occurred
+//        Status(529, _) | // Site is overloaded
+//        Status(599, _) => { // Network Connect Timeout Error
+
+        byte middle = statusCode.byteAt(1);
+        byte last = statusCode.byteAt(2);
+        return middle == '0' && (last == '0' || last == '3' || last == '4' || last == '7' || last == '9')
+                || middle == '2' && (last == '3' || last == '4' || last == '9')
+                || middle == '9' && last == '9';
     }
 
     private HttpClient.Request newRequest() {
@@ -334,5 +397,148 @@ public final class LineHttpSender implements Sender {
         TABLE_NAME_SET,
         ADDING_SYMBOLS,
         ADDING_COLUMNS,
+    }
+
+    private static class JsonErrorParser implements JsonParser, Closeable {
+        private final StringSink codeSink = new StringSink();
+        private final StringSink errorIdSink = new StringSink();
+        private final StringSink jsonSink = new StringSink();
+        private final JsonLexer lexer = new JsonLexer(1024, 1024);
+        private final StringSink lineSink = new StringSink();
+        private final StringSink messageSink = new StringSink();
+        private State state = State.INIT;
+
+        @Override
+        public void close() throws IOException {
+            Misc.free(lexer);
+        }
+
+        @Override
+        public void onEvent(int code, CharSequence tag, int position) throws JsonException {
+            switch (state) {
+                case INIT:
+                    if (code == JsonLexer.EVT_OBJ_START) {
+                        state = State.NEXT_KEY_NAME;
+                    } else {
+                        throw JsonException.$(position, "expected '{'");
+                    }
+                    break;
+                case NEXT_KEY_NAME:
+                    if (code == JsonLexer.EVT_OBJ_END) {
+                        state = State.INIT;
+                    } else if (code == JsonLexer.EVT_NAME) {
+                        if (Chars.equals("code", tag)) {
+                            state = State.NEXT_CODE_VALUE;
+                        } else if (Chars.equals("message", tag)) {
+                            state = State.NEXT_MESSAGE_VALUE;
+                        } else if (Chars.equals("line", tag)) {
+                            state = State.NEXT_LINE_NUMBER_VALUE;
+                        } else if (Chars.equals("errorId", tag)) {
+                            state = State.NEXT_ERROR_ID_VALUE;
+                        } else {
+                            throw JsonException.$(position, "expected 'code', 'message', 'line' or 'error'");
+                        }
+                    } else {
+                        throw JsonException.$(position, "expected 'error' or 'message'");
+                    }
+                    break;
+                case NEXT_CODE_VALUE:
+                    if (code == JsonLexer.EVT_VALUE) {
+                        codeSink.put(tag);
+                        state = State.NEXT_KEY_NAME;
+                    } else {
+                        throw JsonException.$(position, "expected number");
+                    }
+                    break;
+                case NEXT_MESSAGE_VALUE:
+                    if (code == JsonLexer.EVT_VALUE) {
+                        messageSink.put(tag);
+                        state = State.NEXT_KEY_NAME;
+                    } else {
+                        throw JsonException.$(position, "expected string");
+                    }
+                    break;
+                case NEXT_LINE_NUMBER_VALUE:
+                    if (code == JsonLexer.EVT_VALUE) {
+                        lineSink.put(tag);
+                        state = State.NEXT_KEY_NAME;
+                    } else {
+                        throw JsonException.$(position, "expected number");
+                    }
+                    break;
+                case NEXT_ERROR_ID_VALUE:
+                    if (code == JsonLexer.EVT_VALUE) {
+                        errorIdSink.put(tag);
+                        state = State.NEXT_KEY_NAME;
+                    } else {
+                        throw JsonException.$(position, "expected string");
+                    }
+                    break;
+                case DONE:
+                    break;
+            }
+        }
+
+        private void drainAndReset(LineSenderException sink, DirectUtf8Sequence httpStatus) {
+            assert state == State.INIT;
+
+            sink.put(messageSink).put(" [http-status=").put(httpStatus.asAsciiCharSequence());
+            if (codeSink.length() > 0 || errorIdSink.length() > 0 || lineSink.length() > 0) {
+                if (codeSink.length() > 0) {
+                    sink.put(", code: ").put(codeSink);
+                }
+                if (errorIdSink.length() > 0) {
+                    sink.put(", errorId: ").put(errorIdSink);
+                }
+                if (lineSink.length() > 0) {
+                    sink.put(", line: ").put(lineSink);
+                }
+            }
+            sink.put(']');
+            reset();
+        }
+
+        private void reset() {
+            state = State.INIT;
+            codeSink.clear();
+            errorIdSink.clear();
+            lineSink.clear();
+            messageSink.clear();
+            lexer.clear();
+            jsonSink.clear();
+        }
+
+        void parseAndThrow(ChunkedResponse chunkedRsp, DirectUtf8Sequence httpStatus) {
+            Chunk chunk;
+            LineSenderException exception = new LineSenderException("Could not flush buffer: ");
+            while ((chunk = chunkedRsp.recv()) != null) {
+                try {
+                    jsonSink.putUtf8(chunk.lo(), chunk.hi());
+                    lexer.parse(chunk.lo(), chunk.hi(), this);
+                } catch (JsonException e) {
+                    // we failed to parse JSON, but we still want to show the error message.
+                    // if we cannot parse it then we show the whole response as is.
+                    // let's make sure we have the whole message - there might be more chunks
+                    while ((chunk = chunkedRsp.recv()) != null) {
+                        jsonSink.putUtf8(chunk.lo(), chunk.hi());
+                    }
+                    exception.put("Could not parse JSON error response. [error=").put(e.getMessage()).put(", response=").put(jsonSink).put(']');
+                    reset();
+                    throw exception;
+                }
+            }
+            drainAndReset(exception, httpStatus);
+            throw exception;
+        }
+
+        enum State {
+            INIT,
+            NEXT_KEY_NAME,
+            NEXT_CODE_VALUE,
+            NEXT_MESSAGE_VALUE,
+            NEXT_LINE_NUMBER_VALUE,
+            NEXT_ERROR_ID_VALUE,
+            DONE
+        }
     }
 }

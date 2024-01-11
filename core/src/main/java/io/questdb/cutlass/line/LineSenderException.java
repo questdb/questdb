@@ -32,7 +32,7 @@ public class LineSenderException extends RuntimeException {
     private final StringSink message = new StringSink();
     private int errno = Integer.MIN_VALUE;
 
-    public LineSenderException(String message) {
+    public LineSenderException(CharSequence message) {
         this.message.put(message);
     }
 
@@ -65,6 +65,11 @@ public class LineSenderException extends RuntimeException {
             return errNoRender;
         }
         return errNoRender + " " + message;
+    }
+
+    public LineSenderException put(char ch) {
+        message.put(ch);
+        return this;
     }
 
     public LineSenderException put(long value) {
