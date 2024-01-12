@@ -8487,12 +8487,13 @@ public class IODispatcherTest extends AbstractTest {
                                     //wait until query appears in registry and get query id
                                     while (true) {
                                         Os.sleep(1);
+                                        //noinspection Convert2Diamond
                                         testHttpClient.assertGetRegexp(
                                                 "/query",
                                                 ".*dataset.*",
                                                 "select query_id from query_activity() where query = '" + command.replace("'", "''") + "'",
                                                 null, null, null,
-                                                new CharSequenceObjHashMap<>() {{
+                                                new CharSequenceObjHashMap<String>() {{
                                                     put("nm", "true");
                                                 }},
                                                 "200"
