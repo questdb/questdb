@@ -337,6 +337,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.totalReceived = 0;
         this.chunkedContentParser.clear();
         this.recvPos = recvBuffer;
+        this.rejectProcessor.clear();
         clearSuspendEvent();
     }
 
@@ -816,7 +817,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             if (url == null) {
                 throw HttpException.instance("missing URL");
             }
-            HttpRequestProcessor processor = getHttpRequestProcessor(selector);
+            HttpRequestProcessor processor = isRequestBeingRejected() ? rejectProcessor : getHttpRequestProcessor(selector);
             int contentLength = headerParser.getContentLength();
             final boolean chunked = Utf8s.equalsNcAscii("chunked", headerParser.getHeader(HEADER_TRANSFER_ENCODING));
             final boolean multipartRequest = Utf8s.equalsNcAscii("multipart/form-data", headerParser.getContentType())
@@ -828,20 +829,22 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             }
 
             try {
-                if (newRequest && processor.requiresAuthentication() && !configureSecurityContext()) {
-                    processor = rejectUnauthorized(null);
-                }
-
-                if (newRequest && configuration.areCookiesEnabled()) {
-                    if (!processor.processCookies(this, securityContext)) {
-                        processor = rejectProcessor;
+                if (newRequest) {
+                    if (processor.requiresAuthentication() && !configureSecurityContext()) {
+                        processor = rejectUnauthorized(null);
                     }
-                }
 
-                try {
-                    securityContext.checkEntityEnabled();
-                } catch (CairoException e) {
-                    processor = rejectForbiddenRequest(e.getFlyweightMessage());
+                    if (configuration.areCookiesEnabled()) {
+                        if (!processor.processCookies(this, securityContext)) {
+                            processor = rejectProcessor;
+                        }
+                    }
+
+                    try {
+                        securityContext.checkEntityEnabled();
+                    } catch (CairoException e) {
+                        processor = rejectForbiddenRequest(e.getFlyweightMessage());
+                    }
                 }
 
                 if (chunked) {
@@ -931,6 +934,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return busyRecv;
     }
 
+    private boolean isRequestBeingRejected() {
+        return rejectProcessor.rejectCode != 0;
+    }
+
     private boolean handleClientSend() {
         if (resumeProcessor != null) {
             try {
@@ -1005,6 +1012,13 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         private CharSequence rejectCookieName = null;
         private CharSequence rejectCookieValue = null;
         private CharSequence rejectMessage = null;
+
+        public void clear() {
+            rejectCode = 0;
+            rejectCookieName = null;
+            rejectCookieValue = null;
+            rejectMessage = null;
+        }
 
         @Override
         public void onChunk(long lo, long hi) {
