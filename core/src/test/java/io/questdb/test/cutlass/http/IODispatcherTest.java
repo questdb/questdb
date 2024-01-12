@@ -5666,8 +5666,8 @@ public class IODispatcherTest extends AbstractTest {
                         "Transfer-Encoding: chunked\r\n" +
                         "Content-Type: text/plain; charset=utf-8\r\n" +
                         "\r\n" +
-                        "22\r\n" +
-                        "method (multipart) not supported\r\n" +
+                        "27\r\n" +
+                        "method (multipart POST) not supported\r\n" +
                         "\r\n" +
                         "00\r\n" +
                         "\r\n",

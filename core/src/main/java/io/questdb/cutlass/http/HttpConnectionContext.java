@@ -78,7 +78,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private int receivedBytes;
     private long recvBuffer;
     private long recvPos;
-    private HttpRequestProcessor resumeProcessor = new RejectProcessor();
+    private HttpRequestProcessor resumeProcessor = null;
     private SecurityContext securityContext;
     private SuspendEvent suspendEvent;
     private long totalBytesSent;
@@ -847,18 +847,18 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 if (chunked) {
                     if (!multipartProcessor) {
                         // bad request - regular request for processor that expects multipart
-                        processor = rejectRequest(HTTP_NOT_FOUND, "method (chunked) not supported");
+                        processor = rejectRequest(HTTP_NOT_FOUND, "method (chunked POST) not supported");
                     }
                     busyRecv = consumeChunked(processor, headerEnd, read, newRequest);
                 } else if (multipartRequest) {
                     if (!multipartProcessor) {
                         // bad request - multipart request for processor that doesn't expect multipart
-                        processor = rejectRequest(HTTP_NOT_FOUND, "method (multipart) not supported");
+                        processor = rejectRequest(HTTP_NOT_FOUND, "method (multipart POST) not supported");
                     }
                     busyRecv = consumeMultipart(socket, processor, headerEnd, read, newRequest, rescheduleContext);
                 } else if (contentLength > -1) {
                     if (!multipartProcessor) {
-                        processor = rejectRequest(HTTP_NOT_FOUND, "method (content) not supported");
+                        processor = rejectRequest(HTTP_NOT_FOUND, "method (POST) not supported");
                     }
                     busyRecv = consumeContent(contentLength, socket, processor, headerEnd, read, newRequest);
                 } else {
