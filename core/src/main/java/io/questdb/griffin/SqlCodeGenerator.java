@@ -2749,8 +2749,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             SqlExecutionContext executionContext,
             boolean processJoins
     ) throws SqlException {
-        // TODO: special duck model type?
-        switch (model.getSelectModelType()) {
+        final int selectModelType = model.getSelectModelType();
+        switch (selectModelType) {
             case QueryModel.SELECT_MODEL_CHOOSE:
                 return generateSelectChoose(model, executionContext);
             case QueryModel.SELECT_MODEL_GROUP_BY:
@@ -2769,7 +2769,40 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (model.getJoinModels().size() > 1 && processJoins) {
                     return generateJoins(model, executionContext);
                 }
-                return generateNoSelect(model, executionContext);
+                if (selectModelType == QueryModel.SELECT_MODEL_EXTERNAL) {
+                    return generateExternalModel(model, executionContext);
+                } else {
+                    return generateNoSelect(model, executionContext);
+                }
+        }
+    }
+
+    private RecordCursorFactory generateExternalModel(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        assert model.isExternalModel();
+
+        QueryModel externalModel = model;
+        if (model.getTableNameExpr() == null) {
+           externalModel = model.getNestedModel();
+           assert externalModel != null;
+        }
+
+        try(DuckDBConnectionPool.Connection conn = executionContext.getCairoEngine().getDuckDBConnection()) {
+            String externalSQL = externalModel.toExternalSQL();
+            assert externalSQL != null && !externalSQL.isEmpty();
+            LOG.info().$("External (sub)query [query=").$(externalSQL).$(']').$();
+            GcUtf8String query = new GcUtf8String(externalSQL);
+            final long stmt = conn.prepare(query);
+            final long error = DuckDB.preparedGetError(stmt);
+            if (error != 0) {
+                DirectUtf8StringZ err = new DirectUtf8StringZ();
+                err.of(error);
+                throw SqlException.$(externalModel.getModelPosition(), "could not compile external sql [sql=")
+                        .put(externalSQL)
+                        .put(", error=")
+                        .put(err.toString())
+                        .put("]");
+            }
+            return new DuckDBRecordCursorFactory(stmt);
         }
     }
 

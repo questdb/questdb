@@ -4962,6 +4962,37 @@ public class SqlOptimiser implements Mutable {
     protected void authorizeUpdate(QueryModel updateQueryModel, TableToken token) {
     }
 
+    protected QueryModel extractExternal(QueryModel model) {
+        if (model.getNestedModel() == null) {
+            ExpressionNode tableNameExpr = model.getTableNameExpr();
+            if (tableNameExpr != null && Chars.startsWith(tableNameExpr.token, "q:")) {
+                model.setSelectModelType(QueryModel.SELECT_MODEL_EXTERNAL);
+            }
+            return model;
+        }
+
+        return externalise(model, extractExternal(model.getNestedModel()));
+    }
+
+    protected QueryModel externalise(QueryModel parent, QueryModel model) {
+
+        ObjList<QueryModel> joinModels = model.getJoinModels();
+        for (int i = 1; i < joinModels.size(); i++) {
+            joinModels.setQuick(i, extractExternal(joinModels.getQuick(i)));
+        }
+
+        QueryModel unionModel = model.getUnionModel();
+        if (unionModel != null) {
+            model.setUnionModel(extractExternal(unionModel));
+        }
+
+        // TODO: implement a number of optimisations for external models
+        // 1. if the external model has all external joins and/or external union, wrap it in an external "guard" model
+        // 2. if the parent model is compatible/partially compatible with the external "model" model, extract compatible parts
+        parent.setNestedModel(model); //we don't need it now, but we may need it when the "guard" model is implemented
+        return parent;
+    }
+
     QueryModel optimise(
             @Transient final QueryModel model,
             @Transient SqlExecutionContext sqlExecutionContext,
@@ -4991,6 +5022,7 @@ public class SqlOptimiser implements Mutable {
             propagateTopDownColumns(rewrittenModel, rewrittenModel.allowsColumnsChange());
             validateWindowFunctions(rewrittenModel, sqlExecutionContext, 0);
             authorizeColumnAccess(sqlExecutionContext, rewrittenModel);
+            rewrittenModel = extractExternal(rewrittenModel);
             return rewrittenModel;
         } catch (Throwable e) {
             // at this point models may have functions than need to be freed

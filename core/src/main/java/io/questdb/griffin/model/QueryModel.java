@@ -71,6 +71,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final int SELECT_MODEL_SHOW = 7;
     public static final int SELECT_MODEL_VIRTUAL = 2;
     public static final int SELECT_MODEL_WINDOW = 3;
+    public static final int SELECT_MODEL_EXTERNAL = 8;
     public static final int SET_OPERATION_EXCEPT = 2;
     public static final int SET_OPERATION_EXCEPT_ALL = 3;
     public static final int SET_OPERATION_INTERSECT = 4;
@@ -184,6 +185,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     private QueryModel() {
         joinModels.add(this);
+    }
+
+    public boolean isExternalModel() {
+        return this.selectModelType == SELECT_MODEL_EXTERNAL;
     }
 
     // Recursively clones the current value of whereClause for the model and its sub-models into the backupWhereClause field.
@@ -1250,6 +1255,27 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return sink.toString();
     }
 
+    // TODO: reuse toString0
+    public String toExternalSQL() {
+        StringSink sink = Misc.getThreadLocalSink();
+        toSinkExternal(sink);
+        return sink.toString();
+    }
+
+    private void toSinkExternal(CharSinkBase<?> sink) {
+        // TODO: traverse model tree
+        // only the simple "table" model is supported for now
+        if (tableNameExpr != null) {
+            sink.putAscii("(select * from ");
+            if (Chars.startsWith(tableNameExpr.token, "q:")) {
+                sink.put(tableNameExpr.token, 2, tableNameExpr.token.length());
+            } else {
+                sink.put(tableNameExpr.token);
+            }
+            sink.putAscii(')');
+        }
+    }
+
     @Override
     public CharSequence translateAlias(CharSequence column) {
         return aliasToColumnNameMap.get(column);
@@ -1720,5 +1746,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         modelTypeName.extendAndSet(SELECT_MODEL_DISTINCT, "select-distinct");
         modelTypeName.extendAndSet(SELECT_MODEL_CURSOR, "select-cursor");
         modelTypeName.extendAndSet(SELECT_MODEL_SHOW, "show");
+        modelTypeName.extendAndSet(SELECT_MODEL_EXTERNAL, "external");
     }
 }
