@@ -73,13 +73,23 @@ public class MinIntGroupByFunction extends IntFunction implements GroupByFunctio
     }
 
     @Override
+    public int getValueIndex() {
+        return valueIndex;
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }
 
     @Override
     public boolean isParallelismSupported() {
-        return arg.isReadThreadSafe();
+        return true;
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return UnaryFunction.super.isReadThreadSafe();
     }
 
     @Override
@@ -105,5 +115,10 @@ public class MinIntGroupByFunction extends IntFunction implements GroupByFunctio
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putInt(valueIndex, Numbers.INT_NaN);
+    }
+
+    @Override
+    public void setValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
     }
 }

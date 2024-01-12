@@ -72,6 +72,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             @Transient @NotNull ArrayColumnTypes keyTypes,
             @Transient @NotNull ArrayColumnTypes valueTypes,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
+            @Nullable ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
             @NotNull ObjList<Function> keyFunctions,
             @Nullable ObjList<ObjList<Function>> perWorkerKeyFunctions,
             @NotNull ObjList<Function> recordFunctions,
@@ -93,6 +94,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
                     valueTypes,
                     listColumnFilter,
                     groupByFunctions,
+                    perWorkerGroupByFunctions,
                     keyFunctions,
                     perWorkerKeyFunctions,
                     filter,
@@ -100,7 +102,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
                     workerCount
             );
             this.frameSequence = new PageFrameSequence<>(configuration, messageBus, atom, REDUCER, reduceTaskFactory, PageFrameReduceTask.TYPE_GROUP_BY);
-            this.cursor = new AsyncGroupByRecordCursor(groupByFunctions, recordFunctions, messageBus);
+            this.cursor = new AsyncGroupByRecordCursor(configuration, groupByFunctions, recordFunctions, messageBus);
             this.workerCount = workerCount;
         } catch (Throwable e) {
             close();
@@ -164,10 +166,10 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
     ) {
         final long frameRowCount = task.getFrameRowCount();
         final AsyncGroupByAtom atom = task.getFrameSequence(AsyncGroupByAtom.class).getAtom();
-        final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater();
 
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.acquire(workerId, owner, circuitBreaker);
+        final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
         final AsyncGroupByAtom.Particle particle = atom.getParticle(slotId);
         final Function filter = atom.getFilter(slotId);
         final RecordSink mapSink = atom.getMapSink(slotId);

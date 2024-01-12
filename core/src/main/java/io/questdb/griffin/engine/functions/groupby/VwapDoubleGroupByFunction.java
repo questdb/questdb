@@ -95,13 +95,23 @@ public class VwapDoubleGroupByFunction extends DoubleFunction implements GroupBy
     }
 
     @Override
+    public int getValueIndex() {
+        return valueIndex;
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }
 
     @Override
     public boolean isParallelismSupported() {
-        return priceFunction.isReadThreadSafe() && volumeFunction.isReadThreadSafe();
+        return true;
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return BinaryFunction.super.isReadThreadSafe();
     }
 
     @Override
@@ -135,5 +145,10 @@ public class VwapDoubleGroupByFunction extends DoubleFunction implements GroupBy
         mapValue.putDouble(valueIndex, Double.NaN);
         mapValue.putDouble(valueIndex + 1, 0);
         mapValue.putDouble(valueIndex + 2, 0);
+    }
+
+    @Override
+    public void setValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
     }
 }

@@ -298,9 +298,10 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
 
     @Test
     public void testGroupBy() throws Exception {
-        final String query = "select sum(price)/count(sym) from x where price > 0";
+        // We don't want parallel GROUP BY to kick in, so we cast string column to symbol to avoid that.
+        final String query = "select str::symbol, sum(price)/count() from x where price > 0";
         final String ddl = "create table x as " +
-                "(select rnd_symbol('ABB','HBC','DXR') sym, \n" +
+                "(select rnd_str('ABB','HBC','DXR') str, \n" +
                 " rnd_double() price, \n" +
                 " timestamp_sequence(172800000000, 360000000) ts \n" +
                 "from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp (ts)";
@@ -573,8 +574,6 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     private void assertJitQuery(CharSequence query, boolean notNull) throws SqlException {
-//        compiler.setEnableJitNullChecks(true);
-
         sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_FORCE_SCALAR);
         runJitQuery(query);
         TestUtils.assertEquals("[scalar mode] result mismatch for query: " + query, sink, jitSink);
@@ -586,8 +585,6 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // At the moment, there is no way for users to disable null checks in the
         // JIT compiler output. Yet, we want to test this part of the compiler.
         if (notNull) {
-            //          compiler.setEnableJitNullChecks(false);
-
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_FORCE_SCALAR);
             runJitQuery(query);
             TestUtils.assertEquals("[scalar mode, not null] result mismatch for query: " + query, sink, jitSink);

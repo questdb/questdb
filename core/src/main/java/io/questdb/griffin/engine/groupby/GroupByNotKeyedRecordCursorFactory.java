@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
@@ -48,6 +49,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
 
     public GroupByNotKeyedRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
+            CairoConfiguration configuration,
             RecordCursorFactory base,
             RecordMetadata groupByMetadata,
             ObjList<GroupByFunction> groupByFunctions,
@@ -68,9 +70,9 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
             }
 
             if (earlyExitSupported) {
-                this.cursor = new EarlyExitGroupByNotKeyedRecordCursor(updater);
+                this.cursor = new EarlyExitGroupByNotKeyedRecordCursor(configuration, groupByFunctions, updater);
             } else {
-                this.cursor = new GroupByNotKeyedRecordCursor(updater);
+                this.cursor = new GroupByNotKeyedRecordCursor(configuration, groupByFunctions, updater);
             }
         } catch (Throwable e) {
             Misc.freeObjList(groupByFunctions);
@@ -125,8 +127,12 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
 
     private class EarlyExitGroupByNotKeyedRecordCursor extends GroupByNotKeyedRecordCursor {
 
-        public EarlyExitGroupByNotKeyedRecordCursor(GroupByFunctionsUpdater groupByFunctionsUpdater) {
-            super(groupByFunctionsUpdater);
+        public EarlyExitGroupByNotKeyedRecordCursor(
+                CairoConfiguration configuration,
+                ObjList<GroupByFunction> groupByFunctions,
+                GroupByFunctionsUpdater groupByFunctionsUpdater
+        ) {
+            super(configuration, groupByFunctions, groupByFunctionsUpdater);
         }
 
         @Override
@@ -144,7 +150,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
         private static final int INIT_DONE = 2;
         private static final int INIT_FIRST_RECORD_DONE = 1;
         private static final int INIT_PENDING = 0;
-
+        private final GroupByAllocator allocator;
         private final GroupByFunctionsUpdater groupByFunctionsUpdater;
         // hold on to reference of base cursor here
         // because we use it as symbol table source for the functions
@@ -153,8 +159,14 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
         private int initState;
         private int recordsRemaining = 1;
 
-        public GroupByNotKeyedRecordCursor(GroupByFunctionsUpdater groupByFunctionsUpdater) {
+        public GroupByNotKeyedRecordCursor(
+                CairoConfiguration configuration,
+                ObjList<GroupByFunction> groupByFunctions,
+                GroupByFunctionsUpdater groupByFunctionsUpdater
+        ) {
             this.groupByFunctionsUpdater = groupByFunctionsUpdater;
+            this.allocator = new GroupByAllocator(configuration);
+            GroupByUtils.setAllocator(groupByFunctions, allocator);
         }
 
         @Override
@@ -168,6 +180,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
         @Override
         public void close() {
             baseCursor = Misc.free(baseCursor);
+            Misc.free(allocator);
             Misc.clearObjList(groupByFunctions);
         }
 

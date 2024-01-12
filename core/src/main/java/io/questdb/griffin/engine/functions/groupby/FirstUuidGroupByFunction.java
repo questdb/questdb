@@ -73,6 +73,16 @@ public class FirstUuidGroupByFunction extends UuidFunction implements GroupByFun
     }
 
     @Override
+    public int getValueIndex() {
+        return valueIndex;
+    }
+
+    @Override
+    public boolean isParallelismSupported() {
+        return false;
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.UUID);
@@ -81,5 +91,10 @@ public class FirstUuidGroupByFunction extends UuidFunction implements GroupByFun
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong128(valueIndex, Numbers.LONG_NaN, Numbers.LONG_NaN);
+    }
+
+    @Override
+    public void setValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
     }
 }

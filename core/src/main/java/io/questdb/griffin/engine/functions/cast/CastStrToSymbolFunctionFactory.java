@@ -58,7 +58,7 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
         return new Func(arg);
     }
 
-    private static class Func extends SymbolFunction implements UnaryFunction {
+    public static class Func extends SymbolFunction implements UnaryFunction {
         private final Function arg;
         private final CharSequenceIntHashMap lookupMap = new CharSequenceIntHashMap();
         private final ObjList<CharSequence> symbols = new ObjList<>();

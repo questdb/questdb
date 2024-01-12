@@ -29,8 +29,8 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
-import io.questdb.std.str.CharSinkBase;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -179,6 +179,11 @@ public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
     @Override
     public final int getType() {
         return ColumnType.SYMBOL;
+    }
+
+    @Override
+    public boolean isParallelismSupported() {
+        return false;
     }
 
     public abstract boolean isSymbolTableStatic();

@@ -85,6 +85,11 @@ public class FirstSymbolGroupByFunction extends SymbolFunction implements GroupB
     }
 
     @Override
+    public int getValueIndex() {
+        return valueIndex;
+    }
+
+    @Override
     public boolean isSymbolTableStatic() {
         return arg.isSymbolTableStatic();
     }
@@ -105,6 +110,11 @@ public class FirstSymbolGroupByFunction extends SymbolFunction implements GroupB
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putInt(valueIndex, SymbolTable.VALUE_IS_NULL);
+    }
+
+    @Override
+    public void setValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
     }
 
     @Override

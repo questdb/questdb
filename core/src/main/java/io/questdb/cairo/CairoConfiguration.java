@@ -171,6 +171,10 @@ public interface CairoConfiguration {
 
     int getFloatToStrCastScale();
 
+    long getGroupByAllocatorDefaultChunkSize();
+
+    long getGroupByAllocatorMaxChunkSize();
+
     int getGroupByMapCapacity();
 
     int getGroupByMergeShardQueueCapacity();

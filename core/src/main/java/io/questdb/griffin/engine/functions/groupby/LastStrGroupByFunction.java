@@ -31,6 +31,7 @@ import io.questdb.std.str.DirectCharSink;
 import org.jetbrains.annotations.NotNull;
 
 public class LastStrGroupByFunction extends FirstStrGroupByFunction {
+
     public LastStrGroupByFunction(@NotNull Function arg) {
         super(arg);
     }
@@ -51,5 +52,10 @@ public class LastStrGroupByFunction extends FirstStrGroupByFunction {
     @Override
     public String getName() {
         return "last";
+    }
+
+    @Override
+    public boolean isParallelismSupported() {
+        return false;
     }
 }

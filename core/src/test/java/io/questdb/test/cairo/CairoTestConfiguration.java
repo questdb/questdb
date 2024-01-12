@@ -126,6 +126,11 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
+    public long getGroupByAllocatorDefaultChunkSize() {
+        return overrides != null && overrides.getGroupByAllocatorDefaultChunkSize() != -1 ? overrides.getGroupByAllocatorDefaultChunkSize() : super.getGroupByAllocatorDefaultChunkSize();
+    }
+
+    @Override
     public int getGroupByShardingThreshold() {
         return overrides.getGroupByShardingThreshold() < 0 ? super.getGroupByShardingThreshold() : overrides.getGroupByShardingThreshold();
     }

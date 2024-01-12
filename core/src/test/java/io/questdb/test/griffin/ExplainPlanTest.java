@@ -1674,7 +1674,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testFilterOnExcludedIndexedSymbolManyValues() throws Exception {
         assertMemoryLeak(() -> {
             drop("drop table if exists trips");
-            ddl("CREATE TABLE trips(l long, s symbol index capacity 5, ts TIMESTAMP) " +
+            ddl("CREATE TABLE trips (l long, s symbol index capacity 5, ts TIMESTAMP) " +
                     "timestamp(ts) partition by month");
 
             assertPlan("select s, count() from trips where s is not null order by count desc",
@@ -1735,7 +1735,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Async Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
-                            "  filter: (s is not null and l!=0)\n" +
+                            "  filter: (l!=0 and s is not null)\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: trips\n"
@@ -2927,10 +2927,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a (l long, s string)",
                 "select s::symbol, avg(l) a from a",
-                "Async Group By workers: 1\n" +
+                "GroupBy vectorized: false\n" +
                         "  keys: [cast]\n" +
                         "  values: [avg(l)]\n" +
-                        "  filter: null\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
@@ -3254,7 +3253,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a (u uuid, ts timestamp) timestamp(ts);",
                 "select u, ts from a where u in ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222', '33333333-3333-3333-3333-333333333333')",
                 "Async Filter workers: 1\n" +
-                        "  filter: u in ['22222222-2222-2222-2222-222222222222','11111111-1111-1111-1111-111111111111','33333333-3333-3333-3333-333333333333']\n" +
+                        "  filter: u in ['33333333-3333-3333-3333-333333333333','22222222-2222-2222-2222-222222222222','11111111-1111-1111-1111-111111111111']\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
@@ -6595,6 +6594,51 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "        DataFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: tab\n"
+        );
+    }
+
+    @Test
+    public void testSelectCountDistinct4() throws Exception {
+        assertPlan(
+                "create table tab ( s string, i int )",
+                "select s, count_distinct(i) from tab",
+                "Async Group By workers: 1\n" +
+                        "  keys: [s]\n" +
+                        "  values: [count_distinct(i)]\n" +
+                        "  filter: null\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: tab\n"
+        );
+    }
+
+    @Test
+    public void testSelectCountDistinct5() throws Exception {
+        assertPlan(
+                "create table tab ( s string, ip ipv4 )",
+                "select s, count_distinct(ip) from tab",
+                "Async Group By workers: 1\n" +
+                        "  keys: [s]\n" +
+                        "  values: [count_distinct(ip)]\n" +
+                        "  filter: null\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: tab\n"
+        );
+    }
+
+    @Test
+    public void testSelectCountDistinct6() throws Exception {
+        assertPlan(
+                "create table tab ( s string, l long )",
+                "select s, count_distinct(l) from tab",
+                "Async Group By workers: 1\n" +
+                        "  keys: [s]\n" +
+                        "  values: [count_distinct(l)]\n" +
+                        "  filter: null\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: tab\n"
         );
     }
 

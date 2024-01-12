@@ -146,7 +146,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         entityColumnFilter.of(keyTypes.getColumnCount());
         this.mapSink2 = RecordSinkFactory.getInstance(asm, keyTypes, entityColumnFilter, false);
 
-        this.cursor = new SampleByInterpolateRecordCursor(recordFunctions, configuration, keyTypes, valueTypes);
+        this.cursor = new SampleByInterpolateRecordCursor(configuration, recordFunctions, groupByFunctions, keyTypes, valueTypes);
     }
 
     @Override
@@ -218,6 +218,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
     private class SampleByInterpolateRecordCursor extends VirtualFunctionSkewedSymbolRecordCursor {
 
         protected final Map recordKeyMap;
+        private final GroupByAllocator allocator;
         private final Map dataMap;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private long hiSample = -1;
@@ -231,8 +232,9 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         private long prevSample = -1;
 
         public SampleByInterpolateRecordCursor(
-                ObjList<Function> functions,
                 CairoConfiguration configuration,
+                ObjList<Function> functions,
+                ObjList<GroupByFunction> groupByFunctions,
                 @Transient @NotNull ArrayColumnTypes keyTypes,
                 @Transient @NotNull ArrayColumnTypes valueTypes
         ) {
@@ -242,6 +244,8 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             // data map will contain rounded timestamp value as last key column
             keyTypes.add(ColumnType.TIMESTAMP);
             dataMap = MapFactory.createMap(configuration, keyTypes, valueTypes);
+            allocator = new GroupByAllocator(configuration);
+            GroupByUtils.setAllocator(groupByFunctions, allocator);
             isOpen = true;
         }
 
@@ -251,6 +255,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 isOpen = false;
                 recordKeyMap.close();
                 dataMap.close();
+                allocator.close();
                 Misc.clearObjList(groupByFunctions);
                 super.close();
             }
