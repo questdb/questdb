@@ -65,6 +65,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private final MultipartParserState multipartParserState = new MultipartParserState();
     private final NetworkFacade nf;
     private final int recvBufferSize;
+    private final RejectProcessor rejectProcessor = new RejectProcessor();
     private final HttpResponseSink responseSink;
     private final RetryAttemptAttributes retryAttemptAttributes = new RetryAttemptAttributes();
     private final RescheduleContext retryRescheduleContext = retry -> {
@@ -77,7 +78,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private int receivedBytes;
     private long recvBuffer;
     private long recvPos;
-    private HttpRequestProcessor resumeProcessor = null;
+    private HttpRequestProcessor resumeProcessor = new RejectProcessor();
     private SecurityContext securityContext;
     private SuspendEvent suspendEvent;
     private long totalBytesSent;
@@ -302,12 +303,17 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return this;
     }
 
-    public boolean rejectRequest(int code, CharSequence userMessage, CharSequence cookieName, CharSequence cookieValue) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        reset();
+    public HttpRequestProcessor rejectRequest(int code, CharSequence userMessage) {
+        return rejectRequest(code, userMessage, null, null);
+    }
+
+    public HttpRequestProcessor rejectRequest(int code, CharSequence userMessage, CharSequence cookieName, CharSequence cookieValue) {
         LOG.error().$(userMessage).$(" [code=").$(code).I$();
-        simpleResponse().sendStatusWithCookie(code, userMessage, cookieName, cookieValue);
-        dispatcher.registerChannel(this, IOOperation.READ);
-        return false;
+        rejectProcessor.rejectCode = code;
+        rejectProcessor.rejectMessage = userMessage;
+        rejectProcessor.rejectCookieName = cookieName;
+        rejectProcessor.rejectCookieValue = cookieValue;
+        return rejectProcessor;
     }
 
     public void reset() {
@@ -579,7 +585,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
         if (newRequest) {
             if (!headerParser.hasBoundary()) {
-                return rejectRequest("Bad request. Form data in multipart POST expected.");
+                return failRequest("Bad request. Form data in multipart POST expected.");
             }
             processor.onHeadersReady(this);
             multipartContentParser.of(headerParser.getBoundary());
@@ -757,6 +763,11 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         }
     }
 
+    private boolean failRequest(String errorMessage) throws ServerDisconnectException {
+        LOG.error().$(errorMessage).$(". Disconnecting [fd=").$(getFd()).I$();
+        throw new ServerDisconnectException();
+    }
+
     private HttpRequestProcessor getHttpRequestProcessor(HttpRequestProcessorSelector selector) {
         HttpRequestProcessor processor;
         final Utf8Sequence url = headerParser.getUrl();
@@ -818,39 +829,42 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
             try {
                 if (newRequest && processor.requiresAuthentication() && !configureSecurityContext()) {
-                    return rejectUnauthenticatedRequest();
+                    processor = rejectUnauthorized(null);
                 }
 
                 if (newRequest && configuration.areCookiesEnabled()) {
                     if (!processor.processCookies(this, securityContext)) {
-                        return false;
+                        processor = rejectProcessor;
                     }
                 }
 
                 try {
                     securityContext.checkEntityEnabled();
                 } catch (CairoException e) {
-                    return rejectForbiddenRequest(e.getFlyweightMessage());
+                    processor = rejectForbiddenRequest(e.getFlyweightMessage());
                 }
 
                 if (chunked) {
-                    if (multipartProcessor) {
-                        busyRecv = consumeChunked(processor, headerEnd, read, newRequest);
-                    } else {
+                    if (!multipartProcessor) {
                         // bad request - regular request for processor that expects multipart
-                        busyRecv = rejectRequest("Bad request. Chunked requests are not supported by the handler.");
+                        processor = rejectRequest(HTTP_BAD_REQUEST, "Bad request. Chunked requests are not supported by the handler.");
                     }
-                } else if (multipartRequest && !multipartProcessor) {
-                    // bad request - multipart request for processor that doesn't expect multipart
-                    busyRecv = rejectRequest("Bad request. Non-multipart GET expected.");
-                } else if (multipartProcessor && multipartRequest) {
+                    busyRecv = consumeChunked(processor, headerEnd, read, newRequest);
+                } else if (multipartRequest) {
+                    if (!multipartProcessor) {
+                        // bad request - multipart request for processor that doesn't expect multipart
+                        processor = rejectRequest(HTTP_BAD_REQUEST, "Bad request. Non-multipart GET expected.");
+                    }
                     busyRecv = consumeMultipart(socket, processor, headerEnd, read, newRequest, rescheduleContext);
                 } else if (contentLength > -1 && multipartProcessor) {
                     busyRecv = consumeContent(contentLength, socket, processor, headerEnd, read, newRequest);
-                } else if (multipartProcessor) {
-                    // bad request - regular request for processor that expects multipart
-                    busyRecv = rejectRequest("Bad request. Multipart POST expected.");
                 } else {
+                    if (multipartProcessor) {
+                        // bad request - regular request for processor that expects multipart
+                        rejectRequest(HTTP_BAD_REQUEST, "Bad request. Multipart POST expected.");
+                        processor = rejectProcessor;
+                    }
+
                     // Do not expect any more bytes to be sent to us before
                     // we respond back to client. We will disconnect the client when
                     // they abuse protocol. In addition, we will not call processor
@@ -968,20 +982,12 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return false;
     }
 
-    private boolean rejectForbiddenRequest(CharSequence userMessage) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    private HttpRequestProcessor rejectForbiddenRequest(CharSequence userMessage) throws PeerDisconnectedException, PeerIsSlowToReadException {
         return rejectRequest(HTTP_FORBIDDEN, userMessage, null, null);
     }
 
-    private boolean rejectRequest(CharSequence userMessage) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        return rejectRequest(HTTP_NOT_FOUND, userMessage, null, null);
-    }
-
-    private boolean rejectUnauthenticatedRequest() throws PeerDisconnectedException, PeerIsSlowToReadException {
-        reset();
-        LOG.error().$("rejecting unauthenticated request [fd=").$(getFd()).I$();
-        simpleResponse().sendStatusWithHeader(HTTP_UNAUTHORIZED, "WWW-Authenticate: Basic realm=\"questdb\", charset=\"UTF-8\"");
-        dispatcher.registerChannel(this, IOOperation.READ);
-        return false;
+    private HttpRequestProcessor rejectUnauthorized(CharSequence userMessage) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        return rejectRequest(HTTP_UNAUTHORIZED, userMessage, null, null);
     }
 
     private void shiftReceiveBufferUnprocessedBytes(long start, int receivedBytes) {
@@ -989,5 +995,38 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.receivedBytes = receivedBytes;
         Vect.memcpy(recvBuffer, start, receivedBytes);
         LOG.debug().$("peer is slow, waiting for bigger part to parse [multipart]").$();
+    }
+
+    private class RejectProcessor implements HttpRequestProcessor, HttpMultipartContentListener {
+        private int rejectCode;
+        private CharSequence rejectCookieName = null;
+        private CharSequence rejectCookieValue = null;
+        private CharSequence rejectMessage = null;
+
+        @Override
+        public void onChunk(long lo, long hi) {
+        }
+
+        @Override
+        public void onPartBegin(HttpRequestHeader partHeader) {
+        }
+
+        @Override
+        public void onPartEnd() {
+        }
+
+        @Override
+        public void onRequestComplete(
+                HttpConnectionContext context
+        ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            if (rejectCode == HTTP_UNAUTHORIZED) {
+                // Special case, include WWW-Authenticate header
+                context.simpleResponse().sendStatusWithHeader(HTTP_UNAUTHORIZED, "WWW-Authenticate: Basic realm=\"questdb\", charset=\"UTF-8\"");
+            } else {
+                simpleResponse().sendStatusWithCookie(rejectCode, rejectMessage, rejectCookieName, rejectCookieValue);
+            }
+            reset();
+            dispatcher.registerChannel(HttpConnectionContext.this, IOOperation.READ);
+        }
     }
 }

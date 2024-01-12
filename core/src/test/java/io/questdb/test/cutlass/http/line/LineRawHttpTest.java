@@ -57,7 +57,7 @@ public class LineRawHttpTest extends AbstractBootstrapTest {
 
     @Test
     public void testChunkedDataIlpUploadNoKeepAlive() throws Exception {
-        Rnd rnd = TestUtils.generateRandom(LOG);
+        Rnd rnd = TestUtils.generateRandom(LOG, 1957634840483L, 1704992303778L);
         TestUtils.assertMemoryLeak(() -> {
             int fragmentation = 1 + rnd.nextInt(5);
             LOG.info().$("=== fragmentation=").$(fragmentation).$();

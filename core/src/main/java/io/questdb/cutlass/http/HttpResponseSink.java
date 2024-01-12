@@ -595,8 +595,6 @@ public class HttpResponseSink implements Closeable, Mutable {
                 } else {
                     putAscii("Content-Length: ").put(contentLength).putEOL();
                 }
-            }
-            if (contentType != null) {
                 putAscii("Content-Type: ").put(contentType).putEOL();
             }
 
@@ -774,7 +772,7 @@ public class HttpResponseSink implements Closeable, Mutable {
 
         public void sendStatus(int code) throws PeerDisconnectedException, PeerIsSlowToReadException {
             buffer.clearAndPrepareToWriteToBuffer();
-            headerImpl.status(httpVersion, code, CONTENT_TYPE_HTML, -2L);
+            headerImpl.status(httpVersion, code, null, -2L);
             prepareHeaderSink();
             flushSingle();
         }
