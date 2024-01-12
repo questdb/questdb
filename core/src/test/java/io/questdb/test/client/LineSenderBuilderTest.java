@@ -407,6 +407,18 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testHttpTokenNotSupportedForTcp() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                Sender.builder().address(LOCALHOST).httpTokenAuth("foo").build();
+                fail("HTTP token should not be supported for TCP");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "HTTP token authentication is not supported for TCP protocol");
+            }
+        });
+    }
+
+    @Test
     public void testMalformedPortInAddress() throws Exception {
         assertMemoryLeak(() -> {
             Sender.LineSenderBuilder builder = Sender.builder();
@@ -415,6 +427,18 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
                 fail("should fail with malformated port");
             } catch (LineSenderException e) {
                 TestUtils.assertContains(e.getMessage(), "cannot parse port");
+            }
+        });
+    }
+
+    @Test
+    public void testMaxPendingRowsNotSupportedForTcp() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                Sender.builder().address(LOCALHOST).maxPendingRows(1).build();
+                fail("max pending rows should not be supported for TCP");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "max pending rows is not supported for TCP protocol");
             }
         });
     }
@@ -536,6 +560,18 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
                 fail("connection refused should fail fast");
             } catch (LineSenderException e) {
                 TestUtils.assertContains(e.getMessage(), "could not connect");
+            }
+        });
+    }
+
+    @Test
+    public void testUsernamePasswordAuthNotSupportedForTcp() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                Sender.builder().address(LOCALHOST).httpAuth("foo", "bar").build();
+                fail("HTTP token should not be supported for TCP");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "username/password authentication is not supported for TCP protocol");
             }
         });
     }

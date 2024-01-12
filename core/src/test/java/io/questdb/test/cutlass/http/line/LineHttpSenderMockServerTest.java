@@ -25,7 +25,7 @@ import java.util.function.Consumer;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
-public class LineHttpSenderErrorHandlingTest extends AbstractTest {
+public class LineHttpSenderMockServerTest extends AbstractTest {
 
     private static final CharSequence QUESTDB_VERSION = new BuildInformationHolder().getSwVersion();
     private static final Metrics metrics = Metrics.enabled();
@@ -70,6 +70,47 @@ public class LineHttpSenderErrorHandlingTest extends AbstractTest {
                 .respondWith(400, jsonResponse, "application/json");
 
         testWithMock(mockHttpProcessor, errorVerifier("Could not flush buffer: failed to parse line protocol: invalid field format [http-status=400, id: ABC-2, code: invalid, line: 2]"));
+    }
+
+    @Test
+    public void testMaxPendingRows() throws Exception {
+        MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
+                .withExpectedContent("test x=1.0\n")
+                .respondWith(204, "", "application/json")
+                .withExpectedContent("test x=2.0\n" +
+                        "test x=3.0\n")
+                .respondWith(204, "", "application/json")
+                .withExpectedContent("test x=4.0\n" +
+                        "test x=5.0\n")
+                .respondWith(204, "", "application/json")
+                .withExpectedContent("test x=6.0\n")
+                .respondWith(204, "", "application/json");
+
+        testWithMock(mockHttpProcessor, sender -> {
+            // first row to be flushed implicitly
+            sender.table("test").doubleColumn("x", 1.0).atNow();
+            sender.flush();
+
+            // 1st implicit batch sent due to maxPendingRows
+            sender.table("test").doubleColumn("x", 2.0).atNow();
+            sender.table("test").doubleColumn("x", 3.0).atNow();
+
+            // 2nd implicit batch sent due to maxPendingRows
+            sender.table("test").doubleColumn("x", 4.0).atNow();
+            sender.table("test").doubleColumn("x", 5.0).atNow();
+
+            // the last row is flushed on close()
+            sender.table("test").doubleColumn("x", 6.0).atNow();
+        }, senderBuilder -> senderBuilder.maxPendingRows(2));
+    }
+
+    @Test
+    public void testMaxPendingRows_doubleConfiguration() {
+        try {
+            Sender.builder().maxPendingRows(1).maxPendingRows(1);
+        } catch (LineSenderException e) {
+            TestUtils.assertContains(e.getMessage(), "max pending rows was already configured [max-pending-rows=1]");
+        }
     }
 
     @Test

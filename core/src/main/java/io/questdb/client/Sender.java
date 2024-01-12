@@ -249,11 +249,10 @@ public interface Sender extends Closeable {
         private static final int DEFAULT_BUFFER_CAPACITY = 64 * 1024;
         private static final int DEFAULT_HTTP_PORT = 9000;
         private static final int DEFAULT_MAXIMUM_BUFFER_CAPACITY = 20 * 1024 * 1024; // 20MB -- todo: sync with Rust client
-        // indicates that buffer capacity was not set explicitly
         private static final int DEFAULT_MAX_PENDING_ROWS = 10_000;
         private static final int DEFAULT_TCP_PORT = 9009;
+        private static final int MAX_PENDING_ROWS_DEFAULT = -1;
         private static final int MIN_BUFFER_SIZE_FOR_AUTH = 512 + 1; // challenge size + 1;
-        // indicate that port was not set explicitly
         private static final byte PORT_DEFAULT = 0;
         private static final int PROTOCOL_HTTP = 1;
         private static final int PROTOCOL_TCP = 0;
@@ -262,7 +261,7 @@ public interface Sender extends Closeable {
         private String host;
         private String httpToken;
         private String keyId;
-        private int maxPendingRows = DEFAULT_MAX_PENDING_ROWS;
+        private int maxPendingRows = MAX_PENDING_ROWS_DEFAULT;
         private int maximumBufferCapacity = DEFAULT_MAXIMUM_BUFFER_CAPACITY;
         private final HttpClientConfiguration httpClientConfiguration = new DefaultHttpClientConfiguration() {
             @Override
@@ -387,16 +386,20 @@ public interface Sender extends Closeable {
                             .put(", initial-buffer-capacity=").put(httpClientConfiguration.getInitialRequestBufferSize())
                             .put("]");
                 }
-                return new LineHttpSender(host, port, httpClientConfiguration, tlsEnabled, tlsValidationMode, maxPendingRows, httpToken, username, password);
+                int actualMaxPendingRows = maxPendingRows == MAX_PENDING_ROWS_DEFAULT ? DEFAULT_MAX_PENDING_ROWS : maxPendingRows;
+                return new LineHttpSender(host, port, httpClientConfiguration, tlsEnabled, tlsValidationMode, actualMaxPendingRows, httpToken, username, password);
             } else if (protocol != PROTOCOL_TCP) {
                 throw new LineSenderException("unsupported protocol ")
                         .put("[protocol=").put(protocol).put("]");
             }
-            if (username != null) {
+            if (username != null || password != null) {
                 throw new LineSenderException("username/password authentication is not supported for TCP protocol");
             }
-            if (password != null) {
-                throw new LineSenderException("username/password authentication is not supported for TCP protocol");
+            if (maxPendingRows != MAX_PENDING_ROWS_DEFAULT) {
+                throw new LineSenderException("max pending rows is not supported for TCP protocol");
+            }
+            if (httpToken != null) {
+                throw new LineSenderException("HTTP token authentication is not supported for TCP protocol");
             }
 
             LineChannel channel = new PlainTcpLineChannel(nf, host, port, bufferCapacity * 2);
@@ -494,6 +497,15 @@ public interface Sender extends Closeable {
                 throw new LineSenderException("token cannot be empty nor null");
             }
             this.httpToken = token;
+            return this;
+        }
+
+        public LineSenderBuilder maxPendingRows(int maxPendingRows) {
+            if (this.maxPendingRows != -1) {
+                throw new LineSenderException("max pending rows was already configured ")
+                        .put("[max-pending-rows=").put(this.maxPendingRows).put("]");
+            }
+            this.maxPendingRows = maxPendingRows;
             return this;
         }
 
