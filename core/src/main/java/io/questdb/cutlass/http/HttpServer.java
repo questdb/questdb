@@ -146,6 +146,7 @@ public class HttpServer implements Closeable {
             });
         }
 
+        final SettingsProcessor settingsProcessor = new SettingsProcessor(cairoEngine.getConfiguration());
         server.bind(new HttpRequestProcessorFactory() {
             @Override
             public String getUrl() {
@@ -154,7 +155,7 @@ public class HttpServer implements Closeable {
 
             @Override
             public HttpRequestProcessor newInstance() {
-                return new SettingsProcessor(cairoEngine.getConfiguration());
+                return settingsProcessor;
             }
         });
 
