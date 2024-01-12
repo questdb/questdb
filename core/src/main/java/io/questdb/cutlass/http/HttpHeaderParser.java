@@ -104,6 +104,7 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
         this.isStatusCode = true;
         this.isStatusText = true;
         this.needProtocol = true;
+        this.contentLength = -1;
         // do not clear the pool
         // this.pool.clear();
     }
