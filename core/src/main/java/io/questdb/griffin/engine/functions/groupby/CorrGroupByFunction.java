@@ -108,7 +108,17 @@ public class CorrGroupByFunction extends DoubleFunction implements GroupByFuncti
     }
 
     @Override
+    public int getValueIndex() {
+        return valueIndex;
+    }
+
+    @Override
     public boolean isConstant() {
+        return false;
+    }
+
+    @Override
+    public boolean isParallelismSupported() {
         return false;
     }
 
@@ -137,6 +147,11 @@ public class CorrGroupByFunction extends DoubleFunction implements GroupByFuncti
         mapValue.putDouble(valueIndex + 3, Double.NaN);
         mapValue.putDouble(valueIndex + 4, Double.NaN);
         mapValue.putLong(valueIndex + 5, 0);
+    }
+
+    @Override
+    public void setValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
     }
 
     protected void aggregate(MapValue mapValue, double x, double y) {

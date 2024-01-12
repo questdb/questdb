@@ -51,4 +51,9 @@ public class LastNotNullStrGroupByFunction extends FirstStrGroupByFunction {
     public String getName() {
         return "last_not_null";
     }
+
+    @Override
+    public boolean isParallelismSupported() {
+        return false;
+    }
 }

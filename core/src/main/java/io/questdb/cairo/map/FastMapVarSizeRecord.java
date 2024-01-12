@@ -53,7 +53,7 @@ final class FastMapVarSizeRecord implements FastMapRecord {
     private final int splitIndex;
     private final FastMapValue value;
     private final long[] valueOffsets;
-    private final int valueSize;
+    private final long valueSize;
     private long keyAddress;
     private int lastKeyIndex = -1;
     private int lastKeyOffset = -1;
@@ -64,7 +64,7 @@ final class FastMapVarSizeRecord implements FastMapRecord {
     private long valueAddress;
 
     FastMapVarSizeRecord(
-            int valueSize,
+            long valueSize,
             long[] valueOffsets,
             FastMapValue value,
             @NotNull @Transient ColumnTypes keyTypes,
@@ -146,7 +146,7 @@ final class FastMapVarSizeRecord implements FastMapRecord {
     }
 
     private FastMapVarSizeRecord(
-            int valueSize,
+            long valueSize,
             long[] valueOffsets,
             ColumnTypes keyTypes,
             int splitIndex,

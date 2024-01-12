@@ -1596,6 +1596,20 @@ public class FastMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSetKeyCapacityOverflow() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (FastMap map = new FastMap(1024, new SingleColumnType(ColumnType.INT), new SingleColumnType(ColumnType.INT), 16, 0.75, Integer.MAX_VALUE)) {
+                try {
+                    map.setKeyCapacity(Integer.MAX_VALUE);
+                    Assert.fail();
+                } catch (Exception e) {
+                    TestUtils.assertContains(e.getMessage(), "map capacity overflow");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testUnsupportedKeyValueBinary() throws Exception {
         testUnsupportedValueType();
     }

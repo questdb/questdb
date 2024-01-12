@@ -38,13 +38,11 @@ import io.questdb.std.str.DirectCharSink;
 import org.jetbrains.annotations.NotNull;
 
 public class FirstStrGroupByFunction extends StrFunction implements GroupByFunction, UnaryFunction {
-
     private static final int INITIAL_SINK_CAPACITY = 16;
     private static final int LIST_CLEAR_THRESHOLD = 64;
 
     protected final Function arg;
     protected final ObjList<DirectCharSink> sinks = new ObjList<>();
-
     protected int valueIndex;
     private int sinkIndex = 0;
 
@@ -128,7 +126,17 @@ public class FirstStrGroupByFunction extends StrFunction implements GroupByFunct
     }
 
     @Override
+    public int getValueIndex() {
+        return valueIndex;
+    }
+
+    @Override
     public boolean isConstant() {
+        return false;
+    }
+
+    @Override
+    public boolean isParallelismSupported() {
         return false;
     }
 
@@ -147,6 +155,11 @@ public class FirstStrGroupByFunction extends StrFunction implements GroupByFunct
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putBool(valueIndex + 1, true);
+    }
+
+    @Override
+    public void setValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
     }
 
     @Override

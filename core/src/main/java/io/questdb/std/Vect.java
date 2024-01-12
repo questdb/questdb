@@ -170,6 +170,7 @@ public final class Vect {
 
     public static native void memmove(long dst, long src, long len);
 
+    // note: memset only uses single byte of the given int
     public static native void memset(long dst, long len, int value);
 
     public static native long mergeDedupTimestampWithLongIndexAsc(

@@ -237,6 +237,7 @@ public class PageFrameReduceJob implements Job, Closeable {
             record.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());
             record.setFrameIndex(task.getFrameIndex());
             assert !frameSequence.done;
+            circuitBreaker.setFd(frameSequence.getCircuitBreakerFd());
             frameSequence.getReducer().reduce(workerId, record, task, circuitBreaker, stealingFrameSequence);
         } else {
             frameSequence.cancel(cbState);

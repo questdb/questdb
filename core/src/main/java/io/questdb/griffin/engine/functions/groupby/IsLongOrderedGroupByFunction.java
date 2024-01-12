@@ -36,7 +36,6 @@ import org.jetbrains.annotations.NotNull;
 
 public class IsLongOrderedGroupByFunction extends BooleanFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
-    private int flagIndex;
     private int valueIndex;
 
     public IsLongOrderedGroupByFunction(@NotNull Function arg) {
@@ -45,19 +44,19 @@ public class IsLongOrderedGroupByFunction extends BooleanFunction implements Gro
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putBool(flagIndex, true);
-        mapValue.putLong(valueIndex, arg.getLong(record));
+        mapValue.putBool(valueIndex, true);
+        mapValue.putLong(valueIndex + 1, arg.getLong(record));
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        if (mapValue.getBool(flagIndex)) {
-            long prev = mapValue.getLong(valueIndex);
+        if (mapValue.getBool(valueIndex)) {
+            long prev = mapValue.getLong(valueIndex + 1);
             long curr = arg.getLong(record);
             if (curr < prev) {
-                mapValue.putBool(flagIndex, false);
+                mapValue.putBool(valueIndex, false);
             } else {
-                mapValue.putLong(valueIndex, curr);
+                mapValue.putLong(valueIndex + 1, curr);
             }
         }
     }
@@ -69,7 +68,7 @@ public class IsLongOrderedGroupByFunction extends BooleanFunction implements Gro
 
     @Override
     public boolean getBool(Record rec) {
-        return rec.getBool(flagIndex);
+        return rec.getBool(valueIndex);
     }
 
     @Override
@@ -78,15 +77,29 @@ public class IsLongOrderedGroupByFunction extends BooleanFunction implements Gro
     }
 
     @Override
+    public int getValueIndex() {
+        return valueIndex;
+    }
+
+    @Override
+    public boolean isParallelismSupported() {
+        return false;
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.flagIndex = columnTypes.getColumnCount();
-        this.valueIndex = flagIndex + 1;
+        this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.BOOLEAN);
         columnTypes.add(ColumnType.LONG);
     }
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putBool(flagIndex, true);
+        mapValue.putBool(valueIndex, true);
+    }
+
+    @Override
+    public void setValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
     }
 }

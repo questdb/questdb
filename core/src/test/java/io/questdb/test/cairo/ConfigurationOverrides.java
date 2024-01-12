@@ -69,6 +69,8 @@ public interface ConfigurationOverrides {
 
     FilesFacade getFilesFacade();
 
+    long getGroupByAllocatorDefaultChunkSize();
+
     int getGroupByShardingThreshold();
 
     int getInactiveReaderMaxOpenPartitions();
@@ -216,6 +218,8 @@ public interface ConfigurationOverrides {
     void setFactoryProvider(FactoryProvider factoryProvider);
 
     void setFilesFacade(FilesFacade ff);
+
+    void setGroupByAllocatorDefaultChunkSize(long groupByAllocatorDefaultChunkSize);
 
     void setGroupByShardingThreshold(int groupByShardingThreshold);
 

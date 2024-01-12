@@ -65,7 +65,8 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
             @NotNull MessageBus messageBus,
             @NotNull RecordCursorFactory base,
             @NotNull RecordMetadata groupByMetadata,
-            ObjList<GroupByFunction> groupByFunctions,
+            @NotNull ObjList<GroupByFunction> groupByFunctions,
+            @Nullable ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
             int valueCount,
             @Nullable Function filter,
             @NotNull PageFrameReduceTaskFactory reduceTaskFactory,
@@ -80,13 +81,14 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
                     asm,
                     configuration,
                     groupByFunctions,
+                    perWorkerGroupByFunctions,
                     valueCount,
                     filter,
                     perWorkerFilters,
                     workerCount
             );
             this.frameSequence = new PageFrameSequence<>(configuration, messageBus, atom, REDUCER, reduceTaskFactory, PageFrameReduceTask.TYPE_GROUP_BY_NOT_KEYED);
-            this.cursor = new AsyncGroupByNotKeyedRecordCursor(groupByFunctions, valueCount);
+            this.cursor = new AsyncGroupByNotKeyedRecordCursor(configuration, groupByFunctions);
             this.workerCount = workerCount;
         } catch (Throwable e) {
             close();
@@ -149,10 +151,10 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
     ) {
         final long frameRowCount = task.getFrameRowCount();
         final AsyncGroupByNotKeyedAtom atom = task.getFrameSequence(AsyncGroupByNotKeyedAtom.class).getAtom();
-        final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater();
 
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.acquire(workerId, owner, circuitBreaker);
+        final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
         final SimpleMapValue value = atom.getMapValue(slotId);
         final Function filter = atom.getFilter(slotId);
         try {

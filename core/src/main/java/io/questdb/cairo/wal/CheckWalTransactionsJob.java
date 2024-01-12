@@ -79,19 +79,19 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
                     engine.notifyWalTxnCommitted(tableToken);
                 }
             } else {
-                threadLocalPath.trimTo(dbRoot.length()).concat(tableToken).concat(TableUtils.META_FILE_NAME).$();
+                threadLocalPath.trimTo(dbRoot.length()).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$();
                 if (ff.exists(threadLocalPath)) {
-                    threadLocalPath.trimTo(dbRoot.length()).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$();
                     try (TxReader txReader = this.txReader.ofRO(threadLocalPath, PartitionBy.NONE)) {
                         TableUtils.safeReadTxn(this.txReader, millisecondClock, spinLockTimeout);
                         if (engine.getTableSequencerAPI().initTxnTracker(tableToken, txReader.getSeqTxn(), seqTxn)) {
                             engine.notifyWalTxnCommitted(tableToken);
                         }
+                    } catch (CairoException e) {
+                       if (!e.errnoReadPathDoesNotExist()) {
+                           throw e;
+                       } // race, table is dropped, ApplyWal2TableJob is already deleting the files
                     }
-                } else {
-                    // table is dropped, notify the JOB to delete the data
-                    engine.notifyWalTxnCommitted(tableToken);
-                }
+                } // else table is dropped, ApplyWal2TableJob already is deleting the files
             }
         }
     }

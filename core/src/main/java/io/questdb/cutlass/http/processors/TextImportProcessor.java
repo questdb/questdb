@@ -169,6 +169,9 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                 }
             }
 
+            boolean create = !Utf8s.equalsNcAscii("false", rh.getUrlParam(URL_PARAM_CREATE));
+            transientState.textLoader.setCreate(create);
+
             boolean forceHeader = Utf8s.equalsNcAscii("true", rh.getUrlParam(URL_PARAM_FORCE_HEADER));
             transientState.textLoader.setForceHeaders(forceHeader);
             transientState.textLoader.setSkipLinesWithExtraValues(Utf8s.equalsNcAscii("true", rh.getUrlParam(URL_PARAM_SKIP_LEV)));
