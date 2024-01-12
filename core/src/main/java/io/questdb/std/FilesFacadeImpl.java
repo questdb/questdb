@@ -384,6 +384,9 @@ public class FilesFacadeImpl implements FilesFacade {
             if (errno == CairoException.ERRNO_FILE_DOES_NOT_EXIST || (Os.isWindows() && errno == CairoException.ERRNO_FILE_DOES_NOT_EXIST_WIN)) {
                 return true;
             }
+            if (Os.isWindows() && errno == CairoException.ERRNO_ACCESS_DENIED_WIN) {
+                return !exists(name);
+            }
         }
         return ok;
     }
