@@ -37,7 +37,6 @@ import org.jetbrains.annotations.NotNull;
 
 public class IsIPv4OrderedGroupByFunction extends BooleanFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
-    private int flagIndex;
     private int valueIndex;
 
     public IsIPv4OrderedGroupByFunction(@NotNull Function arg) {
@@ -46,19 +45,19 @@ public class IsIPv4OrderedGroupByFunction extends BooleanFunction implements Gro
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putBool(flagIndex, true);
-        mapValue.putLong(valueIndex, Numbers.ipv4ToLong(arg.getIPv4(record)));
+        mapValue.putBool(valueIndex, true);
+        mapValue.putLong(valueIndex + 1, Numbers.ipv4ToLong(arg.getIPv4(record)));
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        if (mapValue.getBool(flagIndex)) {
-            long prev = Numbers.ipv4ToLong(mapValue.getIPv4(valueIndex));
+        if (mapValue.getBool(valueIndex)) {
+            long prev = Numbers.ipv4ToLong(mapValue.getIPv4(valueIndex + 1));
             long curr = Numbers.ipv4ToLong(arg.getIPv4(record));
             if (curr < prev) {
-                mapValue.putBool(flagIndex, false);
+                mapValue.putBool(valueIndex, false);
             } else {
-                mapValue.putLong(valueIndex, curr);
+                mapValue.putLong(valueIndex + 1, curr);
             }
         }
     }
@@ -70,7 +69,7 @@ public class IsIPv4OrderedGroupByFunction extends BooleanFunction implements Gro
 
     @Override
     public boolean getBool(Record rec) {
-        return rec.getBool(flagIndex);
+        return rec.getBool(valueIndex);
     }
 
     @Override
@@ -79,16 +78,29 @@ public class IsIPv4OrderedGroupByFunction extends BooleanFunction implements Gro
     }
 
     @Override
+    public int getValueIndex() {
+        return valueIndex;
+    }
+
+    @Override
+    public boolean isParallelismSupported() {
+        return false;
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.flagIndex = columnTypes.getColumnCount();
-        this.valueIndex = flagIndex + 1;
+        this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.BOOLEAN);
         columnTypes.add(ColumnType.IPv4);
     }
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putBool(flagIndex, true);
+        mapValue.putBool(valueIndex, true);
     }
 
+    @Override
+    public void setValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
+    }
 }

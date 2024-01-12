@@ -33,8 +33,10 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdaterFactory;
+import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -52,6 +54,8 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     private final RecordSink ownerMapSink;
     private final Particle ownerParticle;
     private final ObjList<Function> perWorkerFilters;
+    private final ObjList<GroupByFunctionsUpdater> perWorkerFunctionUpdaters;
+    private final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
     private final ObjList<ObjList<Function>> perWorkerKeyFunctions;
     private final PerWorkerLocks perWorkerLocks;
     private final ObjList<RecordSink> perWorkerMapSinks;
@@ -70,6 +74,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             @Transient @NotNull ArrayColumnTypes valueTypes,
             @Transient @NotNull ListColumnFilter listColumnFilter,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
+            @Nullable ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
             @NotNull ObjList<Function> keyFunctions,
             @Nullable ObjList<ObjList<Function>> perWorkerKeyFunctions,
             @Nullable Function filter,
@@ -78,6 +83,9 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     ) {
         assert perWorkerFilters == null || perWorkerFilters.size() == workerCount;
         assert perWorkerKeyFunctions == null || perWorkerKeyFunctions.size() == workerCount;
+
+        // We don't want to pay for merging redundant maps, so we limit their number.
+        final int slotCount = Math.min(workerCount, configuration.getPageFrameReduceQueueCapacity());
         try {
             this.configuration = configuration;
             this.shardingThreshold = configuration.getGroupByShardingThreshold();
@@ -87,21 +95,32 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             this.perWorkerFilters = perWorkerFilters;
             this.keyFunctions = keyFunctions;
             this.perWorkerKeyFunctions = perWorkerKeyFunctions;
+            this.perWorkerGroupByFunctions = perWorkerGroupByFunctions;
+
             functionUpdater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
-            perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
+            if (perWorkerGroupByFunctions != null) {
+                perWorkerFunctionUpdaters = new ObjList<>(slotCount);
+                for (int i = 0; i < slotCount; i++) {
+                    perWorkerFunctionUpdaters.extendAndSet(i, GroupByFunctionsUpdaterFactory.getInstance(asm, perWorkerGroupByFunctions.getQuick(i)));
+                }
+            } else {
+                perWorkerFunctionUpdaters = null;
+            }
+
+            perWorkerLocks = new PerWorkerLocks(configuration, slotCount);
 
             shardCount = Math.min(Numbers.ceilPow2(2 * workerCount), MAX_SHARDS);
             shardCountShr = Integer.numberOfLeadingZeros(shardCount) + 1;
             ownerParticle = new Particle();
-            perWorkerParticles = new ObjList<>(workerCount);
-            for (int i = 0; i < workerCount; i++) {
+            perWorkerParticles = new ObjList<>(slotCount);
+            for (int i = 0; i < slotCount; i++) {
                 perWorkerParticles.extendAndSet(i, new Particle());
             }
 
             ownerMapSink = RecordSinkFactory.getInstance(asm, columnTypes, listColumnFilter, keyFunctions, false);
             if (perWorkerKeyFunctions != null) {
-                perWorkerMapSinks = new ObjList<>(workerCount);
-                for (int i = 0; i < workerCount; i++) {
+                perWorkerMapSinks = new ObjList<>(slotCount);
+                for (int i = 0; i < slotCount; i++) {
                     RecordSink sink = RecordSinkFactory.getInstance(asm, columnTypes, listColumnFilter, perWorkerKeyFunctions.getQuick(i), false);
                     perWorkerMapSinks.extendAndSet(i, sink);
                 }
@@ -115,11 +134,16 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     }
 
     public int acquire(int workerId, boolean owner, SqlExecutionCircuitBreaker circuitBreaker) {
-        if (perWorkerLocks == null) {
+        if (workerId == -1 && owner) {
+            // Owner thread is free to use the original functions anytime.
             return -1;
         }
-        if (workerId == -1 && owner) {
-            // Owner thread is free to use the original filter anytime.
+        return perWorkerLocks.acquireSlot(workerId, circuitBreaker);
+    }
+
+    public int acquire(int workerId, ExecutionCircuitBreaker circuitBreaker) {
+        if (workerId == -1) {
+            // Owner thread is free to use the original functions anytime.
             return -1;
         }
         return perWorkerLocks.acquireSlot(workerId, circuitBreaker);
@@ -132,6 +156,11 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         for (int i = 0, n = perWorkerParticles.size(); i < n; i++) {
             Particle p = perWorkerParticles.getQuick(i);
             Misc.free(p);
+        }
+        if (perWorkerGroupByFunctions != null) {
+            for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
+                Misc.clearObjList(perWorkerGroupByFunctions.getQuick(i));
+            }
         }
     }
 
@@ -147,6 +176,11 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
                 Misc.freeObjList(perWorkerKeyFunctions.getQuick(i));
             }
         }
+        if (perWorkerGroupByFunctions != null) {
+            for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
+                Misc.freeObjList(perWorkerGroupByFunctions.getQuick(i));
+            }
+        }
     }
 
     public Function getFilter(int slotId) {
@@ -156,8 +190,11 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         return perWorkerFilters.getQuick(slotId);
     }
 
-    public GroupByFunctionsUpdater getFunctionUpdater() {
-        return functionUpdater;
+    public GroupByFunctionsUpdater getFunctionUpdater(int slotId) {
+        if (slotId == -1 || perWorkerFunctionUpdaters == null) {
+            return functionUpdater;
+        }
+        return perWorkerFunctionUpdaters.getQuick(slotId);
     }
 
     public RecordSink getMapSink(int slotId) {
@@ -219,6 +256,18 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
                 executionContext.setCloneSymbolTables(current);
             }
         }
+
+        if (perWorkerGroupByFunctions != null) {
+            final boolean current = executionContext.getCloneSymbolTables();
+            executionContext.setCloneSymbolTables(true);
+            try {
+                for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
+                    Function.init(perWorkerGroupByFunctions.getQuick(i), symbolTableSource, executionContext);
+                }
+            } finally {
+                executionContext.setCloneSymbolTables(current);
+            }
+        }
     }
 
     @Override
@@ -237,9 +286,10 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         return sharded;
     }
 
-    public void mergeShard(int shardIndex) {
+    public void mergeShard(int slotId, int shardIndex) {
         assert sharded;
 
+        final GroupByFunctionsUpdater functionUpdater = getFunctionUpdater(slotId);
         final Map destMap = ownerParticle.getShardMaps().getQuick(shardIndex);
         final int perWorkerMapCount = perWorkerParticles.size();
 
@@ -261,7 +311,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             destMap.merge(srcMap, functionUpdater);
         }
 
-        for (int i = 0, n = perWorkerMapCount; i < n; i++) {
+        for (int i = 0; i < perWorkerMapCount; i++) {
             final Particle srcParticle = perWorkerParticles.getQuick(i);
             final Map srcMap = srcParticle.getShardMaps().getQuick(shardIndex);
             srcMap.close();
@@ -269,9 +319,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     }
 
     public void release(int slotId) {
-        if (perWorkerLocks != null) {
-            perWorkerLocks.releaseSlot(slotId);
-        }
+        perWorkerLocks.releaseSlot(slotId);
     }
 
     @Override
@@ -280,6 +328,14 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         for (int i = 0, n = perWorkerParticles.size(); i < n; i++) {
             Particle p = perWorkerParticles.getQuick(i);
             p.reopen();
+        }
+    }
+
+    public void setAllocator(GroupByAllocator allocator) {
+        if (perWorkerGroupByFunctions != null) {
+            for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
+                GroupByUtils.setAllocator(perWorkerGroupByFunctions.getQuick(i), allocator);
+            }
         }
     }
 
@@ -294,6 +350,14 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     @Override
     public void toPlan(PlanSink sink) {
         sink.val(filter);
+    }
+
+    public void toTop() {
+        if (perWorkerGroupByFunctions != null) {
+            for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
+                GroupByUtils.toTop(perWorkerGroupByFunctions.getQuick(i));
+            }
+        }
     }
 
     public void tryShard(Particle particle) {

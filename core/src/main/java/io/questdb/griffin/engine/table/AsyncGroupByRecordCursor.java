@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.MessageBus;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapRecordCursor;
@@ -37,6 +38,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.log.Log;
@@ -52,7 +54,7 @@ import io.questdb.tasks.GroupByMergeShardTask;
 
 class AsyncGroupByRecordCursor implements RecordCursor {
     private static final Log LOG = LogFactory.getLog(AsyncGroupByRecordCursor.class);
-
+    private final GroupByAllocator allocator;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch(); // used for merge shard workers
     private final ObjList<GroupByFunction> groupByFunctions;
     private final MessageBus messageBus;
@@ -69,11 +71,14 @@ class AsyncGroupByRecordCursor implements RecordCursor {
     private MapRecordCursor mapCursor;
 
     public AsyncGroupByRecordCursor(
+            CairoConfiguration configuration,
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
             MessageBus messageBus
     ) {
+        this.allocator = new GroupByAllocator(configuration);
         this.groupByFunctions = groupByFunctions;
+        GroupByUtils.setAllocator(groupByFunctions, allocator);
         this.recordFunctions = recordFunctions;
         this.messageBus = messageBus;
         recordA = new VirtualRecord(recordFunctions);
@@ -94,6 +99,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
     public void close() {
         if (isOpen) {
             isOpen = false;
+            Misc.free(allocator);
             Misc.clearObjList(groupByFunctions);
             mapCursor = Misc.free(mapCursor);
 
@@ -159,6 +165,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         if (mapCursor != null) {
             mapCursor.toTop();
             GroupByUtils.toTop(recordFunctions);
+            frameSequence.getAtom().toTop();
         }
     }
 
@@ -249,7 +256,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
 
         for (int i = 0; i < perWorkerMapCount; i++) {
             final Map srcMap = atom.getPerWorkerParticles().getQuick(i).getMap();
-            destMap.merge(srcMap, atom.getFunctionUpdater());
+            destMap.merge(srcMap, atom.getFunctionUpdater(-1));
         }
 
         for (int i = 0; i < perWorkerMapCount; i++) {
@@ -282,7 +289,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                 long cursor = pubSeq.next();
                 if (cursor < 0) {
                     circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
-                    atom.mergeShard(i);
+                    atom.mergeShard(-1, i);
                     ownCount++;
                 } else {
                     queue.get(cursor).of(sharedCircuitBreaker, doneLatch, atom, i);
@@ -308,7 +315,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                 long cursor = subSeq.next();
                 if (cursor > -1) {
                     GroupByMergeShardTask task = queue.get(cursor);
-                    GroupByMergeShardJob.run(task, subSeq, cursor);
+                    GroupByMergeShardJob.run(-1, task, subSeq, cursor);
                     reclaimed++;
                 } else {
                     Os.pause();
@@ -337,9 +344,11 @@ class AsyncGroupByRecordCursor implements RecordCursor {
     }
 
     void of(PageFrameSequence<AsyncGroupByAtom> frameSequence, SqlExecutionContext executionContext) throws SqlException {
+        final AsyncGroupByAtom atom = frameSequence.getAtom();
+        atom.setAllocator(allocator);
         if (!isOpen) {
             isOpen = true;
-            frameSequence.getAtom().reopen();
+            atom.reopen();
         }
         this.frameSequence = frameSequence;
         this.circuitBreaker = executionContext.getCircuitBreaker();

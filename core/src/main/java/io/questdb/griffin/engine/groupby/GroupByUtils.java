@@ -32,20 +32,27 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.griffin.engine.functions.cast.CastStrToSymbolFunctionFactory;
 import io.questdb.griffin.engine.functions.columns.*;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
-import io.questdb.std.Chars;
-import io.questdb.std.IntList;
-import io.questdb.std.ObjList;
-import io.questdb.std.Transient;
+import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayDeque;
 
 public class GroupByUtils {
+
+    public static boolean isParallelismSupported(ObjList<GroupByFunction> functions) {
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            if (!functions.getQuick(i).isParallelismSupported()) {
+                return false;
+            }
+        }
+        return true;
+    }
 
     public static void prepareGroupByFunctions(
             @NotNull QueryModel model,
@@ -218,6 +225,10 @@ public class GroupByUtils {
                     functionKeyColumnIndex++;
                     func = createColumnFunction(null, functionKeyColumnIndex, type, -1);
                     keyTypes.add(functionKeyColumnIndex - valueCount - 1, func.getType());
+                    if (type == ColumnType.SYMBOL && func.getType() == ColumnType.STRING) {
+                        // must be a function key, so we need to cast it to symbol
+                        func = new CastStrToSymbolFunctionFactory.Func(func);
+                    }
 
                     recordFunctions.add(func);
                     recordFunctionPositions.add(node.position);
@@ -241,13 +252,52 @@ public class GroupByUtils {
         validateGroupByColumns(sqlNodeStack, model, inferredKeyColumnCount);
     }
 
-    public static boolean supportParallelism(ObjList<GroupByFunction> groupByFunctions) {
-        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
-            if (!groupByFunctions.getQuick(i).isParallelismSupported()) {
-                return false;
+    public static void prepareWorkerGroupByFunctions(
+            @NotNull QueryModel model,
+            @NotNull RecordMetadata metadata,
+            @NotNull FunctionParser functionParser,
+            @NotNull SqlExecutionContext executionContext,
+            @NotNull ObjList<GroupByFunction> groupByFunctions,
+            @NotNull ObjList<GroupByFunction> workerGroupByFunctions
+    ) throws SqlException {
+        final ObjList<QueryColumn> columns = model.getColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final QueryColumn column = columns.getQuick(i);
+            final ExpressionNode node = column.getAst();
+
+            if (node.type != ExpressionNode.LITERAL) {
+                // this can fail
+                final Function function = functionParser.parseFunction(
+                        node,
+                        metadata,
+                        executionContext
+                );
+
+                if (function instanceof GroupByFunction) {
+                    // configure map value columns for group-by functions
+                    // some functions may need more than one column in values,
+                    // so we have them do all the work
+                    GroupByFunction func = (GroupByFunction) function;
+                    workerGroupByFunctions.add(func);
+                } else {
+                    // it's a key function; we don't need it
+                    Misc.free(function);
+                }
             }
         }
-        return true;
+
+        assert groupByFunctions.size() == workerGroupByFunctions.size();
+        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+            final GroupByFunction workerGroupByFunction = workerGroupByFunctions.getQuick(i);
+            final GroupByFunction groupByFunction = groupByFunctions.getQuick(i);
+            workerGroupByFunction.setValueIndex(groupByFunction.getValueIndex());
+        }
+    }
+
+    public static void setAllocator(ObjList<GroupByFunction> functions, GroupByAllocator allocator) {
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            functions.getQuick(i).setAllocator(allocator);
+        }
     }
 
     public static void toTop(ObjList<? extends Function> args) {
@@ -452,7 +502,7 @@ public class GroupByUtils {
                     func = new MapSymbolColumn(keyColumnIndex - 1, index, metadata.isSymbolTableStatic(index));
                 } else {
                     // must be a function key, so we treat symbols as strings
-                    func = StrColumn.newInstance(keyColumnIndex - 1);
+                    func = new StrColumn(keyColumnIndex - 1);
                 }
                 break;
             case ColumnType.DATE:

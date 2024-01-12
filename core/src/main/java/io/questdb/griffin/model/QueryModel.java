@@ -361,6 +361,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         dependencies.clear();
         parsedWhere.clear();
         whereClause = null;
+        backupWhereClause = null;
         constWhereClause = null;
         nestedModel = null;
         tableNameExpr = null;
@@ -1097,6 +1098,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void setArtificialStar(boolean artificialStar) {
         this.artificialStar = artificialStar;
+    }
+
+    public void setBackupWhereClause(ExpressionNode backupWhereClause) {
+        this.backupWhereClause = backupWhereClause;
     }
 
     public void setConstWhereClause(ExpressionNode constWhereClause) {

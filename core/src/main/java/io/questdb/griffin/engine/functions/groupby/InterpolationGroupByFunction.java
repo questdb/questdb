@@ -272,6 +272,11 @@ public class InterpolationGroupByFunction implements GroupByFunction {
     }
 
     @Override
+    public int getValueIndex() {
+        return wrappedFunction.getValueIndex();
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         wrappedFunction.pushValueTypes(columnTypes);
     }
@@ -283,6 +288,11 @@ public class InterpolationGroupByFunction implements GroupByFunction {
 
     public void setTarget(Record target) {
         this.target = target;
+    }
+
+    @Override
+    public void setValueIndex(int valueIndex) {
+        wrappedFunction.setValueIndex(valueIndex);
     }
 
     public void startInterpolating(long startTime, long currentTime, long endTime) {

@@ -68,6 +68,7 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
         final Map map = MapFactory.createMap(configuration, keyTypes, valueTypes);
         final GroupByFunctionsUpdater groupByFunctionsUpdater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
         cursor = new SampleByFillNoneRecordCursor(
+                configuration,
                 map,
                 mapSink,
                 groupByFunctions,

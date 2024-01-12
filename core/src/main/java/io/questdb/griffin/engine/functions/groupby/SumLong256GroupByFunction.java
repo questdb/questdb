@@ -95,21 +95,18 @@ public class SumLong256GroupByFunction extends Long256Function implements GroupB
     }
 
     @Override
+    public int getValueIndex() {
+        return valueIndex;
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }
 
     @Override
     public boolean isParallelismSupported() {
-        return arg.isReadThreadSafe();
-    }
-
-    @Override
-    public void merge(MapValue destValue, MapValue srcValue) {
-        Long256 srcSum = srcValue.getLong256A(valueIndex);
-        long srcCount = srcValue.getLong(valueIndex + 1);
-        destValue.addLong256(valueIndex, srcSum);
-        destValue.addLong(valueIndex + 1, srcCount);
+        return false;
     }
 
     @Override
@@ -123,6 +120,11 @@ public class SumLong256GroupByFunction extends Long256Function implements GroupB
     public void setNull(MapValue mapValue) {
         mapValue.putLong256(valueIndex, Long256Impl.NULL_LONG256);
         mapValue.putLong(valueIndex + 1, 0);
+    }
+
+    @Override
+    public void setValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
     }
 
     private Long256 getLong256(Record rec, Long256Impl long256) {

@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.groupby;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.map.Map;
@@ -49,6 +50,7 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
     private boolean isOpen;
 
     public SampleByFillValueRecordCursor(
+            CairoConfiguration configuration,
             Map map,
             RecordSink keyMapSink,
             ObjList<GroupByFunction> groupByFunctions,
@@ -63,6 +65,7 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
             int offsetFuncPos
     ) {
         super(
+                configuration,
                 recordFunctions,
                 timestampIndex,
                 timestampSampler,

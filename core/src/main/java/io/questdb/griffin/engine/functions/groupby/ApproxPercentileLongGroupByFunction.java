@@ -120,6 +120,11 @@ public class ApproxPercentileLongGroupByFunction extends DoubleFunction implemen
     }
 
     @Override
+    public int getValueIndex() {
+        return valueIndex;
+    }
+
+    @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         BinaryFunction.super.init(symbolTableSource, executionContext);
 
@@ -131,6 +136,11 @@ public class ApproxPercentileLongGroupByFunction extends DoubleFunction implemen
 
     @Override
     public boolean isConstant() {
+        return false;
+    }
+
+    @Override
+    public boolean isParallelismSupported() {
         return false;
     }
 
@@ -153,5 +163,10 @@ public class ApproxPercentileLongGroupByFunction extends DoubleFunction implemen
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NaN);
+    }
+
+    @Override
+    public void setValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
     }
 }

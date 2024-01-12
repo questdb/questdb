@@ -31,7 +31,7 @@ import io.questdb.cairo.sql.Record;
 public interface MapKey extends RecordSinkSPI {
 
     // Updates key size for var-sized keys and returns the size.
-    int commit();
+    long commit();
 
     void copyFrom(MapKey srcKey);
 

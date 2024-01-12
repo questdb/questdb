@@ -80,5 +80,4 @@ public class Long256Column extends Long256Function implements ScalarFunction {
             COLUMNS.setQuick(i, new Long256Column(i));
         }
     }
-
 }
