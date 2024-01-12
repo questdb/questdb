@@ -47,20 +47,23 @@ public abstract class HttpClient implements QuietCloseable {
     private static final String HTTP_NO_CONTENT = String.valueOf(HttpURLConnection.HTTP_NO_CONTENT);
     private static final Log LOG = LogFactory.getLog(HttpClient.class);
     protected final NetworkFacade nf;
-    protected final Socket socket;
     private final int bufferSize;
     private final HttpClientCookieHandler cookieHandler;
     private final ObjectPool<DirectUtf8String> csPool = new ObjectPool<>(DirectUtf8String.FACTORY, 64);
     private final int defaultTimeout;
     private final Request request = new Request();
+    private final SocketFactory socketFactory;
+    protected Socket socket;
     private long bufLo;
     private long contentStart = -1;
+    private CharSequence host;
+    private int port;
     private long ptr = bufLo;
     private ResponseHeaders responseHeaders;
 
     public HttpClient(HttpClientConfiguration configuration, SocketFactory socketFactory) {
         this.nf = configuration.getNetworkFacade();
-        this.socket = socketFactory.newInstance(configuration.getNetworkFacade(), LOG);
+        this.socketFactory = socketFactory;
         this.defaultTimeout = configuration.getTimeout();
         this.cookieHandler = configuration.getCookieHandlerFactory().getInstance();
         this.bufferSize = configuration.getBufferSize();
@@ -79,10 +82,13 @@ public abstract class HttpClient implements QuietCloseable {
     }
 
     public void disconnect() {
-        socket.close();
+        socket = Misc.free(socket);
     }
 
-    public Request newRequest() {
+    public Request newRequest(CharSequence host, int port) {
+        this.socket = socketFactory.newInstance(nf, LOG);
+        this.host = host;
+        this.port = port;
         ptr = bufLo;
         contentStart = -1;
         request.contentLengthHeaderReserved = 0;
@@ -220,6 +226,17 @@ public abstract class HttpClient implements QuietCloseable {
             return this;
         }
 
+        public Request authBearer(CharSequence username, CharSequence token) {
+            beforeHeader();
+            putAsciiInternal("Authorization: Bearer ");
+            putAsciiInternal(token);
+            eol();
+            if (cookieHandler != null) {
+                cookieHandler.setCookies(this, username);
+            }
+            return this;
+        }
+
         public Request authToken(CharSequence username, CharSequence token) {
             beforeHeader();
             putAsciiInternal("Authorization: Token ");
@@ -322,18 +339,19 @@ public abstract class HttpClient implements QuietCloseable {
             return this;
         }
 
-        public ResponseHeaders send(CharSequence host, int port) {
-            return send(host, port, defaultTimeout);
+        public ResponseHeaders send() {
+            return send(defaultTimeout);
         }
 
-        public ResponseHeaders send(CharSequence host, int port, int timeout) {
+        public ResponseHeaders send(int timeout) {
             assert state == STATE_URL_DONE || state == STATE_QUERY || state == STATE_HEADER || state == STATE_CONTENT;
             if (socket.isClosed()) {
                 connect(host, port);
             }
 
             if (state == STATE_URL_DONE || state == STATE_QUERY) {
-                putAscii(" HTTP/1.1").putEOL();
+                putAsciiInternal(" HTTP/1.1").putEOL();
+                putAsciiInternal("Host: ").put(host).putAscii(':').put(port).putEOL();
             }
 
             if (contentStart > -1) {
@@ -347,7 +365,7 @@ public abstract class HttpClient implements QuietCloseable {
             return responseHeaders;
         }
 
-        public void sendPartialContent(CharSequence host, int port, int maxContentLen, int timeout) {
+        public void sendPartialContent(int maxContentLen, int timeout) {
             if (state != STATE_CONTENT || contentStart == -1) {
                 throw new IllegalStateException("No content to send");
             }
@@ -400,6 +418,7 @@ public abstract class HttpClient implements QuietCloseable {
                 case STATE_QUERY:
                 case STATE_URL_DONE:
                     put(" HTTP/1.1").eol();
+                    putAscii("Host").putAscii(": ").put(host).put(':').put(port).putEOL();
                     state = STATE_HEADER;
                     break;
                 case STATE_HEADER:
@@ -407,7 +426,6 @@ public abstract class HttpClient implements QuietCloseable {
                 default:
                     eol();
                     break;
-
             }
         }
 
@@ -603,11 +621,13 @@ public abstract class HttpClient implements QuietCloseable {
         private final long bufLo;
         private final ChunkedResponseImpl chunkedResponse;
         private final int defaultTimeout;
+        private final ResponseImpl response;
 
         public ResponseHeaders(long respParserBufLo, int respParserBufSize, int defaultTimeout, int headerBufSize, ObjectPool<DirectUtf8String> pool) {
             super(headerBufSize, pool);
             this.bufLo = respParserBufLo;
             this.defaultTimeout = defaultTimeout;
+            this.response = new ResponseImpl(respParserBufLo, respParserBufLo + respParserBufSize, defaultTimeout);
             this.chunkedResponse = new ChunkedResponseImpl(respParserBufLo, respParserBufLo + respParserBufSize, defaultTimeout);
         }
 
@@ -616,14 +636,27 @@ public abstract class HttpClient implements QuietCloseable {
         }
 
         public void await(int timeout) {
+            reopen();
+
             while (isIncomplete()) {
                 final int len = recvOrDie(bufLo, timeout);
                 if (len > 0) {
                     // dataLo & dataHi are boundaries of unprocessed data left in the buffer
-                    chunkedResponse.begin(parse(bufLo, bufLo + len, false, true), bufLo + len);
-                    final Utf8Sequence statusCode = getStatusCode();
-                    if (statusCode != null && Utf8s.equalsNcAscii(HTTP_NO_CONTENT, getStatusCode())) {
-                        incomplete = false;
+                    long contentStart = parse(bufLo, bufLo + len, false, true);
+                    if (!isIncomplete()) {
+                        int contentLength = getContentLength();
+                        if (contentLength > bufferSize) {
+                            throw new HttpClientException("insufficient http client buffer size: " + contentLength);
+                        }
+                        if (isChunked()) {
+                            chunkedResponse.begin(contentStart, bufLo + len);
+                        } else {
+                            response.begin(contentStart, bufLo + len, contentLength);
+                        }
+                        final Utf8Sequence statusCode = getStatusCode();
+                        if (statusCode != null && Utf8s.equalsNcAscii(HTTP_NO_CONTENT, getStatusCode())) {
+                            incomplete = false;
+                        }
                     }
                 }
             }
@@ -635,12 +668,23 @@ public abstract class HttpClient implements QuietCloseable {
 
         @Override
         public void clear() {
-            csPool.clear();
             super.clear();
+            csPool.clear();
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            disconnect();
+            clear();
         }
 
         public ChunkedResponse getChunkedResponse() {
             return chunkedResponse;
+        }
+
+        public Response getResponse() {
+            return response;
         }
 
         public boolean isChunked() {
@@ -648,6 +692,17 @@ public abstract class HttpClient implements QuietCloseable {
                 throw new HttpClientException("http response headers not yet received");
             }
             return Utf8s.equalsNcAscii("chunked", getHeader(HEADER_TRANSFER_ENCODING));
+        }
+    }
+
+    private class ResponseImpl extends AbstractResponse {
+        public ResponseImpl(long bufLo, long bufHi, int defaultTimeout) {
+            super(bufLo, bufHi, defaultTimeout);
+        }
+
+        @Override
+        protected int recvOrDie(long bufLo, long bufHi, int timeout) {
+            return HttpClient.this.recvOrDie(bufLo, timeout);
         }
     }
 }

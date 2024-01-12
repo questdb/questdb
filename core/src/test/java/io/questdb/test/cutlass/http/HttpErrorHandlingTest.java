@@ -112,10 +112,10 @@ public class HttpErrorHandlingTest extends BootstrapTest {
                 serverMain.start();
 
                 try (HttpClient httpClient = HttpClientFactory.newInstance(new DefaultHttpClientConfiguration())) {
-                    final HttpClient.Request request = httpClient.newRequest();
+                    final HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
                     request.GET().url("/exec").query("query", "create table x(y long)");
                     try {
-                        HttpClient.ResponseHeaders response = request.send("localhost", HTTP_PORT);
+                        HttpClient.ResponseHeaders response = request.send();
                         response.await();
                         Assert.fail("Expected exception is missing");
                     } catch (HttpClientException e) {
@@ -132,9 +132,9 @@ public class HttpErrorHandlingTest extends BootstrapTest {
             int expectedHttpStatusCode,
             String expectedHttpResponse
     ) {
-        final HttpClient.Request request = httpClient.newRequest();
+        final HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
         request.GET().url("/exec").query("query", sql);
-        HttpClient.ResponseHeaders response = request.send("localhost", HTTP_PORT);
+        HttpClient.ResponseHeaders response = request.send();
         response.await();
 
         TestUtils.assertEquals(String.valueOf(expectedHttpStatusCode), response.getStatusCode());

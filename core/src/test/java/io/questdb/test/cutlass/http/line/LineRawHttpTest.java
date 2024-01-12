@@ -114,7 +114,7 @@ public class LineRawHttpTest extends AbstractBootstrapTest {
 
                     for (int r = 0; r < 3; r++) {
                         int count = 1 + rnd.nextInt(100);
-                        HttpClient.Request request = httpClient.newRequest();
+                        HttpClient.Request request = httpClient.newRequest("localhost", getHttpPort(serverMain));
                         request.POST()
                                 .url("/write ")
                                 .withChunkedContent();
@@ -132,7 +132,7 @@ public class LineRawHttpTest extends AbstractBootstrapTest {
                         }
 
                         request.putEOL().putAscii("0").putEOL().putEOL();
-                        HttpClient.ResponseHeaders resp = request.send("localhost", getHttpPort(serverMain), 5000);
+                        HttpClient.ResponseHeaders resp = request.send(5000);
                         resp.await();
                         totalCount += count;
                     }

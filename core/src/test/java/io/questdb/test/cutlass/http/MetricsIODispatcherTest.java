@@ -242,10 +242,10 @@ public class MetricsIODispatcherTest {
                 // Repeated requests over the same connection.
                 // This is to stress out the RequestState pooling logic.
                 for (int i = 0; i < repeatedRequests; i++) {
-                    HttpClient.ResponseHeaders response = client.newRequest()
+                    HttpClient.ResponseHeaders response = client.newRequest("localhost", DefaultIODispatcherConfiguration.INSTANCE.getBindPort())
                             .GET()
                             .url("/metrics")
-                            .send("localhost", DefaultIODispatcherConfiguration.INSTANCE.getBindPort());
+                            .send();
 
                     response.await(5_000);
                     utf16Sink.clear();

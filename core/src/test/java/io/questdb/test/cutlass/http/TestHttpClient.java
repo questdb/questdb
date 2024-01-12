@@ -84,10 +84,8 @@ public class TestHttpClient implements QuietCloseable {
             @Nullable CharSequence token
     ) {
         try {
-            HttpClient.Request req = httpClient.newRequest();
-            req
-                    .GET()
-                    .url(url);
+            HttpClient.Request req = httpClient.newRequest("localhost", 9001);
+            req.GET().url(url);
 
             if (queryParams != null) {
                 for (int i = 0, n = queryParams.size(); i < n; i++) {
@@ -215,7 +213,7 @@ public class TestHttpClient implements QuietCloseable {
             }
         }
 
-        HttpClient.ResponseHeaders rsp = req.send("localhost", 9001);
+        HttpClient.ResponseHeaders rsp = req.send();
         rsp.await();
 
         if (expectedStatus != null) {
@@ -241,11 +239,8 @@ public class TestHttpClient implements QuietCloseable {
             CharSequenceObjHashMap<String> queryParams,
             CharSequence expectedStatus
     ) {
-        HttpClient.Request req = httpClient.newRequest();
-        req
-                .GET()
-                .url(url)
-                .query("query", sql);
+        HttpClient.Request req = httpClient.newRequest("localhost", 9001);
+        req.GET().url(url).query("query", sql);
 
         reqToSink(req, sink, username, password, token, queryParams, expectedStatus);
     }

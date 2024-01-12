@@ -24,19 +24,18 @@
 
 package io.questdb.cutlass.http;
 
+import io.questdb.cairo.Reopenable;
 import io.questdb.std.*;
 import io.questdb.std.str.*;
 
-import java.io.Closeable;
-
 import static io.questdb.cutlass.http.HttpConstants.*;
 
-public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
+public class HttpHeaderParser implements Mutable, Reopenable, HttpRequestHeader {
     private final BoundaryAugmenter boundaryAugmenter = new BoundaryAugmenter();
+    private final int bufferSize;
     // in theory, it is possible to send multiple cookies on separate lines in the header
     // if we used more cookies, the below map would need to hold a list of CharSequences
     private final LowerCaseUtf8SequenceObjHashMap<DirectUtf8String> headers = new LowerCaseUtf8SequenceObjHashMap<>();
-    private final long hi;
     private final ObjectPool<DirectUtf8String> pool;
     private final DirectUtf8String temp = new DirectUtf8String();
     private final Utf8SequenceObjHashMap<DirectUtf8String> urlParams = new Utf8SequenceObjHashMap<>();
@@ -53,6 +52,7 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
     private DirectUtf8String contentType;
     private DirectUtf8String headerName;
     private long headerPtr;
+    private long hi;
     private boolean isMethod = true;
     private boolean isProtocol = true;
     private boolean isQueryParams = false;
@@ -70,10 +70,9 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
     private DirectUtf8String statusText;
 
     public HttpHeaderParser(int bufferLen, ObjectPool<DirectUtf8String> pool) {
-        final int sz = Numbers.ceilPow2(bufferLen);
-        this.headerPtr = Unsafe.malloc(sz, MemoryTag.NATIVE_HTTP_CONN);
-        this._wptr = headerPtr;
-        this.hi = this.headerPtr + sz;
+        this.bufferSize = Numbers.ceilPow2(bufferLen);
+        this.headerPtr = this._wptr = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_HTTP_CONN);
+        this.hi = headerPtr + bufferSize;
         this.pool = pool;
         clear();
     }
@@ -110,9 +109,10 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
 
     @Override
     public void close() {
-        if (this.headerPtr != 0) {
-            this.headerPtr = Unsafe.free(this.headerPtr, this.hi - this.headerPtr, MemoryTag.NATIVE_HTTP_CONN);
-            this.boundaryAugmenter.close();
+        clear();
+        if (headerPtr != 0) {
+            headerPtr = _wptr = Unsafe.free(headerPtr, hi - headerPtr, MemoryTag.NATIVE_HTTP_CONN);
+            boundaryAugmenter.close();
         }
     }
 
@@ -268,6 +268,15 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
         }
 
         return p;
+    }
+
+    @Override
+    public void reopen() {
+        if (headerPtr == 0) {
+            headerPtr = _wptr = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_HTTP_CONN);
+            hi = headerPtr + bufferSize;
+        }
+        boundaryAugmenter.reopen();
     }
 
     public int size() {
@@ -593,7 +602,7 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
         return offset;
     }
 
-    public static class BoundaryAugmenter implements Closeable {
+    public static class BoundaryAugmenter implements Reopenable {
         private static final Utf8String BOUNDARY_PREFIX = new Utf8String("\r\n--");
         private final DirectUtf8String export = new DirectUtf8String();
         private long _wptr;
@@ -609,7 +618,7 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
         @Override
         public void close() {
             if (lo > 0) {
-                this.lo = this._wptr = Unsafe.free(this.lo, this.lim, MemoryTag.NATIVE_HTTP_CONN);
+                lo = _wptr = Unsafe.free(lo, lim, MemoryTag.NATIVE_HTTP_CONN);
             }
         }
 
@@ -621,6 +630,13 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
             _wptr = lo + BOUNDARY_PREFIX.size();
             of0(value);
             return export.of(lo, _wptr);
+        }
+
+        @Override
+        public void reopen() {
+            if (lo == 0) {
+                lo = _wptr = Unsafe.malloc(lim, MemoryTag.NATIVE_HTTP_CONN);
+            }
         }
 
         private void of0(Utf8Sequence value) {

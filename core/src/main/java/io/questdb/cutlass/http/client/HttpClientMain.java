@@ -42,7 +42,7 @@ public class HttpClientMain {
 
 
             for (int i = 0; i < 1; i++) {
-                HttpClient.Request req = client.newRequest();
+                HttpClient.Request req = client.newRequest("localhost", 9000);
 
                 HttpClient.ResponseHeaders rsp = req
                         .GET()
@@ -53,7 +53,7 @@ public class HttpClientMain {
                         .header("Accept", "gzip, deflate, br")
                         .header("SomethingElse", "vlad")
                         .authBasic("vlad", "hello")
-                        .send("localhost", 9000);
+                        .send();
 
                 rsp.await();
 
@@ -71,7 +71,7 @@ public class HttpClientMain {
                         chunkCount++;
                     }
                     System.out.println(System.currentTimeMillis() - t);
-                    System.out.println("done: " + i +", chunks: "+chunkCount);
+                    System.out.println("done: " + i + ", chunks: " + chunkCount);
                 }
             }
         }

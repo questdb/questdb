@@ -32,10 +32,12 @@ import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractTest;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Rule;
@@ -50,6 +52,11 @@ public class HttpSecurityTest extends AbstractTest {
         @Override
         public boolean authenticate(HttpRequestHeader headers) {
             return false;
+        }
+
+        @Override
+        public @Nullable ObjList<CharSequence> getGroups() {
+            return null;
         }
 
         @Override
@@ -72,6 +79,11 @@ public class HttpSecurityTest extends AbstractTest {
         }
 
         @Override
+        public @Nullable ObjList<CharSequence> getGroups() {
+            return null;
+        }
+
+        @Override
         public CharSequence getPrincipal() {
             return "foo";
         }
@@ -82,6 +94,11 @@ public class HttpSecurityTest extends AbstractTest {
         @Override
         public boolean authenticate(HttpRequestHeader headers) {
             return Utf8s.equalsNcAscii(VALID_REST_TOKEN_AUTH_CREDENTIALS, headers.getHeader(new Utf8String("Authorization")));
+        }
+
+        @Override
+        public @Nullable ObjList<CharSequence> getGroups() {
+            return null;
         }
 
         @Override
