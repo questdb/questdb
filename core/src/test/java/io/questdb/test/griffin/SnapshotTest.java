@@ -455,7 +455,7 @@ public class SnapshotTest extends AbstractCairoTest {
             engine.releaseInactive();
             Assert.assertTrue(ff.removeQuiet(path.of(root).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$()));
 
-            assertException("snapshot prepare", 0, "Cannot append. File does not exist");
+            assertException("snapshot prepare", 0, "Cannot open. File does not exist");
         });
     }
 
