@@ -280,7 +280,7 @@ public abstract class HttpClient implements QuietCloseable {
 
         public Request authToken(CharSequence username, CharSequence token) {
             beforeHeader();
-            putAsciiInternal("Authorization: Token ");
+            putAsciiInternal("Authorization: Bearer ");
             putAsciiInternal(token);
             eol();
             if (cookieHandler != null) {

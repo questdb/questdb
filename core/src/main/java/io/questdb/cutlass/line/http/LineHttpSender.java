@@ -1,5 +1,6 @@
 package io.questdb.cutlass.line.http;
 
+import io.questdb.BuildInformationHolder;
 import io.questdb.cairo.TableUtils;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.http.client.*;
@@ -22,16 +23,18 @@ import java.util.concurrent.ThreadLocalRandom;
 
 public final class LineHttpSender implements Sender {
     private static final int MAX_RETRY = 3;
+    private static final String PATH = "/write?precision=n";
     private static final int RETRY_BACKOFF_MULTIPLIER = 2;
     private static final int RETRY_INITIAL_BACKOFF_MS = 100;
     private static final int RETRY_MAX_BACKOFF_MS = 1000;
     private static final int RETRY_MAX_JITTER_MS = 10;
-    private static final String URL = "/write";
     private final String authToken;
     private final String host;
     private final int maxPendingRows;
     private final String password;
     private final int port;
+    private final CharSequence questdbVersion;
+    private final String url;
     private final String username;
     private HttpClient client;
     private boolean closed;
@@ -49,6 +52,8 @@ public final class LineHttpSender implements Sender {
         this.username = username;
         this.password = password;
         this.client = tls ? HttpClientFactory.newTlsInstance(tlsValidationMode == TlsValidationMode.INSECURE) : HttpClientFactory.newPlainTextInstance();
+        this.url = (tls ? "https://" : "http://") + host + ":" + port + PATH;
+        this.questdbVersion = new BuildInformationHolder().getSwVersion();
         this.request = newRequest();
     }
 
@@ -146,7 +151,7 @@ public final class LineHttpSender implements Sender {
                     // we did our best, give up
                     pendingRows = 0;
                     request = newRequest();
-                    throw new LineSenderException("Could not flush buffer: Error while sending data to server.", e);
+                    throw new LineSenderException("Could not flush buffer: ").put(url).put(" Connection Failed");
                 }
                 retryBackoff = backoff(retryBackoff);
             }
@@ -233,6 +238,14 @@ public final class LineHttpSender implements Sender {
         return Math.min(RETRY_MAX_BACKOFF_MS, backoff * RETRY_BACKOFF_MULTIPLIER);
     }
 
+    private static void chunkedResponseToSink(HttpClient.ResponseHeaders response, StringSink sink) {
+        ChunkedResponse chunkedRsp = response.getChunkedResponse();
+        Chunk chunk;
+        while ((chunk = chunkedRsp.recv()) != null) {
+            sink.putUtf8(chunk.lo(), chunk.hi());
+        }
+    }
+
     private static boolean isSuccessResponse(DirectUtf8Sequence statusCode) {
         return statusCode != null && statusCode.size() == 3 && statusCode.byteAt(0) == '2';
     }
@@ -293,8 +306,19 @@ public final class LineHttpSender implements Sender {
         pendingRows = 0;
         request = newRequest();
 
-        if (Chars.equals("404", statusCode.asAsciiCharSequence())) {
+        CharSequence statusAscii = statusCode.asAsciiCharSequence();
+        if (Chars.equals("404", statusAscii)) {
             throw new LineSenderException("Could not flush buffer: HTTP endpoint does not support ILP. [http-status=404]");
+        }
+        if (Chars.equals("401", statusAscii) || Chars.equals("403", statusAscii)) {
+            StringSink sink = Misc.getThreadLocalSink();
+            chunkedResponseToSink(response, sink);
+            LineSenderException ex = new LineSenderException("Could not flush buffer: HTTP endpoint authentication error");
+            if (sink.length() > 0) {
+                ex = ex.put(": ").put(sink);
+            }
+            ex.put(" [http-status=").put(statusAscii).put(']');
+            throw ex;
         }
         DirectUtf8Sequence contentType = response.getContentType();
         if (contentType != null && Chars.equals("application/json", contentType.asAsciiCharSequence())) {
@@ -307,11 +331,7 @@ public final class LineHttpSender implements Sender {
         // ok, no JSON, let's do something more generic
         StringSink sink = Misc.getThreadLocalSink();
         sink.put("Could not flush buffer: ");
-        ChunkedResponse chunkedRsp = response.getChunkedResponse();
-        Chunk chunk;
-        while ((chunk = chunkedRsp.recv()) != null) {
-            sink.putUtf8(chunk.lo(), chunk.hi());
-        }
+        chunkedResponseToSink(response, sink);
         sink.put(" [http-status=").put(statusCode).put(']');
         throw new LineSenderException(sink);
     }
@@ -342,7 +362,10 @@ public final class LineHttpSender implements Sender {
     }
 
     private HttpClient.Request newRequest() {
-        HttpClient.Request r = client.newRequest().POST().url(URL);
+        HttpClient.Request r = client.newRequest()
+                .POST()
+                .url(PATH)
+                .header("User-Agent", "QuestDB/java/" + questdbVersion);
         if (username != null) {
             r.authBasic(username, password);
         } else if (authToken != null) {
@@ -484,11 +507,11 @@ public final class LineHttpSender implements Sender {
 
             sink.put(messageSink).put(" [http-status=").put(httpStatus.asAsciiCharSequence());
             if (codeSink.length() > 0 || errorIdSink.length() > 0 || lineSink.length() > 0) {
+                if (errorIdSink.length() > 0) {
+                    sink.put(", id: ").put(errorIdSink);
+                }
                 if (codeSink.length() > 0) {
                     sink.put(", code: ").put(codeSink);
-                }
-                if (errorIdSink.length() > 0) {
-                    sink.put(", errorId: ").put(errorIdSink);
                 }
                 if (lineSink.length() > 0) {
                     sink.put(", line: ").put(lineSink);
@@ -522,7 +545,7 @@ public final class LineHttpSender implements Sender {
                     while ((chunk = chunkedRsp.recv()) != null) {
                         jsonSink.putUtf8(chunk.lo(), chunk.hi());
                     }
-                    exception.put("Could not parse JSON error response. [error=").put(e.getMessage()).put(", response=").put(jsonSink).put(']');
+                    exception.put(jsonSink).put(" [http-status=").put(httpStatus.asAsciiCharSequence()).put(']');
                     reset();
                     throw exception;
                 }

@@ -121,7 +121,9 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
                         sender.flush();
                         Assert.fail("should fail");
                     } catch (LineSenderException e) {
-                        TestUtils.assertContains(e.getMessage(), "Could not flush buffer: Error while sending data to server.");
+                        // expected message: Could not flush buffer: https://localhost:<ephemeral_port>/write?precision=n Connection Failed
+                        TestUtils.assertContains(e.getMessage(), "Could not flush buffer: https://localhost:");
+                        TestUtils.assertContains(e.getMessage(), "/write?precision=n Connection Failed");
                     }
                 }
                 assertTableSizeEventually(serverMain.getEngine(), tableName, 1);
