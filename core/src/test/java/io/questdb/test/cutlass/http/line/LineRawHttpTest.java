@@ -250,6 +250,82 @@ public class LineRawHttpTest extends AbstractBootstrapTest {
         });
     }
 
+    @Test
+    public void testValidRequestAfterInvalidWithKeepAlive() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+            )) {
+                serverMain.start();
+
+                Rnd rnd = TestUtils.generateRandom(LOG);
+
+                int totalCount = 0;
+                try (HttpClient httpClient = HttpClientFactory.newInstance(new DefaultHttpClientConfiguration())) {
+                    String line = "line,sym1=123 field1=123i 1234567890000000000\n";
+
+                    for (int r = 0; r < 30; r++) {
+                        if (r % 3 == 0) {
+                            int count = 1 + rnd.nextInt(1000);
+                            HttpClient.Request request = httpClient.newRequest();
+                            request.POST()
+                                    .url("/not_found_chunked ")
+                                    .withChunkedContent();
+                            String hexChunkLen = Integer.toHexString(line.length() * count);
+                            hexChunkLen = hexChunkLen.toUpperCase();
+                            request.putAscii(hexChunkLen).putEOL();
+
+                            for (int i = 0; i < count; i++) {
+                                request.putAscii(line);
+                            }
+                            request.putEOL().putAscii("0").putEOL().putEOL();
+                            HttpClient.ResponseHeaders resp = request.send("localhost", getHttpPort(serverMain), 5000);
+                            resp.await();
+                        } else if (r % 3 == 1) {
+                            // Good request
+                            int count = 1 + rnd.nextInt(100);
+                            HttpClient.Request request = httpClient.newRequest();
+                            request.POST()
+                                    .url("/write ")
+                                    .withChunkedContent();
+
+                            String hexChunkLen = Integer.toHexString(line.length() * count);
+                            hexChunkLen = hexChunkLen.toLowerCase();
+                            request.putAscii(hexChunkLen).putEOL();
+
+                            for (int i = 0; i < count; i++) {
+                                request.putAscii(line);
+                            }
+
+                            request.putEOL().putAscii("0").putEOL().putEOL();
+                            HttpClient.ResponseHeaders resp = request.send("localhost", getHttpPort(serverMain), 5000);
+                            resp.await();
+                            totalCount += count;
+                        } else {
+                            // Good request
+                            int count = 1 + rnd.nextInt(100);
+                            HttpClient.Request request = httpClient.newRequest();
+                            request.POST()
+                                    .url("/not_found ")
+                                    .withContent();
+
+                            for (int i = 0; i < count; i++) {
+                                request.putAscii(line);
+                            }
+
+                            request.putEOL().putAscii("0").putEOL().putEOL();
+                            HttpClient.ResponseHeaders resp = request.send("localhost", getHttpPort(serverMain), 5000);
+                            resp.await();
+                        }
+                    }
+                }
+
+                serverMain.waitWalTxnApplied("line");
+                serverMain.assertSql("select count() from line", "count\n" +
+                        totalCount + "\n");
+            }
+        });
+    }
+
     private RequestBody chunkedBody(final RequestBody body) {
         return new RequestBody() {
             @Override

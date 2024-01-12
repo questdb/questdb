@@ -5660,14 +5660,14 @@ public class IODispatcherTest extends AbstractTest {
     @Test
     public void testPostRequestToGetProcessor() throws Exception {
         testImport(
-                "HTTP/1.1 400 Bad request\r\n" +
+                "HTTP/1.1 404 Not Found\r\n" +
                         "Server: questDB/1.0\r\n" +
                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                         "Transfer-Encoding: chunked\r\n" +
                         "Content-Type: text/plain; charset=utf-8\r\n" +
                         "\r\n" +
-                        "2a\r\n" +
-                        "Bad request. Non-multipart GET expected.\r\n" +
+                        "22\r\n" +
+                        "method (multipart) not supported\r\n" +
                         "\r\n" +
                         "00\r\n" +
                         "\r\n",
@@ -8307,7 +8307,7 @@ public class IODispatcherTest extends AbstractTest {
 
         String baseTable = "create table tab (b boolean, ts timestamp, sym symbol)";
         String walTable = baseTable + " timestamp(ts) partition by DAY WAL";
-        ObjList ddls = new ObjList(
+        ObjList<String> ddls = new ObjList<>(
                 baseTable,
                 baseTable + " timestamp(ts)",
                 baseTable + " timestamp(ts) partition by DAY BYPASS WAL",
@@ -8331,15 +8331,15 @@ public class IODispatcherTest extends AbstractTest {
         String updateWithJoin2 = "update tab t1 set b=sleep(120000) from tab t2 where t1.b = t2.b";
 
         // add many symbols to slow down operation enough so that other thread can detect it in registry and cancel it
-        String addColumnsTmp = "alter table tab add column s1 symbol index";
+        StringBuilder addColumnsTmp = new StringBuilder("alter table tab add column s1 symbol index");
         for (int i = 2; i < 30; i++) {
-            addColumnsTmp += ", s" + i + " symbol index";
+            addColumnsTmp.append(", s").append(i).append(" symbol index");
         }
-        final String addColumns = addColumnsTmp;
+        final String addColumns = addColumnsTmp.toString();
 
-        final ObjList commands;
+        final ObjList<String> commands;
         if ("/query".equals(url)) {
-            commands = new ObjList(
+            commands = new ObjList<>(
                     createAsSelect,
                     select1,
                     select2,
@@ -8358,7 +8358,7 @@ public class IODispatcherTest extends AbstractTest {
                     addColumns
             );
         } else {
-            commands = new ObjList(
+            commands = new ObjList<>(
                     select1,
                     select2,
                     selectWithJoin);
@@ -8385,7 +8385,7 @@ public class IODispatcherTest extends AbstractTest {
 
                     try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                         for (int i = 0, n = ddls.size(); i < n; i++) {
-                            final String ddl = (String) ddls.getQuick(i);
+                            final String ddl = ddls.getQuick(i);
                             boolean isWal = ddl.equals(walTable);
 
                             engine.drop("drop table if exists tab", executionContext, null);
@@ -8396,7 +8396,7 @@ public class IODispatcherTest extends AbstractTest {
                             }
 
                             for (int j = 0, k = commands.size(); j < k; j++) {
-                                final String command = (String) commands.getQuick(j);
+                                final String command = commands.getQuick(j);
 
                                 if (isWal) {
                                     try (RecordCursorFactory factory = engine.select("select suspended, writerTxn, sequencerTxn from wal_tables() where name = 'tab'", executionContext)) {
@@ -8463,7 +8463,7 @@ public class IODispatcherTest extends AbstractTest {
                                         Thread walJob = new Thread(() -> {
                                             started.countDown();
 
-                                            try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1);) {
+                                            try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1)) {
                                                 while (queryError.get() == null) {
                                                     walApplyJob.drain(0);
                                                     new CheckWalTransactionsJob(engine).run(0);
@@ -8492,7 +8492,7 @@ public class IODispatcherTest extends AbstractTest {
                                                 ".*dataset.*",
                                                 "select query_id from query_activity() where query = '" + command.replace("'", "''") + "'",
                                                 null, null, null,
-                                                new CharSequenceObjHashMap<String>() {{
+                                                new CharSequenceObjHashMap<>() {{
                                                     put("nm", "true");
                                                 }},
                                                 "200"
