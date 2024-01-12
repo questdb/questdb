@@ -47,7 +47,7 @@ import java.io.IOException;
 import static io.questdb.PropertyKey.*;
 import static io.questdb.test.cutlass.http.line.IlpHttpUtils.getHttpPort;
 
-public class LineRawHttpTest extends AbstractBootstrapTest {
+public class LineRawHttpFuzzTest extends AbstractBootstrapTest {
     @Before
     public void setUp() {
         super.setUp();
@@ -57,7 +57,7 @@ public class LineRawHttpTest extends AbstractBootstrapTest {
 
     @Test
     public void testChunkedDataIlpUploadNoKeepAlive() throws Exception {
-        Rnd rnd = TestUtils.generateRandom(LOG, 1957634840483L, 1704992303778L);
+        Rnd rnd = TestUtils.generateRandom(LOG);
         TestUtils.assertMemoryLeak(() -> {
             int fragmentation = 1 + rnd.nextInt(5);
             LOG.info().$("=== fragmentation=").$(fragmentation).$();
