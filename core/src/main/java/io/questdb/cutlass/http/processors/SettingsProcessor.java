@@ -32,34 +32,34 @@ import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.Utf8StringSink;
 
 public class SettingsProcessor implements HttpRequestProcessor {
-
-    private final CairoConfiguration cairoConfiguration;
-    private final CharSequenceObjHashMap<CharSequence> settings = new CharSequenceObjHashMap<>();
+    private final Utf8StringSink sink = new Utf8StringSink();
 
     public SettingsProcessor(CairoConfiguration cairoConfiguration) {
-        this.cairoConfiguration = cairoConfiguration;
-    }
-
-    @Override
-    public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        final CharSequenceObjHashMap<CharSequence> settings = new CharSequenceObjHashMap<>();
         cairoConfiguration.populateSettings(settings);
 
-        final HttpChunkedResponseSocket r = context.getChunkedResponseSocket();
-        r.status(200, "application/json");
-        r.sendHeader();
-        r.putAscii('{');
+        sink.putAscii('{');
         final ObjList<CharSequence> keys = settings.keys();
         for (int i = 0, n = keys.size(); i < n; i++) {
             final CharSequence key = keys.getQuick(i);
             final CharSequence value = settings.get(key);
-            r.putQuoted(key).putAscii(':').putQuoted(value);
+            sink.putAscii('"').put(key).putAscii("\":\"").put(value).putAscii('"');
             if (i != n - 1) {
-                r.putAscii(',');
+                sink.putAscii(',');
             }
         }
-        r.putAscii('}');
+        sink.putAscii('}');
+    }
+
+    @Override
+    public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        final HttpChunkedResponseSocket r = context.getChunkedResponseSocket();
+        r.status(200, "application/json");
+        r.sendHeader();
+        r.put(sink);
         r.sendChunk(true);
     }
 
