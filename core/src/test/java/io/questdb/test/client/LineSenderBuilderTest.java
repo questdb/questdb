@@ -444,6 +444,18 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testMaxRetriesNotSupportedForTcp() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                Sender.builder().address(LOCALHOST).maxRetries(1).build();
+                fail("max retries should not be supported for TCP");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "retrying is not supported for TCP protocol");
+            }
+        });
+    }
+
+    @Test
     public void testPlainAuth_connectionRefused() throws Exception {
         assertMemoryLeak(() -> {
             Sender.LineSenderBuilder builder = Sender.builder()

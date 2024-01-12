@@ -87,6 +87,9 @@ final class MockHttpProcessor implements HttpRequestProcessor, HttpMultipartCont
             ActualRequest actualRequest = recordedRequests.poll();
             verifyInteraction(expectedRequest, actualRequest, i);
         }
+        if (!recordedRequests.isEmpty()) {
+            throw new AssertionError("Unexpected requests: " + recordedRequests);
+        }
     }
 
     public MockHttpProcessor withExpectedContent(String expectedContent) {
@@ -119,6 +122,14 @@ final class MockHttpProcessor implements HttpRequestProcessor, HttpMultipartCont
     private static class ActualRequest {
         private final StringSink bodyContent = new StringSink();
         private final Map<String, String> headers = new HashMap<>();
+
+        @Override
+        public String toString() {
+            return "ActualRequest{" +
+                    "bodyContent=" + bodyContent +
+                    ", headers=" + headers +
+                    '}';
+        }
     }
 
     private static class ExpectedRequest {

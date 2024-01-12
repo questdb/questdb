@@ -106,7 +106,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
                 int totalCount = 100_000;
                 int maxPendingRows = 1000;
-                try (LineHttpSender sender = new LineHttpSender("localhost", httpPort, DefaultHttpClientConfiguration.INSTANCE, false, Sender.TlsValidationMode.DEFAULT, maxPendingRows, null, null, null)) {
+                try (LineHttpSender sender = new LineHttpSender("localhost", httpPort, DefaultHttpClientConfiguration.INSTANCE, false, Sender.TlsValidationMode.DEFAULT, maxPendingRows, null, null, null, 0)) {
                     for (int i = 0; i < totalCount; i++) {
                         if (i != 0 && i % maxPendingRows == 0) {
                             serverMain.waitWalTxnApplied("table with space");
@@ -179,7 +179,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 int httpPort = getHttpPort(serverMain);
 
                 int totalCount = 1_000;
-                try (LineHttpSender sender = new LineHttpSender("localhost", httpPort, DefaultHttpClientConfiguration.INSTANCE, false, Sender.TlsValidationMode.DEFAULT, 100_000, null, null, null)) {
+                try (LineHttpSender sender = new LineHttpSender("localhost", httpPort, DefaultHttpClientConfiguration.INSTANCE, false, Sender.TlsValidationMode.DEFAULT, 100_000, null, null, null, 0)) {
                     for (int i = 0; i < totalCount; i++) {
                         sender.table("table")
                                 .longColumn("lcol1", i)
@@ -290,7 +290,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 int httpPort = getHttpPort(serverMain);
 
                 int totalCount = 1_000_000;
-                try (LineHttpSender sender = new LineHttpSender("localhost", httpPort, DefaultHttpClientConfiguration.INSTANCE, false, Sender.TlsValidationMode.DEFAULT, 100_000, null, null, null)) {
+                try (LineHttpSender sender = new LineHttpSender("localhost", httpPort, DefaultHttpClientConfiguration.INSTANCE, false, Sender.TlsValidationMode.DEFAULT, 100_000, null, null, null, 0)) {
                     for (int i = 0; i < totalCount; i++) {
                         sender.table("table with space")
                                 .symbol("tag1", "value" + i % 10)

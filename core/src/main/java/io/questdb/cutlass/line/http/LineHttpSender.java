@@ -23,7 +23,6 @@ import java.time.temporal.ChronoUnit;
 import java.util.concurrent.ThreadLocalRandom;
 
 public final class LineHttpSender implements Sender {
-    private static final int MAX_RETRY = 3;
     private static final String PATH = "/write?precision=n";
     private static final int RETRY_BACKOFF_MULTIPLIER = 2;
     private static final int RETRY_INITIAL_BACKOFF_MS = 100;
@@ -32,6 +31,7 @@ public final class LineHttpSender implements Sender {
     private final String authToken;
     private final String host;
     private final int maxPendingRows;
+    private final int maxRetries;
     private final String password;
     private final int port;
     private final CharSequence questdbVersion;
@@ -44,8 +44,9 @@ public final class LineHttpSender implements Sender {
     private HttpClient.Request request;
     private RequestState state = RequestState.EMPTY;
 
-    public LineHttpSender(String host, int port, HttpClientConfiguration clientConfiguration, boolean tls, TlsValidationMode tlsValidationMode, int maxPendingRows, String authToken, String username, String password) {
+    public LineHttpSender(String host, int port, HttpClientConfiguration clientConfiguration, boolean tls, TlsValidationMode tlsValidationMode, int maxPendingRows, String authToken, String username, String password, int maxRetries) {
         assert authToken == null || (username == null && password == null);
+        this.maxRetries = maxRetries;
         this.host = host;
         this.port = port;
         this.maxPendingRows = maxPendingRows;
@@ -276,7 +277,7 @@ public final class LineHttpSender implements Sender {
             return;
         }
 
-        int remainingRetries = MAX_RETRY;
+        int remainingRetries = maxRetries;
         int retryBackoff = RETRY_INITIAL_BACKOFF_MS;
         for (; ; ) {
             try {
