@@ -1,6 +1,7 @@
 package io.questdb.cutlass.line.http;
 
 import io.questdb.BuildInformationHolder;
+import io.questdb.HttpClientConfiguration;
 import io.questdb.cairo.TableUtils;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.http.client.*;
@@ -43,7 +44,7 @@ public final class LineHttpSender implements Sender {
     private HttpClient.Request request;
     private RequestState state = RequestState.EMPTY;
 
-    public LineHttpSender(String host, int port, int initialBufferCapacity, boolean tls, TlsValidationMode tlsValidationMode, int maxPendingRows, String authToken, String username, String password) {
+    public LineHttpSender(String host, int port, HttpClientConfiguration clientConfiguration, boolean tls, TlsValidationMode tlsValidationMode, int maxPendingRows, String authToken, String username, String password) {
         assert authToken == null || (username == null && password == null);
         this.host = host;
         this.port = port;
@@ -51,8 +52,13 @@ public final class LineHttpSender implements Sender {
         this.authToken = authToken;
         this.username = username;
         this.password = password;
-        this.client = tls ? HttpClientFactory.newTlsInstance(tlsValidationMode == TlsValidationMode.INSECURE) : HttpClientFactory.newPlainTextInstance();
-        this.url = (tls ? "https://" : "http://") + host + ":" + port + PATH;
+        if (tls) {
+            this.client = HttpClientFactory.newTlsInstance(clientConfiguration, tlsValidationMode == TlsValidationMode.INSECURE);
+            this.url = "https://" + host + ":" + port + PATH;
+        } else {
+            this.client = HttpClientFactory.newPlainTextInstance(clientConfiguration);
+            this.url = "http://" + host + ":" + port + PATH;
+        }
         this.questdbVersion = new BuildInformationHolder().getSwVersion();
         this.request = newRequest();
     }
@@ -101,7 +107,7 @@ public final class LineHttpSender implements Sender {
             return;
         }
         try {
-            flush();
+            flush0(true);
         } finally {
             Misc.free(jsonErrorParser);
             closed = true;
@@ -118,46 +124,7 @@ public final class LineHttpSender implements Sender {
 
     @Override
     public void flush() {
-        if (state != RequestState.EMPTY) {
-            throw new LineSenderException("Cannot flush buffer while row is in progress. Use sender.at() or sender.atNow() to finish the current row first.");
-        }
-        if (pendingRows == 0) {
-            return;
-        }
-
-        int remainingRetries = MAX_RETRY;
-        int retryBackoff = RETRY_INITIAL_BACKOFF_MS;
-        for (; ; ) {
-            try {
-                HttpClient.ResponseHeaders response = request.send(host, port);
-                response.await();
-                DirectUtf8Sequence statusCode = response.getStatusCode();
-                if (isSuccessResponse(statusCode)) {
-                    break;
-                }
-                if (isRetryableHttpStatus(statusCode)) {
-                    client.disconnect(); // forces reconnect, just in case
-                    if (remainingRetries-- == 0) {
-                        handleHttpErrorResponse(statusCode, response);
-                    }
-                    retryBackoff = backoff(retryBackoff);
-                    continue;
-                }
-                handleHttpErrorResponse(statusCode, response);
-            } catch (HttpClientException e) {
-                // this is a network error, we can retry
-                client.disconnect(); // forces reconnect
-                if (remainingRetries-- == 0) {
-                    // we did our best, give up
-                    pendingRows = 0;
-                    request = newRequest();
-                    throw new LineSenderException("Could not flush buffer: ").put(url).put(" Connection Failed");
-                }
-                retryBackoff = backoff(retryBackoff);
-            }
-        }
-        pendingRows = 0;
-        request = newRequest();
+        flush0(false);
     }
 
     @Override
@@ -299,6 +266,49 @@ public final class LineHttpSender implements Sender {
                     break;
             }
         }
+    }
+
+    private void flush0(boolean closing) {
+        if (state != RequestState.EMPTY && !closing) {
+            throw new LineSenderException("Cannot flush buffer while row is in progress. Use sender.at() or sender.atNow() to finish the current row first.");
+        }
+        if (pendingRows == 0) {
+            return;
+        }
+
+        int remainingRetries = MAX_RETRY;
+        int retryBackoff = RETRY_INITIAL_BACKOFF_MS;
+        for (; ; ) {
+            try {
+                HttpClient.ResponseHeaders response = request.send(host, port);
+                response.await();
+                DirectUtf8Sequence statusCode = response.getStatusCode();
+                if (isSuccessResponse(statusCode)) {
+                    break;
+                }
+                if (isRetryableHttpStatus(statusCode)) {
+                    client.disconnect(); // forces reconnect, just in case
+                    if (remainingRetries-- == 0) {
+                        handleHttpErrorResponse(statusCode, response);
+                    }
+                    retryBackoff = backoff(retryBackoff);
+                    continue;
+                }
+                handleHttpErrorResponse(statusCode, response);
+            } catch (HttpClientException e) {
+                // this is a network error, we can retry
+                client.disconnect(); // forces reconnect
+                if (remainingRetries-- == 0) {
+                    // we did our best, give up
+                    pendingRows = 0;
+                    request = newRequest();
+                    throw new LineSenderException("Could not flush buffer: ").put(url).put(" Connection Failed");
+                }
+                retryBackoff = backoff(retryBackoff);
+            }
+        }
+        pendingRows = 0;
+        request = newRequest();
     }
 
     private void handleHttpErrorResponse(DirectUtf8Sequence statusCode, HttpClient.ResponseHeaders response) {

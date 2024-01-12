@@ -24,6 +24,8 @@
 
 package io.questdb.client;
 
+import io.questdb.DefaultHttpClientConfiguration;
+import io.questdb.HttpClientConfiguration;
 import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.line.LineChannel;
 import io.questdb.cutlass.line.LineSenderException;
@@ -246,6 +248,7 @@ public interface Sender extends Closeable {
         private static final byte BUFFER_CAPACITY_DEFAULT = 0;
         private static final int DEFAULT_BUFFER_CAPACITY = 64 * 1024;
         private static final int DEFAULT_HTTP_PORT = 9000;
+        private static final int DEFAULT_MAXIMUM_BUFFER_CAPACITY = 20 * 1024 * 1024; // 20MB -- todo: sync with Rust client
         // indicates that buffer capacity was not set explicitly
         private static final int DEFAULT_MAX_PENDING_ROWS = 10_000;
         private static final int DEFAULT_TCP_PORT = 9009;
@@ -260,6 +263,18 @@ public interface Sender extends Closeable {
         private String httpToken;
         private String keyId;
         private int maxPendingRows = DEFAULT_MAX_PENDING_ROWS;
+        private int maximumBufferCapacity = DEFAULT_MAXIMUM_BUFFER_CAPACITY;
+        private final HttpClientConfiguration httpClientConfiguration = new DefaultHttpClientConfiguration() {
+            @Override
+            public int getInitialRequestBufferSize() {
+                return bufferCapacity == BUFFER_CAPACITY_DEFAULT ? DEFAULT_BUFFER_CAPACITY : bufferCapacity;
+            }
+
+            @Override
+            public int getMaximumRequestBufferSize() {
+                return maximumBufferCapacity == BUFFER_CAPACITY_DEFAULT ? DEFAULT_MAXIMUM_BUFFER_CAPACITY : maximumBufferCapacity;
+            }
+        };
         private String password;
         private int port = PORT_DEFAULT;
         private PrivateKey privateKey;
@@ -340,6 +355,7 @@ public interface Sender extends Closeable {
         /**
          * Configure capacity of an internal buffer.
          * Bigger buffer increase batching effect.
+         * <p>
          *
          * @param bufferCapacity buffer capacity in bytes.
          * @return this instance for method chaining
@@ -365,7 +381,13 @@ public interface Sender extends Closeable {
 
             NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             if (protocol == PROTOCOL_HTTP) {
-                return new LineHttpSender(host, port, bufferCapacity, tlsEnabled, tlsValidationMode, maxPendingRows, httpToken, username, password);
+                if (httpClientConfiguration.getMaximumRequestBufferSize() < httpClientConfiguration.getInitialRequestBufferSize()) {
+                    throw new LineSenderException("maximum buffer capacity cannot be less than initial buffer capacity ")
+                            .put("[maximum-buffer-capacity=").put(httpClientConfiguration.getMaximumRequestBufferSize())
+                            .put(", initial-buffer-capacity=").put(httpClientConfiguration.getInitialRequestBufferSize())
+                            .put("]");
+                }
+                return new LineHttpSender(host, port, httpClientConfiguration, tlsEnabled, tlsValidationMode, maxPendingRows, httpToken, username, password);
             } else if (protocol != PROTOCOL_TCP) {
                 throw new LineSenderException("unsupported protocol ")
                         .put("[protocol=").put(protocol).put("]");
@@ -472,6 +494,17 @@ public interface Sender extends Closeable {
                 throw new LineSenderException("token cannot be empty nor null");
             }
             this.httpToken = token;
+            return this;
+        }
+
+        public LineSenderBuilder maximumBufferCapacity(int maximumBufferCapacity) {
+            if (maximumBufferCapacity < DEFAULT_BUFFER_CAPACITY) {
+                throw new LineSenderException("maximum buffer capacity cannot be less than default buffer capacity ")
+                        .put("[maximum-buffer-capacity=").put(maximumBufferCapacity)
+                        .put(", default-buffer-capacity=").put(DEFAULT_BUFFER_CAPACITY)
+                        .put("]");
+            }
+            this.maximumBufferCapacity = maximumBufferCapacity;
             return this;
         }
 

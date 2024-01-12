@@ -7,6 +7,7 @@ import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.HttpRequestProcessorFactory;
 import io.questdb.cutlass.http.HttpServer;
+import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.NetworkFacade;
@@ -69,6 +70,39 @@ public class LineHttpSenderErrorHandlingTest extends AbstractTest {
                 .respondWith(400, jsonResponse, "application/json");
 
         testWithMock(mockHttpProcessor, errorVerifier("Could not flush buffer: failed to parse line protocol: invalid field format [http-status=400, id: ABC-2, code: invalid, line: 2]"));
+    }
+
+    @Test
+    public void testMaxRequestBufferSizeCannotBeLessThanDefault() {
+        try (Sender sender = Sender.builder().url("http://localhost:1").maximumBufferCapacity(65535).build()) {
+            Assert.fail();
+        } catch (LineSenderException e) {
+            TestUtils.assertContains(e.getMessage(), "maximum buffer capacity cannot be less than default buffer capacity [maximum-buffer-capacity=65535, default-buffer-capacity=65536]");
+        }
+    }
+
+    @Test
+    public void testMaxRequestBufferSizeCannotBeLessThanInitialBufferSize() {
+        try (Sender sender = Sender.builder().url("http://localhost:1").maximumBufferCapacity(100_000).bufferCapacity(200_000).build()) {
+            Assert.fail();
+        } catch (LineSenderException e) {
+            TestUtils.assertContains(e.getMessage(), "maximum buffer capacity cannot be less than initial buffer capacity [maximum-buffer-capacity=100000, initial-buffer-capacity=200000]");
+        }
+    }
+
+    @Test
+    public void testMaxRequestBufferSizeExceeded() {
+        try (Sender sender = Sender.builder().url("http://localhost:1").maximumBufferCapacity(65536).build()) {
+            for (int i = 0; i < 100000; i++) {
+                sender.table("test")
+                        .symbol("sym", "bol")
+                        .doubleColumn("x", 1.0)
+                        .atNow();
+            }
+            Assert.fail();
+        } catch (HttpClientException e) {
+            TestUtils.assertContains(e.getMessage(), "maximum buffer size exceeded [maxBufferSize=65536, requiredSize=65537]");
+        }
     }
 
     @Test

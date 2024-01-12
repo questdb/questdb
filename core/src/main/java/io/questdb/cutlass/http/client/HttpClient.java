@@ -52,6 +52,7 @@ public abstract class HttpClient implements QuietCloseable {
     private final ObjectPool<DirectUtf8String> csPool = new ObjectPool<>(DirectUtf8String.FACTORY, 64);
     private final int defaultTimeout;
     private final boolean insecureTls;
+    private final int maxBufferSize;
     private final Request request = new Request();
     private final int responseParserBufSize;
     private long bufLo;
@@ -67,8 +68,9 @@ public abstract class HttpClient implements QuietCloseable {
         this.socket = socketFactory.newInstance(configuration.getNetworkFacade(), LOG);
         this.defaultTimeout = configuration.getTimeout();
         this.cookieHandler = configuration.getCookieHandlerFactory().getInstance();
-        this.bufferSize = configuration.getBufferSize();
-        this.responseParserBufSize = bufferSize;
+        this.bufferSize = configuration.getInitialRequestBufferSize();
+        this.maxBufferSize = configuration.getMaximumRequestBufferSize();
+        this.responseParserBufSize = configuration.getResponseBufferSize();
         this.bufLo = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
         this.responseParserBufLo = Unsafe.malloc(responseParserBufSize, MemoryTag.NATIVE_DEFAULT);
         this.responseHeaders = new ResponseHeaders(responseParserBufLo, responseParserBufSize, defaultTimeout, 4096, csPool);
@@ -121,14 +123,14 @@ public abstract class HttpClient implements QuietCloseable {
         final long requiredSize = usedBytes + capacity;
         if (requiredSize > bufferSize) {
             growBuffer(requiredSize);
-
-//            throw BufferOverflowException.INSTANCE;
         }
     }
 
     private void growBuffer(long requiredSize) {
-        // todo: check sensible boundaries and int overflow
-        long newBufferSize = Numbers.ceilPow2((int) requiredSize);
+        if (requiredSize > maxBufferSize) {
+            throw new HttpClientException("maximum buffer size exceeded [maxBufferSize=").put(maxBufferSize).put(", requiredSize=").put(requiredSize).put(']');
+        }
+        long newBufferSize = Math.min(Numbers.ceilPow2((int) requiredSize), maxBufferSize);
         long newBufLo = Unsafe.realloc(bufLo, bufferSize, newBufferSize, MemoryTag.NATIVE_DEFAULT);
 
         long offset = newBufLo - bufLo;
@@ -448,8 +450,7 @@ public abstract class HttpClient implements QuietCloseable {
             beforeHeader();
 
             putAscii(HEADER_CONTENT_LENGTH);
-//            contentLengthHeaderReserved = ((int) Math.log10(bufferSize) + 2) + 4; // length + 2 x EOL
-            contentLengthHeaderReserved = 20; // hack
+            contentLengthHeaderReserved = ((int) Math.log10(maxBufferSize) + 2) + 4; // length + 2 x EOL
             ensureCapacity(contentLengthHeaderReserved);
             ptr += contentLengthHeaderReserved;
             contentStart = ptr;
