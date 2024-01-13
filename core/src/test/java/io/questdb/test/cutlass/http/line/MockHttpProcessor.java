@@ -12,8 +12,10 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.TimeUnit;
 
 final class MockHttpProcessor implements HttpRequestProcessor, HttpMultipartContentListener {
+    private static final long MAX_DELIVERY_DELAY_NANOS = TimeUnit.SECONDS.toNanos(10);
     private final Queue<ExpectedRequest> expectedRequests = new ConcurrentLinkedQueue<>();
     private final Queue<ActualRequest> recordedRequests = new ConcurrentLinkedQueue<>();
     private final Queue<Response> responses = new ConcurrentLinkedQueue<>();
@@ -84,7 +86,11 @@ final class MockHttpProcessor implements HttpRequestProcessor, HttpMultipartCont
     public void verify() {
         for (int i = 0; !expectedRequests.isEmpty(); i++) {
             ExpectedRequest expectedRequest = expectedRequests.poll();
-            ActualRequest actualRequest = recordedRequests.poll();
+            ActualRequest actualRequest;
+            long deadline = System.nanoTime() + MAX_DELIVERY_DELAY_NANOS;
+            do {
+                actualRequest = recordedRequests.poll();
+            } while (actualRequest == null && System.nanoTime() < deadline);
             verifyInteraction(expectedRequest, actualRequest, i);
         }
         if (!recordedRequests.isEmpty()) {
