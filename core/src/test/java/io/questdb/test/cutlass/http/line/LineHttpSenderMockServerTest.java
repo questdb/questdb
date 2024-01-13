@@ -87,7 +87,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 .respondWith(204, "", "application/json");
 
         testWithMock(mockHttpProcessor, sender -> {
-            // first row to be flushed implicitly
+            // first row to be flushed explicitly
             sender.table("test").doubleColumn("x", 1.0).atNow();
             sender.flush();
 
