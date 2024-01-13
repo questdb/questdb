@@ -69,6 +69,16 @@ public class FirstDateGroupByFunction extends DateFunction implements GroupByFun
     }
 
     @Override
+    public int getValueIndex() {
+        return valueIndex;
+    }
+
+    @Override
+    public boolean isParallelismSupported() {
+        return false;
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.DATE);
@@ -77,5 +87,10 @@ public class FirstDateGroupByFunction extends DateFunction implements GroupByFun
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putTimestamp(valueIndex, Numbers.LONG_NaN);
+    }
+
+    @Override
+    public void setValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
     }
 }

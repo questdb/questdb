@@ -48,13 +48,14 @@ import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.sql.DataFrameCursorFactory.*;
 
-public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFactory {
+public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFactory implements StealableFilterRecordCursorFactory {
 
     private static final PageFrameReducer REDUCER = AsyncJitFilteredRecordCursorFactory::filter;
 
     private final RecordCursorFactory base;
     private final SCSequence collectSubSeq = new SCSequence();
     private final AsyncFilteredRecordCursor cursor;
+    private final Function filter;
     private final PageFrameSequence<AsyncJitFilterAtom> frameSequence;
     private final Function limitLoFunction;
     private final int limitLoPos;
@@ -81,6 +82,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         assert !(base instanceof FilteredRecordCursorFactory);
         assert !(base instanceof AsyncJitFilteredRecordCursorFactory);
         this.base = base;
+        this.filter = filter;
         this.cursor = new AsyncFilteredRecordCursor(filter, base.getScanDirection());
         this.negativeLimitCursor = new AsyncFilteredNegativeLimitRecordCursor(base.getScanDirection());
         MemoryCARW bindVarMemory = Vm.getCARWInstance(
@@ -164,13 +166,30 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     }
 
     @Override
+    public Function getFilter() {
+        return filter;
+    }
+
+    @Override
     public int getScanDirection() {
         return base.getScanDirection();
     }
 
     @Override
+    public void halfClose() {
+        Misc.free(frameSequence);
+        cursor.freeRecords();
+        negativeLimitCursor.freeRecords();
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
+    }
+
+    @Override
+    public boolean supportsFilterStealing() {
+        return limitLoFunction == null;
     }
 
     @Override
@@ -282,10 +301,9 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     @Override
     protected void _close() {
         Misc.free(base);
-        Misc.free(frameSequence);
         Misc.free(negativeLimitRows);
-        cursor.freeRecords();
-        negativeLimitCursor.freeRecords();
+        halfClose();
+        Misc.free(filter);
     }
 
     private static class AsyncJitFilterAtom extends AsyncFilterAtom {

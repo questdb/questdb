@@ -68,7 +68,17 @@ public class FirstIPv4GroupByFunction extends IPv4Function implements GroupByFun
     }
 
     @Override
+    public int getValueIndex() {
+        return valueIndex;
+    }
+
+    @Override
     public boolean isConstant() {
+        return false;
+    }
+
+    @Override
+    public boolean isParallelismSupported() {
         return false;
     }
 
@@ -86,5 +96,10 @@ public class FirstIPv4GroupByFunction extends IPv4Function implements GroupByFun
     @Override
     public void setNull(MapValue mapValue) {
         setInt(mapValue, Numbers.IPv4_NULL);
+    }
+
+    @Override
+    public void setValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
     }
 }

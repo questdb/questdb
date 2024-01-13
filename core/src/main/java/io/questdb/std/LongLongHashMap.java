@@ -44,8 +44,16 @@ public class LongLongHashMap extends AbstractLongHashSet {
         clear();
     }
 
+    public int capacity() {
+        return keys.length;
+    }
+
     public long get(long key) {
         return valueAt(keyIndex(key));
+    }
+
+    public long keyAtRaw(int index) {
+        return keys[index];
     }
 
     public void put(long key, long value) {
@@ -66,6 +74,10 @@ public class LongLongHashMap extends AbstractLongHashSet {
 
     public long valueAt(int index) {
         return index < 0 ? values[-index - 1] : noEntryValue;
+    }
+
+    public long valueAtRaw(int index) {
+        return values[index];
     }
 
     private void rehash() {

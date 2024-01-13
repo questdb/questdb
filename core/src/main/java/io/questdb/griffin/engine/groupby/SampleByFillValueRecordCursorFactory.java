@@ -66,10 +66,10 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
             int offsetFuncPos
     ) throws SqlException {
         super(
+                asm,
                 configuration,
                 base,
                 listColumnFilter,
-                asm,
                 keyTypes,
                 valueTypes,
                 groupByMetadata,
@@ -86,6 +86,7 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
             );
             final GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
             cursor = new SampleByFillValueRecordCursor(
+                    configuration,
                     map,
                     mapSink,
                     groupByFunctions,

@@ -102,6 +102,11 @@ public class MapSymbolColumn extends SymbolFunction {
     }
 
     @Override
+    public boolean isParallelismSupported() {
+        return true;
+    }
+
+    @Override
     public boolean isSymbolTableStatic() {
         return symbolTableStatic;
     }

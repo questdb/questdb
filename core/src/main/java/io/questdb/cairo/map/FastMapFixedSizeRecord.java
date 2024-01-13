@@ -42,10 +42,10 @@ final class FastMapFixedSizeRecord implements FastMapRecord {
     private final long[] columnOffsets;
     private final Long256Impl[] keyLong256A;
     private final Long256Impl[] keyLong256B;
-    private final int keySize;
+    private final long keySize;
     private final FastMapValue value;
     private final long[] valueOffsets;
-    private final int valueSize;
+    private final long valueSize;
     private long keyAddress;
     private long limit;
     private IntList symbolTableIndex;
@@ -53,8 +53,8 @@ final class FastMapFixedSizeRecord implements FastMapRecord {
     private long valueAddress;
 
     FastMapFixedSizeRecord(
-            int keySize,
-            int valueSize,
+            long keySize,
+            long valueSize,
             long[] valueOffsets,
             FastMapValue value,
             @NotNull @Transient ColumnTypes keyTypes,
@@ -125,8 +125,8 @@ final class FastMapFixedSizeRecord implements FastMapRecord {
     }
 
     private FastMapFixedSizeRecord(
-            int keySize,
-            int valueSize,
+            long keySize,
+            long valueSize,
             long[] valueOffsets,
             long[] columnOffsets,
             Long256Impl[] keyLong256A,

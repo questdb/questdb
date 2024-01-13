@@ -196,6 +196,10 @@ public class TextLoader implements Closeable, Mutable {
         return textWriter.getPartitionBy();
     }
 
+    public boolean getCreate() {
+        return textWriter.getCreate();
+    }
+
     public CharSequence getTableName() {
         return textWriter.getTableName();
     }
@@ -255,6 +259,10 @@ public class TextLoader implements Closeable, Mutable {
 
     public void setForceHeaders(boolean forceHeaders) {
         this.forceHeaders = forceHeaders;
+    }
+
+    public void setCreate(boolean create) {
+        textWriter.setCreate(create);
     }
 
     public void setMaxUncommittedRows(int maxUncommittedRows) {

@@ -38,7 +38,6 @@ import org.jetbrains.annotations.NotNull;
 import static java.lang.Math.*;
 
 public class HaversineDistDegreeGroupByFunction extends DoubleFunction implements GroupByFunction, TernaryFunction {
-
     private final static double EARTH_RADIUS = 6371.088;
     private final Function latDegree;
     private final Function lonDegree;
@@ -107,6 +106,11 @@ public class HaversineDistDegreeGroupByFunction extends DoubleFunction implement
     }
 
     @Override
+    public int getValueIndex() {
+        return valueIndex;
+    }
+
+    @Override
     public void interpolateBoundary(
             MapValue value1,
             MapValue value2,
@@ -146,6 +150,11 @@ public class HaversineDistDegreeGroupByFunction extends DoubleFunction implement
     }
 
     @Override
+    public boolean isParallelismSupported() {
+        return false;
+    }
+
+    @Override
     public boolean isScalar() {
         return false;
     }
@@ -173,6 +182,11 @@ public class HaversineDistDegreeGroupByFunction extends DoubleFunction implement
         saveLastItem(mapValue, Double.NaN, Double.NaN, Numbers.LONG_NaN);
         //
         saveDistance(mapValue, 0.0);
+    }
+
+    @Override
+    public void setValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
     }
 
     private double calculateHaversineDistance(MapValue value1, MapValue value2) {

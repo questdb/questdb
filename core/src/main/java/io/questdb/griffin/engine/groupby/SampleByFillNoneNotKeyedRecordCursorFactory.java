@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.groupby;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -39,6 +40,7 @@ public class SampleByFillNoneNotKeyedRecordCursorFactory extends AbstractSampleB
 
     public SampleByFillNoneNotKeyedRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
+            CairoConfiguration configuration,
             RecordCursorFactory base,
             @NotNull TimestampSampler timestampSampler,
             RecordMetadata groupByMetadata,
@@ -55,6 +57,7 @@ public class SampleByFillNoneNotKeyedRecordCursorFactory extends AbstractSampleB
         final SimpleMapValue simpleMapValue = new SimpleMapValue(valueCount);
         final GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
         this.cursor = new SampleByFillNoneNotKeyedRecordCursor(
+                configuration,
                 simpleMapValue,
                 groupByFunctions,
                 updater,

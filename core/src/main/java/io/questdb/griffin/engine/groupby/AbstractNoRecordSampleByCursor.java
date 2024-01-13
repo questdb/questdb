@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.groupby;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
@@ -41,6 +42,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
     protected final ObjList<GroupByFunction> groupByFunctions;
     protected final GroupByFunctionsUpdater groupByFunctionsUpdater;
     protected final int timestampIndex;
+    private final GroupByAllocator allocator;
     private final ObjList<Function> recordFunctions;
     protected RecordCursor baseCursor;
     protected Record baseRecord;
@@ -57,6 +59,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
     private long topNextDst;
 
     public AbstractNoRecordSampleByCursor(
+            CairoConfiguration configuration,
             ObjList<Function> recordFunctions,
             int timestampIndex, // index of timestamp column in base cursor
             TimestampSampler timestampSampler,
@@ -72,11 +75,14 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         this.recordFunctions = recordFunctions;
         this.groupByFunctions = groupByFunctions;
         this.groupByFunctionsUpdater = groupByFunctionsUpdater;
+        this.allocator = new GroupByAllocator(configuration);
+        GroupByUtils.setAllocator(groupByFunctions, allocator);
     }
 
     @Override
     public void close() {
         Misc.free(baseCursor);
+        Misc.free(allocator);
         Misc.clearObjList(groupByFunctions);
         circuitBreaker = null;
     }

@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.Os;
@@ -77,7 +78,7 @@ public class PerWorkerLocks {
             }
             Os.pause();
         }
-        return -1;
+        throw CairoException.nonCritical().put("query aborted").setInterruption(true);
     }
 
     public void releaseSlot(int slot) {

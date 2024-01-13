@@ -58,10 +58,10 @@ public class SampleByFillPrevRecordCursorFactory extends AbstractSampleByFillRec
             int offsetFuncPos
     ) {
         super(
+                asm,
                 configuration,
                 base,
                 listColumnFilter,
-                asm,
                 keyTypes,
                 valueTypes,
                 groupByMetadata,
@@ -70,6 +70,7 @@ public class SampleByFillPrevRecordCursorFactory extends AbstractSampleByFillRec
         );
         final GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
         cursor = new SampleByFillPrevRecordCursor(
+                configuration,
                 map,
                 mapSink,
                 groupByFunctions,

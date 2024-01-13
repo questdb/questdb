@@ -57,6 +57,7 @@ public class Overrides implements ConfigurationOverrides {
     private Map<String, String> env = null;
     private FactoryProvider factoryProvider = null;
     private FilesFacade ff;
+    private long groupByAllocatorDefaultChunkSize = -1;
     private int groupByShardingThreshold = -1;
     private boolean hideTelemetryTable = false;
     private String inputRoot = null;
@@ -194,6 +195,11 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public FilesFacade getFilesFacade() {
         return ff;
+    }
+
+    @Override
+    public long getGroupByAllocatorDefaultChunkSize() {
+        return groupByAllocatorDefaultChunkSize;
     }
 
     @Override
@@ -522,6 +528,7 @@ public class Overrides implements ConfigurationOverrides {
         simulateCrashEnabled = false;
         env = null;
         walMaxLagSize = -1;
+        groupByAllocatorDefaultChunkSize = -1;
     }
 
     @Override
@@ -611,6 +618,11 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public void setFilesFacade(FilesFacade ff) {
         this.ff = ff;
+    }
+
+    @Override
+    public void setGroupByAllocatorDefaultChunkSize(long groupByAllocatorDefaultChunkSize) {
+        this.groupByAllocatorDefaultChunkSize = groupByAllocatorDefaultChunkSize;
     }
 
     @Override

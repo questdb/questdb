@@ -157,7 +157,7 @@ public final class LongLongHashSet implements Mutable, Sinkable {
      * @return slot index
      */
     public int keySlot(long key1, long key2) {
-        int hash = Hash.hash(key1, key2);
+        int hash = Hash.hashLong128(key1, key2);
         int slot = (hash & mask);
         return probe(key1, key2, slot);
     }
