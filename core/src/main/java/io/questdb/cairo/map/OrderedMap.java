@@ -369,9 +369,6 @@ public class OrderedMap implements Map, Reopenable {
     }
 
     private void mergeFixedSizeKey(OrderedMap srcMap, MapValueMergeFunction mergeFunc) {
-        assert keySize >= 0;
-        setKeyCapacity(size + srcMap.size);
-
         long len = keySize + valueSize;
         long alignedLen = Bytes.align8b(len);
 
@@ -403,23 +400,21 @@ public class OrderedMap implements Map, Reopenable {
                 index = (index + 1) & mask;
             }
 
-            assert free > 0;
             if (kPos + len > heapLimit) {
                 resize(len);
             }
             Vect.memcpy(kPos, srcStartAddress, len);
+            kPos += alignedLen;
             setOffset(offsets, index, kPos - heapStart);
             setHashCode(offsets, index, hashCode);
-            kPos += alignedLen;
-            free--;
+            if (--free == 0) {
+                rehash();
+            }
             size++;
         }
     }
 
     private void mergeVarSizeKey(OrderedMap srcMap, MapValueMergeFunction mergeFunc) {
-        assert keySize == -1;
-        setKeyCapacity(size + srcMap.size);
-
         OUTER:
         for (int i = 0, k = (int) (srcMap.offsets.size() / 2); i < k; i++) {
             long offset = getOffset(srcMap.offsets, i);
@@ -456,10 +451,12 @@ public class OrderedMap implements Map, Reopenable {
                 resize(len);
             }
             Vect.memcpy(kPos, srcStartAddress, len);
+            kPos = Bytes.align8b(kPos + len);
             setOffset(offsets, index, kPos - heapStart);
             setHashCode(offsets, index, hashCode);
-            kPos = Bytes.align8b(kPos + len);
-            free--;
+            if (--free == 0) {
+                rehash();
+            }
             size++;
         }
     }

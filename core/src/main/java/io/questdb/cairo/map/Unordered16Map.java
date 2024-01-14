@@ -224,7 +224,6 @@ public class Unordered16Map implements Map, Reopenable {
             return;
         }
         Unordered16Map src16Map = (Unordered16Map) srcMap;
-        setKeyCapacity(size + src16Map.size);
 
         // First, we handle zero key.
         if (src16Map.hasZero && hasZero) {
@@ -263,9 +262,10 @@ public class Unordered16Map implements Map, Reopenable {
                 destAddr = getNextAddress(destAddr);
             }
 
-            assert free > 0;
             Vect.memcpy(destAddr, srcAddr, entrySize);
-            free--;
+            if (--free == 0) {
+                rehash();
+            }
             size++;
         }
     }

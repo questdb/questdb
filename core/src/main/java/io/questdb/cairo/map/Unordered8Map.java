@@ -223,7 +223,6 @@ public class Unordered8Map implements Map, Reopenable {
             return;
         }
         Unordered8Map src8Map = (Unordered8Map) srcMap;
-        setKeyCapacity(size + src8Map.size);
 
         // First, we handle zero key.
         if (src8Map.hasZero && !hasZero) {
@@ -260,9 +259,10 @@ public class Unordered8Map implements Map, Reopenable {
                 destAddr = getNextAddress(destAddr);
             }
 
-            assert free > 0;
             Vect.memcpy(destAddr, srcAddr, entrySize);
-            free--;
+            if (--free == 0) {
+                rehash();
+            }
             size++;
         }
     }
