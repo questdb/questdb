@@ -118,6 +118,10 @@ public class MapFactory {
         );
     }
 
+    /**
+     * Returns total size in case of all fixed-size columns
+     * or -1 if there is a var-size column in the given list.
+     */
     private static int totalSize(ColumnTypes types) {
         int keySize = 0;
         for (int i = 0, n = types.getColumnCount(); i < n; i++) {
