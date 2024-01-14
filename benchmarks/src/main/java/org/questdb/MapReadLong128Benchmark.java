@@ -46,7 +46,7 @@ public class MapReadLong128Benchmark {
 
     private static final int N = 5_000_000;
     private static final double loadFactor = 0.7;
-    private static final OrderedMap fmap = new OrderedMap(1024 * 1024, new SingleColumnType(ColumnType.LONG128), new SingleColumnType(ColumnType.LONG), N, loadFactor, 1024);
+    private static final OrderedMap orderedMap = new OrderedMap(1024 * 1024, new SingleColumnType(ColumnType.LONG128), new SingleColumnType(ColumnType.LONG), N, loadFactor, 1024);
     private static final Rnd rnd = new Rnd();
     private static final Unordered16Map u16map = new Unordered16Map(new SingleColumnType(ColumnType.LONG128), new SingleColumnType(ColumnType.LONG), N, loadFactor, 1024);
 
@@ -68,7 +68,7 @@ public class MapReadLong128Benchmark {
 
     @Benchmark
     public MapValue testFastMap() {
-        MapKey key = fmap.withKey();
+        MapKey key = orderedMap.withKey();
         long value = rnd.nextLong(N);
         key.putLong128(value, value);
         return key.findValue();
@@ -84,7 +84,7 @@ public class MapReadLong128Benchmark {
 
     static {
         for (int i = 0; i < N; i++) {
-            MapKey key = fmap.withKey();
+            MapKey key = orderedMap.withKey();
             key.putLong128(i, i);
             MapValue values = key.createValue();
             values.putLong(0, i);

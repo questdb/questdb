@@ -48,7 +48,7 @@ public class MapReadLongBenchmark {
     private static final int N = 5_000_000;
     private static final double loadFactor = 0.7;
     private static final HashMap<Long, Long> hmap = new HashMap<>(N, (float) loadFactor);
-    private static final OrderedMap fmap = new OrderedMap(1024 * 1024, new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), N, loadFactor, 1024);
+    private static final OrderedMap orderedMap = new OrderedMap(1024 * 1024, new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), N, loadFactor, 1024);
     private static final Rnd rnd = new Rnd();
     private static final Unordered8Map u8map = new Unordered8Map(new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), N, loadFactor, 1024);
 
@@ -69,8 +69,8 @@ public class MapReadLongBenchmark {
     }
 
     @Benchmark
-    public MapValue testFastMap() {
-        MapKey key = fmap.withKey();
+    public MapValue testOrderedMap() {
+        MapKey key = orderedMap.withKey();
         key.putLong(rnd.nextLong(N));
         return key.findValue();
     }
@@ -89,7 +89,7 @@ public class MapReadLongBenchmark {
 
     static {
         for (int i = 0; i < N; i++) {
-            MapKey key = fmap.withKey();
+            MapKey key = orderedMap.withKey();
             key.putLong(i);
             MapValue values = key.createValue();
             values.putLong(0, i);

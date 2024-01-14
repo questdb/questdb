@@ -41,13 +41,13 @@ import java.util.HashMap;
 import java.util.concurrent.TimeUnit;
 
 @State(Scope.Thread)
-@BenchmarkMode(Mode.AverageTime)
-@OutputTimeUnit(TimeUnit.MICROSECONDS)
+@BenchmarkMode(Mode.SampleTime)
+@OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class MapWriteLongBenchmark {
 
     private static final int N = 1_000_000;
     private static final double loadFactor = 0.7;
-    private static final OrderedMap fmap = new OrderedMap(1024 * 1024, new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), 64, loadFactor, 1024);
+    private static final OrderedMap orderedMap = new OrderedMap(1024 * 1024, new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), 64, loadFactor, 1024);
     private static final HashMap<Long, Long> hmap = new HashMap<>(64, (float) loadFactor);
     private static final Unordered8Map u8map = new Unordered8Map(new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), 64, loadFactor, 1024);
     private final Rnd rnd = new Rnd();
@@ -70,15 +70,15 @@ public class MapWriteLongBenchmark {
 
     @Setup(Level.Iteration)
     public void reset() {
-        fmap.clear();
+        orderedMap.clear();
         u8map.clear();
         hmap.clear();
         rnd.reset();
     }
 
     @Benchmark
-    public void testFastMap() {
-        MapKey key = fmap.withKey();
+    public void testOrderedMap() {
+        MapKey key = orderedMap.withKey();
         key.putLong(rnd.nextLong(N));
         MapValue values = key.createValue();
         values.putLong(0, rnd.nextLong());

@@ -244,12 +244,8 @@ public class Unordered8Map implements Map, Reopenable {
                 continue;
             }
 
-            int hashCode = Hash.hashLong(key);
-            int index = hashCode & mask;
-
-            long destAddr;
+            long destAddr = getStartAddress(Hash.hashLong(key) & mask);
             for (; ; ) {
-                destAddr = getStartAddress(index);
                 long k = Unsafe.getUnsafe().getLong(destAddr);
                 if (k == 0) {
                     break;
@@ -261,7 +257,7 @@ public class Unordered8Map implements Map, Reopenable {
                     );
                     continue OUTER;
                 }
-                index = (index + 1) & mask;
+                destAddr = nextEntry(destAddr);
             }
 
             assert free > 0;
@@ -354,11 +350,19 @@ public class Unordered8Map implements Map, Reopenable {
         return memStart + entrySize * index;
     }
 
-    private Unordered8MapValue probe0(long key, int index, int hashCode, Unordered8MapValue value) {
-        long startAddress;
+    //  we can advance through the map data structure sequentially,
+    // avoiding multiplication and pseudo-random access
+    private long nextEntry(long entryAddress) {
+        entryAddress += entrySize;
+        if (entryAddress < memLimit) {
+            return entryAddress;
+        }
+        return memStart;
+    }
+
+    private Unordered8MapValue probe0(long key, long startAddress, int hashCode, Unordered8MapValue value) {
         for (; ; ) {
-            index = (index + 1) & mask;
-            startAddress = getStartAddress(index);
+            startAddress = nextEntry(startAddress);
             long k = Unsafe.getUnsafe().getLong(startAddress);
             if (k == 0) {
                 return asNew(startAddress, key, hashCode, value);
@@ -368,11 +372,9 @@ public class Unordered8Map implements Map, Reopenable {
         }
     }
 
-    private Unordered8MapValue probeReadOnly(long key, int index, Unordered8MapValue value) {
-        long startAddress;
+    private Unordered8MapValue probeReadOnly(long key, long startAddress, Unordered8MapValue value) {
         for (; ; ) {
-            index = (index + 1) & mask;
-            startAddress = getStartAddress(index);
+            startAddress = nextEntry(startAddress);
             long k = Unsafe.getUnsafe().getLong(startAddress);
             if (k == 0) {
                 return null;
@@ -596,15 +598,14 @@ public class Unordered8Map implements Map, Reopenable {
         }
 
         private MapValue createNonZeroKeyValue(long key, int hashCode) {
-            int index = hashCode & mask;
-            long startAddress = getStartAddress(index);
+            long startAddress = getStartAddress(hashCode & mask);
             long k = Unsafe.getUnsafe().getLong(startAddress);
             if (k == 0) {
                 return asNew(startAddress, key, hashCode, value);
             } else if (k == key) {
                 return valueOf(startAddress, false, value);
             }
-            return probe0(key, index, hashCode, value);
+            return probe0(key, startAddress, hashCode, value);
         }
 
         private MapValue createZeroKeyValue() {
@@ -621,16 +622,14 @@ public class Unordered8Map implements Map, Reopenable {
                 return hasZero ? valueOf(zeroMemStart, false, value) : null;
             }
 
-            int hashCode = Hash.hashLong(key);
-            int index = hashCode & mask;
-            long startAddress = getStartAddress(index);
+            long startAddress = getStartAddress(Hash.hashLong(key) & mask);
             long k = Unsafe.getUnsafe().getLong(startAddress);
             if (k == 0) {
                 return null;
             } else if (k == key) {
                 return valueOf(startAddress, false, value);
             }
-            return probeReadOnly(key, index, value);
+            return probeReadOnly(key, startAddress, value);
         }
 
         void copyFromRawKey(long srcPtr) {

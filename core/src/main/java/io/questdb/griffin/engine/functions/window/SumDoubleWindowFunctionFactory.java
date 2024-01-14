@@ -118,7 +118,7 @@ public class SumDoubleWindowFunctionFactory implements FunctionFactory {
             if (framingMode == WindowColumn.FRAMING_RANGE) {
                 // moving sum over whole partition (no order by, default frame) or (order by, unbounded preceding to unbounded following)
                 if (windowContext.isDefaultFrame() && (!windowContext.isOrdered() || windowContext.getRowsHi() == Long.MAX_VALUE)) {
-                    Map map = MapFactory.createOrderedMap(
+                    Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
                             SUM_COLUMN_TYPES
@@ -132,7 +132,7 @@ public class SumDoubleWindowFunctionFactory implements FunctionFactory {
                     );
                 } // between unbounded preceding and current row
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createOrderedMap(
+                    Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
                             SUM_COLUMN_TYPES
@@ -161,7 +161,7 @@ public class SumDoubleWindowFunctionFactory implements FunctionFactory {
                     columnTypes.add(ColumnType.LONG);   // native buffer capacity
                     columnTypes.add(ColumnType.LONG);   // index of first buffered element
 
-                    Map map = MapFactory.createOrderedMap(
+                    Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
                             columnTypes
@@ -186,7 +186,7 @@ public class SumDoubleWindowFunctionFactory implements FunctionFactory {
             } else if (framingMode == WindowColumn.FRAMING_ROWS) {
                 //between unbounded preceding and current row
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createOrderedMap(
+                    Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
                             SUM_COLUMN_TYPES
@@ -203,7 +203,7 @@ public class SumDoubleWindowFunctionFactory implements FunctionFactory {
                     return new SumOverCurrentRowFunction(args.get(0));
                 } // whole partition
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
-                    Map map = MapFactory.createOrderedMap(
+                    Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
                             SUM_COLUMN_TYPES
@@ -224,7 +224,7 @@ public class SumDoubleWindowFunctionFactory implements FunctionFactory {
                     columnTypes.add(ColumnType.LONG);// position of current oldest element
                     columnTypes.add(ColumnType.LONG);// start offset of native array
 
-                    Map map = MapFactory.createOrderedMap(
+                    Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
                             columnTypes

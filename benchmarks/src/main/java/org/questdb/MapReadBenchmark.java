@@ -48,7 +48,7 @@ public class MapReadBenchmark {
     private static final int N = 5_000_000;
     private static final double loadFactor = 0.7;
     private static final HashMap<String, Long> hmap = new HashMap<>(N, (float) loadFactor);
-    private static final OrderedMap fmap = new OrderedMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), N, loadFactor, 1024);
+    private static final OrderedMap orderedMap = new OrderedMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), N, loadFactor, 1024);
     private static final Rnd rnd = new Rnd();
     private static final StringSink sink = new StringSink();
 
@@ -69,8 +69,8 @@ public class MapReadBenchmark {
     }
 
     @Benchmark
-    public MapValue testFastMap() {
-        MapKey key = fmap.withKey();
+    public MapValue testOrderedMap() {
+        MapKey key = orderedMap.withKey();
         sink.clear();
         sink.put(rnd.nextInt(N));
         key.putStr(sink);
@@ -84,7 +84,7 @@ public class MapReadBenchmark {
 
     static {
         for (int i = 0; i < N; i++) {
-            MapKey key = fmap.withKey();
+            MapKey key = orderedMap.withKey();
             key.putStr(String.valueOf(i));
             MapValue values = key.createValue();
             values.putLong(0, i);

@@ -47,7 +47,7 @@ public class MapWriteBenchmark {
     private static final int M = 25;
     private static final double loadFactor = 0.7;
     private static final HashMap<String, Long> hmap = new HashMap<>(64, (float) loadFactor);
-    private static final OrderedMap fmap = new OrderedMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), 64, loadFactor, 1024);
+    private static final OrderedMap orderedMap = new OrderedMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), 64, loadFactor, 1024);
     private final Rnd rnd = new Rnd();
 
     public static void main(String[] args) throws RunnerException {
@@ -68,14 +68,14 @@ public class MapWriteBenchmark {
 
     @Setup(Level.Iteration)
     public void reset() {
-        fmap.clear();
+        orderedMap.clear();
         hmap.clear();
         rnd.reset();
     }
 
     @Benchmark
-    public void testFastMap() {
-        MapKey key = fmap.withKey();
+    public void testOrderedMap() {
+        MapKey key = orderedMap.withKey();
         key.putStr(rnd.nextChars(M));
         MapValue values = key.createValue();
         values.putLong(0, 20);
