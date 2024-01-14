@@ -246,10 +246,7 @@ public class Unordered16Map implements Map, Reopenable {
                 continue;
             }
 
-            int hashCode = Hash.hashLong128(key1, key2);
-            int index = hashCode & mask;
-
-            long destAddr = getStartAddress(index);
+            long destAddr = getStartAddress(Hash.hashLong128(key1, key2) & mask);
             for (; ; ) {
                 long k1 = Unsafe.getUnsafe().getLong(destAddr);
                 long k2 = Unsafe.getUnsafe().getLong(destAddr + 8L);
@@ -263,7 +260,7 @@ public class Unordered16Map implements Map, Reopenable {
                     );
                     continue OUTER;
                 }
-                destAddr = nextEntry(destAddr);
+                destAddr = getNextAddress(destAddr);
             }
 
             assert free > 0;
@@ -335,30 +332,23 @@ public class Unordered16Map implements Map, Reopenable {
         if (--free == 0) {
             rehash();
             // Index may have changed after rehash, so we need to find the key.
-            int index = hashCode & mask;
+            startAddress = getStartAddress(hashCode & mask);
             for (; ; ) {
-                startAddress = getStartAddress(index);
                 long k1 = Unsafe.getUnsafe().getLong(startAddress);
                 long k2 = Unsafe.getUnsafe().getLong(startAddress + 8L);
                 if (k1 == key1 && k2 == key2) {
                     break;
                 }
-                index = (index + 1) & mask;
+                startAddress = getNextAddress(startAddress);
             }
         }
         size++;
         return valueOf(startAddress, true, value);
     }
 
-    private long getStartAddress(int index) {
-        return getStartAddress(memStart, index);
-    }
-
-    private long getStartAddress(long memStart, int index) {
-        return memStart + entrySize * index;
-    }
-
-    private long nextEntry(long entryAddress) {
+    // Advance through the map data structure sequentially,
+    // avoiding multiplication and pseudo-random access.
+    private long getNextAddress(long entryAddress) {
         entryAddress += entrySize;
         if (entryAddress < memLimit) {
             return entryAddress;
@@ -366,9 +356,17 @@ public class Unordered16Map implements Map, Reopenable {
         return memStart;
     }
 
+    private long getStartAddress(long memStart, int index) {
+        return memStart + entrySize * index;
+    }
+
+    private long getStartAddress(int index) {
+        return getStartAddress(memStart, index);
+    }
+
     private Unordered16MapValue probe0(long key1, long key2, long startAddress, int hashCode, Unordered16MapValue value) {
         for (; ; ) {
-            startAddress = nextEntry(startAddress);
+            startAddress = getNextAddress(startAddress);
             long k1 = Unsafe.getUnsafe().getLong(startAddress);
             long k2 = Unsafe.getUnsafe().getLong(startAddress + 8L);
             if (k1 == 0 && k2 == 0) {
@@ -381,7 +379,7 @@ public class Unordered16Map implements Map, Reopenable {
 
     private Unordered16MapValue probeReadOnly(long key1, long key2, long startAddress, Unordered16MapValue value) {
         for (; ; ) {
-            startAddress = nextEntry(startAddress);
+            startAddress = getNextAddress(startAddress);
             long k1 = Unsafe.getUnsafe().getLong(startAddress);
             long k2 = Unsafe.getUnsafe().getLong(startAddress + 8L);
             if (k1 == 0 && k2 == 0) {
@@ -409,6 +407,7 @@ public class Unordered16Map implements Map, Reopenable {
 
         final long newSizeBytes = entrySize * newKeyCapacity;
         final long newMemStart = Unsafe.malloc(newSizeBytes, memoryTag);
+        final long newMemLimit = newMemStart + newSizeBytes;
         Vect.memset(newMemStart, newSizeBytes, 0);
         final int newMask = (int) newKeyCapacity - 1;
 
@@ -419,11 +418,12 @@ public class Unordered16Map implements Map, Reopenable {
                 continue;
             }
 
-            int hashCode = Hash.hashLong128(key1, key2);
-            int index = hashCode & newMask;
-            long newAddr;
-            while (Unsafe.getUnsafe().getLong((newAddr = getStartAddress(newMemStart, index))) != 0) {
-                index = (index + 1) & newMask;
+            long newAddr = getStartAddress(newMemStart, Hash.hashLong128(key1, key2) & newMask);
+            while (Unsafe.getUnsafe().getLong(newAddr) != 0) {
+                newAddr += entrySize;
+                if (newAddr >= newMemLimit) {
+                    newAddr = newMemStart;
+                }
             }
             Vect.memcpy(newAddr, addr, entrySize);
         }
