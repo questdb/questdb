@@ -50,27 +50,25 @@ final class MockHttpProcessor implements HttpRequestProcessor, HttpMultipartCont
 
     @Override
     public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        HttpChunkedResponseSocket chunkedResponseSocket = context.getChunkedResponseSocket();
+        recordedRequests.add(actualRequest);
+        actualRequest = new ActualRequest();
 
         Response response = responses.poll();
         if (response == null) {
             throw new AssertionError("No response configured for request: " + actualRequest);
         }
-        chunkedResponseSocket.status(response.responseStatusCode, response.contentType);
-        chunkedResponseSocket.sendHeader();
-        chunkedResponseSocket.putAscii(response.responseContent);
-        chunkedResponseSocket.sendChunk(true);
-
-        recordedRequests.add(actualRequest);
-        actualRequest = new ActualRequest();
+        if (response.responseContent != null) {
+            HttpChunkedResponseSocket chunkedResponseSocket = context.getChunkedResponseSocket();
+            chunkedResponseSocket.status(response.responseStatusCode, response.contentType);
+            chunkedResponseSocket.sendHeader();
+            chunkedResponseSocket.putAscii(response.responseContent);
+            chunkedResponseSocket.sendChunk(true);
+        } else {
+            context.simpleResponse().sendStatus(response.responseStatusCode);
+        }
     }
 
-    @Override
-    public boolean requiresAuthentication() {
-        return false;
-    }
-
-    public MockHttpProcessor respondWith(int statusCode, String responseContent, String contentType) {
+    public MockHttpProcessor replyWithContent(int statusCode, String responseContent, String contentType) {
         Response response = new Response();
         response.responseStatusCode = statusCode;
         response.responseContent = responseContent;
@@ -81,6 +79,22 @@ final class MockHttpProcessor implements HttpRequestProcessor, HttpMultipartCont
         expectedRequest = new ExpectedRequest();
 
         return this;
+    }
+
+    public MockHttpProcessor replyWithStatus(int statusCode) {
+        Response response = new Response();
+        response.responseStatusCode = statusCode;
+        responses.add(response);
+
+        expectedRequests.add(expectedRequest);
+        expectedRequest = new ExpectedRequest();
+
+        return this;
+    }
+
+    @Override
+    public boolean requiresAuthentication() {
+        return false;
     }
 
     public void verify() {

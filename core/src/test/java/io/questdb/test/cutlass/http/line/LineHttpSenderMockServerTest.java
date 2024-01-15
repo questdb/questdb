@@ -37,7 +37,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
                 .withExpectedContent("test,sym=bol x=1.0\n")
                 .withExpectedHeader("User-Agent", "QuestDB/java/" + QUESTDB_VERSION)
-                .respondWith(400, badJsonResponse, "application/json");
+                .replyWithContent(400, badJsonResponse, "application/json");
 
         testWithMock(mockHttpProcessor, errorVerifier("Could not flush buffer: " + badJsonResponse + " [http-status=400]"));
     }
@@ -48,7 +48,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 .withExpectedContent("test,sym=bol x=1.0\n")
                 .withExpectedHeader("User-Agent", "QuestDB/java/" + QUESTDB_VERSION)
                 .withExpectedHeader("Authorization", "Basic QWxhZGRpbjpPcGVuU2VzYW1l")
-                .respondWith(204, "", "application/json");
+                .replyWithStatus(204);
 
         testWithMock(mockHttpProcessor, sender -> {
             sender.table("test")
@@ -67,7 +67,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
 
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
                 .withExpectedHeader("User-Agent", "QuestDB/java/" + QUESTDB_VERSION)
-                .respondWith(400, jsonResponse, "application/json");
+                .replyWithContent(400, jsonResponse, "application/json");
 
         testWithMock(mockHttpProcessor, errorVerifier("Could not flush buffer: failed to parse line protocol: invalid field format [http-status=400, id: ABC-2, code: invalid, line: 2]"));
     }
@@ -76,15 +76,15 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     public void testMaxPendingRows() throws Exception {
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
                 .withExpectedContent("test x=1.0\n")
-                .respondWith(204, "", "application/json")
+                .replyWithStatus(204)
                 .withExpectedContent("test x=2.0\n" +
                         "test x=3.0\n")
-                .respondWith(204, "", "application/json")
+                .replyWithStatus(204)
                 .withExpectedContent("test x=4.0\n" +
                         "test x=5.0\n")
-                .respondWith(204, "", "application/json")
+                .replyWithStatus(204)
                 .withExpectedContent("test x=6.0\n")
-                .respondWith(204, "", "application/json");
+                .replyWithStatus(204);
 
         testWithMock(mockHttpProcessor, sender -> {
             // first row to be flushed explicitly
@@ -168,7 +168,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     public void testOldServerWithoutIlpHttpSupport() throws Exception {
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
                 .withExpectedHeader("User-Agent", "QuestDB/java/" + QUESTDB_VERSION)
-                .respondWith(404, "Not Found", "test/plain");
+                .replyWithContent(404, "Not Found", "test/plain");
 
         testWithMock(mockHttpProcessor, errorVerifier("Could not flush buffer: HTTP endpoint does not support ILP. [http-status=404]"));
     }
@@ -177,9 +177,9 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     public void testRetryOn500() throws Exception {
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
                 .withExpectedContent("test,sym=bol x=1.0\n")
-                .respondWith(500, "Internal Server Error", "application/json")
+                .replyWithContent(500, "Internal Server Error", "application/json")
                 .withExpectedContent("test,sym=bol x=1.0\n")
-                .respondWith(204, "", "application/json");
+                .replyWithStatus(204);
 
         testWithMock(mockHttpProcessor, sender -> {
             sender.table("test")
@@ -194,13 +194,13 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     public void testRetryOn500_exceeded() throws Exception {
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
                 .withExpectedContent("test,sym=bol x=1.0\n")
-                .respondWith(500, "Internal Server Error", "application/json")
+                .replyWithContent(500, "Internal Server Error", "application/json")
                 .withExpectedContent("test,sym=bol x=1.0\n")
-                .respondWith(500, "Internal Server Error", "application/json")
+                .replyWithContent(500, "Internal Server Error", "application/json")
                 .withExpectedContent("test,sym=bol x=1.0\n")
-                .respondWith(500, "Internal Server Error", "application/json")
+                .replyWithContent(500, "Internal Server Error", "application/json")
                 .withExpectedContent("test,sym=bol x=1.0\n")
-                .respondWith(500, "Internal Server Error", "application/json");
+                .replyWithContent(500, "Internal Server Error", "application/json");
 
         testWithMock(mockHttpProcessor, sender -> {
             sender.table("test")
@@ -220,7 +220,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     public void testRetryingDisabled() throws Exception {
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
                 .withExpectedContent("test,sym=bol x=1.0\n")
-                .respondWith(500, "do not dare to retry", "plain/text");
+                .replyWithContent(500, "do not dare to retry", "plain/text");
 
         testWithMock(mockHttpProcessor, errorVerifier("Could not flush buffer: do not dare to retry [http-status=500]"),
                 senderBuilder -> senderBuilder.maxRetries(0)
@@ -231,7 +231,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     public void testTextPlainError() throws Exception {
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
                 .withExpectedHeader("User-Agent", "QuestDB/java/" + QUESTDB_VERSION)
-                .respondWith(400, "Bad Request", "text/plain");
+                .replyWithContent(400, "Bad Request", "text/plain");
 
         testWithMock(mockHttpProcessor, errorVerifier("Could not flush buffer: Bad Request [http-status=400]"));
     }
@@ -242,7 +242,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 .withExpectedContent("test,sym=bol x=1.0\n")
                 .withExpectedHeader("User-Agent", "QuestDB/java/" + QUESTDB_VERSION)
                 .withExpectedHeader("Authorization", "Bearer 0123456789")
-                .respondWith(204, "", "application/json");
+                .replyWithStatus(204);
 
         testWithMock(mockHttpProcessor, sender -> {
             sender.table("test")
@@ -258,7 +258,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 .withExpectedContent("test,sym=bol x=1.0\n" +
                         "test,sym=bol x=2.0\n")
                 .withExpectedHeader("User-Agent", "QuestDB/java/" + QUESTDB_VERSION)
-                .respondWith(204, "", "application/json");
+                .replyWithStatus(204);
 
         testWithMock(mockHttpProcessor, sender -> {
             sender.table("test")
@@ -275,14 +275,14 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     @Test
     public void testUnauthenticated_401() throws Exception {
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
-                .respondWith(401, "Unauthorized", "text/plain");
+                .replyWithContent(401, "Unauthorized", "text/plain");
         testWithMock(mockHttpProcessor, errorVerifier("Could not flush buffer: HTTP endpoint authentication error: Unauthorized [http-status=401]"));
     }
 
     @Test
     public void testUnauthenticated_403() throws Exception {
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
-                .respondWith(403, "Unauthorized", "text/plain");
+                .replyWithContent(403, "Unauthorized", "text/plain");
         testWithMock(mockHttpProcessor, errorVerifier("Could not flush buffer: HTTP endpoint authentication error: Unauthorized [http-status=403]"));
     }
 
@@ -290,7 +290,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     public void testUnauthenticated_noContent() throws Exception {
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
                 .withExpectedHeader("User-Agent", "QuestDB/java/" + QUESTDB_VERSION)
-                .respondWith(401, "", "text/plain");
+                .replyWithContent(401, "", "text/plain");
 
         testWithMock(mockHttpProcessor, errorVerifier("Could not flush buffer: HTTP endpoint authentication error [http-status=401]"));
     }

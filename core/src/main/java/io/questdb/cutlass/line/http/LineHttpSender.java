@@ -233,6 +233,17 @@ public final class LineHttpSender implements Sender {
         }
     }
 
+    private void consumeChunkedResponse(HttpClient.ResponseHeaders response) {
+        if (!response.isChunked()) {
+            return;
+        }
+        ChunkedResponse chunkedRsp = response.getChunkedResponse();
+        Chunk chunk;
+        while ((chunk = chunkedRsp.recv()) != null) {
+            // we don't care about the response, just consume it
+        }
+    }
+
     private void escapeQuotedString(CharSequence name) {
         for (int i = 0, n = name.length(); i < n; i++) {
             char c = name.charAt(i);
@@ -285,13 +296,14 @@ public final class LineHttpSender implements Sender {
                 response.await();
                 DirectUtf8Sequence statusCode = response.getStatusCode();
                 if (isSuccessResponse(statusCode)) {
+                    consumeChunkedResponse(response);
                     break;
                 }
                 if (isRetryableHttpStatus(statusCode)) {
-                    client.disconnect(); // forces reconnect, just in case
                     if (remainingRetries-- == 0) {
                         handleHttpErrorResponse(statusCode, response);
                     }
+                    client.disconnect(); // forces reconnect, just in case
                     retryBackoff = backoff(retryBackoff);
                     continue;
                 }
@@ -319,6 +331,8 @@ public final class LineHttpSender implements Sender {
 
         CharSequence statusAscii = statusCode.asAsciiCharSequence();
         if (Chars.equals("404", statusAscii)) {
+            consumeChunkedResponse(response);
+            client.disconnect();
             throw new LineSenderException("Could not flush buffer: HTTP endpoint does not support ILP. [http-status=404]");
         }
         if (Chars.equals("401", statusAscii) || Chars.equals("403", statusAscii)) {
@@ -329,6 +343,7 @@ public final class LineHttpSender implements Sender {
                 ex = ex.put(": ").put(sink);
             }
             ex.put(" [http-status=").put(statusAscii).put(']');
+            client.disconnect();
             throw ex;
         }
         DirectUtf8Sequence contentType = response.getContentType();
@@ -344,6 +359,7 @@ public final class LineHttpSender implements Sender {
         sink.put("Could not flush buffer: ");
         chunkedResponseToSink(response, sink);
         sink.put(" [http-status=").put(statusCode).put(']');
+        client.disconnect();
         throw new LineSenderException(sink);
     }
 

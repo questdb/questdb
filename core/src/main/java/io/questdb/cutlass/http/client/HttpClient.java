@@ -692,11 +692,14 @@ public abstract class HttpClient implements QuietCloseable {
         }
 
         public void await(int timeout) {
+            int totalBytesReceived = 0;
+            long unprocessedLo = responseParserBufLo;
             while (isIncomplete()) {
-                final int len = recvOrDie(responseParserBufLo, timeout);
+                final int len = recvOrDie(responseParserBufLo + totalBytesReceived, timeout);
                 if (len > 0) {
-                    // dataLo & dataHi are boundaries of unprocessed data left in the buffer
-                    chunkedResponse.begin(parse(responseParserBufLo, responseParserBufLo + len, false, true), responseParserBufLo + len);
+                    totalBytesReceived += len;
+                    unprocessedLo = parse(unprocessedLo, responseParserBufLo + totalBytesReceived, false, true);
+                    chunkedResponse.begin(unprocessedLo, responseParserBufLo + totalBytesReceived);
                     final Utf8Sequence statusCode = getStatusCode();
                     if (statusCode != null && Utf8s.equalsNcAscii(HTTP_NO_CONTENT, getStatusCode())) {
                         incomplete = false;
