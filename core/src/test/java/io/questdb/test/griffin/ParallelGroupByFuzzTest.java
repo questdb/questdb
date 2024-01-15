@@ -1155,6 +1155,76 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelShortKeyGroupBy() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT f, min(j), max(j) FROM tab ORDER BY f LIMIT 10",
+                "f\tmin\tmax\n" +
+                        "10\t1314395694197390795\t6723423394858896846\n" +
+                        "11\t-8315932136025340446\t7607864790985627953\n" +
+                        "12\t-5660096352887391537\t5043776689680170321\n" +
+                        "13\t-8128062239691246700\t-3923254311502720382\n" +
+                        "14\t-4336023326773263651\t8765329599854326850\n" +
+                        "15\t-7992454774066144274\t5107114504052423148\n" +
+                        "16\t-5614082845083708761\t8040569284337282796\n" +
+                        "17\t4198250268081668695\t4198250268081668695\n" +
+                        "18\t-8704803291387753198\t8124521555908441338\n" +
+                        "19\t-9024109950929884557\t2589709597034033422\n"
+        );
+    }
+
+    @Test
+    public void testParallelShortKeyGroupByWithReadThreadSafeTimestampFilter() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT f, count_distinct(j) FROM tab " +
+                        "WHERE ts in '1970-01-13' and f < 100 ORDER BY f DESC",
+                "f\tcount_distinct\n" +
+                        "99\t1\n" +
+                        "96\t1\n" +
+                        "89\t1\n" +
+                        "86\t1\n" +
+                        "81\t1\n" +
+                        "70\t1\n" +
+                        "68\t2\n" +
+                        "59\t1\n" +
+                        "52\t1\n" +
+                        "47\t1\n" +
+                        "33\t1\n" +
+                        "32\t1\n" +
+                        "25\t1\n" +
+                        "18\t1\n" +
+                        "16\t2\n" +
+                        "11\t1\n"
+        );
+    }
+
+    @Test
+    public void testParallelShortKeyGroupByWithReadThreadUnsafeTimestampFilter() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT f, count_distinct(j2) FROM tab " +
+                        "WHERE ts in '1970-01-13' and f < 100 and key in ('k1', 'k2') ORDER BY f DESC",
+                "f\tcount_distinct\n" +
+                        "99\t1\n" +
+                        "96\t0\n" +
+                        "89\t1\n" +
+                        "86\t1\n" +
+                        "70\t0\n" +
+                        "68\t0\n" +
+                        "47\t1\n" +
+                        "33\t1\n" +
+                        "32\t1\n" +
+                        "16\t1\n"
+        );
+    }
+
+    @Test
+    public void testParallelShortKeyGroupByWithTooStrictFilter() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT f, min(j), max(j) FROM tab WHERE f < -990",
+                "f\tmin\tmax\n"
+        );
+    }
+
+    @Test
     public void testParallelSingleKeyGroupByConcurrent() throws Exception {
         final int numOfThreads = 8;
         final int numOfIterations = 50;
@@ -1257,78 +1327,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testParallelSingleKeyGroupByWithCountDistinctIntFunction() throws Exception {
-        testParallelGroupByAllTypes(
-                "SELECT key, count_distinct(a), count_distinct(ip) FROM tab ORDER BY key",
-                "key\tcount_distinct\tcount_distinct1\n" +
-                        "k0\t800\t800\n" +
-                        "k1\t800\t800\n" +
-                        "k2\t800\t800\n" +
-                        "k3\t800\t800\n" +
-                        "k4\t800\t800\n"
-        );
-    }
-
-    @Test
-    public void testParallelSingleKeyGroupByWithCountDistinctLongFunction() throws Exception {
-        testParallelGroupByAllTypes(
-                "SELECT key, count_distinct(j) FROM tab ORDER BY key",
-                "key\tcount_distinct\n" +
-                        "k0\t800\n" +
-                        "k1\t800\n" +
-                        "k2\t800\n" +
-                        "k3\t800\n" +
-                        "k4\t800\n"
-        );
-    }
-
-    @Test
-    public void testParallelSingleKeyGroupByWithFilter() throws Exception {
-        testParallelStringKeyGroupBy(
-                "SELECT key, avg(value), sum(colTop), count() FROM tab WHERE value < 80 ORDER BY key",
-                "key\tavg\tsum\tcount\n" +
-                        "k0\t46.25\t325.0\t20\n" +
-                        "k1\t45.31818181818182\t381.0\t22\n" +
-                        "k2\t46.31818181818182\t387.0\t22\n" +
-                        "k3\t47.31818181818182\t393.0\t22\n" +
-                        "k4\t48.31818181818182\t399.0\t22\n"
-        );
-    }
-
-    @Test
-    public void testParallelSingleKeyGroupByWithNoFunctions() throws Exception {
-        testParallelSymbolKeyGroupBy(
-                "SELECT key FROM tab GROUP BY key ORDER BY key",
-                "key\n" +
-                        "k0\n" +
-                        "k1\n" +
-                        "k2\n" +
-                        "k3\n" +
-                        "k4\n"
-        );
-    }
-
-    @Test
-    public void testParallelSingleKeyGroupByWithNoFunctionsAndFilter() throws Exception {
-        testParallelSymbolKeyGroupBy(
-                "SELECT key FROM tab WHERE key != 'k1' GROUP BY key ORDER BY key",
-                "key\n" +
-                        "k0\n" +
-                        "k2\n" +
-                        "k3\n" +
-                        "k4\n"
-        );
-    }
-
-    @Test
-    public void testParallelSingleKeyGroupByWithNoFunctionsAndTooStrictFilter() throws Exception {
-        testParallelSymbolKeyGroupBy(
-                "SELECT key FROM tab WHERE quantity < 0 GROUP BY key ORDER BY key",
-                "key\n"
-        );
-    }
-
-    @Test
     public void testParallelSingleKeyGroupByWithReadThreadSafeTimestampFilter() throws Exception {
         testParallelGroupByAllTypes(
                 "SELECT key, count_distinct(ip) FROM tab " +
@@ -1343,38 +1341,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testParallelSingleKeyGroupByWithReadThreadUnsafeTimestampFilter() throws Exception {
-        testParallelGroupByAllTypes(
-                "SELECT key, count_distinct(ip) FROM tab " +
-                        "WHERE ts in '1970-01-13' and d < 1000 and key in ('k1', 'k2') ORDER BY key DESC",
-                "key\tcount_distinct\n" +
-                        "k2\t27\n" +
-                        "k1\t31\n"
-        );
-    }
-
-    @Test
-    public void testParallelSingleKeyGroupByWithTooStrictFilter() throws Exception {
-        testParallelStringKeyGroupBy(
-                "SELECT key, avg(value), sum(colTop), count() FROM tab WHERE value < 0 ORDER BY key",
-                "key\tavg\tsum\tcount\n"
-        );
-    }
-
-    @Test
-    public void testParallelSingleKeyGroupByWithTwoCountDistinctLongFunctions() throws Exception {
-        testParallelGroupByAllTypes(
-                "SELECT key, count_distinct(j), count_distinct(j2) FROM tab ORDER BY key",
-                "key\tcount_distinct\tcount_distinct1\n" +
-                        "k0\t800\t680\n" +
-                        "k1\t800\t654\n" +
-                        "k2\t800\t671\n" +
-                        "k3\t800\t671\n" +
-                        "k4\t800\t671\n"
-        );
-    }
-
-    @Test
     public void testParallelStringKeyGroupBy() throws Exception {
         testParallelStringKeyGroupBy(
                 "SELECT key, avg(value), sum(colTop), count() FROM tab ORDER BY key",
@@ -1384,6 +1350,45 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         "k2\t2024.5\t1639600.0\t1600\n" +
                         "k3\t2025.5\t1640400.0\t1600\n" +
                         "k4\t2026.5\t1641200.0\t1600\n"
+        );
+    }
+
+    @Test
+    public void testParallelStringKeyGroupByWithCountDistinctIntFunction() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT key, count_distinct(a), count_distinct(ip) FROM tab ORDER BY key",
+                "key\tcount_distinct\tcount_distinct1\n" +
+                        "k0\t800\t800\n" +
+                        "k1\t800\t800\n" +
+                        "k2\t800\t800\n" +
+                        "k3\t800\t800\n" +
+                        "k4\t800\t800\n"
+        );
+    }
+
+    @Test
+    public void testParallelStringKeyGroupByWithCountDistinctLongFunction() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT key, count_distinct(j) FROM tab ORDER BY key",
+                "key\tcount_distinct\n" +
+                        "k0\t800\n" +
+                        "k1\t800\n" +
+                        "k2\t800\n" +
+                        "k3\t800\n" +
+                        "k4\t800\n"
+        );
+    }
+
+    @Test
+    public void testParallelStringKeyGroupByWithFilter() throws Exception {
+        testParallelStringKeyGroupBy(
+                "SELECT key, avg(value), sum(colTop), count() FROM tab WHERE value < 80 ORDER BY key",
+                "key\tavg\tsum\tcount\n" +
+                        "k0\t46.25\t325.0\t20\n" +
+                        "k1\t45.31818181818182\t381.0\t22\n" +
+                        "k2\t46.31818181818182\t387.0\t22\n" +
+                        "k3\t47.31818181818182\t393.0\t22\n" +
+                        "k4\t48.31818181818182\t399.0\t22\n"
         );
     }
 
@@ -1440,6 +1445,52 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         "46.31818181818182\tk2\t387.0\n" +
                         "47.31818181818182\tk3\t393.0\n" +
                         "48.31818181818182\tk4\t399.0\n"
+        );
+    }
+
+    @Test
+    public void testParallelStringKeyGroupByWithReadThreadSafeTimestampFilter() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT key, count_distinct(ip) FROM tab " +
+                        "WHERE ts in '1970-01-13' and d < 1000 ORDER BY key DESC",
+                "key\tcount_distinct\n" +
+                        "k4\t28\n" +
+                        "k3\t29\n" +
+                        "k2\t27\n" +
+                        "k1\t31\n" +
+                        "k0\t27\n"
+        );
+    }
+
+    @Test
+    public void testParallelStringKeyGroupByWithReadThreadUnsafeTimestampFilter() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT key, count_distinct(ip) FROM tab " +
+                        "WHERE ts in '1970-01-13' and d < 1000 and key in ('k1', 'k2') ORDER BY key DESC",
+                "key\tcount_distinct\n" +
+                        "k2\t27\n" +
+                        "k1\t31\n"
+        );
+    }
+
+    @Test
+    public void testParallelStringKeyGroupByWithTooStrictFilter() throws Exception {
+        testParallelStringKeyGroupBy(
+                "SELECT key, avg(value), sum(colTop), count() FROM tab WHERE value < 0 ORDER BY key",
+                "key\tavg\tsum\tcount\n"
+        );
+    }
+
+    @Test
+    public void testParallelStringKeyGroupByWithTwoCountDistinctLongFunctions() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT key, count_distinct(j), count_distinct(j2) FROM tab ORDER BY key",
+                "key\tcount_distinct\tcount_distinct1\n" +
+                        "k0\t800\t680\n" +
+                        "k1\t800\t654\n" +
+                        "k2\t800\t671\n" +
+                        "k3\t800\t671\n" +
+                        "k4\t800\t671\n"
         );
     }
 
@@ -1522,6 +1573,39 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         "57.76545632973504\tk2\t387.0\n" +
                         "58.52353506243996\tk3\t393.0\n" +
                         "59.29162746942615\tk4\t399.0\n"
+        );
+    }
+
+    @Test
+    public void testParallelSymbolKeyGroupByWithNoFunctions() throws Exception {
+        testParallelSymbolKeyGroupBy(
+                "SELECT key FROM tab GROUP BY key ORDER BY key",
+                "key\n" +
+                        "k0\n" +
+                        "k1\n" +
+                        "k2\n" +
+                        "k3\n" +
+                        "k4\n"
+        );
+    }
+
+    @Test
+    public void testParallelSymbolKeyGroupByWithNoFunctionsAndFilter() throws Exception {
+        testParallelSymbolKeyGroupBy(
+                "SELECT key FROM tab WHERE key != 'k1' GROUP BY key ORDER BY key",
+                "key\n" +
+                        "k0\n" +
+                        "k2\n" +
+                        "k3\n" +
+                        "k4\n"
+        );
+    }
+
+    @Test
+    public void testParallelSymbolKeyGroupByWithNoFunctionsAndTooStrictFilter() throws Exception {
+        testParallelSymbolKeyGroupBy(
+                "SELECT key FROM tab WHERE quantity < 0 GROUP BY key ORDER BY key",
+                "key\n"
         );
     }
 

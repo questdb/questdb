@@ -143,46 +143,21 @@ public class Unordered8MapTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testUnsupportedKeyBinary() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (Unordered8Map ignore = new Unordered8Map(new SingleColumnType(ColumnType.BINARY), new SingleColumnType(ColumnType.LONG), 64, 0.5, 1)) {
-                Assert.fail();
-            } catch (CairoException e) {
-                Assert.assertTrue(Chars.contains(e.getMessage(), "unexpected key size"));
-            }
-        });
-    }
-
-    @Test
-    public void testUnsupportedKeyLong128() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (Unordered8Map ignore = new Unordered8Map(new SingleColumnType(ColumnType.LONG128), new SingleColumnType(ColumnType.LONG), 64, 0.5, 1)) {
-                Assert.fail();
-            } catch (CairoException e) {
-                Assert.assertTrue(Chars.contains(e.getMessage(), "unexpected key size"));
-            }
-        });
-    }
-
-    @Test
-    public void testUnsupportedKeyLong256() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (Unordered8Map ignore = new Unordered8Map(new SingleColumnType(ColumnType.LONG256), new SingleColumnType(ColumnType.LONG), 64, 0.5, 1)) {
-                Assert.fail();
-            } catch (CairoException e) {
-                Assert.assertTrue(Chars.contains(e.getMessage(), "unexpected key size"));
-            }
-        });
-    }
-
-    @Test
-    public void testUnsupportedKeyString() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (Unordered8Map ignore = new Unordered8Map(new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), 64, 0.5, 1)) {
-                Assert.fail();
-            } catch (CairoException e) {
-                Assert.assertTrue(Chars.contains(e.getMessage(), "unexpected key size"));
-            }
-        });
+    public void testUnsupportedKeyTypes() throws Exception {
+        short[] columnTypes = new short[]{
+                ColumnType.BINARY,
+                ColumnType.STRING,
+                ColumnType.LONG128,
+                ColumnType.UUID,
+        };
+        for (short columnType : columnTypes) {
+            TestUtils.assertMemoryLeak(() -> {
+                try (Unordered8Map ignore = new Unordered8Map(new SingleColumnType(columnType), new SingleColumnType(ColumnType.LONG), 64, 0.5, 1)) {
+                    Assert.fail();
+                } catch (CairoException e) {
+                    Assert.assertTrue(Chars.contains(e.getMessage(), "unexpected key size"));
+                }
+            });
+        }
     }
 }

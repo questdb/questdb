@@ -30,6 +30,7 @@ import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.map.OrderedMap;
 import io.questdb.cairo.map.Unordered8Map;
+import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
@@ -42,15 +43,17 @@ import java.util.concurrent.TimeUnit;
 
 @State(Scope.Thread)
 @BenchmarkMode(Mode.AverageTime)
-@OutputTimeUnit(TimeUnit.MICROSECONDS)
+@OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class MapReadLongBenchmark {
 
-    private static final int N = 5_000_000;
     private static final double loadFactor = 0.7;
-    private static final HashMap<Long, Long> hmap = new HashMap<>(N, (float) loadFactor);
-    private static final OrderedMap orderedMap = new OrderedMap(1024 * 1024, new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), N, loadFactor, 1024);
     private static final Rnd rnd = new Rnd();
-    private static final Unordered8Map u8map = new Unordered8Map(new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), N, loadFactor, 1024);
+    // aim for L1, L2, L3, RAM
+    @Param({"5000", "50000", "500000", "5000000"})
+    public int size;
+    private HashMap<Long, Long> hmap;
+    private OrderedMap orderedMap;
+    private Unordered8Map unordered8map;
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
@@ -65,45 +68,57 @@ public class MapReadLongBenchmark {
 
     @Benchmark
     public long baseline() {
-        return rnd.nextLong(N);
+        return rnd.nextLong(size);
     }
 
-    @Benchmark
-    public MapValue testOrderedMap() {
-        MapKey key = orderedMap.withKey();
-        key.putLong(rnd.nextLong(N));
-        return key.findValue();
-    }
+    @Setup
+    public void setup() {
+        rnd.reset();
 
-    @Benchmark
-    public Long testHashMap() {
-        return hmap.get(rnd.nextLong(N));
-    }
+        Misc.free(orderedMap);
+        Misc.free(unordered8map);
 
-    @Benchmark
-    public MapValue testUnordered8Map() {
-        MapKey key = u8map.withKey();
-        key.putLong(rnd.nextLong(N));
-        return key.findValue();
-    }
+        hmap = new HashMap<>(size, (float) loadFactor);
+        orderedMap = new OrderedMap(1024 * 1024, new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), size, loadFactor, Integer.MAX_VALUE);
+        unordered8map = new Unordered8Map(new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), size, loadFactor, Integer.MAX_VALUE);
 
-    static {
-        for (int i = 0; i < N; i++) {
+        for (int i = 0; i < size; i++) {
             MapKey key = orderedMap.withKey();
             key.putLong(i);
             MapValue values = key.createValue();
             values.putLong(0, i);
         }
 
-        for (int i = 0; i < N; i++) {
-            MapKey key = u8map.withKey();
+        for (int i = 0; i < size; i++) {
+            MapKey key = unordered8map.withKey();
             key.putLong(i);
             MapValue values = key.createValue();
             values.putLong(0, i);
         }
 
-        for (long i = 0; i < N; i++) {
+        for (long i = 0; i < size; i++) {
             hmap.put(i, i);
         }
+    }
+
+    @Benchmark
+    public Long testHashMap() {
+        return hmap.get(rnd.nextLong(size));
+    }
+
+    @Benchmark
+    public long testOrderedMap() {
+        MapKey key = orderedMap.withKey();
+        key.putLong(rnd.nextLong(size));
+        MapValue value = key.findValue();
+        return value != null ? value.getLong(0) : 0;
+    }
+
+    @Benchmark
+    public long testUnordered8Map() {
+        MapKey key = unordered8map.withKey();
+        key.putLong(rnd.nextLong(size));
+        MapValue value = key.findValue();
+        return value != null ? value.getLong(0) : 0;
     }
 }

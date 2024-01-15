@@ -46,6 +46,11 @@ public final class Hash {
         return seq == null ? -1 : (Chars.hashCode(seq) & 0xFFFFFFF) & max;
     }
 
+    public static int hashInt(int k) {
+        long h = k * M2;
+        return (int) (h ^ h >>> 32);
+    }
+
     public static int hashLong(long k) {
         long h = k * M2;
         return (int) (h ^ h >>> 32);

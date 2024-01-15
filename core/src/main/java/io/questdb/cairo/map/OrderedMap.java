@@ -262,6 +262,7 @@ public class OrderedMap implements Map, Reopenable {
         return heapLimit - heapStart;
     }
 
+    @Override
     public int getKeyCapacity() {
         return keyCapacity;
     }

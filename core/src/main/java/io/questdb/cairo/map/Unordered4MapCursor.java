@@ -27,11 +27,11 @@ package io.questdb.cairo.map;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 
-public final class Unordered8MapCursor implements MapRecordCursor {
+public final class Unordered4MapCursor implements MapRecordCursor {
     private final long entrySize;
-    private final Unordered8Map map;
-    private final Unordered8MapRecord recordA;
-    private final Unordered8MapRecord recordB;
+    private final Unordered4Map map;
+    private final Unordered4MapRecord recordA;
+    private final Unordered4MapRecord recordB;
     private long address;
     private int count;
     private long limit;
@@ -39,7 +39,7 @@ public final class Unordered8MapCursor implements MapRecordCursor {
     private long topAddress;
     private long zeroKeyAddress; // set to 0 when there is no zero
 
-    Unordered8MapCursor(Unordered8MapRecord record, Unordered8Map map) {
+    Unordered4MapCursor(Unordered4MapRecord record, Unordered4Map map) {
         this.recordA = record;
         this.recordB = record.clone();
         this.map = map;
@@ -87,7 +87,7 @@ public final class Unordered8MapCursor implements MapRecordCursor {
 
     @Override
     public void recordAt(Record record, long atRowId) {
-        ((Unordered8MapRecord) record).of(atRowId);
+        ((Unordered4MapRecord) record).of(atRowId);
     }
 
     @Override
@@ -110,7 +110,7 @@ public final class Unordered8MapCursor implements MapRecordCursor {
         } while (address < limit && map.isZeroKey(address));
     }
 
-    Unordered8MapCursor init(long address, long limit, long zeroKeyAddress, int count) {
+    Unordered4MapCursor init(long address, long limit, long zeroKeyAddress, int count) {
         this.topAddress = address;
         this.limit = limit;
         this.count = count;

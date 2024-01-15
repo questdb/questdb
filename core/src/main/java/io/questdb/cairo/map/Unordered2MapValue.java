@@ -26,17 +26,17 @@ package io.questdb.cairo.map;
 
 import io.questdb.std.*;
 
-final class Unordered16MapValue implements MapValue {
+final class Unordered2MapValue implements MapValue {
     private final Long256Impl long256 = new Long256Impl();
     private final long[] valueOffsets;
     private final long valueSize;
     private long limit;
     private boolean newValue;
-    private Unordered16MapRecord record; // double-linked
+    private Unordered2MapRecord record; // double-linked
     private long startAddress; // key-value pair start address
     private long valueAddress;
 
-    public Unordered16MapValue(long valueSize, long[] valueOffsets) {
+    public Unordered2MapValue(long valueSize, long[] valueOffsets) {
         this.valueSize = valueSize;
         this.valueOffsets = valueOffsets;
     }
@@ -90,7 +90,7 @@ final class Unordered16MapValue implements MapValue {
 
     @Override
     public void copyFrom(MapValue value) {
-        Unordered16MapValue other = (Unordered16MapValue) value;
+        Unordered2MapValue other = (Unordered2MapValue) value;
         Vect.memcpy(valueAddress, other.valueAddress, valueSize);
     }
 
@@ -292,14 +292,14 @@ final class Unordered16MapValue implements MapValue {
         Vect.memcpy(valueAddress, ptr, valueSize);
     }
 
-    void linkRecord(Unordered16MapRecord record) {
+    void linkRecord(Unordered2MapRecord record) {
         this.record = record;
         record.setLimit(limit);
     }
 
-    Unordered16MapValue of(long startAddress, long limit, boolean newValue) {
+    Unordered2MapValue of(long startAddress, long limit, boolean newValue) {
         this.startAddress = startAddress;
-        this.valueAddress = startAddress + Unordered16Map.KEY_SIZE;
+        this.valueAddress = startAddress + Unordered2Map.KEY_SIZE;
         this.limit = limit;
         this.newValue = newValue;
         return this;

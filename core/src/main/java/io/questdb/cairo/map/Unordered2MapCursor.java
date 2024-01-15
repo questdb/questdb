@@ -27,20 +27,19 @@ package io.questdb.cairo.map;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 
-public final class Unordered16MapCursor implements MapRecordCursor {
-    // Set to -1 when key-value pair is var-size.
+public final class Unordered2MapCursor implements MapRecordCursor {
     private final long entrySize;
-    private final Unordered16Map map;
-    private final Unordered16MapRecord recordA;
-    private final Unordered16MapRecord recordB;
+    private final Unordered2Map map;
+    private final Unordered2MapRecord recordA;
+    private final Unordered2MapRecord recordB;
     private long address;
     private int count;
+    private boolean hasZero;
     private long limit;
     private int remaining;
     private long topAddress;
-    private long zeroKeyAddress; // set to 0 when there is no zero
 
-    Unordered16MapCursor(Unordered16MapRecord record, Unordered16Map map) {
+    Unordered2MapCursor(Unordered2MapRecord record, Unordered2Map map) {
         this.recordA = record;
         this.recordB = record.clone();
         this.map = map;
@@ -73,11 +72,6 @@ public final class Unordered16MapCursor implements MapRecordCursor {
     @Override
     public boolean hasNext() {
         if (remaining > 0) {
-            if (remaining == 1 && zeroKeyAddress != 0) {
-                recordA.of(zeroKeyAddress);
-                remaining--;
-                return true;
-            }
             recordA.of(address);
             skipToNonZeroKey();
             remaining--;
@@ -88,7 +82,7 @@ public final class Unordered16MapCursor implements MapRecordCursor {
 
     @Override
     public void recordAt(Record record, long atRowId) {
-        ((Unordered16MapRecord) record).of(atRowId);
+        ((Unordered2MapRecord) record).of(atRowId);
     }
 
     @Override
@@ -100,7 +94,7 @@ public final class Unordered16MapCursor implements MapRecordCursor {
     public void toTop() {
         address = topAddress;
         remaining = count;
-        if (count > 0 && (zeroKeyAddress == 0 || count > 1) && map.isZeroKey(address)) {
+        if (!hasZero) {
             skipToNonZeroKey();
         }
     }
@@ -111,11 +105,11 @@ public final class Unordered16MapCursor implements MapRecordCursor {
         } while (address < limit && map.isZeroKey(address));
     }
 
-    Unordered16MapCursor init(long address, long limit, long zeroKeyAddress, int count) {
+    Unordered2MapCursor init(long address, long limit, boolean hasZero, int count) {
         this.topAddress = address;
         this.limit = limit;
         this.count = count;
-        this.zeroKeyAddress = zeroKeyAddress;
+        this.hasZero = hasZero;
         toTop();
         recordA.setLimit(limit);
         recordB.setLimit(limit);

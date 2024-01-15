@@ -207,6 +207,7 @@ public class Unordered8Map implements Map, Reopenable {
         return cursor.init(memStart, memLimit, 0, size);
     }
 
+    @Override
     public int getKeyCapacity() {
         return keyCapacity;
     }
@@ -219,20 +220,27 @@ public class Unordered8Map implements Map, Reopenable {
     @Override
     public void merge(Map srcMap, MapValueMergeFunction mergeFunc) {
         assert this != srcMap;
-        if (srcMap.size() == 0) {
+        long srcSize = srcMap.size();
+        if (srcSize == 0) {
             return;
         }
         Unordered8Map src8Map = (Unordered8Map) srcMap;
 
         // First, we handle zero key.
-        if (src8Map.hasZero && !hasZero) {
-            Vect.memcpy(zeroMemStart, src8Map.zeroMemStart, entrySize);
-            hasZero = true;
-        } else if (src8Map.hasZero) {
-            mergeFunc.merge(
-                    valueAt(zeroMemStart),
-                    src8Map.valueAt(src8Map.zeroMemStart)
-            );
+        if (src8Map.hasZero) {
+            if (hasZero) {
+                mergeFunc.merge(
+                        valueAt(zeroMemStart),
+                        src8Map.valueAt(src8Map.zeroMemStart)
+                );
+            } else {
+                Vect.memcpy(zeroMemStart, src8Map.zeroMemStart, entrySize);
+                hasZero = true;
+            }
+            // Check if zero was the only element in the source map.
+            if (srcSize == 1) {
+                return;
+            }
         }
 
         // Then we handle all non-zero keys.

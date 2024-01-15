@@ -45,12 +45,14 @@ import java.util.concurrent.TimeUnit;
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class MapWriteLongBenchmark {
 
-    private static final int N = 1_000_000;
     private static final double loadFactor = 0.7;
-    private static final OrderedMap orderedMap = new OrderedMap(1024 * 1024, new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), 64, loadFactor, 1024);
     private static final HashMap<Long, Long> hmap = new HashMap<>(64, (float) loadFactor);
-    private static final Unordered8Map u8map = new Unordered8Map(new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), 64, loadFactor, 1024);
+    private static final OrderedMap orderedMap = new OrderedMap(1024 * 1024, new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), 64, loadFactor, Integer.MAX_VALUE);
+    private static final Unordered8Map unordered8map = new Unordered8Map(new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), 64, loadFactor, Integer.MAX_VALUE);
     private final Rnd rnd = new Rnd();
+    // aim for L1, L2, L3, RAM
+    @Param({"5000", "50000", "500000", "5000000"})
+    public int size;
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
@@ -63,36 +65,32 @@ public class MapWriteLongBenchmark {
         new Runner(opt).run();
     }
 
-    @Benchmark
-    public long baseline() {
-        return rnd.nextLong(N) + rnd.nextLong();
-    }
-
     @Setup(Level.Iteration)
     public void reset() {
-        orderedMap.clear();
-        u8map.clear();
-        hmap.clear();
         rnd.reset();
+
+        hmap.clear();
+        orderedMap.clear();
+        unordered8map.clear();
+    }
+
+    @Benchmark
+    public void testHashMap() {
+        hmap.put(rnd.nextLong(size), rnd.nextLong());
     }
 
     @Benchmark
     public void testOrderedMap() {
         MapKey key = orderedMap.withKey();
-        key.putLong(rnd.nextLong(N));
+        key.putLong(rnd.nextLong(size));
         MapValue values = key.createValue();
         values.putLong(0, rnd.nextLong());
     }
 
     @Benchmark
-    public void testHashMap() {
-        hmap.put(rnd.nextLong(N), rnd.nextLong());
-    }
-
-    @Benchmark
     public void testUnordered8Map() {
-        MapKey key = u8map.withKey();
-        key.putLong(rnd.nextLong(N));
+        MapKey key = unordered8map.withKey();
+        key.putLong(rnd.nextLong(size));
         MapValue values = key.createValue();
         values.putLong(0, rnd.nextLong());
     }

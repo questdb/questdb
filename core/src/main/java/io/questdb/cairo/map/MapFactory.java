@@ -89,16 +89,18 @@ public class MapFactory {
         final int keySize = totalSize(keyTypes);
         final int valueSize = totalSize(keyTypes);
         if (keySize > 0) {
-            if (keySize <= Long.BYTES && Long.BYTES + valueSize <= maxEntrySize) {
-                return new Unordered8Map(
+            if (keySize <= Short.BYTES && valueSize <= maxEntrySize) {
+                return new Unordered2Map(keyTypes, valueTypes);
+            } else if (keySize <= Integer.BYTES && Integer.BYTES + valueSize <= maxEntrySize) {
+                return new Unordered4Map(
                         keyTypes,
                         valueTypes,
                         keyCapacity,
                         configuration.getSqlFastMapLoadFactor(),
                         configuration.getSqlMapMaxResizes()
                 );
-            } else if (keySize <= 2 * Long.BYTES && 2 * Long.BYTES + valueSize <= maxEntrySize) {
-                return new Unordered16Map(
+            } else if (keySize <= Long.BYTES && Long.BYTES + valueSize <= maxEntrySize) {
+                return new Unordered8Map(
                         keyTypes,
                         valueTypes,
                         keyCapacity,
