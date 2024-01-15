@@ -361,19 +361,18 @@ public class OrderedMap implements Map, Reopenable {
         kPos = Bytes.align8b(keyWriter.appendAddress + valueSize);
         setOffset(offsets, index, keyWriter.startAddress - heapStart);
         setHashCode(offsets, index, hashCode);
+        size++;
         if (--free == 0) {
             rehash();
         }
-        size++;
         return valueOf(keyWriter.startAddress, keyWriter.appendAddress, true, value);
     }
 
     private void mergeFixedSizeKey(OrderedMap srcMap, MapValueMergeFunction mergeFunc) {
         assert keySize >= 0;
-        setKeyCapacity(size + srcMap.size);
 
-        long len = keySize + valueSize;
-        long alignedLen = Bytes.align8b(len);
+        long entrySize = keySize + valueSize;
+        long alignedEntrySize = Bytes.align8b(entrySize);
 
         OUTER:
         for (int i = 0, k = (int) (srcMap.offsets.size() / 2); i < k; i++) {
@@ -403,24 +402,22 @@ public class OrderedMap implements Map, Reopenable {
                 index = (index + 1) & mask;
             }
 
-            assert free > 0;
-            if (kPos + len > heapLimit) {
-                // Make sure to reset key addresses before the resize.
-                key.reset();
-                resize(len);
+            if (kPos + entrySize > heapLimit) {
+                resize(entrySize, kPos);
             }
-            Vect.memcpy(kPos, srcStartAddress, len);
+            Vect.memcpy(kPos, srcStartAddress, entrySize);
             setOffset(offsets, index, kPos - heapStart);
             setHashCode(offsets, index, hashCode);
-            kPos += alignedLen;
-            free--;
+            kPos += alignedEntrySize;
             size++;
+            if (--free == 0) {
+                rehash();
+            }
         }
     }
 
     private void mergeVarSizeKey(OrderedMap srcMap, MapValueMergeFunction mergeFunc) {
         assert keySize == -1;
-        setKeyCapacity(size + srcMap.size);
 
         OUTER:
         for (int i = 0, k = (int) (srcMap.offsets.size() / 2); i < k; i++) {
@@ -452,19 +449,18 @@ public class OrderedMap implements Map, Reopenable {
                 index = (index + 1) & mask;
             }
 
-            assert free > 0;
             long entrySize = keyOffset + srcKeySize + valueSize;
             if (kPos + entrySize > heapLimit) {
-                // Make sure to reset key addresses before the resize.
-                key.reset();
-                resize(entrySize);
+                resize(entrySize, kPos);
             }
             Vect.memcpy(kPos, srcStartAddress, entrySize);
-            kPos = Bytes.align8b(kPos + entrySize);
             setOffset(offsets, index, kPos - heapStart);
             setHashCode(offsets, index, hashCode);
-            free--;
+            kPos = Bytes.align8b(kPos + entrySize);
             size++;
+            if (--free == 0) {
+                rehash();
+            }
         }
     }
 
@@ -526,12 +522,13 @@ public class OrderedMap implements Map, Reopenable {
         keyCapacity = (int) newKeyCapacity;
     }
 
-    private void resize(long entrySize) {
-        assert key.appendAddress >= heapStart;
+    // Returns delta between new and old heapStart addresses.
+    private long resize(long entrySize, long appendAddress) {
+        assert appendAddress >= heapStart;
         if (nResizes < maxResizes) {
             nResizes++;
             long kCapacity = (heapLimit - heapStart) << 1;
-            long target = key.appendAddress + entrySize - heapStart;
+            long target = appendAddress + entrySize - heapStart;
             if (kCapacity < target) {
                 kCapacity = Numbers.ceilPow2(target);
             }
@@ -543,15 +540,12 @@ public class OrderedMap implements Map, Reopenable {
             this.capacity = kCapacity;
             long delta = kAddress - heapStart;
             kPos += delta;
-            key.startAddress += delta;
-            key.appendAddress += delta;
-
             assert kPos > 0;
-            assert key.startAddress > 0;
-            assert key.appendAddress > 0;
 
             this.heapStart = kAddress;
             this.heapLimit = kAddress + kCapacity;
+
+            return delta;
         } else {
             throw LimitOverflowException.instance().put("limit of ").put(maxResizes).put(" resizes exceeded in FastMap");
         }
@@ -791,7 +785,11 @@ public class OrderedMap implements Map, Reopenable {
         protected void checkSize(long requiredKeySize) {
             long requiredSize = requiredKeySize + valueSize;
             if (appendAddress + requiredSize > heapLimit) {
-                resize(requiredSize);
+                long delta = resize(requiredSize, appendAddress);
+                startAddress += delta;
+                appendAddress += delta;
+                assert startAddress > 0;
+                assert appendAddress > 0;
             }
         }
 
