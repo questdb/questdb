@@ -44,6 +44,8 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.HashMap;
+import java.util.Map;
+import java.util.Objects;
 
 public class Unordered16MapTest extends AbstractCairoTest {
 
@@ -246,6 +248,49 @@ public class Unordered16MapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFuzz() throws Exception {
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        TestUtils.assertMemoryLeak(() -> {
+            ArrayColumnTypes keyTypes = new ArrayColumnTypes();
+            keyTypes.add(ColumnType.LONG);
+            keyTypes.add(ColumnType.LONG);
+
+            SingleColumnType valueTypes = new SingleColumnType(ColumnType.LONG);
+
+            HashMap<LongTuple, Long> oracle = new HashMap<>();
+            try (Unordered16Map map = new Unordered16Map(keyTypes, valueTypes, 64, 0.8, Integer.MAX_VALUE)) {
+                final int N = 100000;
+                for (int i = 0; i < N; i++) {
+                    MapKey key = map.withKey();
+                    long l0 = rnd.nextLong();
+                    long l1 = rnd.nextLong();
+                    key.putLong(l0);
+                    key.putLong(l1);
+
+                    MapValue value = key.createValue();
+                    value.putLong(0, l0 + l1);
+
+                    oracle.put(new LongTuple(l0, l1), l0 + l1);
+                }
+
+                Assert.assertEquals(oracle.size(), map.size());
+
+                // assert map contents
+                for (Map.Entry<LongTuple, Long> e : oracle.entrySet()) {
+                    MapKey key = map.withKey();
+                    key.putLong(e.getKey().l0);
+                    key.putLong(e.getKey().l1);
+
+                    MapValue value = key.findValue();
+                    Assert.assertFalse(value.isNew());
+                    Assert.assertEquals(e.getKey().l0 + e.getKey().l1, value.getLong(0));
+                    Assert.assertEquals((long) e.getValue(), value.getLong(0));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSingleZeroKey() {
         try (Unordered16Map map = new Unordered16Map(new SingleColumnType(ColumnType.LONG128), new SingleColumnType(ColumnType.LONG), 16, 0.8, 24)) {
             MapKey key = map.withKey();
@@ -343,5 +388,32 @@ public class Unordered16MapTest extends AbstractCairoTest {
                 Assert.assertTrue(Chars.contains(e.getMessage(), "unexpected key size"));
             }
         });
+    }
+
+    private static class LongTuple {
+        final long l0;
+        final long l1;
+
+        private LongTuple(long l0, long l1) {
+            this.l0 = l0;
+            this.l1 = l1;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) {
+                return true;
+            }
+            if (o == null || getClass() != o.getClass()) {
+                return false;
+            }
+            LongTuple longTuple = (LongTuple) o;
+            return l0 == longTuple.l0 && l1 == longTuple.l1;
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(l0, l1);
+        }
     }
 }
