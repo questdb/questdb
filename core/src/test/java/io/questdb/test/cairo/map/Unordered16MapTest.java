@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.map.MapRecord;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.map.Unordered16Map;
 import io.questdb.cairo.sql.Record;
@@ -207,6 +208,38 @@ public class Unordered16MapTest extends AbstractCairoTest {
                         Assert.assertEquals(rnd.nextLong(), record.getLong128Lo(col));
                         Assert.assertEquals(rnd.nextLong(), record.getLong128Hi(col));
                     }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testFirstLongZero() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            ArrayColumnTypes keyTypes = new ArrayColumnTypes();
+            keyTypes.add(ColumnType.LONG);
+            keyTypes.add(ColumnType.LONG);
+
+            SingleColumnType valueTypes = new SingleColumnType(ColumnType.LONG);
+
+            try (Unordered16Map map = new Unordered16Map(keyTypes, valueTypes, 64, 0.8, Integer.MAX_VALUE)) {
+                final int N = 100000;
+                for (int i = 0; i < N; i++) {
+                    MapKey keyA = map.withKey();
+                    keyA.putLong(0);
+                    keyA.putLong(i);
+
+                    MapValue valueA = keyA.createValue();
+                    Assert.assertTrue(valueA.isNew());
+                    valueA.putLong(0, i);
+                }
+
+                // assert map contents
+                RecordCursor cursor = map.getCursor();
+                MapRecord record = map.getRecord();
+                while (cursor.hasNext()) {
+                    Assert.assertEquals(0, record.getLong(1));
+                    Assert.assertEquals(record.getLong(0), record.getLong(2));
                 }
             }
         });
