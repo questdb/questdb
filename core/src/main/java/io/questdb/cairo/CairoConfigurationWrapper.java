@@ -751,6 +751,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlUnorderedMapMaxEntrySize() {
+        return delegate.getSqlUnorderedMapMaxEntrySize();
+    }
+
+    @Override
     public int getSqlWindowInitialRangeBufferSize() {
         return delegate.getSqlWindowInitialRangeBufferSize();
     }

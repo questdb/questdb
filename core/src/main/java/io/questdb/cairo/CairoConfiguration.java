@@ -436,6 +436,8 @@ public interface CairoConfiguration {
 
     int getSqlSortValuePageSize();
 
+    int getSqlUnorderedMapMaxEntrySize();
+
     int getSqlWindowInitialRangeBufferSize();
 
     int getSqlWindowMaxRecursion();

@@ -27,7 +27,6 @@ package io.questdb.cairo.map;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
-import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -85,11 +84,12 @@ public class MapFactory {
     ) {
         final int keyCapacity = configuration.getSqlSmallMapKeyCapacity();
         final int pageSize = configuration.getSqlSmallMapPageSize();
+        final int maxEntrySize = configuration.getSqlUnorderedMapMaxEntrySize();
 
         final int keySize = totalSize(keyTypes);
         final int valueSize = totalSize(keyTypes);
         if (keySize > 0) {
-            if (keySize <= Long.BYTES && Long.BYTES + valueSize <= Misc.CACHE_LINE_SIZE) {
+            if (keySize <= Long.BYTES && Long.BYTES + valueSize <= maxEntrySize) {
                 return new Unordered8Map(
                         keyTypes,
                         valueTypes,
@@ -97,7 +97,7 @@ public class MapFactory {
                         configuration.getSqlFastMapLoadFactor(),
                         configuration.getSqlMapMaxResizes()
                 );
-            } else if (keySize <= 2 * Long.BYTES && 2 * Long.BYTES + valueSize <= Misc.CACHE_LINE_SIZE) {
+            } else if (keySize <= 2 * Long.BYTES && 2 * Long.BYTES + valueSize <= maxEntrySize) {
                 return new Unordered16Map(
                         keyTypes,
                         valueTypes,
