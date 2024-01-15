@@ -401,6 +401,8 @@ public class OrderedMap implements Map, Reopenable {
             }
 
             if (kPos + len > heapLimit) {
+                // Make sure to reset key addresses before the resize.
+                key.reset();
                 resize(len);
             }
             Vect.memcpy(kPos, srcStartAddress, len);
@@ -446,12 +448,14 @@ public class OrderedMap implements Map, Reopenable {
             }
 
             assert free > 0;
-            long len = keyOffset + srcKeySize + valueSize;
-            if (kPos + len > heapLimit) {
-                resize(len);
+            long entrySize = keyOffset + srcKeySize + valueSize;
+            if (kPos + entrySize > heapLimit) {
+                // Make sure to reset key addresses before the resize.
+                key.reset();
+                resize(entrySize);
             }
-            Vect.memcpy(kPos, srcStartAddress, len);
-            kPos = Bytes.align8b(kPos + len);
+            Vect.memcpy(kPos, srcStartAddress, entrySize);
+            kPos = Bytes.align8b(kPos + entrySize);
             setOffset(offsets, index, kPos - heapStart);
             setHashCode(offsets, index, hashCode);
             if (--free == 0) {
@@ -519,11 +523,12 @@ public class OrderedMap implements Map, Reopenable {
         keyCapacity = (int) newKeyCapacity;
     }
 
-    private void resize(long size) {
+    private void resize(long entrySize) {
+        assert key.appendAddress >= heapStart;
         if (nResizes < maxResizes) {
             nResizes++;
             long kCapacity = (heapLimit - heapStart) << 1;
-            long target = key.appendAddress + size + valueSize - heapStart;
+            long target = key.appendAddress + entrySize - heapStart;
             if (kCapacity < target) {
                 kCapacity = Numbers.ceilPow2(target);
             }
@@ -733,8 +738,7 @@ public class OrderedMap implements Map, Reopenable {
         }
 
         public Key init() {
-            startAddress = kPos;
-            appendAddress = kPos + keyOffset;
+            reset();
             return this;
         }
 
@@ -746,6 +750,11 @@ public class OrderedMap implements Map, Reopenable {
         @Override
         public void putRecord(Record value) {
             // no-op
+        }
+
+        public void reset() {
+            startAddress = kPos;
+            appendAddress = kPos + keyOffset;
         }
 
         private MapValue createValue(long keySize, int hashCode) {
@@ -777,8 +786,9 @@ public class OrderedMap implements Map, Reopenable {
         }
 
         protected void checkSize(long requiredKeySize) {
-            if (appendAddress + requiredKeySize + valueSize > heapLimit) {
-                resize(requiredKeySize);
+            long requiredSize = requiredKeySize + valueSize;
+            if (appendAddress + requiredSize > heapLimit) {
+                resize(requiredSize);
             }
         }
 

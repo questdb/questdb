@@ -1349,6 +1349,38 @@ public class OrderedMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMergeStressTest() throws Exception {
+        // Here we aim to resize both map A's hash table and heap as many times as possible
+        // to catch possible bugs with append address initialization.
+        TestUtils.assertMemoryLeak(() -> {
+            SingleColumnType keyTypes = new SingleColumnType(ColumnType.STRING);
+            SingleColumnType valueTypes = new SingleColumnType(ColumnType.LONG);
+
+            try (
+                    OrderedMap mapA = new OrderedMap(64, keyTypes, valueTypes, 16, 0.9, Integer.MAX_VALUE);
+                    OrderedMap mapB = new OrderedMap(64, keyTypes, valueTypes, 16, 0.9, Integer.MAX_VALUE)
+            ) {
+                final int N = 100;
+                final int M = 1000;
+                for (int i = 0; i < N; i++) {
+                    mapB.clear();
+                    for (int j = 0; j < M; j++) {
+                        MapKey keyB = mapB.withKey();
+                        keyB.putStr(String.valueOf((long) M * i + j));
+
+                        MapValue valueB = keyB.createValue();
+                        Assert.assertTrue(valueB.isNew());
+                        valueB.putLong(0, M * i + j);
+                    }
+
+                    mapA.merge(mapB, new TestMapValueMergeFunction());
+                    Assert.assertEquals((i + 1) * M, mapA.size());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testMergeVarSizeKey() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             ArrayColumnTypes keyTypes = new ArrayColumnTypes();
