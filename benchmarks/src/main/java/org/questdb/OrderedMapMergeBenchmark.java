@@ -142,9 +142,6 @@ public class OrderedMapMergeBenchmark {
 
         for (int i = 0; i < nMaps; i++) {
             destMap.merge(srcMaps.getQuick(i), mergeFunction);
-        }
-
-        for (int i = 0; i < nMaps; i++) {
             srcMaps.getQuick(i).close();
         }
 
