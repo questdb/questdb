@@ -745,15 +745,39 @@ public class HttpResponseSink implements Closeable, Mutable {
     }
 
     public class SimpleResponseImpl {
-        public void sendStatus(int code, CharSequence message) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            sendStatus(code, message, null);
+        public void sendStatusNoContent(int code) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            sendStatusNoContent(code, null);
         }
 
-        public void sendStatus(int code, CharSequence message, CharSequence header) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            sendStatus(code, message, header, null, null);
+        public void sendStatusNoContent(int code, @Nullable CharSequence header) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            buffer.clearAndPrepareToWriteToBuffer();
+            headerImpl.status(httpVersion, code, null, -2L);
+            if (header != null) {
+                headerImpl.put(header).put(Misc.EOL);
+            }
+            prepareHeaderSink();
+            flushSingle();
         }
 
-        public void sendStatus(int code, CharSequence message, CharSequence header, CharSequence cookieName, CharSequence cookieValue) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        /**
+         * Sends "text/plain" content type response with customised message and
+         * optional additional header and cookie.
+         *
+         * @param code        response code, has to be compatible with "text" response type
+         * @param message     optional message, if not provided, a standard message for the response code will be used
+         * @param header      optional header
+         * @param cookieName  optional cookie name, when name is not null the value must be not-null too
+         * @param cookieValue optional cookie value
+         * @throws PeerDisconnectedException exception if HTTP client disconnects during us sending
+         * @throws PeerIsSlowToReadException exception if HTTP client does not keep up with us sending
+         */
+        public void sendStatusTextContent(
+                int code,
+                @Nullable CharSequence message,
+                @Nullable CharSequence header,
+                @Nullable CharSequence cookieName,
+                @Nullable CharSequence cookieValue
+        ) throws PeerDisconnectedException, PeerIsSlowToReadException {
             buffer.clearAndPrepareToWriteToBuffer();
             final String std = headerImpl.status(httpVersion, code, CONTENT_TYPE_TEXT, -1L);
             if (header != null) {
@@ -770,23 +794,24 @@ public class HttpResponseSink implements Closeable, Mutable {
             resumeSend();
         }
 
-        public void sendStatus(int code) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            buffer.clearAndPrepareToWriteToBuffer();
-            headerImpl.status(httpVersion, code, null, -2L);
-            prepareHeaderSink();
-            flushSingle();
+        public void sendStatusTextContent(
+                int code,
+                CharSequence message,
+                CharSequence header
+        ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            sendStatusTextContent(code, message, header, null, null);
         }
 
         public void sendStatusWithCookie(int code, CharSequence message, CharSequence cookieName, CharSequence cookieValue) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            sendStatus(code, message, null, cookieName, cookieValue);
+            sendStatusTextContent(code, message, null, cookieName, cookieValue);
         }
 
-        public void sendStatusWithDefaultMessage(int code) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            sendStatus(code, null);
+        public void sendStatusTextContent(int code) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            sendStatusTextContent(code, null, null);
         }
 
-        public void sendStatusWithHeader(int code, CharSequence header) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            sendStatus(code, null, header);
+        public void sendStatusTextContent(int code, CharSequence header) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            sendStatusTextContent(code, null, header);
         }
 
         private void setCookie(CharSequence name, CharSequence value) {

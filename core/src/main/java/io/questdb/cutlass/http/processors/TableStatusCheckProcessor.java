@@ -64,7 +64,7 @@ public class TableStatusCheckProcessor implements HttpRequestProcessor, Closeabl
     public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
         DirectUtf8Sequence tableName = context.getRequestHeader().getUrlParam(URL_PARAM_STATUS_TABLE_NAME);
         if (tableName == null) {
-            context.simpleResponse().sendStatus(200, "table name missing");
+            context.simpleResponse().sendStatusTextContent(200, "table name missing", null);
         } else {
             int check = TableUtils.TABLE_DOES_NOT_EXIST;
             utf16Sink.clear();
@@ -81,7 +81,7 @@ public class TableStatusCheckProcessor implements HttpRequestProcessor, Closeabl
                 r.put('{').putQuoted("status").put(':').putQuoted(toResponse(check)).put('}');
                 r.sendChunk(true);
             } else {
-                context.simpleResponse().sendStatus(200, toResponse(check));
+                context.simpleResponse().sendStatusTextContent(200, toResponse(check), null);
             }
         }
     }

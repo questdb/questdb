@@ -6517,7 +6517,7 @@ public class IODispatcherTest extends AbstractTest {
 
                             @Override
                             public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
-                                context.simpleResponse().sendStatusWithDefaultMessage(200);
+                                context.simpleResponse().sendStatusTextContent(200);
                             }
                         };
                     }
