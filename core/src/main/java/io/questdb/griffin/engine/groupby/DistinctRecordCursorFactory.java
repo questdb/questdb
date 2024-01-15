@@ -114,7 +114,7 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
         private RecordSink recordSink;
 
         public DistinctRecordCursor(CairoConfiguration configuration, RecordMetadata metadata) {
-            this.dataMap = MapFactory.createMap(configuration, metadata);
+            this.dataMap = MapFactory.createOrderedMap(configuration, metadata);
             this.isOpen = true;
         }
 

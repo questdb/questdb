@@ -83,7 +83,8 @@ public final class MemoryTag {
     public static final int NATIVE_TEXT_PARSER_RSS = 48;
     public static final int NATIVE_TLS_RSS = 47;
     public static final int NATIVE_TREE_CHAIN = 6;
-    public static final int SIZE = NATIVE_GROUP_BY_FUNCTION + 1;
+    public static final int NATIVE_UNORDERED_MAP = 58;
+    public static final int SIZE = NATIVE_UNORDERED_MAP + 1;
     private static final ObjList<String> tagNameMap = new ObjList<>(SIZE);
 
     public static String nameOf(int tag) {
@@ -102,6 +103,7 @@ public final class MemoryTag {
         tagNameMap.extendAndSet(NATIVE_COMPACT_MAP, "NATIVE_COMPACT_MAP");
         tagNameMap.extendAndSet(NATIVE_FAST_MAP, "NATIVE_FAST_MAP");
         tagNameMap.extendAndSet(NATIVE_FAST_MAP_INT_LIST, "NATIVE_FAST_MAP_INT_LIST");
+        tagNameMap.extendAndSet(NATIVE_UNORDERED_MAP, "NATIVE_UNORDERED_MAP");
         tagNameMap.extendAndSet(NATIVE_HTTP_CONN, "NATIVE_HTTP_CONN");
         tagNameMap.extendAndSet(NATIVE_PGW_CONN, "NATIVE_PGW_CONN");
         tagNameMap.extendAndSet(MMAP_INDEX_READER, "MMAP_INDEX_READER");

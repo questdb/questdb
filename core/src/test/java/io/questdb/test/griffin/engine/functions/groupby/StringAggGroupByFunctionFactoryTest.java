@@ -61,11 +61,11 @@ public class StringAggGroupByFunctionFactoryTest extends AbstractCairoTest {
                 "a\tstring_agg\n" +
                         "a\tbbb,abc,aaa\n" +
                         "b\tccc,abc\n" +
-                        "f\tccc\n" +
                         "c\tccc\n" +
+                        "d\tbbb\n" +
                         "e\tabc,ccc\n" +
-                        "d\tbbb\n",
-                "select a, string_agg(s, ',') from x",
+                        "f\tccc\n",
+                "select a, string_agg(s, ',') from x order by a",
                 "create table x as (" +
                         "select * from (" +
                         "   select " +
@@ -87,7 +87,7 @@ public class StringAggGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "a\t\n" +
                         "b\t\n" +
                         "c\t\n",
-                "select a, string_agg(s, ',') from x",
+                "select a, string_agg(s, ',') from x order by a",
                 "create table x as (" +
                         "select * from (" +
                         "   select " +

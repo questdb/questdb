@@ -36,7 +36,7 @@ public class CountLong256GroupByFunctionFactoryTest extends AbstractCairoTest {
                         "a\t1\n" +
                         "b\t1\n" +
                         "c\t1\n",
-                "select a, count_distinct(cast('0x42' AS LONG256)) from x",
+                "select a, count_distinct(cast('0x42' AS LONG256)) from x order by a",
                 "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
                 null,
                 true,
@@ -47,12 +47,12 @@ public class CountLong256GroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testExpression() throws Exception {
         final String expected = "a\tcount_distinct\n" +
-                "c\t5\n" +
                 "a\t2\n" +
-                "b\t4\n";
+                "b\t4\n" +
+                "c\t5\n";
         assertQuery(
                 expected,
-                "select a, count_distinct(s + s) from x",
+                "select a, count_distinct(s + s) from x order by a",
                 "create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_long256(8) s from long_sequence(20)))",
                 null,
                 true,
@@ -60,20 +60,20 @@ public class CountLong256GroupByFunctionFactoryTest extends AbstractCairoTest {
         );
         // self-addition shouldn't affect the number of distinct values,
         // so the result should stay the same
-        assertSql(expected, "select a, count_distinct(s) from x");
+        assertSql(expected, "select a, count_distinct(s) from x order by a");
     }
 
     @Test
     public void testGroupKeyed() throws Exception {
         assertQuery(
                 "a\tcount_distinct\n" +
-                        "c\t5\n" +
-                        "f\t4\n" +
-                        "e\t1\n" +
-                        "d\t3\n" +
+                        "a\t1\n" +
                         "b\t4\n" +
-                        "a\t1\n",
-                "select a, count_distinct(s) from x",
+                        "c\t5\n" +
+                        "d\t3\n" +
+                        "e\t1\n" +
+                        "f\t4\n",
+                "select a, count_distinct(s) from x order by a",
                 "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_long256(16) s,  timestamp_sequence(0, 100000) ts from long_sequence(20)) timestamp(ts))",
                 null,
                 true,
@@ -119,7 +119,7 @@ public class CountLong256GroupByFunctionFactoryTest extends AbstractCairoTest {
                         "a\t0\n" +
                         "b\t0\n" +
                         "c\t0\n",
-                "select a, count_distinct(cast(null as LONG256)) from x",
+                "select a, count_distinct(cast(null as LONG256)) from x order by a",
                 "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
                 null,
                 true,
