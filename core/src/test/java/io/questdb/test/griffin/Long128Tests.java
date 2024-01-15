@@ -29,6 +29,7 @@ import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 public class Long128Tests extends AbstractCairoTest {
+
     @Test
     public void testFatJoinOnLong128Column() throws Exception {
         assertMemoryLeak(() -> {
@@ -83,7 +84,7 @@ public class Long128Tests extends AbstractCairoTest {
                         "00000000-0000-0008-0000-000000000004\t2\n" +
                         "00000000-0000-0009-0000-000000000004\t2\n" +
                         "00000000-0000-000a-0000-000000000005\t1\n",
-                "select ts, count() from tab1",
+                "select ts, count() from tab1 order by ts",
                 "create table tab1 as " +
                         "(select" +
                         " to_long128(x / 4, x / 2) ts, " +
@@ -112,7 +113,7 @@ public class Long128Tests extends AbstractCairoTest {
                         "00000000-0000-0020-0000-000000000010\t1\n" +
                         "00000000-0000-0024-0000-000000000012\t1\n" +
                         "00000000-0000-0028-0000-000000000014\t1\n",
-                "select ts, count() from tab1",
+                "select ts, count() from tab1 order by ts",
                 "create table tab1 as " +
                         "(select" +
                         " case when x % 2 = 0 then to_long128(x, 2 * x) else NULL end ts, " +
@@ -231,7 +232,7 @@ public class Long128Tests extends AbstractCairoTest {
                         "00000000-0000-0020-0000-000000000010\t1\n" +
                         "00000000-0000-0024-0000-000000000012\t1\n" +
                         "00000000-0000-0028-0000-000000000014\t1\n",
-                "select ts, count() from tab1",
+                "select ts, count() from tab1 order by ts",
                 "create table tab1 as " +
                         "(select" +
                         " case when x % 2 = 0 then to_long128(x, 2 * x) else NULL end ts, " +

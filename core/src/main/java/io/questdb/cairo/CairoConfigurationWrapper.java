@@ -221,11 +221,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public @NotNull CharSequence getDefaultMapType() {
-        return delegate.getDefaultMapType();
-    }
-
-    @Override
     public boolean getDefaultSymbolCacheFlag() {
         return delegate.getDefaultSymbolCacheFlag();
     }
@@ -753,6 +748,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getSqlSortValuePageSize() {
         return delegate.getSqlSortValuePageSize();
+    }
+
+    @Override
+    public int getSqlUnorderedMapMaxEntrySize() {
+        return delegate.getSqlUnorderedMapMaxEntrySize();
     }
 
     @Override

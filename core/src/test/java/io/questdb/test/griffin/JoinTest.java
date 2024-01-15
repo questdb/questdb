@@ -2565,9 +2565,49 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testJoinOnGeohashFastMap() throws Exception {
-        configOverrideDefaultMapType("fast");
-        testJoinOnGeohash();
+    public void testJoinOnGeohash() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(
+                    "create table t1 as (select " +
+                            "cast(rnd_str('quest', '1234', '3456') as geohash(4c)) geo4," +
+                            "cast(rnd_str('quest', '1234', '3456') as geohash(1c)) geo1," +
+                            "cast(rnd_str('quest', '1234', '3456') as geohash(2c)) geo2," +
+                            "cast(rnd_str('quest', '1234', '3456') as geohash(8c)) geo8," +
+                            "x," +
+                            "timestamp_sequence(0, 1000000) ts " +
+                            "from long_sequence(10)) timestamp(ts)"
+            );
+            ddl(
+                    "create table t2 as (select " +
+                            "cast(rnd_str('quest', '1234', '3456') as geohash(4c)) geo4," +
+                            "cast(rnd_str('quest', '1234', '3456') as geohash(1c)) geo1," +
+                            "cast(rnd_str('quest', '1234', '3456') as geohash(2c)) geo2," +
+                            "cast(rnd_str('quest', '1234', '3456') as geohash(8c)) geo8," +
+                            "x," +
+                            "timestamp_sequence(0, 1000000) ts " +
+                            "from long_sequence(2)) timestamp(ts)"
+            );
+
+
+            String expected = "geo4\tgeo1\tgeo2\tgeo8\tx\tts\tgeo41\tgeo11\tgeo21\tgeo81\tx1\tts1\n" +
+                    "ques\tq\t12\t\t1\t1970-01-01T00:00:00.000000Z\t\t\t\t\tNaN\t\n" +
+                    "3456\t3\t34\t\t2\t1970-01-01T00:00:01.000000Z\t3456\tq\t12\t\t1\t1970-01-01T00:00:00.000000Z\n" +
+                    "ques\t1\t12\t\t3\t1970-01-01T00:00:02.000000Z\t\t\t\t\tNaN\t\n" +
+                    "1234\t1\t12\t\t4\t1970-01-01T00:00:03.000000Z\t1234\t3\t12\t\t2\t1970-01-01T00:00:01.000000Z\n" +
+                    "ques\t1\tqu\t\t5\t1970-01-01T00:00:04.000000Z\t\t\t\t\tNaN\t\n" +
+                    "1234\tq\tqu\t\t6\t1970-01-01T00:00:05.000000Z\t1234\t3\t12\t\t2\t1970-01-01T00:00:01.000000Z\n" +
+                    "ques\t1\t34\t\t7\t1970-01-01T00:00:06.000000Z\t\t\t\t\tNaN\t\n" +
+                    "1234\tq\t34\t\t8\t1970-01-01T00:00:07.000000Z\t1234\t3\t12\t\t2\t1970-01-01T00:00:01.000000Z\n" +
+                    "3456\t3\tqu\t\t9\t1970-01-01T00:00:08.000000Z\t3456\tq\t12\t\t1\t1970-01-01T00:00:00.000000Z\n" +
+                    "3456\tq\t12\t\t10\t1970-01-01T00:00:09.000000Z\t3456\tq\t12\t\t1\t1970-01-01T00:00:00.000000Z\n";
+
+            String sql = "with g1 as (select distinct * from t1)," +
+                    "g2 as (select distinct * from t2)" +
+                    "select * from g1 lt join g2 on g1.geo4 = g2.geo4";
+
+            assertSql(sql, expected, true);
+            assertSql(expected, sql);
+        });
     }
 
     @Test
@@ -2802,15 +2842,82 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testJoinWithGeohashFastMap() throws Exception {
-        configOverrideDefaultMapType("fast");
-        testJoinWithGeoHash();
+    public void testJoinWithGeohash() throws Exception {
+        assertMemoryLeak(() -> {
+            final String query = "with x1 as (select distinct * from x)," +
+                    "y1 as (select distinct * from y) " +
+                    "select g1, gg1, gg2, gg4, gg8, x1.k " +
+                    "from x1 " +
+                    "join y1 on y1.kk = x1.k";
+
+            final String expected = "g1\tgg1\tgg2\tgg4\tgg8\tk\n" +
+                    "9v1s\t1\twh4\ts2z2\t10011100111100101000010010010000010001010\t1\n" +
+                    "46sw\tq\t71f\tfsnj\t11010111111011100000110010000111111101101\t2\n" +
+                    "jnw9\tb\tjj5\tksu7\t11101100011100010000100111000111100000001\t3\n" +
+                    "zfuq\ts\t76u\tq0s5\t11110001011010001010010100000110110100010\t4\n" +
+                    "hp4m\ty\tp1d\tp2n3\t10111100100011101101110001110010111011001\t5\n";
+
+
+            ddl(
+                    "create table x as (select" +
+                            " cast(x as int) k, " +
+                            " rnd_geohash(20) g1" +
+                            " from long_sequence(5))"
+            );
+
+            ddl(
+                    "create table y as (select" +
+                            " cast(x as int) kk," +
+                            " rnd_geohash(15) gg2," +
+                            " rnd_geohash(20) gg4," +
+                            " rnd_geohash(5) gg1," +
+                            " rnd_geohash(41) gg8" +
+                            " from long_sequence(20))"
+            );
+
+            assertSql(query, expected, true);
+            assertSql(expected, query);
+        });
     }
 
     @Test
-    public void testJoinWithGeohashFastMap2() throws Exception {
-        configOverrideDefaultMapType("fast");
-        testJoinWithGeohash2();
+    public void testJoinWithGeohash2() throws Exception {
+        assertMemoryLeak(() -> {
+            final String query = "with x1 as (select distinct * from x)," +
+                    "y1 as (select distinct * from y) " +
+                    "select g1, gg1, gg2, gg4, gg8, x1.k " +
+                    "from x1 " +
+                    "lt join y1 on x1.l = y1.l";
+
+            final String expected = "g1\tgg1\tgg2\tgg4\tgg8\tk\n" +
+                    "9v1s\t\t\t\t\t1970-01-01T00:00:00.000001Z\n" +
+                    "46sw\t1\twh4\ts2z2\t10011100111100101000010010010000010001010\t1970-01-01T00:00:00.000002Z\n" +
+                    "jnw9\tq\t71f\tfsnj\t11010111111011100000110010000111111101101\t1970-01-01T00:00:00.000003Z\n" +
+                    "zfuq\tb\tjj5\tksu7\t11101100011100010000100111000111100000001\t1970-01-01T00:00:00.000004Z\n" +
+                    "hp4m\ts\t76u\tq0s5\t11110001011010001010010100000110110100010\t1970-01-01T00:00:00.000005Z\n";
+
+            ddl(
+                    "create table x as (select" +
+                            " 1 as l, " +
+                            " cast(x as timestamp) k, " +
+                            " rnd_geohash(20) g1" +
+                            " from long_sequence(5)) timestamp(k)"
+            );
+
+            ddl(
+                    "create table y as (select" +
+                            " 1 as l, " +
+                            " cast(x as timestamp) kk," +
+                            " rnd_geohash(15) gg2," +
+                            " rnd_geohash(20) gg4," +
+                            " rnd_geohash(5) gg1," +
+                            " rnd_geohash(41) gg8" +
+                            " from long_sequence(20))  timestamp(kk)"
+            );
+
+            assertSql(query, expected, true);
+            assertSql(expected, query);
+        });
     }
 
     @Test
@@ -5504,51 +5611,6 @@ public class JoinTest extends AbstractCairoTest {
         });
     }
 
-    private void testJoinOnGeohash() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl(
-                    "create table t1 as (select " +
-                            "cast(rnd_str('quest', '1234', '3456') as geohash(4c)) geo4," +
-                            "cast(rnd_str('quest', '1234', '3456') as geohash(1c)) geo1," +
-                            "cast(rnd_str('quest', '1234', '3456') as geohash(2c)) geo2," +
-                            "cast(rnd_str('quest', '1234', '3456') as geohash(8c)) geo8," +
-                            "x," +
-                            "timestamp_sequence(0, 1000000) ts " +
-                            "from long_sequence(10)) timestamp(ts)"
-            );
-            ddl(
-                    "create table t2 as (select " +
-                            "cast(rnd_str('quest', '1234', '3456') as geohash(4c)) geo4," +
-                            "cast(rnd_str('quest', '1234', '3456') as geohash(1c)) geo1," +
-                            "cast(rnd_str('quest', '1234', '3456') as geohash(2c)) geo2," +
-                            "cast(rnd_str('quest', '1234', '3456') as geohash(8c)) geo8," +
-                            "x," +
-                            "timestamp_sequence(0, 1000000) ts " +
-                            "from long_sequence(2)) timestamp(ts)"
-            );
-
-
-            String expected = "geo4\tgeo1\tgeo2\tgeo8\tx\tts\tgeo41\tgeo11\tgeo21\tgeo81\tx1\tts1\n" +
-                    "ques\tq\t12\t\t1\t1970-01-01T00:00:00.000000Z\t\t\t\t\tNaN\t\n" +
-                    "3456\t3\t34\t\t2\t1970-01-01T00:00:01.000000Z\t3456\tq\t12\t\t1\t1970-01-01T00:00:00.000000Z\n" +
-                    "ques\t1\t12\t\t3\t1970-01-01T00:00:02.000000Z\t\t\t\t\tNaN\t\n" +
-                    "1234\t1\t12\t\t4\t1970-01-01T00:00:03.000000Z\t1234\t3\t12\t\t2\t1970-01-01T00:00:01.000000Z\n" +
-                    "ques\t1\tqu\t\t5\t1970-01-01T00:00:04.000000Z\t\t\t\t\tNaN\t\n" +
-                    "1234\tq\tqu\t\t6\t1970-01-01T00:00:05.000000Z\t1234\t3\t12\t\t2\t1970-01-01T00:00:01.000000Z\n" +
-                    "ques\t1\t34\t\t7\t1970-01-01T00:00:06.000000Z\t\t\t\t\tNaN\t\n" +
-                    "1234\tq\t34\t\t8\t1970-01-01T00:00:07.000000Z\t1234\t3\t12\t\t2\t1970-01-01T00:00:01.000000Z\n" +
-                    "3456\t3\tqu\t\t9\t1970-01-01T00:00:08.000000Z\t3456\tq\t12\t\t1\t1970-01-01T00:00:00.000000Z\n" +
-                    "3456\tq\t12\t\t10\t1970-01-01T00:00:09.000000Z\t3456\tq\t12\t\t1\t1970-01-01T00:00:00.000000Z\n";
-
-            String sql = "with g1 as (select distinct * from t1)," +
-                    "g2 as (select distinct * from t2)" +
-                    "select * from g1 lt join g2 on g1.geo4 = g2.geo4";
-
-            assertSql(sql, expected, true);
-            assertSql(expected, sql);
-        });
-    }
-
     private void testJoinOuterAllTypes0(boolean fullFatJoins) throws Exception {
         assertMemoryLeak(() -> {
             final String expected = "kk\ta\tb\tc\td\te\tf\tg\ti\tj\tk\tl\tm\tn\tkk1\ta1\tb1\tc1\td1\te1\tf1\tg1\ti1\tj1\tk1\tl1\tm1\tn1\n" +
@@ -5661,83 +5723,6 @@ public class JoinTest extends AbstractCairoTest {
                     false,
                     fullFatJoins
             );
-        });
-    }
-
-    private void testJoinWithGeoHash() throws Exception {
-        assertMemoryLeak(() -> {
-            final String query = "with x1 as (select distinct * from x)," +
-                    "y1 as (select distinct * from y) " +
-                    "select g1, gg1, gg2, gg4, gg8, x1.k " +
-                    "from x1 " +
-                    "join y1 on y1.kk = x1.k";
-
-            final String expected = "g1\tgg1\tgg2\tgg4\tgg8\tk\n" +
-                    "9v1s\t1\twh4\ts2z2\t10011100111100101000010010010000010001010\t1\n" +
-                    "46sw\tq\t71f\tfsnj\t11010111111011100000110010000111111101101\t2\n" +
-                    "jnw9\tb\tjj5\tksu7\t11101100011100010000100111000111100000001\t3\n" +
-                    "zfuq\ts\t76u\tq0s5\t11110001011010001010010100000110110100010\t4\n" +
-                    "hp4m\ty\tp1d\tp2n3\t10111100100011101101110001110010111011001\t5\n";
-
-
-            ddl(
-                    "create table x as (select" +
-                            " cast(x as int) k, " +
-                            " rnd_geohash(20) g1" +
-                            " from long_sequence(5))"
-            );
-
-            ddl(
-                    "create table y as (select" +
-                            " cast(x as int) kk," +
-                            " rnd_geohash(15) gg2," +
-                            " rnd_geohash(20) gg4," +
-                            " rnd_geohash(5) gg1," +
-                            " rnd_geohash(41) gg8" +
-                            " from long_sequence(20))"
-            );
-
-            assertSql(query, expected, true);
-            assertSql(expected, query);
-        });
-    }
-
-    private void testJoinWithGeohash2() throws Exception {
-        assertMemoryLeak(() -> {
-            final String query = "with x1 as (select distinct * from x)," +
-                    "y1 as (select distinct * from y) " +
-                    "select g1, gg1, gg2, gg4, gg8, x1.k " +
-                    "from x1 " +
-                    "lt join y1 on x1.l = y1.l";
-
-            final String expected = "g1\tgg1\tgg2\tgg4\tgg8\tk\n" +
-                    "9v1s\t\t\t\t\t1970-01-01T00:00:00.000001Z\n" +
-                    "46sw\t1\twh4\ts2z2\t10011100111100101000010010010000010001010\t1970-01-01T00:00:00.000002Z\n" +
-                    "jnw9\tq\t71f\tfsnj\t11010111111011100000110010000111111101101\t1970-01-01T00:00:00.000003Z\n" +
-                    "zfuq\tb\tjj5\tksu7\t11101100011100010000100111000111100000001\t1970-01-01T00:00:00.000004Z\n" +
-                    "hp4m\ts\t76u\tq0s5\t11110001011010001010010100000110110100010\t1970-01-01T00:00:00.000005Z\n";
-
-            ddl(
-                    "create table x as (select" +
-                            " 1 as l, " +
-                            " cast(x as timestamp) k, " +
-                            " rnd_geohash(20) g1" +
-                            " from long_sequence(5)) timestamp(k)"
-            );
-
-            ddl(
-                    "create table y as (select" +
-                            " 1 as l, " +
-                            " cast(x as timestamp) kk," +
-                            " rnd_geohash(15) gg2," +
-                            " rnd_geohash(20) gg4," +
-                            " rnd_geohash(5) gg1," +
-                            " rnd_geohash(41) gg8" +
-                            " from long_sequence(20))  timestamp(kk)"
-            );
-
-            assertSql(query, expected, true);
-            assertSql(expected, query);
         });
     }
 

@@ -82,7 +82,7 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
 
         try (TableReader reader = newOffPoolReader(configuration, "all")) {
             final SymbolAsIntTypes valueTypes = new SymbolAsIntTypes().of(reader.getMetadata());
-            try (final Map map = new FastMap(Numbers.SIZE_1MB, keyTypes, valueTypes, N, 0.5, 100)) {
+            try (final Map map = new OrderedMap(Numbers.SIZE_1MB, keyTypes, valueTypes, N, 0.5, 100)) {
                 EntityColumnFilter columnFilter = new EntityColumnFilter();
                 columnFilter.of(reader.getMetadata().getColumnCount());
                 RecordValueSink sink = RecordValueSinkFactory.getInstance(new BytecodeAssembler(), reader.getMetadata(), columnFilter);
@@ -170,7 +170,7 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
             valueTypes.add(ColumnType.BOOLEAN);
             valueTypes.add(ColumnType.TIMESTAMP);
             valueTypes.add(ColumnType.INT);
-            try (final Map map = new FastMap(Numbers.SIZE_1MB, keyTypes, valueTypes, N, 0.5, 100)) {
+            try (final Map map = new OrderedMap(Numbers.SIZE_1MB, keyTypes, valueTypes, N, 0.5, 100)) {
                 ListColumnFilter columnFilter = new ListColumnFilter();
                 columnFilter.add(8);
                 columnFilter.add(10);
