@@ -27,8 +27,8 @@ package org.questdb;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.SingleColumnType;
-import io.questdb.cairo.map.FastMap;
 import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.map.OrderedMap;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByLongHashSet;
 import io.questdb.std.Rnd;
@@ -52,7 +52,7 @@ public class GroupByLongHashSetBenchmark {
             return 128 * 1024;
         }
     });
-    private static final FastMap fmap = new FastMap(1024 * 1024, new SingleColumnType(ColumnType.LONG), null, 16, 0.7f, Integer.MAX_VALUE);
+    private static final OrderedMap fmap = new OrderedMap(1024 * 1024, new SingleColumnType(ColumnType.LONG), null, 16, 0.7f, Integer.MAX_VALUE);
     private static final GroupByLongHashSet gbset = new GroupByLongHashSet(16, 0.7, 0);
     private static long ptr = 0;
     private final Rnd rnd = new Rnd();

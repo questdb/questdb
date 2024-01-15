@@ -46,24 +46,15 @@ public final class Hash {
         return seq == null ? -1 : (Chars.hashCode(seq) & 0xFFFFFFF) & max;
     }
 
-    /**
-     * Hash function based on Knuth's multiplicative method.
-     * It provides good distribution even for a sequence of keys.
-     *
-     * @param k the long for which the hash will be calculated
-     * @return the hash
-     */
-    public static long fastLongMix(long k) {
-        long h = k * M2;
-        return h ^ h >>> 32;
-    }
-
     public static int hashLong(long k) {
-        return (int) fastLongMix(k);
+        long h = k * M2;
+        return (int) (h ^ h >>> 32);
     }
 
     public static int hashLong128(long key1, long key2) {
-        return (int) fastLongMix(fastLongMix(key1) + key2);
+        long h = key1 * M2 + key2;
+        h *= M2;
+        return (int) (h ^ h >>> 32);
     }
 
     /**

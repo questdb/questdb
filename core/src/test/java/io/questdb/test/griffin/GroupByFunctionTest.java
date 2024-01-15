@@ -130,7 +130,8 @@ public class GroupByFunctionTest extends AbstractCairoTest {
                         "    WHERE\n" +
                         "        (seller = 'sf' OR buyer = 'sf')\n" +
                         "    )\n" +
-                        "group by y_utc_15m",
+                        "group by y_utc_15m " +
+                        "order by y_utc_15m",
                 "create table trades as (" +
                         "select" +
                         " timestamp_sequence(0, 15*60*1000000L) delivery_start_utc," +
