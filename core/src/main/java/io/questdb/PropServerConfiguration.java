@@ -72,6 +72,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     public static final String SNAPSHOT_DIRECTORY = "snapshot";
     public static final String TMP_DIRECTORY = "tmp";
     private static final LowerCaseCharSequenceIntHashMap WRITE_FO_OPTS = new LowerCaseCharSequenceIntHashMap();
+    protected final boolean httpStaticAuthRequired;
     private final ObjObjHashMap<ConfigPropertyKey, ConfigPropertyValue> allPairs = new ObjObjHashMap<>();
     private final DateFormat backupDirTimestampFormat;
     private final int backupMkdirMode;
@@ -139,7 +140,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int httpSqlCacheBlockCount;
     private final boolean httpSqlCacheEnabled;
     private final int httpSqlCacheRowCount;
-    private final boolean httpStaticAuthRequired;
     private final WaitProcessorConfiguration httpWaitProcessorConfiguration = new PropWaitProcessorConfiguration();
     private final int[] httpWorkerAffinity;
     private final int httpWorkerCount;
@@ -319,7 +319,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlWindowTreeKeyMaxPages;
     private final int sqlWindowTreeKeyPageSize;
     private final int sqlWithClauseModelPoolCapacity;
-    private final StaticContentProcessorConfiguration staticContentProcessorConfiguration = new PropStaticContentProcessorConfiguration();
     private final int systemO3ColumnMemorySize;
     private final String systemTableNamePrefix;
     private final long systemWalWriterDataAppendPageSize;
@@ -376,6 +375,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long writerMiscAppendPageSize;
     private final boolean writerMixedIOEnabled;
     private final int writerTickRowsCountMod;
+    protected StaticContentProcessorConfiguration staticContentProcessorConfiguration;
     private long cairoSqlCopyMaxIndexChunkSize;
     private FactoryProvider factoryProvider;
     private short floatDefaultColumnType;
@@ -520,6 +520,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.fpf = fpf;
         this.microsecondClock = microsecondClock;
         this.validator = newValidator();
+        this.staticContentProcessorConfiguration = new PropStaticContentProcessorConfiguration();
         boolean configValidationStrict = getBoolean(properties, env, PropertyKey.CONFIG_VALIDATION_STRICT, false);
         validateProperties(properties, configValidationStrict);
 
@@ -4126,7 +4127,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private class PropStaticContentProcessorConfiguration implements StaticContentProcessorConfiguration {
+    public class PropStaticContentProcessorConfiguration implements StaticContentProcessorConfiguration {
 
         @Override
         public FilesFacade getFilesFacade() {
