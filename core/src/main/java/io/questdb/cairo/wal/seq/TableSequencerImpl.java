@@ -56,12 +56,12 @@ public class TableSequencerImpl implements TableSequencer {
     private final int rootLen;
     private final ReadWriteLock schemaLock = new SimpleReadWriteLock();
     private final SeqTxnTracker seqTxnTracker;
-    private final TableTransactionLog tableTransactionLog;
     private final WalDirectoryPolicy walDirectoryPolicy;
     private final IDGenerator walIdGenerator;
     private volatile boolean closed = false;
     private boolean distressed = false;
     private TableToken tableToken;
+    private TableTransactionLog tableTransactionLog;
 
     TableSequencerImpl(CairoEngine engine, TableToken tableToken, SeqTxnTracker txnTracker) {
         this.engine = engine;
@@ -82,7 +82,6 @@ public class TableSequencerImpl implements TableSequencer {
             metadata = new SequencerMetadata(ff);
             metadataSvc = new SequencerMetadataService(metadata, tableToken);
             walIdGenerator = new IDGenerator(configuration, WAL_INDEX_FILE_NAME);
-            tableTransactionLog = new TableTransactionLog(ff);
             microClock = engine.getConfiguration().getMicrosecondClock();
         } catch (Throwable th) {
             LOG.critical().$("could not create sequencer [name=").utf8(tableToken.getDirName())
@@ -399,7 +398,12 @@ public class TableSequencerImpl implements TableSequencer {
             createSequencerDir(ff, mkDirMode);
             final long timestamp = microClock.getTicks();
             metadata.create(tableStruct, tableToken, path, rootLen, tableId);
-            tableTransactionLog.create(path, timestamp);
+            tableTransactionLog = TableTransactionLogFactory.create(
+                    path,
+                    timestamp,
+                    engine.getConfiguration().getFilesFacade(),
+                    engine.getConfiguration().getDefaultWalSeqChunkTxnCount()
+            );
             engine.getWalListener().tableCreated(tableToken, timestamp);
         } finally {
             schemaLock.writeLock().unlock();
@@ -410,7 +414,7 @@ public class TableSequencerImpl implements TableSequencer {
         try {
             walIdGenerator.open(path);
             metadata.open(path, rootLen, tableToken);
-            tableTransactionLog.open(path);
+            tableTransactionLog = TableTransactionLogFactory.open(path, ff);
         } catch (CairoException ex) {
             closeLocked();
             if (ex.isTableDropped()) {

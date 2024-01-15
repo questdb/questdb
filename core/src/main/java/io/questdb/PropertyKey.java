@@ -442,7 +442,8 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_O3_LAST_PARTITION_MAX_SPLITS("cairo.o3.last.partition.max.splits"),
     CAIRO_O3_PARTITION_SPLIT_MIN_SIZE("cairo.o3.partition.split.min.size"),
     DEBUG_WAL_PURGE_WAIT_BEFORE_DELETE("debug.wal.purge.wait.before.delete"),
-    WRITER_MEMORY_LIMIT("cairo.writer.memory.limit");
+    WRITER_MEMORY_LIMIT("cairo.writer.memory.limit"),
+    CAIRO_DEFAULT_WAL_SEQ_CHUNK_TXN_COUNT("cairo.default.wal.seq.chunk.txn.count");
     private static final Map<String, PropertyKey> nameMapping;
     private final String envVarName;
     private final String propertyPath;

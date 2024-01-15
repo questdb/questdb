@@ -30,7 +30,6 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.MemoryFCRImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
-import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -41,20 +40,20 @@ import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 import java.lang.ThreadLocal;
-import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cairo.TableUtils.openSmallFile;
 import static io.questdb.cairo.wal.WalUtils.*;
 
-public class TableTransactionLog implements Closeable {
-    public final static int HEADER_RESERVED = 7 * Long.BYTES;
+public abstract class TableTransactionLog implements Closeable {
+    public final static int HEADER_RESERVED = 13 * Integer.BYTES;
     public static final long MAX_TXN_OFFSET = Integer.BYTES;
     public static final int STRUCTURAL_CHANGE_WAL_ID = -1;
     public static final long TABLE_CREATE_TIMESTAMP_OFFSET = MAX_TXN_OFFSET + Long.BYTES;
-    public static final long HEADER_SIZE = TABLE_CREATE_TIMESTAMP_OFFSET + Long.BYTES + HEADER_RESERVED;
+    public static final long TX_CHUNK_TRANSACTION_COUNT_OFFSET = TABLE_CREATE_TIMESTAMP_OFFSET + Long.BYTES;
+    public static final long HEADER_SIZE = TX_CHUNK_TRANSACTION_COUNT_OFFSET + Integer.BYTES + HEADER_RESERVED;
     private static final Log LOG = LogFactory.getLog(TableTransactionLog.class);
-    private static final long TX_LOG_STRUCTURE_VERSION_OFFSET = 0L;
-    private static final long TX_LOG_WAL_ID_OFFSET = TX_LOG_STRUCTURE_VERSION_OFFSET + Long.BYTES;
+    public static final long TX_LOG_STRUCTURE_VERSION_OFFSET = 0L;
+    public static final long TX_LOG_WAL_ID_OFFSET = TX_LOG_STRUCTURE_VERSION_OFFSET + Long.BYTES;
     private static final long TX_LOG_SEGMENT_OFFSET = TX_LOG_WAL_ID_OFFSET + Integer.BYTES;
     private static final long TX_LOG_SEGMENT_TXN_OFFSET = TX_LOG_SEGMENT_OFFSET + Integer.BYTES;
     private static final long TX_LOG_COMMIT_TIMESTAMP_OFFSET = TX_LOG_SEGMENT_TXN_OFFSET + Integer.BYTES;
@@ -62,10 +61,8 @@ public class TableTransactionLog implements Closeable {
     private static final ThreadLocal<AlterOperation> tlAlterOperation = new ThreadLocal<>();
     private static final ThreadLocal<TableMetadataChangeLogImpl> tlStructChangeCursor = new ThreadLocal<>();
     private static final ThreadLocal<TransactionLogCursorImpl> tlTransactionLogCursor = new ThreadLocal<>();
-    private final FilesFacade ff;
-    private final AtomicLong maxTxn = new AtomicLong();
-    private final StringSink rootPath = new StringSink();
-    private final MemoryCMARW txnMem = Vm.getCMARWInstance();
+    protected final FilesFacade ff;
+    protected final StringSink rootPath = new StringSink();
     private final MemoryCMARW txnMetaMem = Vm.getCMARWInstance();
     private final MemoryCMARW txnMetaMemIndex = Vm.getCMARWInstance();
 
@@ -75,29 +72,18 @@ public class TableTransactionLog implements Closeable {
 
     @Override
     public void close() {
-        if (txnMem.isOpen()) {
-            long maxTxnInFile = txnMem.getLong(MAX_TXN_OFFSET);
-            if (maxTxnInFile != maxTxn.get()) {
-                LOG.error().$("Max txn in the file ").$(maxTxnInFile).$(" but in memory is ").$(maxTxn.get()).$();
-            }
-            txnMem.close(false);
-            txnMetaMem.close(false);
-            txnMetaMemIndex.close(false);
-        }
-    }
-
-    public boolean reload(Path path) {
-        txnMem.close(false);
         txnMetaMem.close(false);
         txnMetaMemIndex.close(false);
-        open(path);
-        return true;
     }
 
-    public void sync() {
-        txnMetaMemIndex.sync(false);
-        txnMetaMem.sync(false);
-        txnMem.sync(false);
+    protected void openMeta(long lastTxn, long maxStructureVersion) {
+        txnMetaMemIndex.jumpTo(8); // first entry is 0.
+        txnMetaMem.jumpTo(0L);
+
+        long structureAppendOffset = maxStructureVersion * Long.BYTES;
+        long txnMetaMemSize = txnMetaMemIndex.getLong(structureAppendOffset);
+        txnMetaMemIndex.jumpTo(structureAppendOffset + Long.BYTES);
+        txnMetaMem.jumpTo(txnMetaMemSize);
     }
 
     private static int openFileRO(final FilesFacade ff, final Path path, final String fileName) {
@@ -119,30 +105,10 @@ public class TableTransactionLog implements Closeable {
         return instance;
     }
 
-    long addEntry(long structureVersion, int walId, int segmentId, int segmentTxn, long timestamp) {
-        txnMem.putLong(structureVersion);
-        txnMem.putInt(walId);
-        txnMem.putInt(segmentId);
-        txnMem.putInt(segmentTxn);
-        txnMem.putLong(timestamp);
-
-        Unsafe.getUnsafe().storeFence();
-        long maxTxn = this.maxTxn.incrementAndGet();
-        txnMem.putLong(MAX_TXN_OFFSET, maxTxn);
-        txnMem.sync(false);
-        // Transactions are 1 based here
-        return maxTxn;
-    }
+    abstract long addEntry(long structureVersion, int walId, int segmentId, int segmentTxn, long timestamp);
 
     void beginMetadataChangeEntry(long newStructureVersion, MemorySerializer serializer, Object instance, long timestamp) {
         assert newStructureVersion == txnMetaMemIndex.getAppendOffset() / Long.BYTES;
-
-        txnMem.putLong(newStructureVersion);
-        txnMem.putInt(STRUCTURAL_CHANGE_WAL_ID);
-        txnMem.putInt(-1);
-        txnMem.putInt(-1);
-        txnMem.putLong(timestamp);
-
         txnMetaMem.putInt(0);
         long varMemBegin = txnMetaMem.getAppendOffset();
         serializer.toSink(instance, txnMetaMem);
@@ -151,16 +117,9 @@ public class TableTransactionLog implements Closeable {
         txnMetaMemIndex.putLong(varMemBegin + len);
     }
 
-    void create(Path path, long tableCreateTimestamp) {
+    protected void creatMetaMem(Path path, long tableCreateTimestamp) {
 
-        openFiles(path);
-
-        txnMem.jumpTo(0L);
-        txnMem.putInt(WAL_FORMAT_VERSION);
-        txnMem.putLong(0L);
-        txnMem.putLong(tableCreateTimestamp);
-        txnMem.sync(false);
-
+        openMetadataFiles(path);
         txnMetaMem.jumpTo(0L);
         txnMetaMem.sync(false); // empty
 
@@ -169,17 +128,7 @@ public class TableTransactionLog implements Closeable {
         txnMetaMemIndex.sync(false);
     }
 
-    long endMetadataChangeEntry() {
-        sync();
-
-        Unsafe.getUnsafe().storeFence();
-
-        // Transactions are 1 based here
-        long nextTxn = maxTxn.incrementAndGet();
-        txnMem.putLong(MAX_TXN_OFFSET, nextTxn);
-
-        return nextTxn;
-    }
+    abstract long endMetadataChangeEntry();
 
     TransactionLogCursor getCursor(long txnLo) {
         final Path path = Path.PATH.get().of(rootPath);
@@ -204,43 +153,14 @@ public class TableTransactionLog implements Closeable {
         return cursor;
     }
 
-    boolean isDropped() {
-        long lastTxn = maxTxn.get();
-        if (lastTxn > 0) {
-            return WalUtils.DROP_TABLE_WALID == txnMem.getInt(HEADER_SIZE + (lastTxn - 1) * RECORD_SIZE + TX_LOG_WAL_ID_OFFSET);
-        }
-        return false;
-    }
+    abstract boolean isDropped();
 
-    long lastTxn() {
-        return maxTxn.get();
-    }
+    abstract long lastTxn();
 
-    void open(Path path) {
-        this.rootPath.clear();
-        path.toSink(this.rootPath);
+    abstract void open(Path path);
 
-        if (!txnMem.isOpen()) {
-            openFiles(path);
-        }
-
-        long lastTxn = txnMem.getLong(MAX_TXN_OFFSET);
-        maxTxn.set(lastTxn);
-
-        txnMem.jumpTo(HEADER_SIZE);
-        txnMetaMemIndex.jumpTo(8); // first entry is 0.
-        txnMetaMem.jumpTo(0L);
-        long maxStructureVersion = txnMem.getLong(HEADER_SIZE + (lastTxn - 1) * RECORD_SIZE + TX_LOG_STRUCTURE_VERSION_OFFSET);
-        txnMem.jumpTo(HEADER_SIZE + lastTxn * RECORD_SIZE);
-        long structureAppendOffset = maxStructureVersion * Long.BYTES;
-        long txnMetaMemSize = txnMetaMemIndex.getLong(structureAppendOffset);
-        txnMetaMemIndex.jumpTo(structureAppendOffset + Long.BYTES);
-        txnMetaMem.jumpTo(txnMetaMemSize);
-    }
-
-    void openFiles(Path path) {
-        final int pathLength = path.size();
-        openSmallFile(ff, path, pathLength, txnMem, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);
+    void openMetadataFiles(Path path) {
+        int pathLength = path.size();
         openSmallFile(ff, path, pathLength, txnMetaMem, TXNLOG_FILE_NAME_META_VAR, MemoryTag.MMAP_TX_LOG);
         openSmallFile(ff, path, pathLength, txnMetaMemIndex, TXNLOG_FILE_NAME_META_INX, MemoryTag.MMAP_TX_LOG);
     }
@@ -259,6 +179,20 @@ public class TableTransactionLog implements Closeable {
         serializer.fromSink(alterToDeserializeTo, txnMetaMem, txnMetaOffset, txnMetaOffset + recordSize);
         txnMetaMem.jumpTo(txnMetaOffset + recordSize);
         return alterToDeserializeTo;
+    }
+
+    abstract boolean reload(Path path);
+
+    protected boolean reloadMetadata(Path path) {
+        txnMetaMem.close(false);
+        txnMetaMemIndex.close(false);
+        open(path);
+        return true;
+    }
+
+    protected void syncMetadata() {
+        txnMetaMemIndex.sync(false);
+        txnMetaMem.sync(false);
     }
 
     private static class TableMetadataChangeLogImpl implements TableMetadataChangeLog {
@@ -388,11 +322,6 @@ public class TableTransactionLog implements Closeable {
         }
 
         @Override
-        public long getCommitTimestamp() {
-            return Unsafe.getUnsafe().getLong(address + txnOffset + TX_LOG_COMMIT_TIMESTAMP_OFFSET);
-        }
-
-        @Override
         public boolean extend() {
             final long newTxnCount = ff.readNonNegativeLong(fd, MAX_TXN_OFFSET);
             if (newTxnCount > txnCount) {
@@ -403,6 +332,16 @@ public class TableTransactionLog implements Closeable {
                 return true;
             }
             return false;
+        }
+
+        @Override
+        public long getCommitTimestamp() {
+            return Unsafe.getUnsafe().getLong(address + txnOffset + TX_LOG_COMMIT_TIMESTAMP_OFFSET);
+        }
+
+        @Override
+        public long getMaxTxn() {
+            return txnCount - 1;
         }
 
         @Override
@@ -442,11 +381,6 @@ public class TableTransactionLog implements Closeable {
                 return hasNext(getMappedLen());
             }
             return false;
-        }
-
-        @Override
-        public long getMaxTxn() {
-            return txnCount - 1;
         }
 
         @Override

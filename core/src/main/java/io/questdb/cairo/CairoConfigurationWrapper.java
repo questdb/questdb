@@ -236,6 +236,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getDefaultWalSeqChunkTxnCount() {
+        return delegate.getDefaultWalSeqChunkTxnCount();
+    }
+
+    @Override
     public int getDetachedMkDirMode() {
         return delegate.getDetachedMkDirMode();
     }

@@ -249,6 +249,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getDefaultWalSeqChunkTxnCount() {
+        return 0;
+    }
+
+    @Override
     public int getDetachedMkDirMode() {
         return 509;
     }

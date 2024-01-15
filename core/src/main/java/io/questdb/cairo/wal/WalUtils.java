@@ -53,7 +53,8 @@ public class WalUtils {
     public static final int WALE_HEADER_SIZE = Integer.BYTES + Integer.BYTES;
     public static final long WALE_MAX_TXN_OFFSET_32 = 0L;
     public static final int WAL_FORMAT_OFFSET_32 = Integer.BYTES;
-    public static final int WAL_FORMAT_VERSION = 0;
+    public static final int WAL_FORMAT_VERSION_V1 = 0;
+    public static final int WAL_FORMAT_VERSION_V2 = 1;
     public static final String WAL_INDEX_FILE_NAME = "_wal_index.d";
     public static final String WAL_NAME_BASE = "wal";
     public static final String WAL_PENDING_FS_MARKER = ".pending";

@@ -54,7 +54,7 @@ import org.jetbrains.annotations.TestOnly;
 import java.io.Closeable;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
-import static io.questdb.cairo.wal.WalUtils.WAL_FORMAT_VERSION;
+import static io.questdb.cairo.wal.WalUtils.WAL_FORMAT_VERSION_V1;
 import static io.questdb.griffin.SqlKeywords.*;
 
 public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallback {
@@ -3229,7 +3229,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             mem.close(true, Vm.TRUNCATE_TO_POINTER);
                             // _txnlog
                             mem.smallFile(ff, auxPath.trimTo(len).concat(WalUtils.TXNLOG_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-                            mem.putInt(WAL_FORMAT_VERSION);
+                            mem.putInt(WAL_FORMAT_VERSION_V1);
                             mem.putLong(0L);
                             mem.putLong(0L);
                             mem.close(true, Vm.TRUNCATE_TO_POINTER);
