@@ -58,15 +58,17 @@ import java.util.concurrent.CyclicBarrier;
 
 import static org.junit.Assert.fail;
 
+// This is not a fuzz test in traditional sense, but it's multi-threaded and we want to run it
+// in CI frequently along with other fuzz tests.
 @RunWith(Parameterized.class)
-public class ParallelGroupByTest extends AbstractCairoTest {
+public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     private static final int PAGE_FRAME_COUNT = 4; // also used to set queue size, so must be a power of 2
     private static final int PAGE_FRAME_MAX_ROWS = 100;
     private static final int ROW_COUNT = 10 * PAGE_FRAME_COUNT * PAGE_FRAME_MAX_ROWS;
 
     private final boolean enableParallelGroupBy;
 
-    public ParallelGroupByTest(boolean enableParallelGroupBy) {
+    public ParallelGroupByFuzzTest(boolean enableParallelGroupBy) {
         this.enableParallelGroupBy = enableParallelGroupBy;
     }
 
