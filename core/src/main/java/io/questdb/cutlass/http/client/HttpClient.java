@@ -78,7 +78,7 @@ public abstract class HttpClient implements QuietCloseable {
             Unsafe.free(bufLo, bufferSize, MemoryTag.NATIVE_DEFAULT);
             bufLo = 0;
         }
-        responseHeaders = Misc.free(responseHeaders);
+        responseHeaders.free();
     }
 
     public void disconnect() {
@@ -434,6 +434,7 @@ public abstract class HttpClient implements QuietCloseable {
             if (fd < 0) {
                 throw new HttpClientException("could not allocate a file descriptor").errno(nf.errno());
             }
+            socket.of(fd);
             nf.configureKeepAlive(fd);
             long addrInfo = nf.getAddrInfo(host, port);
             if (addrInfo == -1) {
@@ -447,7 +448,6 @@ public abstract class HttpClient implements QuietCloseable {
                 throw new HttpClientException("could not connect to host ").put("[host=").put(host).put(", port=").put(port).put(", errno=").put(errno).put(']');
             }
             nf.freeAddrInfo(addrInfo);
-            socket.of(fd);
             setupIoWait();
         }
 
@@ -636,8 +636,6 @@ public abstract class HttpClient implements QuietCloseable {
         }
 
         public void await(int timeout) {
-            reopen();
-
             while (isIncomplete()) {
                 final int len = recvOrDie(bufLo, timeout);
                 if (len > 0) {
@@ -672,9 +670,10 @@ public abstract class HttpClient implements QuietCloseable {
             csPool.clear();
         }
 
+        // Note: we don't free parser memory here.
+        // Instead, the client does it when it's closed by calling free() method.
         @Override
         public void close() {
-            super.close();
             disconnect();
             clear();
         }
@@ -692,6 +691,10 @@ public abstract class HttpClient implements QuietCloseable {
                 throw new HttpClientException("http response headers not yet received");
             }
             return Utf8s.equalsNcAscii("chunked", getHeader(HEADER_TRANSFER_ENCODING));
+        }
+
+        private void free() {
+            super.close();
         }
     }
 
