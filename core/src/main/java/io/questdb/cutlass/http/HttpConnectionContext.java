@@ -983,7 +983,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         if (requiredAuthType == SecurityContext.AUTH_TYPE_CREDENTIALS) {
             simpleResponse().sendStatusWithHeader(HTTP_UNAUTHORIZED, "WWW-Authenticate: Basic realm=\"questdb\", charset=\"UTF-8\"");
         } else {
-            simpleResponse().sendStatus(HTTP_UNAUTHORIZED);
+            simpleResponse().sendStatusWithDefaultMessage(HTTP_UNAUTHORIZED);
         }
         dispatcher.registerChannel(this, IOOperation.READ);
         return false;
