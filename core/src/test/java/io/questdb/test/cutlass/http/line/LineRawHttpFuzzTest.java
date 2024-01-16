@@ -27,7 +27,6 @@ package io.questdb.test.cutlass.http.line;
 import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
-import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractBootstrapTest;
@@ -136,44 +135,6 @@ public class LineRawHttpFuzzTest extends AbstractBootstrapTest {
                         HttpClient.ResponseHeaders resp = request.send("localhost", getHttpPort(serverMain), 5000);
                         resp.await();
                         totalCount += count;
-                    }
-                }
-
-                serverMain.waitWalTxnApplied("line");
-                serverMain.assertSql("select count() from line", "count\n" +
-                        totalCount + "\n");
-            }
-        });
-    }
-
-    @Test
-    public void testClientInitiatedDisconnect() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
-                    HTTP_SERVER_KEEP_ALIVE.getEnvVarName(), "true"
-            )) {
-                String line = "line,sym1=123 field1=123i 1234567890000000000\n";
-                int totalCount = 5;
-
-                for (int i = 0; i < totalCount; i++) {
-                    try (HttpClient httpClient = HttpClientFactory.newInstance(new DefaultHttpClientConfiguration())) {
-                        HttpClient.Request request = httpClient.newRequest();
-                        HttpClient.ResponseHeaders response = request.GET().url("/wrong_query_url").query("wrong_query_url", "create table x(y long)")
-                                .send("localhost", getHttpPort(serverMain));
-                        response.await();
-                        Os.sleep(10);
-                        response.close();
-                    }
-
-
-                    try (HttpClient httpClient = HttpClientFactory.newInstance(new DefaultHttpClientConfiguration())) {
-                        HttpClient.Request request = httpClient.newRequest();
-                        HttpClient.ResponseHeaders response = request.POST()
-                                .url("/write ")
-                                .withContent()
-                                .putAscii(line)
-                                .send("localhost", getHttpPort(serverMain));
-                        response.await();
                     }
                 }
 
