@@ -392,22 +392,9 @@ public interface Sender extends Closeable {
                 int actualMaxPendingRows = maxPendingRows == MAX_PENDING_ROWS_DEFAULT ? DEFAULT_MAX_PENDING_ROWS : maxPendingRows;
                 int actualMaxRetries = maxRetries == MAX_RETRIES_DEFAULT ? DEFAULT_MAX_RETRIES : maxRetries;
                 return new LineHttpSender(host, port, httpClientConfiguration, tlsEnabled, tlsValidationMode, actualMaxPendingRows, httpToken, username, password, actualMaxRetries);
-            } else if (protocol != PROTOCOL_TCP) {
-                throw new LineSenderException("unsupported protocol ")
-                        .put("[protocol=").put(protocol).put("]");
             }
-            if (username != null || password != null) {
-                throw new LineSenderException("username/password authentication is not supported for TCP protocol");
-            }
-            if (maxPendingRows != MAX_PENDING_ROWS_DEFAULT) {
-                throw new LineSenderException("max pending rows is not supported for TCP protocol");
-            }
-            if (httpToken != null) {
-                throw new LineSenderException("HTTP token authentication is not supported for TCP protocol");
-            }
-            if (maxRetries != MAX_RETRIES_DEFAULT) {
-                throw new LineSenderException("retrying is not supported for TCP protocol");
-            }
+            assert protocol == PROTOCOL_TCP;
+
 
             LineChannel channel = new PlainTcpLineChannel(nf, host, port, bufferCapacity * 2);
             LineTcpSender sender;
@@ -541,6 +528,7 @@ public interface Sender extends Closeable {
          *
          * @param port port where a QuestDB server is listening on.
          * @return this instance for method chaining
+         * @deprecated use {@link #url(CharSequence)} instead
          */
         public LineSenderBuilder port(int port) {
             if (this.port != 0) {
@@ -551,6 +539,13 @@ public interface Sender extends Closeable {
             return this;
         }
 
+        /**
+         * Configures a QuestDB server address. The address must be a full URL, including a protocol, host and port.
+         * This is the preferred way of configuring a Sender.
+         *
+         * @param url a full URL to a QuestDB server.
+         * @return this instance for method chaining
+         */
         public LineSenderBuilder url(CharSequence url) {
             if (url == null || url.length() == 0) {
                 throw new LineSenderException("url cannot be empty nor null");
@@ -563,8 +558,7 @@ public interface Sender extends Closeable {
                 throw new LineSenderException("post is already configured ")
                         .put("[configured-port=").put(port).put("]");
             }
-            // todo: add more conflict checks and support for TCP and TCP+TLS scheme
-            int hostStart = 0;
+            int hostStart;
             if (Chars.startsWith(url, "http://")) {
                 hostStart = 7;
             } else if (Chars.startsWith(url, "https://")) {
@@ -630,6 +624,29 @@ public interface Sender extends Closeable {
                         .put("[minimal-capacity=").put(MIN_BUFFER_SIZE_FOR_AUTH)
                         .put(", requested-capacity=").put(bufferCapacity)
                         .put("]");
+            }
+            if (protocol == PROTOCOL_HTTP) {
+                if (httpClientConfiguration.getMaximumRequestBufferSize() < httpClientConfiguration.getInitialRequestBufferSize()) {
+                    throw new LineSenderException("maximum buffer capacity cannot be less than initial buffer capacity ")
+                            .put("[maximum-buffer-capacity=").put(httpClientConfiguration.getMaximumRequestBufferSize())
+                            .put(", initial-buffer-capacity=").put(httpClientConfiguration.getInitialRequestBufferSize())
+                            .put("]");
+                }
+            } else if (protocol != PROTOCOL_TCP) {
+                throw new LineSenderException("unsupported protocol ")
+                        .put("[protocol=").put(protocol).put("]");
+            }
+            if (username != null || password != null) {
+                throw new LineSenderException("username/password authentication is not supported for TCP protocol");
+            }
+            if (maxPendingRows != MAX_PENDING_ROWS_DEFAULT) {
+                throw new LineSenderException("max pending rows is not supported for TCP protocol");
+            }
+            if (httpToken != null) {
+                throw new LineSenderException("HTTP token authentication is not supported for TCP protocol");
+            }
+            if (maxRetries != MAX_RETRIES_DEFAULT) {
+                throw new LineSenderException("retrying is not supported for TCP protocol");
             }
         }
 
