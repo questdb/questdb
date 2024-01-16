@@ -1,5 +1,6 @@
 package io.questdb.cutlass.http.processors;
 
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.network.PeerDisconnectedException;
@@ -15,14 +16,14 @@ public class LineHttpPingProcessor implements HttpRequestProcessor {
     }
 
     @Override
+    public byte getRequiredAuthType() {
+        return SecurityContext.AUTH_TYPE_NONE;
+    }
+
+    @Override
     public void onRequestComplete(
             HttpConnectionContext context
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
         context.simpleResponse().sendStatusWithHeader(204, header);
-    }
-
-    @Override
-    public boolean requiresAuthentication() {
-        return false;
     }
 }

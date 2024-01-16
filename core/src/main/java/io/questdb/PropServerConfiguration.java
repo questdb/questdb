@@ -72,7 +72,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     public static final String SNAPSHOT_DIRECTORY = "snapshot";
     public static final String TMP_DIRECTORY = "tmp";
     private static final LowerCaseCharSequenceIntHashMap WRITE_FO_OPTS = new LowerCaseCharSequenceIntHashMap();
-    protected final boolean httpStaticAuthRequired;
+    protected final byte httpHealthCheckAuthType;
+    protected final byte httpStaticContentAuthType;
     private final ObjObjHashMap<ConfigPropertyKey, ConfigPropertyValue> allPairs = new ObjObjHashMap<>();
     private final DateFormat backupDirTimestampFormat;
     private final int backupMkdirMode;
@@ -123,17 +124,14 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean httpAllowDeflateBeforeSend;
     private final PropHttpContextConfiguration httpContextConfiguration = new PropHttpContextConfiguration();
     private final boolean httpFrozenClock;
-    private final boolean httpHealthCheckAuthRequired;
     private final IODispatcherConfiguration httpIODispatcherConfiguration = new PropHttpIODispatcherConfiguration();
     private final PropHttpMinIODispatcherConfiguration httpMinIODispatcherConfiguration = new PropHttpMinIODispatcherConfiguration();
-    private final PropHttpMinServerConfiguration httpMinServerConfiguration = new PropHttpMinServerConfiguration();
     private final boolean httpMinServerEnabled;
     private final boolean httpNetConnectionHint;
     private final boolean httpPessimisticHealthCheckEnabled;
     private final boolean httpReadOnlySecurityContext;
     private final int httpRecvBufferSize;
     private final int httpSendBufferSize;
-    private final HttpServerConfiguration httpServerConfiguration = new PropHttpServerConfiguration();
     private final boolean httpServerCookiesEnabled;
     private final boolean httpServerEnabled;
     private final boolean httpServerKeepAlive;
@@ -164,7 +162,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean isReadOnlyInstance;
     private final int jsonCacheLimit;
     private final int jsonCacheSize;
-    private final JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new PropJsonQueryProcessorConfiguration();
     private final String keepAliveHeader;
     private final int latestByQueueCapacity;
     private final boolean lineHttpEnabled;
@@ -375,6 +372,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long writerMiscAppendPageSize;
     private final boolean writerMixedIOEnabled;
     private final int writerTickRowsCountMod;
+    protected HttpMinServerConfiguration httpMinServerConfiguration = new PropHttpMinServerConfiguration();
+    protected HttpServerConfiguration httpServerConfiguration = new PropHttpServerConfiguration();
+    protected JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new PropJsonQueryProcessorConfiguration();
     protected StaticContentProcessorConfiguration staticContentProcessorConfiguration;
     private long cairoSqlCopyMaxIndexChunkSize;
     private FactoryProvider factoryProvider;
@@ -680,7 +680,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.httpWorkerSleepThreshold = getLong(properties, env, PropertyKey.HTTP_WORKER_SLEEP_THRESHOLD, 10_000);
             this.httpWorkerSleepTimeout = getLong(properties, env, PropertyKey.HTTP_WORKER_SLEEP_TIMEOUT, 10);
             this.indexFileName = getString(properties, env, PropertyKey.HTTP_STATIC_INDEX_FILE_NAME, "index.html");
-            this.httpStaticAuthRequired = getBoolean(properties, env, PropertyKey.HTTP_STATIC_AUTHENTICATION_REQUIRED, true);
+            final boolean httpStaticAuthRequired = getBoolean(properties, env, PropertyKey.HTTP_STATIC_AUTHENTICATION_REQUIRED, true);
+            this.httpStaticContentAuthType = httpStaticAuthRequired ? SecurityContext.AUTH_TYPE_CREDENTIALS : SecurityContext.AUTH_TYPE_NONE;
             this.httpFrozenClock = getBoolean(properties, env, PropertyKey.HTTP_FROZEN_CLOCK, false);
             this.httpAllowDeflateBeforeSend = getBoolean(properties, env, PropertyKey.HTTP_ALLOW_DEFLATE_BEFORE_SEND, false);
             this.httpServerKeepAlive = getBoolean(properties, env, PropertyKey.HTTP_SERVER_KEEP_ALIVE, true);
@@ -743,7 +744,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.utf8SinkSize = getIntSize(properties, env, PropertyKey.HTTP_TEXT_UTF8_SINK_SIZE, 4096);
 
             this.httpPessimisticHealthCheckEnabled = getBoolean(properties, env, PropertyKey.HTTP_PESSIMISTIC_HEALTH_CHECK, false);
-            this.httpHealthCheckAuthRequired = getBoolean(properties, env, PropertyKey.HTTP_HEALTH_CHECK_AUTHENTICATION_REQUIRED, true);
+            final boolean httpHealthCheckAuthRequired = getBoolean(properties, env, PropertyKey.HTTP_HEALTH_CHECK_AUTHENTICATION_REQUIRED, true);
+            this.httpHealthCheckAuthType = httpHealthCheckAuthRequired ? SecurityContext.AUTH_TYPE_CREDENTIALS : SecurityContext.AUTH_TYPE_NONE;
             this.httpReadOnlySecurityContext = getBoolean(properties, env, PropertyKey.HTTP_SECURITY_READONLY, false);
             this.maxHttpQueryResponseRowLimit = getLong(properties, env, PropertyKey.HTTP_SECURITY_MAX_RESPONSE_ROWS, Long.MAX_VALUE);
             this.interruptOnClosedConnection = getBoolean(properties, env, PropertyKey.HTTP_SECURITY_INTERRUPT_ON_CLOSED_CONNECTION, true);
@@ -3093,7 +3095,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private class PropHttpMinServerConfiguration implements HttpMinServerConfiguration {
+    public class PropHttpMinServerConfiguration implements HttpMinServerConfiguration {
 
         @Override
         public IODispatcherConfiguration getDispatcherConfiguration() {
@@ -3113,6 +3115,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public String getPoolName() {
             return "minhttp";
+        }
+
+        @Override
+        public byte getRequiredAuthType() {
+            return httpHealthCheckAuthType;
         }
 
         @Override
@@ -3156,17 +3163,12 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean isHealthCheckAuthenticationRequired() {
-            return httpHealthCheckAuthRequired;
-        }
-
-        @Override
         public boolean isPessimisticHealthCheckEnabled() {
             return httpPessimisticHealthCheckEnabled;
         }
     }
 
-    private class PropHttpServerConfiguration implements HttpServerConfiguration {
+    public class PropHttpServerConfiguration implements HttpServerConfiguration {
 
         @Override
         public IODispatcherConfiguration getDispatcherConfiguration() {
@@ -3206,6 +3208,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getQueryCacheRowCount() {
             return httpSqlCacheRowCount;
+        }
+
+        @Override
+        public byte getRequiredAuthType() {
+            return httpHealthCheckAuthType;
         }
 
         @Override
@@ -3254,11 +3261,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean isHealthCheckAuthenticationRequired() {
-            return httpHealthCheckAuthRequired;
-        }
-
-        @Override
         public boolean isPessimisticHealthCheckEnabled() {
             return httpPessimisticHealthCheckEnabled;
         }
@@ -3269,7 +3271,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private class PropJsonQueryProcessorConfiguration implements JsonQueryProcessorConfiguration {
+    public class PropJsonQueryProcessorConfiguration implements JsonQueryProcessorConfiguration {
 
         @Override
         public MillisecondClock getClock() {
@@ -4160,8 +4162,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean isAuthenticationRequired() {
-            return httpStaticAuthRequired;
+        public byte getRequiredAuthType() {
+            return httpStaticContentAuthType;
         }
     }
 

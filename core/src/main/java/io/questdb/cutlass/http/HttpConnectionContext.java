@@ -817,8 +817,9 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             }
 
             try {
+                final byte requiredAuthType = processor.getRequiredAuthType();
                 if (newRequest && processor.requiresAuthentication() && !configureSecurityContext()) {
-                    return rejectUnauthenticatedRequest();
+                    return rejectUnauthenticatedRequest(url.toString(), requiredAuthType);
                 }
 
                 if (newRequest && configuration.areCookiesEnabled()) {
@@ -976,10 +977,14 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return rejectRequest(HTTP_NOT_FOUND, userMessage, null, null);
     }
 
-    private boolean rejectUnauthenticatedRequest() throws PeerDisconnectedException, PeerIsSlowToReadException {
+    private boolean rejectUnauthenticatedRequest(CharSequence url, byte requiredAuthType) throws PeerDisconnectedException, PeerIsSlowToReadException {
         reset();
-        LOG.error().$("rejecting unauthenticated request [fd=").$(getFd()).I$();
-        simpleResponse().sendStatusWithHeader(HTTP_UNAUTHORIZED, "WWW-Authenticate: Basic realm=\"questdb\", charset=\"UTF-8\"");
+        LOG.error().$("rejecting unauthenticated request [fd=").$(getFd()).$(", url=").$(url).I$();
+        if (requiredAuthType == SecurityContext.AUTH_TYPE_CREDENTIALS) {
+            simpleResponse().sendStatusWithHeader(HTTP_UNAUTHORIZED, "WWW-Authenticate: Basic realm=\"questdb\", charset=\"UTF-8\"");
+        } else {
+            simpleResponse().sendStatus(HTTP_UNAUTHORIZED);
+        }
         dispatcher.registerChannel(this, IOOperation.READ);
         return false;
     }

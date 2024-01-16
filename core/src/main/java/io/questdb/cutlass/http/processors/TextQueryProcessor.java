@@ -68,6 +68,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     private final int floatScale;
     private final Metrics metrics;
     private final QueryLogger queryLogger;
+    private final byte requiredAuthType;
     private final SqlExecutionContextImpl sqlExecutionContext;
 
     @TestOnly
@@ -94,6 +95,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         this.metrics = engine.getMetrics();
         this.engine = engine;
         queryLogger = engine.getConfiguration().getQueryLogger();
+        requiredAuthType = configuration.getRequiredAuthType();
     }
 
     @Override
@@ -183,6 +185,11 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             internalError(context.getChunkedResponseSocket(), context.getLastRequestBytesSent(), e, state);
             readyForNextRequest(context);
         }
+    }
+
+    @Override
+    public byte getRequiredAuthType() {
+        return requiredAuthType;
     }
 
     @Override

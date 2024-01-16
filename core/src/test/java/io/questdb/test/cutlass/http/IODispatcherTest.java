@@ -2276,7 +2276,7 @@ public class IODispatcherTest extends AbstractTest {
 
                     @Override
                     public HttpRequestProcessor newInstance() {
-                        return new TextImportProcessor(engine);
+                        return new TextImportProcessor(engine, httpConfiguration.getJsonQueryProcessorConfiguration());
                     }
                 });
                 workerPool.start(LOG);
@@ -8435,7 +8435,8 @@ public class IODispatcherTest extends AbstractTest {
             commands = new ObjList(
                     select1,
                     select2,
-                    selectWithJoin);
+                    selectWithJoin
+            );
         }
 
 

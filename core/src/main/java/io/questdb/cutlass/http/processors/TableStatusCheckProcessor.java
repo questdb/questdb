@@ -48,16 +48,23 @@ public class TableStatusCheckProcessor implements HttpRequestProcessor, Closeabl
     private final CairoEngine cairoEngine;
     private final String keepAliveHeader;
     private final Path path = new Path();
+    private final byte requiredAuthType;
     private final StringSink utf16Sink = new StringSink();
 
     public TableStatusCheckProcessor(CairoEngine cairoEngine, JsonQueryProcessorConfiguration configuration) {
         this.cairoEngine = cairoEngine;
         this.keepAliveHeader = Chars.toString(configuration.getKeepAliveHeader());
+        this.requiredAuthType = configuration.getRequiredAuthType();
     }
 
     @Override
     public void close() {
         Misc.free(path);
+    }
+
+    @Override
+    public byte getRequiredAuthType() {
+        return requiredAuthType;
     }
 
     @Override

@@ -41,12 +41,17 @@ public class PrometheusMetricsProcessor implements HttpRequestProcessor {
     private static final LocalValue<RequestState> LV = new LocalValue<>();
     private final Scrapable metrics;
     private final RequestStatePool pool;
-    private final boolean requiresAuthentication;
+    private final byte requiredAuthType;
 
     public PrometheusMetricsProcessor(Scrapable metrics, HttpMinServerConfiguration configuration, RequestStatePool pool) {
         this.metrics = metrics;
-        this.requiresAuthentication = configuration.isHealthCheckAuthenticationRequired();
+        this.requiredAuthType = configuration.getRequiredAuthType();
         this.pool = pool;
+    }
+
+    @Override
+    public byte getRequiredAuthType() {
+        return requiredAuthType;
     }
 
     @Override
@@ -61,11 +66,6 @@ public class PrometheusMetricsProcessor implements HttpRequestProcessor {
         r.status(200, CONTENT_TYPE_TEXT);
         r.sendHeader();
         sendResponse(r, state);
-    }
-
-    @Override
-    public boolean requiresAuthentication() {
-        return requiresAuthentication;
     }
 
     /**

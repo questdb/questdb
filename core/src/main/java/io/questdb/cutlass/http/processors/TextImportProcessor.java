@@ -70,11 +70,13 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     private static final int TO_STRING_COL5_PAD = 12;
     private static final Utf8SequenceIntHashMap atomicityParamMap = new Utf8SequenceIntHashMap();
     private final CairoEngine engine;
+    private final byte requiredAuthType;
     private HttpConnectionContext transientContext;
     private TextImportProcessorState transientState;
 
-    public TextImportProcessor(CairoEngine cairoEngine) {
+    public TextImportProcessor(CairoEngine cairoEngine, JsonQueryProcessorConfiguration configuration) {
         this.engine = cairoEngine;
+        requiredAuthType = configuration.getRequiredAuthType();
     }
 
     @Override
@@ -84,6 +86,11 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     @Override
     public void failRequest(HttpConnectionContext context, HttpException e) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         sendErrorAndThrowDisconnect(((FlyweightMessageContainer) e).getFlyweightMessage());
+    }
+
+    @Override
+    public byte getRequiredAuthType() {
+        return requiredAuthType;
     }
 
     @Override

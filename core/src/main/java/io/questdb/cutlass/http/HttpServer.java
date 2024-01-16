@@ -179,7 +179,7 @@ public class HttpServer implements Closeable {
 
             @Override
             public HttpRequestProcessor newInstance() {
-                return new TextImportProcessor(cairoEngine);
+                return new TextImportProcessor(cairoEngine, configuration.getJsonQueryProcessorConfiguration());
             }
         });
 

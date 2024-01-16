@@ -64,6 +64,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private final NanosecondClock nanosecondClock;
     private final Path path = new Path();
     private final QueryLogger queryLogger;
+    private final byte requiredAuthType;
     private final SqlExecutionContextImpl sqlExecutionContext;
 
     @TestOnly
@@ -96,6 +97,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         this.configuration = configuration;
         this.engine = engine;
         queryLogger = engine.getConfiguration().getQueryLogger();
+        requiredAuthType = configuration.getRequiredAuthType();
         final QueryExecutor sendConfirmation = this::updateMetricsAndSendConfirmation;
         this.queryExecutors.extendAndSet(CompiledQuery.SELECT, this::executeNewSelect);
         this.queryExecutors.extendAndSet(CompiledQuery.INSERT, this::executeInsert);
@@ -223,6 +225,11 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         logInternalError(e, state, metrics);
         sendException(socket, context, 0, e.getFlyweightMessage(), state.getQuery(), configuration.getKeepAliveHeader(), 400);
         socket.shutdownWrite();
+    }
+
+    @Override
+    public byte getRequiredAuthType() {
+        return requiredAuthType;
     }
 
     @Override
