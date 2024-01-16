@@ -260,7 +260,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 dispatcher.registerChannel(this, IOOperation.HEARTBEAT);
                 return false;
             default:
-                disconnect(DISCONNECT_REASON_UNKNOWN_OPERATION);
+                dispatcher.disconnect(this, DISCONNECT_REASON_UNKNOWN_OPERATION);
                 keepGoing = false;
                 break;
         }
@@ -272,7 +272,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     keepGoing = handleClientRecv(selector, rescheduleContext);
                 } while (keepGoing);
             } else {
-                disconnect(DISCONNECT_REASON_KEEPALIVE_OFF);
+                dispatcher.disconnect(this, DISCONNECT_REASON_KEEPALIVE_OFF);
             }
         }
         return useful;
@@ -387,7 +387,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 pendingRetry = true;
                 return false;
             } catch (PeerDisconnectedException ignore) {
-                disconnect(DISCONNECT_REASON_PEER_DISCONNECT_AT_RERUN);
+                dispatcher.disconnect(this, DISCONNECT_REASON_PEER_DISCONNECT_AT_RERUN);
             } catch (PeerIsSlowToReadException e2) {
                 LOG.info().$("peer is slow on running the rerun [fd=").$(getFd())
                         .$(", thread=").$(Thread.currentThread().getId()).I$();
@@ -403,7 +403,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 dispatcher.registerChannel(this, IOOperation.WRITE);
             } catch (ServerDisconnectException e) {
                 LOG.info().$("kicked out [fd=").$(getFd()).I$();
-                disconnect(DISCONNECT_REASON_KICKED_OUT_AT_RERUN);
+                dispatcher.disconnect(this, DISCONNECT_REASON_KICKED_OUT_AT_RERUN);
             }
         }
         return true;
@@ -415,7 +415,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         if (configuration.getServerKeepAlive()) {
             while (handleClientRecv(selector, rescheduleContext)) ;
         } else {
-            disconnect(DISCONNECT_REASON_KEEPALIVE_OFF_RECV);
+            dispatcher.disconnect(this, DISCONNECT_REASON_KEEPALIVE_OFF_RECV);
         }
     }
 
@@ -477,12 +477,12 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     if (configuration.getServerKeepAlive()) {
                         return true;
                     } else {
-                        return disconnectHttp(DISCONNECT_REASON_KEEPALIVE_OFF_RECV);
+                        return disconnectHttp(processor, DISCONNECT_REASON_KEEPALIVE_OFF_RECV);
                     }
                 } else if (lo == Long.MIN_VALUE) {
                     // protocol violation
                     LOG.error().$("cannot parse chunk length, chunked protocol violation, disconnecting [fd=").$(getFd()).I$();
-                    return disconnectHttp(DISCONNECT_REASON_KICKED_OUT_AT_EXTRA_BYTES);
+                    return disconnectHttp(processor, DISCONNECT_REASON_KICKED_OUT_AT_EXTRA_BYTES);
                 } else if (lo != hi) {
                     lo = -lo;
                     assert lo >= recvBuffer && lo <= hi && lo < recvBuffer + recvBufferSize;
@@ -502,7 +502,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 return false;
             } else if (read < 0) {
                 // client disconnected
-                return disconnectHttp(DISCONNECT_REASON_KICKED_OUT_AT_RECV);
+                return disconnectHttp(processor, DISCONNECT_REASON_KICKED_OUT_AT_RECV);
             }
         }
     }
@@ -537,7 +537,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     // HTTP protocol violation
                     // client sent more data than it promised in Content-Length header
                     // we will disconnect client and roll back
-                    return disconnectHttp(DISCONNECT_REASON_KICKED_OUT_AT_EXTRA_BYTES);
+                    return disconnectHttp(processor, DISCONNECT_REASON_KICKED_OUT_AT_EXTRA_BYTES);
                 }
 
                 contentProcessor.onChunk(lo, recvBuffer + read);
@@ -549,12 +549,12 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     read = socket.recv(recvBuffer, recvBufferSize);
                     if (read < 0) {
                         // client disconnected, don't commit, rollback instead
-                        return disconnectHttp(DISCONNECT_REASON_KICKED_OUT_AT_RECV);
+                        return disconnectHttp(processor, DISCONNECT_REASON_KICKED_OUT_AT_RECV);
                     } else if (read > 0) {
                         // HTTP protocol violation
                         // client sent more data than it promised in Content-Length header
                         // we will disconnect client and roll back
-                        return disconnectHttp(DISCONNECT_REASON_KICKED_OUT_AT_EXTRA_BYTES);
+                        return disconnectHttp(processor, DISCONNECT_REASON_KICKED_OUT_AT_EXTRA_BYTES);
                     }
 
                     processor.onRequestComplete(this);
@@ -562,7 +562,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     if (configuration.getServerKeepAlive()) {
                         return true;
                     } else {
-                        return disconnectHttp(DISCONNECT_REASON_KEEPALIVE_OFF_RECV);
+                        return disconnectHttp(processor, DISCONNECT_REASON_KEEPALIVE_OFF_RECV);
                     }
                 }
             } else if (read == 0) {
@@ -571,7 +571,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 return false;
             } else {
                 // client disconnected
-                return disconnectHttp(DISCONNECT_REASON_KICKED_OUT_AT_RECV);
+                return disconnectHttp(processor, DISCONNECT_REASON_KICKED_OUT_AT_RECV);
             }
         }
     }
@@ -647,7 +647,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         while (true) {
             final int n = socket.recv(buf, bufRemaining);
             if (n < 0) {
-                disconnect(DISCONNECT_REASON_PEER_DISCONNECT_AT_MULTIPART_RECV);
+                dispatcher.disconnect(this, DISCONNECT_REASON_PEER_DISCONNECT_AT_MULTIPART_RECV);
                 break;
             }
 
@@ -723,9 +723,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return keepGoing;
     }
 
-    private boolean disconnectHttp(int disconnectReasonKickedOutAtRecv) {
+    private boolean disconnectHttp(HttpRequestProcessor processor, int disconnectReasonKickedOutAtRecv) {
+        processor.onConnectionClosed(this);
         reset();
-        disconnect(disconnectReasonKickedOutAtRecv);
+        dispatcher.disconnect(this, disconnectReasonKickedOutAtRecv);
         return false;
     }
 
@@ -745,9 +746,9 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     .$(", error=").$(e.getFlyweightMessage())
                     .I$();
             processor.failRequest(this, e);
-            disconnect(reason);
+            dispatcher.disconnect(this, reason);
         } catch (PeerDisconnectedException peerDisconnectedException) {
-            disconnect(DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND);
+            dispatcher.disconnect(this, DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND);
         } catch (PeerIsSlowToReadException peerIsSlowToReadException) {
             LOG.info().$("peer is slow to receive failed to retry response [fd=").$(getFd()).I$();
             processor.parkRequest(this, false);
@@ -755,7 +756,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             dispatcher.registerChannel(this, IOOperation.WRITE);
             canReset = false;
         } catch (ServerDisconnectException serverDisconnectException) {
-            disconnect(reason);
+            dispatcher.disconnect(this, reason);
         } finally {
             if (canReset) {
                 reset();
@@ -797,7 +798,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                                 .$(", errno=").$(nf.errno())
                                 .I$();
                         // peer disconnect
-                        disconnect(DISCONNECT_REASON_PEER_DISCONNECT_AT_HEADER_RECV);
+                        dispatcher.disconnect(this, DISCONNECT_REASON_PEER_DISCONNECT_AT_HEADER_RECV);
                         return false;
                     }
 
@@ -880,7 +881,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                         dumpBuffer(recvBuffer, read);
                         LOG.info().$("disconnect after request [fd=").$(getFd()).$(", read=").$(read).I$();
                         int reason = read > 0 ? DISCONNECT_REASON_KICKED_OUT_AT_EXTRA_BYTES : DISCONNECT_REASON_PEER_DISCONNECT_AT_RECV;
-                        disconnect(reason);
+                        dispatcher.disconnect(this, reason);
                         busyRecv = false;
                     } else {
                         processor.onHeadersReady(this);
@@ -895,11 +896,13 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 scheduleRetry(processor, rescheduleContext);
                 busyRecv = false;
             } catch (PeerDisconnectedException e) {
-                disconnect(DISCONNECT_REASON_PEER_DISCONNECT_AT_RECV);
+                dispatcher.disconnect(this, DISCONNECT_REASON_PEER_DISCONNECT_AT_RECV);
+                processor.onConnectionClosed(this);
                 busyRecv = false;
             } catch (ServerDisconnectException e) {
                 LOG.info().$("kicked out [fd=").$(getFd()).I$();
-                disconnect(DISCONNECT_REASON_KICKED_OUT_AT_RECV);
+                dispatcher.disconnect(this, DISCONNECT_REASON_KICKED_OUT_AT_RECV);
+                processor.onConnectionClosed(this);
                 busyRecv = false;
             } catch (PeerIsSlowToReadException e) {
                 LOG.debug().$("peer is slow reader [two]").$();
@@ -921,21 +924,14 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             }
         } catch (HttpException e) {
             LOG.error().$("http error [fd=").$(getFd()).$(", e=`").$(e.getFlyweightMessage()).$("`]").$();
-            disconnect(DISCONNECT_REASON_PROTOCOL_VIOLATION);
+            dispatcher.disconnect(this, DISCONNECT_REASON_PROTOCOL_VIOLATION);
             busyRecv = false;
         } catch (Throwable e) {
             LOG.error().$("internal error [fd=").$(getFd()).$(", e=`").$(e).$("`]").$();
-            disconnect(DISCONNECT_REASON_SERVER_ERROR);
+            dispatcher.disconnect(this, DISCONNECT_REASON_SERVER_ERROR);
             busyRecv = false;
         }
         return busyRecv;
-    }
-
-    private void disconnect(int code) {
-        if (dispatcher != null) {
-            dispatcher.disconnect(this, code);
-        }
-        reset();
     }
 
     private boolean isRequestBeingRejected() {
@@ -958,10 +954,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 LOG.debug().$("partition is in cold storage").$();
                 dispatcher.registerChannel(this, IOOperation.WRITE);
             } catch (PeerDisconnectedException ignore) {
-                disconnect(DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND);
+                dispatcher.disconnect(this, DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND);
             } catch (ServerDisconnectException ignore) {
                 LOG.info().$("kicked out [fd=").$(getFd()).I$();
-                disconnect(DISCONNECT_REASON_KICKED_OUT_AT_SEND);
+                dispatcher.disconnect(this, DISCONNECT_REASON_KICKED_OUT_AT_SEND);
             }
         } else {
             LOG.error().$("spurious write request [fd=").$(getFd()).I$();

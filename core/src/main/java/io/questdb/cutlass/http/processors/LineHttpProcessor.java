@@ -64,6 +64,14 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
         this.state.parse(lo, hi);
     }
 
+    @Override
+    public void onConnectionClosed(HttpConnectionContext context) {
+        state = LV.get(context);
+        if (state != null) {
+            state.onDisconnected();
+        }
+    }
+
     public void onHeadersReady(HttpConnectionContext context) {
         state = LV.get(context);
         if (state == null) {
