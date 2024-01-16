@@ -470,6 +470,18 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testPlainOldTokenNotSupportedForHttpProtocol() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                Sender.builder().url("http://localhost:9000").enableAuth("key").authToken(AUTH_TOKEN_KEY1).build();
+                fail("HTTP token should not be supported for TCP");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "old token authentication is not supported for HTTP protocol");
+            }
+        });
+    }
+
+    @Test
     public void testPlain_connectionRefused() throws Exception {
         assertMemoryLeak(() -> {
             Sender.LineSenderBuilder builder = Sender.builder().address(LOCALHOST + ":19003");

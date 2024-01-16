@@ -46,7 +46,10 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 
 /**
- * ILP client to feed data to a remote QuestDB instance.
+ * Influx Line Protocol client to feed data to a remote QuestDB instance.
+ * <p>
+ * This client supports both HTTP and TCP protocols. In most cases you should prefer HTTP protocol as it provides
+ * stronger guarantees and better feedback in case of errors.
  * <p>
  * Use {@link #builder()} method to create a new instance.
  * <br>
@@ -154,6 +157,8 @@ public interface Sender extends Closeable {
      * automatic flush.
      *
      * @see LineSenderBuilder#bufferCapacity(int)
+     * @see LineSenderBuilder#maximumBufferCapacity(int)
+     * @see LineSenderBuilder#maxPendingRows(int)
      */
     void flush();
 
@@ -358,6 +363,12 @@ public interface Sender extends Closeable {
          * Configure capacity of an internal buffer.
          * Bigger buffer increase batching effect.
          * <p>
+         * When communicating over HTTP protocol this buffer size is treated as the initial buffer capacity. Buffer can
+         * grow up to {@link #maximumBufferCapacity(int)}. You should call {@link #flush()} to send buffered data to
+         * a server. Otherwise, data will be sent automatically when number of buffered rows reaches {@link #maxPendingRows(int)}.
+         * <p>
+         * When communicating over TCP protocol this buffer size is treated as the maximum buffer capacity. The Sender
+         * will automatically flush the buffer when it reaches this capacity.
          *
          * @param bufferCapacity buffer capacity in bytes.
          * @return this instance for method chaining
@@ -494,6 +505,19 @@ public interface Sender extends Closeable {
             return this;
         }
 
+        /**
+         * Set the maximum number of rows that can be buffered locally before they are sent to a server.
+         * This is only used when communicating over HTTP protocol and it's illegal to call this method when
+         * communicating over TCP protocol.
+         * <br>
+         * The Sender will automatically flush the buffer when it reaches this limit. You must make sure that
+         * the buffer is flushed before it reaches the maximum capacity. Otherwise, the Sender will throw an exception
+         * when you try to add more data to the buffer.
+         *
+         * @param maxPendingRows maximum number of rows that can be buffered locally before they are sent to a server.
+         * @return this instance for method chaining
+         * @see #flush()
+         */
         public LineSenderBuilder maxPendingRows(int maxPendingRows) {
             if (this.maxPendingRows != -1) {
                 throw new LineSenderException("max pending rows was already configured ")
@@ -512,6 +536,17 @@ public interface Sender extends Closeable {
             return this;
         }
 
+        /**
+         * Set the maximum buffer capacity. This is only used when communicating over HTTP protocol.
+         * <br>
+         * This is a hard limit on the maximum buffer capacity. The buffer cannot grow beyond this limit and Sender
+         * will throw an exception if you try to accommodate more data in the buffer. To prevent this from happening
+         * you should call {@link #flush()} periodically or set {@link #maxPendingRows(int)} to make sure that
+         * Sender will flush the buffer automatically before it reaches the maximum capacity.
+         *
+         * @param maximumBufferCapacity maximum buffer capacity in bytes.
+         * @return this instance for method chaining
+         */
         public LineSenderBuilder maximumBufferCapacity(int maximumBufferCapacity) {
             if (maximumBufferCapacity < DEFAULT_BUFFER_CAPACITY) {
                 throw new LineSenderException("maximum buffer capacity cannot be less than default buffer capacity ")
@@ -632,21 +667,25 @@ public interface Sender extends Closeable {
                             .put(", initial-buffer-capacity=").put(httpClientConfiguration.getInitialRequestBufferSize())
                             .put("]");
                 }
-            } else if (protocol != PROTOCOL_TCP) {
+                if (privateKey != null) {
+                    throw new LineSenderException("plain old token authentication is not supported for HTTP protocol. Did you mean to use HTTP token authentication?");
+                }
+            } else if (protocol == PROTOCOL_TCP) {
+                if (username != null || password != null) {
+                    throw new LineSenderException("username/password authentication is not supported for TCP protocol");
+                }
+                if (maxPendingRows != MAX_PENDING_ROWS_DEFAULT) {
+                    throw new LineSenderException("max pending rows is not supported for TCP protocol");
+                }
+                if (httpToken != null) {
+                    throw new LineSenderException("HTTP token authentication is not supported for TCP protocol");
+                }
+                if (maxRetries != MAX_RETRIES_DEFAULT) {
+                    throw new LineSenderException("retrying is not supported for TCP protocol");
+                }
+            } else {
                 throw new LineSenderException("unsupported protocol ")
                         .put("[protocol=").put(protocol).put("]");
-            }
-            if (username != null || password != null) {
-                throw new LineSenderException("username/password authentication is not supported for TCP protocol");
-            }
-            if (maxPendingRows != MAX_PENDING_ROWS_DEFAULT) {
-                throw new LineSenderException("max pending rows is not supported for TCP protocol");
-            }
-            if (httpToken != null) {
-                throw new LineSenderException("HTTP token authentication is not supported for TCP protocol");
-            }
-            if (maxRetries != MAX_RETRIES_DEFAULT) {
-                throw new LineSenderException("retrying is not supported for TCP protocol");
             }
         }
 
