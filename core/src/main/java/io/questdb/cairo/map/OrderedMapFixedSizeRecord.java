@@ -38,12 +38,12 @@ import org.jetbrains.annotations.Nullable;
  * <p>
  * Uses an offsets array to speed up key and value column look-ups.
  */
-final class FastMapFixedSizeRecord implements FastMapRecord {
+final class OrderedMapFixedSizeRecord implements OrderedMapRecord {
     private final long[] columnOffsets;
     private final Long256Impl[] keyLong256A;
     private final Long256Impl[] keyLong256B;
     private final long keySize;
-    private final FastMapValue value;
+    private final OrderedMapValue value;
     private final long[] valueOffsets;
     private final long valueSize;
     private long keyAddress;
@@ -52,11 +52,11 @@ final class FastMapFixedSizeRecord implements FastMapRecord {
     private RecordCursor symbolTableResolver;
     private long valueAddress;
 
-    FastMapFixedSizeRecord(
+    OrderedMapFixedSizeRecord(
             long keySize,
             long valueSize,
             long[] valueOffsets,
-            FastMapValue value,
+            OrderedMapValue value,
             @NotNull @Transient ColumnTypes keyTypes,
             @Nullable @Transient ColumnTypes valueTypes
     ) {
@@ -124,7 +124,7 @@ final class FastMapFixedSizeRecord implements FastMapRecord {
         this.keyLong256B = long256B;
     }
 
-    private FastMapFixedSizeRecord(
+    private OrderedMapFixedSizeRecord(
             long keySize,
             long valueSize,
             long[] valueOffsets,
@@ -136,14 +136,14 @@ final class FastMapFixedSizeRecord implements FastMapRecord {
         this.valueSize = valueSize;
         this.valueOffsets = valueOffsets;
         this.columnOffsets = columnOffsets;
-        this.value = new FastMapValue(valueSize, valueOffsets);
+        this.value = new OrderedMapValue(valueSize, valueOffsets);
         this.keyLong256A = keyLong256A;
         this.keyLong256B = keyLong256B;
     }
 
     @SuppressWarnings("MethodDoesntCallSuperMethod")
     @Override
-    public FastMapRecord clone() {
+    public OrderedMapRecord clone() {
         final Long256Impl[] long256A;
         final Long256Impl[] long256B;
 
@@ -162,18 +162,18 @@ final class FastMapFixedSizeRecord implements FastMapRecord {
             long256A = null;
             long256B = null;
         }
-        return new FastMapFixedSizeRecord(keySize, valueSize, valueOffsets, columnOffsets, long256A, long256B);
+        return new OrderedMapFixedSizeRecord(keySize, valueSize, valueOffsets, columnOffsets, long256A, long256B);
     }
 
     @Override
     public void copyToKey(MapKey destKey) {
-        FastMap.FixedSizeKey destFastKey = (FastMap.FixedSizeKey) destKey;
+        OrderedMap.FixedSizeKey destFastKey = (OrderedMap.FixedSizeKey) destKey;
         destFastKey.copyFromRawKey(keyAddress, keySize);
     }
 
     @Override
     public void copyValue(MapValue destValue) {
-        FastMapValue destFastValue = (FastMapValue) destValue;
+        OrderedMapValue destFastValue = (OrderedMapValue) destValue;
         destFastValue.copyRawValue(valueAddress);
     }
 

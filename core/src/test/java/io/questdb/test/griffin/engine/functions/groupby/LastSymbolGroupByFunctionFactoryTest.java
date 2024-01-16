@@ -33,10 +33,10 @@ public class LastSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testKeyed() throws Exception {
         assertMemoryLeak(() -> assertQuery(
                 "a\tsym\n" +
+                        "-1\tbb\n" +
                         "0\tbb\n" +
-                        "1\taa\n" +
-                        "-1\tbb\n",
-                "select a, last(sym) sym from tab",
+                        "1\taa\n",
+                "select a, last(sym) sym from tab order by a",
                 "create table tab as (select rnd_int() % 2 a, rnd_symbol('aa', 'bb', 'cc') sym from long_sequence(10))",
                 null,
                 true,

@@ -27,7 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class NoopGroupByTest extends AbstractCairoTest {
+public class NoOpGroupByTest extends AbstractCairoTest {
 
     @Test
     public void testMissingGroupByWithHourFunction() throws Exception {
@@ -216,7 +216,7 @@ public class NoopGroupByTest extends AbstractCairoTest {
                             "1\t2\t1.0\n" +
                             "1\t3\t3.0\n" +
                             "1\t4\t2.0\n",
-                    "select x.id, x.ref + y.ref, sum(val) from x join y on (id) group by x.id, x.ref + y.ref",
+                    "select x.id, x.ref + y.ref, sum(val) from x join y on (id) group by x.id, x.ref + y.ref order by 1, 2",
                     null,
                     true,
                     true
@@ -397,7 +397,7 @@ public class NoopGroupByTest extends AbstractCairoTest {
     public void testNoopGroupByWhenUsingAliasedColumn() throws Exception {
         assertQuery(
                 "ccy\tavgBid\n",
-                "select sym1 ccy, avg(bid) avgBid from x where sym1 in ('A', 'B' ) group by ccy",
+                "select sym1 ccy, avg(bid) avgBid from x where sym1 in ('A', 'B' ) group by ccy order by ccy",
                 "create table x (\n" +
                         "    sym1 symbol,\n" +
                         "    sym2 symbol,\n" +
@@ -455,7 +455,7 @@ public class NoopGroupByTest extends AbstractCairoTest {
     public void testNoopGroupByWhenUsingOriginalColumnAndAliasedTable() throws Exception {
         assertQuery(
                 "ccy\tavgBid\n",
-                "select sym1 as ccy, avg(bid) avgBid from x a where sym1 in ('A', 'B' ) group by a.sym1",
+                "select sym1 as ccy, avg(bid) avgBid from x a where sym1 in ('A', 'B' ) group by a.sym1 order by 1",
                 "create table x (\n" +
                         "    sym1 symbol,\n" +
                         "    sym2 symbol,\n" +
@@ -484,7 +484,7 @@ public class NoopGroupByTest extends AbstractCairoTest {
     public void testNoopGroupByWith1Syms() throws Exception {
         assertQuery(
                 "sym1\tavgBid\n",
-                "select sym1, avg(bid) avgBid from x where sym1 in ('A', 'B' ) group by sym1",
+                "select sym1, avg(bid) avgBid from x where sym1 in ('A', 'B' ) group by sym1 order by sym1",
                 "create table x (\n" +
                         "    sym1 symbol,\n" +
                         "    sym2 symbol,\n" +
@@ -513,7 +513,7 @@ public class NoopGroupByTest extends AbstractCairoTest {
     public void testNoopGroupByWith2Syms() throws Exception {
         assertQuery(
                 "sym1\tsym2\tavgBid\n",
-                "select sym1, sym2, avg(bid) avgBid from x where sym1 in ('A', 'B' ) group by sym1, sym2",
+                "select sym1, sym2, avg(bid) avgBid from x where sym1 in ('A', 'B' ) group by sym1, sym2 order by sym1, sym2",
                 "create table x (\n" +
                         "    sym1 symbol,\n" +
                         "    sym2 symbol,\n" +
@@ -531,10 +531,10 @@ public class NoopGroupByTest extends AbstractCairoTest {
                         "    from long_sequence(20)) timestamp (ts)",
                 "sym1\tsym2\tavgBid\n" +
                         "A\tD\t0.47381585528154324\n" +
-                        "B\tE\t0.6403134139386097\n" +
                         "A\tE\t0.5837537495691357\n" +
+                        "A\tF\t0.8664158914718532\n" +
                         "B\tD\t0.8434630350290969\n" +
-                        "A\tF\t0.8664158914718532\n",
+                        "B\tE\t0.6403134139386097\n",
                 true,
                 true,
                 false
@@ -545,7 +545,7 @@ public class NoopGroupByTest extends AbstractCairoTest {
     public void testNoopGroupByWithAlias() throws Exception {
         assertQuery(
                 "sym1\tavgBid\n",
-                "select sym1, avg(bid) avgBid from x a where sym1 in ('A', 'B' ) group by a.sym1",
+                "select sym1, avg(bid) avgBid from x a where sym1 in ('A', 'B' ) group by a.sym1 order by sym1",
                 "create table x (\n" +
                         "    sym1 symbol,\n" +
                         "    sym2 symbol,\n" +
@@ -625,7 +625,7 @@ public class NoopGroupByTest extends AbstractCairoTest {
     public void testNoopGroupByWithFunction1() throws Exception {
         assertQuery(
                 "column\tavg\n",
-                "select b+a, avg(c) from x group by b+a",
+                "select b+a, avg(c) from x group by b+a order by b+a",
                 "create table x (\n" +
                         "    sym1 symbol,\n" +
                         "    sym2 symbol,\n" +
@@ -645,25 +645,25 @@ public class NoopGroupByTest extends AbstractCairoTest {
                         "    from long_sequence(20)) timestamp (ts)",
                 "column\tavg\n" +
                         "0.30949977657533256\t0.299199045961845\n" +
-                        "1.4932004946738646\t0.9856290845874263\n" +
-                        "1.1347848544029424\t0.7611029514995744\n" +
                         "0.5966743012271949\t0.2390529010846525\n" +
-                        "0.9879110542701665\t0.38539947865244994\n" +
                         "0.6649002464931092\t0.7675673070796104\n" +
+                        "0.693754621013657\t0.8164182592467494\n" +
+                        "0.7675889012481835\t0.9540069089049732\n" +
                         "0.7795990267808574\t0.6381607531178513\n" +
-                        "1.4831535123369082\t0.12026122412833129\n" +
+                        "0.8195064672447426\t0.5659429139861241\n" +
+                        "0.8268723676824133\t0.8847591603509142\n" +
+                        "0.9144934765891063\t0.6551335839796312\n" +
+                        "0.9257619753148886\t0.19751370382305056\n" +
+                        "0.9820924616701128\t0.769238189433781\n" +
+                        "0.9879110542701665\t0.38539947865244994\n" +
+                        "1.0843141424360652\t0.456344569609078\n" +
+                        "1.1347848544029424\t0.7611029514995744\n" +
                         "1.234827286954693\t0.42281342727402726\n" +
                         "1.2962662695358191\t0.5522494170511608\n" +
-                        "0.8268723676824133\t0.8847591603509142\n" +
-                        "1.757029498695562\t0.8001121139739173\n" +
-                        "1.0843141424360652\t0.456344569609078\n" +
-                        "0.8195064672447426\t0.5659429139861241\n" +
                         "1.405167662413488\t0.9644183832564398\n" +
-                        "0.693754621013657\t0.8164182592467494\n" +
-                        "0.9820924616701128\t0.769238189433781\n" +
-                        "0.9144934765891063\t0.6551335839796312\n" +
-                        "0.7675889012481835\t0.9540069089049732\n" +
-                        "0.9257619753148886\t0.19751370382305056\n",
+                        "1.4831535123369082\t0.12026122412833129\n" +
+                        "1.4932004946738646\t0.9856290845874263\n" +
+                        "1.757029498695562\t0.8001121139739173\n",
                 true,
                 true,
                 false
@@ -706,7 +706,7 @@ public class NoopGroupByTest extends AbstractCairoTest {
     public void testSubQuery() throws Exception {
         assertQuery(
                 "bkt\tavg\n",
-                "select bkt, avg(bid) from (select abs(id % 10) bkt, bid from x) group by bkt",
+                "select bkt, avg(bid) from (select abs(id % 10) bkt, bid from x) group by bkt order by bkt",
                 "create table x (\n" +
                         "    id long,\n" +
                         "    bid double\n" +
@@ -717,15 +717,15 @@ public class NoopGroupByTest extends AbstractCairoTest {
                         "        rnd_double() \n" +
                         "    from long_sequence(20))",
                 "bkt\tavg\n" +
-                        "6\t0.7275909062911847\n" +
-                        "5\t0.08486964232560668\n" +
-                        "8\t0.5773046624150107\n" +
-                        "4\t0.413662826357355\n" +
-                        "2\t0.22452340856088226\n" +
-                        "1\t0.33762525947485594\n" +
-                        "3\t0.7715455271652294\n" +
-                        "7\t0.47335449523280454\n" +
                         "0\t0.1911234617573182\n" +
+                        "1\t0.33762525947485594\n" +
+                        "2\t0.22452340856088226\n" +
+                        "3\t0.7715455271652294\n" +
+                        "4\t0.413662826357355\n" +
+                        "5\t0.08486964232560668\n" +
+                        "6\t0.7275909062911847\n" +
+                        "7\t0.47335449523280454\n" +
+                        "8\t0.5773046624150107\n" +
                         "9\t0.5793466326862211\n",
                 true,
                 true,

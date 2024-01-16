@@ -8203,9 +8203,12 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSelectSumSquared() throws Exception {
-        assertSql("x1\tx\n" +
-                "1\t1\n" +
-                "2\t4\n", "select x, sum(x)*sum(x) x from long_sequence(2)");
+        assertSql(
+                "x1\tx\n" +
+                        "1\t1\n" +
+                        "2\t4\n",
+                "select x, sum(x)*sum(x) x from long_sequence(2) order by x"
+        );
     }
 
     @Test

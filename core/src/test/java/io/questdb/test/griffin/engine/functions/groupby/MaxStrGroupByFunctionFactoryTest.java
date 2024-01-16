@@ -40,7 +40,7 @@ public class MaxStrGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "a\t42\n" +
                         "b\t42\n" +
                         "c\t42\n",
-                "select a, max('42') from x",
+                "select a, max('42') from x order by a",
                 "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
                 null,
                 true,
@@ -55,7 +55,7 @@ public class MaxStrGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "a\tcccccc\n" +
                         "b\tcccccc\n" +
                         "c\tcccccc\n",
-                "select a, max(concat(s, s)) from x",
+                "select a, max(concat(s, s)) from x order by a",
                 "create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_str('aaa','bbb','ccc') s from long_sequence(20)))",
                 null,
                 true,
@@ -70,7 +70,7 @@ public class MaxStrGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "a\t333\n" +
                         "b\t333\n" +
                         "c\t333\n",
-                "select a, max(s) from x",
+                "select a, max(s) from x order by a",
                 "create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_str('111','222','333') s, timestamp_sequence(0, 100000) ts from long_sequence(20)) timestamp(ts))",
                 null,
                 true,
@@ -115,9 +115,9 @@ public class MaxStrGroupByFunctionFactoryTest extends AbstractCairoTest {
         assertQuery(
                 "a\tlength\n" +
                         "a\t7439\n" +
-                        "c\t3504\n" +
-                        "b\t2740\n",
-                "select a, length(s) from (select a, max(s) s from x)",
+                        "b\t2740\n" +
+                        "c\t3504\n",
+                "select a, length(s) from (select a, max(s) s from x) order by a",
                 "create table x as (select rnd_symbol('a','b','c') a, rnd_str(10,10000,2) s from long_sequence(1000))",
                 null,
                 true,
@@ -132,7 +132,7 @@ public class MaxStrGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "a\t\n" +
                         "b\t\n" +
                         "c\t\n",
-                "select a, max(cast(null as STRING)) from x",
+                "select a, max(cast(null as STRING)) from x order by a",
                 "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
                 null,
                 true,

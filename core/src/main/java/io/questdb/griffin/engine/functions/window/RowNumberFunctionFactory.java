@@ -73,7 +73,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
 
         if (windowContext.getPartitionByRecord() != null) {
-            Map map = MapFactory.createMap(
+            Map map = MapFactory.createOrderedMap(
                     configuration,
                     windowContext.getPartitionByKeyTypes(),
                     LONG_COLUMN_TYPE

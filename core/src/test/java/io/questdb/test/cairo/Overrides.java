@@ -52,7 +52,6 @@ public class Overrides implements ConfigurationOverrides {
     private final MicrosecondClock defaultMicrosecondClock = () -> currentMicros >= 0 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
     private MicrosecondClock testMicrosClock = defaultMicrosecondClock;
     private long dataAppendPageSize = -1;
-    private CharSequence defaultMapType;
     private int defaultTableWriteMode = SqlWalMode.WAL_NOT_SET;
     private Map<String, String> env = null;
     private FactoryProvider factoryProvider = null;
@@ -170,11 +169,6 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public long getDataAppendPageSize() {
         return dataAppendPageSize;
-    }
-
-    @Override
-    public CharSequence getDefaultMapType() {
-        return defaultMapType;
     }
 
     @Override
@@ -483,7 +477,6 @@ public class Overrides implements ConfigurationOverrides {
         currentMicros = -1;
         testMicrosClock = defaultMicrosecondClock;
         sampleByIndexSearchPageSize = -1;
-        defaultMapType = null;
         writerAsyncCommandBusyWaitTimeout = -1;
         writerAsyncCommandMaxTimeout = -1;
         pageFrameMaxRows = -1;
@@ -594,11 +587,6 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public void setDataAppendPageSize(long dataAppendPageSize) {
         this.dataAppendPageSize = dataAppendPageSize;
-    }
-
-    @Override
-    public void setDefaultMapType(CharSequence defaultMapType) {
-        this.defaultMapType = defaultMapType;
     }
 
     @Override
