@@ -185,14 +185,14 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
     }
 
     private void sendErrorContent(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        HttpChunkedResponseSocket r = context.getChunkedResponseSocket();
-        state.formatError(r);
-        r.sendChunk(true);
+        HttpChunkedResponse response = context.getChunkedResponse();
+        state.formatError(response);
+        response.sendChunk(true);
     }
 
     private void sendErrorHeader(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        HttpChunkedResponseSocket r = context.getChunkedResponseSocket();
-        r.status(state.getHttpResponseCode(), CONTENT_TYPE_JSON);
-        r.sendHeader();
+        HttpChunkedResponse response = context.getChunkedResponse();
+        response.status(state.getHttpResponseCode(), CONTENT_TYPE_JSON);
+        response.sendHeader();
     }
 }

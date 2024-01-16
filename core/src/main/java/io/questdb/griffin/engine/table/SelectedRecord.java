@@ -28,8 +28,8 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
-import io.questdb.std.str.CharSinkBase;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 
 class SelectedRecord implements Record {
     private final IntList columnCrossIndex;
@@ -125,7 +125,7 @@ class SelectedRecord implements Record {
     }
 
     @Override
-    public void getLong256(int col, CharSinkBase<?> sink) {
+    public void getLong256(int col, CharSink<?> sink) {
         base.getLong256(getColumnIndex(col), sink);
     }
 
@@ -160,7 +160,7 @@ class SelectedRecord implements Record {
     }
 
     @Override
-    public void getStr(int col, CharSink sink) {
+    public void getStr(int col, Utf16Sink sink) {
         base.getStr(getColumnIndex(col), sink);
     }
 

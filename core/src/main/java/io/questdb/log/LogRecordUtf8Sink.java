@@ -31,7 +31,7 @@ import io.questdb.std.str.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public class LogRecordSink implements Utf8Sink, DirectUtf8Sequence, Sinkable, Mutable {
+public class LogRecordUtf8Sink implements Utf8Sink, DirectUtf8Sequence, Sinkable, Mutable {
     public static final int EOL_LENGTH = Misc.EOL.length();
     private final static int UTF8_BYTE_CLASS_BAD = -1;
     private final static int UTF8_BYTE_CLASS_CONTINUATION = 0;
@@ -42,7 +42,7 @@ public class LogRecordSink implements Utf8Sink, DirectUtf8Sequence, Sinkable, Mu
     private boolean done = false;
     private int level;
 
-    public LogRecordSink(long address, long addressSize) {
+    public LogRecordUtf8Sink(long address, long addressSize) {
         this.address = _wptr = address;
         this.lim = address + addressSize;
     }
@@ -149,7 +149,7 @@ public class LogRecordSink implements Utf8Sink, DirectUtf8Sequence, Sinkable, Mu
     }
 
     @Override
-    public Utf8Sink put(long lo, long hi) {
+    public Utf8Sink putUtf8(long lo, long hi) {
         final long rem = (lim - _wptr - EOL_LENGTH);
         final long size = hi - lo;
         if (rem >= size) {
@@ -197,8 +197,13 @@ public class LogRecordSink implements Utf8Sink, DirectUtf8Sequence, Sinkable, Mu
     }
 
     @Override
-    public void toSink(@NotNull CharSinkBase<?> sink) {
-        Utf8s.utf8ToUtf16(address, _wptr, sink);
+    public void toSink(@NotNull CharSink<?> sink) {
+        if (sink instanceof Utf16Sink) {
+            Utf8s.utf8ToUtf16(address, _wptr, (Utf16Sink) sink);
+        } else {
+            // target is the UTF8 sink
+            sink.putUtf8(address, _wptr);
+        }
     }
 
     @Override

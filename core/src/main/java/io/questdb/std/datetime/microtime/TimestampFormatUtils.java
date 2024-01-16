@@ -29,7 +29,7 @@ import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
@@ -78,14 +78,14 @@ public class TimestampFormatUtils {
         return thisCenturyLow + year;
     }
 
-    public static void append0(@NotNull CharSinkBase<?> sink, int val) {
+    public static void append0(@NotNull CharSink<?> sink, int val) {
         if (Math.abs(val) < 10) {
             sink.putAscii('0');
         }
         sink.put(val);
     }
 
-    public static void append00(@NotNull CharSinkBase<?> sink, int val) {
+    public static void append00(@NotNull CharSink<?> sink, int val) {
         int v = Math.abs(val);
         if (v < 10) {
             sink.putAscii('0').putAscii('0');
@@ -95,7 +95,7 @@ public class TimestampFormatUtils {
         sink.put(val);
     }
 
-    public static void append00000(@NotNull CharSinkBase<?> sink, int val) {
+    public static void append00000(@NotNull CharSink<?> sink, int val) {
         int v = Math.abs(val);
         if (v < 10) {
             sink.putAscii('0').putAscii('0').putAscii('0').putAscii('0').putAscii('0');
@@ -111,7 +111,7 @@ public class TimestampFormatUtils {
         sink.put(val);
     }
 
-    public static void appendAmPm(@NotNull CharSinkBase<?> sink, int hour, @NotNull DateLocale locale) {
+    public static void appendAmPm(@NotNull CharSink<?> sink, int hour, @NotNull DateLocale locale) {
         if (hour < 12) {
             sink.putAscii(locale.getAMPM(0));
         } else {
@@ -120,7 +120,7 @@ public class TimestampFormatUtils {
     }
 
     // YYYY-MM-DDThh:mm:ss.mmmZ
-    public static void appendDateTime(@NotNull CharSinkBase<?> sink, long micros) {
+    public static void appendDateTime(@NotNull CharSink<?> sink, long micros) {
         if (micros == Long.MIN_VALUE) {
             return;
         }
@@ -128,14 +128,14 @@ public class TimestampFormatUtils {
     }
 
     // YYYY-MM-DDThh:mm:ss.mmmuuuZ
-    public static void appendDateTimeUSec(@NotNull CharSinkBase<?> sink, long micros) {
+    public static void appendDateTimeUSec(@NotNull CharSink<?> sink, long micros) {
         if (micros == Long.MIN_VALUE) {
             return;
         }
         USEC_UTC_FORMAT.format(micros, DateFormatUtils.EN_LOCALE, "Z", sink);
     }
 
-    public static void appendEra(@NotNull CharSinkBase<?> sink, int year, @NotNull DateLocale locale) {
+    public static void appendEra(@NotNull CharSink<?> sink, int year, @NotNull DateLocale locale) {
         if (year < 0) {
             sink.put(locale.getEra(0));
         } else {
@@ -143,7 +143,7 @@ public class TimestampFormatUtils {
         }
     }
 
-    public static void appendHour12(@NotNull CharSinkBase<?> sink, int hour) {
+    public static void appendHour12(@NotNull CharSink<?> sink, int hour) {
         if (hour < 12) {
             Numbers.append(sink, hour);
         } else {
@@ -151,7 +151,7 @@ public class TimestampFormatUtils {
         }
     }
 
-    public static void appendHour121(@NotNull CharSinkBase<?> sink, int hour) {
+    public static void appendHour121(@NotNull CharSink<?> sink, int hour) {
         if (hour < 12) {
             Numbers.append(sink, hour + 1);
         } else {
@@ -159,7 +159,7 @@ public class TimestampFormatUtils {
         }
     }
 
-    public static void appendHour121Padded(@NotNull CharSinkBase<?> sink, int hour) {
+    public static void appendHour121Padded(@NotNull CharSink<?> sink, int hour) {
         if (hour < 12) {
             append0(sink, hour + 1);
         } else {
@@ -167,7 +167,7 @@ public class TimestampFormatUtils {
         }
     }
 
-    public static void appendHour12Padded(@NotNull CharSinkBase<?> sink, int hour) {
+    public static void appendHour12Padded(@NotNull CharSink<?> sink, int hour) {
         if (hour < 12) {
             append0(sink, hour);
         } else {
@@ -175,18 +175,18 @@ public class TimestampFormatUtils {
         }
     }
 
-    public static void appendYear(@NotNull CharSinkBase<?> sink, int val) {
+    public static void appendYear(@NotNull CharSink<?> sink, int val) {
         Numbers.append(sink, val != 0 ? val : 1);
     }
 
-    public static void appendYear0(@NotNull CharSinkBase<?> sink, int val) {
+    public static void appendYear0(@NotNull CharSink<?> sink, int val) {
         if (Math.abs(val) < 10) {
             sink.putAscii('0');
         }
         appendYear(sink, val);
     }
 
-    public static void appendYear00(@NotNull CharSinkBase<?> sink, int val) {
+    public static void appendYear00(@NotNull CharSink<?> sink, int val) {
         int v = Math.abs(val);
         if (v < 10) {
             sink.putAscii('0').putAscii('0');
@@ -196,7 +196,7 @@ public class TimestampFormatUtils {
         appendYear(sink, val);
     }
 
-    public static void appendYear000(@NotNull CharSinkBase<?> sink, int val) {
+    public static void appendYear000(@NotNull CharSink<?> sink, int val) {
         int v = Math.abs(val);
         if (v < 10) {
             sink.putAscii('0').putAscii('0').putAscii('0');
@@ -333,7 +333,7 @@ public class TimestampFormatUtils {
     }
 
     // YYYY-MM-DD
-    public static void formatDashYYYYMMDD(@NotNull CharSinkBase<?> sink, long millis) {
+    public static void formatDashYYYYMMDD(@NotNull CharSink<?> sink, long millis) {
         int y = Timestamps.getYear(millis);
         boolean l = Timestamps.isLeapYear(y);
         int m = Timestamps.getMonthOfYear(millis, y, l);
@@ -342,12 +342,12 @@ public class TimestampFormatUtils {
         append0(sink.putAscii('-'), Timestamps.getDayOfMonth(millis, y, m, l));
     }
 
-    public static void formatHTTP(@NotNull CharSinkBase<?> sink, long millis) {
+    public static void formatHTTP(@NotNull CharSink<?> sink, long millis) {
         HTTP_FORMAT.format(millis, EN_LOCALE, "GMT", sink);
     }
 
     // YYYY-MM
-    public static void formatYYYYMM(@NotNull CharSinkBase<?> sink, long millis) {
+    public static void formatYYYYMM(@NotNull CharSink<?> sink, long millis) {
         int y = Timestamps.getYear(millis);
         int m = Timestamps.getMonthOfYear(millis, y, Timestamps.isLeapYear(y));
         Numbers.append(sink, y);
@@ -355,7 +355,7 @@ public class TimestampFormatUtils {
     }
 
     // YYYYMMDD
-    public static void formatYYYYMMDD(@NotNull CharSinkBase<?> sink, long millis) {
+    public static void formatYYYYMMDD(@NotNull CharSink<?> sink, long millis) {
         int y = Timestamps.getYear(millis);
         boolean l = Timestamps.isLeapYear(y);
         int m = Timestamps.getMonthOfYear(millis, y, l);

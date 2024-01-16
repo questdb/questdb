@@ -33,7 +33,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.*;
 import io.questdb.std.*;
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.CharSink;
 
 public class CoalesceFunctionFactory implements FunctionFactory {
     @Override
@@ -283,7 +283,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getLong256(Record rec, CharSinkBase<?> sink) {
+        public void getLong256(Record rec, CharSink<?> sink) {
             for (int i = 0; i < size; i++) {
                 Long256 value = args.getQuick(i).getLong256A(rec);
                 if (isNotNull(value)) {
@@ -577,7 +577,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getLong256(Record rec, CharSinkBase<?> sink) {
+        public void getLong256(Record rec, CharSink<?> sink) {
             Long256 value = args0.getLong256A(rec);
             if (!isNotNull(value)) {
                 value = args1.getLong256A(rec);

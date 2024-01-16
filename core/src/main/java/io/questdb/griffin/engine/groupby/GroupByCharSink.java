@@ -27,8 +27,8 @@ package io.questdb.griffin.engine.groupby;
 import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.AbstractCharSequence;
-import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -45,7 +45,7 @@ import org.jetbrains.annotations.Nullable;
  * +---------------------+-------------------+------------+
  * </pre>
  */
-public class GroupByCharSink extends AbstractCharSink implements CharSequence, Mutable {
+public class GroupByCharSink implements CharSink<GroupByCharSink>, CharSequence, Mutable {
     private static final long HEADER_SIZE = 2 * Integer.BYTES;
     private static final long LEN_OFFSET = Integer.BYTES;
     private static final int MIN_CAPACITY = 16;
@@ -86,10 +86,20 @@ public class GroupByCharSink extends AbstractCharSink implements CharSequence, M
     }
 
     @Override
-    public CharSink put(@Nullable CharSequence cs) {
+    public GroupByCharSink put(@Nullable Utf8Sequence us) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public GroupByCharSink put(byte b) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public GroupByCharSink put(@Nullable CharSequence cs) {
         if (cs != null) {
             int thatLen = cs.length();
-            ensureCapacity(thatLen);
+            checkCapacity(thatLen);
             int thisLen = length();
             long lo = ptr + HEADER_SIZE + 2L * thisLen;
             for (int i = 0; i < thatLen; i++) {
@@ -101,13 +111,28 @@ public class GroupByCharSink extends AbstractCharSink implements CharSequence, M
     }
 
     @Override
-    public CharSink put(char c) {
-        ensureCapacity(1);
+    public GroupByCharSink put(char c) {
+        checkCapacity(1);
         int len = length();
         long lo = ptr + HEADER_SIZE + 2L * len;
         Unsafe.getUnsafe().putChar(lo, c);
         Unsafe.getUnsafe().putInt(ptr + LEN_OFFSET, len + 1);
         return this;
+    }
+
+    @Override
+    public GroupByCharSink putAscii(char c) {
+        return put(c);
+    }
+
+    @Override
+    public GroupByCharSink putAscii(@Nullable CharSequence cs) {
+        return put(cs);
+    }
+
+    @Override
+    public GroupByCharSink putUtf8(long lo, long hi) {
+        throw new UnsupportedOperationException();
     }
 
     public void setAllocator(GroupByAllocator allocator) {
@@ -125,7 +150,7 @@ public class GroupByCharSink extends AbstractCharSink implements CharSequence, M
         return AbstractCharSequence.getString(this);
     }
 
-    private void ensureCapacity(int nChars) {
+    private void checkCapacity(int nChars) {
         int capacity = capacity();
         int len = length();
         int requiredCapacity = len + nChars;

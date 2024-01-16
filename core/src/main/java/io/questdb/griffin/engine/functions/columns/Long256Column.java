@@ -30,7 +30,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.Long256Function;
 import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.CharSink;
 
 import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
 
@@ -50,7 +50,7 @@ public class Long256Column extends Long256Function implements ScalarFunction {
     }
 
     @Override
-    public void getLong256(Record rec, CharSinkBase<?> sink) {
+    public void getLong256(Record rec, CharSink<?> sink) {
         rec.getLong256(columnIndex, sink);
     }
 

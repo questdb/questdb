@@ -29,7 +29,7 @@ import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 
 import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
 
@@ -54,7 +54,7 @@ public class StrColumn extends StrFunction implements ScalarFunction {
     }
 
     @Override
-    public void getStr(Record rec, CharSink sink) {
+    public void getStr(Record rec, Utf16Sink sink) {
         rec.getStr(columnIndex, sink);
     }
 

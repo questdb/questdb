@@ -38,7 +38,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.MutableCharSink;
+import io.questdb.std.str.MutableUtf16Sink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -566,7 +566,7 @@ public class TableBackupTest {
         drainWalQueue();
     }
 
-    private void selectAll(TableToken tableToken, boolean backup, MutableCharSink sink) throws Exception {
+    private void selectAll(TableToken tableToken, boolean backup, MutableUtf16Sink sink) throws Exception {
         CairoEngine engine = mainEngine;
         SqlCompiler compiler = mainCompiler;
         SqlExecutionContext context = mainSqlExecutionContext;

@@ -87,7 +87,7 @@ public final class Chars {
         base64Decode(encoded, target, base64Inverted);
     }
 
-    public static void base64Encode(@Nullable BinarySequence sequence, int maxLength, @NotNull CharSinkBase<?> buffer) {
+    public static void base64Encode(@Nullable BinarySequence sequence, int maxLength, @NotNull CharSink<?> buffer) {
         int pad = base64Encode(sequence, maxLength, buffer, base64);
         for (int j = 0; j < pad; j++) {
             buffer.putAscii("=");
@@ -114,7 +114,7 @@ public final class Chars {
         base64Decode(encoded, target, base64UrlInverted);
     }
 
-    public static void base64UrlEncode(BinarySequence sequence, int maxLength, CharSinkBase<?> buffer) {
+    public static void base64UrlEncode(BinarySequence sequence, int maxLength, CharSink<?> buffer) {
         base64Encode(sequence, maxLength, buffer, base64Url);
         // base64 url does not use padding
     }
@@ -736,7 +736,7 @@ public final class Chars {
             }
 
             @Override
-            public CharSequence subSequence(int start, int end) {
+            @NotNull public CharSequence subSequence(int start, int end) {
                 throw new UnsupportedOperationException();
             }
         };
@@ -837,7 +837,7 @@ public final class Chars {
         return cs.length() >= l && equalsCharsLowerCase(startsLC, cs, l);
     }
 
-    public static void toLowerCase(@Nullable CharSequence str, @NotNull CharSinkBase<?> sink) {
+    public static void toLowerCase(@Nullable CharSequence str, @NotNull CharSink<?> sink) {
         if (str != null) {
             final int len = str.length();
             for (int i = 0; i < len; i++) {
@@ -855,7 +855,7 @@ public final class Chars {
             return "";
         }
 
-        final CharSink b = Misc.getThreadLocalSink();
+        final Utf16Sink b = Misc.getThreadLocalSink();
         for (int i = 0; i < len; i++) {
             b.put(toLowerCaseAscii(value.charAt(i)));
         }
@@ -866,7 +866,7 @@ public final class Chars {
         return character > 64 && character < 91 ? (char) (character + 32) : character;
     }
 
-    public static void toSink(@Nullable BinarySequence sequence, @NotNull CharSinkBase<?> sink) {
+    public static void toSink(@Nullable BinarySequence sequence, @NotNull CharSink<?> sink) {
         if (sequence == null) {
             return;
         }
@@ -914,13 +914,13 @@ public final class Chars {
     }
 
     public static String toString(CharSequence cs, int start, int end) {
-        final CharSink b = Misc.getThreadLocalSink();
+        final Utf16Sink b = Misc.getThreadLocalSink();
         b.put(cs, start, end);
         return b.toString();
     }
 
     public static String toString(CharSequence cs, int start, int end, char unescape) {
-        final CharSink b = Misc.getThreadLocalSink();
+        final Utf16Sink b = Misc.getThreadLocalSink();
         final int lastChar = end - 1;
         for (int i = start; i < end; i++) {
             char c = cs.charAt(i);
@@ -932,7 +932,7 @@ public final class Chars {
         return b.toString();
     }
 
-    public static void toUpperCase(@Nullable CharSequence str, @NotNull CharSinkBase<?> sink) {
+    public static void toUpperCase(@Nullable CharSequence str, @NotNull CharSink<?> sink) {
         if (str != null) {
             final int len = str.length();
             for (int i = 0; i < len; i++) {
@@ -1086,7 +1086,7 @@ public final class Chars {
         }
     }
 
-    private static int base64Encode(@Nullable BinarySequence sequence, int maxLength, @NotNull CharSinkBase<?> buffer, char @NotNull [] alphabet) {
+    private static int base64Encode(@Nullable BinarySequence sequence, int maxLength, @NotNull CharSink<?> buffer, char @NotNull [] alphabet) {
         if (sequence == null) {
             return 0;
         }

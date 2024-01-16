@@ -43,7 +43,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
      * These indirect fields are get/set by {@link #getImplPtr()},
      * {@link #setImplPtr(long)}, {@link #getImplLo()}, {@link #getImplHi()}.
      * <p>
-     * The {@link #book(long)} method updates `impl`'s `lo` and `hi` fields.
+     * The {@link #checkCapacity(long)} method updates `impl`'s `lo` and `hi` fields.
      */
     private long impl;
 
@@ -87,7 +87,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
 
     /**
      * Low-level access to advance the internal write cursor by `written` bytes.
-     * Use in conjunction with {@link #book(long)}.
+     * Use in conjunction with {@link #checkCapacity(long)}.
      */
     public void advance(long written) {
         setImplPtr(getImplPtr() + written);
@@ -98,7 +98,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
      * Returns the address of the first writable byte.
      * Use in conjunction with {@link #advance(long)}.
      */
-    public long book(long required) {
+    public long checkCapacity(long required) {
         assert required >= 0;
         long p = getImplPtr();
         final long available = getImplHi() - p;
@@ -167,7 +167,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
     }
 
     public DirectByteSink put(byte b) {
-        final long dest = book(1);
+        final long dest = checkCapacity(1);
         Unsafe.getUnsafe().putByte(dest, b);
         advance(1);
         return this;
@@ -176,7 +176,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
     public DirectByteSink put(ByteSequence bs) {
         if (bs != null) {
             final int bsSize = bs.size();
-            final long dest = book(bsSize);
+            final long dest = checkCapacity(bsSize);
             for (int i = 0; i < bsSize; i++) {
                 Unsafe.getUnsafe().putByte(dest + i, bs.byteAt(i));
             }
@@ -194,7 +194,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
 
     public DirectByteSink put(long lo, long hi) {
         final long len = hi - lo;
-        final long dest = book(len);
+        final long dest = checkCapacity(len);
         Vect.memcpy(dest, lo, len);
         advance(len);
         return this;

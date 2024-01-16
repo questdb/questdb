@@ -24,7 +24,7 @@
 
 package io.questdb.std;
 
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 
@@ -172,7 +172,7 @@ public final class LongLongHashSet implements Mutable, Sinkable {
     }
 
     @Override
-    public void toSink(@NotNull CharSinkBase<?> sink) {
+    public void toSink(@NotNull CharSink<?> sink) {
         sink.putAscii('[');
         boolean pastFirst = false;
         for (int i = 0, n = values.length; i < n; i += 2) {
@@ -238,6 +238,6 @@ public final class LongLongHashSet implements Mutable, Sinkable {
     }
 
     public interface SinkStrategy {
-        void put(long key1, long key2, CharSinkBase<?> sink);
+        void put(long key1, long key2, CharSink<?> sink);
     }
 }

@@ -32,7 +32,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
-public class DirectCharSink extends AbstractCharSink implements MutableCharSink, CharSequence, DirectSequence, Closeable {
+public class DirectUtf16Sink implements MutableUtf16Sink, CharSequence, DirectSequence, Closeable, Utf16Sink {
     private final long initialCapacity;
     private long capacity;
     private long hi;
@@ -40,7 +40,7 @@ public class DirectCharSink extends AbstractCharSink implements MutableCharSink,
     private long ptr;
     private FloatingCharSequence subSequence;
 
-    public DirectCharSink(long capacity) {
+    public DirectUtf16Sink(long capacity) {
         ptr = Unsafe.malloc(capacity, MemoryTag.NATIVE_DIRECT_CHAR_SINK);
         this.capacity = capacity;
         this.initialCapacity = capacity;
@@ -79,7 +79,7 @@ public class DirectCharSink extends AbstractCharSink implements MutableCharSink,
     }
 
     @Override
-    public CharSink put(@Nullable CharSequence cs) {
+    public Utf16Sink put(@Nullable CharSequence cs) {
         if (cs != null) {
             int l = cs.length();
             int l2 = l * 2;
@@ -95,7 +95,7 @@ public class DirectCharSink extends AbstractCharSink implements MutableCharSink,
     }
 
     @Override
-    public CharSink put(char c) {
+    public Utf16Sink put(char c) {
         if (lo == hi) {
             resize(this.capacity * 2);
         }
@@ -105,7 +105,7 @@ public class DirectCharSink extends AbstractCharSink implements MutableCharSink,
     }
 
     @Override
-    public CharSink put(char @NotNull [] chars, int start, int len) {
+    public Utf16Sink put(char @NotNull [] chars, int start, int len) {
         int l2 = len * 2;
 
         if (lo + l2 >= hi) {
@@ -131,7 +131,7 @@ public class DirectCharSink extends AbstractCharSink implements MutableCharSink,
     }
 
     @Override
-    public CharSequence subSequence(int start, int end) {
+    public @NotNull CharSequence subSequence(int start, int end) {
         if (subSequence == null) {
             subSequence = new FloatingCharSequence();
         }

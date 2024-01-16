@@ -27,7 +27,7 @@ package io.questdb.std.str;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public interface Utf8Sink extends CharSinkBase<Utf8Sink> {
+public interface Utf8Sink extends CharSink<Utf8Sink> {
 
     /**
      * Encodes the given segment of a char sequence from UTF-16 to UTF-8 and writes it to the sink.
@@ -44,8 +44,6 @@ public interface Utf8Sink extends CharSinkBase<Utf8Sink> {
         }
         return this;
     }
-
-    Utf8Sink put(long lo, long hi);
 
     /**
      * Encodes the given char sequence from UTF-16 to UTF-8 and writes it to the sink.
@@ -73,16 +71,13 @@ public interface Utf8Sink extends CharSinkBase<Utf8Sink> {
         return this;
     }
 
-    Utf8Sink put(@Nullable Utf8Sequence us);
 
     default Utf8Sink put(@Nullable DirectUtf8Sequence dus) {
         if (dus != null) {
-            put(dus.lo(), dus.hi());
+            putUtf8(dus.lo(), dus.hi());
         }
         return this;
     }
-
-    Utf8Sink put(byte b);
 
     @Override
     default Utf8Sink putAscii(char c) {

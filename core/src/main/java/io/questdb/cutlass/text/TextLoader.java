@@ -37,7 +37,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.str.DirectCharSink;
+import io.questdb.std.str.DirectUtf16Sink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
@@ -63,7 +63,7 @@ public class TextLoader implements Closeable, Mutable {
     private final CairoTextWriter textWriter;
     private final TextLexerWrapper tlw;
     private final TypeManager typeManager;
-    private final DirectCharSink utf8Sink;
+    private final DirectUtf16Sink utf8Sink;
     private byte columnDelimiter = -1;
     private boolean forceHeaders = false;
     private AbstractTextLexer lexer;
@@ -77,7 +77,7 @@ public class TextLoader implements Closeable, Mutable {
         this.tlw = new TextLexerWrapper(engine.getConfiguration().getTextConfiguration());
         this.textWriter = new CairoTextWriter(engine);
         this.textConfiguration = engine.getConfiguration().getTextConfiguration();
-        this.utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkSize());
+        this.utf8Sink = new DirectUtf16Sink(textConfiguration.getUtf8SinkSize());
         this.typeManager = new TypeManager(textConfiguration, utf8Sink);
         jsonLexer = new JsonLexer(textConfiguration.getJsonCacheSize(), textConfiguration.getJsonCacheLimit());
 

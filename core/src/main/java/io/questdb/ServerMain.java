@@ -110,7 +110,11 @@ public class ServerMain implements Closeable {
         return authenticatorFactory;
     }
 
-    public static PgWireAuthenticatorFactory getPgWireAuthenticatorFactory(ServerConfiguration configuration, DirectUtf8Sink defaultUserPasswordSink, DirectUtf8Sink readOnlyUserPasswordSink) {
+    public static PgWireAuthenticatorFactory getPgWireAuthenticatorFactory(
+            ServerConfiguration configuration,
+            DirectUtf8Sink defaultUserPasswordSink,
+            DirectUtf8Sink readOnlyUserPasswordSink
+    ) {
         UsernamePasswordMatcher usernamePasswordMatcher = newPgWireUsernamePasswordMatcher(configuration.getPGWireConfiguration(), defaultUserPasswordSink, readOnlyUserPasswordSink);
         return new UsernamePasswordPgWireAuthenticatorFactory(usernamePasswordMatcher);
     }

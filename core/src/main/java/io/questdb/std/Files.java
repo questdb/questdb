@@ -135,7 +135,7 @@ public final class Files {
 
     /**
      * close(fd) should be used instead of this method in most cases
-     * unless you don't need close sys call to happen.
+     * unless you don't need close() sys call to happen.
      *
      * @param fd file descriptor
      */
@@ -380,17 +380,6 @@ public final class Files {
 
     public static native long noop();
 
-    public static boolean notDots(CharSequence value) {
-        final int len = value.length();
-        if (len > 2) {
-            return true;
-        }
-        if (value.charAt(0) != '.') {
-            return true;
-        }
-        return len == 2 && value.charAt(1) != '.';
-    }
-
     public static boolean notDots(Utf8Sequence value) {
         final int size = value.size();
         if (size > 2) {
@@ -512,7 +501,7 @@ public final class Files {
                     } else if (notDots(nameUtf8Ptr)) {
                         res = type == Files.DT_LNK ? unlink(pathUtf8Ptr) == 0 : rmdir(path, haltOnFail);
                         if (!res && haltOnFail) {
-                            return res;
+                            return false;
                         }
                     }
                 }
@@ -561,7 +550,7 @@ public final class Files {
         if (type == DT_DIR) {
             if (nameSink != null) {
                 nameSink.clear();
-                Utf8s.utf8ToUtf16Z(pUtf8NameZ, nameSink);
+                Utf8s.utf8ZCopy(pUtf8NameZ, nameSink);
             }
             path.trimTo(rootLen).concat(pUtf8NameZ).$();
             return DT_DIR;
@@ -570,7 +559,7 @@ public final class Files {
         if (type == DT_LNK) {
             if (nameSink != null) {
                 nameSink.clear();
-                Utf8s.utf8ToUtf16Z(pUtf8NameZ, nameSink);
+                Utf8s.utf8ZCopy(pUtf8NameZ, nameSink);
             }
             path.trimTo(rootLen).concat(pUtf8NameZ).$();
             if (isDir(path.ptr())) {

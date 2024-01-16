@@ -24,7 +24,7 @@
 
 package io.questdb.std;
 
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 
@@ -64,13 +64,13 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
      * {@inheritDoc}
      */
     public void add(T value) {
-        ensureCapacity(pos + 1);
+        checkCapacity(pos + 1);
         buffer[pos++] = value;
     }
 
     public void addAll(ReadOnlyObjList<? extends T> that) {
         int n = that.size();
-        ensureCapacity(pos + n);
+        checkCapacity(pos + n);
         for (int i = 0; i < n; i++) {
             buffer[pos++] = that.getQuick(i);
         }
@@ -78,9 +78,20 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
 
     public void addAll(ReadOnlyObjList<? extends T> that, int lo, int hi) {
         int n = hi - lo;
-        ensureCapacity(pos + n);
+        checkCapacity(pos + n);
         for (int i = lo; i < hi; i++) {
             buffer[pos++] = that.getQuick(i);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    public void checkCapacity(int capacity) {
+        int l = buffer.length;
+        if (capacity > l) {
+            int newCap = Math.max(l << 1, capacity);
+            T[] buf = (T[]) new Object[newCap];
+            System.arraycopy(buffer, 0, buf, 0, l);
+            this.buffer = buf;
         }
     }
 
@@ -106,17 +117,6 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
         return false;
     }
 
-    @SuppressWarnings("unchecked")
-    public void ensureCapacity(int capacity) {
-        int l = buffer.length;
-        if (capacity > l) {
-            int newCap = Math.max(l << 1, capacity);
-            T[] buf = (T[]) new Object[newCap];
-            System.arraycopy(buffer, 0, buf, 0, l);
-            this.buffer = buf;
-        }
-    }
-
     /**
      * {@inheritDoc}
      */
@@ -126,7 +126,7 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
     }
 
     public void extendAndSet(int index, T value) {
-        ensureCapacity(index + 1);
+        checkCapacity(index + 1);
         if (index >= pos) {
             pos = index + 1;
         }
@@ -134,7 +134,7 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
     }
 
     public void extendPos(int capacity) {
-        ensureCapacity(capacity);
+        checkCapacity(capacity);
         pos = Math.max(pos, capacity);
     }
 
@@ -237,7 +237,7 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
     }
 
     public void insert(int index, int length, T defaultValue) {
-        ensureCapacity(pos + length);
+        checkCapacity(pos + length);
         if (pos > index) {
             System.arraycopy(buffer, index, buffer, index + length, pos - index);
         }
@@ -287,13 +287,13 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
     }
 
     public void setAll(int capacity, T value) {
-        ensureCapacity(capacity);
+        checkCapacity(capacity);
         pos = capacity;
         Arrays.fill(buffer, value);
     }
 
     public void setPos(int capacity) {
-        ensureCapacity(capacity);
+        checkCapacity(capacity);
         pos = capacity;
     }
 
@@ -319,15 +319,15 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
     }
 
     @Override
-    public void toSink(@NotNull CharSinkBase<?> sink) {
+    public void toSink(@NotNull CharSink<?> sink) {
         toSink(sink, 0, size());
     }
 
-    public void toSink(CharSinkBase<?> sink, int from) {
+    public void toSink(CharSink<?> sink, int from) {
         toSink(sink, from, size());
     }
 
-    public void toSink(CharSinkBase<?> sink, int from, int to) {
+    public void toSink(CharSink<?> sink, int from, int to) {
         sink.putAscii('[');
         for (int i = from; i < to; i++) {
             if (i > from) {
