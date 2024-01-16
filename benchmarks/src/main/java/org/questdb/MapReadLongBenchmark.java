@@ -66,11 +66,6 @@ public class MapReadLongBenchmark {
         new Runner(opt).run();
     }
 
-    @Benchmark
-    public long baseline() {
-        return rnd.nextLong(size);
-    }
-
     @Setup
     public void setup() {
         rnd.reset();
