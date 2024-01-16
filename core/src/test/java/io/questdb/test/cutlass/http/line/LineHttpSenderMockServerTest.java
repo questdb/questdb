@@ -3,15 +3,10 @@ package io.questdb.test.cutlass.http.line;
 import io.questdb.BuildInformationHolder;
 import io.questdb.Metrics;
 import io.questdb.client.Sender;
-import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
-import io.questdb.cutlass.http.HttpRequestProcessor;
-import io.questdb.cutlass.http.HttpRequestProcessorFactory;
-import io.questdb.cutlass.http.HttpServer;
+import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.mp.WorkerPool;
-import io.questdb.network.NetworkFacade;
-import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.network.PlainSocketFactory;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.cutlass.http.HttpServerConfigurationBuilder;
@@ -37,7 +32,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
                 .withExpectedContent("test,sym=bol x=1.0\n")
                 .withExpectedHeader("User-Agent", "QuestDB/java/" + QUESTDB_VERSION)
-                .replyWithContent(400, badJsonResponse, "application/json");
+                .replyWithContent(400, badJsonResponse, HttpConstants.CONTENT_TYPE_JSON);
 
         testWithMock(mockHttpProcessor, errorVerifier("Could not flush buffer: " + badJsonResponse + " [http-status=400]"));
     }
@@ -67,7 +62,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
 
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
                 .withExpectedHeader("User-Agent", "QuestDB/java/" + QUESTDB_VERSION)
-                .replyWithContent(400, jsonResponse, "application/json");
+                .replyWithContent(400, jsonResponse, HttpConstants.CONTENT_TYPE_JSON);
 
         testWithMock(mockHttpProcessor, errorVerifier("Could not flush buffer: failed to parse line protocol: invalid field format [http-status=400, id: ABC-2, code: invalid, line: 2]"));
     }
@@ -177,7 +172,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     public void testRetryOn500() throws Exception {
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
                 .withExpectedContent("test,sym=bol x=1.0\n")
-                .replyWithContent(500, "Internal Server Error", "application/json")
+                .replyWithContent(500, "Internal Server Error", HttpConstants.CONTENT_TYPE_JSON)
                 .withExpectedContent("test,sym=bol x=1.0\n")
                 .replyWithStatus(204);
 
@@ -194,13 +189,13 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     public void testRetryOn500_exceeded() throws Exception {
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
                 .withExpectedContent("test,sym=bol x=1.0\n")
-                .replyWithContent(500, "Internal Server Error", "application/json")
+                .replyWithContent(500, "Internal Server Error", HttpConstants.CONTENT_TYPE_JSON)
                 .withExpectedContent("test,sym=bol x=1.0\n")
-                .replyWithContent(500, "Internal Server Error", "application/json")
+                .replyWithContent(500, "Internal Server Error", HttpConstants.CONTENT_TYPE_JSON)
                 .withExpectedContent("test,sym=bol x=1.0\n")
-                .replyWithContent(500, "Internal Server Error", "application/json")
+                .replyWithContent(500, "Internal Server Error", HttpConstants.CONTENT_TYPE_JSON)
                 .withExpectedContent("test,sym=bol x=1.0\n")
-                .replyWithContent(500, "Internal Server Error", "application/json");
+                .replyWithContent(500, "Internal Server Error", HttpConstants.CONTENT_TYPE_JSON);
 
         testWithMock(mockHttpProcessor, sender -> {
             sender.table("test")
@@ -311,42 +306,14 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     }
 
     @NotNull
-    private DefaultHttpServerConfiguration createHttpServerConfiguration(
-            NetworkFacade nf,
-            String baseDir,
-            int sendBufferSize,
-            boolean dumpTraffic,
-            boolean allowDeflateBeforeSend
-    ) {
-        return createHttpServerConfiguration(
-                nf,
-                baseDir,
-                sendBufferSize,
-                dumpTraffic,
-                allowDeflateBeforeSend,
-                true,
-                "HTTP/1.1 "
-        );
-    }
-
-    @NotNull
-    private DefaultHttpServerConfiguration createHttpServerConfiguration(
-            NetworkFacade nf,
-            String baseDir,
-            int sendBufferSize,
-            boolean dumpTraffic,
-            boolean allowDeflateBeforeSend,
-            boolean serverKeepAlive,
-            String httpProtocolVersion
-    ) {
+    private DefaultHttpServerConfiguration createHttpServerConfiguration() {
         return new HttpServerConfigurationBuilder()
-                .withNetwork(nf)
-                .withBaseDir(baseDir)
-                .withSendBufferSize(sendBufferSize)
-                .withDumpingTraffic(dumpTraffic)
-                .withAllowDeflateBeforeSend(allowDeflateBeforeSend)
-                .withServerKeepAlive(serverKeepAlive)
-                .withHttpProtocolVersion(httpProtocolVersion)
+                .withBaseDir(root)
+                .withSendBufferSize(4096)
+                .withDumpingTraffic(false)
+                .withAllowDeflateBeforeSend(false)
+                .withServerKeepAlive(true)
+                .withHttpProtocolVersion("HTTP/1.1 ")
                 .build();
     }
 
@@ -356,9 +323,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
 
     private void testWithMock(MockHttpProcessor mockHttpProcessor, Consumer<Sender> senderConsumer, Consumer<Sender.LineSenderBuilder> senderCustomizer) throws Exception {
         assertMemoryLeak(() -> {
-            final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
-            final String baseDir = root;
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 4096, false, false);
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration();
 
             try (WorkerPool workerPool = new TestWorkerPool(1);
                  HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, PlainSocketFactory.INSTANCE)) {
