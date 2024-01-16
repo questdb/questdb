@@ -238,9 +238,8 @@ public final class LineHttpSender implements Sender {
             return;
         }
         ChunkedResponse chunkedRsp = response.getChunkedResponse();
-        Chunk chunk;
-        while ((chunk = chunkedRsp.recv()) != null) {
-            // we don't care about the response, just consume it
+        while ((chunkedRsp.recv()) != null) {
+            // we don't care about the response, just consume it so it won't stay in the socket receive buffer
         }
     }
 
@@ -352,7 +351,9 @@ public final class LineHttpSender implements Sender {
                 jsonErrorParser = new JsonErrorParser();
             }
             jsonErrorParser.reset();
-            jsonErrorParser.parseAndThrow(response.getChunkedResponse(), statusCode);
+            LineSenderException ex = jsonErrorParser.toException(response.getChunkedResponse(), statusCode);
+            client.disconnect();
+            throw ex;
         }
         // ok, no JSON, let's do something more generic
         StringSink sink = Misc.getThreadLocalSink();
@@ -558,7 +559,7 @@ public final class LineHttpSender implements Sender {
             jsonSink.clear();
         }
 
-        void parseAndThrow(ChunkedResponse chunkedRsp, DirectUtf8Sequence httpStatus) {
+        LineSenderException toException(ChunkedResponse chunkedRsp, DirectUtf8Sequence httpStatus) {
             Chunk chunk;
             LineSenderException exception = new LineSenderException("Could not flush buffer: ");
             while ((chunk = chunkedRsp.recv()) != null) {
@@ -574,11 +575,11 @@ public final class LineHttpSender implements Sender {
                     }
                     exception.put(jsonSink).put(" [http-status=").put(httpStatus.asAsciiCharSequence()).put(']');
                     reset();
-                    throw exception;
+                    return exception;
                 }
             }
             drainAndReset(exception, httpStatus);
-            throw exception;
+            return exception;
         }
 
         enum State {
