@@ -25,9 +25,9 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.map.FastMap;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.map.OrderedMap;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
@@ -54,7 +54,7 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
         // sink will be storing record columns to map key
         columnFilter.of(metadata.getColumnCount());
         RecordSink recordSink = RecordSinkFactory.getInstance(asm, metadata, columnFilter, false);
-        Map dataMap = new FastMap(
+        Map dataMap = new OrderedMap(
                 configuration.getSqlSmallMapPageSize(),
                 metadata,
                 configuration.getSqlDistinctTimestampKeyCapacity(),

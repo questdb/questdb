@@ -105,11 +105,6 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
-    public @NotNull CharSequence getDefaultMapType() {
-        return overrides.getDefaultMapType() == null ? super.getDefaultMapType() : overrides.getDefaultMapType();
-    }
-
-    @Override
     public Map<String, String> getEnv() {
         return overrides.getEnv();
     }

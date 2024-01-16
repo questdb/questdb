@@ -36,7 +36,7 @@ public class CountDistinctSymbolGroupByFunctionFactoryTest extends AbstractCairo
                         "a\t1\n" +
                         "b\t1\n" +
                         "c\t1\n",
-                "select a, count_distinct('a'::symbol) from x",
+                "select a, count_distinct('a'::symbol) from x order by a",
                 "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
                 null,
                 true,
@@ -47,16 +47,16 @@ public class CountDistinctSymbolGroupByFunctionFactoryTest extends AbstractCairo
     @Test
     public void testExpression() throws Exception {
         final String expected = "a\tcount_distinct\n" +
-                "7\t3\n" +
-                "6\t2\n" +
-                "8\t2\n" +
-                "5\t2\n" +
-                "3\t1\n" +
                 "1\t1\n" +
-                "4\t2\n";
+                "3\t1\n" +
+                "4\t2\n" +
+                "5\t2\n" +
+                "6\t2\n" +
+                "7\t3\n" +
+                "8\t2\n";
         assertQuery(
                 expected,
-                "select a, count_distinct(concat(s, 'foobar')::symbol) from x",
+                "select a, count_distinct(concat(s, 'foobar')::symbol) from x order by a",
                 "create table x as (select * from (select rnd_int(1, 8, 0) a, rnd_symbol('a','b','c') s from long_sequence(20)))",
                 null,
                 true,
@@ -64,21 +64,21 @@ public class CountDistinctSymbolGroupByFunctionFactoryTest extends AbstractCairo
         );
         // concatenation shouldn't affect the number of distinct values,
         // so the result should stay the same
-        assertSql(expected, "select a, count_distinct(s) from x");
+        assertSql(expected, "select a, count_distinct(s) from x order by a");
     }
 
     @Test
     public void testGroupKeyed() throws Exception {
         assertQuery(
                 "a\tcount_distinct\n" +
-                        "8\t3\n" +
+                        "0\t3\n" +
                         "1\t3\n" +
-                        "6\t2\n" +
                         "3\t3\n" +
                         "4\t3\n" +
-                        "0\t3\n" +
-                        "5\t1\n",
-                "select a, count_distinct(s) from x",
+                        "5\t1\n" +
+                        "6\t2\n" +
+                        "8\t3\n",
+                "select a, count_distinct(s) from x order by a",
                 "create table x as (select * from (select rnd_int(0, 9, 0) a, rnd_symbol('a','b','c','d','e','f') s, timestamp_sequence(0, 100000) ts from long_sequence(20)) timestamp(ts))",
                 null,
                 true,
@@ -137,7 +137,7 @@ public class CountDistinctSymbolGroupByFunctionFactoryTest extends AbstractCairo
                         "a\t0\n" +
                         "b\t0\n" +
                         "c\t0\n",
-                "select s, count_distinct(cast(null as SYMBOL)) from x",
+                "select s, count_distinct(cast(null as SYMBOL)) from x order by s",
                 "create table x as (select * from (select rnd_symbol('a','b','c') s from long_sequence(20)))",
                 null,
                 true,

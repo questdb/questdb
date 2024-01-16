@@ -59,8 +59,6 @@ public interface ConfigurationOverrides {
 
     long getDataAppendPageSize();
 
-    CharSequence getDefaultMapType();
-
     int getDefaultTableWriteMode();
 
     Map<String, String> getEnv();
@@ -208,8 +206,6 @@ public interface ConfigurationOverrides {
     void setCurrentMicros(long currentMicros);
 
     void setDataAppendPageSize(long dataAppendPageSize);
-
-    void setDefaultMapType(CharSequence defaultMapType);
 
     void setDefaultTableWriteMode(int defaultTableWriteMode);
 

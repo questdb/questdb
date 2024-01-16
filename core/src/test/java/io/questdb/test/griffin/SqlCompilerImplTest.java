@@ -3324,15 +3324,16 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "select id " +
                         "from test " +
                         "group by id " +
+                        "order by id " +
                         "limit 10")) {
 
             String expected = "id\n" +
-                    "0010cde8-12ce-40ee-8010-a928bb8b9650\n" +
                     "9f9b2131-d49f-4d1d-ab81-39815c50d341\n" +
+                    "0010cde8-12ce-40ee-8010-a928bb8b9650\n" +
                     "7bcd48d8-c77a-4655-b2a2-15ba0462ad15\n";
 
-            assertCursor(expected, factory, true, false, false);
-            assertCursor(expected, factory, true, false, false);
+            assertCursor(expected, factory, true, true, false);
+            assertCursor(expected, factory, true, true, false);
         }
     }
 

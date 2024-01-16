@@ -259,12 +259,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testFrameFunctionOverPartitionedRangeWithLargeFrame() throws Exception {
         assertMemoryLeak(() -> {
-            //default buffer size holds 65k entries in total, 32 per partition, see CairoConfiguration.getSqlWindowInitialRangeBufferSize()
+            // default buffer size holds 65k entries in total, 32 per partition, see CairoConfiguration.getSqlWindowInitialRangeBufferSize()
             ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
 
             // trigger per-partition buffers growth and free list usage
             insert("insert into tab select x::timestamp, x/10000, x from long_sequence(39999)");
-            //trigger removal of rows below lo boundary AND resize of buffer
+            // trigger removal of rows below lo boundary AND resize of buffer
             insert("insert into tab select (100000+x)::timestamp, (100000+x)%4, (100000+x) from long_sequence(4*90000)");
 
             String expected = "ts\ti\tj\tavg\tsum\tfirst_value\n" +
@@ -280,7 +280,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from " +
                             "( select i, max(ts) as max from tab group by i) cnt " +
                             "join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000) " +
-                            "group by data.i"
+                            "group by data.i " +
+                            "order by data.i"
             );
 
             assertQuery(
@@ -2421,8 +2422,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testRowNumberWithFilter() throws Exception {
         assertQuery(
                 "author\tsym\tcommits\trk\n" +
-                        "user2\tETH\t3\t1\n" +
-                        "user1\tETH\t3\t2\n",
+                        "user1\tETH\t3\t1\n" +
+                        "user2\tETH\t3\t2\n",
                 "with active_devs as (" +
                         "    select author, sym, count() as commits" +
                         "    from dev_stats" +
@@ -2434,7 +2435,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "    select author, sym, commits, row_number() over (partition by sym order by commits desc) as rk" +
                         "    from active_devs" +
                         ") " +
-                        "select * from active_ranked where sym = 'ETH'",
+                        "select * from active_ranked where sym = 'ETH' order by author, sym, commits",
                 "create table dev_stats as " +
                         "(" +
                         "select" +

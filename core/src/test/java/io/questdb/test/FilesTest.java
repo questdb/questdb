@@ -26,6 +26,7 @@ package io.questdb.test;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableUtils;
+import io.questdb.log.Log;
 import io.questdb.log.LogError;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -54,6 +55,7 @@ import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 public class FilesTest {
     private static final String EOL = System.lineSeparator();
+    private static final Log LOG = LogFactory.getLog(FilesTest.class);
     @Rule
     public final TemporaryFolder temporaryFolder = new TemporaryFolder();
 
@@ -124,6 +126,47 @@ public class FilesTest {
                 } finally {
                     Files.close(fd);
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testConcurrentRemove() throws Exception {
+        assertMemoryLeak(() -> {
+            File temp = temporaryFolder.newFile();
+            TestUtils.writeStringToFile(temp, "abcde");
+            FilesFacade ff = FilesFacadeImpl.INSTANCE;
+            try (Path path = new Path().of(temp.getAbsolutePath()).$()) {
+                Assert.assertTrue(Files.exists(path));
+                Assert.assertEquals(5, Files.length(path));
+
+                int threadCount = 4;
+                CyclicBarrier barrier = new CyclicBarrier(threadCount);
+                AtomicInteger errorCounter = new AtomicInteger();
+                ObjList<Thread> threads = new ObjList<>();
+
+                for (int i = 0; i < threadCount; i++) {
+                    threads.add(new Thread(() -> {
+                        try {
+                            barrier.await();
+                            ff.remove(path);
+                        } catch (Throwable e) {
+                            e.printStackTrace();
+                            LOG.error().$(e).$();
+                            errorCounter.incrementAndGet();
+                        }
+                    }));
+                }
+
+                for (int i = 0; i < threadCount; i++) {
+                    threads.getQuick(i).start();
+                }
+
+                for (int i = 0; i < threadCount; i++) {
+                    threads.getQuick(i).join();
+                }
+
+                Assert.assertEquals(0, errorCounter.get());
             }
         });
     }
