@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.http.client;
 
+import io.questdb.ClientTlsConfiguration;
 import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.HttpClientConfiguration;
 import io.questdb.network.JavaTlsClientSocketFactory;
@@ -33,20 +34,20 @@ import io.questdb.std.Os;
 
 public class HttpClientFactory {
     public static HttpClient newInsecureTlsInstance() {
-        return newTlsInstance(DefaultHttpClientConfiguration.INSTANCE, true);
+        return newInstance(DefaultHttpClientConfiguration.INSTANCE, JavaTlsClientSocketFactory.INSECURE_NO_VALIDATION);
     }
 
-    public static HttpClient newInstance(HttpClientConfiguration configuration, SocketFactory socketFactory, boolean insecureTls) {
+    public static HttpClient newInstance(HttpClientConfiguration configuration, SocketFactory socketFactory) {
         switch (Os.type) {
             case Os.LINUX_AMD64:
             case Os.LINUX_ARM64:
-                return new HttpClientLinux(configuration, socketFactory, insecureTls);
+                return new HttpClientLinux(configuration, socketFactory);
             case Os.OSX_AMD64:
             case Os.OSX_ARM64:
             case Os.FREEBSD:
-                return new HttpClientOsx(configuration, socketFactory, insecureTls);
+                return new HttpClientOsx(configuration, socketFactory);
             case Os.WINDOWS:
-                return new HttpClientWindows(configuration, socketFactory, insecureTls);
+                return new HttpClientWindows(configuration, socketFactory);
             default:
                 throw new UnsupportedOperationException();
         }
@@ -57,14 +58,10 @@ public class HttpClientFactory {
     }
 
     public static HttpClient newPlainTextInstance(HttpClientConfiguration configuration) {
-        return newInstance(configuration, PlainSocketFactory.INSTANCE, true);
+        return newInstance(configuration, PlainSocketFactory.INSTANCE);
     }
 
-    public static HttpClient newTlsInstance(boolean insecureTls) {
-        return newTlsInstance(DefaultHttpClientConfiguration.INSTANCE, insecureTls);
-    }
-
-    public static HttpClient newTlsInstance(HttpClientConfiguration configuration, boolean insecureTls) {
-        return newInstance(configuration, JavaTlsClientSocketFactory.INSTANCE, insecureTls);
+    public static HttpClient newTlsInstance(HttpClientConfiguration configuration, ClientTlsConfiguration tlsConfig) {
+        return newInstance(configuration, new JavaTlsClientSocketFactory(tlsConfig));
     }
 }

@@ -35,8 +35,8 @@ public class HttpClientWindows extends HttpClient {
     private final SelectFacade sf;
     private FDSet fdSet;
 
-    public HttpClientWindows(HttpClientConfiguration configuration, SocketFactory socketFactory, boolean insecureTls) {
-        super(configuration, socketFactory, insecureTls);
+    public HttpClientWindows(HttpClientConfiguration configuration, SocketFactory socketFactory) {
+        super(configuration, socketFactory);
         this.fdSet = new FDSet(configuration.getWaitQueueCapacity());
         this.sf = configuration.getSelectFacade();
     }

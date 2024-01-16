@@ -24,13 +24,20 @@
 
 package io.questdb.network;
 
+import io.questdb.ClientTlsConfiguration;
 import io.questdb.log.Log;
 
 public final class JavaTlsClientSocketFactory implements SocketFactory {
-    public static final SocketFactory INSTANCE = new JavaTlsClientSocketFactory();
+    public static final SocketFactory DEFAULT = new JavaTlsClientSocketFactory(ClientTlsConfiguration.DEFAULT);
+    public static final SocketFactory INSECURE_NO_VALIDATION = new JavaTlsClientSocketFactory(ClientTlsConfiguration.INSECURE_NO_VALIDATION);
+    private final ClientTlsConfiguration tlsConfig;
+
+    public JavaTlsClientSocketFactory(ClientTlsConfiguration tlsConfig) {
+        this.tlsConfig = tlsConfig;
+    }
 
     @Override
     public Socket newInstance(NetworkFacade nf, Log log) {
-        return new JavaTlsClientSocket(nf, log);
+        return new JavaTlsClientSocket(nf, log, tlsConfig);
     }
 }

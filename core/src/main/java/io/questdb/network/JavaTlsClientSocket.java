@@ -24,18 +24,25 @@
 
 package io.questdb.network;
 
+import io.questdb.ClientTlsConfiguration;
+import io.questdb.cutlass.line.LineSenderException;
+import io.questdb.cutlass.line.tcp.DelegatingTlsChannel;
 import io.questdb.log.Log;
+import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
 import javax.net.ssl.*;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.io.InputStream;
 import java.lang.reflect.Field;
 import java.nio.Buffer;
 import java.nio.ByteBuffer;
-import java.security.KeyManagementException;
-import java.security.NoSuchAlgorithmException;
-import java.security.SecureRandom;
+import java.security.*;
+import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
 
 public final class JavaTlsClientSocket implements Socket {
@@ -61,6 +68,7 @@ public final class JavaTlsClientSocket implements Socket {
     private static final int STATE_TLS = 2;
     private final Socket delegate;
     private final Log log;
+    private final ClientTlsConfiguration tlsConfig;
     private final ByteBuffer unwrapInputBuffer;
     private final ByteBuffer unwrapOutputBuffer;
     private final ByteBuffer wrapInputBuffer;
@@ -70,9 +78,10 @@ public final class JavaTlsClientSocket implements Socket {
     private long unwrapInputBufferPtr;
     private long wrapOutputBufferPtr;
 
-    JavaTlsClientSocket(NetworkFacade nf, Log log) {
+    JavaTlsClientSocket(NetworkFacade nf, Log log, ClientTlsConfiguration tlsConfig) {
         this.delegate = new PlainSocket(nf, log);
         this.log = log;
+        this.tlsConfig = tlsConfig;
 
         // wrapInputBuffer are just placeholders. we set the internal address, capacity and limit in send() and recv().
         // so read/write from/to a buffer supplied by the caller and avoid unnecessary memory copies.
@@ -265,11 +274,11 @@ public final class JavaTlsClientSocket implements Socket {
     }
 
     @Override
-    public int startTlsSession(String serverName) {
+    public int startTlsSession(CharSequence peerName) {
         assert state == STATE_PLAINTEXT;
         prepareInternalBuffers();
         try {
-            this.sslEngine = createSslEngine(serverName);
+            this.sslEngine = createSslEngine(peerName);
             this.sslEngine.beginHandshake();
             SSLEngineResult.HandshakeStatus handshakeStatus = sslEngine.getHandshakeStatus();
             while (handshakeStatus != SSLEngineResult.HandshakeStatus.FINISHED) {
@@ -344,7 +353,8 @@ public final class JavaTlsClientSocket implements Socket {
             wrapOutputBuffer.clear();
             state = STATE_TLS;
             return 0;
-        } catch (SSLException | KeyManagementException | NoSuchAlgorithmException e) {
+        } catch (KeyManagementException | NoSuchAlgorithmException | KeyStoreException | IOException |
+                 CertificateException e) {
             log.error().$("could not start SSL session").$(e).$();
             return -1;
         }
@@ -394,19 +404,59 @@ public final class JavaTlsClientSocket implements Socket {
         return newAddress;
     }
 
-    private static SSLEngine createSslEngine(String serverName) throws KeyManagementException, NoSuchAlgorithmException {
-        // todo: make configurable: CAs, peer advisory, etc.
+    private static long expandBuffer(ByteBuffer buffer, long oldAddress) {
+        int oldCapacity = buffer.capacity();
+        int newCapacity = oldCapacity * 2;
+        long newAddress = Unsafe.realloc(oldAddress, oldCapacity, newCapacity, MemoryTag.NATIVE_TLS_RSS);
+        resetBufferToPointer(buffer, newAddress, newCapacity);
+        return newAddress;
+    }
 
-        SSLEngine sslEngine;
-        if (serverName == null) {
-            // no server name, no certificate validation
-            // this is insecure and should only be used for testing
-            SSLContext sslContext = SSLContext.getInstance("TLS");
+    private static InputStream openTruststoreStream(String trustStorePath) throws FileNotFoundException {
+        InputStream trustStoreStream;
+        if (trustStorePath.startsWith("classpath:")) {
+            String adjustedPath = trustStorePath.substring("classpath:".length());
+            trustStoreStream = DelegatingTlsChannel.class.getResourceAsStream(adjustedPath);
+            if (trustStoreStream == null) {
+                throw new LineSenderException("configured trust store is unavailable ")
+                        .put("[path=").put(trustStorePath).put("]");
+            }
+            return trustStoreStream;
+        }
+        return new FileInputStream(trustStorePath);
+    }
+
+    private static void resetBufferToPointer(ByteBuffer buffer, long ptr, int len) {
+        assert buffer.isDirect();
+        Unsafe.getUnsafe().putLong(buffer, ADDRESS_FIELD_OFFSET, ptr);
+        Unsafe.getUnsafe().putLong(buffer, LIMIT_FIELD_OFFSET, len);
+        Unsafe.getUnsafe().putLong(buffer, CAPACITY_FIELD_OFFSET, len);
+        buffer.position(0);
+    }
+
+    private SSLEngine createSslEngine(CharSequence serverName) throws KeyManagementException, NoSuchAlgorithmException, KeyStoreException, IOException, CertificateException {
+        SSLContext sslContext;
+        String trustStorePath = tlsConfig.trustStorePath();
+        int tlsValidationMode = tlsConfig.tlsValidationMode();
+        if (trustStorePath != null) {
+            sslContext = SSLContext.getInstance("TLS");
+            TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+            KeyStore jks = KeyStore.getInstance("JKS");
+            try (InputStream trustStoreStream = openTruststoreStream(trustStorePath)) {
+                jks.load(trustStoreStream, tlsConfig.trustStorePassword());
+            }
+            tmf.init(jks);
+            TrustManager[] trustManagers = tmf.getTrustManagers();
+            sslContext.init(null, trustManagers, new SecureRandom());
+        } else if (tlsValidationMode == ClientTlsConfiguration.TLS_VALIDATION_MODE_NONE) {
+            sslContext = SSLContext.getInstance("TLS");
             sslContext.init(null, BLIND_TRUST_MANAGERS, new SecureRandom());
-            sslEngine = sslContext.createSSLEngine();
         } else {
-            SSLContext sslContext = SSLContext.getDefault();
-            sslEngine = sslContext.createSSLEngine(serverName, -1);
+            sslContext = SSLContext.getDefault();
+        }
+
+        SSLEngine sslEngine = sslContext.createSSLEngine(Chars.toString(serverName), -1);
+        if (tlsValidationMode != ClientTlsConfiguration.TLS_VALIDATION_MODE_NONE) {
             SSLParameters sslParameters = sslEngine.getSSLParameters();
             // The https validation algorithm? That looks confusing! After all we are not using any
             // https here at so what does it mean?
@@ -418,24 +468,9 @@ public final class JavaTlsClientSocket implements Socket {
             sslParameters.setEndpointIdentificationAlgorithm("https");
             sslEngine.setSSLParameters(sslParameters);
         }
+
         sslEngine.setUseClientMode(true);
         return sslEngine;
-    }
-
-    private static long expandBuffer(ByteBuffer buffer, long oldAddress) {
-        int oldCapacity = buffer.capacity();
-        int newCapacity = oldCapacity * 2;
-        long newAddress = Unsafe.realloc(oldAddress, oldCapacity, newCapacity, MemoryTag.NATIVE_TLS_RSS);
-        resetBufferToPointer(buffer, newAddress, newCapacity);
-        return newAddress;
-    }
-
-    private static void resetBufferToPointer(ByteBuffer buffer, long ptr, int len) {
-        assert buffer.isDirect();
-        Unsafe.getUnsafe().putLong(buffer, ADDRESS_FIELD_OFFSET, ptr);
-        Unsafe.getUnsafe().putLong(buffer, LIMIT_FIELD_OFFSET, len);
-        Unsafe.getUnsafe().putLong(buffer, CAPACITY_FIELD_OFFSET, len);
-        buffer.position(0);
     }
 
     private void freeInternalBuffers() {

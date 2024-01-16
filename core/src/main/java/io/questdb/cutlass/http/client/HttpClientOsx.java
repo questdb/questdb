@@ -33,8 +33,8 @@ import io.questdb.std.Misc;
 public class HttpClientOsx extends HttpClient {
     private Kqueue kqueue;
 
-    public HttpClientOsx(HttpClientConfiguration configuration, SocketFactory socketFactory, boolean insecureTls) {
-        super(configuration, socketFactory, insecureTls);
+    public HttpClientOsx(HttpClientConfiguration configuration, SocketFactory socketFactory) {
+        super(configuration, socketFactory);
         this.kqueue = new Kqueue(
                 configuration.getKQueueFacade(),
                 configuration.getWaitQueueCapacity()

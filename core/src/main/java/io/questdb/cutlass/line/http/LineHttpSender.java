@@ -1,6 +1,7 @@
 package io.questdb.cutlass.line.http;
 
 import io.questdb.BuildInformationHolder;
+import io.questdb.ClientTlsConfiguration;
 import io.questdb.HttpClientConfiguration;
 import io.questdb.cairo.TableUtils;
 import io.questdb.client.Sender;
@@ -44,7 +45,7 @@ public final class LineHttpSender implements Sender {
     private HttpClient.Request request;
     private RequestState state = RequestState.EMPTY;
 
-    public LineHttpSender(String host, int port, HttpClientConfiguration clientConfiguration, boolean tls, TlsValidationMode tlsValidationMode, int maxPendingRows, String authToken, String username, String password, int maxRetries) {
+    public LineHttpSender(String host, int port, HttpClientConfiguration clientConfiguration, ClientTlsConfiguration tlsConfig, int maxPendingRows, String authToken, String username, String password, int maxRetries) {
         assert authToken == null || (username == null && password == null);
         this.maxRetries = maxRetries;
         this.host = host;
@@ -53,8 +54,8 @@ public final class LineHttpSender implements Sender {
         this.authToken = authToken;
         this.username = username;
         this.password = password;
-        if (tls) {
-            this.client = HttpClientFactory.newTlsInstance(clientConfiguration, tlsValidationMode == TlsValidationMode.INSECURE);
+        if (tlsConfig != null) {
+            this.client = HttpClientFactory.newTlsInstance(clientConfiguration, tlsConfig);
             this.url = "https://" + host + ":" + port + PATH;
         } else {
             this.client = HttpClientFactory.newPlainTextInstance(clientConfiguration);

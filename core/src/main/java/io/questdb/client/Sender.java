@@ -24,6 +24,7 @@
 
 package io.questdb.client;
 
+import io.questdb.ClientTlsConfiguration;
 import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.HttpClientConfiguration;
 import io.questdb.cutlass.auth.AuthUtils;
@@ -402,7 +403,12 @@ public interface Sender extends Closeable {
                 }
                 int actualMaxPendingRows = maxPendingRows == MAX_PENDING_ROWS_DEFAULT ? DEFAULT_MAX_PENDING_ROWS : maxPendingRows;
                 int actualMaxRetries = maxRetries == MAX_RETRIES_DEFAULT ? DEFAULT_MAX_RETRIES : maxRetries;
-                return new LineHttpSender(host, port, httpClientConfiguration, tlsEnabled, tlsValidationMode, actualMaxPendingRows, httpToken, username, password, actualMaxRetries);
+                ClientTlsConfiguration tlsConfig = null;
+                if (tlsEnabled) {
+                    assert (trustStorePath == null) == (trustStorePassword == null); //either both null or both non-null
+                    tlsConfig = new ClientTlsConfiguration(trustStorePath, trustStorePassword, tlsValidationMode == TlsValidationMode.DEFAULT ? ClientTlsConfiguration.TLS_VALIDATION_MODE_FULL : ClientTlsConfiguration.TLS_VALIDATION_MODE_NONE);
+                }
+                return new LineHttpSender(host, port, httpClientConfiguration, tlsConfig, actualMaxPendingRows, httpToken, username, password, actualMaxRetries);
             }
             assert protocol == PROTOCOL_TCP;
 

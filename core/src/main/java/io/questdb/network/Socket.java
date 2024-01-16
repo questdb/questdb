@@ -92,13 +92,12 @@ public interface Socket extends QuietCloseable {
      * Starts a TLS session, if supported.
      * <p>
      * The server name is used for SNI and certificate validation for client connections. It has no effect
-     * on server connections. If null, clients will not validate the server certificate. This is insecure
-     * and should only be used for testing.
+     * on server connections.
      *
-     * @param serverName server name to use for SNI and certificate validation.
+     * @param peerName server name to use for SNI and certificate validation.
      * @return 0 if the call is successful; -1 if there was an error.
      */
-    int startTlsSession(@Nullable String serverName);
+    int startTlsSession(@Nullable CharSequence peerName);
 
     /**
      * @return true if the socket support TLS encryption; false otherwise.

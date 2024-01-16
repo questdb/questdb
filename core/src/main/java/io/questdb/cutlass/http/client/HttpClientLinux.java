@@ -34,8 +34,8 @@ import io.questdb.std.Misc;
 public class HttpClientLinux extends HttpClient {
     private Epoll epoll;
 
-    public HttpClientLinux(HttpClientConfiguration configuration, SocketFactory socketFactory, boolean insecureTls) {
-        super(configuration, socketFactory, insecureTls);
+    public HttpClientLinux(HttpClientConfiguration configuration, SocketFactory socketFactory) {
+        super(configuration, socketFactory);
         epoll = new Epoll(
                 configuration.getEpollFacade(),
                 configuration.getWaitQueueCapacity()

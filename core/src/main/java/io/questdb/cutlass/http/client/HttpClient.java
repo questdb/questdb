@@ -51,7 +51,6 @@ public abstract class HttpClient implements QuietCloseable {
     private final HttpClientCookieHandler cookieHandler;
     private final ObjectPool<DirectUtf8String> csPool = new ObjectPool<>(DirectUtf8String.FACTORY, 64);
     private final int defaultTimeout;
-    private final boolean insecureTls;
     private final int maxBufferSize;
     private final Request request = new Request();
     private final int responseParserBufSize;
@@ -62,8 +61,7 @@ public abstract class HttpClient implements QuietCloseable {
     private ResponseHeaders responseHeaders;
     private long responseParserBufLo;
 
-    public HttpClient(HttpClientConfiguration configuration, SocketFactory socketFactory, boolean insecureTls) {
-        this.insecureTls = insecureTls;
+    public HttpClient(HttpClientConfiguration configuration, SocketFactory socketFactory) {
         this.nf = configuration.getNetworkFacade();
         this.socket = socketFactory.newInstance(configuration.getNetworkFacade(), LOG);
         this.defaultTimeout = configuration.getTimeout();
@@ -501,7 +499,7 @@ public abstract class HttpClient implements QuietCloseable {
             }
             socket.of(fd);
             if (socket.supportsTls()) {
-                String serverName = insecureTls ? null : Chars.toString(host);
+                String serverName = Chars.toString(host);
                 if (socket.startTlsSession(serverName) < 0) {
                     int errno = nf.errno();
                     disconnect();

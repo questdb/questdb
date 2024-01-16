@@ -24,6 +24,8 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.fail;
 
 public class LineHttpsSenderTest extends AbstractBootstrapTest {
+    public static final char[] TRUSTSTORE_PASSWORD = "questdb".toCharArray();
+    public static final String TRUSTSTORE_PATH = "/keystore/server.keystore";
     @Rule
     public TlsProxyRule tlsProxy = TlsProxyRule.toHostAndPort("localhost", HTTP_PORT);
 
@@ -101,6 +103,27 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testCustomTrustStore() throws Exception {
+        String tableName = UUID.randomUUID().toString();
+        String truststore = TestUtils.getTestResourcePath(TRUSTSTORE_PATH);
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
+            )) {
+                serverMain.start();
+                int port = tlsProxy.getListeningPort();
+                String url = "https://localhost:" + port;
+                try (Sender sender = Sender.builder().url(url).advancedTls().customTrustStore(truststore, TRUSTSTORE_PASSWORD).build()) {
+                    for (int i = 0; i < 100_000; i++) {
+                        sender.table(tableName).longColumn("value", 42).atNow();
+                    }
+                }
+                assertTableSizeEventually(serverMain.getEngine(), tableName, 100_000);
+            }
+        });
+    }
+
+    @Test
     public void testRecoveryAfterInfrastructureErrorExceededRetryLimit() throws Exception {
         String tableName = "testAutoRecoveryAfterInfrastructureError";
         TestUtils.assertMemoryLeak(() -> {
@@ -162,6 +185,30 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
                     sender.flush();
                 }
                 assertTableSizeEventually(serverMain.getEngine(), tableName, 2);
+            }
+        });
+    }
+
+    @Test
+    public void testServerNotTrusted() throws Exception {
+        String tableName = UUID.randomUUID().toString();
+        String truststore = TestUtils.getTestResourcePath(TRUSTSTORE_PATH);
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
+            )) {
+                serverMain.start();
+                int port = tlsProxy.getListeningPort();
+                String url = "https://localhost:" + port;
+                try (Sender sender = Sender.builder().url(url).build()) {
+                    try {
+                        sender.table(tableName).longColumn("value", 42).atNow();
+                        sender.flush();
+                        fail("should fail, the server is not trusted");
+                    } catch (LineSenderException ex) {
+                        TestUtils.assertContains(ex.getMessage(), "Could not flush buffer");
+                    }
+                }
             }
         });
     }
