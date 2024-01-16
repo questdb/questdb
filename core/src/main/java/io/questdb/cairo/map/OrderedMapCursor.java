@@ -29,19 +29,19 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.Unsafe;
 import io.questdb.std.bytes.Bytes;
 
-public final class FastMapCursor implements MapRecordCursor {
+public final class OrderedMapCursor implements MapRecordCursor {
     // Set to -1 when key-value pair is var-size.
     private final long alignedKeyValueSize;
-    private final FastMap map;
-    private final FastMapRecord recordA;
-    private final FastMapRecord recordB;
+    private final OrderedMap map;
+    private final OrderedMapRecord recordA;
+    private final OrderedMapRecord recordB;
     private final long valueSize;
     private long address;
     private int count;
     private int remaining;
     private long topAddress;
 
-    FastMapCursor(FastMapRecord record, FastMap map) {
+    OrderedMapCursor(OrderedMapRecord record, OrderedMap map) {
         this.recordA = record;
         this.recordB = record.clone();
         this.map = map;
@@ -82,7 +82,7 @@ public final class FastMapCursor implements MapRecordCursor {
             recordA.of(address);
             if (alignedKeyValueSize == -1) {
                 int keySize = Unsafe.getUnsafe().getInt(address);
-                address = Bytes.align8b(address + FastMap.VAR_KEY_HEADER_SIZE + keySize + valueSize);
+                address = Bytes.align8b(address + OrderedMap.VAR_KEY_HEADER_SIZE + keySize + valueSize);
             } else {
                 address += alignedKeyValueSize;
             }
@@ -94,7 +94,7 @@ public final class FastMapCursor implements MapRecordCursor {
 
     @Override
     public void recordAt(Record record, long atRowId) {
-        ((FastMapRecord) record).of(atRowId);
+        ((OrderedMapRecord) record).of(atRowId);
     }
 
     @Override
@@ -108,7 +108,7 @@ public final class FastMapCursor implements MapRecordCursor {
         remaining = count;
     }
 
-    FastMapCursor init(long address, long limit, int count) {
+    OrderedMapCursor init(long address, long limit, int count) {
         this.address = this.topAddress = address;
         this.remaining = this.count = count;
         recordA.setLimit(limit);

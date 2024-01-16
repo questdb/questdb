@@ -79,7 +79,7 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
         this.masterKeySink = masterSink;
         this.slaveKeySink = slaveSink;
 
-        Map joinKeyMap = MapFactory.createMap(
+        Map joinKeyMap = MapFactory.createOrderedMap(
                 cairoConfiguration,
                 joinColumnTypes,
                 valueTypes

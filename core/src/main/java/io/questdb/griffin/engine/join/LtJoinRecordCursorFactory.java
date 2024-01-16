@@ -62,7 +62,7 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
             ColumnFilter masterTableKeyColumns
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
-        Map joinKeyMap = MapFactory.createMap(configuration, mapKeyTypes, mapValueTypes);
+        Map joinKeyMap = MapFactory.createOrderedMap(configuration, mapKeyTypes, mapValueTypes);
         this.masterKeySink = masterKeySink;
         this.slaveKeySink = slaveKeySink;
         int slaveWrappedOverMaster = slaveColumnTypes.getColumnCount() - masterTableKeyColumns.getColumnCount();

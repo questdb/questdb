@@ -52,7 +52,7 @@ public class LatestByAllSymbolsFilteredRecordCursorFactory extends AbstractTreeS
             @NotNull IntList columnIndexes
     ) {
         super(metadata, dataFrameCursorFactory, configuration);
-        Map map = MapFactory.createMap(configuration, partitionByColumnTypes);
+        Map map = MapFactory.createOrderedMap(configuration, partitionByColumnTypes);
         this.cursor = new LatestByAllSymbolsFilteredRecordCursor(
                 map,
                 rows,

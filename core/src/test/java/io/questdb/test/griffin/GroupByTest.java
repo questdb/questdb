@@ -754,11 +754,11 @@ public class GroupByTest extends AbstractCairoTest {
     public void testGroupByAliasInDifferentOrder1() throws Exception {
         assertQuery(
                 "k1\tk2\tcount\n" +
-                        "0\t2\t3\n" +
                         "0\t0\t2\n" +
+                        "0\t2\t3\n" +
                         "1\t1\t3\n" +
                         "1\t3\t2\n",
-                "select key1 as k1, key2 as k2, count(*) from t group by k2, k1 order by 1",
+                "select key1 as k1, key2 as k2, count(*) from t group by k2, k1 order by 1, 2",
                 "create table t as ( select x%2 key1, x%4 key2, x as value from long_sequence(10)); ",
                 null,
                 true,
@@ -770,11 +770,11 @@ public class GroupByTest extends AbstractCairoTest {
     public void testGroupByAliasInDifferentOrder2() throws Exception {
         assertQuery(
                 "k1\tk2\tcount\n" +
-                        "1\t2\t3\n" +
                         "1\t0\t2\n" +
+                        "1\t2\t3\n" +
                         "2\t1\t3\n" +
                         "2\t3\t2\n",
-                "select key1+1 as k1, key2 as k2, count(*) from t group by k2, k1 order by 1",
+                "select key1+1 as k1, key2 as k2, count(*) from t group by k2, k1 order by 1, 2",
                 "create table t as ( select x%2 key1, x%4 key2, x as value from long_sequence(10));",
                 null,
                 true,
@@ -793,7 +793,8 @@ public class GroupByTest extends AbstractCairoTest {
                         "FROM x " +
                         "WHERE ts BETWEEN '2023-05-16T00:00:00.00Z' AND '2023-05-16T00:10:00.00Z' " +
                         "AND s2 = ('foo') " +
-                        "GROUP BY s1, s2;",
+                        "GROUP BY s1, s2 " +
+                        "ORDER BY s1, s2;",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -1027,22 +1028,24 @@ public class GroupByTest extends AbstractCairoTest {
                     "    union all " +
                     "    select 1, 'a', -2 )");
 
-            String query = "select s, max, max(l) from t group by s, max";
+            String query = "select s, max, max(l) from t group by s, max order by s";
             assertPlan(
                     query,
-                    "Async Group By workers: 1\n" +
-                            "  keys: [s,max]\n" +
-                            "  values: [max(l)]\n" +
-                            "  filter: null\n" +
-                            "    DataFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: t\n"
+                    "Sort light\n" +
+                            "  keys: [s]\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [s,max]\n" +
+                            "      values: [max(l)]\n" +
+                            "      filter: null\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: t\n"
             );
 
             assertQuery(
                     "s\tmax\tmax1\n" +
-                            "a\t-1\t1\n" +
-                            "a\t-2\t1\n",
+                            "a\t-2\t1\n" +
+                            "a\t-1\t1\n",
                     query,
                     null,
                     true,
@@ -1060,7 +1063,8 @@ public class GroupByTest extends AbstractCairoTest {
             String query = "select t1.x, max(t2.y), t2.x " +
                     "from t1 " +
                     "join t2 on t1.y = t2.y  " +
-                    "group by t1.x, t2.x";
+                    "group by t1.x, t2.x " +
+                    "order by t1.x, t2.x";
 
             assertQuery(
                     "x\tmax\tx1\n" +
@@ -1083,23 +1087,30 @@ public class GroupByTest extends AbstractCairoTest {
             String query = "select t1.x, max(t2.y), case when t1.x > 1 then 100*t1.x else 10*t2.x end " +
                     "from t1 " +
                     "join t2 on t1.y = t2.y  " +
-                    "group by t1.x, t2.x";
+                    "group by t1.x, t2.x " +
+                    "order by t1.x, t2.x";
 
-            assertPlan(query, "VirtualRecord\n" +
-                    "  functions: [x,max,case([1<x,100*x,10*x1])]\n" +
-                    "    GroupBy vectorized: false\n" +
-                    "      keys: [x,x1]\n" +
-                    "      values: [max(y)]\n" +
-                    "        SelectedRecord\n" +
-                    "            Hash Join Light\n" +
-                    "              condition: t2.y=t1.y\n" +
-                    "                DataFrame\n" +
-                    "                    Row forward scan\n" +
-                    "                    Frame forward scan on: t1\n" +
-                    "                Hash\n" +
-                    "                    DataFrame\n" +
-                    "                        Row forward scan\n" +
-                    "                        Frame forward scan on: t2\n");
+            assertPlan(
+                    query,
+                    "SelectedRecord\n" +
+                            "    Sort light\n" +
+                            "      keys: [x, x1]\n" +
+                            "        VirtualRecord\n" +
+                            "          functions: [x,max,case([1<x,100*x,10*x1]),x1]\n" +
+                            "            GroupBy vectorized: false\n" +
+                            "              keys: [x,x1]\n" +
+                            "              values: [max(y)]\n" +
+                            "                SelectedRecord\n" +
+                            "                    Hash Join Light\n" +
+                            "                      condition: t2.y=t1.y\n" +
+                            "                        DataFrame\n" +
+                            "                            Row forward scan\n" +
+                            "                            Frame forward scan on: t1\n" +
+                            "                        Hash\n" +
+                            "                            DataFrame\n" +
+                            "                                Row forward scan\n" +
+                            "                                Frame forward scan on: t2\n"
+            );
 
             assertQuery(
                     "x\tmax\tcase\n" +
@@ -1204,25 +1215,31 @@ public class GroupByTest extends AbstractCairoTest {
             String query = "select t1.x, max(t2.y), dateadd('s', max(t2.y)::int, dateadd('d', t1.x, '2023-03-01T00:00:00') ) " +
                     "from t1 " +
                     "join t2 on t1.y = t2.y  " +
-                    "group by t1.x, t2.x, dateadd('d', t1.x, '2023-03-01T00:00:00') ";
+                    "group by t1.x, t2.x, dateadd('d', t1.x, '2023-03-01T00:00:00') " +
+                    "order by 1, 2, 3";
 
-            assertPlan(query, "VirtualRecord\n" +
-                    "  functions: [x,max,dateadd('s',dateadd,max::int)]\n" +
-                    "    GroupBy vectorized: false\n" +
-                    "      keys: [x,dateadd,x1]\n" +
-                    "      values: [max(y)]\n" +
-                    "        VirtualRecord\n" +
-                    "          functions: [x,y,dateadd('d',1677628800000000,x),x1]\n" +
-                    "            SelectedRecord\n" +
-                    "                Hash Join Light\n" +
-                    "                  condition: t2.y=t1.y\n" +
-                    "                    DataFrame\n" +
-                    "                        Row forward scan\n" +
-                    "                        Frame forward scan on: t1\n" +
-                    "                    Hash\n" +
-                    "                        DataFrame\n" +
-                    "                            Row forward scan\n" +
-                    "                            Frame forward scan on: t2\n");
+            assertPlan(
+                    query,
+                    "Sort light\n" +
+                            "  keys: [x, max, dateadd]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [x,max,dateadd('s',dateadd,max::int)]\n" +
+                            "        GroupBy vectorized: false\n" +
+                            "          keys: [x,dateadd,x1]\n" +
+                            "          values: [max(y)]\n" +
+                            "            VirtualRecord\n" +
+                            "              functions: [x,y,dateadd('d',1677628800000000,x),x1]\n" +
+                            "                SelectedRecord\n" +
+                            "                    Hash Join Light\n" +
+                            "                      condition: t2.y=t1.y\n" +
+                            "                        DataFrame\n" +
+                            "                            Row forward scan\n" +
+                            "                            Frame forward scan on: t1\n" +
+                            "                        Hash\n" +
+                            "                            DataFrame\n" +
+                            "                                Row forward scan\n" +
+                            "                                Frame forward scan on: t2\n"
+            );
 
             assertQuery(
                     "x\tmax\tdateadd\n" +
@@ -1326,15 +1343,17 @@ public class GroupByTest extends AbstractCairoTest {
                             "('b', 'd', 13, '2021-11-17T17:35:01.000000Z')," +
                             "('b', 'c', 14, '2021-11-17T17:35:02.000000Z');"
             );
-            String query = "select s2, sum(l) from t where s2 in ('c', 'd') latest on ts partition by s1";
+            String query = "select s2, sum(l) from t where s2 in ('c', 'd') latest on ts partition by s1 order by s2";
             assertPlan(
                     query,
-                    "GroupBy vectorized: false\n" +
+                    "Sort light\n" +
                             "  keys: [s2]\n" +
-                            "  values: [sum(l)]\n" +
-                            "    LatestByDeferredListValuesFiltered\n" +
-                            "      filter: s2 in [c,d]\n" +
-                            "        Frame backward scan on: t\n"
+                            "    GroupBy vectorized: false\n" +
+                            "      keys: [s2]\n" +
+                            "      values: [sum(l)]\n" +
+                            "        LatestByDeferredListValuesFiltered\n" +
+                            "          filter: s2 in [c,d]\n" +
+                            "            Frame backward scan on: t\n"
             );
             assertQuery(
                     "s2\tsum\n" +
@@ -1628,17 +1647,22 @@ public class GroupByTest extends AbstractCairoTest {
                     " select rnd_symbol('A', 'B'), rnd_double(), dateadd('m', x::int, 0::timestamp) " +
                     " from long_sequence(20)");
 
-            String query = "select sym, hour(ts), avg(bid) avgBid from x group by hour(ts), sym ";
-            assertPlan(query, "VirtualRecord\n" +
-                    "  functions: [sym,hour,avgBid]\n" +
-                    "    GroupBy vectorized: false\n" +
-                    "      keys: [sym,hour]\n" +
-                    "      values: [avg(bid)]\n" +
-                    "        VirtualRecord\n" +
-                    "          functions: [sym,hour(ts),bid]\n" +
-                    "            DataFrame\n" +
-                    "                Row forward scan\n" +
-                    "                Frame forward scan on: x\n");
+            String query = "select sym, hour(ts), avg(bid) avgBid from x group by hour(ts), sym order by hour(ts), sym";
+            assertPlan(
+                    query,
+                    "Sort light\n" +
+                            "  keys: [hour, sym]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [sym,hour,avgBid]\n" +
+                            "        GroupBy vectorized: false\n" +
+                            "          keys: [sym,hour]\n" +
+                            "          values: [avg(bid)]\n" +
+                            "            VirtualRecord\n" +
+                            "              functions: [sym,hour(ts),bid]\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: x\n"
+            );
             assertQuery(
                     "sym\thour\tavgBid\n" +
                             "A\t0\t0.4922298136511458\n" +

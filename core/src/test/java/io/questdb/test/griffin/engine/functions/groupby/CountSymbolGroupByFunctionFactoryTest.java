@@ -36,7 +36,7 @@ public class CountSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "a\t1\n" +
                         "b\t1\n" +
                         "c\t1\n",
-                "select a, count_distinct(cast('foobar' as SYMBOL)) from x",
+                "select a, count_distinct(cast('foobar' as SYMBOL)) from x order by a",
                 "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
                 null,
                 true,
@@ -50,11 +50,11 @@ public class CountSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
                 "a\tcount_distinct\n" +
                         "a\t4\n" +
                         "b\t4\n" +
-                        "f\t3\n" +
                         "c\t3\n" +
+                        "d\t1\n" +
                         "e\t2\n" +
-                        "d\t1\n",
-                "select a, count_distinct(s) from x",
+                        "f\t3\n",
+                "select a, count_distinct(s) from x order by a",
                 "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_symbol('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(20)) timestamp(ts))",
                 null,
                 true,
@@ -95,7 +95,7 @@ public class CountSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "a\t0\n" +
                         "b\t0\n" +
                         "c\t0\n",
-                "select a, count_distinct(cast(null as SYMBOL)) from x",
+                "select a, count_distinct(cast(null as SYMBOL)) from x order by a",
                 "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
                 null,
                 true,
