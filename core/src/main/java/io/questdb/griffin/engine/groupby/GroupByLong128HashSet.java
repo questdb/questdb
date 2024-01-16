@@ -50,7 +50,7 @@ public class GroupByLong128HashSet {
     private static final long SIZE_OFFSET = Integer.BYTES;
     private final int initialCapacity;
     private final double loadFactor;
-    private final long noKeyValue; // -2^63 for UUIDs
+    private final long noKeyValue;
     private GroupByAllocator allocator;
     private int mask;
     private long ptr;
