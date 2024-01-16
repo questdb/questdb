@@ -82,6 +82,15 @@ public class Long256Impl implements Long256, Sinkable {
         );
     }
 
+    public void fromRnd(Rnd rnd, long N) {
+        setAll(
+                rnd.nextLong(N),
+                rnd.nextLong(N),
+                rnd.nextLong(N),
+                rnd.nextLong(N)
+        );
+    }
+
     @Override
     public long getLong0() {
         return l0;

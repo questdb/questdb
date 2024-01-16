@@ -721,6 +721,11 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public void putLong256(long l0, long l1, long l2, long l3) {
+            recordedTypes.add(ColumnType.LONG256);
+        }
+
+        @Override
         public void putRecord(Record value) {
             throw new UnsupportedOperationException();
         }

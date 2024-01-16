@@ -57,6 +57,12 @@ public final class Hash {
         return (int) (h ^ h >>> 32);
     }
 
+    public static int hashLong256(long key1, long key2, long key3, long key4) {
+        long h = key1 * M2 + key2 + key3 + key4;
+        h *= M2;
+        return (int) (h ^ h >>> 32);
+    }
+
     /**
      * Same as {@link #hashMem32(long, long)}, but with on-heap char sequence
      * instead of direct unsafe access.
