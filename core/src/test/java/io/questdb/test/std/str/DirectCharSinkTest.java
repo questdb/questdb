@@ -24,7 +24,7 @@
 
 package io.questdb.test.std.str;
 
-import io.questdb.std.str.DirectCharSink;
+import io.questdb.std.str.DirectUtf16Sink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -65,7 +65,7 @@ public class DirectCharSinkTest {
                 "string 29\n";
 
         final int initialCapacity = 16;
-        try (DirectCharSink sink = new DirectCharSink(initialCapacity)) {
+        try (DirectUtf16Sink sink = new DirectUtf16Sink(initialCapacity)) {
             for (int i = 0; i < 30; i++) {
                 sink.put("string ").put(i).put('\n');
             }

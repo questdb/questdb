@@ -34,8 +34,8 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
-import io.questdb.std.str.CharSinkBase;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 
 public class NamedParameterLinkFunction implements ScalarFunction {
     private final int type;
@@ -138,7 +138,7 @@ public class NamedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
-    public void getLong256(Record rec, CharSinkBase<?> sink) {
+    public void getLong256(Record rec, CharSink<?> sink) {
         getBase().getLong256(rec, sink);
     }
 
@@ -168,7 +168,7 @@ public class NamedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
-    public void getStr(Record rec, CharSink sink) {
+    public void getStr(Record rec, Utf16Sink sink) {
         getBase().getStr(rec, sink);
     }
 

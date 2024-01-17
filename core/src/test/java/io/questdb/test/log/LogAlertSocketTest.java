@@ -30,10 +30,7 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
-import io.questdb.std.str.DirectUtf8Sequence;
-import io.questdb.std.str.Sinkable;
-import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.*;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -48,7 +45,7 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static io.questdb.log.HttpLogRecordSink.CRLF;
+import static io.questdb.log.HttpLogRecordUtf8Sink.CRLF;
 
 public class LogAlertSocketTest {
 
@@ -87,7 +84,7 @@ public class LogAlertSocketTest {
     public void testFailOver() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (LogAlertSocket alertSkt = new LogAlertSocket(NetworkFacadeImpl.INSTANCE, "localhost:1234,localhost:1242", LOG)) {
-                final HttpLogRecordSink builder = new HttpLogRecordSink(alertSkt)
+                final HttpLogRecordUtf8Sink builder = new HttpLogRecordUtf8Sink(alertSkt)
                         .putHeader("localhost")
                         .setMark();
 
@@ -149,7 +146,7 @@ public class LogAlertSocketTest {
                 }
             };
             try (LogAlertSocket alertSkt = new LogAlertSocket(nf, "localhost:1234,localhost:1243", LOG)) {
-                final HttpLogRecordSink builder = new HttpLogRecordSink(alertSkt)
+                final HttpLogRecordUtf8Sink builder = new HttpLogRecordUtf8Sink(alertSkt)
                         .putHeader("localhost")
                         .setMark();
                 final int numHosts = alertSkt.getAlertHostsCount();
@@ -184,7 +181,7 @@ public class LogAlertSocketTest {
             int port = server.getPortNumber();
 
             try (LogAlertSocket alertSkt = new LogAlertSocket(NetworkFacadeImpl.INSTANCE, host + ":" + port, LOG)) {
-                final HttpLogRecordSink builder = new HttpLogRecordSink(alertSkt)
+                final HttpLogRecordUtf8Sink builder = new HttpLogRecordUtf8Sink(alertSkt)
                         .putHeader(host)
                         .setMark();
 
@@ -458,7 +455,7 @@ public class LogAlertSocketTest {
             };
             MockLog log = new MockLog();
             try (LogAlertSocket alertSkt = new LogAlertSocket(nf, "", log)) {
-                LogRecordSink logRecord = new LogRecordSink(alertSkt.getInBufferPtr(), alertSkt.getInBufferSize());
+                LogRecordUtf8Sink logRecord = new LogRecordUtf8Sink(alertSkt.getInBufferPtr(), alertSkt.getInBufferSize());
                 logRecord.put(httpMessage);
                 alertSkt.logResponse(logRecord.size());
                 TestUtils.assertEquals(expected, log.logRecord.sink);
@@ -670,8 +667,26 @@ public class LogAlertSocketTest {
         }
 
         @Override
+        public LogRecord put(@Nullable Utf8Sequence us) {
+            sink.put(us);
+            return this;
+        }
+
+        @Override
+        public LogRecord put(byte b) {
+            sink.put(b);
+            return this;
+        }
+
+        @Override
         public LogRecord put(char c) {
             sink.put(c);
+            return this;
+        }
+
+        @Override
+        public Utf8Sink putUtf8(long lo, long hi) {
+            sink.put(lo, hi);
             return this;
         }
 

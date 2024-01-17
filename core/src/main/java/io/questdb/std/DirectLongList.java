@@ -27,7 +27,7 @@ package io.questdb.std;
 import io.questdb.cairo.Reopenable;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 
 import java.io.Closeable;
 
@@ -51,7 +51,7 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
     }
 
     public void add(long x) {
-        ensureCapacity();
+        checkCapacity();
         assert pos < limit;
         Unsafe.getUnsafe().putLong(pos, x);
         pos += Long.BYTES;
@@ -166,7 +166,7 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
 
     @Override
     public String toString() {
-        CharSink sb = Misc.getThreadLocalSink();
+        Utf16Sink sb = Misc.getThreadLocalSink();
         sb.put('[');
         final int maxElementsToPrint = 1000; // Do not try to print too much, it can hang IntelliJ debugger.
         for (int i = 0, n = (int) Math.min(maxElementsToPrint, size()); i < n; i++) {
@@ -200,7 +200,7 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
         }
     }
 
-    void ensureCapacity() {
+    void checkCapacity() {
         if (this.pos < limit) {
             return;
         }

@@ -264,7 +264,7 @@ public class CleartextPasswordPgWireAuthenticator implements Authenticator {
         sendBufWritePos = sendBufStart + len;
     }
 
-    private void ensureCapacity(long capacity) {
+    private void checkCapacity(long capacity) {
         if (sendBufWritePos + capacity > sendBufEnd) {
             throw NoSpaceLeftInResponseBufferException.INSTANCE;
         }
@@ -502,9 +502,9 @@ public class CleartextPasswordPgWireAuthenticator implements Authenticator {
     private class ResponseSink implements Utf8Sink {
 
         @Override
-        public Utf8Sink put(long lo, long hi) {
+        public Utf8Sink putUtf8(long lo, long hi) {
             final long size = hi - lo;
-            ensureCapacity(size);
+            checkCapacity(size);
             Vect.memcpy(sendBufWritePos, lo, size);
             sendBufWritePos += size;
             return this;
@@ -517,13 +517,13 @@ public class CleartextPasswordPgWireAuthenticator implements Authenticator {
 
         @Override
         public Utf8Sink put(byte b) {
-            ensureCapacity(Byte.BYTES);
+            checkCapacity(Byte.BYTES);
             Unsafe.getUnsafe().putByte(sendBufWritePos++, b);
             return this;
         }
 
         public void putInt(int i) {
-            ensureCapacity(Integer.BYTES);
+            checkCapacity(Integer.BYTES);
             Unsafe.getUnsafe().putInt(sendBufWritePos, Numbers.bswap(i));
             sendBufWritePos += Integer.BYTES;
         }
@@ -535,12 +535,12 @@ public class CleartextPasswordPgWireAuthenticator implements Authenticator {
 
         void encodeUtf8Z(CharSequence value) {
             put(value);
-            ensureCapacity(Byte.BYTES);
+            checkCapacity(Byte.BYTES);
             put((byte) 0);
         }
 
         long skip() {
-            ensureCapacity(Integer.BYTES);
+            checkCapacity(Integer.BYTES);
             long checkpoint = sendBufWritePos;
             sendBufWritePos += Integer.BYTES;
             return checkpoint;

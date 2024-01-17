@@ -30,7 +30,7 @@ import io.questdb.cairo.vm.NullMemoryMR;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.std.*;
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.CharSink;
 
 import java.io.Closeable;
 
@@ -198,7 +198,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
     public long getLong128Hi(int col) {
         long address = pageAddressCache.getPageAddress(frameIndex, col);
         if (address == 0) {
-            return NullMemoryMR.INSTANCE.getLong128Hi(0);
+            return NullMemoryMR.INSTANCE.getLong128Hi();
         }
         return Unsafe.getUnsafe().getLong(address + (rowIndex << 4) + Long.BYTES);
     }
@@ -207,13 +207,13 @@ public class PageAddressCacheRecord implements Record, Closeable {
     public long getLong128Lo(int col) {
         long address = pageAddressCache.getPageAddress(frameIndex, col);
         if (address == 0) {
-            return NullMemoryMR.INSTANCE.getLong128Lo(0);
+            return NullMemoryMR.INSTANCE.getLong128Lo();
         }
         return Unsafe.getUnsafe().getLong(address + (rowIndex << 4));
     }
 
     @Override
-    public void getLong256(int columnIndex, CharSinkBase<?> sink) {
+    public void getLong256(int columnIndex, CharSink<?> sink) {
         final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
         if (address == 0) {
             NullMemoryMR.INSTANCE.getLong256(0, sink);
@@ -369,7 +369,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
         return symbolTable;
     }
 
-    void getLong256(long offset, CharSinkBase<?> sink) {
+    void getLong256(long offset, CharSink<?> sink) {
         final long addr = offset + Long.BYTES * 4;
         final long a, b, c, d;
         a = Unsafe.getUnsafe().getLong(addr - Long.BYTES * 4);
