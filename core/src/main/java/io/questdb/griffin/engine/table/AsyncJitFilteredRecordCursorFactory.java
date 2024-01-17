@@ -53,7 +53,10 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     private static final PageFrameReducer REDUCER = AsyncJitFilteredRecordCursorFactory::filter;
 
     private final RecordCursorFactory base;
+    private final ObjList<Function> bindVarFunctions;
+    private final MemoryCARW bindVarMemory;
     private final SCSequence collectSubSeq = new SCSequence();
+    private final CompiledFilter compiledFilter;
     private final AsyncFilteredRecordCursor cursor;
     private final Function filter;
     private final PageFrameSequence<AsyncJitFilterAtom> frameSequence;
@@ -69,10 +72,10 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
             @NotNull MessageBus messageBus,
             @NotNull RecordCursorFactory base,
             @NotNull ObjList<Function> bindVarFunctions,
+            @NotNull CompiledFilter compiledFilter,
             @NotNull Function filter,
             @NotNull PageFrameReduceTaskFactory reduceTaskFactory,
             @Nullable ObjList<Function> perWorkerFilters,
-            @NotNull CompiledFilter compiledFilter,
             @Nullable Function limitLoFunction,
             int limitLoPos,
             boolean preTouchColumns,
@@ -82,14 +85,16 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         assert !(base instanceof FilteredRecordCursorFactory);
         assert !(base instanceof AsyncJitFilteredRecordCursorFactory);
         this.base = base;
+        this.compiledFilter = compiledFilter;
         this.filter = filter;
         this.cursor = new AsyncFilteredRecordCursor(filter, base.getScanDirection());
         this.negativeLimitCursor = new AsyncFilteredNegativeLimitRecordCursor(base.getScanDirection());
-        MemoryCARW bindVarMemory = Vm.getCARWInstance(
+        this.bindVarMemory = Vm.getCARWInstance(
                 configuration.getSqlJitBindVarsMemoryPageSize(),
                 configuration.getSqlJitBindVarsMemoryMaxPages(),
                 MemoryTag.NATIVE_JIT
         );
+        this.bindVarFunctions = bindVarFunctions;
         IntList preTouchColumnTypes = null;
         if (preTouchColumns) {
             preTouchColumnTypes = new IntList();
@@ -114,6 +119,72 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         this.workerCount = workerCount;
     }
 
+    public static void writeBindVarFunction(
+            MemoryCARW bindVarMemory,
+            Function function,
+            SymbolTableSource symbolTableSource,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        final int columnType = function.getType();
+        final int columnTypeTag = ColumnType.tagOf(columnType);
+        switch (columnTypeTag) {
+            case ColumnType.BOOLEAN:
+                bindVarMemory.putLong(function.getBool(null) ? 1 : 0);
+                return;
+            case ColumnType.BYTE:
+                bindVarMemory.putLong(function.getByte(null));
+                return;
+            case ColumnType.GEOBYTE:
+                bindVarMemory.putLong(function.getGeoByte(null));
+                return;
+            case ColumnType.SHORT:
+                bindVarMemory.putLong(function.getShort(null));
+                return;
+            case ColumnType.GEOSHORT:
+                bindVarMemory.putLong(function.getGeoShort(null));
+                return;
+            case ColumnType.CHAR:
+                bindVarMemory.putLong(function.getChar(null));
+                return;
+            case ColumnType.INT:
+                bindVarMemory.putLong(function.getInt(null));
+                return;
+            case ColumnType.IPv4:
+                bindVarMemory.putLong(function.getIPv4(null));
+                return;
+            case ColumnType.GEOINT:
+                bindVarMemory.putLong(function.getGeoInt(null));
+                return;
+            case ColumnType.SYMBOL:
+                assert function instanceof CompiledFilterSymbolBindVariable;
+                function.init(symbolTableSource, executionContext);
+                bindVarMemory.putLong(function.getInt(null));
+                return;
+            case ColumnType.FLOAT:
+                // compiled filter function will read only the first word
+                bindVarMemory.putFloat(function.getFloat(null));
+                bindVarMemory.putFloat(Float.NaN);
+                return;
+            case ColumnType.LONG:
+                bindVarMemory.putLong(function.getLong(null));
+                return;
+            case ColumnType.GEOLONG:
+                bindVarMemory.putLong(function.getGeoLong(null));
+                return;
+            case ColumnType.DATE:
+                bindVarMemory.putLong(function.getDate(null));
+                return;
+            case ColumnType.TIMESTAMP:
+                bindVarMemory.putLong(function.getTimestamp(null));
+                return;
+            case ColumnType.DOUBLE:
+                bindVarMemory.putDouble(function.getDouble(null));
+                return;
+            default:
+                throw SqlException.position(0).put("unsupported bind variable type: ").put(ColumnType.nameOf(columnTypeTag));
+        }
+    }
+
     @Override
     public PageFrameSequence<AsyncJitFilterAtom> execute(SqlExecutionContext executionContext, SCSequence collectSubSeq, int order) throws SqlException {
         return frameSequence.of(base, executionContext, collectSubSeq, order);
@@ -127,6 +198,21 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     @Override
     public RecordCursorFactory getBaseFactory() {
         return base;
+    }
+
+    @Override
+    public ObjList<Function> getBindVarFunctions() {
+        return bindVarFunctions;
+    }
+
+    @Override
+    public MemoryCARW getBindVarMemory() {
+        return bindVarMemory;
+    }
+
+    @Override
+    public CompiledFilter getCompiledFilter() {
+        return compiledFilter;
     }
 
     @Override
@@ -166,7 +252,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     }
 
     @Override
-    public Function getFilter() {
+    public @NotNull Function getFilter() {
         return filter;
     }
 
@@ -303,7 +389,10 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         Misc.free(base);
         Misc.free(negativeLimitRows);
         halfClose();
+        Misc.free(compiledFilter);
         Misc.free(filter);
+        Misc.free(bindVarMemory);
+        Misc.freeObjList(bindVarFunctions);
     }
 
     private static class AsyncJitFilterAtom extends AsyncFilterAtom {
@@ -328,14 +417,6 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         }
 
         @Override
-        public void close() {
-            super.close();
-            Misc.free(compiledFilter);
-            Misc.free(bindVarMemory);
-            Misc.freeObjList(bindVarFunctions);
-        }
-
-        @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
             Function.init(bindVarFunctions, symbolTableSource, executionContext);
@@ -348,73 +429,8 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                 bindVarMemory.truncate();
                 for (int i = 0, n = bindVarFunctions.size(); i < n; i++) {
                     Function function = bindVarFunctions.getQuick(i);
-                    writeBindVarFunction(function, symbolTableSource, executionContext);
+                    writeBindVarFunction(bindVarMemory, function, symbolTableSource, executionContext);
                 }
-            }
-        }
-
-        private void writeBindVarFunction(
-                Function function,
-                SymbolTableSource symbolTableSource,
-                SqlExecutionContext executionContext
-        ) throws SqlException {
-            final int columnType = function.getType();
-            final int columnTypeTag = ColumnType.tagOf(columnType);
-            switch (columnTypeTag) {
-                case ColumnType.BOOLEAN:
-                    bindVarMemory.putLong(function.getBool(null) ? 1 : 0);
-                    return;
-                case ColumnType.BYTE:
-                    bindVarMemory.putLong(function.getByte(null));
-                    return;
-                case ColumnType.GEOBYTE:
-                    bindVarMemory.putLong(function.getGeoByte(null));
-                    return;
-                case ColumnType.SHORT:
-                    bindVarMemory.putLong(function.getShort(null));
-                    return;
-                case ColumnType.GEOSHORT:
-                    bindVarMemory.putLong(function.getGeoShort(null));
-                    return;
-                case ColumnType.CHAR:
-                    bindVarMemory.putLong(function.getChar(null));
-                    return;
-                case ColumnType.INT:
-                    bindVarMemory.putLong(function.getInt(null));
-                    return;
-                case ColumnType.IPv4:
-                    bindVarMemory.putLong(function.getIPv4(null));
-                    return;
-                case ColumnType.GEOINT:
-                    bindVarMemory.putLong(function.getGeoInt(null));
-                    return;
-                case ColumnType.SYMBOL:
-                    assert function instanceof CompiledFilterSymbolBindVariable;
-                    function.init(symbolTableSource, executionContext);
-                    bindVarMemory.putLong(function.getInt(null));
-                    return;
-                case ColumnType.FLOAT:
-                    // compiled filter function will read only the first word
-                    bindVarMemory.putFloat(function.getFloat(null));
-                    bindVarMemory.putFloat(Float.NaN);
-                    return;
-                case ColumnType.LONG:
-                    bindVarMemory.putLong(function.getLong(null));
-                    return;
-                case ColumnType.GEOLONG:
-                    bindVarMemory.putLong(function.getGeoLong(null));
-                    return;
-                case ColumnType.DATE:
-                    bindVarMemory.putLong(function.getDate(null));
-                    return;
-                case ColumnType.TIMESTAMP:
-                    bindVarMemory.putLong(function.getTimestamp(null));
-                    return;
-                case ColumnType.DOUBLE:
-                    bindVarMemory.putDouble(function.getDouble(null));
-                    return;
-                default:
-                    throw SqlException.position(0).put("unsupported bind variable type: ").put(ColumnType.nameOf(columnTypeTag));
             }
         }
     }

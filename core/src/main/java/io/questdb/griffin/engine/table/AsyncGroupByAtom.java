@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.*;
 import io.questdb.cairo.map.*;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
@@ -37,6 +38,7 @@ import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdaterFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
+import io.questdb.jit.CompiledFilter;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -46,6 +48,9 @@ import java.io.Closeable;
 public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Plannable {
     // We use the first 8 bits of a hash code to determine the shard, hence 128 as the max number of shards.
     private static final int MAX_SHARDS = 128;
+    private final ObjList<Function> bindVarFunctions;
+    private final MemoryCARW bindVarMemory;
+    private final CompiledFilter compiledFilter;
     private final CairoConfiguration configuration;
     private final Function filter;
     private final GroupByFunctionsUpdater functionUpdater;
@@ -77,6 +82,9 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             @Nullable ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
             @NotNull ObjList<Function> keyFunctions,
             @Nullable ObjList<ObjList<Function>> perWorkerKeyFunctions,
+            @Nullable CompiledFilter compiledFilter,
+            @Nullable MemoryCARW bindVarMemory,
+            @Nullable ObjList<Function> bindVarFunctions,
             @Nullable Function filter,
             @Nullable ObjList<Function> perWorkerFilters,
             int workerCount
@@ -91,6 +99,9 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             this.shardingThreshold = configuration.getGroupByShardingThreshold();
             this.keyTypes = new ArrayColumnTypes().addAll(keyTypes);
             this.valueTypes = new ArrayColumnTypes().addAll(valueTypes);
+            this.compiledFilter = compiledFilter;
+            this.bindVarMemory = bindVarMemory;
+            this.bindVarFunctions = bindVarFunctions;
             this.filter = filter;
             this.perWorkerFilters = perWorkerFilters;
             this.keyFunctions = keyFunctions;
@@ -168,6 +179,9 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     public void close() {
         Misc.free(ownerParticle);
         Misc.freeObjList(perWorkerParticles);
+        Misc.free(compiledFilter);
+        Misc.free(bindVarMemory);
+        Misc.freeObjList(bindVarFunctions);
         Misc.free(filter);
         Misc.freeObjList(keyFunctions);
         Misc.freeObjList(perWorkerFilters);
@@ -181,6 +195,18 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
                 Misc.freeObjList(perWorkerGroupByFunctions.getQuick(i));
             }
         }
+    }
+
+    public ObjList<Function> getBindVarFunctions() {
+        return bindVarFunctions;
+    }
+
+    public MemoryCARW getBindVarMemory() {
+        return bindVarMemory;
+    }
+
+    public CompiledFilter getCompiledFilter() {
+        return compiledFilter;
     }
 
     public Function getFilter(int slotId) {
@@ -267,6 +293,11 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             } finally {
                 executionContext.setCloneSymbolTables(current);
             }
+        }
+
+        if (bindVarFunctions != null) {
+            Function.init(bindVarFunctions, symbolTableSource, executionContext);
+            prepareBindVarMemory(symbolTableSource, executionContext);
         }
     }
 
@@ -362,6 +393,17 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         if (particle.getMap().size() > shardingThreshold || sharded) {
             particle.shard();
             sharded = true;
+        }
+    }
+
+    private void prepareBindVarMemory(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        // don't trigger memory allocation if there are no variables
+        if (bindVarFunctions.size() > 0) {
+            bindVarMemory.truncate();
+            for (int i = 0, n = bindVarFunctions.size(); i < n; i++) {
+                Function function = bindVarFunctions.getQuick(i);
+                AsyncJitFilteredRecordCursorFactory.writeBindVarFunction(bindVarMemory, function, symbolTableSource, executionContext);
+            }
         }
     }
 

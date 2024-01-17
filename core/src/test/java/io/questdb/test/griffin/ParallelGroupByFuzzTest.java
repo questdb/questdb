@@ -26,6 +26,9 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -65,18 +68,21 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     private static final int PAGE_FRAME_COUNT = 4; // also used to set queue size, so must be a power of 2
     private static final int PAGE_FRAME_MAX_ROWS = 100;
     private static final int ROW_COUNT = 10 * PAGE_FRAME_COUNT * PAGE_FRAME_MAX_ROWS;
-
+    private final boolean enableJitCompiler;
     private final boolean enableParallelGroupBy;
 
-    public ParallelGroupByFuzzTest(boolean enableParallelGroupBy) {
+    public ParallelGroupByFuzzTest(boolean enableParallelGroupBy, boolean enableJitCompiler) {
         this.enableParallelGroupBy = enableParallelGroupBy;
+        this.enableJitCompiler = enableJitCompiler;
     }
 
-    @Parameterized.Parameters(name = "parallel={0} threshold={1}")
+    @Parameterized.Parameters(name = "parallel={0} JIT={1}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
-                {true},
-                {false}
+                {true, true},
+                {true, false},
+                {false, true},
+                {false, false},
         });
     }
 
@@ -972,8 +978,8 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         // Parallel GROUP BY shouldn't kick in on this query, yet we want
         // to validate the result correctness.
         testParallelGroupByAllTypes(
-                "SELECT count_distinct(ip) FROM " +
-                        "(SELECT * FROM tab WHERE ts in '1970-01-13' and a > 0 LIMIT 10)",
+                "SELECT count_distinct(anint) FROM " +
+                        "(SELECT * FROM tab WHERE ts in '1970-01-13' and anint > 0 LIMIT 10)",
                 "count_distinct\n" +
                         "10\n"
         );
@@ -984,8 +990,8 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         // Parallel GROUP BY shouldn't kick in on this query, yet we want
         // to validate the result correctness.
         testParallelGroupByAllTypes(
-                "SELECT count_distinct(ip) FROM " +
-                        "(SELECT * FROM tab WHERE ts in '1970-01-13' and a > 0 and i in (select i from tab where length(i) = 4) LIMIT 10)",
+                "SELECT count_distinct(anint) FROM " +
+                        "(SELECT * FROM tab WHERE ts in '1970-01-13' and anint > 0 and asymbol in (select asymbol from tab where length(asymbol) = 4) LIMIT 10)",
                 "count_distinct\n" +
                         "10\n"
         );
@@ -997,29 +1003,85 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelNonKeyedGroupByWithAllBindVariableTypesInFilter() throws Exception {
+        testParallelGroupByAllTypes(
+                (sqlExecutionContext) -> {
+                    BindVariableService bindVariableService = sqlExecutionContext.getBindVariableService();
+                    bindVariableService.clear();
+                    bindVariableService.setBoolean("aboolean", false);
+                    bindVariableService.setByte("abyte", (byte) 28);
+                    bindVariableService.setGeoHash("ageobyte", 0, ColumnType.getGeoHashTypeWithBits(4));
+                    bindVariableService.setShort("ashort", (short) 243);
+                    bindVariableService.setGeoHash("ageoshort", 0b011011000010L, ColumnType.getGeoHashTypeWithBits(12));
+                    bindVariableService.setChar("achar", 'O');
+                    bindVariableService.setInt("anint", 2085282008);
+                    bindVariableService.setGeoHash("ageoint", 0b0101011010111101L, ColumnType.getGeoHashTypeWithBits(16));
+                    bindVariableService.setStr("asymbol", "HYRX");
+                    bindVariableService.setFloat("afloat", 0.48820507526397705f);
+                    bindVariableService.setLong("along", -4986232506486815364L);
+                    bindVariableService.setDouble("adouble", 0.42281342727402726);
+                    bindVariableService.setDate("adate", 1443479385706L);
+                    bindVariableService.setGeoHash("ageolong", 0b11010000001110101000110100011010L, ColumnType.getGeoHashTypeWithBits(32));
+                    bindVariableService.setTimestamp("atimestamp", 400500000000L);
+                },
+                "SELECT max(along), min(along) FROM tab " +
+                        "WHERE aboolean != :aboolean" +
+                        " and abyte != :abyte" +
+                        " and ageobyte != :ageobyte" +
+                        " and ashort != :ashort" +
+                        " and ageoshort != :ageoshort" +
+                        " and achar != :achar" +
+                        " and anint != :anint" +
+                        " and ageoint != :ageoint" +
+                        " and asymbol != :asymbol" +
+                        " and afloat != :afloat" +
+                        " and along != :along" +
+                        " and adouble != :adouble" +
+                        " and adate != :adate" +
+                        " and ageolong != :ageolong" +
+                        " and ts != :atimestamp",
+                "max\tmin\n" +
+                        "9205610066984479988\t-9211162377139482426\n"
+        );
+    }
+
+    @Test
+    public void testParallelNonKeyedGroupByWithBindVariablesInFilter() throws Exception {
+        testParallelGroupByAllTypes(
+                (sqlExecutionContext) -> {
+                    sqlExecutionContext.getBindVariableService().clear();
+                    sqlExecutionContext.getBindVariableService().setStr(0, "CPSW");
+                },
+                "SELECT min(anint), max(anint) FROM tab WHERE asymbol = $1",
+                "min\tmax\n" +
+                        "-2141059164\t2147164481\n"
+        );
+    }
+
+    @Test
     public void testParallelNonKeyedGroupByWithCountDistinctIPv4Function() throws Exception {
         testParallelGroupByAllTypes(
-                "SELECT count_distinct(ip2) FROM tab",
+                "SELECT count_distinct(ts) FROM tab",
                 "count_distinct\n" +
-                        "3265\n"
+                        "4000\n"
         );
     }
 
     @Test
     public void testParallelNonKeyedGroupByWithCountDistinctIntFunction() throws Exception {
         testParallelGroupByAllTypes(
-                "SELECT count_distinct(a2) FROM tab",
+                "SELECT count_distinct(along) FROM tab",
                 "count_distinct\n" +
-                        "3308\n"
+                        "4000\n"
         );
     }
 
     @Test
     public void testParallelNonKeyedGroupByWithCountDistinctLongFunction() throws Exception {
         testParallelGroupByAllTypes(
-                "SELECT count_distinct(j2) FROM tab",
+                "SELECT count_distinct(adate) FROM tab",
                 "count_distinct\n" +
-                        "3342\n"
+                        "3304\n"
         );
     }
 
@@ -1029,6 +1091,15 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                 "SELECT vwap(price, quantity), sum(colTop) FROM tab WHERE quantity < 100",
                 "vwap\tsum\n" +
                         "1981.006198090988\t3675.0\n"
+        );
+    }
+
+    @Test
+    public void testParallelNonKeyedGroupByWithMinMaxIntExpressionFunction() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT max(length(asymbol)), max(length(astring)) FROM tab",
+                "max\tmax1\n" +
+                        "4\t16\n"
         );
     }
 
@@ -1053,9 +1124,9 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     @Test
     public void testParallelNonKeyedGroupByWithMultipleCountDistinctIntFunctions() throws Exception {
         testParallelGroupByAllTypes(
-                "SELECT count_distinct(a), count_distinct(a2), count_distinct(ip), count_distinct(ip2) FROM tab",
-                "count_distinct\tcount_distinct1\tcount_distinct2\tcount_distinct3\n" +
-                        "4000\t3308\t4000\t3265\n"
+                "SELECT count_distinct(ashort), count_distinct(anint), count_distinct(along) FROM tab",
+                "count_distinct\tcount_distinct1\tcount_distinct2\n" +
+                        "997\t4000\t4000\n"
         );
     }
 
@@ -1081,9 +1152,9 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     @Test
     public void testParallelNonKeyedGroupByWithReadThreadSafeTimestampFilter1() throws Exception {
         testParallelGroupByAllTypes(
-                "SELECT count_distinct(ip) FROM tab WHERE ts in '1970-01-13' and a > 0",
+                "SELECT count_distinct(adate) FROM tab WHERE ts in '1970-01-13' and anint > 0",
                 "count_distinct\n" +
-                        "84\n"
+                        "69\n"
         );
     }
 
@@ -1091,7 +1162,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     public void testParallelNonKeyedGroupByWithReadThreadSafeTimestampFilter2() throws Exception {
         testParallelGroupByAllTypes(
                 "SELECT min(key), max(key) FROM tab " +
-                        "WHERE ts in '1970-01-13' and a > 0",
+                        "WHERE ts in '1970-01-13' and anint > 0",
                 "min\tmax\n" +
                         "k0\tk4\n"
         );
@@ -1109,20 +1180,20 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     @Test
     public void testParallelNonKeyedGroupByWithReadThreadUnsafeTimestampFilter1() throws Exception {
         testParallelGroupByAllTypes(
-                "SELECT count_distinct(ip) FROM tab " +
-                        "WHERE ts in '1970-01-13' and a > 0 and i in (select i from tab where length(i) = 4)",
+                "SELECT count_distinct(anint) FROM tab " +
+                        "WHERE ts in '1970-01-13' and anint > 0 and asymbol in (select asymbol from tab where length(asymbol) = 4)",
                 "count_distinct\n" +
-                        "14\n"
+                        "52\n"
         );
     }
 
     @Test
     public void testParallelNonKeyedGroupByWithReadThreadUnsafeTimestampFilter2() throws Exception {
         testParallelGroupByAllTypes(
-                "SELECT min(i), max(i) FROM tab " +
-                        "WHERE ts in '1970-01-13' and a > 0 and i in (select i from tab where length(i) >= 4 and length(i) <= 6)",
+                "SELECT min(asymbol), max(asymbol) FROM tab " +
+                        "WHERE ts in '1970-01-13' and anint > 0 and asymbol in (select asymbol from tab where length(asymbol) >= 4)",
                 "min\tmax\n" +
-                        "NRXGZ\tXUXIBB\n"
+                        "CPSW\tVTJW\n"
         );
     }
 
@@ -1138,9 +1209,9 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     @Test
     public void testParallelNonKeyedGroupByWithTwoCountDistinctLongFunctions() throws Exception {
         testParallelGroupByAllTypes(
-                "SELECT count_distinct(j), count_distinct(j2) FROM tab",
+                "SELECT count_distinct(along), count_distinct(along % 2) FROM tab",
                 "count_distinct\tcount_distinct1\n" +
-                        "4000\t3342\n"
+                        "4000\t3\n"
         );
     }
 
@@ -1259,7 +1330,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     @Test
     public void testParallelSingleKeyGroupByWithCountDistinctIntFunction() throws Exception {
         testParallelGroupByAllTypes(
-                "SELECT key, count_distinct(a), count_distinct(ip) FROM tab ORDER BY key",
+                "SELECT key, count_distinct(anint), count_distinct(anint + 42) FROM tab ORDER BY key",
                 "key\tcount_distinct\tcount_distinct1\n" +
                         "k0\t800\t800\n" +
                         "k1\t800\t800\n" +
@@ -1272,7 +1343,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     @Test
     public void testParallelSingleKeyGroupByWithCountDistinctLongFunction() throws Exception {
         testParallelGroupByAllTypes(
-                "SELECT key, count_distinct(j) FROM tab ORDER BY key",
+                "SELECT key, count_distinct(along) FROM tab ORDER BY key",
                 "key\tcount_distinct\n" +
                         "k0\t800\n" +
                         "k1\t800\n" +
@@ -1331,25 +1402,25 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     @Test
     public void testParallelSingleKeyGroupByWithReadThreadSafeTimestampFilter() throws Exception {
         testParallelGroupByAllTypes(
-                "SELECT key, count_distinct(ip) FROM tab " +
-                        "WHERE ts in '1970-01-13' and d < 1000 ORDER BY key DESC",
+                "SELECT key, count_distinct(anint) FROM tab " +
+                        "WHERE ts in '1970-01-13' and adouble < 1000 ORDER BY key DESC",
                 "key\tcount_distinct\n" +
-                        "k4\t28\n" +
-                        "k3\t29\n" +
-                        "k2\t27\n" +
-                        "k1\t31\n" +
-                        "k0\t27\n"
+                        "k4\t30\n" +
+                        "k3\t26\n" +
+                        "k2\t31\n" +
+                        "k1\t29\n" +
+                        "k0\t28\n"
         );
     }
 
     @Test
     public void testParallelSingleKeyGroupByWithReadThreadUnsafeTimestampFilter() throws Exception {
         testParallelGroupByAllTypes(
-                "SELECT key, count_distinct(ip) FROM tab " +
-                        "WHERE ts in '1970-01-13' and d < 1000 and key in ('k1', 'k2') ORDER BY key DESC",
+                "SELECT key, count_distinct(anint) FROM tab " +
+                        "WHERE ts in '1970-01-13' and adouble < 1000 and key in ('k1', 'k2') ORDER BY key DESC",
                 "key\tcount_distinct\n" +
-                        "k2\t27\n" +
-                        "k1\t31\n"
+                        "k2\t31\n" +
+                        "k1\t29\n"
         );
     }
 
@@ -1364,13 +1435,13 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     @Test
     public void testParallelSingleKeyGroupByWithTwoCountDistinctLongFunctions() throws Exception {
         testParallelGroupByAllTypes(
-                "SELECT key, count_distinct(j), count_distinct(j2) FROM tab ORDER BY key",
+                "SELECT key, count_distinct(along), count_distinct(abs(along) % 10) FROM tab ORDER BY key",
                 "key\tcount_distinct\tcount_distinct1\n" +
-                        "k0\t800\t680\n" +
-                        "k1\t800\t654\n" +
-                        "k2\t800\t671\n" +
-                        "k3\t800\t671\n" +
-                        "k4\t800\t671\n"
+                        "k0\t800\t10\n" +
+                        "k1\t800\t10\n" +
+                        "k2\t800\t10\n" +
+                        "k3\t800\t10\n" +
+                        "k4\t800\t10\n"
         );
     }
 
@@ -1384,6 +1455,66 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         "k2\t2024.5\t1639600.0\t1600\n" +
                         "k3\t2025.5\t1640400.0\t1600\n" +
                         "k4\t2026.5\t1641200.0\t1600\n"
+        );
+    }
+
+    @Test
+    public void testParallelStringKeyGroupByWithAllBindVariableTypesInFilter() throws Exception {
+        testParallelGroupByAllTypes(
+                (sqlExecutionContext) -> {
+                    BindVariableService bindVariableService = sqlExecutionContext.getBindVariableService();
+                    bindVariableService.clear();
+                    bindVariableService.setBoolean("aboolean", true);
+                    bindVariableService.setByte("abyte", (byte) 27);
+                    bindVariableService.setGeoHash("ageobyte", 0b1110, ColumnType.getGeoHashTypeWithBits(4));
+                    bindVariableService.setShort("ashort", (short) 967);
+                    bindVariableService.setGeoHash("ageoshort", 0b110101110001, ColumnType.getGeoHashTypeWithBits(12));
+                    bindVariableService.setChar("achar", 'T');
+                    bindVariableService.setInt("anint", -382110917);
+                    bindVariableService.setGeoHash("ageoint", 0b0011000110101001L, ColumnType.getGeoHashTypeWithBits(16));
+                    bindVariableService.setStr("asymbol", null);
+                    bindVariableService.setLong("along", 4625553163167802495L);
+                    bindVariableService.setDate("adate", 1432692897394L);
+                    bindVariableService.setGeoHash("ageolong", 0b01001001000101100011111011100111L, ColumnType.getGeoHashTypeWithBits(32));
+                    bindVariableService.setStr("astring", "FMIFFNCGOR");
+                    bindVariableService.setTimestamp("atimestamp", 2399500000000L);
+                },
+                "SELECT key, count(anint), count(along) FROM tab " +
+                        "WHERE aboolean = :aboolean" +
+                        " and abyte = :abyte" +
+                        " and ageobyte = :ageobyte" +
+                        " and ashort = :ashort" +
+                        " and ageoshort = :ageoshort" +
+                        " and achar = :achar" +
+                        " and anint = :anint" +
+                        " and ageoint = :ageoint" +
+                        " and asymbol = :asymbol" +
+                        " and along = :along" +
+                        " and adate = :adate" +
+                        " and ageolong = :ageolong" +
+                        " and astring = :astring" +
+                        " and ts = :atimestamp " +
+                        "ORDER BY key",
+                "key\tcount\tcount1\n" +
+                        "k0\t1\t1\n"
+        );
+    }
+
+    @Test
+    public void testParallelStringKeyGroupByWithBindVariablesInFilter() throws Exception {
+        testParallelGroupByAllTypes(
+                (sqlExecutionContext) -> {
+                    sqlExecutionContext.getBindVariableService().clear();
+                    sqlExecutionContext.getBindVariableService().setInt(0, 10);
+                    sqlExecutionContext.getBindVariableService().setLong(1, 100);
+                },
+                "SELECT key, min(along), max(along) FROM tab WHERE anint > $1 and along < $2 ORDER BY key",
+                "key\tmin\tmax\n" +
+                        "k0\t-9163665195049517449\t-821679930140433295\n" +
+                        "k1\t-9211162377139482426\t-315372252554695059\n" +
+                        "k2\t-9210040949198821598\t-392919441181422827\n" +
+                        "k3\t-9206124989211917513\t-169245080956466231\n" +
+                        "k4\t-9201446338235814877\t-523002682211837829\n"
         );
     }
 
@@ -1406,26 +1537,26 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     @Test
     public void testParallelStringKeyGroupByWithMinMaxStrFunction() throws Exception {
         testParallelGroupByAllTypes(
-                "SELECT key, min(n), max(n) FROM tab ORDER BY key",
+                "SELECT key, min(astring), max(astring) FROM tab ORDER BY key",
                 "key\tmin\tmax\n" +
-                        "k0\tBBESDHRQLODO\tZZBIRKYMQIJSSYVB\n" +
-                        "k1\tBBDTOUBOOV\tZZXERHVNQRHEMY\n" +
-                        "k2\tBBCMFKVGYNNEND\tZZSVHMXRTDYBN\n" +
-                        "k3\tBBXMKDIWWF\tZYUPDRBHF\n" +
-                        "k4\tBBFVKZOVCXTXY\tZZKLNTGZNIDJXOX\n"
+                        "k0\tBBQRHKLSSCIQ\tZZRMFMBEZGHWVD\n" +
+                        "k1\tBBHLHQWQCSE\tZZQVVCJZSDLNDV\n" +
+                        "k2\tBBHLPGXIIDYSTGX\tZXJBJEX\n" +
+                        "k3\tBDBJTHFBKJJLT\tZZSRLZQQNGCQTSFD\n" +
+                        "k4\tBBKYQSWZHTVJQD\tZZYFVYUXFENY\n"
         );
     }
 
     @Test
     public void testParallelStringKeyGroupByWithMinMaxSymbolFunction() throws Exception {
         testParallelGroupByAllTypes(
-                "SELECT key, min(i), max(i) FROM tab ORDER BY key",
+                "SELECT key, min(asymbol), max(asymbol) FROM tab ORDER BY key",
                 "key\tmin\tmax\n" +
-                        "k0\tNRXGZ\tXUXIBB\n" +
-                        "k1\tNRXGZ\tXUXIBB\n" +
-                        "k2\tNRXGZ\tXUXIBB\n" +
-                        "k3\tNRXGZ\tXUXIBB\n" +
-                        "k4\tNRXGZ\tXUXIBB\n"
+                        "k0\tCPSW\tVTJW\n" +
+                        "k1\tCPSW\tVTJW\n" +
+                        "k2\tCPSW\tVTJW\n" +
+                        "k3\tCPSW\tVTJW\n" +
+                        "k4\tCPSW\tVTJW\n"
         );
     }
 
@@ -1552,7 +1683,9 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     public void testStringKeyGroupByEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool((() -> 4));
-            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
                         ddl(
                                 compiler,
                                 "CREATE TABLE tab (" +
@@ -1593,40 +1726,40 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     private void testParallelGroupByAllTypes(String... queriesAndExpectedResults) throws Exception {
+        testParallelGroupByAllTypes(null, queriesAndExpectedResults);
+    }
+
+    private void testParallelGroupByAllTypes(BindVariablesInitializer initializer, String... queriesAndExpectedResults) throws Exception {
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool((() -> 4));
-            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+                        if (initializer != null) {
+                            initializer.init(sqlExecutionContext);
+                        }
+
                         ddl(
                                 compiler,
                                 "create table tab as (select" +
                                         " 'k' || ((50 + x) % 5) key," +
-                                        " cast(x as int) kk," +
-                                        " rnd_int() a," +
-                                        " rnd_int(0, 1000000, 2) a2," +
-                                        " rnd_ipv4() ip," +
-                                        " rnd_ipv4('10.5/16', 2) ip2," +
-                                        " rnd_boolean() b," +
-                                        " rnd_str(1,1,2) c," +
-                                        " rnd_double(2) d," +
-                                        " rnd_float(2) e," +
-                                        " rnd_short(10,1024) f," +
-                                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                                        " rnd_symbol(4,4,8,2) i," +
-                                        " rnd_long() j," +
-                                        " rnd_long(0, 1000000, 2) j2," +
-                                        " timestamp_sequence(400000000000, 500000000) ts," +
-                                        " rnd_byte(2,50) l," +
-                                        " rnd_bin(10, 20, 2) m," +
-                                        " rnd_str(5,16,2) n," +
-                                        " rnd_char() cc," +
-                                        " rnd_long256() l2," +
-                                        " rnd_geohash(1) hash1b," +
-                                        " rnd_geohash(2) hash2b," +
-                                        " rnd_geohash(3) hash3b," +
-                                        " rnd_geohash(5) hash1c," +
-                                        " rnd_geohash(10) hash2c," +
-                                        " rnd_geohash(20) hash4c," +
-                                        " rnd_geohash(40) hash8c" +
+                                        " rnd_boolean() aboolean," +
+                                        " rnd_byte(2,50) abyte," +
+                                        " rnd_geohash(4) ageobyte," +
+                                        " rnd_short(10,1024) ashort," +
+                                        " rnd_geohash(12) ageoshort," +
+                                        " rnd_char() achar," +
+                                        " rnd_int() anint," +
+                                        " rnd_geohash(16) ageoint," +
+                                        " rnd_symbol(4,4,4,2) asymbol," +
+                                        " rnd_float(2) afloat," +
+                                        " rnd_long() along," +
+                                        " rnd_double(2) adouble," +
+                                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) adate," +
+                                        " rnd_geohash(32) ageolong," +
+                                        " rnd_str(5,16,2) astring," +
+                                        " timestamp_sequence(400000000000, 500000000) ts" +
                                         " from long_sequence(" + ROW_COUNT + ")) timestamp(ts) partition by day",
                                 sqlExecutionContext
                         );
@@ -1642,7 +1775,11 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         Assume.assumeTrue(enableParallelGroupBy);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool((() -> 4));
-            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+
                         ddl(
                                 compiler,
                                 "CREATE TABLE tab (" +
@@ -1712,6 +1849,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                     context.getRequestFd(),
                     circuitBreaker
             );
+            context.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
 
             try {
                 assertSql("", query);
@@ -1734,7 +1872,11 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     private void testParallelMultiSymbolKeyGroupBy(String... queriesAndExpectedResults) throws Exception {
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool((() -> 4));
-            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+
                         ddl(
                                 compiler,
                                 "CREATE TABLE tab (\n" +
@@ -1769,7 +1911,11 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     private void testParallelNonKeyedGroupBy(String... queriesAndExpectedResults) throws Exception {
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool((() -> 4));
-            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+
                         ddl(
                                 compiler,
                                 "CREATE TABLE tab (" +
@@ -1802,9 +1948,12 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     private void testParallelStringKeyGroupBy(String... queriesAndExpectedResults) throws Exception {
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool((() -> 4));
-            TestUtils.execute(pool,
+            TestUtils.execute(
+                    pool,
                     (engine) -> pool.assign(new GroupByMergeShardJob(engine.getMessageBus())),
                     (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+
                         ddl(
                                 compiler,
                                 "CREATE TABLE tab (" +
@@ -1837,7 +1986,11 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     private void testParallelSymbolKeyGroupBy(String... queriesAndExpectedResults) throws Exception {
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool((() -> 4));
-            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+
                         ddl(
                                 compiler,
                                 "CREATE TABLE tab (" +
@@ -1867,5 +2020,9 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                     LOG
             );
         });
+    }
+
+    private interface BindVariablesInitializer {
+        void init(SqlExecutionContext sqlExecutionContext) throws SqlException;
     }
 }

@@ -38,6 +38,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 public class AndFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "and(TT)";
@@ -80,8 +81,7 @@ public class AndFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            // The right branch is usually more specific, so we start from it.
-            return right.getBool(rec) && left.getBool(rec);
+            return left.getBool(rec) && right.getBool(rec);
         }
 
         @Override

@@ -1700,7 +1700,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             );
 
             assertPlan("select s, count() from trips where s is not null",
-                    "Async Group By workers: 1\n" +
+                    "Async JIT Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: s is not null\n" +
@@ -1710,7 +1710,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             );
 
             assertPlan("select s, count() from trips where s is not null and s != 'A1000'",
-                    "Async Group By workers: 1\n" +
+                    "Async JIT Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: (s is not null and s!='A1000')\n" +
@@ -1722,7 +1722,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             bindVariableService.clear();
             bindVariableService.setStr("s1", "A100");
             assertPlan("select s, count() from trips where s is not null and s != :s1",
-                    "Async Group By workers: 1\n" +
+                    "Async JIT Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: (s is not null and s!=:s1::string)\n" +
@@ -1732,7 +1732,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             );
 
             assertPlan("select s, count() from trips where s is not null and l != 0",
-                    "Async Group By workers: 1\n" +
+                    "Async JIT Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: (l!=0 and s is not null)\n" +
@@ -1742,7 +1742,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             );
 
             assertPlan("select s, count() from trips where s is not null or l != 0",
-                    "Async Group By workers: 1\n" +
+                    "Async JIT Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: (s is not null or l!=0)\n" +
@@ -1752,7 +1752,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             );
 
             assertPlan("select s, count() from trips where l != 0 and s is not null",
-                    "Async Group By workers: 1\n" +
+                    "Async JIT Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: (l!=0 and s is not null)\n" +
@@ -1762,7 +1762,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             );
 
             assertPlan("select s, count() from trips where l != 0 or s is not null",
-                    "Async Group By workers: 1\n" +
+                    "Async JIT Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: (l!=0 or s is not null)\n" +
@@ -1772,7 +1772,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             );
 
             assertPlan("select s, count() from trips where l > 100 or l != 0 and s is not null",
-                    "Async Group By workers: 1\n" +
+                    "Async JIT Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: ((100<l or l!=0) and s is not null)\n" +
@@ -1813,7 +1813,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "timestamp(ts) partition by month");
 
             assertPlan("select s, count() from trips where s is not null",
-                    "Async Group By workers: 1\n" +
+                    "Async JIT Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: s is not null\n" +
@@ -1833,7 +1833,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             );
 
             assertPlan("select s, count() from trips where s is not null",
-                    "Async Group By workers: 1\n" +
+                    "Async JIT Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: s is not null\n" +
@@ -1843,7 +1843,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             );
 
             assertPlan("select s, count() from trips where s is not null and s != 'A1000'",
-                    "Async Group By workers: 1\n" +
+                    "Async JIT Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: (s is not null and s!='A1000')\n" +
@@ -1855,7 +1855,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             bindVariableService.clear();
             bindVariableService.setStr("s1", "A100");
             assertPlan("select s, count() from trips where s is not null and s != :s1",
-                    "Async Group By workers: 1\n" +
+                    "Async JIT Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: (s is not null and s!=:s1::string)\n" +
@@ -1865,7 +1865,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             );
 
             assertPlan("select s, count() from trips where s is not null and l != 0",
-                    "Async Group By workers: 1\n" +
+                    "Async JIT Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: (s is not null and l!=0)\n" +
@@ -1875,7 +1875,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             );
 
             assertPlan("select s, count() from trips where s is not null or l != 0",
-                    "Async Group By workers: 1\n" +
+                    "Async JIT Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: (s is not null or l!=0)\n" +
@@ -1885,7 +1885,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             );
 
             assertPlan("select s, count() from trips where l != 0 and s is not null",
-                    "Async Group By workers: 1\n" +
+                    "Async JIT Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: (l!=0 and s is not null)\n" +
@@ -1895,7 +1895,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             );
 
             assertPlan("select s, count() from trips where l != 0 or s is not null",
-                    "Async Group By workers: 1\n" +
+                    "Async JIT Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: (l!=0 or s is not null)\n" +
@@ -1905,7 +1905,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             );
 
             assertPlan("select s, count() from trips where l > 100 or l != 0 and s is not null",
-                    "Async Group By workers: 1\n" +
+                    "Async JIT Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: ((100<l or l!=0) and s is not null)\n" +
@@ -2354,7 +2354,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a (l long, b boolean)",
                 "select b, min(l)  from a where b = true group by b",
-                "Async Group By workers: 1\n" +
+                "Async JIT Group By workers: 1\n" +
                         "  keys: [b]\n" +
                         "  values: [min(l)]\n" +
                         "  filter: b=true\n" +
@@ -2597,7 +2597,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a (i int, d double)",
                 "select i from a where d < 42 group by i",
-                "Async Group By workers: 1\n" +
+                "Async JIT Group By workers: 1\n" +
                         "  keys: [i]\n" +
                         "  filter: d<42\n" +
                         "    DataFrame\n" +
@@ -2639,7 +2639,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a (i long, j long, d double)",
                 "select i, j from a where d > 42 group by i, j",
-                "Async Group By workers: 1\n" +
+                "Async JIT Group By workers: 1\n" +
                         "  keys: [i,j]\n" +
                         "  filter: 42<d\n" +
                         "    DataFrame\n" +
@@ -2667,7 +2667,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a (s symbol, d double)",
                 "select s from a where d = 42 group by s",
-                "Async Group By workers: 1\n" +
+                "Async JIT Group By workers: 1\n" +
                         "  keys: [s]\n" +
                         "  filter: d=42\n" +
                         "    DataFrame\n" +
@@ -2824,7 +2824,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( i int, d double)",
                 "select max(i) from a where i < 10",
-                "Async Group By workers: 1\n" +
+                "Async JIT Group By workers: 1\n" +
                         "  values: [max(i)]\n" +
                         "  filter: i<10\n" +
                         "    DataFrame\n" +
@@ -2898,7 +2898,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a (l long, s1 string, s2 string)",
                 "select s1||s2 s, avg(l) a from a where l > 42",
-                "Async Group By workers: 1\n" +
+                "Async JIT Group By workers: 1\n" +
                         "  keys: [s]\n" +
                         "  values: [avg(l)]\n" +
                         "  filter: 42<l\n" +
@@ -3023,7 +3023,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long)",
                 "select x, count(*) from di where y = 5 group by x limit 10",
                 "Limit lo: 10\n" +
-                        "    Async Group By workers: 1\n" +
+                        "    Async JIT Group By workers: 1\n" +
                         "      keys: [x]\n" +
                         "      values: [count(*)]\n" +
                         "      filter: y=5\n" +
@@ -3039,7 +3039,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long)",
                 "select x, count(*) from di where y = 5 group by x limit -10",
                 "Limit lo: -10\n" +
-                        "    Async Group By workers: 1\n" +
+                        "    Async JIT Group By workers: 1\n" +
                         "      keys: [x]\n" +
                         "      values: [count(*)]\n" +
                         "      filter: y=5\n" +
@@ -3104,7 +3104,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select ts, count(*) from di where y = 5 group by ts order by ts desc limit 10",
                 "Sort light lo: 10\n" +
                         "  keys: [ts desc]\n" +
-                        "    Async Group By workers: 1\n" +
+                        "    Async JIT Group By workers: 1\n" +
                         "      keys: [ts]\n" +
                         "      values: [count(*)]\n" +
                         "      filter: y=5\n" +
@@ -6019,7 +6019,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "            Frame forward scan on: test\n");
 
             // no where clause, distinct expression 1
-            assertPlan("SELECT count_distinct(substring(s,1,1)) FROM test ",
+            assertPlan("SELECT count_distinct(substring(s,1,1)) FROM test;",
                     "Count\n" +
                             "    Async Group By workers: 1\n" +
                             "      keys: [substring]\n" +
@@ -6051,7 +6051,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             // where clause, distinct expression 3
             assertPlan("SELECT count_distinct(x+1) FROM test where x > 5",
                     "Count\n" +
-                            "    Async Group By workers: 1\n" +
+                            "    Async JIT Group By workers: 1\n" +
                             "      keys: [column]\n" +
                             "      filter: (5<x and null!=x+1)\n" +
                             "        DataFrame\n" +
@@ -6061,7 +6061,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             // where clause, distinct expression, col alias
             assertPlan("SELECT count_distinct(x+1) cnt_dst FROM test where x > 5",
                     "Count\n" +
-                            "    Async Group By workers: 1\n" +
+                            "    Async JIT Group By workers: 1\n" +
                             "      keys: [column]\n" +
                             "      filter: (5<x and null!=x+1)\n" +
                             "        DataFrame\n" +
@@ -6075,7 +6075,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             // where clause, distinct expression, table alias
             assertPlan("SELECT count_distinct(x+1) FROM test tab where x > 5",
                     "Count\n" +
-                            "    Async Group By workers: 1\n" +
+                            "    Async JIT Group By workers: 1\n" +
                             "      keys: [column]\n" +
                             "      filter: (5<x and null!=x+1)\n" +
                             "        DataFrame\n" +
@@ -6438,7 +6438,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a (i long, j long, d double)",
                 "select count(*) from (select i, j from a where d > 42 group by i, j)",
                 "Count\n" +
-                        "    Async Group By workers: 1\n" +
+                        "    Async JIT Group By workers: 1\n" +
                         "      keys: [i,j]\n" +
                         "      filter: 42<d\n" +
                         "        DataFrame\n" +
@@ -6588,7 +6588,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( s string, l long )",
                 "select count_distinct(l) from tab",
                 "Count\n" +
-                        "    Async Group By workers: 1\n" +
+                        "    Async JIT Group By workers: 1\n" +
                         "      keys: [l]\n" +
                         "      filter: null!=l\n" +
                         "        DataFrame\n" +

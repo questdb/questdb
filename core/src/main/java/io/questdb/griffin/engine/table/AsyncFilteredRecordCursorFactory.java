@@ -145,7 +145,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
     }
 
     @Override
-    public Function getFilter() {
+    public @NotNull Function getFilter() {
         return filter;
     }
 
@@ -206,11 +206,6 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         }
         sink.attr("filter").val(frameSequence.getAtom());
         sink.child(base, order);
-    }
-
-    @Override
-    public boolean usesCompiledFilter() {
-        return base.usesCompiledFilter();
     }
 
     private static void filter(

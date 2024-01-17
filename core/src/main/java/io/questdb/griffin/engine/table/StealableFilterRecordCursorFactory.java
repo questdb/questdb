@@ -25,9 +25,32 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.jit.CompiledFilter;
+import io.questdb.std.ObjList;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public interface StealableFilterRecordCursorFactory {
 
+    // to be used in combination with compiled filter
+    @Nullable
+    default ObjList<Function> getBindVarFunctions() {
+        return null;
+    }
+
+    // to be used in combination with compiled filter
+    @Nullable
+    default MemoryCARW getBindVarMemory() {
+        return null;
+    }
+
+    @Nullable
+    default CompiledFilter getCompiledFilter() {
+        return null;
+    }
+
+    @NotNull
     Function getFilter();
 
     /**

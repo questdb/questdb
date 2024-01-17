@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
@@ -36,6 +37,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.groupby.*;
+import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -47,6 +49,9 @@ import java.io.Closeable;
 
 public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Plannable {
 
+    private final ObjList<Function> bindVarFunctions;
+    private final MemoryCARW bindVarMemory;
+    private final CompiledFilter compiledFilter;
     private final Function filter;
     private final GroupByFunctionsUpdater functionUpdater;
     private final SimpleMapValue mapValue;
@@ -62,6 +67,9 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Planna
             @NotNull ObjList<GroupByFunction> groupByFunctions,
             @Nullable ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
             int valueCount,
+            @Nullable CompiledFilter compiledFilter,
+            @Nullable MemoryCARW bindVarMemory,
+            @Nullable ObjList<Function> bindVarFunctions,
             @Nullable Function filter,
             @Nullable ObjList<Function> perWorkerFilters,
             int workerCount
@@ -69,6 +77,9 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Planna
         assert perWorkerFilters == null || perWorkerFilters.size() == workerCount;
         assert perWorkerGroupByFunctions == null || perWorkerGroupByFunctions.size() == workerCount;
         try {
+            this.compiledFilter = compiledFilter;
+            this.bindVarMemory = bindVarMemory;
+            this.bindVarFunctions = bindVarFunctions;
             this.filter = filter;
             this.perWorkerFilters = perWorkerFilters;
             this.perWorkerGroupByFunctions = perWorkerGroupByFunctions;
@@ -122,6 +133,9 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Planna
 
     @Override
     public void close() {
+        Misc.free(compiledFilter);
+        Misc.free(bindVarMemory);
+        Misc.freeObjList(bindVarFunctions);
         Misc.free(filter);
         Misc.freeObjList(perWorkerFilters);
         if (perWorkerGroupByFunctions != null) {
@@ -129,6 +143,18 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Planna
                 Misc.freeObjList(perWorkerGroupByFunctions.getQuick(i));
             }
         }
+    }
+
+    public ObjList<Function> getBindVarFunctions() {
+        return bindVarFunctions;
+    }
+
+    public MemoryCARW getBindVarMemory() {
+        return bindVarMemory;
+    }
+
+    public CompiledFilter getCompiledFilter() {
+        return compiledFilter;
     }
 
     public Function getFilter(int slotId) {
@@ -167,6 +193,7 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Planna
         if (filter != null) {
             filter.init(symbolTableSource, executionContext);
         }
+
         if (perWorkerFilters != null) {
             final boolean current = executionContext.getCloneSymbolTables();
             executionContext.setCloneSymbolTables(true);
@@ -176,6 +203,7 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Planna
                 executionContext.setCloneSymbolTables(current);
             }
         }
+
         if (perWorkerGroupByFunctions != null) {
             final boolean current = executionContext.getCloneSymbolTables();
             executionContext.setCloneSymbolTables(true);
@@ -186,6 +214,11 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Planna
             } finally {
                 executionContext.setCloneSymbolTables(current);
             }
+        }
+
+        if (bindVarFunctions != null) {
+            Function.init(bindVarFunctions, symbolTableSource, executionContext);
+            prepareBindVarMemory(symbolTableSource, executionContext);
         }
     }
 
@@ -222,6 +255,17 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Planna
         if (perWorkerGroupByFunctions != null) {
             for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
                 GroupByUtils.toTop(perWorkerGroupByFunctions.getQuick(i));
+            }
+        }
+    }
+
+    private void prepareBindVarMemory(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        // don't trigger memory allocation if there are no variables
+        if (bindVarFunctions.size() > 0) {
+            bindVarMemory.truncate();
+            for (int i = 0, n = bindVarFunctions.size(); i < n; i++) {
+                Function function = bindVarFunctions.getQuick(i);
+                AsyncJitFilteredRecordCursorFactory.writeBindVarFunction(bindVarMemory, function, symbolTableSource, executionContext);
             }
         }
     }
