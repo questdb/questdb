@@ -27,6 +27,7 @@ package io.questdb.log;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -41,6 +42,21 @@ final class NullLogRecord implements LogRecord {
 
     @Override
     public void $() {
+    }
+
+    @Override
+    public Utf8Sink putUtf8(long lo, long hi) {
+        return this;
+    }
+
+    @Override
+    public Utf8Sink put(@Nullable Utf8Sequence us) {
+        return this;
+    }
+
+    @Override
+    public Utf8Sink put(byte b) {
+        return this;
     }
 
     @Override

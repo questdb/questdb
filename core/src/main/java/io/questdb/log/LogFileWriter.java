@@ -38,7 +38,7 @@ public class LogFileWriter extends SynchronizedJob implements Closeable, LogWrit
 
     private static final int DEFAULT_BUFFER_SIZE = 1024 * 1024;
     private final int level;
-    private final RingQueue<LogRecordSink> ring;
+    private final RingQueue<LogRecordUtf8Sink> ring;
     private final SCSequence subSeq;
     private long _wptr;
     private long buf;
@@ -47,12 +47,12 @@ public class LogFileWriter extends SynchronizedJob implements Closeable, LogWrit
     private int fd = -1;
     private long lim;
     private String location;
-    private QueueConsumer<LogRecordSink> myConsumer = this::copyToBuffer;
+    private QueueConsumer<LogRecordUtf8Sink> myConsumer = this::copyToBuffer;
     // can be set via reflection
     @SuppressWarnings("unused")
     private String truncate;
 
-    public LogFileWriter(RingQueue<LogRecordSink> ring, SCSequence subSeq, int level) {
+    public LogFileWriter(RingQueue<LogRecordUtf8Sink> ring, SCSequence subSeq, int level) {
         this.ring = ring;
         this.subSeq = subSeq;
         this.level = level;
@@ -104,7 +104,7 @@ public class LogFileWriter extends SynchronizedJob implements Closeable, LogWrit
     }
 
     @TestOnly
-    public QueueConsumer<LogRecordSink> getMyConsumer() {
+    public QueueConsumer<LogRecordUtf8Sink> getMyConsumer() {
         return myConsumer;
     }
 
@@ -131,11 +131,11 @@ public class LogFileWriter extends SynchronizedJob implements Closeable, LogWrit
     }
 
     @TestOnly
-    public void setMyConsumer(QueueConsumer<LogRecordSink> myConsumer) {
+    public void setMyConsumer(QueueConsumer<LogRecordUtf8Sink> myConsumer) {
         this.myConsumer = myConsumer;
     }
 
-    private void copyToBuffer(LogRecordSink sink) {
+    private void copyToBuffer(LogRecordUtf8Sink sink) {
         final int size = sink.size();
         if ((sink.getLevel() & this.level) != 0 && size > 0) {
             if (_wptr + size >= lim) {

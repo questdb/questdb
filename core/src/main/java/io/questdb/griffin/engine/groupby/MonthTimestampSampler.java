@@ -25,7 +25,7 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.std.datetime.microtime.Timestamps.toMicros;
@@ -77,7 +77,7 @@ public class MonthTimestampSampler implements TimestampSampler {
     }
 
     @Override
-    public void toSink(@NotNull CharSinkBase<?> sink) {
+    public void toSink(@NotNull CharSink<?> sink) {
         sink.putAscii("MonthTsSampler");
     }
 

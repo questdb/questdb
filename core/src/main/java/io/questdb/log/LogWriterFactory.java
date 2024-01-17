@@ -29,5 +29,5 @@ import io.questdb.mp.SCSequence;
 
 @FunctionalInterface
 public interface LogWriterFactory {
-    LogWriter createLogWriter(RingQueue<LogRecordSink> ring, SCSequence seq, int level);
+    LogWriter createLogWriter(RingQueue<LogRecordUtf8Sink> ring, SCSequence seq, int level);
 }

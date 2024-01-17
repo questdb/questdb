@@ -33,7 +33,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 
 import java.io.Closeable;
 
@@ -61,7 +61,7 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
             RecordMetadata metadata
     ) {
         int dot = addAlias(tableAlias, columnName);
-        final CharSink b = Misc.getThreadLocalSink();
+        final Utf16Sink b = Misc.getThreadLocalSink();
         TableColumnMetadata cm;
         if (dot == -1) {
             cm = new TableColumnMetadata(
@@ -88,7 +88,7 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
     public void add(CharSequence tableAlias, TableColumnMetadata m) {
         final CharSequence columnName = m.getName();
         final int dot = addAlias(tableAlias, columnName);
-        final CharSink b = Misc.getThreadLocalSink();
+        final Utf16Sink b = Misc.getThreadLocalSink();
         TableColumnMetadata cm;
         if (dot == -1) {
             cm = new TableColumnMetadata(

@@ -35,13 +35,13 @@ import java.io.Closeable;
 public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogWriter {
     private final int fd = Files.getStdOutFd();
     private final int level;
-    private final RingQueue<LogRecordSink> ring;
+    private final RingQueue<LogRecordUtf8Sink> ring;
     private final SCSequence subSeq;
     private LogInterceptor interceptor;
-    private final QueueConsumer<LogRecordSink> myConsumer = this::toStdOut;
+    private final QueueConsumer<LogRecordUtf8Sink> myConsumer = this::toStdOut;
 
 
-    public LogConsoleWriter(RingQueue<LogRecordSink> ring, SCSequence subSeq, int level) {
+    public LogConsoleWriter(RingQueue<LogRecordUtf8Sink> ring, SCSequence subSeq, int level) {
         this.ring = ring;
         this.subSeq = subSeq;
         this.level = level;
@@ -64,7 +64,7 @@ public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogW
         this.interceptor = interceptor;
     }
 
-    private void toStdOut(LogRecordSink sink) {
+    private void toStdOut(LogRecordUtf8Sink sink) {
         if ((sink.getLevel() & this.level) != 0) {
             if (interceptor != null) {
                 interceptor.onLog(sink);
@@ -75,6 +75,6 @@ public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogW
 
     @FunctionalInterface
     public interface LogInterceptor {
-        void onLog(LogRecordSink sink);
+        void onLog(LogRecordUtf8Sink sink);
     }
 }

@@ -33,6 +33,7 @@ import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 
 import java.io.File;
+import java.nio.file.FileSystems;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -45,7 +46,7 @@ public class PathTest {
 
     @Rule
     public final TemporaryFolder temp = new TemporaryFolder();
-    private final char separator = System.getProperty("file.separator").charAt(0);
+    private final char separator = FileSystems.getDefault().getSeparator().charAt(0);
     private Path path;
 
     @Before
@@ -161,7 +162,7 @@ public class PathTest {
         final long src = 0;
         try {
             try (Path p0 = new Path()) {
-                p0.put(src, src + threeGiB);
+                p0.putUtf8(src, src + threeGiB);
                 Assert.fail("Expected exception");
             }
         } catch (IllegalArgumentException iae) {
@@ -414,10 +415,7 @@ public class PathTest {
                         path.concat("partition").slash$();
                         Assert.assertEquals(expected2, path.toString());
                         Assert.assertEquals(32, path.size());
-                        AtomicLong count = stats.get(threadId);
-                        if (count == null) {
-                            stats.put(threadId, count = new AtomicLong());
-                        }
+                        AtomicLong count = stats.computeIfAbsent(threadId, k -> new AtomicLong());
                         count.incrementAndGet();
                         Os.pause();
                     }

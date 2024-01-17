@@ -89,7 +89,7 @@ public class DirectUtf8Sink implements MutableUtf8Sink, BorrowableUtf8Sink, Dire
     public DirectUtf8Sink put(@Nullable Utf8Sequence us) {
         if (us != null) {
             final int size = us.size();
-            final long dest = sink.book(size);
+            final long dest = sink.checkCapacity(size);
             for (int i = 0; i < size; i++) {
                 Unsafe.getUnsafe().putByte(dest + i, us.byteAt(i));
             }
@@ -105,7 +105,7 @@ public class DirectUtf8Sink implements MutableUtf8Sink, BorrowableUtf8Sink, Dire
     }
 
     @Override
-    public DirectUtf8Sink put(long lo, long hi) {
+    public DirectUtf8Sink putUtf8(long lo, long hi) {
         sink.put(lo, hi);
         return this;
     }

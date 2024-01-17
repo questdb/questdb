@@ -377,7 +377,7 @@ public class Utf8sTest {
             for (int i = 0, n = bytes.length; i < n; i++) {
                 Unsafe.getUnsafe().putByte(p + i, bytes[i]);
             }
-            CharSink b = new StringSink();
+            Utf16Sink b = new StringSink();
             Utf8s.utf8ToUtf16(p, p + bytes.length, b);
             TestUtils.assertEquals(in, b.toString());
         } finally {

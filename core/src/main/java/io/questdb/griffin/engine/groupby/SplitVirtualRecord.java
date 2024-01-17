@@ -29,7 +29,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.groupby.InterpolationGroupByFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 
 public class SplitVirtualRecord implements Record {
     private final ObjList<? extends Function> functionsA;
@@ -156,7 +156,7 @@ public class SplitVirtualRecord implements Record {
     }
 
     @Override
-    public void getStr(int col, CharSink sink) {
+    public void getStr(int col, Utf16Sink sink) {
         getFunction(col).getStr(base, sink);
     }
 
