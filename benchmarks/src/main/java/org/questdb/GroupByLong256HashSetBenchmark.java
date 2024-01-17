@@ -30,9 +30,7 @@ import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.OrderedMap;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
-import io.questdb.griffin.engine.groupby.GroupByLong128HashSet;
 import io.questdb.griffin.engine.groupby.GroupByLong256HashSet;
-import io.questdb.std.Long256;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import org.openjdk.jmh.annotations.*;
@@ -45,25 +43,32 @@ import java.util.concurrent.TimeUnit;
 
 @State(Scope.Thread)
 @BenchmarkMode(Mode.AverageTime)
-@OutputTimeUnit(TimeUnit.MICROSECONDS)
+@OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class GroupByLong256HashSetBenchmark {
+    private static final double loadFactor = 0.7;
+    private static final int orderedMapPageSize = 1024 * 1024;
+    private static final long groupByAllocatorDefaultChunkSize = 128 * 1024;
+    private static final long groupByAllocatorMaxChunkSize = Numbers.SIZE_1GB * 8;
 
-    private static final long N = 1_000_000;
+    private static final Rnd rnd = new Rnd();
+
+    @Param({"5000", "50000", "500000", "5000000"})
+    public int size;
+
     private static final GroupByAllocator allocator = new GroupByAllocator(new DefaultCairoConfiguration(null) {
         @Override
         public long getGroupByAllocatorDefaultChunkSize() {
-            return 128 * 1024;
+            return groupByAllocatorDefaultChunkSize;
         }
 
         @Override
         public long getGroupByAllocatorMaxChunkSize() {
-            return Numbers.SIZE_1GB * 8;
+            return groupByAllocatorMaxChunkSize;
         }
     });
-    private static final OrderedMap fmap = new OrderedMap(1024 * 1024, new SingleColumnType(ColumnType.LONG256), null, 16, 0.7f, Integer.MAX_VALUE);
-    private static final GroupByLong256HashSet gbset = new GroupByLong256HashSet(16, 0.7, 0);
+    private static final OrderedMap orderedMap = new OrderedMap(orderedMapPageSize, new SingleColumnType(ColumnType.LONG256), null, 64, loadFactor, Integer.MAX_VALUE);
+    private static final GroupByLong256HashSet groupByLong256HashSet = new GroupByLong256HashSet(64, loadFactor, 0);
     private static long ptr = 0;
-    private final Rnd rnd = new Rnd();
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
@@ -76,41 +81,32 @@ public class GroupByLong256HashSetBenchmark {
         new Runner(opt).run();
     }
 
-    @Benchmark
-    public long baseline() {
-        rnd.nextLong(N);
-        rnd.nextLong(N);
-        rnd.nextLong(N);
-        return rnd.nextLong(N);
-    }
-
     @Setup(Level.Iteration)
     public void reset() {
-        fmap.close();
-        fmap.reopen();
+        orderedMap.clear();
         allocator.close();
-        gbset.setAllocator(allocator);
+        groupByLong256HashSet.setAllocator(allocator);
         ptr = 0;
         rnd.reset();
     }
 
     @Benchmark
-    public void testFastMap() {
-        MapKey key = fmap.withKey();
-        key.putLong256(rnd.nextLong(N), rnd.nextLong(N), rnd.nextLong(N), rnd.nextLong(N));
+    public void testOrderedMap() {
+        MapKey key = orderedMap.withKey();
+        key.putLong256(rnd.nextLong(size), rnd.nextLong(size), rnd.nextLong(size), rnd.nextLong(size));
         key.createValue();
     }
 
     @Benchmark
     public void testGroupByLong256HashSet() {
-        long l0 = rnd.nextLong(N);
-        long l1 = rnd.nextLong(N);
-        long l2 = rnd.nextLong(N);
-        long l3 = rnd.nextLong(N);
-        int index = gbset.of(ptr).keyIndex(l0, l1, l2, l3);
+        long l0 = rnd.nextLong(size);
+        long l1 = rnd.nextLong(size);
+        long l2 = rnd.nextLong(size);
+        long l3 = rnd.nextLong(size);
+        int index = groupByLong256HashSet.of(ptr).keyIndex(l0, l1, l2, l3);
         if (index >= 0) {
-            gbset.addAt(index, l0, l1, l2, l3);
-            ptr = gbset.ptr();
+            groupByLong256HashSet.addAt(index, l0, l1, l2, l3);
+            ptr = groupByLong256HashSet.ptr();
         }
     }
 }
