@@ -54,6 +54,8 @@ import java.security.PublicKey;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
+import static io.questdb.cutlass.line.tcp.LineTcpConnectionContext.IOContextResult.NEEDS_DISCONNECT;
+
 
 abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     static final int FD = 1_000_000;
@@ -233,18 +235,8 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     }
 
     protected boolean handleContextIO0() {
-        switch (context.handleIO(noNetworkIOJob)) {
-            case NEEDS_READ:
-                context.getDispatcher().registerChannel(context, IOOperation.READ);
-                break;
-            case NEEDS_WRITE:
-                context.getDispatcher().registerChannel(context, IOOperation.WRITE);
-                break;
-            case QUEUE_FULL:
-                return true;
-            case NEEDS_DISCONNECT:
-                context.getDispatcher().disconnect(context, IODispatcher.DISCONNECT_REASON_PROTOCOL_VIOLATION);
-                break;
+        if (context.handleIO(noNetworkIOJob) == NEEDS_DISCONNECT) {
+            disconnected = true;
         }
         context.commitWalTables(Long.MAX_VALUE);
         scheduler.doMaintenance(noNetworkIOJob.localTableUpdateDetailsByTableName, noNetworkIOJob.getWorkerId(), Long.MAX_VALUE);
@@ -317,7 +309,6 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         };
         noNetworkIOJob.setScheduler(scheduler);
         context = new LineTcpConnectionContext(lineTcpConfiguration, scheduler, metrics);
-        Assert.assertNull(context.getDispatcher());
         context.of(FD, new IODispatcher<LineTcpConnectionContext>() {
             @Override
             public void close() {

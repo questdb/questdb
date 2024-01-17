@@ -175,7 +175,7 @@ public class WaitProcessorTest {
             public long getMaxWaitCapMs() {
                 return 1000;
             }
-        });
+        }, null);
     }
 
     @NotNull

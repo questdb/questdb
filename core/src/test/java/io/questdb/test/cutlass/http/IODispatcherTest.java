@@ -191,10 +191,10 @@ public class IODispatcherTest extends AbstractTest {
                         while (serverRunning.get()) {
                             dispatcher.run(0);
                             dispatcher.processIOQueue(
-                                    (operation, context) -> {
+                                    (operation, context, dispatcher1) -> {
                                         if (operation == IOOperation.WRITE) {
                                             Assert.assertEquals(1024, Net.send(context.getFd(), context.buffer, 1024));
-                                            context.getDispatcher().disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
+                                            dispatcher1.disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
                                         }
                                         return true;
                                     }
@@ -411,7 +411,7 @@ public class IODispatcherTest extends AbstractTest {
                         while (serverRunning.get()) {
                             dispatcher.run(0);
                             dispatcher.processIOQueue(
-                                    (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
+                                    (operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, EmptyRescheduleContext, dispatcher1)
                             );
                         }
                     } finally {
@@ -5471,7 +5471,7 @@ public class IODispatcherTest extends AbstractTest {
                         do {
                             dispatcher.run(0);
                             dispatcher.processIOQueue(
-                                    (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
+                                    (operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, EmptyRescheduleContext, dispatcher1)
                             );
                         } while (serverRunning.get());
                     } finally {
@@ -6365,7 +6365,7 @@ public class IODispatcherTest extends AbstractTest {
                         while (serverRunning.get()) {
                             dispatcher.run(0);
                             dispatcher.processIOQueue(
-                                    (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
+                                    (operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, EmptyRescheduleContext, dispatcher1)
                             );
                         }
                     } finally {
@@ -6536,7 +6536,7 @@ public class IODispatcherTest extends AbstractTest {
                         while (serverRunning.get()) {
                             dispatcher.run(0);
                             dispatcher.processIOQueue(
-                                    (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
+                                    (operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, EmptyRescheduleContext, dispatcher1)
                             );
                         }
                     } finally {
@@ -6691,7 +6691,7 @@ public class IODispatcherTest extends AbstractTest {
                         while (serverRunning.get()) {
                             dispatcher.run(0);
                             dispatcher.processIOQueue(
-                                    (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
+                                    (operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, EmptyRescheduleContext, dispatcher1)
                             );
                         }
                     } finally {
@@ -7648,7 +7648,7 @@ public class IODispatcherTest extends AbstractTest {
                                 while (serverRunning.get()) {
                                     dispatcher.run(0);
                                     dispatcher.processIOQueue(
-                                            (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
+                                            (operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, EmptyRescheduleContext, dispatcher1)
                                     );
                                 }
                             } finally {
@@ -7711,7 +7711,7 @@ public class IODispatcherTest extends AbstractTest {
                     serverHaltLatch.await();
                 }
             } catch (Throwable e) {
-                e.printStackTrace();
+                LOG.critical().$(e).$();
                 throw e;
             } finally {
                 finished.set(true);
@@ -7803,7 +7803,7 @@ public class IODispatcherTest extends AbstractTest {
                         event.close();
                         totalEvents.incrementAndGet();
                     } catch (Exception e) {
-                        e.printStackTrace();
+                        LOG.critical().$(e).$();
                     }
                 } else {
                     Os.pause();
@@ -8040,6 +8040,27 @@ public class IODispatcherTest extends AbstractTest {
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false);
+    }
+
+    private boolean handleClientOperation(
+            HttpConnectionContext context,
+            int operation,
+            HttpRequestProcessorSelector selector,
+            RescheduleContext rescheduleContext,
+            IODispatcher<HttpConnectionContext> dispatcher
+    ) {
+        try {
+            return context.handleClientOperation(operation, selector, rescheduleContext);
+        } catch (HeartBeatException e) {
+            dispatcher.registerChannel(context, IOOperation.HEARTBEAT);
+        } catch (PeerIsSlowToReadException e) {
+            dispatcher.registerChannel(context, IOOperation.WRITE);
+        } catch (ServerDisconnectException e) {
+            dispatcher.disconnect(context, context.getDisconnectReason());
+        } catch (PeerIsSlowToWriteException e) {
+            dispatcher.registerChannel(context, IOOperation.READ);
+        }
+        return false;
     }
 
     private void importWithO3MaxLagAndMaxUncommittedRowsTableExists(
@@ -8856,7 +8877,7 @@ public class IODispatcherTest extends AbstractTest {
                     @Override
                     public void run() {
                         long smem = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
-                        IORequestProcessor<TestIOContext> requestProcessor = (operation, context) -> {
+                        IORequestProcessor<TestIOContext> requestProcessor = (operation, context, dispatcher) -> {
                             int fd = context.getFd();
                             int rc;
                             switch (operation) {
@@ -9037,9 +9058,8 @@ public class IODispatcherTest extends AbstractTest {
 
         public HelloContext(int fd, SOCountDownLatch closeLatch, IODispatcher<HelloContext> dispatcher) {
             super(PlainSocketFactory.INSTANCE, NetworkFacadeImpl.INSTANCE, LOG, NullLongGauge.INSTANCE);
-            socket.of(fd);
+            this.of(fd, dispatcher);
             this.closeLatch = closeLatch;
-            this.dispatcher = dispatcher;
         }
 
         @Override
@@ -9081,14 +9101,14 @@ public class IODispatcherTest extends AbstractTest {
                         try {
                             requester.execute(requests[index][0], requests[index][1]);
                         } catch (Throwable e) {
-                            e.printStackTrace();
+                            LOG.critical().$(e).$();
                             System.out.println("erm: " + index + ", ts=" + Timestamps.toString(Os.currentTimeMicros()));
                             throw e;
                         }
                     }
                 });
             } catch (Throwable e) {
-                e.printStackTrace();
+                LOG.critical().$(e).$();
                 errorCounter.incrementAndGet();
             } finally {
                 latch.countDown();

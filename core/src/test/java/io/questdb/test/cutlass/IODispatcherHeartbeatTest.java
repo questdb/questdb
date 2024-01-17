@@ -438,7 +438,7 @@ public class IODispatcherHeartbeatTest {
         }
 
         @Override
-        public boolean onRequest(int operation, TestContext context) {
+        public boolean onRequest(int operation, TestContext context, IODispatcher<TestContext> dispatcher) {
             context.checkInvariant(operation, clock.getTicks());
             if (operation != IOOperation.HEARTBEAT && !alreadySuspended) {
                 context.suspendEvent = suspendEvent;
@@ -512,8 +512,7 @@ public class IODispatcherHeartbeatTest {
             super.close();
         }
 
-        @Override
-        public IODispatcher<TestContext> getDispatcher() {
+        IODispatcher<TestContext> getDispatcher() {
             return dispatcher;
         }
 
@@ -536,7 +535,7 @@ public class IODispatcherHeartbeatTest {
         }
 
         @Override
-        public boolean onRequest(int operation, TestContext context) {
+        public boolean onRequest(int operation, TestContext context, IODispatcher<TestContext> dispatcher) {
             context.checkInvariant(operation, clock.getTicks());
             context.getDispatcher().registerChannel(context, operation);
             return true;

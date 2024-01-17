@@ -32,9 +32,11 @@ import org.jetbrains.annotations.NotNull;
 
 public abstract class IOContext<T extends IOContext<T>> implements Mutable, QuietCloseable {
     protected final Socket socket;
-    protected IODispatcher<T> dispatcher;
-    protected long heartbeatId = -1;
     private final LongGauge connectionCountGauge;
+    protected long heartbeatId = -1;
+    private int disconnectReason;
+    // keep dispatcher private to avoid context scheduling itself multiple times
+    private IODispatcher<T> dispatcher;
 
     protected IOContext(SocketFactory socketFactory, NetworkFacade nf, Log log, LongGauge connectionCountGauge) {
         this.socket = socketFactory.newInstance(nf, log);
@@ -55,14 +57,32 @@ public abstract class IOContext<T extends IOContext<T>> implements Mutable, Quie
         _clear();
     }
 
+    public int getDisconnectReason() {
+        return disconnectReason;
+    }
+
+
+    public PeerIsSlowToReadException registerDispatcherWrite() {
+        return PeerIsSlowToReadException.INSTANCE;
+    }
+
+    public HeartBeatException registerDispatcherHeartBeat() {
+        return HeartBeatException.INSTANCE;
+    }
+
+    public ServerDisconnectException registerDispatcherDisconnect(int reason) {
+        disconnectReason = reason;
+        return ServerDisconnectException.INSTANCE;
+    }
+
     public long getAndResetHeartbeatId() {
         long id = heartbeatId;
         heartbeatId = -1;
         return id;
     }
 
-    public IODispatcher<T> getDispatcher() {
-        return dispatcher;
+    public PeerIsSlowToWriteException registerDispatcherRead() {
+        return PeerIsSlowToWriteException.INSTANCE;
     }
 
     public int getFd() {
@@ -109,6 +129,7 @@ public abstract class IOContext<T extends IOContext<T>> implements Mutable, Quie
         heartbeatId = -1;
         socket.close();
         dispatcher = null;
+        disconnectReason = -1;
         clearSuspendEvent();
     }
 }
