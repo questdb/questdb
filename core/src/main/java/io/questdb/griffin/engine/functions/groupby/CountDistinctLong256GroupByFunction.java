@@ -33,7 +33,6 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
-import io.questdb.griffin.engine.groupby.GroupByLong128HashSet;
 import io.questdb.griffin.engine.groupby.GroupByLong256HashSet;
 import io.questdb.std.*;
 
@@ -80,7 +79,6 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
 
         if (isNotNull(l256)) {
             long ptr = mapValue.getLong(valueIndex + 1);
-            mapValue.putLong(valueIndex, 1L);
             long l0 = l256.getLong0() == 0 ? Numbers.LONG_NaN : l256.getLong0();
             long l1 = l256.getLong1() == 0 ? Numbers.LONG_NaN : l256.getLong1();
             long l2 = l256.getLong2() == 0 ? Numbers.LONG_NaN : l256.getLong2();
@@ -164,7 +162,7 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.LONG);
-        columnTypes.add(ColumnType.INT);
+        columnTypes.add(ColumnType.LONG);
     }
 
     @Override

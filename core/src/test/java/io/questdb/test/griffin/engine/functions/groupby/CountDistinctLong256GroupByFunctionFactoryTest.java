@@ -75,144 +75,144 @@ public class CountDistinctLong256GroupByFunctionFactoryTest extends AbstractCair
         // so the result should stay the same
         assertSql(expected, "select a, count_distinct(s) from x order by a");
     }
+
+    @Test
+    public void testGroupKeyed() throws Exception {
+        assertQuery(
+                "a\tcount_distinct\n" +
+                        "a\t2\n" +
+                        "b\t1\n" +
+                        "c\t1\n" +
+                        "d\t4\n" +
+                        "e\t4\n" +
+                        "f\t3\n",
+                "select a, count_distinct(s) from x order by a",
+                "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, to_long256(rnd_long(0, 16, 0), 0, 0, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(20)) timestamp(ts))",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testGroupNotKeyed() throws Exception {
+        assertQuery(
+                "count_distinct\n" +
+                        "6\n",
+                "select count_distinct(s) from x",
+                "create table x as (select * from (select to_long256(rnd_long(1, 6, 0), 0, 0, 0) s, timestamp_sequence(0, 1000) ts from long_sequence(1000)) timestamp(ts))",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testGroupNotKeyedWithNulls() throws Exception {
+        String expected = "count_distinct\n" +
+                "6\n";
+        assertQuery(
+                expected,
+                "select count_distinct(s) from x",
+                "create table x as (select * from (select to_long256(rnd_long(1, 6, 0), 0, 0 ,0) s, timestamp_sequence(10, 100000) ts from long_sequence(1000)) timestamp(ts)) timestamp(ts) PARTITION BY YEAR",
+                null,
+                false,
+                true
+        );
+
+        insert("insert into x values(cast(null as long256), '2021-05-21')");
+        insert("insert into x values(cast(null as long256), '1970-01-01')");
+        assertSql(expected, "select count_distinct(s) from x");
+    }
+
+    @Test
+    public void testNullConstant() throws Exception {
+        assertQuery(
+                "a\tcount_distinct\n" +
+                        "a\t0\n" +
+                        "b\t0\n" +
+                        "c\t0\n",
+                "select a, count_distinct(to_long256(null, null, null, null)) from x order by a",
+                "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testSampleFillLinear() throws Exception {
+        assertQuery(
+                "ts\tcount_distinct\n" +
+                        "1970-01-01T00:00:00.000000Z\t9\n" +
+                        "1970-01-01T00:00:01.000000Z\t7\n" +
+                        "1970-01-01T00:00:02.000000Z\t7\n" +
+                        "1970-01-01T00:00:03.000000Z\t8\n" +
+                        "1970-01-01T00:00:04.000000Z\t8\n" +
+                        "1970-01-01T00:00:05.000000Z\t8\n" +
+                        "1970-01-01T00:00:06.000000Z\t7\n" +
+                        "1970-01-01T00:00:07.000000Z\t8\n" +
+                        "1970-01-01T00:00:08.000000Z\t7\n" +
+                        "1970-01-01T00:00:09.000000Z\t9\n",
+                "select ts, count_distinct(s) from x sample by 1s fill(linear)",
+                "create table x as (select * from (select to_long256(rnd_long(0, 16, 0), 0, 0, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
+                "ts",
+                true,
+                true
+        );
+    }
 //
-//    @Test
-//    public void testGroupKeyed() throws Exception {
-//        assertQuery(
-//                "a\tcount_distinct\n" +
-//                        "a\t2\n" +
-//                        "b\t1\n" +
-//                        "c\t1\n" +
-//                        "d\t4\n" +
-//                        "e\t4\n" +
-//                        "f\t3\n",
-//                "select a, count_distinct(s) from x order by a",
-//                "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, to_long256(rnd_long(0, 16, 0), 0, 0, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(20)) timestamp(ts))",
-//                null,
-//                true,
-//                true
-//        );
-//    }
-//
-//    @Test
-//    public void testGroupNotKeyed() throws Exception {
-//        assertQuery(
-//                "count_distinct\n" +
-//                        "6\n",
-//                "select count_distinct(s) from x",
-//                "create table x as (select * from (select to_long256(rnd_long(1, 6, 0), 0, 0 ,0) s, timestamp_sequence(0, 1000) ts from long_sequence(1000)) timestamp(ts))",
-//                null,
-//                false,
-//                true
-//        );
-//    }
-//
-//    @Test
-//    public void testGroupNotKeyedWithNulls() throws Exception {
-//        String expected = "count_distinct\n" +
-//                "6\n";
-//        assertQuery(
-//                expected,
-//                "select count_distinct(s) from x",
-//                "create table x as (select * from (select to_long256(rnd_long(), 0, 0 ,0) s, timestamp_sequence(10, 100000) ts from long_sequence(1000)) timestamp(ts)) timestamp(ts) PARTITION BY YEAR",
-//                null,
-//                false,
-//                true
-//        );
-//
-//        insert("insert into x values(cast(null as long256), '2021-05-21')");
-//        insert("insert into x values(cast(null as long256), '1970-01-01')");
-//        assertSql(expected, "select count_distinct(s) from x");
-//    }
-//
-//    @Test
-//    public void testNullConstant() throws Exception {
-//        assertQuery(
-//                "a\tcount_distinct\n" +
-//                        "a\t0\n" +
-//                        "b\t0\n" +
-//                        "c\t0\n",
-//                "select a, count_distinct(to_long256(null, null, null, null)) from x order by a",
-//                "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
-//                null,
-//                true,
-//                true
-//        );
-//    }
-//
-//    @Test
-//    public void testSampleFillLinear() throws Exception {
-//        assertQuery(
-//                "ts\tcount_distinct\n" +
-//                        "1970-01-01T00:00:00.000000Z\t9\n" +
-//                        "1970-01-01T00:00:01.000000Z\t7\n" +
-//                        "1970-01-01T00:00:02.000000Z\t7\n" +
-//                        "1970-01-01T00:00:03.000000Z\t8\n" +
-//                        "1970-01-01T00:00:04.000000Z\t8\n" +
-//                        "1970-01-01T00:00:05.000000Z\t8\n" +
-//                        "1970-01-01T00:00:06.000000Z\t7\n" +
-//                        "1970-01-01T00:00:07.000000Z\t8\n" +
-//                        "1970-01-01T00:00:08.000000Z\t7\n" +
-//                        "1970-01-01T00:00:09.000000Z\t9\n",
-//                "select ts, count_distinct(s) from x sample by 1s fill(linear)",
-//                "create table x as (select * from (select to_long256(rnd_long(0, 16, 0), 0, 0, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
-//                "ts",
-//                true,
-//                true
-//        );
-//    }
-////
-//    @Test
-//    public void testSampleFillNone() throws Exception {
-//        assertMemoryLeak(() -> assertSql(
-//                "ts\tcount_distinct\n" +
-//                        "1970-01-01T00:00:00.050000Z\t8\n" +
-//                        "1970-01-01T00:00:02.050000Z\t8\n", "with x as (select * from (select to_long256(rnd_long(1, 8, 0), 0, 0, 0) s, timestamp_sequence(50000, 100000L/4) ts from long_sequence(100)) timestamp(ts))\n" +
-//                        "select ts, count_distinct(s) from x sample by 2s"
-//        ));
-//    }
-//
-//    @Test
-//    public void testSampleFillValue() throws Exception {
-//        assertQuery(
-//                "ts\tcount_distinct\n" +
-//                        "1970-01-01T00:00:00.000000Z\t5\n" +
-//                        "1970-01-01T00:00:01.000000Z\t8\n" +
-//                        "1970-01-01T00:00:02.000000Z\t6\n" +
-//                        "1970-01-01T00:00:03.000000Z\t7\n" +
-//                        "1970-01-01T00:00:04.000000Z\t6\n" +
-//                        "1970-01-01T00:00:05.000000Z\t5\n" +
-//                        "1970-01-01T00:00:06.000000Z\t6\n" +
-//                        "1970-01-01T00:00:07.000000Z\t6\n" +
-//                        "1970-01-01T00:00:08.000000Z\t6\n" +
-//                        "1970-01-01T00:00:09.000000Z\t7\n",
-//                "select ts, count_distinct(s) from x sample by 1s fill(99)",
-//                "create table x as (select * from (select to_long256(rnd_long(0, 8, 0), 0, 0, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
-//                "ts",
-//                false
-//        );
-//    }
-//
-//    @Test
-//    public void testSampleKeyed() throws Exception {
-//        assertQuery(
-//                "a\tcount_distinct\tts\n" +
-//                        "a\t4\t1970-01-01T00:00:00.000000Z\n" +
-//                        "f\t9\t1970-01-01T00:00:00.000000Z\n" +
-//                        "c\t8\t1970-01-01T00:00:00.000000Z\n" +
-//                        "e\t4\t1970-01-01T00:00:00.000000Z\n" +
-//                        "d\t6\t1970-01-01T00:00:00.000000Z\n" +
-//                        "b\t6\t1970-01-01T00:00:00.000000Z\n" +
-//                        "b\t5\t1970-01-01T00:00:05.000000Z\n" +
-//                        "c\t4\t1970-01-01T00:00:05.000000Z\n" +
-//                        "f\t7\t1970-01-01T00:00:05.000000Z\n" +
-//                        "e\t6\t1970-01-01T00:00:05.000000Z\n" +
-//                        "d\t8\t1970-01-01T00:00:05.000000Z\n" +
-//                        "a\t5\t1970-01-01T00:00:05.000000Z\n",
-//                "select a, count_distinct(s), ts from x sample by 5s",
-//                "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, to_long256(rnd_long(0, 12, 0), 0, 0, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
-//                "ts",
-//                false
-//        );
-//    }
+    @Test
+    public void testSampleFillNone() throws Exception {
+        assertMemoryLeak(() -> assertSql(
+                "ts\tcount_distinct\n" +
+                        "1970-01-01T00:00:00.050000Z\t8\n" +
+                        "1970-01-01T00:00:02.050000Z\t8\n", "with x as (select * from (select to_long256(rnd_long(1, 8, 0), 0, 0, 0) s, timestamp_sequence(50000, 100000L/4) ts from long_sequence(100)) timestamp(ts))\n" +
+                        "select ts, count_distinct(s) from x sample by 2s"
+        ));
+    }
+
+    @Test
+    public void testSampleFillValue() throws Exception {
+        assertQuery(
+                "ts\tcount_distinct\n" +
+                        "1970-01-01T00:00:00.000000Z\t5\n" +
+                        "1970-01-01T00:00:01.000000Z\t8\n" +
+                        "1970-01-01T00:00:02.000000Z\t6\n" +
+                        "1970-01-01T00:00:03.000000Z\t7\n" +
+                        "1970-01-01T00:00:04.000000Z\t6\n" +
+                        "1970-01-01T00:00:05.000000Z\t5\n" +
+                        "1970-01-01T00:00:06.000000Z\t6\n" +
+                        "1970-01-01T00:00:07.000000Z\t6\n" +
+                        "1970-01-01T00:00:08.000000Z\t6\n" +
+                        "1970-01-01T00:00:09.000000Z\t7\n",
+                "select ts, count_distinct(s) from x sample by 1s fill(99)",
+                "create table x as (select * from (select to_long256(rnd_long(0, 8, 0), 0, 0, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
+                "ts",
+                false
+        );
+    }
+
+    @Test
+    public void testSampleKeyed() throws Exception {
+        assertQuery(
+                "a\tcount_distinct\tts\n" +
+                        "a\t4\t1970-01-01T00:00:00.000000Z\n" +
+                        "f\t9\t1970-01-01T00:00:00.000000Z\n" +
+                        "c\t8\t1970-01-01T00:00:00.000000Z\n" +
+                        "e\t4\t1970-01-01T00:00:00.000000Z\n" +
+                        "d\t6\t1970-01-01T00:00:00.000000Z\n" +
+                        "b\t6\t1970-01-01T00:00:00.000000Z\n" +
+                        "b\t5\t1970-01-01T00:00:05.000000Z\n" +
+                        "c\t4\t1970-01-01T00:00:05.000000Z\n" +
+                        "f\t7\t1970-01-01T00:00:05.000000Z\n" +
+                        "e\t6\t1970-01-01T00:00:05.000000Z\n" +
+                        "d\t8\t1970-01-01T00:00:05.000000Z\n" +
+                        "a\t5\t1970-01-01T00:00:05.000000Z\n",
+                "select a, count_distinct(s), ts from x sample by 5s",
+                "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, to_long256(rnd_long(0, 12, 0), 0, 0, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
+                "ts",
+                false
+        );
+    }
 }

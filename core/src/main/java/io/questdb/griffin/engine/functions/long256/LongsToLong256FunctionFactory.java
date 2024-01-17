@@ -29,12 +29,8 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.BinaryFunction;
-import io.questdb.griffin.engine.functions.Long256Function;
-import io.questdb.griffin.engine.functions.LongFunction;
-import io.questdb.griffin.engine.functions.UuidFunction;
+import io.questdb.griffin.engine.functions.*;
 import io.questdb.griffin.engine.functions.constants.Long256Constant;
-import io.questdb.griffin.engine.functions.constants.UuidConstant;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSinkBase;
 
@@ -58,7 +54,7 @@ public final class LongsToLong256FunctionFactory implements FunctionFactory {
         return new LongsToLong256Function(l0, l1, l2, l3);
     }
 
-    private static class LongsToLong256Function extends Long256Function {
+    private static class LongsToLong256Function extends Long256Function implements QuaternaryFunction {
 
         private final Function l0;
         private final Function l1;
@@ -81,6 +77,26 @@ public final class LongsToLong256FunctionFactory implements FunctionFactory {
             Misc.free(l1);
             Misc.free(l2);
             Misc.free(l3);
+        }
+
+        @Override
+        public Function getZero() {
+            return l0;
+        }
+
+        @Override
+        public Function getOne() {
+            return l1;
+        }
+
+        @Override
+        public Function getTwo() {
+            return l2;
+        }
+
+        @Override
+        public Function getThree() {
+            return l3;
         }
 
         @Override
