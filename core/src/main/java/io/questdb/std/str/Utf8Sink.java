@@ -29,20 +29,9 @@ import org.jetbrains.annotations.Nullable;
 
 public interface Utf8Sink extends CharSink<Utf8Sink> {
 
-    /**
-     * Encodes the given segment of a char sequence from UTF-16 to UTF-8 and writes it to the sink.
-     */
-    default Utf8Sink put(@NotNull CharSequence cs, int lo, int hi) {
-        int i = lo;
-        while (i < hi) {
-            char c = cs.charAt(i++);
-            if (c < 128) {
-                putAscii(c);
-            } else {
-                i = Utf8s.encodeUtf16Char(this, cs, hi, i, c);
-            }
-        }
-        return this;
+    @Override
+    default int getEncoding() {
+        return CharSinkEncoding.UTF8;
     }
 
     /**
@@ -88,9 +77,20 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
         return this;
     }
 
-    @Override
-    default Utf8Sink putAscii(char c) {
-        return put((byte) c);
+    /**
+     * Encodes the given segment of a char sequence from UTF-16 to UTF-8 and writes it to the sink.
+     */
+    default Utf8Sink put(@NotNull CharSequence cs, int lo, int hi) {
+        int i = lo;
+        while (i < hi) {
+            char c = cs.charAt(i++);
+            if (c < 128) {
+                putAscii(c);
+            } else {
+                i = Utf8s.encodeUtf16Char(this, cs, hi, i, c);
+            }
+        }
+        return this;
     }
 
     @Override
@@ -102,6 +102,11 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
             }
         }
         return this;
+    }
+
+    @Override
+    default Utf8Sink putAscii(char c) {
+        return put((byte) c);
     }
 
     default Utf8Sink putQuoted(@NotNull CharSequence cs) {

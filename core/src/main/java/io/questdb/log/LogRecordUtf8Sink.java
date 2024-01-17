@@ -149,6 +149,16 @@ public class LogRecordUtf8Sink implements Utf8Sink, DirectUtf8Sequence, Sinkable
     }
 
     @Override
+    public Utf8Sink putEOL() {
+        int rem = (int) (lim - _wptr);
+        int len = Misc.EOL.length();
+        int n = Math.min(rem, len);
+        Utf8s.strCpyAscii(Misc.EOL, n, _wptr);
+        _wptr += n;
+        return this;
+    }
+
+    @Override
     public Utf8Sink putUtf8(long lo, long hi) {
         final long rem = (lim - _wptr - EOL_LENGTH);
         final long size = hi - lo;
@@ -177,16 +187,6 @@ public class LogRecordUtf8Sink implements Utf8Sink, DirectUtf8Sequence, Sinkable
         return this;
     }
 
-    @Override
-    public Utf8Sink putEOL() {
-        int rem = (int) (lim - _wptr);
-        int len = Misc.EOL.length();
-        int n = Math.min(rem, len);
-        Utf8s.strCpyAscii(Misc.EOL, n, _wptr);
-        _wptr += n;
-        return this;
-    }
-
     public void setLevel(int level) {
         this.level = level;
     }
@@ -198,11 +198,16 @@ public class LogRecordUtf8Sink implements Utf8Sink, DirectUtf8Sequence, Sinkable
 
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
-        if (sink instanceof Utf16Sink) {
-            Utf8s.utf8ToUtf16(address, _wptr, (Utf16Sink) sink);
-        } else {
-            // target is the UTF8 sink
-            sink.putUtf8(address, _wptr);
+        switch (sink.getEncoding()) {
+            case CharSinkEncoding.UTF8:
+                sink.putUtf8(address, _wptr);
+                break;
+            case CharSinkEncoding.UTF16:
+                Utf8s.utf8ToUtf16(address, _wptr, (Utf16Sink) sink);
+                break;
+            default:
+                assert false : "unsupported sink encoding";
+                break;
         }
     }
 

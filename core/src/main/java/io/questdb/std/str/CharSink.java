@@ -169,4 +169,6 @@ public interface CharSink<T extends CharSink<?>> {
     }
 
     T putUtf8(long lo, long hi);
+
+    int getEncoding();
 }

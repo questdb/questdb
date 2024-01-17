@@ -37,10 +37,13 @@ import static io.questdb.std.Numbers.hexDigits;
  *     <li>Avoid using these sinks as the target of UTF16-to-UTF8 conversions</li>
  *     <li>Group implementations in easy to understand hierarchy</li>
  * </ul>
- *
- *
  */
 public interface Utf16Sink extends CharSink<Utf16Sink> {
+    @Override
+    default int getEncoding() {
+        return CharSinkEncoding.UTF16;
+    }
+
     default Utf16Sink put(@Nullable Utf8Sequence us) {
         if (us != null) {
             Utf8s.utf8ToUtf16(us, this);
