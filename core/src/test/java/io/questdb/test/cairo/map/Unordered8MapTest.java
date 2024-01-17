@@ -33,12 +33,53 @@ import io.questdb.cairo.map.Unordered8Map;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.Chars;
+import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.HashMap;
+import java.util.Map;
+
 public class Unordered8MapTest extends AbstractCairoTest {
+
+    @Test
+    public void testFuzz() throws Exception {
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        TestUtils.assertMemoryLeak(() -> {
+            SingleColumnType keyTypes = new SingleColumnType(ColumnType.LONG);
+            SingleColumnType valueTypes = new SingleColumnType(ColumnType.LONG);
+
+            HashMap<Long, Long> oracle = new HashMap<>();
+            try (Unordered8Map map = new Unordered8Map(keyTypes, valueTypes, 64, 0.8, Integer.MAX_VALUE)) {
+                final int N = 100000;
+                for (int i = 0; i < N; i++) {
+                    MapKey key = map.withKey();
+                    long l = rnd.nextLong();
+                    key.putLong(l);
+
+                    MapValue value = key.createValue();
+                    value.putLong(0, l);
+
+                    oracle.put(l, l);
+                }
+
+                Assert.assertEquals(oracle.size(), map.size());
+
+                // assert map contents
+                for (Map.Entry<Long, Long> e : oracle.entrySet()) {
+                    MapKey key = map.withKey();
+                    key.putLong(e.getKey());
+
+                    MapValue value = key.findValue();
+                    Assert.assertFalse(value.isNew());
+                    Assert.assertEquals((long) e.getKey(), value.getLong(0));
+                    Assert.assertEquals((long) e.getValue(), value.getLong(0));
+                }
+            }
+        });
+    }
 
     @Test
     public void testSingleZeroKey() {
