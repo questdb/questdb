@@ -31,6 +31,8 @@ import io.questdb.std.RostiAllocFacade;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 
+import java.util.Map;
+
 @SuppressWarnings("unused")
 public interface ConfigurationOverrides {
     String getAttachableDirSuffix();
@@ -61,9 +63,13 @@ public interface ConfigurationOverrides {
 
     int getDefaultTableWriteMode();
 
+    Map<String, String> getEnv();
+
     FactoryProvider getFactoryProvider();
 
     FilesFacade getFilesFacade();
+
+    int getGroupByShardingThreshold();
 
     int getInactiveReaderMaxOpenPartitions();
 
@@ -95,8 +101,6 @@ public interface ConfigurationOverrides {
 
     long getPartitionO3SplitThreshold();
 
-    int getQueryCacheEventQueueCapacity();
-
     int getRecreateDistressedSequencerAttempts();
 
     int getRepeatMigrationsFromVersion();
@@ -108,6 +112,8 @@ public interface ConfigurationOverrides {
     RostiAllocFacade getRostiAllocFacade();
 
     int getSampleByIndexSearchPageSize();
+
+    boolean getSimulateCrashEnabled();
 
     String getSnapshotInstanceId();
 
@@ -121,17 +127,33 @@ public interface ConfigurationOverrides {
 
     int getSqlJoinMetadataPageSize();
 
+    int getSqlWindowMaxRecursion();
+
+    int getSqlWindowStoreMaxPages();
+
+    int getSqlWindowStorePageSize();
+
     int getTableRegistryCompactionThreshold();
 
     MicrosecondClock getTestMicrosClock();
 
+    int getTextAnalysisMaxLines();
+
+    int getWalApplyLookAheadTransactionCount();
+
     long getWalApplyTableTimeQuota();
 
+    long getWalMaxLagSize();
+
     int getWalMaxLagTxnCount();
+
+    int getWalMaxSegmentFileDescriptorsCache();
 
     long getWalPurgeInterval();
 
     long getWalSegmentRolloverRowCount();
+
+    long getWalSegmentRolloverSize();
 
     int getWalTxnNotificationQueueCapacity();
 
@@ -152,6 +174,8 @@ public interface ConfigurationOverrides {
     boolean isO3QuickSortEnabled();
 
     Boolean isParallelFilterEnabled();
+
+    Boolean isParallelGroupByEnabled();
 
     Boolean isWriterMixedIOEnabled();
 
@@ -189,9 +213,13 @@ public interface ConfigurationOverrides {
 
     void setDefaultTableWriteMode(int defaultTableWriteMode);
 
+    void setEnv(Map<String, String> env);
+
     void setFactoryProvider(FactoryProvider factoryProvider);
 
     void setFilesFacade(FilesFacade ff);
+
+    void setGroupByShardingThreshold(int groupByShardingThreshold);
 
     void setHideTelemetryTable(boolean hideTelemetryTable);
 
@@ -229,11 +257,11 @@ public interface ConfigurationOverrides {
 
     void setParallelFilterEnabled(Boolean parallelFilterEnabled);
 
+    void setParallelGroupByEnabled(Boolean parallelGroupByEnabled);
+
     void setParallelImportStatusLogKeepNDays(int parallelImportStatusLogKeepNDays);
 
     void setPartitionO3SplitThreshold(long value);
-
-    void setQueryCacheEventQueueCapacity(int queryCacheEventQueueCapacity);
 
     void setRecreateDistressedSequencerAttempts(int recreateDistressedSequencerAttempts);
 
@@ -249,6 +277,8 @@ public interface ConfigurationOverrides {
 
     void setSampleByIndexSearchPageSize(int sampleByIndexSearchPageSize);
 
+    void setSimulateCrashEnabled(boolean enabled);
+
     void setSnapshotInstanceId(String snapshotInstanceId);
 
     void setSnapshotRecoveryEnabled(Boolean snapshotRecoveryEnabled);
@@ -261,15 +291,31 @@ public interface ConfigurationOverrides {
 
     void setSqlJoinMetadataPageSize(int sqlJoinMetadataPageSize);
 
+    void setSqlWindowMaxRecursion(int maxRecursion);
+
+    void setSqlWindowStoreMaxPages(int windowStoreMaxPages);
+
+    void setSqlWindowStorePageSize(int windowStorePageSize);
+
     void setTestMicrosClock(MicrosecondClock testMicrosClock);
+
+    void setTextAnalysisMaxLines(int lines);
 
     void setWalApplyTableTimeQuota(long walApplyTableTimeQuota);
 
+    void setWalLookAheadTransactionCount(int walApplyTableTimeQuota);
+
+    void setWalMaxLagSize(long value);
+
     void setWalMaxLagTxnCount(int walMaxLagTxnCount);
+
+    void setWalMaxSegmentFileDescriptorsCache(int value);
 
     void setWalPurgeInterval(long walPurgeInterval);
 
     void setWalSegmentRolloverRowCount(long walSegmentRolloverRowCount);
+
+    void setWalSegmentRolloverSize(long walSegmentRolloverSize);
 
     void setWalTxnNotificationQueueCapacity(int walTxnNotificationQueueCapacity);
 

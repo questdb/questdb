@@ -123,13 +123,19 @@ public class TypeManagerTest extends AbstractTest {
         File configFile = new File(root, "text_loader.json");
         TestUtils.writeStringToFile(configFile, "{\n}\n");
         TypeManager typeManager = createTypeManager("/text_loader.json");
-        Assert.assertEquals("[CHAR,INT,LONG,DOUBLE,BOOLEAN,LONG256,UUID,IPv4]", typeManager.getAllAdapters().toString());
+        Assert.assertEquals("[CHAR,INT,LONG,DOUBLE,BOOLEAN,LONG256,UUID,IPv4," +
+                        "BYTE,SHORT,FLOAT," +
+                        "GEOHASH(1b),GEOHASH(2b),GEOHASH(3b),GEOHASH(4b),GEOHASH(1c),GEOHASH(6b),GEOHASH(7b),GEOHASH(8b),GEOHASH(9b),GEOHASH(2c),GEOHASH(11b),GEOHASH(12b),GEOHASH(13b),GEOHASH(14b),GEOHASH(3c),GEOHASH(16b),GEOHASH(17b),GEOHASH(18b),GEOHASH(19b),GEOHASH(4c),GEOHASH(21b),GEOHASH(22b),GEOHASH(23b),GEOHASH(24b),GEOHASH(5c),GEOHASH(26b),GEOHASH(27b),GEOHASH(28b),GEOHASH(29b),GEOHASH(6c),GEOHASH(31b),GEOHASH(32b),GEOHASH(33b),GEOHASH(34b),GEOHASH(7c),GEOHASH(36b),GEOHASH(37b),GEOHASH(38b),GEOHASH(39b),GEOHASH(8c),GEOHASH(41b),GEOHASH(42b),GEOHASH(43b),GEOHASH(44b),GEOHASH(9c),GEOHASH(46b),GEOHASH(47b),GEOHASH(48b),GEOHASH(49b),GEOHASH(10c),GEOHASH(51b),GEOHASH(52b),GEOHASH(53b),GEOHASH(54b),GEOHASH(11c),GEOHASH(56b),GEOHASH(57b),GEOHASH(58b),GEOHASH(59b),GEOHASH(12c)]",
+                typeManager.getAllAdapters().toString());
     }
 
     @Test
     public void testEmpty() throws JsonException {
         TypeManager typeManager = createTypeManager("/textloader/types/empty.json");
-        Assert.assertEquals("[CHAR,INT,LONG,DOUBLE,BOOLEAN,LONG256,UUID,IPv4]", typeManager.getAllAdapters().toString());
+        Assert.assertEquals("[CHAR,INT,LONG,DOUBLE,BOOLEAN,LONG256,UUID,IPv4," +
+                        "BYTE,SHORT,FLOAT," +
+                        "GEOHASH(1b),GEOHASH(2b),GEOHASH(3b),GEOHASH(4b),GEOHASH(1c),GEOHASH(6b),GEOHASH(7b),GEOHASH(8b),GEOHASH(9b),GEOHASH(2c),GEOHASH(11b),GEOHASH(12b),GEOHASH(13b),GEOHASH(14b),GEOHASH(3c),GEOHASH(16b),GEOHASH(17b),GEOHASH(18b),GEOHASH(19b),GEOHASH(4c),GEOHASH(21b),GEOHASH(22b),GEOHASH(23b),GEOHASH(24b),GEOHASH(5c),GEOHASH(26b),GEOHASH(27b),GEOHASH(28b),GEOHASH(29b),GEOHASH(6c),GEOHASH(31b),GEOHASH(32b),GEOHASH(33b),GEOHASH(34b),GEOHASH(7c),GEOHASH(36b),GEOHASH(37b),GEOHASH(38b),GEOHASH(39b),GEOHASH(8c),GEOHASH(41b),GEOHASH(42b),GEOHASH(43b),GEOHASH(44b),GEOHASH(9c),GEOHASH(46b),GEOHASH(47b),GEOHASH(48b),GEOHASH(49b),GEOHASH(10c),GEOHASH(51b),GEOHASH(52b),GEOHASH(53b),GEOHASH(54b),GEOHASH(11c),GEOHASH(56b),GEOHASH(57b),GEOHASH(58b),GEOHASH(59b),GEOHASH(12c)]",
+                typeManager.getAllAdapters().toString());
     }
 
     @Test
@@ -157,7 +163,10 @@ public class TypeManagerTest extends AbstractTest {
         File configFile = new File(root, "my_awesome_text_loader.json");
         TestUtils.writeStringToFile(configFile, "{\n}\n");
         TypeManager typeManager = createTypeManager("/my_awesome_text_loader.json");
-        Assert.assertEquals("[CHAR,INT,LONG,DOUBLE,BOOLEAN,LONG256,UUID,IPv4]", typeManager.getAllAdapters().toString());
+        Assert.assertEquals("[CHAR,INT,LONG,DOUBLE,BOOLEAN,LONG256,UUID,IPv4," +
+                        "BYTE,SHORT,FLOAT," +
+                        "GEOHASH(1b),GEOHASH(2b),GEOHASH(3b),GEOHASH(4b),GEOHASH(1c),GEOHASH(6b),GEOHASH(7b),GEOHASH(8b),GEOHASH(9b),GEOHASH(2c),GEOHASH(11b),GEOHASH(12b),GEOHASH(13b),GEOHASH(14b),GEOHASH(3c),GEOHASH(16b),GEOHASH(17b),GEOHASH(18b),GEOHASH(19b),GEOHASH(4c),GEOHASH(21b),GEOHASH(22b),GEOHASH(23b),GEOHASH(24b),GEOHASH(5c),GEOHASH(26b),GEOHASH(27b),GEOHASH(28b),GEOHASH(29b),GEOHASH(6c),GEOHASH(31b),GEOHASH(32b),GEOHASH(33b),GEOHASH(34b),GEOHASH(7c),GEOHASH(36b),GEOHASH(37b),GEOHASH(38b),GEOHASH(39b),GEOHASH(8c),GEOHASH(41b),GEOHASH(42b),GEOHASH(43b),GEOHASH(44b),GEOHASH(9c),GEOHASH(46b),GEOHASH(47b),GEOHASH(48b),GEOHASH(49b),GEOHASH(10c),GEOHASH(51b),GEOHASH(52b),GEOHASH(53b),GEOHASH(54b),GEOHASH(11c),GEOHASH(56b),GEOHASH(57b),GEOHASH(58b),GEOHASH(59b),GEOHASH(12c)]",
+                typeManager.getAllAdapters().toString());
     }
 
     @Test
@@ -235,7 +244,7 @@ public class TypeManagerTest extends AbstractTest {
                 new DateFormatFactory(),
                 DateLocaleFactory.INSTANCE,
                 new TimestampFormatFactory(),
-                DateFormatUtils.enLocale
+                DateFormatUtils.EN_LOCALE
         );
 
         inputFormatConfiguration.parseConfiguration(getClass(), jsonLexer, root, fileResource);

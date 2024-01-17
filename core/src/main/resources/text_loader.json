@@ -223,6 +223,22 @@
     {
       "format": "MMM d, yyyy h:m:s a",
       "utf8": false
+    },
+    {
+      "format": "yyyy-MM-ddTHH:mm:ss.SSSZ",
+      "utf8": false
+    },
+    {
+      "format": "EPM+",
+      "utf8": false
+    },
+    {
+      "format": "EPU+",
+      "utf8": false
+    },
+    {
+      "format": "EPN+",
+      "utf8": false
     }
   ]
 }

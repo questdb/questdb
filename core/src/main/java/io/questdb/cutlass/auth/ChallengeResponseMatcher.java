@@ -14,5 +14,5 @@ public interface ChallengeResponseMatcher {
      * @param base64SignatureLen length of base64 encoded signature
      * @return true if signature matches
      */
-    boolean verifyLineToken(CharSequence username, long challengePtr, int challengeLen, long base64SignaturePtr, int base64SignatureLen);
+    boolean verifyJwk(CharSequence username, long challengePtr, int challengeLen, long base64SignaturePtr, int base64SignatureLen);
 }

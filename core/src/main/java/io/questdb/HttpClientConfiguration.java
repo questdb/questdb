@@ -24,23 +24,37 @@
 
 package io.questdb;
 
-import io.questdb.network.EpollFacade;
-import io.questdb.network.KqueueFacade;
-import io.questdb.network.NetworkFacade;
-import io.questdb.network.SelectFacade;
+import io.questdb.cutlass.http.client.HttpClientCookieHandlerFactory;
+import io.questdb.network.*;
 
 public interface HttpClientConfiguration {
-    NetworkFacade getNetworkFacade();
+    default int getBufferSize() {
+        return 64 * 1024;
+    }
 
-    int getTimeout();
+    HttpClientCookieHandlerFactory getCookieHandlerFactory();
 
-    int getBufferSize();
+    default EpollFacade getEpollFacade() {
+        return EpollFacadeImpl.INSTANCE;
+    }
 
-    int getWaitQueueCapacity();
+    default KqueueFacade getKQueueFacade() {
+        return KqueueFacadeImpl.INSTANCE;
+    }
 
-    EpollFacade getEpollFacade();
+    default NetworkFacade getNetworkFacade() {
+        return NetworkFacadeImpl.INSTANCE;
+    }
 
-    KqueueFacade getKQueueFacade();
+    default SelectFacade getSelectFacade() {
+        return SelectFacadeImpl.INSTANCE;
+    }
 
-    SelectFacade getSelectFacade();
+    default int getTimeout() {
+        return 60_000;
+    }
+
+    default int getWaitQueueCapacity() {
+        return 4;
+    }
 }

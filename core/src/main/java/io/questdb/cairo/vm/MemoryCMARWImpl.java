@@ -33,6 +33,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -170,18 +171,18 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
-    public void of(FilesFacade ff, int fd, @Nullable CharSequence name, long size, int memoryTag) {
+    public void of(FilesFacade ff, int fd, @Nullable LPSZ fileName, long size, int memoryTag) {
         close();
         assert fd > 0;
         this.ff = ff;
         this.extendSegmentMsb = ff.getMapPageSize();
         this.minMappedMemorySize = this.extendSegmentMsb;
         this.fd = fd;
-        map(ff, name, size, memoryTag);
+        map(ff, fileName, size, memoryTag);
     }
 
     @Override
-    public void of(FilesFacade ff, int fd, @Nullable CharSequence name, long extendSegmentSize, long size, int memoryTag) {
+    public void of(FilesFacade ff, int fd, @Nullable LPSZ fileName, long extendSegmentSize, long size, int memoryTag) {
         of(ff, fd, null, size, memoryTag);
         this.extendSegmentMsb = Numbers.msb(extendSegmentSize);
     }
@@ -203,8 +204,8 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
-    public void switchTo(int fd, long offset, byte truncateMode) {
-        close(true, truncateMode);
+    public void switchTo(int fd, long offset, boolean truncate, byte truncateMode) {
+        close(truncate, truncateMode);
         this.fd = fd;
         map(ff, null, offset, memoryTag);
     }
@@ -323,7 +324,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         fd = TableUtils.openFileRWOrFail(ff, name, opts);
     }
 
-    protected void map(FilesFacade ff, @Nullable CharSequence name, long size, int memoryTag) {
+    protected void map(FilesFacade ff, @Nullable Utf8Sequence name, long size, int memoryTag) {
         this.memoryTag = memoryTag;
         // file either did not exist when length() was called or empty
         if (size < 1) {
@@ -337,9 +338,15 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
             this.appendAddress = pageAddress + size;
         }
         if (name != null) {
-            LOG.debug().$("open [file=").$(name).$(", fd=").$(fd).$(", pageSize=").$(size).$(", size=").$(this.size).$(']').$();
+            LOG.debug().$("open [file=").$(name)
+                    .$(", fd=").$(fd)
+                    .$(", pageSize=").$(size)
+                    .$(", size=").$(this.size)
+                    .I$();
         } else {
-            LOG.debug().$("open [fd=").$(fd).$(", pageSize=").$(size).$(", size=").$(this.size).$(']').$();
+            LOG.debug().$("open [fd=").$(fd)
+                    .$(", pageSize=").$(size)
+                    .$(", size=").$(this.size).I$();
         }
     }
 }

@@ -28,14 +28,14 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.std.*;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectUtf8String;
 
 import java.io.Closeable;
 
 public abstract class AbstractTextLexer implements Closeable, Mutable {
     private final static Log LOG = LogFactory.getLog(AbstractTextLexer.class);
-    private final ObjectPool<DirectByteCharSequence> csPool;
-    private final ObjList<DirectByteCharSequence> fields = new ObjList<>();
+    private final ObjectPool<DirectUtf8String> csPool;
+    private final ObjList<DirectUtf8String> fields = new ObjList<>();
     private final int lineRollBufLimit;
     private boolean delayedOutQuote;
     private boolean eol;
@@ -61,7 +61,7 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
     private boolean useLineRollBuf = false;
 
     public AbstractTextLexer(TextConfiguration textConfiguration) {
-        this.csPool = new ObjectPool<>(DirectByteCharSequence.FACTORY, textConfiguration.getTextLexerStringPoolCapacity());
+        this.csPool = new ObjectPool<>(DirectUtf8String.FACTORY, textConfiguration.getTextLexerStringPoolCapacity());
         this.lineRollBufSize = textConfiguration.getRollBufferSize();
         this.lineRollBufLimit = textConfiguration.getRollBufferLimit();
         this.lineRollBufPtr = Unsafe.malloc(lineRollBufSize, MemoryTag.NATIVE_TEXT_PARSER_RSS);
@@ -147,6 +147,7 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
         this.header = header;
         fields.clear();
         csPool.clear();
+        lastLineStart = 0;
     }
 
     public void setSkipLinesWithExtraValues(boolean skipLinesWithExtraValues) {
@@ -456,7 +457,7 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
 
     @FunctionalInterface
     public interface Listener {
-        void onFields(long line, ObjList<DirectByteCharSequence> fields, int hi);
+        void onFields(long line, ObjList<DirectUtf8String> fields, int hi);
     }
 
     protected static final class LineLimitException extends Exception {

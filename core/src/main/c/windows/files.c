@@ -499,7 +499,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileSystemStatus(JNIEnv *e,
                 // windows share (CIFS) reports filesystem as NTFS
                 // local disks support transactions, but CIFS does not
                 strcpy((char *) lpszName, fileSystemName);
-                return -1 * 0x2b;
+                return FLAG_FS_SUPPORTED * 0x2b;
             }
             // unsupported file system
             strcpy((char *) lpszName, "SMB");
@@ -691,11 +691,6 @@ static inline jlong internal_mremap0
     // Note that unmapping will not flush dirty pages because the mapping to address is shared with newAddress
     Java_io_questdb_std_Files_munmap0((JNIEnv *) NULL, (jclass) NULL, address, previousLen);
     return newAddress;
-}
-
-JNIEXPORT jlong JNICALL JavaCritical_io_questdb_std_Files_mremap0
-        (jint fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {
-    return internal_mremap0(fd, address, previousLen, newLen, offset, flags);
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mremap0
@@ -925,4 +920,14 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getDiskSize(JNIEnv *e, jclass 
     }
     SaveLastError();
     return -1;
+}
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileLimit
+        (JNIEnv *e, jclass cl) {
+    return 0; // no-op
+}
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getMapCountLimit
+        (JNIEnv *e, jclass cl) {
+    return 0; // no-op
 }

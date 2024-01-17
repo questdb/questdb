@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.http;
 
+import io.questdb.cairo.SecurityContext;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.QueryPausedException;
@@ -31,6 +32,9 @@ import io.questdb.network.ServerDisconnectException;
 
 public interface HttpRequestProcessor {
     default void notifyRetryFailed(HttpConnectionContext context, HttpException exception) {
+    }
+
+    default void onConnectionClosed(HttpConnectionContext context) {
     }
 
     default void onHeadersReady(HttpConnectionContext context) {
@@ -45,6 +49,10 @@ public interface HttpRequestProcessor {
     }
 
     default void parkRequest(HttpConnectionContext context, boolean pausedQuery) {
+    }
+
+    default boolean processCookies(HttpConnectionContext context, SecurityContext securityContext) throws PeerIsSlowToReadException, PeerDisconnectedException {
+        return true;
     }
 
     default boolean requiresAuthentication() {

@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -46,7 +47,6 @@ import org.junit.Test;
 public class O3MaxLagFuzzTest extends AbstractO3Test {
     private final static Log LOG = LogFactory.getLog(O3MaxLagFuzzTest.class);
 
-
     @Test
     public void testFuzzParallel() throws Exception {
         executeWithPool(2, this::testFuzz0);
@@ -57,12 +57,12 @@ public class O3MaxLagFuzzTest extends AbstractO3Test {
         executeWithPool(2, this::testRollbackFuzz);
     }
 
-    private static void replayTransactions(Rnd rnd, TableWriter w, ObjList<FuzzTransaction> transactions, int virtualTimestampIndex) {
+    private static void replayTransactions(Rnd rnd, CairoEngine engine, TableWriter w, ObjList<FuzzTransaction> transactions, int virtualTimestampIndex) {
         for (int i = 0, n = transactions.size(); i < n; i++) {
             FuzzTransaction tx = transactions.getQuick(i);
             ObjList<FuzzTransactionOperation> ops = tx.operationList;
             for (int j = 0, k = ops.size(); j < k; j++) {
-                ops.getQuick(j).apply(rnd, w, virtualTimestampIndex);
+                ops.getQuick(j).apply(rnd, engine, w, virtualTimestampIndex);
             }
             w.ic();
         }
@@ -111,9 +111,11 @@ public class O3MaxLagFuzzTest extends AbstractO3Test {
         int rowCount = Math.max(1, txCount * rnd.nextInt(200) * 1000);
         try (
                 TableWriter w = TestUtils.getWriter(engine, "x");
+                TableMetadata sequencerMetadata = engine.getLegacyMetadata(w.getTableToken());
                 TableWriter w2 = TestUtils.getWriter(engine, "y")
         ) {
             ObjList<FuzzTransaction> transactions = FuzzTransactionGenerator.generateSet(
+                    sequencerMetadata,
                     w.getMetadata(),
                     rnd,
                     minTs,
@@ -135,15 +137,16 @@ public class O3MaxLagFuzzTest extends AbstractO3Test {
                     0,
                     5,
                     new String[]{"ABC", "CDE", "XYZ"},
+                    0,
                     0
             );
 
             Rnd rnd1 = new Rnd();
-            replayTransactions(rnd1, w, transactions, -1);
+            replayTransactions(rnd1, engine, w, transactions, -1);
             w.commit();
 
             Rnd rnd2 = new Rnd();
-            replayTransactions(rnd2, w2, transactions, w.getMetadata().getTimestampIndex());
+            replayTransactions(rnd2, engine, w2, transactions, w.getMetadata().getTimestampIndex());
             w2.commit();
 
             TestUtils.assertEquals(compiler, sqlExecutionContext, "y order by ts", "x");

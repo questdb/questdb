@@ -25,6 +25,8 @@
 package io.questdb.test.griffin;
 
 import io.questdb.griffin.SqlKeywords;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -154,6 +156,14 @@ public class SqlKeywordsTest {
     }
 
     @Test
+    public void testIsParametersKeyword() {
+        Assert.assertTrue(SqlKeywords.isParametersKeyword("PARAMETERS"));
+        Assert.assertTrue(SqlKeywords.isParametersKeyword("parameters"));
+        Assert.assertTrue(SqlKeywords.isParametersKeyword("paraMEters"));
+        Assert.assertFalse(SqlKeywords.isParametersKeyword("param3ters"));
+    }
+
+    @Test
     public void testLinear() {
         Assert.assertFalse(isLinearKeyword("12345"));
         Assert.assertFalse(isLinearKeyword("123456"));
@@ -188,7 +198,15 @@ public class SqlKeywordsTest {
                     }
                     methodParam = name.substring(2, name.length() - 7).toLowerCase();
                 }
-                Assert.assertTrue(name, (boolean) method.invoke(null, methodParam));
+                Class<?>[] argTypes = method.getParameterTypes();
+                if (argTypes.length != 1) {
+                    Assert.fail("keyword method must have a single argument: " + name);
+                }
+                if (argTypes[0] == Utf8Sequence.class) {
+                    Assert.assertTrue(name, (boolean) method.invoke(null, new Utf8String(methodParam)));
+                } else {
+                    Assert.assertTrue(name, (boolean) method.invoke(null, methodParam));
+                }
             }
         }
     }
@@ -205,5 +223,6 @@ public class SqlKeywordsTest {
         specialCases.put("isTransactionIsolation", "transaction_isolation");
         specialCases.put("isEmptyAlias", "''");
         specialCases.put("isKeyword", "select");
+        specialCases.put("isServerVersionKeyword", "server_version");
     }
 }

@@ -34,7 +34,8 @@ import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
@@ -52,7 +53,7 @@ public class LogAlertSocketWriterTest {
     public static TemporaryFolder temp = new TemporaryFolder();
     private static String root;
     private Rnd rand;
-    private StringSink sink;
+    private Utf8StringSink sink;
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
@@ -62,7 +63,7 @@ public class LogAlertSocketWriterTest {
     @Before
     public void setUp() {
         rand = new Rnd();
-        sink = new StringSink();
+        sink = new Utf8StringSink();
     }
 
     @Test
@@ -326,7 +327,7 @@ public class LogAlertSocketWriterTest {
                                         "  }\n" +
                                         "]\n" +
                                         "\n",
-                                writer.getAlertSink()
+                                (Utf8Sequence) writer.getAlertSink()
                         );
 
                         Assert.assertTrue(haltLatch.await(10_000_000_000L));
@@ -567,7 +568,7 @@ public class LogAlertSocketWriterTest {
                                         "    }\n" +
                                         "  }\n" +
                                         "]\n",
-                                writer.getAlertSink()
+                                (Utf8Sequence) writer.getAlertSink()
                         );
 
                         recordSink.clear();
@@ -602,7 +603,7 @@ public class LogAlertSocketWriterTest {
                                         "    }\n" +
                                         "  }\n" +
                                         "]\n",
-                                writer.getAlertSink()
+                                (Utf8Sequence) writer.getAlertSink()
                         );
 
                         haltLatch.await();

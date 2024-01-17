@@ -33,11 +33,10 @@ import io.questdb.griffin.QueryFutureUpdateListener;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.LimitRecordCursorFactory;
-import io.questdb.griffin.engine.analytic.AnalyticContext;
 import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
+import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.jit.JitUtil;
 import io.questdb.mp.*;
 import io.questdb.std.Misc;
@@ -473,7 +472,8 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                 Assert.assertEquals(AsyncFilteredRecordCursorFactory.class, f.getClass());
             }
 
-            assertQuery(compiler,
+            assertQuery(
+                    compiler,
                     "a\tt\n" +
                             "0.34574819315105954\t1970-01-01T15:03:20.500000Z\n" +
                             "0.34574734261660356\t1970-01-02T02:14:37.600000Z\n" +
@@ -492,19 +492,17 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
     public void testPositiveLimitGroupBy() throws Exception {
         withPool((engine, compiler, sqlExecutionContext) -> {
             compiler.compile("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour", sqlExecutionContext);
-            final String sql = "select sum(a) from x where a > 0.345747032 and a < 0.34575 limit 5";
-            try (LimitRecordCursorFactory f = (LimitRecordCursorFactory) compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-                Assert.assertEquals(io.questdb.griffin.engine.LimitRecordCursorFactory.class, f.getClass());
-            }
+            final String sql = "select sum(a) from (x where a > 0.345747032 and a < 0.34575 limit 5)";
 
-            assertQuery(compiler,
+            assertQuery(
+                    compiler,
                     "sum\n" +
                             "1.382992963766362\n",
                     sql,
                     null,
                     false,
                     sqlExecutionContext,
-                    false
+                    true
             );
         });
     }
@@ -592,7 +590,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         final RingQueue<PageFrameReduceTask> tasks = engine.getMessageBus().getPageFrameReduceQueue(0);
         for (int i = 0; i < tasks.getCycle(); i++) {
             PageFrameReduceTask task = tasks.get(i);
-            Assert.assertTrue("Row id list capacity exceeds max page frame rows", task.getRows().getCapacity() <= maxPageFrameRows);
+            Assert.assertTrue("Row id list capacity exceeds max page frame rows", task.getFilteredRows().getCapacity() <= maxPageFrameRows);
             task.resetCapacities();
         }
     }
@@ -879,24 +877,44 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
 
     private static abstract class DelegatingSqlExecutionContext implements SqlExecutionContext {
         @Override
-        public void clearAnalyticContext() {
-            sqlExecutionContext.clearAnalyticContext();
+        public void clearWindowContext() {
+            sqlExecutionContext.clearWindowContext();
         }
 
         @Override
-        public void configureAnalyticContext(
+        public void configureWindowContext(
                 @Nullable VirtualRecord partitionByRecord,
                 @Nullable RecordSink partitionBySink,
                 @Nullable ColumnTypes keyTypes,
                 boolean isOrdered,
-                boolean baseSupportsRandomAccess
+                int orderByDirection,
+                int orderByPos,
+                boolean baseSupportsRandomAccess,
+                int framingMode,
+                long rowsLo,
+                int rowsLoKindPos,
+                long rowsHi,
+                int rowsHiKindPos,
+                int exclusionKind,
+                int exclusionKindPos,
+                int timestampIndex
         ) {
-            sqlExecutionContext.configureAnalyticContext(partitionByRecord, partitionBySink, keyTypes, isOrdered, baseSupportsRandomAccess);
-        }
-
-        @Override
-        public AnalyticContext getAnalyticContext() {
-            return sqlExecutionContext.getAnalyticContext();
+            sqlExecutionContext.configureWindowContext(
+                    partitionByRecord,
+                    partitionBySink,
+                    keyTypes,
+                    isOrdered,
+                    orderByDirection,
+                    orderByPos,
+                    baseSupportsRandomAccess,
+                    framingMode,
+                    rowsLo,
+                    rowsLoKindPos,
+                    rowsHi,
+                    rowsHiKindPos,
+                    exclusionKind,
+                    exclusionKindPos,
+                    timestampIndex);
         }
 
         @Override
@@ -945,13 +963,18 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
-        public long getRequestFd() {
+        public int getRequestFd() {
             return sqlExecutionContext.getRequestFd();
         }
 
         @Override
         public @NotNull SecurityContext getSecurityContext() {
             return sqlExecutionContext.getSecurityContext();
+        }
+
+        @Override
+        public WindowContext getWindowContext() {
+            return sqlExecutionContext.getWindowContext();
         }
 
         @Override

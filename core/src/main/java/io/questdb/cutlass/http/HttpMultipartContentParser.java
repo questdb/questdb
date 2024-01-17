@@ -31,7 +31,7 @@ import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectUtf8Sequence;
 
 import java.io.Closeable;
 
@@ -53,7 +53,7 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
     private static final int START_PARSING = 1;
     private static final int START_PRE_HEADERS = 11;
     private final HttpHeaderParser headerParser;
-    private DirectByteCharSequence boundary;
+    private DirectUtf8Sequence boundary;
     private byte boundaryByte;
     private int boundaryLen;
     private int boundaryPtr;
@@ -91,10 +91,10 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
      *
      * @param boundary boundary value
      */
-    public void of(DirectByteCharSequence boundary) {
+    public void of(DirectUtf8Sequence boundary) {
         this.boundary = boundary;
-        this.boundaryLen = boundary.length();
-        this.boundaryByte = (byte) boundary.charAt(0);
+        this.boundaryLen = boundary.size();
+        this.boundaryByte = boundary.byteAt(0);
     }
 
     public boolean parse(long lo, long hi, HttpMultipartContentListener listener)
@@ -139,7 +139,7 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
                             state = DONE;
                             return true;
                         default:
-                            listener.onChunk(boundary.getLo(), boundary.getHi());
+                            listener.onChunk(boundary.lo(), boundary.hi());
                             _lo = ptr;
                             state = BODY;
                             break;
@@ -204,7 +204,7 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
                             break;
                         default:
                             // can only be BOUNDARY_NO_MATCH:
-                            onChunkWithRetryHandle(listener, boundary.getLo(), boundary.getLo() + p, BODY_BROKEN, ptr, true);
+                            onChunkWithRetryHandle(listener, boundary.lo(), boundary.lo() + p, BODY_BROKEN, ptr, true);
                             break;
                     }
                     break;

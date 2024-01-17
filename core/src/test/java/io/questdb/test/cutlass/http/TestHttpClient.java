@@ -28,14 +28,18 @@ import io.questdb.cutlass.http.client.Chunk;
 import io.questdb.cutlass.http.client.ChunkedResponse;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
+import io.questdb.cutlass.http.processors.TextImportProcessor;
 import io.questdb.std.CharSequenceObjHashMap;
-import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
+import org.junit.Assert;
+
+import java.util.regex.Pattern;
 
 public class TestHttpClient implements QuietCloseable {
     private final HttpClient httpClient = HttpClientFactory.newInstance();
@@ -67,13 +71,24 @@ public class TestHttpClient implements QuietCloseable {
             CharSequence url,
             CharSequence expectedResponse,
             @Nullable CharSequenceObjHashMap<String> queryParams,
-            CharSequence username,
-            CharSequence password
+            @Nullable CharSequence username,
+            @Nullable CharSequence password
+    ) {
+        assertGet(url, expectedResponse, queryParams, username, password, null);
+    }
+
+    public void assertGet(
+            CharSequence url,
+            CharSequence expectedResponse,
+            @Nullable CharSequenceObjHashMap<String> queryParams,
+            @Nullable CharSequence username,
+            @Nullable CharSequence password,
+            @Nullable CharSequence token
     ) {
         try {
             HttpClient.Request req = httpClient.newRequest();
             req
-                    .GET("localhost", 9001)
+                    .GET("localhost", 9001)//TODO: empty call?
                     .url(url);
 
             if (queryParams != null) {
@@ -83,21 +98,7 @@ public class TestHttpClient implements QuietCloseable {
                 }
             }
 
-            if (username != null && password != null) {
-                req.authBasic(username, password);
-            }
-
-            HttpClient.Response rsp = req.send();
-
-            rsp.await();
-            ChunkedResponse chunkedResponse = rsp.getChunkedResponse();
-            Chunk chunk;
-
-            sink.clear();
-            while ((chunk = chunkedResponse.recv()) != null) {
-                Chars.utf8toUtf16(chunk.lo(), chunk.hi(), sink);
-            }
-
+            reqToSink(req, sink, username, password, token, null);
             TestUtils.assertEquals(expectedResponse, sink);
         } finally {
             if (!keepConnection) {
@@ -113,10 +114,41 @@ public class TestHttpClient implements QuietCloseable {
             @Nullable CharSequence username,
             @Nullable CharSequence password
     ) {
+        assertGet(url, expectedResponse, sql, username, password, null);
+    }
+
+    public void assertGet(
+            CharSequence url,
+            CharSequence expectedResponse,
+            CharSequence sql,
+            @Nullable CharSequence username,
+            @Nullable CharSequence password,
+            @Nullable CharSequence token
+    ) {
         try {
-            sink.clear();
-            toSinkGet0(url, sql, sink, username, password);
+            toSink0(url, sql, sink, username, password, token, null);
             TestUtils.assertEquals(expectedResponse, sink);
+        } finally {
+            if (!keepConnection) {
+                httpClient.disconnect();
+            }
+        }
+    }
+
+    public void assertGetRegexp(
+            CharSequence url,
+            String expectedResponseRegexp,
+            CharSequence sql,
+            @Nullable CharSequence username,
+            @Nullable CharSequence password,
+            @Nullable CharSequence token,
+            CharSequence expectedStatus
+    ) {
+        try {
+            toSink0(url, sql, sink, username, password, token, expectedStatus);
+            Pattern pattern = Pattern.compile(expectedResponseRegexp);
+            String message = "Expected response to match regexp " + expectedResponseRegexp + " but got " + sink + " which does not match";
+            Assert.assertTrue(message, pattern.matcher(sink).matches());
         } finally {
             if (!keepConnection) {
                 httpClient.disconnect();
@@ -127,6 +159,7 @@ public class TestHttpClient implements QuietCloseable {
     public void assertSendMultipart(
             CharSequence expectedResponse,
             @Nullable CharSequence json,
+            CharSequence jsonVersion,
             CharSequence csv,
             CharSequence fileName,
             @Nullable CharSequence tableName,
@@ -141,6 +174,7 @@ public class TestHttpClient implements QuietCloseable {
             toSinkImport0(
                     tableName,
                     json,
+                    jsonVersion,
                     csv,
                     fileName,
                     responseFormat,
@@ -156,6 +190,33 @@ public class TestHttpClient implements QuietCloseable {
         }
     }
 
+    public void assertSendMultipart(
+            CharSequence expectedResponse,
+            @Nullable CharSequence json,
+            CharSequence csv,
+            CharSequence fileName,
+            @Nullable CharSequence tableName,
+            @Nullable CharSequence responseFormat,
+            @Nullable CharSequence timestampColumnName,
+            @Nullable CharSequence partitionBy,
+            @Nullable CharSequence forceHeader,
+            @Nullable CharSequence overwrite
+    ) {
+        assertSendMultipart(
+                expectedResponse,
+                json,
+                TextImportProcessor.SCHEMA_V1,
+                csv,
+                fileName,
+                tableName,
+                responseFormat,
+                timestampColumnName,
+                partitionBy,
+                forceHeader,
+                overwrite
+        );
+    }
+
     @Override
     public void close() {
         Misc.free(httpClient);
@@ -165,9 +226,9 @@ public class TestHttpClient implements QuietCloseable {
         this.keepConnection = keepConnection;
     }
 
-    public void toSink(CharSequence url, CharSequence sql, CharSink sink) {
+    public void toSink(CharSequence url, CharSequence sql, StringSink sink) {
         try {
-            toSinkGet0(url, sql, sink, null, null);
+            toSink0(url, sql, sink, null, null, null, null);
         } finally {
             if (!keepConnection) {
                 httpClient.disconnect();
@@ -175,37 +236,62 @@ public class TestHttpClient implements QuietCloseable {
         }
     }
 
-    private void toSinkGet0(
-            CharSequence url,
-            CharSequence sql,
-            CharSink sink,
+    private void reqToSink(
+            HttpClient.Request req,
+            StringSink sink,
             @Nullable CharSequence username,
-            @Nullable CharSequence password
+            @Nullable CharSequence password,
+            @Nullable CharSequence token,
+            CharSequence expectedStatus
     ) {
-        HttpClient.Request req = httpClient.newRequest();
-        req
-                .GET("localhost", 9001)
-                .url(url)
-                .query("query", sql);
-
-        if (username != null && password != null) {
-            req.authBasic(username, password);
+        if (username != null) {
+            if (password != null) {
+                req.authBasic(username, password);
+            } else if (token != null) {
+                req.authToken(username, token);
+            } else {
+                throw new RuntimeException("username specified without pwd or tooken");
+            }
         }
 
-        HttpClient.Response rsp = req.send();
-
+        HttpClient.ResponseHeaders rsp = req.send("localhost", 9001);
         rsp.await();
+
+        if (expectedStatus != null) {
+            TestUtils.assertEquals(expectedStatus, rsp.getStatusCode());
+        }
+
         ChunkedResponse chunkedResponse = rsp.getChunkedResponse();
         Chunk chunk;
 
+        sink.clear();
         while ((chunk = chunkedResponse.recv()) != null) {
-            Chars.utf8toUtf16(chunk.lo(), chunk.hi(), sink);
+            Utf8s.utf8ToUtf16(chunk.lo(), chunk.hi(), sink);
         }
+    }
+
+    private void toSink0(
+            CharSequence url,
+            CharSequence sql,
+            StringSink sink,
+            @Nullable CharSequence username,
+            @Nullable CharSequence password,
+            @Nullable CharSequence token,
+            CharSequence expectedStatus
+    ) {
+        HttpClient.Request req = httpClient.newRequest();
+        req
+                .GET()
+                .url(url)
+                .query("query", sql);
+
+        reqToSink(req, sink, username, password, token, expectedStatus);
     }
 
     private void toSinkImport0(
             CharSequence tableName,
             CharSequence json,
+            CharSequence jsonVersion,
             CharSequence csv,
             CharSequence fileName,
             CharSequence responseFormat,
@@ -213,7 +299,7 @@ public class TestHttpClient implements QuietCloseable {
             CharSequence partitionBy,
             CharSequence forceHeader,
             CharSequence overwrite,
-            CharSink sink
+            CharSinkBase<?> sink
     ) {
         HttpClient.Request req = httpClient.newRequest();
         req
@@ -236,7 +322,7 @@ public class TestHttpClient implements QuietCloseable {
         // csv schema part has to be consumed before the csv itself
         // this part is optional
         if (json != null) {
-            data = multipart.formData("schema");
+            data = multipart.formData(jsonVersion);
             data.put(json);
         }
 
@@ -249,7 +335,8 @@ public class TestHttpClient implements QuietCloseable {
         Chunk chunk;
 
         while ((chunk = chunkedResponse.recv()) != null) {
-            Chars.utf8toUtf16(chunk.lo(), chunk.hi(), sink);
+            Utf8s.utf8ToUtf16(chunk.lo(), chunk.hi(), sink);
         }
     }
+
 }

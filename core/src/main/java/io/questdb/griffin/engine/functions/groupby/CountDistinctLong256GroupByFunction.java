@@ -36,12 +36,16 @@ import io.questdb.std.*;
 
 public class CountDistinctLong256GroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
     private final Function arg;
+    private final int setInitialCapacity;
+    private final double setLoadFactor;
     private final ObjList<Long256HashSet> sets = new ObjList<>();
     private int setIndex;
     private int valueIndex;
 
-    public CountDistinctLong256GroupByFunction(Function arg) {
+    public CountDistinctLong256GroupByFunction(Function arg, int setInitialCapacity, double setLoadFactor) {
         this.arg = arg;
+        this.setInitialCapacity = setInitialCapacity;
+        this.setLoadFactor = setLoadFactor;
     }
 
     @Override
@@ -54,12 +58,12 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
     public void computeFirst(MapValue mapValue, Record record) {
         final Long256HashSet set;
         if (sets.size() <= setIndex) {
-            sets.extendAndSet(setIndex, set = new Long256HashSet());
+            sets.extendAndSet(setIndex, set = new Long256HashSet(setInitialCapacity, setLoadFactor));
         } else {
             set = sets.getQuick(setIndex);
+            set.clear();
         }
 
-        set.clear();
         Long256 val = arg.getLong256A(record);
         if (isNotNull(val)) {
             set.add(val.getLong0(), val.getLong1(), val.getLong2(), val.getLong3());

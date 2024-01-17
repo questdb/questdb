@@ -55,7 +55,7 @@ final class Mig607 {
             long rowCount,
             long columnNameOffset
     ) {
-        final int plen2 = path.length();
+        final int plen2 = path.size();
         if (rowCount > 0) {
             long mem = migrationContext.getTempMemory();
             long currentColumnNameOffset = columnNameOffset;
@@ -191,8 +191,7 @@ final class Mig607 {
     static void migrate(MigrationContext migrationContext) {
         final FilesFacade ff = migrationContext.getFf();
         Path path = migrationContext.getTablePath();
-        int plen = path.length();
-
+        int plen = path.size();
 
         path.trimTo(plen).concat(META_FILE_NAME).$();
         long metaFileSize;

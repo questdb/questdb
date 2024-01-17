@@ -708,7 +708,7 @@ public class TimestampFormatCompilerTest {
 
     @Test(expected = BytecodeException.class)
     public void testLongPattern() {
-        StringBuffer b = new StringBuffer();
+        StringBuilder b = new StringBuilder();
         for (int i = 0; i < 1000; i++) {
             b.append("KK").append(' ').append('Z').append(',');
         }

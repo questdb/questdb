@@ -28,11 +28,11 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.std.Transient;
 
 public interface SecurityContextFactory {
-    int HTTP = 0;
-    int ILP = 2;
-    int PGWIRE = 1;
+    byte HTTP = 0;
+    byte ILP = 2;
+    byte PGWIRE = 1;
 
-    SecurityContext getInstance(@Transient CharSequence principal, int interfaceId);
+    SecurityContext getInstance(@Transient CharSequence principal, byte authType, byte interfaceId);
 
     default SecurityContext getRootContext() {
         return AllowAllSecurityContext.INSTANCE;

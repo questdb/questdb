@@ -28,8 +28,8 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.Sinkable;
 import io.questdb.std.Uuid;
+import io.questdb.std.str.Sinkable;
 
 public class JsonPlanSink extends BasePlanSink {
     final int NODE_ATTR = 2;
@@ -169,6 +169,7 @@ public class JsonPlanSink extends BasePlanSink {
 
     @Override
     public PlanSink val(int i) {
+        quoteValue = false;
         checkType(NODE_VALUE);
         sink.put(i);
         return this;
@@ -176,6 +177,7 @@ public class JsonPlanSink extends BasePlanSink {
 
     @Override
     public PlanSink val(long l) {
+        quoteValue = false;
         checkType(NODE_VALUE);
         sink.put(l);
         return this;
@@ -183,6 +185,7 @@ public class JsonPlanSink extends BasePlanSink {
 
     @Override
     public PlanSink val(float f) {
+        quoteValue = false;
         checkType(NODE_VALUE);
         sink.put(f);
         return this;
@@ -190,6 +193,7 @@ public class JsonPlanSink extends BasePlanSink {
 
     @Override
     public PlanSink val(double d) {
+        quoteValue = false;
         checkType(NODE_VALUE);
         sink.put(d);
         return this;
@@ -197,6 +201,7 @@ public class JsonPlanSink extends BasePlanSink {
 
     @Override
     public PlanSink val(boolean b) {
+        quoteValue = false;
         checkType(NODE_VALUE);
         sink.put(b);
         return this;

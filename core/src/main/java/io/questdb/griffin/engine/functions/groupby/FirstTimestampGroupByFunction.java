@@ -36,8 +36,8 @@ import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 public class FirstTimestampGroupByFunction extends TimestampFunction implements GroupByFunction, UnaryFunction {
-    private final Function arg;
-    private int valueIndex;
+    protected final Function arg;
+    protected int valueIndex;
 
     public FirstTimestampGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
@@ -45,7 +45,7 @@ public class FirstTimestampGroupByFunction extends TimestampFunction implements 
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putLong(this.valueIndex, this.arg.getTimestamp(record));
+        mapValue.putLong(valueIndex, arg.getTimestamp(record));
     }
 
     @Override
@@ -65,7 +65,7 @@ public class FirstTimestampGroupByFunction extends TimestampFunction implements 
 
     @Override
     public long getTimestamp(Record rec) {
-        return rec.getTimestamp(this.valueIndex);
+        return rec.getTimestamp(valueIndex);
     }
 
     @Override
@@ -76,6 +76,6 @@ public class FirstTimestampGroupByFunction extends TimestampFunction implements 
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putTimestamp(this.valueIndex, Numbers.LONG_NaN);
+        mapValue.putTimestamp(valueIndex, Numbers.LONG_NaN);
     }
 }

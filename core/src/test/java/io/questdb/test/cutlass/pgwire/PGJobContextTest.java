@@ -48,6 +48,7 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cutlass.NetUtils;
 import io.questdb.test.mp.TestWorkerPool;
@@ -2228,7 +2229,11 @@ if __name__ == "__main__":
     @Test
     public void testCancelOneQueryOutOfMultipleRunningOnes() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table if not exists tab as (select x::timestamp ts, x, rnd_double() d from long_sequence(1000000)) timestamp(ts) partition by day");
+            ddl("create table if not exists tab as " +
+                    "(select x::timestamp ts, x, rnd_double() d " +
+                    "from long_sequence(1000000)) " +
+                    "timestamp(ts) " +
+                    "partition by day");
             mayDrainWalQueue();
 
             final int THREADS = 5;
@@ -2252,7 +2257,9 @@ if __name__ == "__main__":
                 for (int i = 0; i < THREADS; i++) {
                     final int j = i;
                     new Thread(() -> {
-                        final String query = (j == BLOCKED_THREAD) ? "select count(*) from tab t1 cross join tab t2 where t1.x > 0" : "select count(*) from tab where x > 0";
+                        final String query = (j == BLOCKED_THREAD) ?
+                                "select count(*) from tab t1 join tab t2 on t1.x = t2.x where t1.x > 0" :
+                                "select count(*) from tab where x > 0";
                         try (PreparedStatement stmt = conns.getQuick(j).prepareStatement(query)) {
                             startLatch.countDown();
                             startLatch.await();
@@ -2335,12 +2342,12 @@ if __name__ == "__main__":
 
     @Test
     public void testCancelRunningQuery() throws Exception {
-        String[] queries = {"create table new_tab as (select count(*) from tab t1 cross join tab t2 where t1.x > 0)",
-                "select count(*) from tab t1 cross join tab t2 where t1.x > 0",
-                "insert into dest select count(*)::timestamp, 0, 0.0 from tab t1 cross join tab t2 where t1.x > 0",
+        String[] queries = {"create table new_tab as (select count(*) from tab t1 join tab t2 on t1.x = t2.x where t1.x > 0)",
+                "select count(*) from tab t1 join tab t2 on t1.x = t2.x where t1.x > 0",
+                "insert into dest select count(*)::timestamp, 0, 0.0 from tab t1 join tab t2 on t1.x = t2.x where t1.x > 0",
                 "update dest \n" +
                         "set l = t1.x \n" +
-                        "from tab t1 \n" +
+                        "from (tab where d > 0  limit 1, -1 ) t1 \n" +
                         "where \n" +
                         "'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' || t1.x = \n" +
                         "'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' || dest.l || '00000'; "
@@ -2348,7 +2355,7 @@ if __name__ == "__main__":
 
         assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary) -> {
             ddl("create table if not exists tab as " +
-                    "(select x::timestamp ts, x, rnd_double() d from long_sequence(1000000)) timestamp(ts) partition by day");
+                    "(select x::timestamp ts, x, rnd_double() d from long_sequence(5000000)) timestamp(ts) partition by day");
             ddl("create table if not exists dest as (select x l from long_sequence(10000))");
             mayDrainWalQueue();
 
@@ -2372,7 +2379,7 @@ if __name__ == "__main__":
                     }, "cancellation thread").start();
                     try {
                         stmt.execute();
-                        Assert.fail("expected PSQLException with cancel message");
+                        Assert.fail("expected PSQLException with cancel message for query: " + query);
                     } catch (PSQLException e) {
                         isCancelled.set(true);
                         finished.await();
@@ -2848,7 +2855,7 @@ if __name__ == "__main__":
     public void testDisconnectDuringAuth() throws Exception {
         skipOnWalRun(); // we are not touching tables at all, no reason to run the same test twice.
         for (int i = 0; i < 3; i++) {
-            testDisconnectDuringAuth0(i, 10);
+            testDisconnectDuringAuth0(i);
         }
     }
 
@@ -2936,40 +2943,40 @@ if __name__ == "__main__":
             }
 
             //max rows bigger than result set sie (empty result set)
-            assertResultNTimes(connection,
+            assertResultTenTimes(connection,
                     "select * from tab",
-                    "a[INTEGER],b[BIGINT],ts[TIMESTAMP]\n", 5, 10
+                    "a[INTEGER],b[BIGINT],ts[TIMESTAMP]\n", 5
             );
 
             //max rows bigger than result set sie (non-empty result set)
-            assertResultNTimes(connection,
+            assertResultTenTimes(connection,
                     "select 1 as x",
                     "x[INTEGER]\n" +
-                            "1\n", 5, 10
+                            "1\n", 5
             );
 
             //max rows smaller than result set size
-            assertResultNTimes(connection,
+            assertResultTenTimes(connection,
                     "select x from long_sequence(5)",
                     "x[BIGINT]\n" +
-                            "1\n2\n3\n", 3, 10
+                            "1\n2\n3\n", 3
             );
 
             // max rows smaller than cursor size, cursor does not return size
-            assertResultNTimes(connection,
+            assertResultTenTimes(connection,
                     "show columns from tab",
                     "column[VARCHAR],type[VARCHAR],indexed[BIT],indexBlockCapacity[INTEGER],symbolCached[BIT],symbolCapacity[INTEGER],designated[BIT],upsertKey[BIT]\n" +
                             "a,INT,false,0,false,0,false,false\n" +
-                            "b,LONG,false,0,false,0,false,false\n", 2, 10
+                            "b,LONG,false,0,false,0,false,false\n", 2
             );
 
             // max rows bigger than cursor size, cursor does not return size
-            assertResultNTimes(connection,
+            assertResultTenTimes(connection,
                     "show columns from tab",
                     "column[VARCHAR],type[VARCHAR],indexed[BIT],indexBlockCapacity[INTEGER],symbolCached[BIT],symbolCapacity[INTEGER],designated[BIT],upsertKey[BIT]\n" +
                             "a,INT,false,0,false,0,false,false\n" +
                             "b,LONG,false,0,false,0,false,false\n" +
-                            "ts,TIMESTAMP,false,0,false,0,false,false\n", 6, 10
+                            "ts,TIMESTAMP,false,0,false,0,false,false\n", 6
             );
         });
     }
@@ -3007,7 +3014,7 @@ if __name__ == "__main__":
             try (PreparedStatement pstmt = connection.prepareStatement("create table xx as (" +
                     "select x," +
                     " timestamp_sequence(0, 1000) ts" +
-                    " from long_sequence(100000)) timestamp (ts)")) {
+                    " from long_sequence(1000)) timestamp (ts)")) {
                 pstmt.execute();
             }
 
@@ -7185,7 +7192,7 @@ nodejs code:
             ff = new TestFilesFacadeImpl() {
                 @Override
                 public int openRW(LPSZ name, long opts) {
-                    if (Chars.endsWith(name, "_meta.swp")) {
+                    if (Utf8s.endsWithAscii(name, "_meta.swp")) {
                         queryStartedCountDown.await();
                         Os.sleep(configuration.getWriterAsyncCommandBusyWaitTimeout());
                     }
@@ -7206,7 +7213,7 @@ nodejs code:
             ff = new TestFilesFacadeImpl() {
                 @Override
                 public int openRW(LPSZ name, long opts) {
-                    if (Chars.endsWith(name, "_meta.swp")) {
+                    if (Utf8s.endsWithAscii(name, "_meta.swp")) {
                         queryStartedCountDown.await();
                         // wait for twice the time to allow busy wait to time out
                         Os.sleep(configuration.getWriterAsyncCommandBusyWaitTimeout() * 2);
@@ -7226,7 +7233,7 @@ nodejs code:
             ff = new TestFilesFacadeImpl() {
                 @Override
                 public int openRW(LPSZ name, long opts) {
-                    if (Chars.endsWith(name, "_meta.swp")) {
+                    if (Utf8s.endsWithAscii(name, "_meta.swp")) {
                         Os.sleep(50);
                     }
                     return super.openRW(name, opts);
@@ -7246,7 +7253,12 @@ nodejs code:
     @Test
     public void testRunQueryAfterCancellingPreviousInTheSameConnection() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table if not exists tab as (select x::timestamp ts, x, rnd_double() d from long_sequence(1000000)) timestamp(ts) partition by day");
+            ddl("create table if not exists tab as " +
+                    "(select x::timestamp ts, " +
+                    "        x, " +
+                    "        rnd_double() d " +
+                    " from long_sequence(1000000)) " +
+                    "timestamp(ts) partition by day");
             mayDrainWalQueue();
 
             try (
@@ -7255,7 +7267,7 @@ nodejs code:
             ) {
                 workerPool.start(LOG);
 
-                //first connection
+                // first connection
                 try (final PgConnection connection = (PgConnection) getConnection(server.getPort(), false, true)) {
                     executeAndCancelQuery(connection);
 
@@ -7372,7 +7384,6 @@ nodejs code:
     public void testSchemasCall() throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
-
             sink.clear();
             recvBufferSize = 2048;
             try (
@@ -9542,7 +9553,7 @@ create table tab as (
         AtomicBoolean isCancelled = new AtomicBoolean(false);
         CountDownLatch finished = new CountDownLatch(1);
         backendPid = connection.getQueryExecutor().getBackendPID();
-        String query = "select count(*) from tab t1 cross join tab t2 where t1.x > 0";
+        String query = "select count(*) from tab t1 join tab t2 on t1.x = t2.x where t1.x > 0";
 
         try (final PreparedStatement stmt = connection.prepareStatement(query)) {
             new Thread(() -> {
@@ -9713,11 +9724,11 @@ create table tab as (
         }
     }
 
-    private void assertResultNTimes(Connection connection, String sql, String expected, int maxRows, int times) throws SQLException, IOException {
+    private void assertResultTenTimes(Connection connection, String sql, String expected, int maxRows) throws SQLException, IOException {
         try (PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setMaxRows(maxRows);
 
-            for (int i = 0; i < times; i++) {
+            for (int i = 0; i < 10; i++) {
                 sink.clear();
                 try (ResultSet rs = statement.executeQuery()) {
                     assertResultSet(expected, sink, rs);
@@ -9984,7 +9995,7 @@ create table tab as (
             }
         };
 
-        WorkerPool pool = new WorkerPool(conf, metrics.health());
+        WorkerPool pool = new WorkerPool(conf, metrics);
         pool.assign(engine.getEngineMaintenanceJob());
         try (CircuitBreakerRegistry registry = new CircuitBreakerRegistry(conf, engine.getConfiguration());
              final PGWireServer server = createPGWireServer(
@@ -10534,7 +10545,7 @@ create table tab as (
         });
     }
 
-    private void testDisconnectDuringAuth0(int allowedSendCount, int clientCount) throws Exception {
+    private void testDisconnectDuringAuth0(int allowedSendCount) throws Exception {
         DisconnectOnSendNetworkFacade nf = new DisconnectOnSendNetworkFacade(allowedSendCount);
         assertMemoryLeak(() -> {
             PGWireConfiguration configuration = new Port0PGWireConfiguration() {
@@ -10558,7 +10569,7 @@ create table tab as (
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
-                for (int i = 0; i < clientCount; i++) {
+                for (int i = 0; i < 10; i++) {
                     try (Connection ignored1 = getConnectionWitSslInitRequest(Mode.EXTENDED, server.getPort(), false, -2)) {
                         assertException("Connection should not be established when server disconnects during authentication");
                     } catch (PSQLException ignored) {

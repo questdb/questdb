@@ -24,14 +24,13 @@
 
 package io.questdb.test.cutlass.http;
 
-import io.questdb.MessageBus;
-import io.questdb.MessageBusImpl;
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cutlass.Services;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.http.processors.HealthCheckProcessor;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
@@ -51,10 +50,7 @@ import io.questdb.mp.*;
 import io.questdb.network.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.str.AbstractCharSequence;
-import io.questdb.std.str.ByteSequence;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.*;
 import io.questdb.tasks.TelemetryTask;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.CreateTableTestUtils;
@@ -100,7 +96,7 @@ public class IODispatcherTest extends AbstractTest {
             "Transfer-Encoding: chunked\r\n" +
             "Content-Type: text/plain; charset=utf-8\r\n" +
             "\r\n" +
-            "0666\r\n" +
+            "0a0e\r\n" +
             "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
             "|      Location:  |                          fhv_tripdata_2017-02.csv  |        Pattern  | Locale  |      Errors  |\r\n" +
             "|   Partition by  |                                              NONE  |                 |         |              |\r\n" +
@@ -114,6 +110,14 @@ public class IODispatcherTest extends AbstractTest {
             "|              2  |                                  DropOff_datetime  |                   STRING  |           0  |\r\n" +
             "|              3  |                                      PUlocationID  |                   STRING  |           0  |\r\n" +
             "|              4  |                                      DOlocationID  |                   STRING  |           0  |\r\n" +
+            "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+            "|  Idx  |            Csv name  |     Csv type  |        Table column  |   Table type  |                   Status  |\r\n" +
+            "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+            "|    0  |Dispatching_base_num  |       STRING  |Dispatching_base_num  |       STRING  |                       OK  |\r\n" +
+            "|    1  |     Pickup_DateTime  |    TIMESTAMP  |     Pickup_DateTime  |    TIMESTAMP  |                       OK  |\r\n" +
+            "|    2  |    DropOff_datetime  |       STRING  |    DropOff_datetime  |       STRING  |                       OK  |\r\n" +
+            "|    3  |        PUlocationID  |       STRING  |        PUlocationID  |       STRING  |                       OK  |\r\n" +
+            "|    4  |        DOlocationID  |       STRING  |        DOlocationID  |       STRING  |                       OK  |\r\n" +
             "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
             "\r\n" +
             "00\r\n" +
@@ -143,6 +147,24 @@ public class IODispatcherTest extends AbstractTest {
         super.setUp();
         SharedRandom.RANDOM.set(new Rnd());
         testHttpClient.setKeepConnection(false);
+    }
+
+    @Override
+    public void tearDown() throws Exception {
+        super.tearDown();
+        TestDataUnavailableFunctionFactory.eventCallback = null;
+    }
+
+    @Test
+    public void testBadImplicitStrToLongCast() throws Exception {
+        getSimpleTester().run(engine -> {
+            testHttpClient.assertGet("{\"ddl\":\"OK\"}", "create table tab (value int, when long, ts timestamp) timestamp(ts) partition by day bypass wal;");
+            testHttpClient.assertGet("{\"ddl\":\"OK\"}", "insert into tab values(1, now(), now());"); // it should not be DDL:OK. change me when https://github.com/questdb/questdb/issues/3858 is fixed
+            testHttpClient.assertGet(
+                    "{\"query\":\"select * from tab where when = '2023-10-17';\",\"error\":\"inconvertible value: `2023-10-17` [STRING -> LONG]\",\"position\":0}",
+                    "select * from tab where when = '2023-10-17';"
+            );
+        });
     }
 
     @Test
@@ -382,7 +404,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor select(CharSequence url) {
+                    public HttpRequestProcessor select(Utf8Sequence url) {
                         return null;
                     }
                 };
@@ -1113,6 +1135,22 @@ public class IODispatcherTest extends AbstractTest {
                                                 "Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
                                                 "\r\n" +
                                                 "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                                                "Content-Disposition: form-data; name=\"schema\"; filename=\"schema.json\"\r\n" +
+                                                "Content-Type: application/octet-stream\r\n" +
+                                                "\r\n" +
+                                                "[\r\n" +
+                                                "  {\r\n" +
+                                                "    \"name\": \"col_a\",\r\n" +
+                                                "    \"type\": \"INT\"\r\n" +
+                                                "  },\r\n" +
+                                                "  {\r\n" +
+                                                "    \"name\": \"ts\",\r\n" +
+                                                "    \"type\": \"TIMESTAMP\",\r\n" +
+                                                "    \"pattern\": \"EPU+\"\r\n" +
+                                                "  }\r\n" +
+                                                "]\r\n" +
+                                                "\r\n" +
+                                                "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
                                                 "Content-Disposition: form-data; name=\"data\"\r\n" +
                                                 "\r\n" +
                                                 "col_a,ts\r\n" +
@@ -1127,7 +1165,7 @@ public class IODispatcherTest extends AbstractTest {
                                                 "Transfer-Encoding: chunked\r\n" +
                                                 "Content-Type: text/plain; charset=utf-8\r\n" +
                                                 "\r\n" +
-                                                "0507\r\n" +
+                                                "0750\r\n" +
                                                 "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
                                                 "|      Location:  |                                              test  |        Pattern  | Locale  |      Errors  |\r\n" +
                                                 "|   Partition by  |                                              WEEK  |                 |         |              |\r\n" +
@@ -1138,6 +1176,11 @@ public class IODispatcherTest extends AbstractTest {
                                                 "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
                                                 "|              0  |                                             col_a  |                      INT  |           0  |\r\n" +
                                                 "|              1  |                                                ts  |                TIMESTAMP  |           0  |\r\n" +
+                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                                "|  Idx  |            Csv name  |     Csv type  |        Table column  |   Table type  |                   Status  |\r\n" +
+                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                                "|    0  |               col_a  |          INT  |               col_a  |          INT  |                       OK  |\r\n" +
+                                                "|    1  |                  ts  |    TIMESTAMP  |                  ts  |    TIMESTAMP  |                       OK  |\r\n" +
                                                 "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
                                                 "\r\n" +
                                                 "00\r\n" +
@@ -1185,8 +1228,27 @@ public class IODispatcherTest extends AbstractTest {
                                         "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
                                         "|              0  |                                             col_b  |                     LONG  |           0  |\r\n" +
                                         "|              1  |                                             col_a  |                     LONG  |           0  |\r\n" +
+                                        "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                        "|  Idx  |            Csv name  |     Csv type  |        Table column  |   Table type  |                   Status  |\r\n" +
+                                        "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                        "|    0  |               col_a  |         LONG  |               col_a  |         LONG  |                       OK  |\r\n" +
+                                        "|    1  |               col_b  |         LONG  |               col_b  |         LONG  |                       OK  |\r\n" +
                                         "+-----------------------------------------------------------------------------------------------------------------+\r\n",
-                                null,
+                                "{\n" +
+                                        "  \"columns\": [\r\n" +
+                                        "    {\r\n" +
+                                        "      \"file_column_index\": 0,\r\n" +
+                                        "      \"column_type\": \"LONG\",\r\n" +
+                                        "      \"table_column_name\": \"col_a\"\r\n" +
+                                        "    },\r\n" +
+                                        "    {\r\n" +
+                                        "      \"file_column_index\": 1,\r\n" +
+                                        "      \"column_type\": \"LONG\",\r\n" +
+                                        "      \"table_column_name\": \"col_b\"\r\n" +
+                                        "    }\r\n" +
+                                        "  ]\r\n" +
+                                        "}",
+                                TextImportProcessor.SCHEMA_V2,
                                 "col_a,col_b\r\n" +
                                         "1000,1000\r\n" +
                                         "2000,2000\r\n" +
@@ -1220,8 +1282,8 @@ public class IODispatcherTest extends AbstractTest {
     public void testImportBadJson() throws Exception {
         testImport(
                 engine -> testHttpClient.assertSendMultipart(
-                        "{\"status\":\"Unexpected symbol\"}",
-                        "[{\"name\":\"timestamp,\"type\":\"DATE\"},{\"name\":\"bid\",\"type\":\"INT\"}]",
+                        "{\"status\":\"ERROR\",\"location\":\"\",\"rowsRejected\":0,\"rowsImported\":0,\"header\":false,\"partitionBy\":\"DAY\",\"errors\":[\"[22] Unexpected symbol\"],\"columns\":[],\"mapping\":[]}",
+                        "[{\"name\":\"timestamp,\"type\":\"DATE\"},{\"name\":\"bid\",\"type\":\"INT\"}]",// timestamp is not quoted properly
                         "timestamp,bid\r\n" +
                                 "27/05/2018 00:00:01,100\r\n" +
                                 "27/05/2018 00:00:02,101\r\n" +
@@ -1310,15 +1372,16 @@ public class IODispatcherTest extends AbstractTest {
                                     "|              2  |                                  DropOff_datetime  |                   STRING  |           0  |\r\n" +
                                     "|              3  |                                      PUlocationID  |                   STRING  |           0  |\r\n" +
                                     "|              4  |                                      DOlocationID  |                   STRING  |           0  |\r\n" +
+                                    "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                    "|  Idx  |            Csv name  |     Csv type  |        Table column  |   Table type  |                   Status  |\r\n" +
+                                    "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                    "|    0  |Dispatching_base_num  |       STRING  |Dispatching_base_num  |       STRING  |                       OK  |\r\n" +
+                                    "|    1  |     Pickup_DateTime  |    TIMESTAMP  |     Pickup_DateTime  |    TIMESTAMP  |                       OK  |\r\n" +
+                                    "|    2  |    DropOff_datetime  |       STRING  |    DropOff_datetime  |       STRING  |                       OK  |\r\n" +
+                                    "|    3  |        PUlocationID  |       STRING  |        PUlocationID  |       STRING  |                       OK  |\r\n" +
+                                    "|    4  |        DOlocationID  |       STRING  |        DOlocationID  |       STRING  |                       OK  |\r\n" +
                                     "+-----------------------------------------------------------------------------------------------------------------+\r\n",
-                            "[\r\n" +
-                                    "  {\r\n" +
-                                    "    \"name\": \"date\",\r\n" +
-                                    "    \"type\": \"DATE\",\r\n" +
-                                    "    \"pattern\": \"d MMMM y.\",\r\n" +
-                                    "    \"locale\": \"ru-RU\"\r\n" +
-                                    "  }\r\n" +
-                                    "]",
+                            "",
                             "Dispatching_base_num,Pickup_DateTime,DropOff_datetime,PUlocationID,DOlocationID\r\n" +
                                     "B00008,2017-02-01 00:30:00,,,\r\n" +
                                     "B00008,2017-02-01 00:40:00,,,\r\n" +
@@ -1354,11 +1417,34 @@ public class IODispatcherTest extends AbstractTest {
                     );
 
                     // append different data structure to the same table
-
-                    // todo: new world - we should provide better diagnostics from the server
-                    //    to include which columns we could map and which columns is extras
                     testHttpClient.assertSendMultipart(
-                            "column count mismatch [textColumnCount=6, tableColumnCount=5, table=fhv_tripdata_2017-02.csv]",
+                            "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                    "|      Location:  |                          fhv_tripdata_2017-02.csv  |        Pattern  | Locale  |      Errors  |\r\n" +
+                                    "|   Partition by  |                                              NONE  |                 |         |              |\r\n" +
+                                    "|      Timestamp  |                                              NONE  |                 |         |              |\r\n" +
+                                    "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                    "|   Rows handled  |                                                 0  |                 |         |              |\r\n" +
+                                    "|  Rows imported  |                                                 0  |                 |         |              |\r\n" +
+                                    "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                    "|  Idx  |            Csv name  |     Csv type  |        Table column  |   Table type  |                   Status  |\r\n" +
+                                    "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                    "|    0  |             UNKNOWN  |       STRING  |             UNKNOWN  |      unknown  |                 UNMAPPED  |\r\n" +
+                                    "|    1  |             UNKNOWN  |       STRING  |             UNKNOWN  |      unknown  |                 UNMAPPED  |\r\n" +
+                                    "|    2  |             UNKNOWN  |       STRING  |             UNKNOWN  |      unknown  |                 UNMAPPED  |\r\n" +
+                                    "|    3  |             UNKNOWN  |       STRING  |             UNKNOWN  |      unknown  |                 UNMAPPED  |\r\n" +
+                                    "|    4  |             UNKNOWN  |         CHAR  |             UNKNOWN  |      unknown  |                 UNMAPPED  |\r\n" +
+                                    "|    5  |             UNKNOWN  |         CHAR  |             UNKNOWN  |      unknown  |                 UNMAPPED  |\r\n" +
+                                    "|       |             UNKNOWN  |      UNKNOWN  |Dispatching_base_num  |       STRING  |                 UNMAPPED  |\r\n" +
+                                    "|       |             UNKNOWN  |      UNKNOWN  |     Pickup_DateTime  |    TIMESTAMP  |                 UNMAPPED  |\r\n" +
+                                    "|       |             UNKNOWN  |      UNKNOWN  |    DropOff_datetime  |       STRING  |                 UNMAPPED  |\r\n" +
+                                    "|       |             UNKNOWN  |      UNKNOWN  |        PUlocationID  |       STRING  |                 UNMAPPED  |\r\n" +
+                                    "|       |             UNKNOWN  |      UNKNOWN  |        DOlocationID  |       STRING  |                 UNMAPPED  |\r\n" +
+                                    "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                    "|  Errors                                                                                                         |\r\n" +
+                                    "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                    "|  mapping error(s) [unmapped schema column(s),unmapped csv column(s),unmapped table column(s)]                   |\r\n" +
+                                    "|  Unmapped schema columns: [csvColumnName=date,csvColumnType=DATE]                                               |\r\n" +
+                                    "+-----------------------------------------------------------------------------------------------------------------+\r\n",
                             "[\r\n" +
                                     "  {\r\n" +
                                     "    \"name\": \"date\",\r\n" +
@@ -1421,6 +1507,13 @@ public class IODispatcherTest extends AbstractTest {
                                     "|              1  |                                                t2  |                TIMESTAMP  |           0  |\r\n" +
                                     "|              2  |                                                t3  |                TIMESTAMP  |           0  |\r\n" +
                                     "|              3  |                                                t4  |                TIMESTAMP  |           0  |\r\n" +
+                                    "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                    "|  Idx  |            Csv name  |     Csv type  |        Table column  |   Table type  |                   Status  |\r\n" +
+                                    "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                    "|    0  |                  t1  |    TIMESTAMP  |                  t1  |    TIMESTAMP  |                       OK  |\r\n" +
+                                    "|    1  |                  t2  |    TIMESTAMP  |                  t2  |    TIMESTAMP  |                       OK  |\r\n" +
+                                    "|    2  |                  t3  |    TIMESTAMP  |                  t3  |    TIMESTAMP  |                       OK  |\r\n" +
+                                    "|    3  |                  t4  |    TIMESTAMP  |                  t4  |    TIMESTAMP  |                       OK  |\r\n" +
                                     "+-----------------------------------------------------------------------------------------------------------------+\r\n",
                             null,
                             "t1,t2,t3,t4\n" +
@@ -1435,9 +1528,7 @@ public class IODispatcherTest extends AbstractTest {
                             null
                     );
 
-                    // insert the same data again, existing table must be using custom formatters still
-                    System.out.println("STEP2******************************");
-
+                    // Step 2. insert the same data again, existing table must be using custom formatters still
                     testHttpClient.assertSendMultipart(
                             "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
                                     "|      Location:  |                                           testTs1  |        Pattern  | Locale  |      Errors  |\r\n" +
@@ -1451,8 +1542,44 @@ public class IODispatcherTest extends AbstractTest {
                                     "|              1  |                                                t2  |                TIMESTAMP  |           0  |\r\n" +
                                     "|              2  |                                                t3  |                TIMESTAMP  |           0  |\r\n" +
                                     "|              3  |                                                t4  |                TIMESTAMP  |           0  |\r\n" +
+                                    "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                    "|  Idx  |            Csv name  |     Csv type  |        Table column  |   Table type  |                   Status  |\r\n" +
+                                    "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                    "|    0  |                  t1  |    TIMESTAMP  |                  t1  |    TIMESTAMP  |                       OK  |\r\n" +
+                                    "|    1  |                  t2  |    TIMESTAMP  |                  t2  |    TIMESTAMP  |                       OK  |\r\n" +
+                                    "|    2  |                  t3  |    TIMESTAMP  |                  t3  |    TIMESTAMP  |                       OK  |\r\n" +
+                                    "|    3  |                  t4  |    TIMESTAMP  |                  t4  |    TIMESTAMP  |                       OK  |\r\n" +
                                     "+-----------------------------------------------------------------------------------------------------------------+\r\n",
-                            null,
+                            "\r\n" +
+                                    "{\r\n" +
+                                    "  \"columns\": [\r\n" +
+                                    "    {\r\n" +
+                                    "      \"file_column_name\": \"t1\",\r\n" +
+                                    "      \"column_type\": \"TIMESTAMP\",\r\n" +
+                                    "      \"table_column_name\": \"t1\",\r\n" +
+                                    "      \"formats\": [ { \"pattern\": \"yyyy-MM-ddTHH:mm:ss.N+''''Z''''\" }]\r\n" +
+                                    "    },\r\n" +
+                                    "    {\r\n" +
+                                    "      \"file_column_name\": \"t2\",\r\n" +
+                                    "      \"column_type\": \"TIMESTAMP\",\r\n" +
+                                    "      \"table_column_name\": \"t2\",\r\n" +
+                                    "      \"formats\":[{\"pattern\":\"yyyy-MM-ddTHH:mm:ss.N+''''Z''''\"}]\r\n" +
+                                    "    },\r\n" +
+                                    "    {\r\n" +
+                                    "      \"file_column_name\": \"t3\",\r\n" +
+                                    "      \"column_type\": \"TIMESTAMP\",\r\n" +
+                                    "      \"table_column_name\": \"t3\",\r\n" +
+                                    "      \"formats\":[{\"pattern\":\"yyyy-MM-dd'''T'''HH:mm:ss''''Z''''\"}]\r\n" +
+                                    "    },\r\n" +
+                                    "    {\r\n" +
+                                    "      \"file_column_name\": \"t4\",\r\n" +
+                                    "      \"column_type\": \"TIMESTAMP\",\r\n" +
+                                    "      \"table_column_name\": \"t4\",\r\n" +
+                                    "      \"formats\":[{\"pattern\":\"yyyy-MM-dd'''T'''HH:mm:ss*N+Z\"}]\r\n" +
+                                    "    },\r\n" +
+                                    "  ]\r\n" +
+                                    "}\r\n",
+                            "schemaV2",
                             "t1,t2,t3,t4\n" +
                                     "2023-07-01T14:59:55.711'+0000',2023-07-01T14:59:55.711111222'+0000',2023-03-12'T'17:56:22'-0700',2023-08-20'T'13:20:10*633+0000\n" +
                                     "2023-07-01T14:59:55.711'+0000',2023-07-01T14:59:55.711111222'+0000',2023-03-12'T'17:56:22'-0700',2023-08-20'T'13:20:10*633+0000",
@@ -1546,6 +1673,27 @@ public class IODispatcherTest extends AbstractTest {
                                                 "Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
                                                 "\r\n" +
                                                 "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                                                "Content-Disposition: form-data; name=\"schemaV2\"\r\n" +
+                                                "\r\n" +
+                                                "{\r\n" +
+                                                "  \"columns\": [\r\n" +
+                                                "    {\r\n" +
+                                                "      \"file_column_index\": 0,\r\n" +
+                                                "      \"column_type\": \"TIMESTAMP\",\r\n" +
+                                                "      \"table_column_name\": \"ts\",\r\n" +
+                                                "      \"formats\": [\r\n" +
+                                                "        {\r\n" +
+                                                "          \"pattern\": \"EPU+\"\r\n" +
+                                                "       }]\r\n" +
+                                                "    },\r\n" +
+                                                "    {\r\n" +
+                                                "      \"file_column_index\": 1,\r\n" +
+                                                "      \"column_type\": \"INT\",\r\n" +
+                                                "      \"table_column_name\": \"value\"\r\n" +
+                                                "    }\r\n" +
+                                                "  ]\r\n" +
+                                                "}\r\n" +
+                                                "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
                                                 "Content-Disposition: form-data; name=\"data\"\r\n" +
                                                 "\r\n" +
                                                 "100000000,1000\r\n" +
@@ -1567,7 +1715,7 @@ public class IODispatcherTest extends AbstractTest {
                                                 "Transfer-Encoding: chunked\r\n" +
                                                 "Content-Type: text/plain; charset=utf-8\r\n" +
                                                 "\r\n" +
-                                                "0507\r\n" +
+                                                "0750\r\n" +
                                                 "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
                                                 "|      Location:  |                                              test  |        Pattern  | Locale  |      Errors  |\r\n" +
                                                 "|   Partition by  |                                               DAY  |                 |         |              |\r\n" +
@@ -1578,6 +1726,11 @@ public class IODispatcherTest extends AbstractTest {
                                                 "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
                                                 "|              0  |                                                ts  |                TIMESTAMP  |           0  |\r\n" +
                                                 "|              1  |                                             value  |                      INT  |           0  |\r\n" +
+                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                                "|  Idx  |            Csv name  |     Csv type  |        Table column  |   Table type  |                   Status  |\r\n" +
+                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                                "|    0  |             UNKNOWN  |    TIMESTAMP  |                  ts  |    TIMESTAMP  |                       OK  |\r\n" +
+                                                "|    1  |             UNKNOWN  |          INT  |               value  |          INT  |                       OK  |\r\n" +
                                                 "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
                                                 "\r\n" +
                                                 "00\r\n" +
@@ -1614,10 +1767,10 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
-    public void testImportForceUnknownDate() throws Exception {
+    public void testImportForceHeaderUnknownTimestamp() throws Exception {
         testImport(engine -> testHttpClient.assertSendMultipart(
-                "{\"status\":\"DATE format pattern is required\"}",
-                "[{\"name\":\"timestamp\",\"type\":\"DATE\"},{\"name\":\"bid\",\"type\":\"INT\"}]",
+                "{\"status\":\"ERROR\",\"location\":\"\",\"rowsRejected\":0,\"rowsImported\":0,\"header\":false,\"partitionBy\":\"DAY\",\"errors\":[\"[0] TIMESTAMP format pattern is required\"],\"columns\":[],\"mapping\":[]}",
+                "[{\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"},{\"name\":\"bid\",\"type\":\"INT\"}]\r\n",
                 "timestamp,bid\r\n" +
                         "27/05/2018 00:00:01,100\r\n" +
                         "27/05/2018 00:00:02,101\r\n" +
@@ -1651,10 +1804,10 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
-    public void testImportForceUnknownTimestamp() throws Exception {
+    public void testImportForceUnknownDate() throws Exception {
         testImport(engine -> testHttpClient.assertSendMultipart(
-                "{\"status\":\"TIMESTAMP format pattern is required\"}",
-                null,
+                "{\"status\":\"ERROR\",\"location\":\"\",\"rowsRejected\":0,\"rowsImported\":0,\"header\":false,\"partitionBy\":\"DAY\",\"errors\":[\"[35] DATE format pattern is required\"],\"columns\":[],\"mapping\":[]}",
+                "[{\"name\":\"timestamp\",\"type\":\"DATE\"},{\"name\":\"bid\",\"type\":\"INT\"}]",
                 "timestamp,bid\r\n" +
                         "27/05/2018 00:00:01,100\r\n" +
                         "27/05/2018 00:00:02,101\r\n" +
@@ -1714,11 +1867,23 @@ public class IODispatcherTest extends AbstractTest {
                                                 "Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
                                                 "\r\n" +
                                                 "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                                                "Content-Disposition: form-data; name=\"schemaV2\"\r\n" +
+                                                "\r\n" +
+                                                "{\r\n" +
+                                                "  \"columns\": [\r\n" +
+                                                "    { \"file_column_name\": \"geo1\", \"column_type\": \"GEOHASH\", \"table_column_name\": \"geo1\" },\r\n" +
+                                                "    { \"file_column_name\": \"geo2\", \"column_type\": \"GEOHASH\", \"table_column_name\": \"geo2\" },\r\n" +
+                                                "    { \"file_column_name\": \"geo4\", \"column_type\": \"GEOHASH\", \"table_column_name\": \"geo4\" },\r\n" +
+                                                "    { \"file_column_name\": \"geo8\", \"column_type\": \"GEOHASH\", \"table_column_name\": \"geo8\" },\r\n" +
+                                                "    { \"file_column_name\": \"geo2b\", \"column_type\": \"GEOHASH\", \"table_column_name\": \"geo2b\" }\r\n" +
+                                                "  ]\r\n" +
+                                                "}\r\n" +
+                                                "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
                                                 "Content-Disposition: form-data; name=\"data\"\r\n" +
                                                 "\r\n" +
                                                 "geo1,geo2,geo4,geo8,geo2b\r\n" +
                                                 "null,null,null,null,null\r\n" +
-                                                "questdb1234567890,questdb1234567890,questdb1234567890,questdb1234567890,questdb1234567890\r\n" +
+                                                "questdb12345,questdb12345,questdb12345,questdb12345,questdb12345\r\n" +
                                                 "u10m99dd3pbj,u10m99dd3pbj,u10m99dd3pbj,u10m99dd3pbj,u10m99dd3pbj\r\n" +
                                                 "\r\n" +
                                                 "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--",
@@ -1728,7 +1893,7 @@ public class IODispatcherTest extends AbstractTest {
                                                 "Transfer-Encoding: chunked\r\n" +
                                                 "Content-Type: text/plain; charset=utf-8\r\n" +
                                                 "\r\n" +
-                                                "0666\r\n" +
+                                                "0a0e\r\n" +
                                                 "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
                                                 "|      Location:  |                                              test  |        Pattern  | Locale  |      Errors  |\r\n" +
                                                 "|   Partition by  |                                              NONE  |                 |         |              |\r\n" +
@@ -1742,6 +1907,14 @@ public class IODispatcherTest extends AbstractTest {
                                                 "|              2  |                                              geo4  |              GEOHASH(6c)  |           0  |\r\n" +
                                                 "|              3  |                                              geo8  |             GEOHASH(12c)  |           0  |\r\n" +
                                                 "|              4  |                                             geo2b  |              GEOHASH(2b)  |           0  |\r\n" +
+                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                                "|  Idx  |            Csv name  |     Csv type  |        Table column  |   Table type  |                   Status  |\r\n" +
+                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                                "|    0  |                geo1  |  GEOHASH(1c)  |                geo1  |  GEOHASH(1c)  |                       OK  |\r\n" +
+                                                "|    1  |                geo2  |  GEOHASH(3c)  |                geo2  |  GEOHASH(3c)  |                       OK  |\r\n" +
+                                                "|    2  |                geo4  |  GEOHASH(6c)  |                geo4  |  GEOHASH(6c)  |                       OK  |\r\n" +
+                                                "|    3  |                geo8  | GEOHASH(12c)  |                geo8  | GEOHASH(12c)  |                       OK  |\r\n" +
+                                                "|    4  |               geo2b  |  GEOHASH(2b)  |               geo2b  |  GEOHASH(2b)  |                       OK  |\r\n" +
                                                 "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
                                                 "\r\n" +
                                                 "00\r\n" +
@@ -1821,7 +1994,7 @@ public class IODispatcherTest extends AbstractTest {
                                                 "Transfer-Encoding: chunked\r\n" +
                                                 "Content-Type: text/plain; charset=utf-8\r\n" +
                                                 "\r\n" +
-                                                "0666\r\n" +
+                                                "0a0e\r\n" +
                                                 "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
                                                 "|      Location:  |                                              test  |        Pattern  | Locale  |      Errors  |\r\n" +
                                                 "|   Partition by  |                                              NONE  |                 |         |              |\r\n" +
@@ -1835,6 +2008,14 @@ public class IODispatcherTest extends AbstractTest {
                                                 "|              2  |                                              geo4  |              GEOHASH(6c)  |           0  |\r\n" +
                                                 "|              3  |                                              geo8  |             GEOHASH(12c)  |           0  |\r\n" +
                                                 "|              4  |                                             geo2b  |              GEOHASH(2b)  |           0  |\r\n" +
+                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                                "|  Idx  |            Csv name  |     Csv type  |        Table column  |   Table type  |                   Status  |\r\n" +
+                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                                "|    0  |                geo1  |  GEOHASH(1c)  |                geo1  |  GEOHASH(1c)  |                       OK  |\r\n" +
+                                                "|    1  |                geo2  |  GEOHASH(3c)  |                geo2  |  GEOHASH(3c)  |                       OK  |\r\n" +
+                                                "|    2  |                geo4  |  GEOHASH(6c)  |                geo4  |  GEOHASH(6c)  |                       OK  |\r\n" +
+                                                "|    3  |                geo8  | GEOHASH(12c)  |                geo8  | GEOHASH(12c)  |                       OK  |\r\n" +
+                                                "|    4  |               geo2b  |  GEOHASH(2b)  |               geo2b  |  GEOHASH(2b)  |                       OK  |\r\n" +
                                                 "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
                                                 "\r\n" +
                                                 "00\r\n" +
@@ -1863,7 +2044,50 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
-    public void testImportIntoExistingNoHeuristics() throws Exception {
+    public void testImportIntoExistingNoHeuristicsReturnsMissingColumnMappingsError() throws Exception {
+        testImport(
+                engine -> {
+                    try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                        engine.ddl("create table test (col_a int, col_b long)", executionContext);
+
+                        testHttpClient.assertSendMultipart(
+                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                        "|      Location:  |                                              test  |        Pattern  | Locale  |      Errors  |\r\n" +
+                                        "|   Partition by  |                                              NONE  |                 |         |              |\r\n" +
+                                        "|      Timestamp  |                                              NONE  |                 |         |              |\r\n" +
+                                        "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                        "|   Rows handled  |                                                 0  |                 |         |              |\r\n" +
+                                        "|  Rows imported  |                                                 0  |                 |         |              |\r\n" +
+                                        "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                        "|  Idx  |            Csv name  |     Csv type  |        Table column  |   Table type  |                   Status  |\r\n" +
+                                        "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                        "|    0  |             UNKNOWN  |          INT  |             UNKNOWN  |      unknown  |                 UNMAPPED  |\r\n" +
+                                        "|    1  |             UNKNOWN  |          INT  |             UNKNOWN  |      unknown  |                 UNMAPPED  |\r\n" +
+                                        "|       |             UNKNOWN  |      UNKNOWN  |               col_a  |          INT  |                 UNMAPPED  |\r\n" +
+                                        "|       |             UNKNOWN  |      UNKNOWN  |               col_b  |         LONG  |                 UNMAPPED  |\r\n" +
+                                        "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                        "|  Errors                                                                                                         |\r\n" +
+                                        "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                        "|  mapping error(s) [unmapped csv column(s),unmapped table column(s)]                                             |\r\n" +
+                                        "+-----------------------------------------------------------------------------------------------------------------+\r\n",
+                                null,
+                                "1000,1000\r\n" +
+                                        "2000,2000\r\n",
+                                null,
+                                "test",
+                                null,
+                                null,
+                                null,
+                                null,
+                                null
+                        );
+                    }
+                }
+        );
+    }
+
+    @Test
+    public void testImportIntoExistingNoHeuristicsWithSchemaV2() throws Exception {
         testImport(
                 engine -> {
                     try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
@@ -1880,8 +2104,27 @@ public class IODispatcherTest extends AbstractTest {
                                         "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
                                         "|              0  |                                             col_a  |                      INT  |           0  |\r\n" +
                                         "|              1  |                                             col_b  |                     LONG  |           0  |\r\n" +
+                                        "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                        "|  Idx  |            Csv name  |     Csv type  |        Table column  |   Table type  |                   Status  |\r\n" +
+                                        "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                        "|    0  |             UNKNOWN  |          INT  |               col_a  |          INT  |                       OK  |\r\n" +
+                                        "|    1  |             UNKNOWN  |         LONG  |               col_b  |         LONG  |                       OK  |\r\n" +
                                         "+-----------------------------------------------------------------------------------------------------------------+\r\n",
-                                null,
+                                "{\n" +
+                                        "  \"columns\": [\r\n" +
+                                        "    {\r\n" +
+                                        "      \"file_column_index\": 0,\r\n" +
+                                        "      \"column_type\": \"INT\",\r\n" +
+                                        "      \"table_column_name\": \"col_a\"\r\n" +
+                                        "    },\r\n" +
+                                        "    {\r\n" +
+                                        "      \"file_column_index\": 1,\r\n" +
+                                        "      \"column_type\": \"LONG\",\r\n" +
+                                        "      \"table_column_name\": \"col_b\"\r\n" +
+                                        "    }\r\n" +
+                                        "  ]\r\n" +
+                                        "}",
+                                TextImportProcessor.SCHEMA_V2,
                                 "1000,1000\r\n" +
                                         "2000,2000\r\n",
                                 null,
@@ -1916,10 +2159,25 @@ public class IODispatcherTest extends AbstractTest {
                         "\r\n" +
                         "[\r\n" +
                         "  {\r\n" +
-                        "    \"name\": \"date\",\r\n" +
-                        "    \"type\": \"DATE\",\r\n" +
-                        "    \"pattern\": \"d MMMM y.\",\r\n" +
-                        "    \"locale\": \"ru-RU\"\r\n" +
+                        "    \"name\": \"Dispatching_base_num\",\r\n" +
+                        "    \"type\": \"STRING\"\r\n" +
+                        "  },\r\n" +
+                        "  {\r\n" +
+                        "    \"name\": \"Pickup_DateTime\",\r\n" +
+                        "    \"type\": \"TIMESTAMP\",\r\n" +
+                        "    \"pattern\": \"yyyy-MM-dd HH:mm:ss\"\r\n" +
+                        "  },\r\n" +
+                        "  {\r\n" +
+                        "    \"name\": \"DropOff_datetime\",\r\n" +
+                        "    \"type\": \"STRING\"\r\n" +
+                        "  },\r\n" +
+                        "  {\r\n" +
+                        "    \"name\": \"PUlocationID\",\r\n" +
+                        "    \"type\": \"STRING\"\r\n" +
+                        "  },\r\n" +
+                        "  {\r\n" +
+                        "    \"name\": \"DOlocationID\",\r\n" +
+                        "    \"type\": \"STRING\"\r\n" +
                         "  }\r\n" +
                         "]\r\n" +
                         "\r\n" +
@@ -1979,10 +2237,25 @@ public class IODispatcherTest extends AbstractTest {
                         "\r\n" +
                         "[\r\n" +
                         "  {\r\n" +
-                        "    \"name\": \"date\",\r\n" +
-                        "    \"type\": \"DATE\",\r\n" +
-                        "    \"pattern\": \"d MMMM y.\",\r\n" +
-                        "    \"locale\": \"ru-RU\"\r\n" +
+                        "    \"name\": \"Dispatching_base_num\",\r\n" +
+                        "    \"type\": \"STRING\"\r\n" +
+                        "  },\r\n" +
+                        "  {\r\n" +
+                        "    \"name\": \"Pickup_DateTime\",\r\n" +
+                        "    \"type\": \"TIMESTAMP\",\r\n" +
+                        "    \"pattern\": \"yyyy-MM-dd HH:mm:ss\"\r\n" +
+                        "  },\r\n" +
+                        "  {\r\n" +
+                        "    \"name\": \"DropOff_datetime\",\r\n" +
+                        "    \"type\": \"STRING\"\r\n" +
+                        "  },\r\n" +
+                        "  {\r\n" +
+                        "    \"name\": \"PUlocationID\",\r\n" +
+                        "    \"type\": \"STRING\"\r\n" +
+                        "  },\r\n" +
+                        "  {\r\n" +
+                        "    \"name\": \"DOlocationID\",\r\n" +
+                        "    \"type\": \"STRING\"\r\n" +
                         "  }\r\n" +
                         "]\r\n" +
                         "\r\n" +
@@ -2041,7 +2314,7 @@ public class IODispatcherTest extends AbstractTest {
             final WorkerPool workerPool = new TestWorkerPool(3, metrics);
             try (
                     CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir), metrics);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, PlainSocketFactory.INSTANCE)
+                    HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, PlainSocketFactory.INSTANCE)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -2083,10 +2356,25 @@ public class IODispatcherTest extends AbstractTest {
                         "\r\n" +
                         "[\r\n" +
                         "  {\r\n" +
-                        "    \"name\": \"date\",\r\n" +
-                        "    \"type\": \"DATE\",\r\n" +
-                        "    \"pattern\": \"d MMMM y.\",\r\n" +
-                        "    \"locale\": \"ru-RU\"\r\n" +
+                        "    \"name\": \"Dispatching_base_num\",\r\n" +
+                        "    \"type\": \"STRING\"\r\n" +
+                        "  },\r\n" +
+                        "  {\r\n" +
+                        "    \"name\": \"Pickup_DateTime\",\r\n" +
+                        "    \"type\": \"TIMESTAMP\",\r\n" +
+                        "    \"pattern\": \"yyyy-MM-dd HH:mm:ss\"\r\n" +
+                        "  },\r\n" +
+                        "  {\r\n" +
+                        "    \"name\": \"DropOff_datetime\",\r\n" +
+                        "    \"type\": \"STRING\"\r\n" +
+                        "  },\r\n" +
+                        "  {\r\n" +
+                        "    \"name\": \"PUlocationID\",\r\n" +
+                        "    \"type\": \"STRING\"\r\n" +
+                        "  },\r\n" +
+                        "  {\r\n" +
+                        "    \"name\": \"DOlocationID\",\r\n" +
+                        "    \"type\": \"STRING\"\r\n" +
                         "  }\r\n" +
                         "]\r\n" +
                         "\r\n" +
@@ -2162,6 +2450,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testImportNoSkipLEV() throws Exception {
+        // LEV == Line Extra Values
         testImport(
                 "HTTP/1.1 200 OK\r\n" +
                         "Server: questDB/1.0\r\n" +
@@ -2169,8 +2458,9 @@ public class IODispatcherTest extends AbstractTest {
                         "Transfer-Encoding: chunked\r\n" +
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "\r\n" +
-                        "052d\r\n" +
-                        "{\"status\":\"OK\",\"location\":\"clipboard-157200856\",\"rowsRejected\":0,\"rowsImported\":59,\"header\":true,\"partitionBy\":\"NONE\",\"columns\":[{\"name\":\"VendorID\",\"type\":\"INT\",\"size\":4,\"errors\":0},{\"name\":\"lpep_pickup_datetime\",\"type\":\"DATE\",\"size\":8,\"errors\":0},{\"name\":\"Lpep_dropoff_datetime\",\"type\":\"DATE\",\"size\":8,\"errors\":0},{\"name\":\"Store_and_fwd_flag\",\"type\":\"CHAR\",\"size\":2,\"errors\":0},{\"name\":\"RateCodeID\",\"type\":\"INT\",\"size\":4,\"errors\":0},{\"name\":\"Pickup_longitude\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Pickup_latitude\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Dropoff_longitude\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Dropoff_latitude\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Passenger_count\",\"type\":\"INT\",\"size\":4,\"errors\":0},{\"name\":\"Trip_distance\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Fare_amount\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Extra\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"MTA_tax\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Tip_amount\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Tolls_amount\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Ehail_fee\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Total_amount\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Payment_type\",\"type\":\"INT\",\"size\":4,\"errors\":0},{\"name\":\"Trip_type\",\"type\":\"INT\",\"size\":4,\"errors\":0}]}\r\n" +
+                        "13e6\r\n" +
+                        "{\"status\":\"OK\",\"location\":\"clipboard-157200856\",\"rowsRejected\":0,\"rowsImported\":59,\"header\":true,\"partitionBy\":\"NONE\",\"columns\":[{\"name\":\"VendorID\",\"type\":\"INT\",\"size\":4,\"errors\":0},{\"name\":\"lpep_pickup_datetime\",\"type\":\"TIMESTAMP\",\"size\":8,\"errors\":0},{\"name\":\"Lpep_dropoff_datetime\",\"type\":\"TIMESTAMP\",\"size\":8,\"errors\":0},{\"name\":\"Store_and_fwd_flag\",\"type\":\"CHAR\",\"size\":2,\"errors\":0},{\"name\":\"RateCodeID\",\"type\":\"INT\",\"size\":4,\"errors\":0},{\"name\":\"Pickup_longitude\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Pickup_latitude\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Dropoff_longitude\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Dropoff_latitude\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Passenger_count\",\"type\":\"INT\",\"size\":4,\"errors\":0},{\"name\":\"Trip_distance\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Fare_amount\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Extra\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"MTA_tax\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Tip_amount\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Tolls_amount\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Ehail_fee\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Total_amount\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Payment_type\",\"type\":\"INT\",\"size\":4,\"errors\":0},{\"name\":\"Trip_type\",\"type\":\"INT\",\"size\":4,\"errors\":0}]," +
+                        "\"mapping\":[{\"file_column_name\":\"VendorID\",\"file_column_index\":0,\"file_column_ignore\":false,\"column_type\":\"INT\",\"table_column_name\":\"VendorID\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"lpep_pickup_datetime\",\"file_column_index\":1,\"file_column_ignore\":false,\"column_type\":\"TIMESTAMP\",\"table_column_name\":\"lpep_pickup_datetime\",\"insert_null\":\"false\",\"formats\":[{\"pattern\":\"yyyy-MM-dd HH:mm:ss\",\"locale\":\"en\",\"utf8\":false}]},{\"file_column_name\":\"Lpep_dropoff_datetime\",\"file_column_index\":2,\"file_column_ignore\":false,\"column_type\":\"TIMESTAMP\",\"table_column_name\":\"Lpep_dropoff_datetime\",\"insert_null\":\"false\",\"formats\":[{\"pattern\":\"yyyy-MM-dd HH:mm:ss\",\"locale\":\"en\",\"utf8\":false}]},{\"file_column_name\":\"Store_and_fwd_flag\",\"file_column_index\":3,\"file_column_ignore\":false,\"column_type\":\"CHAR\",\"table_column_name\":\"Store_and_fwd_flag\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"RateCodeID\",\"file_column_index\":4,\"file_column_ignore\":false,\"column_type\":\"INT\",\"table_column_name\":\"RateCodeID\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Pickup_longitude\",\"file_column_index\":5,\"file_column_ignore\":false,\"column_type\":\"DOUBLE\",\"table_column_name\":\"Pickup_longitude\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Pickup_latitude\",\"file_column_index\":6,\"file_column_ignore\":false,\"column_type\":\"DOUBLE\",\"table_column_name\":\"Pickup_latitude\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Dropoff_longitude\",\"file_column_index\":7,\"file_column_ignore\":false,\"column_type\":\"DOUBLE\",\"table_column_name\":\"Dropoff_longitude\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Dropoff_latitude\",\"file_column_index\":8,\"file_column_ignore\":false,\"column_type\":\"DOUBLE\",\"table_column_name\":\"Dropoff_latitude\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Passenger_count\",\"file_column_index\":9,\"file_column_ignore\":false,\"column_type\":\"INT\",\"table_column_name\":\"Passenger_count\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Trip_distance\",\"file_column_index\":10,\"file_column_ignore\":false,\"column_type\":\"DOUBLE\",\"table_column_name\":\"Trip_distance\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Fare_amount\",\"file_column_index\":11,\"file_column_ignore\":false,\"column_type\":\"DOUBLE\",\"table_column_name\":\"Fare_amount\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Extra\",\"file_column_index\":12,\"file_column_ignore\":false,\"column_type\":\"DOUBLE\",\"table_column_name\":\"Extra\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"MTA_tax\",\"file_column_index\":13,\"file_column_ignore\":false,\"column_type\":\"DOUBLE\",\"table_column_name\":\"MTA_tax\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Tip_amount\",\"file_column_index\":14,\"file_column_ignore\":false,\"column_type\":\"DOUBLE\",\"table_column_name\":\"Tip_amount\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Tolls_amount\",\"file_column_index\":15,\"file_column_ignore\":false,\"column_type\":\"DOUBLE\",\"table_column_name\":\"Tolls_amount\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Ehail_fee\",\"file_column_index\":16,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Ehail_fee\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Total_amount\",\"file_column_index\":17,\"file_column_ignore\":false,\"column_type\":\"DOUBLE\",\"table_column_name\":\"Total_amount\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Payment_type\",\"file_column_index\":18,\"file_column_ignore\":false,\"column_type\":\"INT\",\"table_column_name\":\"Payment_type\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Trip_type\",\"file_column_index\":19,\"file_column_ignore\":false,\"column_type\":\"INT\",\"table_column_name\":\"Trip_type\",\"insert_null\":\"false\",\"formats\":[{}]}]}\r\n" +
                         "00\r\n" +
                         "\r\n",
                 "POST /upload?fmt=json&overwrite=true&forceHeader=true&name=clipboard-157200856 HTTP/1.1\r\n" +
@@ -2317,7 +2607,7 @@ public class IODispatcherTest extends AbstractTest {
                         "Transfer-Encoding: chunked\r\n" +
                         "Content-Type: text/plain; charset=utf-8\r\n" +
                         "\r\n" +
-                        "0666\r\n" +
+                        "0a0e\r\n" +
                         "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
                         "|      Location:  |                                          test.csv  |        Pattern  | Locale  |      Errors  |\r\n" +
                         "|   Partition by  |                                              NONE  |                 |         |              |\r\n" +
@@ -2331,6 +2621,14 @@ public class IODispatcherTest extends AbstractTest {
                         "|              2  |                                                f2  |                   STRING  |           0  |\r\n" +
                         "|              3  |                                                f3  |                   DOUBLE  |           0  |\r\n" +
                         "|              4  |                                                f4  |                TIMESTAMP  |           0  |\r\n" +
+                        "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                        "|  Idx  |            Csv name  |     Csv type  |        Table column  |   Table type  |                   Status  |\r\n" +
+                        "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                        "|    0  |             UNKNOWN  |       STRING  |                  f0  |       STRING  |                       OK  |\r\n" +
+                        "|    1  |             UNKNOWN  |       STRING  |                  f1  |       STRING  |                       OK  |\r\n" +
+                        "|    2  |             UNKNOWN  |       STRING  |                  f2  |       STRING  |                       OK  |\r\n" +
+                        "|    3  |             UNKNOWN  |       DOUBLE  |                  f3  |       DOUBLE  |                       OK  |\r\n" +
+                        "|    4  |             UNKNOWN  |    TIMESTAMP  |                  f4  |    TIMESTAMP  |                       OK  |\r\n" +
                         "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
                         "\r\n" +
                         "00\r\n" +
@@ -2366,8 +2664,8 @@ public class IODispatcherTest extends AbstractTest {
                         "Transfer-Encoding: chunked\r\n" +
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "\r\n" +
-                        "0543\r\n" +
-                        "{\"status\":\"OK\",\"location\":\"clipboard-157200856\",\"rowsRejected\":59,\"rowsImported\":59,\"header\":true,\"partitionBy\":\"NONE\",\"columns\":[{\"name\":\"VendorID\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"lpep_pickup_datetime\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Lpep_dropoff_datetime\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Store_and_fwd_flag\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"RateCodeID\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Pickup_longitude\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Pickup_latitude\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Dropoff_longitude\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Dropoff_latitude\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Passenger_count\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Trip_distance\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Fare_amount\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Extra\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"MTA_tax\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Tip_amount\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Tolls_amount\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Ehail_fee\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Total_amount\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Payment_type\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Trip_type\",\"type\":\"STRING\",\"size\":0,\"errors\":0}]}\r\n" +
+                        "1389\r\n" +
+                        "{\"status\":\"OK\",\"location\":\"clipboard-157200856\",\"rowsRejected\":59,\"rowsImported\":59,\"header\":true,\"partitionBy\":\"NONE\",\"columns\":[{\"name\":\"VendorID\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"lpep_pickup_datetime\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Lpep_dropoff_datetime\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Store_and_fwd_flag\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"RateCodeID\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Pickup_longitude\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Pickup_latitude\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Dropoff_longitude\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Dropoff_latitude\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Passenger_count\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Trip_distance\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Fare_amount\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Extra\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"MTA_tax\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Tip_amount\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Tolls_amount\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Ehail_fee\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Total_amount\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Payment_type\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Trip_type\",\"type\":\"STRING\",\"size\":0,\"errors\":0}],\"mapping\":[{\"file_column_name\":\"VendorID\",\"file_column_index\":0,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"VendorID\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"lpep_pickup_datetime\",\"file_column_index\":1,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"lpep_pickup_datetime\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Lpep_dropoff_datetime\",\"file_column_index\":2,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Lpep_dropoff_datetime\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Store_and_fwd_flag\",\"file_column_index\":3,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Store_and_fwd_flag\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"RateCodeID\",\"file_column_index\":4,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"RateCodeID\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Pickup_longitude\",\"file_column_index\":5,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Pickup_longitude\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Pickup_latitude\",\"file_column_index\":6,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Pickup_latitude\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Dropoff_longitude\",\"file_column_index\":7,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Dropoff_longitude\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Dropoff_latitude\",\"file_column_index\":8,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Dropoff_latitude\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Passenger_count\",\"file_column_index\":9,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Passenger_count\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Trip_distance\",\"file_column_index\":10,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Trip_distance\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Fare_amount\",\"file_column_index\":11,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Fare_amount\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Extra\",\"file_column_index\":12,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Extra\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"MTA_tax\",\"file_column_index\":13,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"MTA_tax\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Tip_amount\",\"file_column_index\":14,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Tip_amount\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Tolls_amount\",\"file_column_index\":15,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Tolls_amount\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Ehail_fee\",\"file_column_index\":16,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Ehail_fee\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Total_amount\",\"file_column_index\":17,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Total_amount\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Payment_type\",\"file_column_index\":18,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Payment_type\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Trip_type\",\"file_column_index\":19,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Trip_type\",\"insert_null\":\"false\",\"formats\":[{}]}]}\r\n" +
                         "00\r\n" +
                         "\r\n",
                 "POST /upload?fmt=json&overwrite=true&forceHeader=true&skipLev=true&name=clipboard-157200856 HTTP/1.1\r\n" +
@@ -2463,7 +2761,12 @@ public class IODispatcherTest extends AbstractTest {
     public void testImportWithSingleCharacterColumnName() throws Exception {
         testImport(
                 engine -> testHttpClient.assertSendMultipart(
-                        "{\"status\":\"OK\",\"location\":\"test\",\"rowsRejected\":0,\"rowsImported\":1,\"header\":true,\"partitionBy\":\"MONTH\",\"timestamp\":\"ts\",\"columns\":[{\"name\":\"ts\",\"type\":\"TIMESTAMP\",\"size\":8,\"errors\":0},{\"name\":\"a\",\"type\":\"CHAR\",\"size\":2,\"errors\":0}]}",
+                        "{\"status\":\"OK\",\"location\":\"test\",\"rowsRejected\":0,\"rowsImported\":1,\"header\":true,\"partitionBy\":\"MONTH\",\"timestamp\":\"ts\"," +
+                                "\"columns\":[{\"name\":\"ts\",\"type\":\"TIMESTAMP\",\"size\":8,\"errors\":0},{\"name\":\"a\",\"type\":\"CHAR\",\"size\":2,\"errors\":0}]," +
+                                "\"mapping\":[" +
+                                "{\"file_column_name\":\"ts\",\"file_column_index\":0,\"file_column_ignore\":false,\"column_type\":\"TIMESTAMP\",\"table_column_name\":\"ts\",\"insert_null\":\"false\",\"formats\":[{\"pattern\":\"yyyy-MM-ddTHH:mm:ss.SSSUUUz\",\"locale\":\"en\",\"utf8\":false}]}," +
+                                "{\"file_column_name\":\"a\",\"file_column_index\":1,\"file_column_ignore\":false,\"column_type\":\"CHAR\",\"table_column_name\":\"a\",\"insert_null\":\"false\",\"formats\":[{}]}]" +
+                                "}",
                         null,
                         "ts,a\r\n" +
                                 "2022-11-01T22:34:49.273814+0000,\"a\"\r\n",
@@ -2572,7 +2875,7 @@ public class IODispatcherTest extends AbstractTest {
             WorkerPool workerPool = new TestWorkerPool(2);
             try (
                     CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir), metrics);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, PlainSocketFactory.INSTANCE)
+                    HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, PlainSocketFactory.INSTANCE)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -3181,7 +3484,7 @@ public class IODispatcherTest extends AbstractTest {
             WorkerPool workerPool = new TestWorkerPool(1);
             try (
                     CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir), metrics);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, PlainSocketFactory.INSTANCE)
+                    HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, PlainSocketFactory.INSTANCE)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -3244,7 +3547,7 @@ public class IODispatcherTest extends AbstractTest {
                             try {
                                 int sent = 0;
                                 int reqLen = request.length();
-                                Chars.asciiStrCpy(request, reqLen, ptr);
+                                Utf8s.strCpyAscii(request, reqLen, ptr);
                                 while (sent < reqLen) {
                                     int n = NetworkFacadeImpl.INSTANCE.sendRaw(fd, ptr + sent, reqLen - sent);
                                     Assert.assertTrue(n > -1);
@@ -3312,14 +3615,6 @@ public class IODispatcherTest extends AbstractTest {
                         Misc.free(eventRef.get());
                     }
                 });
-    }
-
-    @Test
-    public void testJsonQueryDisconnectOnDataUnavailableEventNeverFired() throws Exception {
-        testDisconnectOnDataUnavailableEventNeverFired(
-                "GET /query?query=" + HttpUtils.urlEncodeQuery("select * from test_data_unavailable(1, 10)") + "&count=true HTTP/1.1\r\n"
-                        + SendAndReceiveRequestBuilder.RequestHeaders
-        );
     }
 
     @Test
@@ -3399,6 +3694,24 @@ public class IODispatcherTest extends AbstractTest {
                         "00\r\n" +
                         "\r\n"
         );
+    }
+
+    @Test
+    public void testJsonQueryErrorOnDataUnavailableEventNeverFired() throws Exception {
+        TestDataUnavailableFunctionFactory.eventCallback = SuspendEvent::close;
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .withQueryTimeout(100)
+                .run(engine -> testHttpClient.assertGetRegexp(
+                        "/query",
+                        "\\{\"query\":\"select \\* from test_data_unavailable\\(1, 10\\)\",\"error\":\"timeout, query aborted \\[fd=\\d+\\]\",\"position\":0\\}",
+                        "select * from test_data_unavailable(1, 10)",
+                        null, null, null,
+                        "400"
+                ));
     }
 
     @Test
@@ -4481,7 +4794,7 @@ public class IODispatcherTest extends AbstractTest {
             WorkerPool workerPool = new TestWorkerPool(1);
             try (
                     CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir), metrics);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, PlainSocketFactory.INSTANCE)
+                    HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, PlainSocketFactory.INSTANCE)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -4546,18 +4859,14 @@ public class IODispatcherTest extends AbstractTest {
                 .run((engine) -> {
                     try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                         engine.ddl(QUERY_TIMEOUT_TABLE_DDL, executionContext);
-                        // We expect header only to be sent and then a disconnect.
-                        new SendAndReceiveRequestBuilder()
-                                .withExpectReceiveDisconnect(true)
-                                .executeWithStandardRequestHeaders(
-                                        "GET /exec?query=" + HttpUtils.urlEncodeQuery(QUERY_TIMEOUT_SELECT) + "&count=true HTTP/1.1\r\n",
-                                        "HTTP/1.1 200 OK\r\n" +
-                                                "Server: questDB/1.0\r\n" +
-                                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                                                "Transfer-Encoding: chunked\r\n" +
-                                                "Content-Type: application/json; charset=utf-8\r\n" +
-                                                "Keep-Alive: timeout=5, max=10000\r\n"
-                                );
+                        // we use regexp, because the fd is different every time
+                        testHttpClient.assertGetRegexp(
+                                "/query",
+                                "\\{\"query\":\"select i, avg\\(l\\), max\\(l\\) from t group by i order by i asc limit 3\",\"error\":\"timeout, query aborted \\[fd=\\d+\\]\",\"position\":0\\}",
+                                "select i, avg(l), max(l) from t group by i order by i asc limit 3",
+                                null, null, null,
+                                "400"
+                        );
                     }
                 });
     }
@@ -4742,7 +5051,7 @@ public class IODispatcherTest extends AbstractTest {
             final WorkerPool workerPool = new TestWorkerPool(2);
             try (
                     CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir), metrics);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, PlainSocketFactory.INSTANCE)) {
+                    HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, PlainSocketFactory.INSTANCE)) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public String getUrl() {
@@ -4820,7 +5129,7 @@ public class IODispatcherTest extends AbstractTest {
             WorkerPool workerPool = new TestWorkerPool(2);
             try (
                     CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir), metrics);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, PlainSocketFactory.INSTANCE)
+                    HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, PlainSocketFactory.INSTANCE)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -4916,7 +5225,7 @@ public class IODispatcherTest extends AbstractTest {
                     return 10_000;
                 }
             }, metrics);
-                 HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, PlainSocketFactory.INSTANCE)
+                 HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, PlainSocketFactory.INSTANCE)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -5160,11 +5469,18 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
-    public void testLong256AndCharImport() throws Exception {
+    public void testLong256AndCharImportWithSChema() throws Exception {
         testImport(
                 engine -> {
                     testHttpClient.assertSendMultipart(
-                            "{\"status\":\"OK\",\"location\":\"test\",\"rowsRejected\":0,\"rowsImported\":5,\"header\":false,\"partitionBy\":\"NONE\",\"columns\":[{\"name\":\"f0\",\"type\":\"LONG256\",\"size\":32,\"errors\":0},{\"name\":\"f1\",\"type\":\"CHAR\",\"size\":2,\"errors\":0}]}",
+                            "{\"status\":\"OK\",\"location\":\"test\",\"rowsRejected\":0,\"rowsImported\":5,\"header\":false,\"partitionBy\":\"NONE\"," +
+                                    "\"columns\":[" +
+                                    "{\"name\":\"f0\",\"type\":\"LONG256\",\"size\":32,\"errors\":0}," +
+                                    "{\"name\":\"f1\",\"type\":\"CHAR\",\"size\":2,\"errors\":0}]," +
+                                    "\"mapping\":[" +
+                                    "{\"file_column_name\":\"\",\"file_column_index\":0,\"file_column_ignore\":false,\"column_type\":\"LONG256\",\"table_column_name\":\"f0\",\"insert_null\":\"false\",\"formats\":[{}]}," +
+                                    "{\"file_column_name\":\"\",\"file_column_index\":1,\"file_column_ignore\":false,\"column_type\":\"CHAR\",\"table_column_name\":\"f1\",\"insert_null\":\"false\",\"formats\":[{}]}" +
+                                    "]}",
                             null,
                             "0x5c504ed432cb51138bcf09aa5e8a410dd4a1e204ef84bfed1be16dfba1b22060,a\n" +
                                     "0x19f1df2c7ee6b464720ad28e903aeda1a5ad8780afc22f0b960827bd4fcf656d,b\n" +
@@ -5255,7 +5571,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor select(CharSequence url) {
+                    public HttpRequestProcessor select(Utf8Sequence url) {
                         return null;
                     }
                 }) {
@@ -5426,7 +5742,7 @@ public class IODispatcherTest extends AbstractTest {
                     try {
                         int sent = 0;
                         int reqLen = request.length();
-                        Chars.asciiStrCpy(request, reqLen, ptr);
+                        Utf8s.strCpyAscii(request, reqLen, ptr);
                         boolean disconnected = false;
                         while (sent < reqLen) {
                             int n = nf.sendRaw(fd, ptr + sent, reqLen - sent);
@@ -5679,12 +5995,10 @@ public class IODispatcherTest extends AbstractTest {
     public void testSCPConnectDownloadDisconnect() throws Exception {
         assertMemoryLeak(() -> {
             final String baseDir = root;
-            final DefaultCairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
             WorkerPool workerPool = new TestWorkerPool(2);
             try (
-                    MessageBus messageBus = new MessageBusImpl(configuration);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, messageBus, metrics, workerPool, PlainSocketFactory.INSTANCE)
+                    HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, PlainSocketFactory.INSTANCE)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -5834,12 +6148,10 @@ public class IODispatcherTest extends AbstractTest {
     public void testSCPFullDownload() throws Exception {
         assertMemoryLeak(() -> {
             final String baseDir = root;
-            final DefaultCairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
             WorkerPool workerPool = new TestWorkerPool(2);
             try (
-                    MessageBus messageBus = new MessageBusImpl(configuration);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, messageBus, metrics, workerPool, PlainSocketFactory.INSTANCE)
+                    HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, PlainSocketFactory.INSTANCE)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -5979,7 +6291,6 @@ public class IODispatcherTest extends AbstractTest {
     public void testSCPHttp10() throws Exception {
         assertMemoryLeak(() -> {
             final String baseDir = root;
-            final DefaultCairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(
                     NetworkFacadeImpl.INSTANCE,
                     baseDir,
@@ -5991,8 +6302,7 @@ public class IODispatcherTest extends AbstractTest {
             );
             WorkerPool workerPool = new TestWorkerPool(2);
             try (
-                    MessageBus messageBus = new MessageBusImpl(configuration);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, messageBus, metrics, workerPool, PlainSocketFactory.INSTANCE)
+                    HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, PlainSocketFactory.INSTANCE)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -6188,14 +6498,14 @@ public class IODispatcherTest extends AbstractTest {
 
         // the difference between request and expected is url encoding (and ':' padding, which can easily be fixed)
         final String expected = "GET /status?x=1&a=&b&c&d=x HTTP/1.1\r\n" +
-                "host:localhost:9000\r\n" +
-                "connection:keep-alive\r\n" +
-                "cache-control:max-age=0\r\n" +
-                "accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8\r\n" +
-                "user-agent:Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.48 Safari/537.36\r\n" +
-                "accept-encoding:gzip,deflate,sdch\r\n" +
-                "accept-language:en-US,en;q=0.8\r\n" +
-                "cookie:textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
+                "Host:localhost:9000\r\n" +
+                "Connection:keep-alive\r\n" +
+                "Cache-Control:max-age=0\r\n" +
+                "Accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8\r\n" +
+                "User-Agent:Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.48 Safari/537.36\r\n" +
+                "Accept-Encoding:gzip,deflate,sdch\r\n" +
+                "Accept-Language:en-US,en;q=0.8\r\n" +
+                "Cookie:textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
                 "\r\n";
 
         assertMemoryLeak(() -> {
@@ -6241,14 +6551,14 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor select(CharSequence url) {
+                    public HttpRequestProcessor select(Utf8Sequence url) {
                         return new HttpRequestProcessor() {
                             @Override
                             public void onHeadersReady(HttpConnectionContext context) {
                                 HttpRequestHeader headers = context.getRequestHeader();
                                 sink.put(headers.getMethodLine());
                                 sink.put("\r\n");
-                                ObjList<CharSequence> headerNames = headers.getHeaderNames();
+                                ObjList<? extends Utf8Sequence> headerNames = headers.getHeaderNames();
                                 for (int i = 0, n = headerNames.size(); i < n; i++) {
                                     sink.put(headerNames.getQuick(i)).put(':');
                                     sink.put(headers.getHeader(headerNames.getQuick(i)));
@@ -6338,14 +6648,14 @@ public class IODispatcherTest extends AbstractTest {
 
         // the difference between request and expected is url encoding (and ':' padding, which can easily be fixed)
         final String expected = "GET /status?x=1&a=&b&c&d=x HTTP/1.1\r\n" +
-                "host:localhost:9000\r\n" +
-                "connection:keep-alive\r\n" +
-                "cache-control:max-age=0\r\n" +
-                "accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8\r\n" +
-                "user-agent:Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.48 Safari/537.36\r\n" +
-                "accept-encoding:gzip,deflate,sdch\r\n" +
-                "accept-language:en-US,en;q=0.8\r\n" +
-                "cookie:textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
+                "Host:localhost:9000\r\n" +
+                "Connection:keep-alive\r\n" +
+                "Cache-Control:max-age=0\r\n" +
+                "Accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8\r\n" +
+                "User-Agent:Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.48 Safari/537.36\r\n" +
+                "Accept-Encoding:gzip,deflate,sdch\r\n" +
+                "Accept-Language:en-US,en;q=0.8\r\n" +
+                "Cookie:textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
                 "\r\n";
 
         final String expectedResponse = "HTTP/1.1 200 OK\r\n" +
@@ -6411,7 +6721,7 @@ public class IODispatcherTest extends AbstractTest {
                                 HttpRequestHeader headers = context.getRequestHeader();
                                 sink.put(headers.getMethodLine());
                                 sink.put("\r\n");
-                                ObjList<CharSequence> headerNames = headers.getHeaderNames();
+                                ObjList<? extends Utf8Sequence> headerNames = headers.getHeaderNames();
                                 for (int i = 0, n = headerNames.size(); i < n; i++) {
                                     sink.put(headerNames.getQuick(i)).put(':');
                                     sink.put(headers.getHeader(headerNames.getQuick(i)));
@@ -6428,7 +6738,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor select(CharSequence url) {
+                    public HttpRequestProcessor select(Utf8Sequence url) {
                         return null;
                     }
                 };
@@ -6572,7 +6882,7 @@ public class IODispatcherTest extends AbstractTest {
                                 HttpRequestHeader headers = connectionContext.getRequestHeader();
                                 sink.put(headers.getMethodLine());
                                 sink.put("\r\n");
-                                ObjList<CharSequence> headerNames = headers.getHeaderNames();
+                                ObjList<? extends Utf8Sequence> headerNames = headers.getHeaderNames();
                                 for (int i = 0, n = headerNames.size(); i < n; i++) {
                                     sink.put(headerNames.getQuick(i)).put(':');
                                     sink.put(headers.getHeader(headerNames.getQuick(i)));
@@ -6584,7 +6894,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor select(CharSequence url) {
+                    public HttpRequestProcessor select(Utf8Sequence url) {
                         return null;
                     }
                 };
@@ -6667,6 +6977,11 @@ public class IODispatcherTest extends AbstractTest {
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withSendBufferSize(256))
                 .withTelemetry(false)
                 .run((engine) -> {
+                    TestDataUnavailableFunctionFactory.eventCallback = event -> {
+                        event.trigger();
+                        event.close();
+                    };
+
                     final String select = "select * from test_data_unavailable(32, 10)";
                     new SendAndReceiveRequestBuilder().executeWithStandardRequestHeaders(
                             "GET /exp?query=" + HttpUtils.urlEncodeQuery(select) + "&count=true HTTP/1.1\r\n",
@@ -7459,8 +7774,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testTwoThreadsSendTwoThreadsRead() throws Exception {
-
-        LOG.info().$("started testSendHttpGet").$();
+        LOG.info().$("started testTwoThreadsSendTwoThreadsRead").$();
 
         final String request = "GET /status?x=1&a=%26b&c&d=x HTTP/1.1\r\n" +
                 "Host: localhost:9000\r\n" +
@@ -7475,14 +7789,14 @@ public class IODispatcherTest extends AbstractTest {
 
         // the difference between request and expected is url encoding (and ':' padding, which can easily be fixed)
         final String expected = "GET /status?x=1&a=&b&c&d=x HTTP/1.1\r\n" +
-                "host:localhost:9000\r\n" +
-                "connection:keep-alive\r\n" +
-                "cache-control:max-age=0\r\n" +
-                "accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8\r\n" +
-                "user-agent:Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.48 Safari/537.36\r\n" +
-                "accept-encoding:gzip,deflate,sdch\r\n" +
-                "accept-language:en-US,en;q=0.8\r\n" +
-                "cookie:textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
+                "Host:localhost:9000\r\n" +
+                "Connection:keep-alive\r\n" +
+                "Cache-Control:max-age=0\r\n" +
+                "Accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8\r\n" +
+                "User-Agent:Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.48 Safari/537.36\r\n" +
+                "Accept-Encoding:gzip,deflate,sdch\r\n" +
+                "Accept-Language:en-US,en;q=0.8\r\n" +
+                "Cookie:textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
                 "\r\n";
 
         final int N = 100;
@@ -7507,7 +7821,6 @@ public class IODispatcherTest extends AbstractTest {
                     },
                     (fd, dispatcher1) -> new HttpConnectionContext(httpServerConfiguration, metrics, PlainSocketFactory.INSTANCE).of(fd, dispatcher1)
             )) {
-
                 // server will publish status of each request to this queue
                 try (final RingQueue<Status> queue = new RingQueue<>(Status::new, 1024)) {
                     final MPSequence pubSeq = new MPSequence(queue.getCycle());
@@ -7531,7 +7844,7 @@ public class IODispatcherTest extends AbstractTest {
                                         sink.clear();
                                         sink.put(headers.getMethodLine());
                                         sink.put("\r\n");
-                                        ObjList<CharSequence> headerNames = headers.getHeaderNames();
+                                        ObjList<? extends Utf8Sequence> headerNames = headers.getHeaderNames();
                                         for (int i = 0, n = headerNames.size(); i < n; i++) {
                                             sink.put(headerNames.getQuick(i)).put(':');
                                             sink.put(headers.getHeader(headerNames.getQuick(i)));
@@ -7575,7 +7888,7 @@ public class IODispatcherTest extends AbstractTest {
                                     }
 
                                     @Override
-                                    public HttpRequestProcessor select(CharSequence url) {
+                                    public HttpRequestProcessor select(Utf8Sequence url) {
                                         return null;
                                     }
                                 };
@@ -7732,6 +8045,20 @@ public class IODispatcherTest extends AbstractTest {
         }
     }
 
+    private static HttpServer createHttpServer(
+            HttpServerConfiguration configuration,
+            CairoEngine cairoEngine,
+            WorkerPool workerPool
+    ) {
+        return Services.INSTANCE.createHttpServer(
+                configuration,
+                cairoEngine,
+                workerPool,
+                workerPool.getWorkerCount(),
+                IODispatcherTest.metrics
+        );
+    }
+
     private static void createTestTable(CairoEngine engine) {
         try (TableModel model = new TableModel(engine.getConfiguration(), "y", PartitionBy.NONE)) {
             model.col("j", ColumnType.SYMBOL);
@@ -7790,7 +8117,7 @@ public class IODispatcherTest extends AbstractTest {
 
     private static void sendRequest(String request, int fd, long buffer) {
         final int requestLen = request.length();
-        Chars.asciiStrCpy(request, requestLen, buffer);
+        Utf8s.strCpyAscii(request, requestLen, buffer);
         Assert.assertEquals(requestLen, Net.send(fd, buffer, requestLen));
     }
 
@@ -7861,7 +8188,7 @@ public class IODispatcherTest extends AbstractTest {
         DefaultCairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
 
         String dirName = TableUtils.getTableDir(mangleTableDirNames, tableName, 1, false);
-        TableToken tableToken = new TableToken(tableName, dirName, 1, false, false);
+        TableToken tableToken = new TableToken(tableName, dirName, 1, false, false, false);
         try (TableReader reader = new TableReader(configuration, tableToken)) {
             Assert.assertEquals(expectedO3MaxLag, reader.getO3MaxLag());
             Assert.assertEquals(expectedMaxUncommittedRows, reader.getMaxUncommittedRows());
@@ -7877,7 +8204,7 @@ public class IODispatcherTest extends AbstractTest {
         DefaultCairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
 
         String telemetry = TelemetryTask.TABLE_NAME;
-        TableToken telemetryTableName = new TableToken(telemetry, telemetry, 0, false, false);
+        TableToken telemetryTableName = new TableToken(telemetry, telemetry, 0, false, false, false);
         try (TableReader reader = new TableReader(configuration, telemetryTableName)) {
             final StringSink sink = new StringSink();
             sink.clear();
@@ -8005,7 +8332,11 @@ public class IODispatcherTest extends AbstractTest {
                 "\"columns\":[" +
                 "{\"name\":\"ts\",\"type\":\"TIMESTAMP\",\"size\":8,\"errors\":0}," +
                 "{\"name\":\"int\",\"type\":\"INT\",\"size\":4,\"errors\":0}" +
-                "]}\r\n";
+                "]," +
+                "\"mapping\":[" +
+                "{\"file_column_name\":\"ts\",\"file_column_index\":0,\"file_column_ignore\":false,\"column_type\":\"TIMESTAMP\",\"table_column_name\":\"ts\",\"insert_null\":\"false\",\"formats\":[{\"pattern\":\"yyyy-MM-dd HH:mm:ss\",\"locale\":\"en\",\"utf8\":false}]}," +
+                "{\"file_column_name\":\"int\",\"file_column_index\":1,\"file_column_ignore\":false,\"column_type\":\"INT\",\"table_column_name\":\"int\",\"insert_null\":\"false\",\"formats\":[{}]}]" +
+                "}\r\n";
 
         testImport(
                 "HTTP/1.1 200 OK\r\n" +
@@ -8014,7 +8345,7 @@ public class IODispatcherTest extends AbstractTest {
                         "Transfer-Encoding: chunked\r\n" +
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "\r\n" +
-                        (partitionBy == PartitionBy.DAY ? "ed\r\n" : "ee\r\n") +
+                        (partitionBy == PartitionBy.DAY ? "0275\r\n" : "0276\r\n") +
                         expectedMetadata +
                         "00\r\n" +
                         "\r\n",
@@ -8106,7 +8437,10 @@ public class IODispatcherTest extends AbstractTest {
                 "\"columns\":[" +
                 "{\"name\":\"ts\",\"type\":\"TIMESTAMP\",\"size\":8,\"errors\":0}," +
                 "{\"name\":\"int\",\"type\":\"INT\",\"size\":4,\"errors\":0}" +
-                "]}\r\n";
+                "],\"mapping\":[" +
+                "{\"file_column_name\":\"ts\",\"file_column_index\":0,\"file_column_ignore\":false,\"column_type\":\"TIMESTAMP\",\"table_column_name\":\"ts\",\"insert_null\":\"false\",\"formats\":[{\"pattern\":\"yyyy-MM-dd HH:mm:ss\",\"locale\":\"en\",\"utf8\":false}]}," +
+                "{\"file_column_name\":\"int\",\"file_column_index\":1,\"file_column_ignore\":false,\"column_type\":\"INT\",\"table_column_name\":\"int\",\"insert_null\":\"false\",\"formats\":[{}]}]" +
+                "}\r\n";
 
         testImport(
                 "HTTP/1.1 200 OK\r\n" +
@@ -8115,7 +8449,7 @@ public class IODispatcherTest extends AbstractTest {
                         "Transfer-Encoding: chunked\r\n" +
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "\r\n" +
-                        "ed\r\n" +
+                        "0275\r\n" +
                         expectedMetadata +
                         "00\r\n" +
                         "\r\n",
@@ -8663,7 +8997,7 @@ public class IODispatcherTest extends AbstractTest {
         void run(CairoEngine engine) throws SqlException;
     }
 
-    private static class ByteArrayResponse extends AbstractCharSequence implements ByteSequence {
+    private static class ByteArrayResponse extends AbstractCharSequence {
         private final byte[] bytes;
         private final int len;
 
@@ -8673,7 +9007,6 @@ public class IODispatcherTest extends AbstractTest {
             this.len = len;
         }
 
-        @Override
         public byte byteAt(int index) {
             if (index >= len) {
                 throw new IndexOutOfBoundsException();

@@ -59,7 +59,7 @@ final class FastFloatByteArray {
      * @param endIndex       end index (exclusive)
      * @param isNegative     true if the float value is negative
      * @param hasLeadingZero true if we have consumed the optional leading zero
-     * @param rejectOverflow reject parsed values that overflow double type
+     * @param rejectOverflow reject parsed values that overflow float type
      * @return the bit pattern of the parsed value, if the input is legal;
      * otherwise, {@code -1L}.
      */
@@ -208,7 +208,7 @@ final class FastFloatByteArray {
      * @param startIndex     the start index of the string
      * @param endIndex       the end index of the string
      * @param isNegative     if the resulting number is negative
-     * @param rejectOverflow reject parsed values that overflow double type
+     * @param rejectOverflow reject parsed values that overflow float type
      * @return the bit pattern of the parsed value, if the input is legal;
      * otherwise, {@code -1L}.
      */
@@ -437,7 +437,7 @@ final class FastFloatByteArray {
      * @param str            a string containing a {@code FloatingPointLiteralWithWhiteSpace}
      * @param offset         start offset of {@code FloatingPointLiteralWithWhiteSpace} in {@code str}
      * @param length         length of {@code FloatingPointLiteralWithWhiteSpace} in {@code str}
-     * @param rejectOverflow reject parsed values that overflow double type
+     * @param rejectOverflow reject parsed values that overflow float type
      * @return the bit pattern of the parsed value, if the input is legal;
      * otherwise, {@code -1L}.
      */

@@ -35,11 +35,12 @@ import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicReference;
+
+import static org.junit.Assert.*;
 
 /**
  * Test interactions between cast and index clauses in CREATE TABLE and CREATE TABLE AS SELECT statements .
@@ -287,10 +288,14 @@ public class CreateTableTest extends AbstractCairoTest {
                                 SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
                         ) {
                             for (int j = 0; j < tableCount; j++) {
-                                Assert.assertNotNull(compiler.query().$("create table if not exists tab").$(j).$(" (x int)").compile(executionContext).getTableToken());
+                                final TableToken token = compiler.query().$("create table if not exists tab").$(j).$(" (x int)")
+                                        .compile(executionContext).getTableToken();
+                                assertNotNull(token);
+                                assertEquals("tab" + j, token.getTableName());
                             }
                         }
                     } catch (Throwable e) {
+                        LOG.error().$("Error in thread").$(e).$();
                         ref.set(e);
                     } finally {
                         Path.clearThreadLocals();
@@ -344,7 +349,7 @@ public class CreateTableTest extends AbstractCairoTest {
                 throw new RuntimeException(ref.get());
             }
 
-            Assert.assertEquals(tableCount, getTablesInRegistrySize());
+            assertEquals(tableCount, getTablesInRegistrySize());
         });
     }
 
@@ -404,6 +409,28 @@ public class CreateTableTest extends AbstractCairoTest {
     @Test
     public void testCreateTableLikeTableWithCachedSymbol() throws Exception {
         testCreateTableLikeTableWithCachedSymbol(true);
+    }
+
+    @Test
+    public void testCreateTableLikeTableWithDedup() throws Exception {
+        ddl(
+                "CREATE TABLE foo (" +
+                        "ts TIMESTAMP," +
+                        "a INT," +
+                        "b STRING" +
+                        ") " +
+                        "TIMESTAMP(ts) PARTITION BY DAY WAL " +
+                        "DEDUP UPSERT KEYS(ts, a)"
+        );
+        ddl("create table foo_clone ( like foo)");
+        assertSql(
+                "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
+                        "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\ttrue\n" +
+                        "a\tINT\tfalse\t0\tfalse\t0\tfalse\ttrue\n" +
+                        "b\tSTRING\tfalse\t0\tfalse\t0\tfalse\tfalse\n"
+                ,
+                "SHOW COLUMNS FROM foo_clone"
+        );
     }
 
     @Test
@@ -539,7 +566,7 @@ public class CreateTableTest extends AbstractCairoTest {
                 throw new RuntimeException(ref.get());
             }
 
-            Assert.assertEquals(tableCount, getTablesInRegistrySize());
+            assertEquals(tableCount, getTablesInRegistrySize());
         });
     }
 
@@ -640,8 +667,8 @@ public class CreateTableTest extends AbstractCairoTest {
                 TableReaderMetadata metadata = reader.getMetadata();
                 for (int i = 0; i < columnTypes.length; i++) {
                     String[] arr = columnTypes[i];
-                    Assert.assertEquals(arr[0], metadata.getColumnName(i));
-                    Assert.assertEquals(arr[1], ColumnType.nameOf(metadata.getColumnType(i)));
+                    assertEquals(arr[0], metadata.getColumnName(i));
+                    assertEquals(arr[1], ColumnType.nameOf(metadata.getColumnType(i)));
                 }
             }
         });
@@ -658,13 +685,13 @@ public class CreateTableTest extends AbstractCairoTest {
                     int i = metadata.getColumnIndex(columnName);
                     indexed.setQuick(i, 1);
 
-                    Assert.assertTrue("Column " + columnName + " should be indexed!", metadata.isColumnIndexed(i));
+                    assertTrue("Column " + columnName + " should be indexed!", metadata.isColumnIndexed(i));
                 }
 
                 for (int i = 0, len = indexed.size(); i < len; i++) {
                     if (indexed.getQuick(i) == 0) {
                         String columnName = metadata.getColumnName(i);
-                        Assert.assertFalse("Column " + columnName + " shouldn't be indexed!", metadata.isColumnIndexed(i));
+                        assertFalse("Column " + columnName + " shouldn't be indexed!", metadata.isColumnIndexed(i));
                     }
                 }
             }
@@ -675,9 +702,9 @@ public class CreateTableTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try {
                 ddl(sql, sqlExecutionContext);
-                Assert.fail();
+                fail();
             } catch (SqlException e) {
-                Assert.assertEquals(position, e.getPosition());
+                assertEquals(position, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "indexes are supported only for SYMBOL columns: x");
             }
         });
@@ -686,8 +713,8 @@ public class CreateTableTest extends AbstractCairoTest {
     private void assertPartitionAndTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             try (TableReader reader = engine.getReader("tab")) {
-                Assert.assertEquals(PartitionBy.MONTH, reader.getPartitionedBy());
-                Assert.assertEquals(1, reader.getMetadata().getTimestampIndex());
+                assertEquals(PartitionBy.MONTH, reader.getPartitionedBy());
+                assertEquals(1, reader.getMetadata().getTimestampIndex());
             }
         });
     }
@@ -697,12 +724,12 @@ public class CreateTableTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (TableReader reader = engine.getReader("tab")) {
                 if (parameters.symbolCapacity != null) {
-                    Assert.assertEquals(parameters.symbolCapacity.intValue(), reader.getSymbolMapReader(1).getSymbolCapacity());
+                    assertEquals(parameters.symbolCapacity.intValue(), reader.getSymbolMapReader(1).getSymbolCapacity());
                 }
-                Assert.assertEquals(parameters.isCached, reader.getSymbolMapReader(1).isCached());
-                Assert.assertEquals(parameters.isIndexed, reader.getMetadata().isColumnIndexed(1));
+                assertEquals(parameters.isCached, reader.getSymbolMapReader(1).isCached());
+                assertEquals(parameters.isIndexed, reader.getMetadata().isColumnIndexed(1));
                 if (parameters.indexBlockCapacity != null) {
-                    Assert.assertEquals(parameters.indexBlockCapacity.intValue(), reader.getMetadata().getIndexValueBlockCapacity(1));
+                    assertEquals(parameters.indexBlockCapacity.intValue(), reader.getMetadata().getIndexValueBlockCapacity(1));
                 }
             }
         });
@@ -711,7 +738,7 @@ public class CreateTableTest extends AbstractCairoTest {
     private void assertWalEnabled(boolean isWalEnabled) throws Exception {
         assertMemoryLeak(() -> {
             try (TableReader reader = engine.getReader("x")) {
-                Assert.assertEquals(isWalEnabled, reader.getMetadata().isWalEnabled());
+                assertEquals(isWalEnabled, reader.getMetadata().isWalEnabled());
             }
         });
     }
@@ -719,8 +746,8 @@ public class CreateTableTest extends AbstractCairoTest {
     private void assertWithClauseParameters(int maxUncommittedRows, int o3MaxLag) throws Exception {
         assertMemoryLeak(() -> {
             try (TableReader reader = engine.getReader("x")) {
-                Assert.assertEquals(o3MaxLag, reader.getMetadata().getO3MaxLag());
-                Assert.assertEquals(maxUncommittedRows, reader.getMetadata().getMaxUncommittedRows());
+                assertEquals(o3MaxLag, reader.getMetadata().getO3MaxLag());
+                assertEquals(maxUncommittedRows, reader.getMetadata().getMaxUncommittedRows());
             }
         });
     }

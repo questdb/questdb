@@ -32,6 +32,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.*;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.vm.Vm.STRING_LENGTH_BYTES;
 
@@ -47,8 +48,8 @@ public class MemoryPARWImpl implements MemoryARW {
     private final Long256Impl long256B = new Long256Impl();
     private final int maxPages;
     private final StraddlingPageLong256FromCharSequenceDecoder straddlingPageLong256Decoder = new StraddlingPageLong256FromCharSequenceDecoder();
-    private final FloatingDirectCharSink utf8FloatingSink = new FloatingDirectCharSink();
-    private final StringSink utf8StrSink = new StringSink();
+    private final StringSink utf16Sink = new StringSink();
+    private final FlyweightDirectCharSink utf8FloatingSink = new FlyweightDirectCharSink();
     protected int memoryTag;
     private long absolutePointer;
     private long appendPointer = -1;
@@ -229,7 +230,7 @@ public class MemoryPARWImpl implements MemoryARW {
         return getLong0(offset);
     }
 
-    public void getLong256(long offset, CharSink sink) {
+    public void getLong256(long offset, CharSinkBase<?> sink) {
         final long a, b, c, d;
         if (roOffsetLo < offset && offset < roOffsetHi - Long256.BYTES) {
             a = Unsafe.getUnsafe().getLong(absolutePointer + offset);
@@ -569,6 +570,10 @@ public class MemoryPARWImpl implements MemoryARW {
         if (pageHi - appendPointer > 3) {
             Unsafe.getUnsafe().putInt(appendPointer, value);
             appendPointer += 4;
+        } else if (pageHi == appendPointer) {
+            pageAt(getAppendOffset() + 1);
+            Unsafe.getUnsafe().putInt(appendPointer, value);
+            appendPointer += 4;
         } else {
             putIntBytes(value);
         }
@@ -689,6 +694,15 @@ public class MemoryPARWImpl implements MemoryARW {
         }
     }
 
+    @Override
+    public void putLong256Utf8(@Nullable DirectUtf8Sequence hexString) {
+        if (pageHi - appendPointer < 4 * Long.BYTES) {
+            straddlingPageLong256Decoder.putLong256(hexString);
+        } else {
+            inPageLong256Decoder.putLong256(hexString);
+        }
+    }
+
     public void putLongBytes(long value) {
         putByte((byte) (value & 0xffL));
         putByte((byte) ((value >> 8) & 0xffL));
@@ -805,11 +819,15 @@ public class MemoryPARWImpl implements MemoryARW {
         return putStr0(value, pos, len);
     }
 
-    public long putStrUtf8AsUtf16(DirectByteCharSequence value, boolean hasNonAsciiChars) {
+    @Override
+    public long putStrUtf8(DirectUtf8Sequence value, boolean hasNonAsciiChars) {
         if (value != null && hasNonAsciiChars) {
             return putStrUtf8AsUtf160(value);
         }
-        return putStr(value);
+        if (value == null) {
+            return putNullStr();
+        }
+        return putStr(value.asAsciiCharSequence());
     }
 
     @Override
@@ -1053,18 +1071,18 @@ public class MemoryPARWImpl implements MemoryARW {
         }
     }
 
-    private long putStrUtf8AsUtf160(DirectByteCharSequence value) {
-        int estimatedLen = value.length() * 2;
+    private long putStrUtf8AsUtf160(DirectUtf8Sequence value) {
+        int estimatedLen = value.size() * 2;
         if (pageHi - appendPointer < estimatedLen + 4) {
-            utf8StrSink.clear();
-            CharSequence utf16 = Chars.utf8ToUtf16(value, utf8StrSink, true);
+            utf16Sink.clear();
+            CharSequence utf16 = Utf8s.utf8ToUtf16(value, utf16Sink, true);
             putInt(utf16.length());
-            putStrSplit(utf8StrSink, 0, utf16.length());
+            putStrSplit(utf16Sink, 0, utf16.length());
         } else {
             utf8FloatingSink.of(appendPointer + 4, appendPointer + estimatedLen + 4); // shifted by 4 bytes of length
-            CharSequence utf16 = Chars.utf8ToUtf16(value, utf8FloatingSink, true);
+            CharSequence utf16 = Utf8s.utf8ToUtf16(value, utf8FloatingSink, true);
             putInt(utf16.length());
-            appendPointer = utf8FloatingSink.getLo();
+            appendPointer = utf8FloatingSink.appendPtr();
         }
         return getAppendOffset();
     }
@@ -1135,6 +1153,7 @@ public class MemoryPARWImpl implements MemoryARW {
     }
 
     protected final void setExtendSegmentSize(long extendSegmentSize) {
+        assert extendSegmentSize > 3; // Int writing assumes page sized of at least 4 bytes
         clear();
         this.extendSegmentSize = Numbers.ceilPow2(extendSegmentSize);
         this.extendSegmentMsb = Numbers.msb(this.extendSegmentSize);
@@ -1228,7 +1247,7 @@ public class MemoryPARWImpl implements MemoryARW {
             Unsafe.getUnsafe().putLong(appendPointer + 24, l3);
         }
 
-        private void putLong256(CharSequence hexString) {
+        private void putLong256(@Nullable CharSequence hexString) {
             final int len;
             if (hexString == null || (len = hexString.length()) == 0) {
                 putLong256Null();
@@ -1238,7 +1257,17 @@ public class MemoryPARWImpl implements MemoryARW {
             }
         }
 
-        private void putLong256(CharSequence hexString, int start, int end) {
+        private void putLong256(@Nullable DirectUtf8Sequence hexString) {
+            final int size;
+            if (hexString == null || (size = hexString.size()) == 0) {
+                putLong256Null();
+                appendPointer += Long256.BYTES;
+            } else {
+                putLong256(hexString.asAsciiCharSequence(), 2, size);
+            }
+        }
+
+        private void putLong256(@NotNull CharSequence hexString, int start, int end) {
             decode(hexString, start, end, inPageLong256Decoder);
             appendPointer += Long256.BYTES;
         }
@@ -1253,7 +1282,7 @@ public class MemoryPARWImpl implements MemoryARW {
             putLong(l3);
         }
 
-        private void putLong256(CharSequence hexString) {
+        private void putLong256(@Nullable CharSequence hexString) {
             final int len;
             if (hexString == null || (len = hexString.length()) == 0) {
                 putLong(Long256Impl.NULL_LONG256.getLong0());
@@ -1265,8 +1294,20 @@ public class MemoryPARWImpl implements MemoryARW {
             }
         }
 
-        private void putLong256(CharSequence hexString, int start, int end) {
+        private void putLong256(@NotNull CharSequence hexString, int start, int end) {
             decode(hexString, start, end, this);
+        }
+
+        private void putLong256(@Nullable DirectUtf8Sequence hexString) {
+            final int size;
+            if (hexString == null || (size = hexString.size()) == 0) {
+                putLong(Long256Impl.NULL_LONG256.getLong0());
+                putLong(Long256Impl.NULL_LONG256.getLong1());
+                putLong(Long256Impl.NULL_LONG256.getLong2());
+                putLong(Long256Impl.NULL_LONG256.getLong3());
+            } else {
+                putLong256(hexString.asAsciiCharSequence(), 2, size);
+            }
         }
     }
 }

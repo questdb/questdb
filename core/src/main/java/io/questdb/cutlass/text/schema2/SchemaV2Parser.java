@@ -47,9 +47,11 @@ public class SchemaV2Parser implements JsonParser, Mutable, Closeable {
     private static final int LVL_1_FORMATS = 2;
     private static final int LVL_1_FORMATS_ACTION = 3;
     private static final int LVL_2_COLUMN_TYPE = 3;
+    private static final int LVL_2_FILE_COLUMN_IGNORE = 6;
     private static final int LVL_2_FILE_COLUMN_INDEX = 2;
     private static final int LVL_2_FILE_COLUMN_NAME = 1;
-    private static final int LVL_2_FORMATS = 5;
+    private static final int LVL_2_FORMATS = 7;
+    private static final int LVL_2_TABLE_COLUMN_INSERT_NULL = 5;
     private static final int LVL_2_TABLE_COLUMN_NAME = 4;
     private static final int LVL_3_LOCALE = 2;
     private static final int LVL_3_PATTERN = 1;
@@ -59,39 +61,41 @@ public class SchemaV2Parser implements JsonParser, Mutable, Closeable {
     private static final int S_NEED_PROPERTY_NAME = 3;
     private static final int S_NEED_PROPERTY_VALUE = 4;
     private static final CharSequenceIntHashMap lvl1Branches = new CharSequenceIntHashMap();
+    private static final LowerCaseCharSequenceIntHashMap lvl1FormatsActionValues = new LowerCaseCharSequenceIntHashMap();
     private static final CharSequenceIntHashMap lvl2Branches = new CharSequenceIntHashMap();
     private static final CharSequenceIntHashMap lvl3Branches = new CharSequenceIntHashMap();
-    private static final LowerCaseCharSequenceIntHashMap lvl1FormatsActionValues = new LowerCaseCharSequenceIntHashMap();
     private final ObjectPool<FloatingCharSequence> csPool;
     private final DateFormatFactory dateFormatFactory;
     private final DateLocale dateLocale;
     private final DateLocaleFactory dateLocaleFactory;
     private final ObjList<TypeAdapter> formatsInFlight = new ObjList<>();
+    private final IntHashSet seenFormatsColumnTypes = new IntHashSet();
     private final TimestampFormatFactory timestampFormatFactory;
     private final TypeManager typeManager;
     private long buf;
     private long bufCapacity = 0;
     private int bufSize = 0;
     private int columnType = -1;
-    private int fileColumnIndex;
+    private boolean columnsDefined = false;
+    private boolean fileColumnIgnore;
+    private int fileColumnIndex = -1;
     private CharSequence fileColumnName;
     private CharSequence formatLocale;
     private int formatLocalePosition;
     private String formatPattern;
     private int formatPatternPosition;
     private boolean formatUtf8 = false;
+    private int formatsAction = SchemaV2.FORMATS_ACTION_ADD;
+    private boolean formatsActionDefined = false;
+    private boolean formatsDefined = false;
     private int level;
     private int lvl1Index;
     private int lvl2Index;
     private int lvl3Index;
     private SchemaV2 schema;
     private int state = S_NEED_OBJECT;
+    private boolean tableColumnInsertNull;
     private CharSequence tableColumnName;
-    private boolean columnsDefined = false;
-    private boolean formatsDefined = false;
-    private boolean formatsActionDefined = false;
-    private int formatsAction = SchemaV2.FORMATS_ACTION_ADD;
-    private final IntHashSet seenFormatsColumnTypes = new IntHashSet();
 
     public SchemaV2Parser(TextConfiguration textConfiguration, TypeManager typeManager) {
         this.csPool = new ObjectPool<>(FloatingCharSequence::new, textConfiguration.getMetadataStringPoolCapacity());
@@ -199,8 +203,10 @@ public class SchemaV2Parser implements JsonParser, Mutable, Closeable {
                                 switch (lvl2Index) {
                                     case LVL_2_FILE_COLUMN_NAME:
                                     case LVL_2_FILE_COLUMN_INDEX:
+                                    case LVL_2_FILE_COLUMN_IGNORE:
                                     case LVL_2_COLUMN_TYPE:
                                     case LVL_2_TABLE_COLUMN_NAME:
+                                    case LVL_2_TABLE_COLUMN_INSERT_NULL:
                                         state = S_NEED_PROPERTY_VALUE;
                                         break;
                                     case LVL_2_FORMATS:
@@ -264,6 +270,9 @@ public class SchemaV2Parser implements JsonParser, Mutable, Closeable {
                                             }
                                         }
                                         break;
+                                    case LVL_2_FILE_COLUMN_IGNORE:
+                                        fileColumnIgnore = Chars.equalsIgnoreCaseNc("true", tag);
+                                        break;
                                     case LVL_2_COLUMN_TYPE:
                                         columnType = ColumnType.typeOf(tag);
                                         if (columnType == -1) {
@@ -272,6 +281,9 @@ public class SchemaV2Parser implements JsonParser, Mutable, Closeable {
                                         break;
                                     case LVL_2_TABLE_COLUMN_NAME:
                                         tableColumnName = copy(tag);
+                                        break;
+                                    case LVL_2_TABLE_COLUMN_INSERT_NULL:
+                                        tableColumnInsertNull = Chars.equalsIgnoreCaseNc("true", tag);
                                         break;
                                     case LVL_2_FORMATS:
                                         // expect array of formats
@@ -319,8 +331,10 @@ public class SchemaV2Parser implements JsonParser, Mutable, Closeable {
                                 schema.addColumn(
                                         fileColumnName,
                                         fileColumnIndex,
+                                        fileColumnIgnore,
                                         columnType,
                                         tableColumnName,
+                                        tableColumnInsertNull,
                                         formatsInFlight
                                 );
                                 formatsInFlight.clear();
@@ -396,7 +410,9 @@ public class SchemaV2Parser implements JsonParser, Mutable, Closeable {
     private void clearColumnStage() {
         fileColumnName = null;
         fileColumnIndex = -1;
+        fileColumnIgnore = false;
         tableColumnName = null;
+        tableColumnInsertNull = false;
         columnType = -1;
     }
 
@@ -460,8 +476,10 @@ public class SchemaV2Parser implements JsonParser, Mutable, Closeable {
 
         lvl2Branches.put("file_column_name", LVL_2_FILE_COLUMN_NAME);
         lvl2Branches.put("file_column_index", LVL_2_FILE_COLUMN_INDEX);
+        lvl2Branches.put("file_column_ignore", LVL_2_FILE_COLUMN_IGNORE);
         lvl2Branches.put("column_type", LVL_2_COLUMN_TYPE);
         lvl2Branches.put("table_column_name", LVL_2_TABLE_COLUMN_NAME);
+        lvl2Branches.put("insert_null", LVL_2_TABLE_COLUMN_INSERT_NULL);
         lvl2Branches.put("formats", LVL_2_FORMATS);
 
         lvl3Branches.put("pattern", LVL_3_PATTERN);

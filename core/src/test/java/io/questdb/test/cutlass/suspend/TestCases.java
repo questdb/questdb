@@ -67,6 +67,7 @@ public class TestCases {
 
         // FilterOnSubQueryRecordCursorFactory
         addTestCase("select * from x where isym in (select s from y limit 3) and i != 42");
+        addTestCase("select * from x where isym in (select s from y limit 3) and i != 42 limit -10");
 
         // FilterOnExcludedValuesRecordCursorFactory
         addTestCase("select * from x where isym not in ('a','b') and i != 42");
@@ -115,7 +116,7 @@ public class TestCases {
         // LimitedSizeSortedLightRecordCursorFactory
         addTestCase("select * from x order by i limit 3");
 
-        // CachedAnalyticRecordCursorFactory
+        // CachedWindowRecordCursorFactory
         addTestCase("select i, row_number() over (partition by sym) from x");
         addTestCase("select i, row_number() over (partition by sym order by ts) from x");
 
@@ -133,8 +134,11 @@ public class TestCases {
         // DistinctRecordCursorFactory
         addTestCase("select distinct sym from (x union all y)");
 
-        // DistinctKeyRecordCursorFactory
+        // DistinctSymbolRecordCursorFactory
         addTestCase("select distinct sym from x order by sym");
+
+        // DistinctIntKeyRecordCursorFactory
+        addTestCase("select distinct i from x order by i");
 
         // GroupByNotKeyedVectorRecordCursor
         addTestCase("select max(i), min(i) from x");
@@ -148,6 +152,8 @@ public class TestCases {
 
         // GroupByRecordCursorFactory
         addTestCase("select sym, max(i), min(i) from (x union all y)");
+        addTestCase("select sym, max(i), min(i) from (x union all y) limit 0,-1 ");
+        addTestCase("select sym, max(i), min(i) from (x union all y) limit -10 ");
 
         // SampleByFillNoneNotKeyedRecordCursor
         addTestCase("select max(i), min(i) from x sample by 1h");
@@ -170,6 +176,7 @@ public class TestCases {
 
         // SampleByInterpolateRecordCursorFactory
         addTestCase("select max(i), min(i) from x sample by 1h fill(linear)");
+        addTestCase("select max(i), min(i) from x sample by 1s fill(linear) limit -10");
 
         // SampleByFillNullNotKeyedRecordCursorFactory
         addTestCase("select sum(i) s, ts from x sample by 30m fill(null)");
@@ -213,6 +220,8 @@ public class TestCases {
 
         // LatestBySubQueryRecordCursorFactory, LatestByValuesRecordCursor
         addTestCase("select * from x where sym in (select sym from y limit 3) latest on ts partition by sym");
+        addTestCase("select * from x where sym in (select sym from y limit 10) latest on ts partition by sym limit 1, 10");
+        addTestCase("select * from x where sym in (select sym from y limit 10) latest on ts partition by sym limit -10");
 
         // LatestBySubQueryRecordCursorFactory, LatestByValuesFilteredRecordCursor
         addTestCase("select * from x where sym in (select sym from y limit 3) and i%2 <> 1 latest on ts partition by sym");

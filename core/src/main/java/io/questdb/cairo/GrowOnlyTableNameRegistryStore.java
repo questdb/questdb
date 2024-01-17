@@ -61,7 +61,7 @@ public class GrowOnlyTableNameRegistryStore implements Closeable {
     }
 
     public GrowOnlyTableNameRegistryStore of(Path rootPath, int version) {
-        rootPath.concat(TABLE_REGISTRY_NAME_FILE).put('.').put(version).$();
+        rootPath.concat(TABLE_REGISTRY_NAME_FILE).putAscii('.').put(version).$();
         tableNameMemory.smallFile(ff, rootPath, MemoryTag.MMAP_DEFAULT);
         tableNameMemory.putLong(0);
         return this;

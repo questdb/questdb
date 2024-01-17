@@ -142,7 +142,6 @@ public class DateLocale {
     }
 
     private static long findToken(CharSequence content, int lo, int hi, IntObjHashMap<ObjList<CharSequence>> map) throws NumericException {
-
         if (lo >= hi) {
             throw NumericException.INSTANCE;
         }

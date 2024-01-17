@@ -24,19 +24,20 @@
 
 package io.questdb.log;
 
-import io.questdb.std.Chars;
 import io.questdb.std.Misc;
-import io.questdb.std.Sinkable;
+import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.AbstractCharSink;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.*;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
-public class LogRecordSink extends AbstractCharSink implements Sinkable {
+public class LogRecordSink implements Utf8Sink, DirectUtf8Sequence, Sinkable, Mutable {
     public static final int EOL_LENGTH = Misc.EOL.length();
-    public final static int UTF8_BYTE_CLASS_BAD = -1;
-    public final static int UTF8_BYTE_CLASS_CONTINUATION = 0;
+    private final static int UTF8_BYTE_CLASS_BAD = -1;
+    private final static int UTF8_BYTE_CLASS_CONTINUATION = 0;
     protected final long address;
     protected final long lim;
+    private final AsciiCharSequence asciiCharSequence = new AsciiCharSequence();
     protected long _wptr;
     private boolean done = false;
     private int level;
@@ -46,60 +47,67 @@ public class LogRecordSink extends AbstractCharSink implements Sinkable {
         this.lim = address + addressSize;
     }
 
+    @Override
+    public @NotNull CharSequence asAsciiCharSequence() {
+        return asciiCharSequence.of(this);
+    }
+
+    @Override
+    public byte byteAt(int index) {
+        return Unsafe.getUnsafe().getByte(address + index);
+    }
+
+    @Override
     public void clear() {
         _wptr = address;
         done = false;
-    }
-
-    public long getAddress() {
-        return address;
     }
 
     public int getLevel() {
         return level;
     }
 
-    public int length() {
-        return (int) (_wptr - address);
+    @Override
+    public long ptr() {
+        return address;
     }
 
-    /**
-     * Log a string that contains only ASCII chars.
-     * Call `encodeUtf8` otherwise.
-     */
     @Override
-    public CharSink put(CharSequence cs) {
-        int rem = (int) (lim - _wptr - EOL_LENGTH);
-        int len = cs.length();
-        int n = Math.min(rem, len);
-        Chars.asciiStrCpy(cs, n, _wptr);
-        _wptr += n;
+    public Utf8Sink put(@Nullable Utf8Sequence us) {
+        if (us != null) {
+            final int rem = (int) (lim - _wptr - EOL_LENGTH);
+            final int size = us.size();
+            if (rem >= size) {
+                // Common case where the buffer fits the available space.
+                Utf8s.strCpy(us, size, _wptr);
+                _wptr += size;
+                return this;
+            }
+
+            // The line is being truncated:
+            // We determine a safe length to byte-copy.
+            // We skip copying the last 4 bytes, as they may be a multibyte UTF-8 codepoint.
+            // NOTE: The computed length may be negative.
+            int safeLen = rem - 4;
+            if (safeLen > 0) {
+                Utf8s.strCpy(us, safeLen, _wptr);
+                _wptr += safeLen;
+            }
+
+            safeLen = Math.max(0, safeLen);
+            for (int i = safeLen; i < rem; i++) {
+                // Copying the final few bytes one at a time ensures we don't write any partial codepoints.
+                put(us.byteAt(i));
+            }
+            return this;
+        }
         return this;
     }
 
-    /**
-     * Log a substring that contains only ASCII chars.
-     * Call `encodeUtf8` otherwise.
-     */
     @Override
-    public CharSink put(CharSequence cs, int lo, int hi) {
-        int rem = (int) (lim - _wptr - EOL_LENGTH);
-        int len = hi - lo;
-        int n = Math.min(rem, len);
-        Chars.asciiStrCpy(cs, lo, n, _wptr);
-        _wptr += n;
-        return this;
-    }
-
-    /**
-     * Log a ASCII character or UTF-8 byte (cast as a `char`).
-     * The signature breaks expectations: Read as if `char c` were `byte b`.
-     */
-    @Override
-    public CharSink put(char c) {
+    public Utf8Sink put(byte b) {
         final long left = lim - _wptr - EOL_LENGTH;
-        byte b = (byte) c;
-        if (left >= 4) {  // 4 is the maximum byte length for a UTF-8 character.
+        if (left >= 4) { // 4 is the maximum byte length for a UTF-8 character.
             Unsafe.getUnsafe().putByte(_wptr++, b);
             return this;
         }
@@ -124,7 +132,7 @@ public class LogRecordSink extends AbstractCharSink implements Sinkable {
             return this;
         }
 
-        long needed = utf8charNeeded(b);
+        long needed = utf8CharNeeded(b);
         if (needed == UTF8_BYTE_CLASS_BAD) {
             // Invalid UTF-8 byte, sentinel replacement -- this should never happen in practice.
             b = (byte) '?';
@@ -141,23 +149,13 @@ public class LogRecordSink extends AbstractCharSink implements Sinkable {
     }
 
     @Override
-    public CharSink putEOL() {
-        int rem = (int) (lim - _wptr);
-        int len = Misc.EOL.length();
-        int n = Math.min(rem, len);
-        Chars.asciiStrCpy(Misc.EOL, n, _wptr);
-        _wptr += n;
-        return this;
-    }
-
-    @Override
-    public CharSink putUtf8(long lo, long hi) {
+    public Utf8Sink put(long lo, long hi) {
         final long rem = (lim - _wptr - EOL_LENGTH);
-        final long len = hi - lo;
-        if (rem >= len) {
+        final long size = hi - lo;
+        if (rem >= size) {
             // Common case where the buffer fits the available space.
-            Unsafe.getUnsafe().copyMemory(lo, _wptr, len);
-            _wptr += len;
+            Unsafe.getUnsafe().copyMemory(lo, _wptr, size);
+            _wptr += size;
             return this;
         }
 
@@ -174,8 +172,18 @@ public class LogRecordSink extends AbstractCharSink implements Sinkable {
         safeLen = Math.max(0, safeLen);
         for (long i = safeLen; i < rem; i++) {
             // Copying the final few bytes one at a time ensures we don't write any partial codepoints.
-            put((char) Unsafe.getUnsafe().getByte(lo + i));
+            put(Unsafe.getUnsafe().getByte(lo + i));
         }
+        return this;
+    }
+
+    @Override
+    public Utf8Sink putEOL() {
+        int rem = (int) (lim - _wptr);
+        int len = Misc.EOL.length();
+        int n = Math.min(rem, len);
+        Utf8s.strCpyAscii(Misc.EOL, n, _wptr);
+        _wptr += n;
         return this;
     }
 
@@ -184,11 +192,21 @@ public class LogRecordSink extends AbstractCharSink implements Sinkable {
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        Chars.utf8toUtf16(address, _wptr, sink);
+    public int size() {
+        return (int) (_wptr - address);
     }
 
-    private static int utf8byteClass(byte b) {
+    @Override
+    public void toSink(@NotNull CharSinkBase<?> sink) {
+        Utf8s.utf8ToUtf16(address, _wptr, sink);
+    }
+
+    @Override
+    public @NotNull String toString() {
+        return Utf8s.stringFromUtf8Bytes(address, _wptr);
+    }
+
+    private static int utf8ByteClass(byte b) {
         // Reference the table at:
         // https://en.wikipedia.org/wiki/UTF-8#Encoding
         if (b >= 0) {
@@ -211,14 +229,14 @@ public class LogRecordSink extends AbstractCharSink implements Sinkable {
         }
     }
 
-    private int utf8charNeeded(byte b) {
-        final int byteClass = utf8byteClass(b);
+    private int utf8CharNeeded(byte b) {
+        final int byteClass = utf8ByteClass(b);
         switch (byteClass) {
             case UTF8_BYTE_CLASS_BAD:
                 return UTF8_BYTE_CLASS_BAD;
 
             case UTF8_BYTE_CLASS_CONTINUATION: {
-                // We've been dropped into the middle of a multi-byte character
+                // We've been dropped into the middle of a multibyte character
                 // without prior knowledge of how long it is.
                 // We now need to look back to find the start of the character.
                 int multibyteLength = UTF8_BYTE_CLASS_BAD;
@@ -228,7 +246,7 @@ public class LogRecordSink extends AbstractCharSink implements Sinkable {
                 lookback:
                 for (; ptr >= boundary; --ptr) {
                     final byte prev = Unsafe.getUnsafe().getByte(ptr);
-                    multibyteLength = utf8byteClass(prev);
+                    multibyteLength = utf8ByteClass(prev);
                     switch (multibyteLength) {
                         case UTF8_BYTE_CLASS_BAD:
                             return UTF8_BYTE_CLASS_BAD;
@@ -238,15 +256,12 @@ public class LogRecordSink extends AbstractCharSink implements Sinkable {
                             break lookback;
                     }
                 }
-
                 // Adjust the obtained length to account for the number of bytes looked back.
                 multibyteLength -= (int) (_wptr - ptr);
-
                 // Normalize errors in case of an illegal ascii character followed by one or more continuation bytes.
                 if (multibyteLength < 1) {
                     multibyteLength = UTF8_BYTE_CLASS_BAD;
                 }
-
                 return multibyteLength;
             }
 

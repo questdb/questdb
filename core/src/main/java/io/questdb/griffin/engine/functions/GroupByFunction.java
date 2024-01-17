@@ -40,26 +40,53 @@ public interface GroupByFunction extends Function, Mutable {
 
     void computeNext(MapValue mapValue, Record record);
 
-    default void interpolateBoundary(MapValue mapValue1,
-                                     MapValue mapValue2,
-                                     long boundaryTimestamp,
-                                     boolean isEndOfBoundary) {
+    // only makes sense for non-keyed group by
+    default boolean earlyExit(MapValue mapValue) {
+        return false;
+    }
+
+    default void interpolateBoundary(
+            MapValue mapValue1,
+            MapValue mapValue2,
+            long boundaryTimestamp,
+            boolean isEndOfBoundary
+    ) {
         throw new UnsupportedOperationException();
     }
 
-    default void interpolateGap(MapValue mapValue,
-                                MapValue mapValue1,
-                                MapValue mapValue2,
-                                long x) {
+    default void interpolateGap(
+            MapValue mapValue,
+            MapValue mapValue1,
+            MapValue mapValue2,
+            long x
+    ) {
         throw new UnsupportedOperationException();
+    }
+
+    // only makes sense for non-keyed group by
+    default boolean isEarlyExitSupported() {
+        return false;
     }
 
     default boolean isInterpolationSupported() {
         return false;
     }
 
+    // returns whether the function can be used in parallel GROUP BY
+    default boolean isParallelismSupported() {
+        return false;
+    }
+
     default boolean isScalar() {
         return true;
+    }
+
+    /**
+     * Used in parallel GROUP BY to merge partial results. Both values are guaranteed to be not new
+     * when this method is called, i.e. {@code !destValue.isNew() && !srcValue.isNew()} is true.
+     */
+    default void merge(MapValue destValue, MapValue srcValue) {
+        throw new UnsupportedOperationException();
     }
 
     void pushValueTypes(ArrayColumnTypes columnTypes);

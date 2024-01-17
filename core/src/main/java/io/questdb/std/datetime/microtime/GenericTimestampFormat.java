@@ -30,7 +30,9 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.AbstractDateFormat;
 import io.questdb.std.datetime.DateLocale;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public class GenericTimestampFormat extends AbstractDateFormat {
     private final IntList compiledOps;
@@ -42,7 +44,7 @@ public class GenericTimestampFormat extends AbstractDateFormat {
     }
 
     @Override
-    public void format(long micros, DateLocale locale, CharSequence timeZoneName, CharSink sink) {
+    public void format(long micros, @NotNull DateLocale locale, @Nullable CharSequence timeZoneName, @NotNull CharSinkBase<?> sink) {
         int day = -1;
         int month = -1;
         int year = Integer.MIN_VALUE;
@@ -57,7 +59,6 @@ public class GenericTimestampFormat extends AbstractDateFormat {
         for (int i = 0, n = compiledOps.size(); i < n; i++) {
             int op = compiledOps.getQuick(i);
             switch (op) {
-
                 // AM/PM
                 case TimestampFormatCompiler.OP_AM_PM:
                     if (hour == -1) {
@@ -131,7 +132,6 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     }
                     TimestampFormatUtils.append0(sink, second);
                     break;
-
 
                 // MINUTE
                 case TimestampFormatCompiler.OP_MINUTE_ONE_DIGIT:
@@ -276,8 +276,8 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                 case TimestampFormatCompiler.OP_WEEK_OF_YEAR:
                     sink.put(Timestamps.getWeekOfYear(micros));
                     break;
-                // MONTH
 
+                // MONTH
                 case TimestampFormatCompiler.OP_MONTH_ONE_DIGIT:
                 case TimestampFormatCompiler.OP_MONTH_GREEDY:
                     if (month == -1) {
@@ -326,7 +326,6 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     break;
 
                 // YEAR
-
                 case TimestampFormatCompiler.OP_YEAR_ONE_DIGIT:
                 case TimestampFormatCompiler.OP_YEAR_GREEDY:
                     if (year == Integer.MIN_VALUE) {
@@ -362,6 +361,7 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     }
                     TimestampFormatUtils.appendYear000(sink, year);
                     break;
+
                 // ERA
                 case TimestampFormatCompiler.OP_ERA:
                     if (year == Integer.MIN_VALUE) {
@@ -382,6 +382,25 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     sink.put(timeZoneName);
                     break;
 
+                case TimestampFormatCompiler.OP_EPOCH_MILLIS:
+                    if (compiledOps.size() != 1) {
+                        return;//maybe throw exception
+                    }
+                    sink.put(micros / 1000);
+                    break;
+                case TimestampFormatCompiler.OP_EPOCH_MICROS:
+                    if (compiledOps.size() != 1) {
+                        return;//maybe throw exception
+                    }
+                    sink.put(micros);
+                    break;
+                case TimestampFormatCompiler.OP_EPOCH_NANOS:
+                    if (compiledOps.size() != 1) {
+                        return;//maybe throw exception
+                    }
+                    sink.put(micros * 1000);
+                    break;
+
                 // SEPARATORS
                 default:
                     sink.put(delimiters.getQuick(-op - 1));
@@ -391,7 +410,7 @@ public class GenericTimestampFormat extends AbstractDateFormat {
     }
 
     @Override
-    public long parse(CharSequence in, int lo, int hi, DateLocale locale) throws NumericException {
+    public long parse(@NotNull CharSequence in, int lo, int hi, @NotNull DateLocale locale) throws NumericException {
         int day = 1;
         int month = 1;
         int year = 1970;
@@ -714,6 +733,23 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     }
                     pos += Numbers.decodeHighInt(l);
                     break;
+
+                // EPOCH - these formats can't be combined with anything else
+                case TimestampFormatCompiler.OP_EPOCH_MILLIS:
+                    if (compiledOps.size() != 1) {
+                        throw NumericException.INSTANCE;//TODO: would null be better ?
+                    }
+                    return Numbers.parseLong(in, lo, hi) * 1000;
+                case TimestampFormatCompiler.OP_EPOCH_MICROS:
+                    if (compiledOps.size() != 1) {
+                        throw NumericException.INSTANCE;//TODO: would null be better ?
+                    }
+                    return Numbers.parseLong(in, lo, hi);
+                case TimestampFormatCompiler.OP_EPOCH_NANOS:
+                    if (compiledOps.size() != 1) {
+                        throw NumericException.INSTANCE;//TODO: would null be better ?
+                    }
+                    return Numbers.parseLong(in, lo, hi) / 1000;
 
                 // SEPARATORS
                 default:

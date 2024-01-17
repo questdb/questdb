@@ -32,11 +32,13 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.std.Misc;
 import io.questdb.test.cairo.ConfigurationOverrides;
+import io.questdb.test.cutlass.text.TextTestConfiguration;
 import io.questdb.test.tools.TestUtils;
 
 public class QuestDBTestNode {
@@ -160,7 +162,9 @@ public class QuestDBTestNode {
                 }
             };
 
-            configuration = configurationFactory.getInstance(root, telemetryConfiguration, overrides);
+            final TextConfiguration textConfiguration = new TextTestConfiguration(overrides);
+
+            configuration = configurationFactory.getInstance(root, telemetryConfiguration, overrides, textConfiguration);
             metrics = Metrics.enabled();
             engine = engineFactory.getInstance(configuration, metrics);
             messageBus = engine.getMessageBus();

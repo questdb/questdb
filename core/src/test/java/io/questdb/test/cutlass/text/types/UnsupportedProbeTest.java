@@ -25,7 +25,10 @@
 package io.questdb.test.cutlass.text.types;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cutlass.text.types.*;
+import io.questdb.cutlass.text.types.BadDateAdapter;
+import io.questdb.cutlass.text.types.BadTimestampAdapter;
+import io.questdb.cutlass.text.types.StringAdapter;
+import io.questdb.cutlass.text.types.SymbolAdapter;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -48,21 +51,6 @@ public class UnsupportedProbeTest {
     @Test
     public void testBadTimestampType() {
         Assert.assertEquals(ColumnType.TIMESTAMP, BadTimestampAdapter.INSTANCE.getType());
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testByte() {
-        ByteAdapter.INSTANCE.probe(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testFloat() {
-        FloatAdapter.INSTANCE.probe(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testShort() {
-        ShortAdapter.INSTANCE.probe(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)

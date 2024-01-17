@@ -246,8 +246,9 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                         compiler,
                         context,
                         "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
-                        Misc.getThreadLocalBuilder(),
-                        TABLE_START_CONTENT);
+                        Misc.getThreadLocalSink(),
+                        TABLE_START_CONTENT
+                );
 
                 // run the test
                 test.run();
@@ -287,7 +288,7 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                             compiler,
                             context,
                             "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
-                            Misc.getThreadLocalBuilder(),
+                            Misc.getThreadLocalSink(),
                             finallyExpected);
                 }
 

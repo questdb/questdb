@@ -26,12 +26,14 @@ package io.questdb.cairo;
 
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Os;
-import io.questdb.std.Sinkable;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public class CairoException extends RuntimeException implements Sinkable, FlyweightMessageContainer {
     public static final int ERRNO_FILE_DOES_NOT_EXIST = 2;
@@ -39,7 +41,8 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     public static final int METADATA_VALIDATION = -100;
     public static final int ILLEGAL_OPERATION = METADATA_VALIDATION - 1;
     private static final int TABLE_DROPPED = ILLEGAL_OPERATION - 1;
-    private static final int TABLE_SUSPENDED = TABLE_DROPPED - 1;
+    public static final int METADATA_VALIDATION_RECOVERABLE = METADATA_VALIDATION - 1;
+    public static final int PARTITION_MANIPULATION_RECOVERABLE = METADATA_VALIDATION_RECOVERABLE - 1;
     public static final int NON_CRITICAL = -1;
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
     private static final int ERRNO_ACCESS_DENIED_WIN = 5;
@@ -80,18 +83,19 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
                 .put("] is not compatible with current table metadata");
     }
 
-    public static CairoException duplicateColumn(CharSequence columnName, CharSequence columnAlias) {
-        CairoException exception = invalidMetadata("Duplicate column", columnName);
+    public static CairoException duplicateColumn(CharSequence column, CharSequence columnAlias) {
+        CairoException exception = critical(METADATA_VALIDATION).put("Duplicate column [name=").put(column);
         if (columnAlias != null) {
-            exception.put(", [alias=").put(columnAlias).put(']');
+            exception.put(", alias=").put(columnAlias);
         }
-        return exception;
+        return exception.put(']');
     }
 
     public static CairoException duplicateColumn(CharSequence columnName) {
         return duplicateColumn(columnName, null);
     }
 
+    @SuppressWarnings("unused")
     public static CairoException entityIsDisabled(CharSequence entityName) {
         return nonCritical().setEntityDisabled(true).put("entity is disabled [name=").put(entityName).put(']');
     }
@@ -104,12 +108,16 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return errno == ERRNO_FILE_DOES_NOT_EXIST || (Os.type == Os.WINDOWS && errno == ERRNO_FILE_DOES_NOT_EXIST_WIN);
     }
 
-    public static CairoException invalidMetadata(@NotNull CharSequence msg, @NotNull CharSequence columnName) {
-        return critical(METADATA_VALIDATION).put(msg).put(" [name=").put(columnName).put(']');
+    public static CairoException invalidMetadataRecoverable(@NotNull CharSequence msg, @NotNull CharSequence columnName) {
+        return critical(METADATA_VALIDATION_RECOVERABLE).put(msg).put(" [column=").put(columnName).put(']');
     }
 
     public static CairoException nonCritical() {
         return instance(NON_CRITICAL);
+    }
+
+    public static CairoException partitionManipulationRecoverable() {
+        return instance(PARTITION_MANIPULATION_RECOVERABLE);
     }
 
     public static CairoException queryCancelled(int fd) {
@@ -171,7 +179,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     public boolean isCritical() {
-        return errno != NON_CRITICAL;
+        return errno != NON_CRITICAL && errno != PARTITION_MANIPULATION_RECOVERABLE && errno != METADATA_VALIDATION_RECOVERABLE;
     }
 
     public boolean isEntityDisabled() {
@@ -188,7 +196,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     // logged and skipped by WAL applying code
     public boolean isWALTolerable() {
-        return !isCritical() || errno == METADATA_VALIDATION;
+        return errno == PARTITION_MANIPULATION_RECOVERABLE || errno == METADATA_VALIDATION_RECOVERABLE;
     }
 
     public CairoException position(int position) {
@@ -201,8 +209,18 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return this;
     }
 
-    public CairoException put(CharSequence cs) {
+    public CairoException put(double value) {
+        message.put(value);
+        return this;
+    }
+
+    public CairoException put(@Nullable CharSequence cs) {
         message.put(cs);
+        return this;
+    }
+
+    public CairoException put(@Nullable Utf8Sequence us) {
+        message.put(us);
         return this;
     }
 
@@ -242,8 +260,8 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        sink.put('[').put(errno).put("]: ").put(message);
+    public void toSink(@NotNull CharSinkBase<?> sink) {
+        sink.putAscii('[').put(errno).putAscii("]: ").put(message);
     }
 
     public CairoException ts(long timestamp) {
@@ -255,12 +273,17 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         CairoException ex = tlException.get();
         // This is to have correct stack trace in local debugging with -ea option
         assert (ex = new CairoException()) != null;
-        ex.message.clear();
-        ex.errno = errno;
-        ex.cacheable = false;
-        ex.interruption = false;
-        ex.authorizationError = false;
-        ex.entityDisabled = false;
+        ex.clear(errno);
         return ex;
+    }
+
+    protected void clear(int errno) {
+        message.clear();
+        this.errno = errno;
+        cacheable = false;
+        interruption = false;
+        authorizationError = false;
+        entityDisabled = false;
+        messagePosition = 0;
     }
 }

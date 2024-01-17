@@ -26,9 +26,9 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.std.FlyweightMessageContainer;
-import io.questdb.std.Sinkable;
 import io.questdb.std.ThreadLocal;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -68,6 +68,10 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
         return exception;
     }
 
+    public static SqlException emptyWindowContext(int position) {
+        return SqlException.$(position, "window function called in non-window context, make sure to add OVER clause");
+    }
+
     public static SqlException inconvertibleTypes(int position, int fromType, CharSequence fromName, int toType, CharSequence toName) {
         return $(position, "inconvertible types: ")
                 .put(ColumnType.nameOf(fromType))
@@ -79,6 +83,10 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
 
     public static SqlException invalidColumn(int position, CharSequence column) {
         return position(position).put("Invalid column: ").put(column);
+    }
+
+    public static SqlException invalidDate(CharSequence str, int position) {
+        return position(position).put("Invalid date [str=").put(str).put(']');
     }
 
     public static SqlException invalidDate(int position) {
@@ -119,7 +127,6 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
                 .put(", from=").put(ColumnType.nameOf(fromType))
                 .put(", to=").put(ColumnType.nameOf(toType))
                 .put(']');
-
     }
 
     @Override
@@ -144,8 +151,10 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
         return result;
     }
 
-    public SqlException put(CharSequence cs) {
-        message.put(cs);
+    public SqlException put(@Nullable CharSequence cs) {
+        if (cs != null) {
+            message.put(cs);
+        }
         return this;
     }
 
@@ -184,7 +193,7 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        sink.put('[').put(position).put("]: ").put(message);
+    public void toSink(@NotNull CharSinkBase<?> sink) {
+        sink.putAscii('[').put(position).putAscii("]: ").put(message);
     }
 }

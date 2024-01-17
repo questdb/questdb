@@ -25,7 +25,8 @@
 package io.questdb.metrics;
 
 import io.questdb.std.Numbers;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.BorrowableUtf8Sink;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.concurrent.atomic.LongAdder;
 
@@ -62,7 +63,7 @@ public class CounterWithTwoLabelsImpl implements CounterWithTwoLabels {
     }
 
     @Override
-    public void scrapeIntoPrometheus(CharSink sink) {
+    public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
         PrometheusFormatUtils.appendCounterType(name, sink);
         for (int i = 0, n = labelValues0.length; i < n; i++) {
             for (int j = 0, k = labelValues1.length; j < k; j++) {

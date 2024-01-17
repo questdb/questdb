@@ -66,7 +66,7 @@ public class WalReader implements Closeable {
         ff = configuration.getFilesFacade();
         path = new Path();
         path.of(configuration.getRoot()).concat(tableToken.getDirName()).concat(walName);
-        rootLen = path.length();
+        rootLen = path.size();
 
         try {
             metadata = new SequencerMetadata(ff, true);
@@ -74,7 +74,7 @@ public class WalReader implements Closeable {
             columnCount = metadata.getColumnCount();
             events = new WalEventReader(ff);
             LOG.debug().$("open [table=").$(tableName).I$();
-            int pathLen = path.length();
+            int pathLen = path.size();
             eventCursor = events.of(path.slash().put(segmentId), WAL_FORMAT_VERSION, -1L);
             path.trimTo(pathLen);
             openSymbolMaps(eventCursor, configuration);
@@ -154,7 +154,7 @@ public class WalReader implements Closeable {
                 openSegmentColumns();
                 return rowCount;
             }
-            LOG.error().$("open segment failed, segment does not exist on the disk. [path=").utf8(path.$()).I$();
+            LOG.error().$("open segment failed, segment does not exist on the disk. [path=").$(path).I$();
             throw CairoException.critical(0)
                     .put("WAL data directory does not exist on disk at ")
                     .put(path);
@@ -168,7 +168,7 @@ public class WalReader implements Closeable {
     }
 
     private void loadColumnAt(int columnIndex) {
-        final int pathLen = path.length();
+        final int pathLen = path.size();
         try {
             final int columnType = metadata.getColumnType(columnIndex);
             if (columnType > 0) {

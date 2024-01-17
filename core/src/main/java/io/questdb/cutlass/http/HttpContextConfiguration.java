@@ -32,6 +32,8 @@ public interface HttpContextConfiguration {
 
     boolean allowDeflateBeforeSend();
 
+    boolean areCookiesEnabled();
+
     MillisecondClock getClock();
 
     int getConnectionPoolInitialCapacity();
@@ -41,6 +43,10 @@ public interface HttpContextConfiguration {
     boolean getDumpNetworkTraffic();
 
     FactoryProvider getFactoryProvider();
+
+    int getForceRecvFragmentationChunkSize();
+
+    int getForceSendFragmentationChunkSize();
 
     String getHttpVersion();
 

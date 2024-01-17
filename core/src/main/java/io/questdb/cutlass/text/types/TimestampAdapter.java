@@ -30,8 +30,8 @@ import io.questdb.std.Mutable;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
-import io.questdb.std.str.CharSink;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.DirectUtf8Sequence;
 
 public class TimestampAdapter extends AbstractTypeAdapter implements Mutable {
     protected DateFormat format;
@@ -44,8 +44,8 @@ public class TimestampAdapter extends AbstractTypeAdapter implements Mutable {
         this.locale = null;
     }
 
-    public long getTimestamp(DirectByteCharSequence value) throws Exception {
-        return format.parse(value, locale);
+    public long getTimestamp(DirectUtf8Sequence value) throws Exception {
+        return format.parse(value.asAsciiCharSequence(), locale);
     }
 
     @Override
@@ -61,9 +61,9 @@ public class TimestampAdapter extends AbstractTypeAdapter implements Mutable {
     }
 
     @Override
-    public boolean probe(DirectByteCharSequence text) {
+    public boolean probe(DirectUtf8Sequence text) {
         try {
-            format.parse(text, locale);
+            format.parse(text.asAsciiCharSequence(), locale);
             return true;
         } catch (NumericException e) {
             return false;
@@ -71,16 +71,16 @@ public class TimestampAdapter extends AbstractTypeAdapter implements Mutable {
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        sink.put('{');
-        sink.putQuoted("pattern").put(':').putQuoted(pattern).put(',');
-        sink.putQuoted("locale").put(':').putQuoted(locale.getLocaleName()).put(',');
-        sink.putQuoted("utf8").put(':').put("false");
-        sink.put('}');
+    public void toSink(CharSinkBase<?> sink) {
+        sink.putAscii('{');
+        sink.putAsciiQuoted("pattern").putAscii(':').putQuoted(pattern).put(',');
+        sink.putAsciiQuoted("locale").putAscii(':').putQuoted(locale.getLocaleName()).put(',');
+        sink.putAsciiQuoted("utf8").putAscii(':').putAscii("false");
+        sink.putAscii('}');
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
-        row.putDate(column, format.parse(value, locale));
+    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) throws Exception {
+        row.putDate(column, format.parse(value.asAsciiCharSequence(), locale));
     }
 }

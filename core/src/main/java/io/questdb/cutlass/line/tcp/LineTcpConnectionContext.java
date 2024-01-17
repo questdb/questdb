@@ -35,13 +35,15 @@ import io.questdb.cutlass.auth.AuthenticatorException;
 import io.questdb.cutlass.line.tcp.LineTcpParser.ParseResult;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.log.LogRecord;
 import io.questdb.network.IOContext;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.str.ByteCharSequence;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.Utf8String;
 import org.jetbrains.annotations.NotNull;
 
 public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext> {
@@ -49,7 +51,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     private static final long QUEUE_FULL_LOG_HYSTERESIS_IN_MS = 10_000;
     protected final NetworkFacade nf;
     private final Authenticator authenticator;
-    private final DirectByteCharSequence byteCharSequence = new DirectByteCharSequence();
+    private final DirectUtf8String byteCharSequence = new DirectUtf8String();
     private final long checkIdleInterval;
     private final long commitInterval;
     private final LineTcpReceiverConfiguration configuration;
@@ -59,7 +61,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     private final MillisecondClock milliClock;
     private final LineTcpParser parser;
     private final LineTcpMeasurementScheduler scheduler;
-    private final ByteCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf8 = new ByteCharSequenceObjHashMap<>();
+    private final Utf8StringObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf8 = new Utf8StringObjHashMap<>();
     protected boolean peerDisconnected;
     protected long recvBufEnd;
     protected long recvBufPos;
@@ -97,7 +99,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
 
     public void checkIdle(long millis) {
         for (int n = tableUpdateDetailsUtf8.size() - 1; n >= 0; n--) {
-            final ByteCharSequence tableNameUtf8 = tableUpdateDetailsUtf8.keys().get(n);
+            final Utf8String tableNameUtf8 = tableUpdateDetailsUtf8.keys().get(n);
             final TableUpdateDetails tud = tableUpdateDetailsUtf8.get(tableNameUtf8);
             if (millis - tud.getLastMeasurementMillis() >= idleTimeout) {
                 tableUpdateDetailsUtf8.remove(tableNameUtf8);
@@ -114,9 +116,9 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         recvBufStart = recvBufEnd = recvBufPos = Unsafe.free(recvBufStart, recvBufEnd - recvBufStart, MemoryTag.NATIVE_ILP_RSS);
         peerDisconnected = false;
         resetParser();
-        ObjList<ByteCharSequence> keys = tableUpdateDetailsUtf8.keys();
+        ObjList<Utf8String> keys = tableUpdateDetailsUtf8.keys();
         for (int n = keys.size() - 1; n >= 0; --n) {
-            final ByteCharSequence tableNameUtf8 = keys.get(n);
+            final Utf8String tableNameUtf8 = keys.get(n);
             final TableUpdateDetails tud = tableUpdateDetailsUtf8.get(tableNameUtf8);
             tud.close();
             tableUpdateDetailsUtf8.remove(tableNameUtf8);
@@ -132,7 +134,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     public long commitWalTables(long wallClockMillis) {
         long minTableNextCommitTime = Long.MAX_VALUE;
         for (int n = 0, sz = tableUpdateDetailsUtf8.size(); n < sz; n++) {
-            final ByteCharSequence tableNameUtf8 = tableUpdateDetailsUtf8.keys().get(n);
+            final Utf8String tableNameUtf8 = tableUpdateDetailsUtf8.keys().get(n);
             final TableUpdateDetails tud = tableUpdateDetailsUtf8.get(tableNameUtf8);
 
             if (tud.isWal()) {
@@ -174,7 +176,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         }
     }
 
-    public TableUpdateDetails getTableUpdateDetails(DirectByteCharSequence tableName) {
+    public TableUpdateDetails getTableUpdateDetails(DirectUtf8Sequence tableName) {
         return tableUpdateDetailsUtf8.get(tableName);
     }
 
@@ -216,7 +218,12 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         if (authenticator.isAuthenticated() && securityContext == DenyAllSecurityContext.INSTANCE) {
             // when security context has not been set by anything else (subclass) we assume
             // this is an authenticated, anonymous user
-            securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(null, SecurityContextFactory.ILP);
+            securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(
+                    null,
+                    SecurityContext.AUTH_TYPE_NONE,
+                    SecurityContextFactory.ILP
+            );
+            securityContext.authorizeLineTcp();
         }
         return this;
     }
@@ -256,7 +263,17 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                 case Authenticator.OK:
                     assert authenticator.isAuthenticated();
                     assert securityContext == DenyAllSecurityContext.INSTANCE;
-                    securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(authenticator.getPrincipal(), SecurityContextFactory.ILP);
+                    securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(
+                            authenticator.getPrincipal(),
+                            authenticator.getAuthType(),
+                            SecurityContextFactory.ILP
+                    );
+                    try {
+                        securityContext.checkEntityEnabled();
+                    } catch (CairoException e) {
+                        LOG.error().$('[').$(getFd()).$("] ").$(e.getFlyweightMessage()).$();
+                        return IOContextResult.NEEDS_DISCONNECT;
+                    }
                     recvBufPos = authenticator.getRecvBufPos();
                     resetParser(authenticator.getRecvBufPseudoStart());
                     return parseMeasurements(netIoJob);
@@ -298,7 +315,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         }
     }
 
-    void addTableUpdateDetails(ByteCharSequence tableNameUtf8, TableUpdateDetails tableUpdateDetails) {
+    void addTableUpdateDetails(Utf8String tableNameUtf8, TableUpdateDetails tableUpdateDetails) {
         tableUpdateDetailsUtf8.put(tableNameUtf8, tableUpdateDetails);
     }
 
@@ -380,7 +397,8 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                     }
                 }
             } catch (CairoException ex) {
-                LOG.error()
+                LogRecord error = ex.isCritical() ? LOG.critical() : LOG.error();
+                error
                         .$('[').$(getFd()).$("] could not process line data [table=").$(parser.getMeasurementName())
                         .$(", msg=").$(ex.getFlyweightMessage())
                         .$(", errno=").$(ex.getErrno())
@@ -420,7 +438,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         return !peerDisconnected;
     }
 
-    TableUpdateDetails removeTableUpdateDetails(DirectByteCharSequence tableNameUtf8) {
+    TableUpdateDetails removeTableUpdateDetails(DirectUtf8Sequence tableNameUtf8) {
         final int keyIndex = tableUpdateDetailsUtf8.keyIndex(tableNameUtf8);
         if (keyIndex < 0) {
             TableUpdateDetails tud = tableUpdateDetailsUtf8.valueAtQuick(keyIndex);

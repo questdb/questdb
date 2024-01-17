@@ -233,7 +233,7 @@ public class SchemaV1Parser implements JsonParser, Mutable, Closeable {
 
                 // date pattern is required
                 if (pattern == null) {
-                    throw JsonException.$(0, "DATE format pattern is required");
+                    throw JsonException.$(position, "DATE format pattern is required");
                 }
                 columnTypes.add(typeManager.nextDateAdapter().of(pattern, dateFormatFactory.get(pattern), dateLocale));
                 break;

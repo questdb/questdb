@@ -40,6 +40,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -178,14 +179,15 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                     "  sym symbol,\n" +
                     "  l256 long256," +
                     "  ge geohash(20b)" +
-                    ") timestamp(tstmp) partition by DAY;", sqlExecutionContext);
+                    ") timestamp(tstmp) partition by DAY", sqlExecutionContext);
             try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 importer.of("alltypes", "test-alltypes-with-gaps.csv", 1, PartitionBy.DAY, (byte) ',', "tstmp", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true, null);
                 importer.process(AllowAllSecurityContext.INSTANCE);
             }
 
             refreshTablesInBaseEngine();
-            assertQuery("bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge\n" +
+            assertQuery(
+                    "bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge\n" +
                             "false\t106\t22716\tG\t1\t1\t1970-01-02T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1000\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d\n" +
                             "false\t0\t8654\tS\t2\t2\t1970-01-03T00:00:00.000Z\t1970-01-03T00:00:00.000000Z\t2.1000\t2.2\ts2\tsy2\t0x593c9b7507c60ec943cd1e308a29ac9e645f3f4104fa76983c50b65784d51e37\tu33d\n" +
                             "false\t104\t0\tT\t3\t3\t1970-01-04T00:00:00.000Z\t1970-01-04T00:00:00.000000Z\t3.1000\t3.2\ts3\tsy3\t0x30cb58d11566e857a87063d9dba8961195ddd1458f633b7f285307c11a7072d1\tu33d\n" +
@@ -196,7 +198,11 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                             "true\t102\t5672\tS\t8\t8\t\t1970-01-09T00:00:00.000000Z\t8.1000\t8.2\ts8\tsy8\t0x6df9f4797b131d69aa4f08d320dde2dc72cb5a65911401598a73264e80123440\tu33d\n" +
                             "false\t73\t-5962\tE\t9\t9\t1970-01-10T00:00:00.000Z\t1970-01-10T00:00:00.000000Z\t9.1000\t9.2\t\tsy9\t0xdc33dd2e6ea8cc86a6ef5e562486cceb67886eea99b9dd07ba84e3fba7f66cd6\tu33d\n" +
                             "true\t61\t-17553\tD\t10\t10\t1970-01-11T00:00:00.000Z\t1970-01-11T00:00:00.000000Z\t10.1000\t10.2\ts10\t\t0x83e9d33db60120e69ba3fb676e3280ed6a6e16373be3139063343d28d3738449\tu33d\n",
-                    "select * from alltypes", "tstmp", true, false, true
+                    "select * from alltypes",
+                    "tstmp",
+                    true,
+                    false,
+                    true
             );
         });
     }
@@ -588,7 +594,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
 
             @Override
             public int openRO(LPSZ name) {
-                if (Chars.endsWith(name, "test-quotes-big.csv")) {
+                if (Utf8s.endsWithAscii(name, "test-quotes-big.csv")) {
                     if (count++ > 1) {
                         return -1;
                     }
@@ -605,7 +611,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         FilesFacade brokenFf = new TestFilesFacadeImpl() {
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, "line.v") && stackContains("PhaseBuildSymbolIndex")) {
+                if (Utf8s.endsWithAscii(name, "line.v") && stackContains("PhaseBuildSymbolIndex")) {
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -621,7 +627,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         FilesFacade brokenFf = new TestFilesFacadeImpl() {
             @Override
             public int openRO(LPSZ name) {
-                if (Chars.endsWith(name, "3_1")) {
+                if (Utf8s.endsWithAscii(name, "3_1")) {
                     return -1;
                 }
                 return super.openRO(name);
@@ -636,7 +642,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         FilesFacade brokenFf = new TestFilesFacadeImpl() {
             @Override
             public int openRO(LPSZ name) {
-                if (Chars.endsWith(name, "test-quotes-big.csv") && stackContains("CsvFileIndexer")) {
+                if (Utf8s.endsWithAscii(name, "test-quotes-big.csv") && stackContains("CsvFileIndexer")) {
                     return -1;
                 }
                 return super.openRO(name);
@@ -651,7 +657,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         FilesFacade brokenFf = new TestFilesFacadeImpl() {
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, "line.r") && stackContains("PhaseUpdateSymbolKeys")) {
+                if (Utf8s.endsWithAscii(name, "line.r") && stackContains("PhaseUpdateSymbolKeys")) {
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -666,7 +672,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         FilesFacade brokenFf = new TestFilesFacadeImpl() {
             @Override
             public int openRO(LPSZ name) {
-                if (Chars.endsWith(name, "line.c")) {
+                if (Utf8s.endsWithAscii(name, "line.c")) {
                     return -1;
                 }
                 return super.openRO(name);
@@ -739,7 +745,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         FilesFacadeImpl ff = new TestFilesFacadeImpl() {
             @Override
             public int mkdirs(Path path, int mode) {
-                if (Chars.contains(path, File.separator + dirName + File.separator + "1970-06" + configuration.getAttachPartitionSuffix())) {
+                if (Utf8s.containsAscii(path, File.separator + dirName + File.separator + "1970-06" + configuration.getAttachPartitionSuffix())) {
                     return -1;
                 }
                 return super.mkdirs(path, mode);
@@ -759,7 +765,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         FilesFacadeImpl ff = new TestFilesFacadeImpl() {
             @Override
             public int copy(LPSZ from, LPSZ to) {
-                if (Chars.contains(from, "tab42")) {
+                if (Utf8s.containsAscii(from, "tab42")) {
                     return -1;
                 }
                 return super.copy(from, to);
@@ -793,9 +799,9 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public boolean exists(LPSZ path) {
-                if (Chars.endsWith(path, tab34_0)) {
+                if (Utf8s.endsWithAscii(path, tab34_0)) {
                     return true;
-                } else if (Chars.endsWith(path, tab34_0 + File.separator + "_txn")) {
+                } else if (Utf8s.endsWithAscii(path, tab34_0 + File.separator + "_txn")) {
                     return true;
                 }
                 return super.exists(path);
@@ -807,11 +813,11 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean rmdir(Path name) {
-                if (Chars.endsWith(name, tab34_0)) {
+            public boolean rmdir(Path name, boolean lazy) {
+                if (Utf8s.endsWithAscii(name, tab34_0)) {
                     return false;
                 }
-                return super.rmdir(name);
+                return super.rmdir(name, lazy);
             }
         };
 
@@ -833,7 +839,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public boolean exists(LPSZ path) {
-                if (Chars.endsWith(path, fakeExists)) {
+                if (Utf8s.endsWithAscii(path, fakeExists)) {
                     return true;
                 }
                 return super.exists(path);
@@ -885,7 +891,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         FilesFacadeImpl ff = new TestFilesFacadeImpl() {
             @Override
             public int mkdir(Path path, int mode) {
-                if (Chars.contains(path, "tab39")) {
+                if (Utf8s.containsAscii(path, "tab39")) {
                     return -1;
                 }
                 return super.mkdir(path, mode);
@@ -902,18 +908,18 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
 
             @Override
             public boolean exists(LPSZ path) {
-                if (Chars.equals(path, tempDir)) {
+                if (Utf8s.equalsAscii(tempDir, path)) {
                     return false;
                 }
                 return super.exists(path);
             }
 
             @Override
-            public boolean rmdir(Path name) {
-                if (Chars.equals(name, tempDir)) {
+            public boolean rmdir(Path name, boolean lazy) {
+                if (Utf8s.equalsAscii(tempDir, name)) {
                     return false;
                 }
-                return super.rmdir(name);
+                return super.rmdir(name, lazy);
             }
         };
 
@@ -928,9 +934,9 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
 
             @Override
             public boolean exists(LPSZ path) {
-                if (Chars.endsWith(path, mangledPartDir)) {
+                if (Utf8s.endsWithAscii(path, mangledPartDir)) {
                     return true;
-                } else if (Chars.endsWith(path, mangledPartDir + File.separator + "_txn")) {
+                } else if (Utf8s.endsWithAscii(path, mangledPartDir + File.separator + "_txn")) {
                     return true;
                 }
                 return super.exists(path);
@@ -942,11 +948,11 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean rmdir(Path name) {
-                if (Chars.endsWith(name, mangledPartDir)) {
+            public boolean rmdir(Path name, boolean lazy) {
+                if (Utf8s.endsWithAscii(name, mangledPartDir)) {
                     return false;
                 }
-                return super.rmdir(name);
+                return super.rmdir(name, lazy);
             }
         };
 
@@ -1033,6 +1039,21 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
             refreshTablesInBaseEngine();
             assertQuery("count\n3\n",
                     "select count() from tab44", null, false, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testImportFileWithAdditionalColumns() throws Exception {
+        executeWithPool(4, 8, TestFilesFacadeImpl.INSTANCE, (CairoEngine engine1, SqlCompiler compiler1, SqlExecutionContext sqlExecutionContext1) -> {
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine1, sqlExecutionContext1.getWorkerCount())) {
+                importer.of("tabTest", "test-quotes-oneline.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", null, true);
+                importer.process(AllowAllSecurityContext.INSTANCE);
+            }
+
+            refreshTablesInBaseEngine();
+            assertQuery("count\n1\n",
+                    "select count(*) from tabTest", null, false, false, true
             );
         });
     }
@@ -1286,11 +1307,6 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
             refreshTablesInBaseEngine();
             assertQuery("count\n3\n", "select count(*) from tab55", null, false, false, true);
         });
-    }
-
-    @Test
-    public void testImportFileWithoutHeader() throws Exception {
-        testImportThrowsException("tabex1", "test-quotes-oneline.csv", PartitionBy.MONTH, "ts", null, "column is not a timestamp [no=1, name='ts']");
     }
 
     @Test
@@ -2405,7 +2421,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         FilesFacade brokenFf = new TestFilesFacadeImpl() {
             @Override
             public int openRO(LPSZ path) {
-                if (Chars.endsWith(path, "1972-09" + configuration.getAttachPartitionSuffix() + File.separator + "ts.d")) {
+                if (Utf8s.endsWithAscii(path, "1972-09" + configuration.getAttachPartitionSuffix() + File.separator + "ts.d")) {
                     return -1;
                 }
                 return super.openRO(path);
@@ -2439,7 +2455,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
 
             @Override
             public int rename(LPSZ from, LPSZ to) {
-                if (Chars.endsWith(from, "1972-09" + File.separator)) {
+                if (Utf8s.endsWithAscii(from, "1972-09" + File.separator)) {
                     return Files.FILES_RENAME_ERR_OTHER;
                 }
                 return super.rename(from, to);
@@ -2468,7 +2484,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         FilesFacade brokenFf = new TestFilesFacadeImpl() {
             @Override
             public int openRO(LPSZ path) {
-                if (Chars.endsWith(path, "1972-09" + configuration.getAttachPartitionSuffix() + File.separator + "ts.d")) {
+                if (Utf8s.endsWithAscii(path, "1972-09" + configuration.getAttachPartitionSuffix() + File.separator + "ts.d")) {
                     return -1;
                 }
                 return super.openRO(path);
@@ -2488,7 +2504,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
 
             @Override
             public int rename(LPSZ from, LPSZ to) {
-                if (Chars.endsWith(from, "1972-09" + File.separator)) {
+                if (Utf8s.endsWithAscii(from, "1972-09" + File.separator)) {
                     return Files.FILES_RENAME_ERR_OTHER;
                 }
                 return super.rename(from, to);
@@ -2727,11 +2743,11 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
             ParallelCsvFileImporter importer,
             SqlExecutionContext context,
             SqlCompiler compiler,
-            CharSequence tableName,
-            CharSequence inputFileName,
+            String tableName,
+            String inputFileName,
             int partitionBy,
-            CharSequence timestampColumn,
-            CharSequence timestampFormat,
+            String timestampColumn,
+            String timestampFormat,
             boolean forceHeader,
             int expectedCount
     ) throws Exception {

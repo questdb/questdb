@@ -487,7 +487,7 @@ public class InsertTest extends AbstractCairoTest {
 
                 insertOperation.createMethod(sqlExecutionContext);
                 Assert.fail();
-            } catch (WriterOutOfDateException ignored) {
+            } catch (TableReferenceOutOfDateException ignored) {
             }
         });
     }

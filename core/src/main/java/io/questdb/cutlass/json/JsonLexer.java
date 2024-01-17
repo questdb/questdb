@@ -27,6 +27,7 @@ package io.questdb.cutlass.json;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 
 import java.io.Closeable;
 
@@ -309,7 +310,7 @@ public class JsonLexer implements Mutable, Closeable {
     private CharSequence getCharSequence(long lo, long hi, int position) throws JsonException {
         sink.clear();
         if (cacheSize == 0) {
-            if (!Chars.utf8toUtf16(lo, hi - 1, sink)) {
+            if (!Utf8s.utf8ToUtf16(lo, hi - 1, sink)) {
                 throw unsupportedEncoding(position);
             }
         } else {
@@ -325,7 +326,7 @@ public class JsonLexer implements Mutable, Closeable {
         while (p < lim) {
             byte b = Unsafe.getUnsafe().getByte(p);
             if (b < 0) {
-                int len = Chars.utf8DecodeMultiByte(p, lim, b, sink);
+                int len = Utf8s.utf8DecodeMultiByte(p, lim, b, sink);
                 if (len != -1) {
                     p += len;
                 } else {
@@ -342,7 +343,7 @@ public class JsonLexer implements Mutable, Closeable {
                         addToStash(lo, lo + n);
                         assert offset < cacheSize;
                         assert cacheSize <= cacheCapacity;
-                        len = Chars.utf8DecodeMultiByte(cache + offset, cache + cacheSize, b, sink);
+                        len = Utf8s.utf8DecodeMultiByte(cache + offset, cache + cacheSize, b, sink);
                         if (len == -1) {
                             // definitely UTF8 error
                             throw unsupportedEncoding(position);
@@ -363,7 +364,7 @@ public class JsonLexer implements Mutable, Closeable {
         while (p < hi) {
             byte b = Unsafe.getUnsafe().getByte(p);
             if (b < 0) {
-                int len = Chars.utf8DecodeMultiByte(p, hi, b, sink);
+                int len = Utf8s.utf8DecodeMultiByte(p, hi, b, sink);
                 if (len == -1) {
                     throw unsupportedEncoding(position);
                 }

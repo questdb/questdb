@@ -89,6 +89,11 @@ public class StaticOverrides extends Overrides {
     }
 
     @Override
+    public int getGroupByShardingThreshold() {
+        return AbstractCairoTest.groupByShardingThreshold;
+    }
+
+    @Override
     public int getInactiveReaderMaxOpenPartitions() {
         return AbstractCairoTest.maxOpenPartitions;
     }
@@ -116,11 +121,6 @@ public class StaticOverrides extends Overrides {
     @Override
     public int getPageFrameReduceShardCount() {
         return AbstractCairoTest.pageFrameReduceShardCount;
-    }
-
-    @Override
-    public int getQueryCacheEventQueueCapacity() {
-        return AbstractCairoTest.queryCacheEventQueueCapacity;
     }
 
     @Override
@@ -187,12 +187,12 @@ public class StaticOverrides extends Overrides {
         AbstractCairoTest.writerAsyncCommandBusyWaitTimeout = -1;
         AbstractCairoTest.writerAsyncCommandMaxTimeout = -1;
         AbstractCairoTest.pageFrameMaxRows = -1;
+        AbstractCairoTest.groupByShardingThreshold = -1;
         AbstractCairoTest.spinLockTimeout = -1;
         AbstractCairoTest.walTxnNotificationQueueCapacity = -1;
         AbstractCairoTest.snapshotInstanceId = null;
         AbstractCairoTest.snapshotRecoveryEnabled = null;
         AbstractCairoTest.writerCommandQueueCapacity = 4;
-        AbstractCairoTest.queryCacheEventQueueCapacity = -1;
         AbstractCairoTest.pageFrameReduceShardCount = -1;
         AbstractCairoTest.pageFrameReduceQueueCapacity = -1;
         AbstractCairoTest.columnVersionPurgeQueueCapacity = -1;
@@ -260,6 +260,11 @@ public class StaticOverrides extends Overrides {
     }
 
     @Override
+    public void setGroupByShardingThreshold(int groupByShardingThreshold) {
+        AbstractCairoTest.groupByShardingThreshold = groupByShardingThreshold;
+    }
+
+    @Override
     public void setInactiveReaderMaxOpenPartitions(int maxOpenPartitions) {
         AbstractCairoTest.maxOpenPartitions = maxOpenPartitions;
     }
@@ -287,11 +292,6 @@ public class StaticOverrides extends Overrides {
     @Override
     public void setPageFrameReduceShardCount(int pageFrameReduceShardCount) {
         AbstractCairoTest.pageFrameReduceShardCount = pageFrameReduceShardCount;
-    }
-
-    @Override
-    public void setQueryCacheEventQueueCapacity(int queryCacheEventQueueCapacity) {
-        AbstractCairoTest.queryCacheEventQueueCapacity = queryCacheEventQueueCapacity;
     }
 
     @Override

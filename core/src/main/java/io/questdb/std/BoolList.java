@@ -181,7 +181,7 @@ public class BoolList implements Mutable {
      */
     @Override
     public String toString() {
-        CharSink b = Misc.getThreadLocalBuilder();
+        CharSink b = Misc.getThreadLocalSink();
 
         b.put('[');
         for (int i = 0, k = size(); i < k; i++) {

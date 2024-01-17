@@ -448,6 +448,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                     walWriter.commit();
 
                     addColumn(walWriter, "c", ColumnType.INT);
+                    drainWalQueue();
 
                     update("UPDATE " + tableName + " SET b = a");
                     update("UPDATE " + tableName + " SET c = a");
@@ -953,7 +954,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
 
     private void assertMaxUncommittedRows(CharSequence tableName, int expectedMaxUncommittedRows) throws SqlException {
         try (TableReader reader = getReader(tableName)) {
-            assertSql("maxUncommittedRows\n" + expectedMaxUncommittedRows + "\n", "SELECT maxUncommittedRows FROM tables() WHERE name = '" + tableName + "'"
+            assertSql("maxUncommittedRows\n" + expectedMaxUncommittedRows + "\n", "SELECT maxUncommittedRows FROM tables() WHERE table_name = '" + tableName + "'"
             );
             reader.reload();
             assertEquals(expectedMaxUncommittedRows, reader.getMetadata().getMaxUncommittedRows());

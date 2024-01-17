@@ -35,8 +35,8 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import org.jetbrains.annotations.NotNull;
 
 public class FirstFloatGroupByFunction extends FloatFunction implements GroupByFunction, UnaryFunction {
-    private final Function arg;
-    private int valueIndex;
+    protected final Function arg;
+    protected int valueIndex;
 
     public FirstFloatGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
@@ -44,7 +44,7 @@ public class FirstFloatGroupByFunction extends FloatFunction implements GroupByF
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putFloat(this.valueIndex, this.arg.getFloat(record));
+        mapValue.putFloat(valueIndex, arg.getFloat(record));
     }
 
     @Override
@@ -59,7 +59,7 @@ public class FirstFloatGroupByFunction extends FloatFunction implements GroupByF
 
     @Override
     public float getFloat(Record rec) {
-        return rec.getFloat(this.valueIndex);
+        return rec.getFloat(valueIndex);
     }
 
     @Override
@@ -75,7 +75,7 @@ public class FirstFloatGroupByFunction extends FloatFunction implements GroupByF
 
     @Override
     public void setFloat(MapValue mapValue, float value) {
-        mapValue.putFloat(this.valueIndex, value);
+        mapValue.putFloat(valueIndex, value);
     }
 
     @Override

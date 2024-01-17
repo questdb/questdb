@@ -85,8 +85,8 @@ public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
         private final int patternPos;
         private final Function replacement;
         private final int replacementPos;
-        private final StringBufferSink sink = new StringBufferSink();
-        private final StringBufferSink sinkB = new StringBufferSink();
+        private final StringBuilderSink sink = new StringBuilderSink();
+        private final StringBuilderSink sinkB = new StringBuilderSink();
         private final Function value;
         private Matcher matcher;
         private String replacementStr;
@@ -111,7 +111,7 @@ public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
             return getStr(rec, sink);
         }
 
-        public CharSequence getStr(Record rec, StringBufferSink sink) {
+        public CharSequence getStr(Record rec, StringBuilderSink sink) {
             CharSequence cs = value.getStr(rec);
             if (cs == null) {
                 return null;
@@ -180,11 +180,12 @@ public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
         }
     }
 
-    // TODO(puzpuzpuz):
-    //  Get rid of this class in favor of StringSink once we drop support for Java 8 where j.u.r.Matcher
-    //  has no method overloads for StringBuilder.
-    private static class StringBufferSink implements CharSequence {
-        private final StringBuffer buffer = new StringBuffer();
+    private static class StringBuilderSink implements CharSequence {
+//#if jdk.version==8
+//$        private final StringBuffer buffer = new StringBuffer();
+//#else
+        private final StringBuilder buffer = new StringBuilder();
+//#endif
 
         @Override
         public char charAt(int index) {

@@ -35,13 +35,15 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOUnboundedCountDownLatch;
-import io.questdb.mp.Sequence;
 import io.questdb.mp.Worker;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
 import io.questdb.tasks.VectorAggregateTask;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -74,7 +76,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             @Transient ObjList<VectorAggregateFunction> vafList,
             int keyColumnIndexInBase,
             int keyColumnIndexInThisCursor,
-            @Transient IntList symbolTableSkewIndex
+            @Transient @Nullable IntList symbolTableSkewIndex
     ) {
         super(metadata);
         this.workerCount = workerCount;
@@ -144,7 +146,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
         this.vafList.addAll(vafList);
         keyColumnIndex = keyColumnIndexInBase;
-        if (symbolTableSkewIndex.size() > 0) {
+        if (symbolTableSkewIndex != null && symbolTableSkewIndex.size() > 0) {
             final IntList symbolSkew = new IntList(symbolTableSkewIndex.size());
             symbolSkew.addAll(symbolTableSkewIndex);
             cursor = new RostiRecordCursor(pRosti, columnSkewIndex, symbolSkew);
@@ -191,6 +193,11 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public boolean usesCompiledFilter() {
         return base.usesCompiledFilter();
+    }
+
+    @Override
+    public boolean usesIndex() {
+        return base.usesIndex();
     }
 
     private static void addOffsets(
@@ -244,6 +251,19 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             record = new RostiRecord();
             this.symbolTableSkewIndex = symbolTableSkewIndex;
             this.columnSkewIndex = columnSkewIndex;
+        }
+
+        @Override
+        public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
+            if (!isRostiBuilt) {
+                buildRosti();
+                isRostiBuilt = true;
+            }
+
+            if (count < size) {
+                counter.add(size - count);
+                count = size;
+            }
         }
 
         @Override
@@ -325,7 +345,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         private void buildRosti() {
             final int vafCount = vafList.size();
             final RingQueue<VectorAggregateTask> queue = bus.getVectorAggregateQueue();
-            final Sequence pubSeq = bus.getVectorAggregatePubSeq();
+            final MPSequence pubSeq = bus.getVectorAggregatePubSeq();
 
             sharedCircuitBreaker.reset();
             entryPool.clear();
@@ -369,8 +389,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                         final int columnSizeShr = frame.getColumnShiftBits(pageColIndex);
                         final long valueAddressSize = frame.getPageSize(pageColIndex);
 
-                        long seq = pubSeq.next();
-                        if (seq < 0) {
+                        long cursor = pubSeq.next();
+                        if (cursor < 0) {
                             circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
                             // acquire the slot and DIY the func
                             final int slot = perWorkerLocks.acquireSlot(workerId, circuitBreaker);
@@ -420,8 +440,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                                         sharedCircuitBreaker
                                 );
                             }
-                            queue.get(seq).entry = entry;
-                            pubSeq.done(seq);
+                            queue.get(cursor).entry = entry;
+                            pubSeq.done(cursor);
                         }
                         total++;
                     }
@@ -448,7 +468,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                         reclaimed,
                         workerId,
                         doneLatch,
-                        LOG,
                         circuitBreaker,
                         sharedCircuitBreaker
                 );
@@ -593,7 +612,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             }
 
             @Override
-            public void getLong256(int col, CharSink sink) {
+            public void getLong256(int col, CharSinkBase<?> sink) {
                 Long256Impl v = (Long256Impl) getLong256A(col);
                 v.toSink(sink);
             }

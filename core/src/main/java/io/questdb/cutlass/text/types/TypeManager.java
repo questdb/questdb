@@ -34,25 +34,38 @@ import io.questdb.std.str.DirectCharSink;
 import org.jetbrains.annotations.TestOnly;
 
 public class TypeManager implements Mutable {
+    // includes all available probes, including non-default like geohash
+    private final int allProbeCount;
+    // holds all type adapters used to validate file against types/formats supplied by user or fetched from existing table metadata
+    private final ObjList<TypeAdapter> allTypeAdapterList = new ObjList<>();
     private final ObjectPool<DateUtf8Adapter> dateAdapterPool;
+    // includes default probes only to avoid type clashes during detection (e.g. short vs int)
+    private final int defaultProbeCount;
+
+    // holds type adapters used for type detection, doesn't include types that might clash (e.g. byte, short or geohash)
+    private final ObjList<TypeAdapter> defaultTypeAdapterList = new ObjList<>();
     private final SymbolAdapter indexedSymbolAdapter;
     private final InputFormatConfiguration inputFormatConfiguration;
     private final SymbolAdapter notIndexedSymbolAdapter;
-    private final int probeCount;
     private final StringAdapter stringAdapter;
     private final ObjectPool<TimestampAdapter> timestampAdapterPool;
     private final ObjectPool<TimestampUtf8Adapter> timestampUtf8AdapterPool;
-    private final ObjList<TypeAdapter> typeAdapterList = new ObjList<>();
+    private final IntList typeAdapterIndexList = new IntList();
+    /* maps all column type to type adapter indexes (probe indexes) in this type manager*/
+    private final IntObjHashMap<IntList> typeAdapterIndexMap = new IntObjHashMap<>();
     private final IntObjHashMap<ObjList<TypeAdapter>> typeAdapterMap = new IntObjHashMap<>();
 
-    public TypeManager(TextConfiguration configuration, DirectCharSink utf8Sink) {
-        this.dateAdapterPool = new ObjectPool<>(() -> new DateUtf8Adapter(utf8Sink), configuration.getDateAdapterPoolCapacity());
-        this.timestampUtf8AdapterPool = new ObjectPool<>(() -> new TimestampUtf8Adapter(utf8Sink), configuration.getTimestampAdapterPoolCapacity());
+    public TypeManager(
+            TextConfiguration configuration,
+            DirectCharSink utf16Sink
+    ) {
+        this.dateAdapterPool = new ObjectPool<>(() -> new DateUtf8Adapter(utf16Sink), configuration.getDateAdapterPoolCapacity());
+        this.timestampUtf8AdapterPool = new ObjectPool<>(() -> new TimestampUtf8Adapter(utf16Sink), configuration.getTimestampAdapterPoolCapacity());
         this.timestampAdapterPool = new ObjectPool<>(TimestampAdapter::new, configuration.getTimestampAdapterPoolCapacity());
         this.inputFormatConfiguration = configuration.getInputFormatConfiguration();
-        this.stringAdapter = new StringAdapter(utf8Sink);
-        this.indexedSymbolAdapter = new SymbolAdapter(utf8Sink, true);
-        this.notIndexedSymbolAdapter = new SymbolAdapter(utf8Sink, false);
+        this.stringAdapter = new StringAdapter(utf16Sink);
+        this.indexedSymbolAdapter = new SymbolAdapter(utf16Sink, true);
+        this.notIndexedSymbolAdapter = new SymbolAdapter(utf16Sink, false);
         addDefaultAdapters();
 
         final ObjList<DateFormat> dateFormats = inputFormatConfiguration.getDateFormats();
@@ -61,15 +74,15 @@ public class TypeManager implements Mutable {
         final IntList dateUtf8Flags = inputFormatConfiguration.getDateUtf8Flags();
         for (int i = 0, n = dateFormats.size(); i < n; i++) {
             if (dateUtf8Flags.getQuick(i) == 1) {
-                typeAdapterList.add(
-                        new DateUtf8Adapter(utf8Sink).of(
+                defaultTypeAdapterList.add(
+                        new DateUtf8Adapter(utf16Sink).of(
                                 datePatterns.getQuick(i),
                                 dateFormats.getQuick(i),
                                 dateLocales.getQuick(i)
                         )
                 );
             } else {
-                typeAdapterList.add(
+                defaultTypeAdapterList.add(
                         new DateAdapter().of(
                                 datePatterns.getQuick(i),
                                 dateFormats.getQuick(i),
@@ -85,33 +98,46 @@ public class TypeManager implements Mutable {
         final IntList timestampUtf8Flags = inputFormatConfiguration.getTimestampUtf8Flags();
         for (int i = 0, n = timestampFormats.size(); i < n; i++) {
             if (timestampUtf8Flags.getQuick(i) == 1) {
-                typeAdapterList.add(new TimestampUtf8Adapter(utf8Sink).of(
+                defaultTypeAdapterList.add(new TimestampUtf8Adapter(utf16Sink).of(
                         timestampPatterns.getQuick(i),
                         timestampFormats.getQuick(i),
                         timestampLocales.getQuick(i))
                 );
             } else {
-                typeAdapterList.add(new TimestampAdapter().of(
+                defaultTypeAdapterList.add(new TimestampAdapter().of(
                         timestampPatterns.getQuick(i),
                         timestampFormats.getQuick(i),
                         timestampLocales.getQuick(i))
                 );
             }
         }
-        this.probeCount = typeAdapterList.size();
+        this.defaultProbeCount = defaultTypeAdapterList.size();
+        allTypeAdapterList.addAll(defaultTypeAdapterList);
+        addNonDefaultAdapters(utf16Sink);
+        this.allProbeCount = allTypeAdapterList.size();
 
         // index adapters by type
-        for (int i = 0; i < probeCount; i++) {
-            TypeAdapter typeAdapter = typeAdapterList.getQuick(i);
+        for (int i = 0; i < allProbeCount; i++) {
+            TypeAdapter typeAdapter = allTypeAdapterList.getQuick(i);
             ObjList<TypeAdapter> mappedList;
+            IntList probeIndexList;
             int index = typeAdapterMap.keyIndex(typeAdapter.getType());
+            int probeIndex = typeAdapterIndexMap.keyIndex(typeAdapter.getType());
             if (index > -1) {
                 mappedList = new ObjList<>();
+                probeIndexList = new IntList();
                 typeAdapterMap.putAt(index, typeAdapter.getType(), mappedList);
+                typeAdapterIndexMap.putAt(probeIndex, typeAdapter.getType(), probeIndexList);
             } else {
                 mappedList = typeAdapterMap.valueAt(index);
+                probeIndexList = typeAdapterIndexMap.valueAt(index);
             }
             mappedList.add(typeAdapter);
+            probeIndexList.add(i);
+        }
+
+        for (int i = 0; i < allProbeCount; i++) {
+            typeAdapterIndexList.add(i);
         }
     }
 
@@ -124,7 +150,19 @@ public class TypeManager implements Mutable {
 
     @TestOnly
     public ObjList<TypeAdapter> getAllAdapters() {
-        return typeAdapterList;
+        return allTypeAdapterList;
+    }
+
+    public int getAllProbeCount() {
+        return allProbeCount;
+    }
+
+    public int getDefaultProbeCount() {
+        return defaultProbeCount;
+    }
+
+    public ObjList<TypeAdapter> getDefaultTypeAdapterList() {
+        return defaultTypeAdapterList;
     }
 
     public InputFormatConfiguration getInputFormatConfiguration() {
@@ -132,11 +170,7 @@ public class TypeManager implements Mutable {
     }
 
     public TypeAdapter getProbe(int index) {
-        return typeAdapterList.getQuick(index);
-    }
-
-    public int getProbeCount() {
-        return probeCount;
+        return allTypeAdapterList.getQuick(index);
     }
 
     public TypeAdapter getTypeAdapter(int columnType) {
@@ -180,8 +214,12 @@ public class TypeManager implements Mutable {
         }
     }
 
-    public ObjList<TypeAdapter> getTypeAdapterList() {
-        return typeAdapterList;
+    public IntList getTypeAdapterIndexList() {
+        return typeAdapterIndexList;
+    }
+
+    public IntObjHashMap<IntList> getTypeAdapterIndexMap() {
+        return typeAdapterIndexMap;
     }
 
     public IntObjHashMap<ObjList<TypeAdapter>> getTypeAdapterMap() {
@@ -209,13 +247,54 @@ public class TypeManager implements Mutable {
     }
 
     private void addDefaultAdapters() {
-        typeAdapterList.add(getTypeAdapter(ColumnType.CHAR));
-        typeAdapterList.add(getTypeAdapter(ColumnType.INT));
-        typeAdapterList.add(getTypeAdapter(ColumnType.LONG));
-        typeAdapterList.add(getTypeAdapter(ColumnType.DOUBLE));
-        typeAdapterList.add(getTypeAdapter(ColumnType.BOOLEAN));
-        typeAdapterList.add(getTypeAdapter(ColumnType.LONG256));
-        typeAdapterList.add(getTypeAdapter(ColumnType.UUID));
-        typeAdapterList.add(getTypeAdapter(ColumnType.IPv4));
+        defaultTypeAdapterList.add(getTypeAdapter(ColumnType.CHAR));
+        defaultTypeAdapterList.add(getTypeAdapter(ColumnType.INT));
+        defaultTypeAdapterList.add(getTypeAdapter(ColumnType.LONG));
+        defaultTypeAdapterList.add(getTypeAdapter(ColumnType.DOUBLE));
+        defaultTypeAdapterList.add(getTypeAdapter(ColumnType.BOOLEAN));
+        defaultTypeAdapterList.add(getTypeAdapter(ColumnType.LONG256));
+        defaultTypeAdapterList.add(getTypeAdapter(ColumnType.UUID));
+        defaultTypeAdapterList.add(getTypeAdapter(ColumnType.IPv4));
+    }
+
+    private void addNonDefaultAdapters(DirectCharSink utf16Sink) {
+        allTypeAdapterList.add(getTypeAdapter(ColumnType.BYTE));
+        allTypeAdapterList.add(getTypeAdapter(ColumnType.SHORT));
+        allTypeAdapterList.add(getTypeAdapter(ColumnType.FLOAT));
+
+        for (int b = 1; b <= ColumnType.GEOLONG_MAX_BITS; b++) {
+            int type = ColumnType.getGeoHashTypeWithBits(b);
+            GeoHashAdapter adapter = GeoHashAdapter.getInstance(type);
+            allTypeAdapterList.add(adapter);
+        }
+
+        // add timestamp formats as date formats
+        final ObjList<DateLocale> timestampLocales = inputFormatConfiguration.getTimestampLocales();
+        final ObjList<String> timestampPatterns = inputFormatConfiguration.getTimestampPatterns();
+        final IntList timestampUtf8Flags = inputFormatConfiguration.getTimestampUtf8Flags();
+        for (int i = 0, n = timestampPatterns.size(); i < n; i++) {
+            String pattern = timestampPatterns.getQuick(i);
+
+            // skip patterns containing micros or nanos, millis are fine
+            if (pattern.contains("U") || pattern.contains("N")) {
+                continue;
+            }
+
+            DateFormat dateFormat = inputFormatConfiguration.getDateFormatFactory().get(pattern);
+
+            if (timestampUtf8Flags.getQuick(i) == 1) {
+                allTypeAdapterList.add(new DateUtf8Adapter(utf16Sink).of(
+                        pattern,
+                        dateFormat,
+                        timestampLocales.getQuick(i))
+                );
+            } else {
+                allTypeAdapterList.add(new DateAdapter().of(
+                        pattern,
+                        dateFormat,
+                        timestampLocales.getQuick(i))
+                );
+            }
+        }
     }
 }

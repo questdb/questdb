@@ -26,7 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.ObjList;
-import io.questdb.std.Sinkable;
+import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.TestOnly;
 
@@ -60,6 +60,8 @@ public interface PlanSink {
     @TestOnly
     StringSink getSink();
 
+    boolean getUseBaseMetadata();
+
     PlanSink meta(CharSequence name);
 
     void of(RecordCursorFactory factory, SqlExecutionContext executionContext);
@@ -67,6 +69,8 @@ public interface PlanSink {
     PlanSink optAttr(CharSequence name, Sinkable value);
 
     PlanSink optAttr(CharSequence name, Plannable value);
+
+    PlanSink optAttr(CharSequence name, Plannable value, boolean useBaseMetadata);
 
     PlanSink optAttr(CharSequence name, ObjList<? extends Plannable> value, boolean useBaseMetadata);
 
@@ -79,6 +83,8 @@ public interface PlanSink {
     PlanSink putColumnName(int columnIdx);
 
     PlanSink type(CharSequence type);
+
+    void useBaseMetadata(boolean b);
 
     PlanSink val(ObjList<?> list);
 

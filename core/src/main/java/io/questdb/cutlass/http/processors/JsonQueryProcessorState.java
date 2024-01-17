@@ -25,13 +25,13 @@
 package io.questdb.cutlass.http.processors;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cutlass.http.HttpChunkedResponseSocket;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpRequestHeader;
-import io.questdb.cutlass.text.TextUtil;
 import io.questdb.cutlass.text.Utf8Exception;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -42,11 +42,13 @@ import io.questdb.mp.SCSequence;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.*;
-import io.questdb.std.str.CharSink;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 
 import java.io.Closeable;
+
+import static io.questdb.cutlass.http.HttpConstants.*;
 
 public class JsonQueryProcessorState implements Mutable, Closeable {
     public static final String HIDDEN = "hidden";
@@ -57,21 +59,25 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     static final int QUERY_RECORD_PREFIX = 9;
     static final int QUERY_RECORD_START = 4;
     static final int QUERY_RECORD_SUFFIX = 6;
-    static final int QUERY_SETUP_FIRST_RECORD = 8;
+    static final int QUERY_SEND_RECORDS_LOOP = 8;
+    static final int QUERY_SETUP_FIRST_RECORD = 0;
     static final int QUERY_SUFFIX = 7;
     private static final Log LOG = LogFactory.getLog(JsonQueryProcessorState.class);
     private final ObjList<String> columnNames = new ObjList<>();
     private final IntList columnSkewList = new IntList();
     private final IntList columnTypesAndFlags = new IntList();
     private final StringSink columnsQueryParameter = new StringSink();
+    private final RecordCursor.Counter counter = new RecordCursor.Counter();
     private final int doubleScale;
     private final SCSequence eventSubSequence = new SCSequence();
     private final int floatScale;
     private final HttpConnectionContext httpConnectionContext;
+    private final CharSequence keepAliveHeader;
     private final NanosecondClock nanosecondClock;
     private final StringSink query = new StringSink();
     private final ObjList<StateResumeAction> resumeActions = new ObjList<>();
     private final long statementTimeout;
+    private SqlExecutionCircuitBreaker circuitBreaker;
     private int columnCount;
     private int columnIndex;
     private long compilerNanos;
@@ -79,6 +85,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private long count;
     private boolean countRows = false;
     private RecordCursor cursor;
+    private boolean cursorHasRows;
     private long executeStartNanos;
     private boolean explain = false;
     private boolean noMeta = false;
@@ -86,7 +93,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private boolean pausedQuery = false;
     private boolean queryCacheable = false;
     private boolean queryJitCompiled = false;
-    private int queryState = QUERY_PREFIX;
+    private int queryState = QUERY_SETUP_FIRST_RECORD;
     private int queryTimestampIndex;
     private short queryType;
     private boolean quoteLargeNum = false;
@@ -102,13 +109,14 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             HttpConnectionContext httpConnectionContext,
             NanosecondClock nanosecondClock,
             int floatScale,
-            int doubleScale
-    ) {
+            int doubleScale,
+            CharSequence keepAliveHeader) {
         this.httpConnectionContext = httpConnectionContext;
+        resumeActions.extendAndSet(QUERY_SETUP_FIRST_RECORD, this::onSetupFirstRecord);
         resumeActions.extendAndSet(QUERY_PREFIX, this::onQueryPrefix);
         resumeActions.extendAndSet(QUERY_METADATA, this::onQueryMetadata);
         resumeActions.extendAndSet(QUERY_METADATA_SUFFIX, this::onQueryMetadataSuffix);
-        resumeActions.extendAndSet(QUERY_SETUP_FIRST_RECORD, this::doFirstRecordLoop);
+        resumeActions.extendAndSet(QUERY_SEND_RECORDS_LOOP, this::onSendRecordsLoop);
         resumeActions.extendAndSet(QUERY_RECORD_PREFIX, this::onQueryRecordPrefix);
         resumeActions.extendAndSet(QUERY_RECORD, this::onQueryRecord);
         resumeActions.extendAndSet(QUERY_RECORD_SUFFIX, this::onQueryRecordSuffix);
@@ -118,6 +126,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         this.floatScale = floatScale;
         this.doubleScale = doubleScale;
         this.statementTimeout = httpConnectionContext.getRequestHeader().getStatementTimeout();
+        this.keepAliveHeader = keepAliveHeader;
     }
 
     @Override
@@ -128,6 +137,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         columnNames.clear();
         queryTimestampIndex = -1;
         cursor = Misc.free(cursor);
+        circuitBreaker = null;
         record = null;
         if (recordCursorFactory != null) {
             if (queryCacheable) {
@@ -139,7 +149,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         }
         query.clear();
         columnsQueryParameter.clear();
-        queryState = QUERY_PREFIX;
+        queryState = QUERY_SETUP_FIRST_RECORD;
         columnIndex = 0;
         countRows = false;
         explain = false;
@@ -151,6 +161,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         operationFuture = Misc.free(operationFuture);
         skip = 0;
         count = 0;
+        counter.clear();
         stop = 0;
         containsSecret = false;
     }
@@ -159,26 +170,30 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     public void close() {
         cursor = Misc.free(cursor);
         recordCursorFactory = Misc.free(recordCursorFactory);
+        circuitBreaker = null;
         freeAsyncOperation();
     }
 
     public void configure(
             HttpRequestHeader request,
-            DirectByteCharSequence query,
+            DirectUtf8Sequence query,
             long skip,
             long stop
     ) throws Utf8Exception {
         this.query.clear();
-        TextUtil.utf8ToUtf16(query.getLo(), query.getHi(), this.query);
+        if (!Utf8s.utf8ToUtf16(query.lo(), query.hi(), this.query)) {
+            throw Utf8Exception.INSTANCE;
+        }
         this.skip = skip;
         this.stop = stop;
         count = 0L;
-        noMeta = Chars.equalsNc("true", request.getUrlParam("nm"));
-        countRows = Chars.equalsNc("true", request.getUrlParam("count"));
-        timings = Chars.equalsNc("true", request.getUrlParam("timings"));
-        explain = Chars.equalsNc("true", request.getUrlParam("explain"));
-        quoteLargeNum = Chars.equalsNc("true", request.getUrlParam("quoteLargeNum"))
-                || Chars.equalsNc("con", request.getUrlParam("src"));
+        counter.clear();
+        noMeta = Utf8s.equalsNcAscii("true", request.getUrlParam(URL_PARAM_NM));
+        countRows = Utf8s.equalsNcAscii("true", request.getUrlParam(URL_PARAM_COUNT));
+        timings = Utf8s.equalsNcAscii("true", request.getUrlParam(URL_PARAM_TIMINGS));
+        explain = Utf8s.equalsNcAscii("true", request.getUrlParam(URL_PARAM_EXPLAIN));
+        quoteLargeNum = Utf8s.equalsNcAscii("true", request.getUrlParam(URL_PARAM_QUOTE_LARGE_NUM))
+                || Utf8s.equalsNcAscii("con", request.getUrlParam(URL_PARAM_SRC));
     }
 
     public LogRecord critical() {
@@ -299,25 +314,25 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     private static void putByteValue(HttpChunkedResponseSocket socket, Record rec, int col) {
-        socket.put(rec.getByte(col));
+        socket.put((int) rec.getByte(col));
     }
 
     private static void putCharValue(HttpChunkedResponseSocket socket, Record rec, int col) {
         char c = rec.getChar(col);
         if (c == 0) {
-            socket.put("\"\"");
+            socket.putAscii("\"\"");
         } else {
-            socket.put('"').putUtf8(c).put('"');
+            socket.putAscii('"').put(c).putAscii('"');
         }
     }
 
     private static void putDateValue(HttpChunkedResponseSocket socket, Record rec, int col) {
         final long d = rec.getDate(col);
         if (d == Long.MIN_VALUE) {
-            socket.put("null");
+            socket.putAscii("null");
             return;
         }
-        socket.put('"').putISODateMillis(d).put('"');
+        socket.putAscii('"').putISODateMillis(d).putAscii('"');
     }
 
     private static void putGeoHashStringByteValue(HttpChunkedResponseSocket socket, Record rec, int col, int bitFlags) {
@@ -343,35 +358,35 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private static void putIPv4Value(HttpChunkedResponseSocket socket, Record rec, int col) {
         final int i = rec.getIPv4(col);
         if (i == Numbers.IPv4_NULL) {
-            socket.put("null");
+            socket.putAscii("null");
         } else {
-            socket.put('"');
+            socket.putAscii('"');
             Numbers.intToIPv4Sink(socket, i);
-            socket.put('"');
+            socket.putAscii('"');
         }
     }
 
     private static void putIntValue(HttpChunkedResponseSocket socket, Record rec, int col) {
         final int i = rec.getInt(col);
         if (i == Integer.MIN_VALUE) {
-            socket.put("null");
+            socket.putAscii("null");
         } else {
-            Numbers.append(socket, i);
+            socket.put(i);
         }
     }
 
     private static void putLong256Value(HttpChunkedResponseSocket socket, Record rec, int col) {
-        socket.put('"');
+        socket.putAscii('"');
         rec.getLong256(col, socket);
-        socket.put('"');
+        socket.putAscii('"');
     }
 
     private static void putLongValue(HttpChunkedResponseSocket socket, Record rec, int col, boolean quoteLargeNum) {
         final long l = rec.getLong(col);
         if (l == Long.MIN_VALUE) {
-            socket.put("null");
+            socket.putAscii("null");
         } else if (quoteLargeNum) {
-            socket.put('"').put(l).put('"');
+            socket.putAscii('"').put(l).putAscii('"');
         } else {
             socket.put(l);
         }
@@ -389,11 +404,11 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         putStringOrNull(socket, rec.getStr(col));
     }
 
-    private static void putStringOrNull(CharSink r, CharSequence str) {
+    private static void putStringOrNull(HttpChunkedResponseSocket socket, CharSequence str) {
         if (str == null) {
-            r.put("null");
+            socket.putAscii("null");
         } else {
-            r.encodeUtf8AndQuote(str);
+            socket.putQuoted(str);
         }
     }
 
@@ -404,22 +419,22 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private static void putTimestampValue(HttpChunkedResponseSocket socket, Record rec, int col) {
         final long t = rec.getTimestamp(col);
         if (t == Long.MIN_VALUE) {
-            socket.put("null");
+            socket.putAscii("null");
             return;
         }
-        socket.put('"').putISODate(t).put('"');
+        socket.putAscii('"').putISODate(t).putAscii('"');
     }
 
     private static void putUuidValue(HttpChunkedResponseSocket socket, Record rec, int col) {
         long lo = rec.getLong128Lo(col);
         long hi = rec.getLong128Hi(col);
         if (Uuid.isNull(lo, hi)) {
-            socket.put("null");
+            socket.putAscii("null");
             return;
         }
-        socket.put('"');
+        socket.putAscii('"');
         Numbers.appendUuid(lo, hi, socket);
-        socket.put('"');
+        socket.putAscii('"');
     }
 
     private boolean addColumnToOutput(
@@ -431,11 +446,11 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         if (start == hi) {
             info().$("empty column in list '").$(columnNames).$('\'').$();
             HttpChunkedResponseSocket socket = getHttpConnectionContext().getChunkedResponseSocket();
-            JsonQueryProcessor.header(socket, "", 400);
-            socket.put('{')
-                    .putQuoted("query").put(':').encodeUtf8AndQuote(query).put(',')
-                    .putQuoted("error").put(':').putQuoted("empty column in list")
-                    .put('}');
+            JsonQueryProcessor.header(socket, getHttpConnectionContext(), "", 400);
+            socket.putAscii('{')
+                    .putAsciiQuoted("query").putAscii(':').putQuoted(query).putAscii(',')
+                    .putAsciiQuoted("error").putAscii(':').putAsciiQuoted("empty column in list")
+                    .putAscii('}');
             socket.sendChunk(true);
             return true;
         }
@@ -444,11 +459,11 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         if (columnIndex == RecordMetadata.COLUMN_NOT_FOUND) {
             info().$("invalid column in list: '").$(columnNames, start, hi).$('\'').$();
             HttpChunkedResponseSocket socket = getHttpConnectionContext().getChunkedResponseSocket();
-            JsonQueryProcessor.header(socket, "", 400);
-            socket.put('{')
-                    .putQuoted("query").put(':').encodeUtf8AndQuote(query).put(',')
-                    .putQuoted("error").put(':').put('\'').put("invalid column in list: ").put(columnNames, start, hi).put('\'')
-                    .put('}');
+            JsonQueryProcessor.header(socket, getHttpConnectionContext(), "", 400);
+            socket.putAscii('{')
+                    .putAsciiQuoted("query").putAscii(':').putQuoted(query).putAscii(',')
+                    .putAsciiQuoted("error").putAscii(':').putAscii('\'').putAscii("invalid column in list: ").put(columnNames, start, hi).putAscii('\'')
+                    .putAscii('}');
             socket.sendChunk(true);
             return true;
         }
@@ -464,17 +479,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         this.columnTypesAndFlags.add(columnType);
         this.columnTypesAndFlags.add(flags);
         this.columnNames.add(metadata.getColumnName(i));
-    }
-
-    private void doFirstRecordLoop(
-            HttpChunkedResponseSocket socket,
-            int columnCount
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        if (onQuerySetupFirstRecord()) {
-            doRecordFetchLoop(socket, columnCount);
-        } else {
-            doQuerySuffix(socket, columnCount);
-        }
     }
 
     private void doNextRecordLoop(
@@ -493,22 +497,22 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         for (; columnIndex < columnCount; columnIndex++) {
             socket.bookmark();
             if (columnIndex > 0) {
-                socket.put(',');
+                socket.putAscii(',');
             }
             int columnType = columnTypesAndFlags.getQuick(2 * columnIndex);
-            socket.put('{')
-                    .putQuoted("name").put(':').encodeUtf8AndQuote(columnNames.getQuick(columnIndex))
-                    .put(',')
-                    .putQuoted("type").put(':').putQuoted(ColumnType.nameOf(columnType == ColumnType.NULL ? ColumnType.STRING : columnType))
-                    .put('}');
+            socket.putAscii('{')
+                    .putAsciiQuoted("name").putAscii(':').putQuoted(columnNames.getQuick(columnIndex))
+                    .putAscii(',')
+                    .putAsciiQuoted("type").putAscii(':').putAsciiQuoted(ColumnType.nameOf(columnType == ColumnType.NULL ? ColumnType.STRING : columnType))
+                    .putAscii('}');
         }
     }
 
     private void doQueryMetadataSuffix(HttpChunkedResponseSocket socket) {
         queryState = QUERY_METADATA_SUFFIX;
         socket.bookmark();
-        socket.put("],\"timestamp\":").put(queryTimestampIndex);
-        socket.put(",\"dataset\":[");
+        socket.putAscii("],\"timestamp\":").put(queryTimestampIndex);
+        socket.putAscii(",\"dataset\":[");
     }
 
     private boolean doQueryNextRecord() {
@@ -525,13 +529,13 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private boolean doQueryPrefix(HttpChunkedResponseSocket socket) {
         if (noMeta) {
             socket.bookmark();
-            socket.put('{').putQuoted("dataset").put(":[");
+            socket.putAscii('{').putAsciiQuoted("dataset").putAscii(":[");
             return false;
         }
         socket.bookmark();
-        socket.put('{')
-                .putQuoted("query").put(':').encodeUtf8AndQuote(query)
-                .put(',').putQuoted("columns").put(':').put('[');
+        socket.putAscii('{')
+                .putAsciiQuoted("query").putAscii(':').putQuoted(query).putAscii(',')
+                .putAsciiQuoted("columns").putAscii(':').putAscii('[');
         columnIndex = 0;
         return true;
     }
@@ -541,7 +545,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         for (; columnIndex < columnCount; columnIndex++) {
             socket.bookmark();
             if (columnIndex > 0) {
-                socket.put(',');
+                socket.putAscii(',');
             }
 
             int columnIdx = columnSkewList.size() > 0 ? columnSkewList.getQuick(columnIndex) : columnIndex;
@@ -605,7 +609,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     putRecValue(socket);
                     break;
                 case ColumnType.NULL:
-                    socket.put("null");
+                    socket.putAscii("null");
                     break;
                 case ColumnType.LONG128:
                     throw new UnsupportedOperationException();
@@ -617,7 +621,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     break;
                 default:
                     assert false : "Not supported type in output " + ColumnType.nameOf(columnType);
-                    socket.put("null"); // To make JSON valid
+                    socket.putAscii("null"); // To make JSON valid
                     break;
             }
         }
@@ -627,17 +631,18 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         queryState = QUERY_RECORD_PREFIX;
         socket.bookmark();
         if (count > skip) {
-            socket.put(',');
+            socket.putAscii(',');
         }
-        socket.put('[');
+        socket.putAscii('[');
         columnIndex = 0;
         count++;
+        counter.inc();
     }
 
     private void doQueryRecordSuffix(HttpChunkedResponseSocket socket) {
         queryState = QUERY_RECORD_SUFFIX;
         socket.bookmark();
-        socket.put(']');
+        socket.putAscii(']');
     }
 
     private void doQuerySuffix(
@@ -648,28 +653,30 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         // closing cursor here guarantees that by the time http client finished reading response the table
         // is released
         cursor = Misc.free(cursor);
+        circuitBreaker = null;
         queryState = QUERY_SUFFIX;
         if (count > -1) {
             logTimings();
             socket.bookmark();
-            socket.put(']');
-            socket.put(',').putQuoted("count").put(':').put(count);
+            socket.putAscii(']');
+            socket.putAscii(',').putAsciiQuoted("count").putAscii(':').put(count);
             if (timings) {
-                socket.put(',').putQuoted("timings").put(':')
-                        .put('{')
-                        .putQuoted("compiler").put(':').put(compilerNanos).put(',')
-                        .putQuoted("execute").put(':').put(nanosecondClock.getTicks() - executeStartNanos).put(',')
-                        .putQuoted("count").put(':').put(recordCountNanos)
-                        .put('}');
+                socket.putAscii(',').putAsciiQuoted("timings").putAscii(':')
+                        .putAscii('{')
+                        .putAsciiQuoted("compiler").putAscii(':').put(compilerNanos).putAscii(',')
+                        .putAsciiQuoted("execute").putAscii(':').put(nanosecondClock.getTicks() - executeStartNanos).putAscii(',')
+                        .putAsciiQuoted("count").putAscii(':').put(recordCountNanos)
+                        .putAscii('}');
             }
             if (explain) {
-                socket.put(',').putQuoted("explain").put(':')
-                        .put('{')
-                        .putQuoted("jitCompiled").put(':').put(queryJitCompiled ? "true" : "false")
-                        .put('}');
+                socket.putAscii(',').putAsciiQuoted("explain").putAscii(':')
+                        .putAscii('{')
+                        .putAsciiQuoted("jitCompiled").putAscii(':').putAscii(queryJitCompiled ? "true" : "false")
+                        .putAscii('}');
             }
-            socket.put('}');
+            socket.putAscii('}');
             count = -1;
+            counter.set(-1);
             socket.sendChunk(true);
             return;
         }
@@ -698,14 +705,16 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             // this is the tail end of the cursor
             // we don't need to read records, just round up record count
             final RecordCursor cursor = this.cursor;
-            final long size = cursor.size();
+            long size = cursor.size();
+            counter.clear();
             if (size < 0) {
-                LOG.info().$("counting").$();
-                long count = 1;
-                while (cursor.hasNext()) {
-                    count++;
+                try {
+                    cursor.calculateSize(circuitBreaker, counter);
+                    this.count += counter.get() + 1;
+                } catch (DataUnavailableException e) {
+                    this.count += counter.get();
+                    throw e;
                 }
-                this.count += count;
             } else {
                 this.count = size;
             }
@@ -726,7 +735,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             int columnCount
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         doQueryMetadataSuffix(socket);
-        doFirstRecordLoop(socket, columnCount);
+        onSendRecordsLoop(socket, columnCount);
     }
 
     private void onQueryPrefix(HttpChunkedResponseSocket socket, int columnCount) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -734,7 +743,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             doQueryMetadata(socket, columnCount);
             doQueryMetadataSuffix(socket);
         }
-        doFirstRecordLoop(socket, columnCount);
+        onSendRecordsLoop(socket, columnCount);
     }
 
     private void onQueryRecord(HttpChunkedResponseSocket socket, int columnCount) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -758,31 +767,37 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         doNextRecordLoop(socket, columnCount);
     }
 
-    private boolean onQuerySetupFirstRecord() {
-        if (skip > 0) {
-            final RecordCursor cursor = this.cursor;
-            long target = skip + 1;
-            while (target > 0 && cursor.hasNext()) {
-                target--;
-            }
-            if (target > 0) {
-                return false;
-            }
-            count = skip;
+    private void onSendRecordsLoop(
+            HttpChunkedResponseSocket socket,
+            int columnCount
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        if (cursorHasRows) {
+            doRecordFetchLoop(socket, columnCount);
         } else {
-            if (!cursor.hasNext()) {
-                return false;
-            }
+            doQuerySuffix(socket, columnCount);
         }
+    }
 
-        columnIndex = 0;
-        record = cursor.getRecord();
-        return true;
+    private void onSetupFirstRecord(HttpChunkedResponseSocket socket, int columnCount) throws PeerIsSlowToReadException, PeerDisconnectedException {
+        // If there is an exception in the first record setup then upper layers will handle it:
+        // Either they will send error or pause execution on DataUnavailableException
+        setupFirstRecord();
+        // If we make it past setup then we optimistically send HTTP 200 header.
+        // There is still a risk of exception while iterating over cursor, but there is not much we can do about it.
+        // Trying to access the first record before sending HTTP headers will already catch many errors.
+        // So we can send an appropriate HTTP error code. If there is an error past the first record then
+        // we have no choice but to disconnect :( - because we have already sent HTTP 200 header.
+
+        // We assume HTTP headers will always fit into our buffer => a state transition to the QUERY_PREFIX
+        // before actually sending HTTP headers. Otherwise, we would have to make JsonQueryProcessor.header() idempotent
+        queryState = QUERY_PREFIX;
+        JsonQueryProcessor.header(socket, getHttpConnectionContext(), keepAliveHeader, 200);
+        onQueryPrefix(socket, columnCount);
     }
 
     private void putBinValue(HttpChunkedResponseSocket socket) {
-        socket.put('[');
-        socket.put(']');
+        socket.putAscii('[');
+        socket.putAscii(']');
     }
 
     private void putDoubleValue(HttpChunkedResponseSocket socket, Record rec, int col) {
@@ -793,17 +808,56 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         socket.put(rec.getFloat(col), floatScale);
     }
 
+    private void setupFirstRecord() {
+        if (skip > 0) {
+            final RecordCursor cursor = this.cursor;
+            long target = skip + 1;
+            while (target > 0 && cursor.hasNext()) {
+                target--;
+            }
+            if (target > 0) {
+                cursorHasRows = false;
+                return;
+            }
+            count = skip;
+            counter.set(skip);
+        } else {
+            if (!cursor.hasNext()) {
+                cursorHasRows = false;
+                return;
+            }
+        }
+
+        columnIndex = 0;
+        record = cursor.getRecord();
+        cursorHasRows = true;
+    }
+
     static void prepareExceptionJson(
             HttpChunkedResponseSocket socket,
             int position,
             CharSequence message,
             CharSequence query
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        socket.put('{')
-                .putQuoted("query").put(':').encodeUtf8AndQuote(query == null ? "" : query).put(',')
-                .putQuoted("error").put(':').encodeUtf8AndQuote(message).put(',')
-                .putQuoted("position").put(':').put(position)
-                .put('}');
+        socket.putAscii('{')
+                .putAsciiQuoted("query").putAscii(':').putQuoted(query == null ? "" : query).putAscii(',')
+                .putAsciiQuoted("error").putAscii(':').putQuoted(message).putAscii(',')
+                .putAsciiQuoted("position").putAscii(':').put(position)
+                .putAscii('}');
+        socket.sendChunk(true);
+    }
+
+    static void prepareExceptionJson(
+            HttpChunkedResponseSocket socket,
+            int position,
+            CharSequence message,
+            DirectUtf8Sequence query
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        socket.putAscii('{')
+                .putAsciiQuoted("query").putAscii(':').putQuoted(query == null ? "" : query.asAsciiCharSequence()).putAscii(',')
+                .putAsciiQuoted("error").putAscii(':').putQuoted(message).putAscii(',')
+                .putAsciiQuoted("position").putAscii(':').put(position)
+                .putAscii('}');
         socket.sendChunk(true);
     }
 
@@ -826,23 +880,22 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         // we do a no-op loop over the cursor to calculate the total row count and pre-touch only slows things down.
         sqlExecutionContext.setColumnPreTouchEnabled(stop == Long.MAX_VALUE);
         this.cursor = factory.getCursor(sqlExecutionContext);
+        this.circuitBreaker = sqlExecutionContext.getCircuitBreaker();
         final RecordMetadata metadata = factory.getMetadata();
         this.queryTimestampIndex = metadata.getTimestampIndex();
         HttpRequestHeader header = httpConnectionContext.getRequestHeader();
-        DirectByteCharSequence columnNames = header.getUrlParam("cols");
+        DirectUtf8Sequence columnNames = header.getUrlParam(URL_PARAM_COLS);
         int columnCount;
         columnSkewList.clear();
         if (columnNames != null) {
             columnsQueryParameter.clear();
-            try {
-                TextUtil.utf8ToUtf16(columnNames.getLo(), columnNames.getHi(), columnsQueryParameter);
-            } catch (Utf8Exception e) {
+            if (!Utf8s.utf8ToUtf16(columnNames.lo(), columnNames.hi(), columnsQueryParameter)) {
                 info().$("utf8 error when decoding column list '").$(columnNames).$('\'').$();
                 HttpChunkedResponseSocket socket = getHttpConnectionContext().getChunkedResponseSocket();
-                JsonQueryProcessor.header(socket, "", 400);
-                socket.put('{')
-                        .putQuoted("error").put(':').putQuoted("utf8 error in column list")
-                        .put('}');
+                JsonQueryProcessor.header(socket, getHttpConnectionContext(), "", 400);
+                socket.putAscii('{')
+                        .putAsciiQuoted("error").putAscii(':').putAsciiQuoted("utf8 error in column list")
+                        .putAscii('}');
                 socket.sendChunk(true);
                 return false;
             }

@@ -98,6 +98,11 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public boolean usesIndex() {
+        return base.usesIndex();
+    }
+
+    @Override
     protected void _close() {
         rowIndexes.close();
         cursor.close();

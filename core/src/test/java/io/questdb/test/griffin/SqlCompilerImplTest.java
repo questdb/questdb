@@ -32,12 +32,15 @@ import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
+import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.QueryModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -45,6 +48,7 @@ import org.junit.*;
 
 import java.io.File;
 import java.util.Arrays;
+import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
@@ -62,6 +66,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     public static void setUpStatic() throws Exception {
         path = new Path();
         AbstractCairoTest.setUpStatic();
+        configOverrideSqlWindowMaxRecursion(512);
     }
 
     @AfterClass
@@ -153,6 +158,103 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "select * from a " +
                         "join b on a.ts = b.ts and a.i - b.i and b.i - a.i"
         );
+    }
+
+    @Test
+    public void testACBadOffsetParsing() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table trips (a double, b int, ts timestamp ) timestamp(ts)");
+
+            String prefix = "select avg(a) over(partition by b order by ts ";
+
+            for (String frameType : Arrays.asList("rows ", "range")) {
+                String queryPrefix = prefix + frameType;
+
+                assertFailure(
+                        60,
+                        "integer expression expected",
+                        queryPrefix + " between preceding and current row)  from trips"
+                );
+
+                assertFailure(
+                        77,
+                        "integer expression expected",
+                        queryPrefix + " between 10 preceding and preceding)  from trips"
+                );
+
+                assertFailure(
+                        77,
+                        "integer expression expected",
+                        queryPrefix + " between 10 preceding and following)  from trips"
+                );
+
+                assertFailure(
+                        52,
+                        "integer expression expected",
+                        queryPrefix + " preceding)  from trips"
+                );
+
+                assertFailure(
+                        52,
+                        "integer expression expected",
+                        queryPrefix + " following)  from trips"
+                );
+
+                assertFailure(
+                        59,
+                        "Expression expected",
+                        queryPrefix + " between)  from trips"
+                );
+
+                assertFailure(
+                        60,
+                        "integer expression expected",
+                        queryPrefix + " between '' preceding and current row)  from trips"
+                );
+
+                assertFailure(
+                        60,
+                        "integer expression expected",
+                        queryPrefix + " between null preceding and current row)  from trips"
+                );
+
+                assertFailure(
+                        60,
+                        "integer expression expected",
+                        queryPrefix + " between #012 preceding and current row)  from trips"
+                );
+
+                assertFailure(
+                        60,
+                        "integer expression expected",
+                        queryPrefix + " between 30d preceding and current row)  from trips"
+                );
+
+                assertFailure(
+                        77,
+                        "integer expression expected",
+                        queryPrefix + " between 30 preceding and 10f preceding)  from trips"
+                );
+
+                assertFailure(
+                        77,
+                        "integer expression expected",
+                        queryPrefix + " between 30 preceding and 10.1f preceding)  from trips"
+                );
+
+                assertFailure(
+                        77,
+                        "invalid constant",
+                        queryPrefix + " between 30 preceding and 10g preceding)  from trips"
+                );
+
+                assertFailure(
+                        52,
+                        "integer expression expected",
+                        queryPrefix + " 10.2f preceding)  from trips"
+                );
+            }
+        });
     }
 
     @Test
@@ -2413,7 +2515,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             @Override
             public int openRO(LPSZ name) {
                 int fd = super.openRO(name);
-                if (Chars.endsWith(name, Files.SEPARATOR + TableUtils.META_FILE_NAME)) {
+                if (Utf8s.endsWithAscii(name, Files.SEPARATOR + TableUtils.META_FILE_NAME)) {
                     metaFd = fd;
                 }
                 return fd;
@@ -2422,7 +2524,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             @Override
             public int openRW(LPSZ name, long opts) {
                 int fd = super.openRW(name, opts);
-                if (Chars.endsWith(name, Files.SEPARATOR + TableUtils.TXN_FILE_NAME)) {
+                if (Utf8s.endsWithAscii(name, Files.SEPARATOR + TableUtils.TXN_FILE_NAME)) {
                     txnFd = fd;
                 }
                 return fd;
@@ -2433,7 +2535,6 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 ff,
                 sql,
                 "Could not create table. See log for details"
-
         );
     }
 
@@ -2474,14 +2575,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         AbstractCairoTest.ff = new TestFilesFacadeImpl() {
             @Override
             public boolean isDirOrSoftLinkDir(LPSZ path) {
-                if (Chars.equals(path, target)) {
+                if (Utf8s.equalsAscii(target, path)) {
                     return false;
                 }
                 return super.exists(path);
             }
 
             @Override
-            public boolean rmdir(Path name) {
+            public boolean rmdir(Path name, boolean lazy) {
                 Assert.assertEquals(target + Files.SEPARATOR, name.toString());
                 return false;
             }
@@ -2948,8 +3049,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                     "partition by DAY WITH maxUncommittedRows=10000, o3MaxLag=250ms;"
                     );
 
-                    try (TableWriter writer = getWriter("x");
-                         TableMetadata tableMetadata = engine.getMetadata(writer.getTableToken())) {
+                    try (
+                            TableWriter writer = getWriter("x");
+                            TableMetadata tableMetadata = engine.getLegacyMetadata(writer.getTableToken())
+                    ) {
                         sink.clear();
                         tableMetadata.toJson(sink);
                         TestUtils.assertEquals(
@@ -3016,6 +3119,30 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 0,
                 "empty query"
         );
+    }
+
+    @Test
+    public void testEvaluateLargeAddIntExpression() throws Exception {
+        StringSink sink = Misc.getThreadLocalSink();
+        sink.put("select ");
+        for (int i = 0; i < 100; i++) {
+            sink.put("(rnd_uuid4()::int) + ");
+        }
+        sink.put(" null ");
+        String query = sink.toString();
+
+        assertSql("column\n\n", query);
+
+        sink.clear();
+        sink.put("select ");
+        for (int i = 0; i < 100; i++) {
+            sink.put("x + ");
+        }
+        sink.put(" 1 from tab");
+        query = sink.toString();
+
+        ddl("create table tab as (select 1::int x) ");
+        assertSql("column\n101\n", query);
     }
 
     @Test
@@ -3086,16 +3213,20 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         ddl("create table tab ( timestamp timestamp, col string, id symbol index) timestamp(timestamp);");
         insert("insert into tab values (1, 'foo', 'A'), (2, 'bah', 'B'), (3, 'dee', 'C')");
 
-        assertSql("timestamp\tcol\tid\n" +
+        assertSql(
+                "timestamp\tcol\tid\n" +
                         "1970-01-01T00:00:00.000003Z\tdee\tC\n",
                 "SELECT * FROM tab\n" +
-                        "WHERE substring(col, 1, 3) NOT IN ('foo', 'bah')\n");
+                        "WHERE substring(col, 1, 3) NOT IN ('foo', 'bah')\n"
+        );
 
-        assertSql("timestamp\tcol\tid\n" +
+        assertSql(
+                "timestamp\tcol\tid\n" +
                         "1970-01-01T00:00:00.000003Z\tdee\tC\n",
                 "SELECT * FROM tab\n" +
                         "WHERE substring(col, 1, 3) NOT IN ('foo', 'bah')\n" +
-                        "LATEST ON timestamp PARTITION BY id");
+                        "LATEST ON timestamp PARTITION BY id"
+        );
     }
 
     @Test
@@ -3119,7 +3250,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testGeoLiteralBinLength() throws Exception {
         assertMemoryLeak(() -> {
-            StringSink bitString = Misc.getThreadLocalBuilder();
+            StringSink bitString = Misc.getThreadLocalSink();
             bitString.put(Chars.repeat("0", 59)).put('1');
             assertSql("geobits\n" +
                     "000000000001\n", "select ##" + bitString + " as geobits");
@@ -3223,6 +3354,20 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testInLongTypeMismatch() throws Exception {
         assertFailure(43, "cannot compare LONG with type DOUBLE", "select 1 from long_sequence(1) where x in (123.456)");
+    }
+
+    @Test
+    public void testInShortByteIntLong() throws Exception {
+        ddl("CREATE table abc (aa long, a int, b short, c byte)");
+        insert("insert into abc values(1, 1, 1, 1)");
+        assertSql("aa\ta\tb\tc\n" +
+                "1\t1\t1\t1\n", "select * from abc where aa in (1, 2)");
+        assertSql("aa\ta\tb\tc\n" +
+                "1\t1\t1\t1\n", "select * from abc where a in (1, 2)");
+        assertSql("aa\ta\tb\tc\n" +
+                "1\t1\t1\t1\n", "select * from abc where b in (1, 2)");
+        assertSql("aa\ta\tb\tc\n" +
+                "1\t1\t1\t1\n", "select * from abc where c in (1, 2)");
     }
 
     @Test
@@ -4437,6 +4582,21 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLargeQueryDoesntHitIncreasedMaxRecursionLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table trades (symbol symbol, timestamp timestamp) timestamp(timestamp)");
+
+            assertSql(
+                    "symbol\ttimestamp\tsymbol1\ttimestamp1\tsymbol11\ttimestamp11\tsymbol111\ttimestamp111\tsymbol1111\ttimestamp1111\tsymbol11111\ttimestamp11111\tsymbol111111\ttimestamp111111\tsymbol1111111\ttimestamp1111111\tsymbol11111111\ttimestamp11111111\tsymbol111111111\ttimestamp111111111\tsymbol1111111111\ttimestamp1111111111\tsymbol11111111111\ttimestamp11111111111\tsymbol111111111111\ttimestamp111111111111\tsymbol1111111111111\ttimestamp1111111111111\tsymbol11111111111111\ttimestamp11111111111111\tsymbol111111111111111\ttimestamp111111111111111\tsymbol1111111111111111\ttimestamp1111111111111111\tsymbol11111111111111111\ttimestamp11111111111111111\tsymbol111111111111111111\ttimestamp111111111111111111\tsymbol1111111111111111111\ttimestamp1111111111111111111\tsymbol11111111111111111111\ttimestamp11111111111111111111\tsymbol111111111111111111111\ttimestamp111111111111111111111\tsymbol1111111111111111111111\ttimestamp1111111111111111111111\tsymbol11111111111111111111111\ttimestamp11111111111111111111111\tsymbol111111111111111111111111\ttimestamp111111111111111111111111\tsymbol1111111111111111111111111\ttimestamp1111111111111111111111111\tsymbol11111111111111111111111111\ttimestamp11111111111111111111111111\tsymbol111111111111111111111111111\ttimestamp111111111111111111111111111\tsymbol1111111111111111111111111111\ttimestamp1111111111111111111111111111\tsymbol11111111111111111111111111111\ttimestamp11111111111111111111111111111\tsymbol111111111111111111111111111111\ttimestamp111111111111111111111111111111\tsymbol1111111111111111111111111111111\ttimestamp1111111111111111111111111111111\tsymbol11111111111111111111111111111111\ttimestamp11111111111111111111111111111111\tsymbol111111111111111111111111111111111\ttimestamp111111111111111111111111111111111\tsymbol1111111111111111111111111111111111\ttimestamp1111111111111111111111111111111111\tsymbol11111111111111111111111111111111111\ttimestamp11111111111111111111111111111111111\tsymbol111111111111111111111111111111111111\ttimestamp111111111111111111111111111111111111\tsymbol1111111111111111111111111111111111111\ttimestamp1111111111111111111111111111111111111\tsymbol11111111111111111111111111111111111111\ttimestamp11111111111111111111111111111111111111\tsymbol111111111111111111111111111111111111111\ttimestamp111111111111111111111111111111111111111\tsymbol1111111111111111111111111111111111111111\ttimestamp1111111111111111111111111111111111111111\tsymbol11111111111111111111111111111111111111111\ttimestamp11111111111111111111111111111111111111111\tsymbol111111111111111111111111111111111111111111\ttimestamp111111111111111111111111111111111111111111\n",
+                    "WITH Y AS (SELECT * FROM trades WHERE symbol='BTC-USD')," +
+                            "X AS (SELECT * FROM ((Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol))  " +
+                            "WHERE date_trunc('day', timestamp) = date_trunc('day', timestamp111111111111111111111111111111111111111111))\n" +
+                            "SELECT * FROM X"
+            );
+        });
+    }
+
+    @Test
     public void testLeftJoinPostMetadata() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table tab ( created timestamp, value long ) timestamp(created) ");
@@ -5067,6 +5227,40 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSelectConcurrentDDL() throws Exception {
+        engine.ddl("create table x (a int, b int, c int)", sqlExecutionContext);
+
+        CyclicBarrier barrier = new CyclicBarrier(2);
+        new Thread(() -> {
+            try {
+                while (barrier.getNumberWaiting() == 0) {
+                    ddl("alter table x add column d int", sqlExecutionContext);
+                    ddl("alter table x drop column d", sqlExecutionContext);
+                }
+            } catch (SqlException e) {
+                e.printStackTrace();
+            } finally {
+                try {
+                    barrier.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    e.printStackTrace();
+                } catch (BrokenBarrierException e) {
+                    e.printStackTrace();
+                }
+            }
+        }).start();
+
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            for (int i = 0; i < 20_000; i++) {
+                Misc.freeIfCloseable(compiler.compile("select * from x", sqlExecutionContext).getRecordCursorFactory());
+            }
+        } finally {
+            barrier.await();
+        }
+    }
+
+    @Test
     public void testSelectDateInListContainingNull() throws Exception {
         assertQuery("c\n1970-01-01T00:00:00.001Z\n\n",
                 "select * from x where c in (cast(1 as date), cast(null as date))",
@@ -5447,6 +5641,46 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnionAllWithFirstSubQueryUsingDistinct() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table ict ( event int );");
+            insert("insert into ict select x::int from long_sequence(1000)");
+
+            assertWithReorder(
+                    "avg\n" +
+                            "500.5\n",
+                    "union",
+                    "select avg(event) from ict ",
+                    "select distinct avg(event) from ict"
+            );
+
+            assertWithReorder(
+                    "avg\n" +
+                            "500.5\n" +
+                            "500.5\n",
+                    "union all",
+                    "select avg(event) from ict ",
+                    "select distinct avg(event) from ict"
+            );
+
+            assertWithReorder(
+                    "avg\n" +
+                            "500.5\n",
+                    "intersect",
+                    "select avg(event) from ict ",
+                    "select distinct avg(event) from ict"
+            );
+
+            assertWithReorder(
+                    "avg\n",
+                    "except",
+                    "select avg(event) from ict ",
+                    "select distinct avg(event) from ict"
+            );
+        });
+    }
+
+    @Test
     public void testUseExtensionPoints() {
         try (SqlCompilerWrapper compiler = new SqlCompilerWrapper(engine)) {
 
@@ -5461,7 +5695,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 compiler.compile("show something", sqlExecutionContext);
                 Assert.fail();
             } catch (Exception e) {
-                Assert.assertTrue(compiler.unknownShowStatementCalled);
+                Assert.assertTrue(compiler.parseShowSqlCalled);
             }
 
             try {
@@ -5477,6 +5711,21 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             } catch (Exception e) {
                 Assert.assertTrue(compiler.unknownDropStatementCalled);
             }
+
+            try {
+                compiler.compile("drop table hopp", sqlExecutionContext);
+                Assert.fail();
+            } catch (Exception e) {
+                Assert.assertTrue(compiler.dropTableCalled);
+            }
+
+            compiler.dropTableCalled = false;
+            try {
+                compiler.compile("drop table if exists hopp", sqlExecutionContext);
+            } catch (Exception e) {
+                Assert.fail();
+            }
+            Assert.assertTrue(compiler.dropTableCalled);
 
             try {
                 compiler.compile("create table tab ( i int)", sqlExecutionContext);
@@ -5758,6 +6007,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         );
     }
 
+    private void assertWithReorder(String expected, String setOperation, String... subqueries) throws SqlException {
+        assertSql(expected, subqueries[0] + " " + setOperation + " " + subqueries[1]);
+        assertSql(expected, subqueries[1] + " " + setOperation + " " + subqueries[0]);
+    }
+
     private void selectDoubleInListWithBindVariable() throws Exception {
         assertQuery("c\n1.0\n",
                 "select * from x where c in (:val)",
@@ -5810,14 +6064,27 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     static class SqlCompilerWrapper extends SqlCompilerImpl {
+        boolean dropTableCalled;
+        boolean parseShowSqlCalled;
         boolean unknownAlterStatementCalled;
         boolean unknownDropColumnSuffixCalled;
         boolean unknownDropStatementCalled;
         boolean unknownDropTableSuffixCalled;
-        boolean unknownShowStatementCalled;
 
         SqlCompilerWrapper(CairoEngine engine) {
             super(engine);
+        }
+
+        @Override
+        public int parseShowSql(GenericLexer lexer, QueryModel model, CharSequence tok, ObjectPool<ExpressionNode> expressionNodePool) throws SqlException {
+            parseShowSqlCalled = true;
+            return super.parseShowSql(lexer, model, tok, expressionNodePool);
+        }
+
+        @Override
+        protected boolean dropTable(SqlExecutionContext executionContext, CharSequence tableName, int tableNamePosition, boolean hasIfExists) throws SqlException {
+            dropTableCalled = true;
+            return super.dropTable(executionContext, tableName, tableNamePosition, hasIfExists);
         }
 
         @Override
@@ -5843,12 +6110,5 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             unknownDropTableSuffixCalled = true;
             super.unknownDropTableSuffix(executionContext, tok, tableName, tableNamePosition, hasIfExists);
         }
-
-        @Override
-        protected RecordCursorFactory unknownShowStatement(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
-            unknownShowStatementCalled = true;
-            return super.unknownShowStatement(executionContext, tok);
-        }
     }
-
 }

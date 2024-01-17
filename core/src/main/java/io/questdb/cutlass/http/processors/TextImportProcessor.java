@@ -32,21 +32,25 @@ import io.questdb.cutlass.text.Atomicity;
 import io.questdb.cutlass.text.TextException;
 import io.questdb.cutlass.text.TextLoadWarning;
 import io.questdb.cutlass.text.TextLoader;
+import io.questdb.cutlass.text.schema2.Column;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.*;
-import io.questdb.std.str.CharSink;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.*;
 
 import java.io.Closeable;
 
+import static io.questdb.cutlass.http.HttpConstants.*;
 import static io.questdb.cutlass.text.TextLoadWarning.*;
 
 public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartContentListener, Closeable {
+
     public static final CharSequence CONTENT_TYPE_TEXT = "text/plain; charset=utf-8";
+    public static final String SCHEMA_V1 = "schema";
+    public static final String SCHEMA_V2 = "schemaV2";
     static final int MESSAGE_UNKNOWN = 3;
     static final int RESPONSE_PREFIX = 1;
     private static final CharSequence CONTENT_TYPE_JSON = "application/json; charset=utf-8";
@@ -58,16 +62,20 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     private static final int MESSAGE_DATA = 2;
     private static final int MESSAGE_SCHEMA = 1;
     private static final String OVERRIDDEN_FROM_TABLE = "From Table";
+    private static final Utf8String PARTITION_BY_NONE = new Utf8String("NONE");
     private static final int RESPONSE_COLUMN = 2;
     private static final int RESPONSE_COMPLETE = 6;
     private static final int RESPONSE_DONE = 5;
-    private static final int RESPONSE_SUFFIX = 3;
+    private static final int RESPONSE_MAPPING = 3;
+    private static final int RESPONSE_SUFFIX = 4;
     private static final int TO_STRING_COL1_PAD = 15;
     private static final int TO_STRING_COL2_PAD = 50;
     private static final int TO_STRING_COL3_PAD = 15;
     private static final int TO_STRING_COL4_PAD = 7;
     private static final int TO_STRING_COL5_PAD = 12;
-    private static final LowerCaseCharSequenceIntHashMap atomicityParamMap = new LowerCaseCharSequenceIntHashMap();
+    private static final int ERROR_LINE_PAD = TO_STRING_COL1_PAD + TO_STRING_COL2_PAD + TO_STRING_COL3_PAD + TO_STRING_COL4_PAD + TO_STRING_COL5_PAD + 12;
+    //TODO: should be lowercase!
+    private static final Utf8SequenceIntHashMap atomicityParamMap = new Utf8SequenceIntHashMap();
     private final CairoEngine engine;
     private HttpConnectionContext transientContext;
     private TextImportProcessorState transientState;
@@ -100,7 +108,9 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
             } catch (EntryUnavailableException e) {
                 throw RetryOperationException.INSTANCE;
             } catch (TextException | CairoException | CairoError e) {
+                LOG.error().$(e.getFlyweightMessage()).$();
                 transientState.textLoader.setIgnoreEverything(true);
+                transientState.errorMessage = e.getFlyweightMessage().toString();
                 sendResponse(transientContext);
             }
         }
@@ -108,37 +118,37 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
 
     @Override
     public void onPartBegin(HttpRequestHeader partHeader) {
-        final CharSequence contentDisposition = partHeader.getContentDispositionName();
+        final DirectUtf8Sequence contentDisposition = partHeader.getContentDispositionName();
         LOG.debug().$("part begin [name=").$(contentDisposition).$(']').$();
-        if (Chars.equalsNc("data", contentDisposition)) {
-
+        if (Utf8s.equalsNcAscii("data", contentDisposition)) {
             final HttpRequestHeader rh = transientContext.getRequestHeader();
-            CharSequence tableName = rh.getUrlParam("tableName");
-            if (Chars.isBlank(tableName)) {
+            DirectUtf8Sequence tableName = rh.getUrlParam(URL_PARAM_TABLE_NAME);
+            if (Utf8s.isBlank(tableName)) {
                 // "name" query parameter name is handled for backward compatibility
-                tableName = rh.getUrlParam("name");
-                if (Chars.isBlank(tableName)) {
+                tableName = rh.getUrlParam(URL_PARAM_NAME);
+                if (Utf8s.isBlank(tableName)) {
                     tableName = partHeader.getContentDispositionFilename();
 
-                    if (Chars.isBlank(tableName)) {
+                    if (Utf8s.isBlank(tableName)) {
                         throwHttpException("no file name given");
                     }
                 }
             }
 
-            final CharSequence partitionByColumnName = rh.getUrlParam("partitionBy");
+
+            Utf8Sequence partitionByColumnName = rh.getUrlParam(URL_PARAM_PARTITION_BY);
             final int partitionBy;
-            if (Chars.isBlank(partitionByColumnName)) {
+            if (Utf8s.isBlank(partitionByColumnName)) {
                 partitionBy = PartitionBy.NONE;
             } else {
-                partitionBy = PartitionBy.fromString(partitionByColumnName);
+                partitionBy = PartitionBy.fromUtf8String(partitionByColumnName);
                 if (partitionBy == -1) {
                     throwHttpException("invalid partitionBy");
                 }
             }
 
-            final CharSequence timestampColumnName = rh.getUrlParam("timestamp");
-            final boolean isTimestampColumnNameBlank = Chars.isBlank(timestampColumnName);
+            DirectUtf8Sequence timestampColumnName = rh.getUrlParam(URL_PARAM_TIMESTAMP);
+            final boolean isTimestampColumnNameBlank = Utf8s.isBlank(timestampColumnName);
             if (PartitionBy.isPartitioned(partitionBy) && isTimestampColumnNameBlank) {
                 throwHttpException("when specifying partitionBy you must also specify timestamp");
             }
@@ -146,15 +156,15 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
             transientState.analysed = false;
             transientState.textLoader.configureDestination(
                     tableName,
-                    !Chars.equalsIgnoreCaseNc("false", rh.getUrlParam("wal")),
-                    Chars.equalsIgnoreCaseNc("true", rh.getUrlParam("overwrite")),
-                    getAtomicity(rh.getUrlParam("atomicity")),
+                    !Utf8s.equalsIgnoreCaseNcAscii("false", rh.getUrlParam(URL_PARAM_WAL)),
+                    Utf8s.equalsIgnoreCaseNcAscii("true", rh.getUrlParam(URL_PARAM_OVERWRITE)),
+                    getAtomicity(rh.getUrlParam(URL_PARAM_ATOMICITY)),
                     partitionBy,
                     isTimestampColumnNameBlank ? null : timestampColumnName,
                     null
             );
 
-            CharSequence o3MaxLagChars = rh.getUrlParam("o3MaxLag");
+            DirectUtf8Sequence o3MaxLagChars = rh.getUrlParam(URL_PARAM_O3_MAX_LAG);
             if (o3MaxLagChars != null) {
                 try {
                     long o3MaxLag = Numbers.parseLong(o3MaxLagChars);
@@ -166,7 +176,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                 }
             }
 
-            CharSequence maxUncommittedRowsChars = rh.getUrlParam("maxUncommittedRows");
+            DirectUtf8Sequence maxUncommittedRowsChars = rh.getUrlParam(URL_PARAM_MAX_UNCOMMITTED_ROWS);
             if (maxUncommittedRowsChars != null) {
                 try {
                     int maxUncommittedRows = Numbers.parseInt(maxUncommittedRowsChars);
@@ -178,27 +188,43 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                 }
             }
 
-            transientState.textLoader.setForceHeaders(Chars.equalsIgnoreCaseNc("true", rh.getUrlParam("forceHeader")));
-            transientState.textLoader.setSkipLinesWithExtraValues(Chars.equalsIgnoreCaseNc("true", rh.getUrlParam("skipLev")));
-            CharSequence delimiter = rh.getUrlParam("delimiter");
-            if (delimiter != null && delimiter.length() == 1) {
-                transientState.textLoader.configureColumnDelimiter((byte) delimiter.charAt(0));
+            boolean forceHeader = Utf8s.equalsIgnoreCaseNcAscii("true", rh.getUrlParam(URL_PARAM_FORCE_HEADER));
+            transientState.textLoader.setForceHeaders(forceHeader);
+            transientState.textLoader.setSkipLinesWithExtraValues(Utf8s.equalsIgnoreCaseNcAscii("true", rh.getUrlParam(URL_PARAM_SKIP_LEV)));
+            DirectUtf8Sequence delimiter = rh.getUrlParam(URL_PARAM_DELIMITER);
+            if (delimiter != null && delimiter.size() == 1) {
+                transientState.textLoader.configureColumnDelimiter(delimiter.byteAt(0));
             }
             transientState.textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
 
-            transientState.forceHeader = Chars.equalsIgnoreCaseNc("true", rh.getUrlParam("forceHeader"));
+            transientState.forceHeader = forceHeader;
             transientState.messagePart = MESSAGE_DATA;
-        } else if (Chars.equalsIgnoreCaseNc("schema", contentDisposition)) {
-            transientState.textLoader.setState(TextLoader.LOAD_JSON_METADATA);
-            transientState.messagePart = MESSAGE_SCHEMA;
         } else {
-            if (partHeader.getContentDisposition() == null) {
-                throwHttpException("'Content-Disposition' multipart header missing'");
+            if (Utf8s.equalsIgnoreCaseNcAscii(SCHEMA_V1, contentDisposition)) {
+                transientState.textLoader.clearSchemas();
+                transientState.textLoader.setState(TextLoader.LOAD_JSON_METADATA);
+                transientState.messagePart = MESSAGE_SCHEMA;
+                transientState.textLoader.setSchemaVersion(1);
+            } else if (Utf8s.equalsIgnoreCaseNcAscii(SCHEMA_V2, contentDisposition)) {
+                transientState.textLoader.clearSchemas();
+                transientState.textLoader.setState(TextLoader.LOAD_JSON_METADATA);
+                transientState.messagePart = MESSAGE_SCHEMA;
+                transientState.textLoader.setSchemaVersion(2);
             } else {
-                throwHttpException("invalid value in 'Content-Disposition' multipart header");
+                if (partHeader.getContentDisposition() == null) {
+                    throwHttpException("'Content-Disposition' multipart header missing'");
+                } else {
+                    throwHttpException("invalid value in 'Content-Disposition' multipart header");
+                }
             }
         }
     }
+
+    // This processor implements HttpMultipartContentListener, methods of which
+    // have neither context nor dispatcher. During "chunk" processing we may need
+    // to send something back to client, or disconnect them. To do that we need
+    // these transient references. resumeRecv() will set them and they will remain
+    // valid during multipart events.
 
     @Override
     public void onPartEnd() throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -212,12 +238,6 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
             throwHttpException(e.getFlyweightMessage());
         }
     }
-
-    // This processor implements HttpMultipartContentListener, methods of which
-    // have neither context nor dispatcher. During "chunk" processing we may need
-    // to send something back to client, or disconnect them. To do that we need
-    // these transient references. resumeRecv() will set them and they will remain
-    // valid during multipart events.
 
     @Override
     public void onRequestComplete(HttpConnectionContext context) {
@@ -248,7 +268,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         doResumeSend(LV.get(context), context.getChunkedResponseSocket());
     }
 
-    private static int getAtomicity(CharSequence name) {
+    private static int getAtomicity(Utf8Sequence name) {
         if (name == null) {
             return Atomicity.SKIP_COL;
         }
@@ -257,34 +277,216 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         return atomicity == -1 ? Atomicity.SKIP_COL : atomicity;
     }
 
-    private static void pad(CharSink b, int w, long value) {
+    private static void pad(Utf8Sink b, int w, long value) {
         int len = (int) Math.log10(value);
         if (len < 0) {
             len = 0;
         }
         replicate(b, ' ', w - len - 1);
         b.put(value);
-        b.put("  |");
+        b.putAscii("  |");
     }
 
-    private static CharSink pad(CharSink b, int w, CharSequence value) {
+    private static Utf8Sink pad(Utf8Sink b, int w, CharSequence value) {
         int pad = value == null ? w : w - value.length();
         replicate(b, ' ', pad);
-
         if (value != null) {
             if (pad < 0) {
-                b.put("...").put(value.subSequence(-pad + 3, value.length()));
+                b.putAscii("...").put(value.subSequence(-pad + 3, value.length()));
             } else {
                 b.put(value);
             }
         }
-
-        b.put("  |");
-
+        b.putAscii("  |");
         return b;
     }
 
-    private static void replicate(CharSink b, char c, int times) {
+    private static Utf8Sink pad(Utf8Sink b, int w, CharSequence value, int from, int to) {
+        to = Math.min(to, value.length());
+
+        int pad = value == null ? w : w - (to - from);
+        replicate(b, ' ', pad);
+        if (value != null) {
+            b.put(value, from, to);
+        }
+        b.putAscii("  |");
+        return b;
+    }
+
+    private static Utf8Sink padRight(Utf8Sink b, int w, CharSequence value, int from, int to) {
+        to = Math.min(to, value.length());
+        b.putAscii("  ");
+        int pad = value == null ? w : w - (to - from);
+        if (value != null) {
+            b.put(value, from, to);
+        }
+        replicate(b, ' ', pad);
+        b.putAscii('|');
+        return b;
+    }
+
+    // add list of errors, e.g. unmapped schema or table columns
+    private static void putErrors(TextImportProcessorState state, HttpChunkedResponseSocket socket) {
+        IntList unmappedSchemaColumnIndexes = state.textLoader.getUnmappedSchemaColumnIndexes();
+        //ObjList<CharSequence> unmappedTableColumns = state.textLoader.getUnmappedTableColumns();
+
+        if (state.errorMessage == null
+                && unmappedSchemaColumnIndexes.size() == 0) {
+            return;
+        }
+
+        sep(socket);
+        socket.putAscii('|');
+        socket.putAscii("  Errors");
+        replicate(socket, ' ', 105);
+        socket.putAscii('|');
+        socket.putEOL();
+        sep(socket);
+
+        putMultiline(socket, state.errorMessage);
+
+        StringSink sink = new StringSink();
+        if (unmappedSchemaColumnIndexes.size() > 0) {
+            sink.clear();
+            sink.put("Unmapped schema columns: ");
+            ObjList<Column> schemaColumnList = state.textLoader.getSchema().getColumnList();
+
+            for (int i = 0, n = unmappedSchemaColumnIndexes.size(); i < n; i++) {
+                Column column = schemaColumnList.getQuick(unmappedSchemaColumnIndexes.getQuick(i));
+
+                int csvColumnIndex = column.getFileColumnIndex();
+                CharSequence csvColumnName = column.getFileColumnName();
+                int csvColumnType = column.getColumnType();
+                CharSequence tableColumnName = column.getTableColumnName();
+
+                if (i > 0) {
+                    sink.put(',');
+                }
+
+                boolean isFirst = true;
+
+                sink.put("[");
+                if (csvColumnIndex > -1) {
+                    if (!isFirst) {
+                        sink.put(',');
+                    }
+                    isFirst = false;
+                    sink.put("csvIndex=").put(csvColumnIndex);
+                }
+                if (csvColumnName != null) {
+                    if (!isFirst) {
+                        sink.put(',');
+                    }
+                    isFirst = false;
+                    sink.put("csvColumnName=").put(csvColumnName);
+                }
+                if (csvColumnType > -1) {
+                    if (!isFirst) {
+                        sink.put(',');
+                    }
+                    isFirst = false;
+                    sink.put("csvColumnType=").put(ColumnType.nameOf(csvColumnType));
+                }
+
+                if (tableColumnName != null) {
+                    if (!isFirst) {
+                        sink.put(',');
+                    }
+                    sink.put("tableColumnName=").put(tableColumnName);
+                }
+                sink.put(']');
+            }
+            putMultiline(socket, sink);
+        }
+        /* unmapped table columns are shown in mapping
+        if (unmappedTableColumns.size() > 0) {
+            sink.clear();
+            sink.put("unmapped table columns = ");
+            for (int i = 0, n = unmappedTableColumns.size(); i < n; i += 2) {
+                if (i > 0) {
+                    sink.put(',');
+                }
+                sink.put("[")
+                        .put("columnName=").put(unmappedTableColumns.getQuick(i))
+                        .put(",columnType=").put(unmappedTableColumns.getQuick(i + 1))
+                        .put(']');
+            }
+
+            putMultiline(socket, sink);
+        }*/
+    }
+
+    // add mapping for all matching columns in format
+    private static void putMapping(TextImportProcessorState state, HttpChunkedResponseSocket socket) {
+        ObjList<TextLoader.CsvColumnMapping> mappingColumns = state.textLoader.getMappingColumns();
+        StringSink sink = new StringSink();
+
+        final int CSV_COL_IDX_PAD = 5;
+        final int CSV_COL_NAME_PAD = 20;
+        final int CSV_COL_TYPE_PAD = 13;
+        final int TABLE_COL_NAME_PAD = 20;
+        final int TABLE_COL_TYPE_PAD = 13;
+        final int INFO_COL_PAD = 25;
+
+        if (mappingColumns.size() > 0) {
+            socket.putAscii('|');
+            pad(socket, CSV_COL_IDX_PAD, "Idx");
+            pad(socket, CSV_COL_NAME_PAD, "Csv name");
+            pad(socket, CSV_COL_TYPE_PAD, "Csv type");
+            pad(socket, TABLE_COL_NAME_PAD, "Table column");
+            pad(socket, TABLE_COL_TYPE_PAD, "Table type");
+            pad(socket, INFO_COL_PAD, "Status");
+            socket.putEOL();
+            sep(socket);
+
+            for (int i = 0, n = mappingColumns.size(); i < n; i++) {
+                socket.putAscii('|');
+
+                sink.clear();
+                TextLoader.CsvColumnMapping column = mappingColumns.getQuick(i);
+                if (column.getCsvColumnIndex() != -1) {
+                    sink.put(column.getCsvColumnIndex());
+                }
+                pad(socket, CSV_COL_IDX_PAD, sink);
+
+                sink.clear();
+                sink.put(column.getCsvColumnName() != null ? column.getCsvColumnName() : "UNKNOWN");
+                pad(socket, CSV_COL_NAME_PAD, sink);
+
+                sink.clear();
+                sink.put(column.getCsvColumnAdapter() != null ? ColumnType.nameOf(column.getCsvColumnAdapter().getType()) : "UNKNOWN");
+                pad(socket, CSV_COL_TYPE_PAD, sink);
+
+                sink.clear();
+                sink.put(column.getTableColumnName() != null ? column.getTableColumnName() : "UNKNOWN");
+                pad(socket, TABLE_COL_NAME_PAD, sink);
+
+                sink.clear();
+                sink.put(ColumnType.nameOf(column.getTableColumnType()));
+                pad(socket, TABLE_COL_TYPE_PAD, sink);
+
+                sink.clear();
+                column.errorsToSink(sink);
+                pad(socket, INFO_COL_PAD, sink);
+
+                socket.putEOL();
+            }
+        }
+    }
+
+    private static void putMultiline(HttpChunkedResponseSocket socket, CharSequence text) {
+        if (text == null) {
+            return;
+        }
+
+        for (int i = 0, n = text.length(); i < n; i += ERROR_LINE_PAD) {
+            socket.putAscii('|');
+            padRight(socket, ERROR_LINE_PAD, text, i, i + ERROR_LINE_PAD - 2);
+            socket.putEOL();
+        }
+    }
+
+    private static void replicate(Utf8Sink b, char c, int times) {
         for (int i = 0; i < times; i++) {
             b.put(c);
         }
@@ -299,33 +501,39 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
             case RESPONSE_PREFIX:
                 long totalRows = completeState.getParsedLineCount();
                 long importedRows = completeState.getWrittenLineCount();
-                socket.put('{')
-                        .putQuoted("status").put(':').putQuoted("OK").put(',')
-                        .putQuoted("location").put(':').encodeUtf8AndQuote(completeState.getTableName()).put(',')
-                        .putQuoted("rowsRejected").put(':').put(totalRows - importedRows + completeState.getErrorLineCount()).put(',')
-                        .putQuoted("rowsImported").put(':').put(importedRows).put(',')
-                        .putQuoted("header").put(':').put(completeState.isHeaderDetected()).put(',')
-                        .putQuoted("partitionBy").put(':').putQuoted(PartitionBy.toString(completeState.getPartitionBy())).put(',');
+                socket.putAscii('{')
+                        .putAsciiQuoted("status").putAscii(':').putAsciiQuoted(state.errorMessage == null ? "OK" : "ERROR").putAscii(',')
+                        .putAsciiQuoted("location").putAscii(':').putQuoted(completeState.getTableName()).putAscii(',')
+                        .putAsciiQuoted("rowsRejected").putAscii(':').put(totalRows - importedRows + completeState.getErrorLineCount()).putAscii(',')
+                        .putAsciiQuoted("rowsImported").putAscii(':').put(importedRows).putAscii(',')
+                        .putAsciiQuoted("header").putAscii(':').put(completeState.isHeaderDetected()).putAscii(',')
+                        .putAsciiQuoted("partitionBy").putAscii(':').putAsciiQuoted(PartitionBy.toString(completeState.getPartitionBy())).putAscii(',');
 
                 final int tsIdx = metadata != null ? metadata.getTimestampIndex() : -1;
                 if (tsIdx != -1) {
-                    socket.putQuoted("timestamp").put(':').encodeUtf8AndQuote(metadata.getColumnName(tsIdx)).put(',');
+                    socket.putAsciiQuoted("timestamp").putAscii(':').putQuoted(metadata.getColumnName(tsIdx)).putAscii(',');
                 }
                 if (completeState.getWarnings() != TextLoadWarning.NONE) {
                     final int warningFlags = completeState.getWarnings();
-                    socket.putQuoted("warnings").put(':').put('[');
+                    socket.putAsciiQuoted("warnings").putAscii(':').putAscii('[');
                     boolean isFirst = true;
                     if ((warningFlags & TextLoadWarning.TIMESTAMP_MISMATCH) != TextLoadWarning.NONE) {
                         isFirst = false;
-                        socket.putQuoted("Existing table timestamp column is used");
+                        socket.putAsciiQuoted("Existing table timestamp column is used");
                     }
                     if ((warningFlags & PARTITION_TYPE_MISMATCH) != TextLoadWarning.NONE) {
-                        if (!isFirst) socket.put(',');
-                        socket.putQuoted("Existing table PartitionBy is used");
+                        if (!isFirst) socket.putAscii(',');
+                        socket.putAsciiQuoted("Existing table PartitionBy is used");
                     }
-                    socket.put(']').put(',');
+                    socket.putAscii(']').putAscii(',');
                 }
-                socket.putQuoted("columns").put(':').put('[');
+                if (state.errorMessage != null) {
+                    socket.putAsciiQuoted("errors").putAscii(':').putAscii('[');
+                    socket.putAsciiQuoted(state.errorMessage);
+                    socket.putAscii(']').putAscii(',');
+                }
+
+                socket.putAsciiQuoted("columns").putAscii(':').putAscii('[');
                 state.responseState = RESPONSE_COLUMN;
                 // fall through
             case RESPONSE_COLUMN:
@@ -334,21 +542,46 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                     for (; state.columnIndex < columnCount; state.columnIndex++) {
                         socket.bookmark();
                         if (state.columnIndex > 0) {
-                            socket.put(',');
+                            socket.putAscii(',');
                         }
-                        socket.put('{').
-                                putQuoted("name").put(':').putQuoted(metadata.getColumnName(state.columnIndex)).put(',').
-                                putQuoted("type").put(':').putQuoted(ColumnType.nameOf(metadata.getColumnType(state.columnIndex))).put(',').
-                                putQuoted("size").put(':').put(ColumnType.sizeOf(metadata.getColumnType(state.columnIndex))).put(',').
-                                putQuoted("errors").put(':').put(errors.getQuick(state.columnIndex));
-                        socket.put('}');
+                        socket.putAscii('{')
+                                .putAsciiQuoted("name").putAscii(':').putQuoted(metadata.getColumnName(state.columnIndex)).putAscii(',')
+                                .putAsciiQuoted("type").putAscii(':').putAsciiQuoted(ColumnType.nameOf(metadata.getColumnType(state.columnIndex))).putAscii(',')
+                                .putAsciiQuoted("size").putAscii(':').put(ColumnType.sizeOf(metadata.getColumnType(state.columnIndex))).putAscii(',')
+                                .putAsciiQuoted("errors").putAscii(':').put(errors.getQuick(state.columnIndex));
+                        socket.putAscii('}');
                     }
+                    //TODO: refactor
+                    if (state.columnIndex == columnCount) {
+                        socket.bookmark();
+                        socket.putAscii(']').putAscii(',');
+                        socket.putAsciiQuoted("mapping").putAscii(':').putAscii('[');
+                        state.columnIndex++;
+                    }
+                } else {
+                    socket.bookmark();
+                    socket.putAscii(']').putAscii(',');
+                    socket.putAsciiQuoted("mapping").putAscii(':').putAscii('[');
                 }
-                state.responseState = RESPONSE_SUFFIX;
+
+                state.responseState = RESPONSE_MAPPING;
+                state.columnIndex = 0;
                 // fall through
+            case RESPONSE_MAPPING:
+                ObjList<TextLoader.CsvColumnMapping> mappingColumns = state.textLoader.getMappingColumns();
+                final int columnCount = mappingColumns.size();
+                for (; state.columnIndex < columnCount; state.columnIndex++) {
+                    socket.bookmark();
+                    if (state.columnIndex > 0) {
+                        socket.putAscii(',');
+                    }
+                    mappingColumns.getQuick(state.columnIndex).toJson(socket);
+                }
+                // fall through
+                state.responseState = RESPONSE_SUFFIX;
             case RESPONSE_SUFFIX:
                 socket.bookmark();
-                socket.put(']').put('}');
+                socket.putAscii(']').putAscii('}');
                 state.responseState = RESPONSE_COMPLETE;
                 socket.sendChunk(true);
                 break;
@@ -369,14 +602,14 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         switch (state.responseState) {
             case RESPONSE_PREFIX:
                 sep(socket);
-                socket.put('|');
+                socket.putAscii('|');
                 pad(socket, TO_STRING_COL1_PAD, "Location:");
                 pad(socket, TO_STRING_COL2_PAD, textLoaderCompletedState.getTableName());
                 pad(socket, TO_STRING_COL3_PAD, "Pattern");
                 pad(socket, TO_STRING_COL4_PAD, "Locale");
-                pad(socket, TO_STRING_COL5_PAD, "Errors").put(Misc.EOL);
+                pad(socket, TO_STRING_COL5_PAD, "Errors").putEOL();
 
-                socket.put('|');
+                socket.putAscii('|');
                 pad(socket, TO_STRING_COL1_PAD, "Partition by");
                 pad(socket, TO_STRING_COL2_PAD, PartitionBy.toString(textLoaderCompletedState.getPartitionBy()));
                 pad(socket, TO_STRING_COL3_PAD, "");
@@ -386,34 +619,35 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                 } else {
                     pad(socket, TO_STRING_COL5_PAD, "");
                 }
-                socket.put(Misc.EOL);
+                socket.putEOL();
 
-                socket.put('|');
+                socket.putAscii('|');
                 pad(socket, TO_STRING_COL1_PAD, "Timestamp");
                 pad(socket, TO_STRING_COL2_PAD, textLoaderCompletedState.getTimestampCol() == null ? "NONE" : textLoaderCompletedState.getTimestampCol());
                 pad(socket, TO_STRING_COL3_PAD, "");
                 pad(socket, TO_STRING_COL4_PAD, "");
+                //TODO: it's unreadable; rework
                 if (hasFlag(textLoaderCompletedState.getWarnings(), TIMESTAMP_MISMATCH)) {
                     pad(socket, TO_STRING_COL5_PAD, OVERRIDDEN_FROM_TABLE);
                 } else {
                     pad(socket, TO_STRING_COL5_PAD, "");
                 }
-                socket.put(Misc.EOL);
+                socket.putEOL();
 
                 sep(socket);
 
-                socket.put('|');
+                socket.putAscii('|');
                 pad(socket, TO_STRING_COL1_PAD, "Rows handled");
                 pad(socket, TO_STRING_COL2_PAD, textLoaderCompletedState.getParsedLineCount() + textLoaderCompletedState.getErrorLineCount());
                 pad(socket, TO_STRING_COL3_PAD, "");
                 pad(socket, TO_STRING_COL4_PAD, "");
-                pad(socket, TO_STRING_COL5_PAD, "").put(Misc.EOL);
-                socket.put('|');
+                pad(socket, TO_STRING_COL5_PAD, "").putEOL();
+                socket.putAscii('|');
                 pad(socket, TO_STRING_COL1_PAD, "Rows imported");
                 pad(socket, TO_STRING_COL2_PAD, textLoaderCompletedState.getWrittenLineCount());
                 pad(socket, TO_STRING_COL3_PAD, "");
                 pad(socket, TO_STRING_COL4_PAD, "");
-                pad(socket, TO_STRING_COL5_PAD, "").put(Misc.EOL);
+                pad(socket, TO_STRING_COL5_PAD, "").putEOL();
                 sep(socket);
 
                 state.responseState = RESPONSE_COLUMN;
@@ -425,25 +659,39 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
 
                     for (; state.columnIndex < columnCount; state.columnIndex++) {
                         socket.bookmark();
-                        socket.put('|');
+                        socket.putAscii('|');
                         pad(socket, TO_STRING_COL1_PAD, state.columnIndex);
                         pad(socket, TO_STRING_COL2_PAD, metadata.getColumnName(state.columnIndex));
                         if (!metadata.isColumnIndexed(state.columnIndex)) {
                             pad(socket, TO_STRING_COL3_PAD + TO_STRING_COL4_PAD + 3, ColumnType.nameOf(metadata.getColumnType(state.columnIndex)));
                         } else {
-                            StringSink sink = Misc.getThreadLocalBuilder();
+                            StringSink sink = Misc.getThreadLocalSink();
                             sink.put("(idx/").put(metadata.getIndexValueBlockCapacity(state.columnIndex)).put(") ");
                             sink.put(ColumnType.nameOf(metadata.getColumnType(state.columnIndex)));
                             pad(socket, TO_STRING_COL3_PAD + TO_STRING_COL4_PAD + 3, sink);
                         }
                         pad(socket, TO_STRING_COL5_PAD, errors.getQuick(state.columnIndex));
-                        socket.put(Misc.EOL);
+                        socket.putEOL();
                     }
                 }
                 state.responseState = RESPONSE_SUFFIX;
                 // fall through
             case RESPONSE_SUFFIX:
                 socket.bookmark();
+                if (metadata != null) {
+                    sep(socket);
+                }
+                putMapping(state, socket);
+
+                if (state.errorMessage != null) {
+                    if (metadata != null) {
+                        sep(socket);
+                    }
+
+                    //putMapping(state, socket);
+                    putErrors(state, socket);
+                }
+
                 sep(socket);
                 state.responseState = RESPONSE_COMPLETE;
                 socket.sendChunk(true);
@@ -457,10 +705,10 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         }
     }
 
-    private static void sep(CharSink b) {
-        b.put('+');
+    private static void sep(Utf8Sink b) {
+        b.putAscii('+');
         replicate(b, '-', TO_STRING_COL1_PAD + TO_STRING_COL2_PAD + TO_STRING_COL3_PAD + TO_STRING_COL4_PAD + TO_STRING_COL5_PAD + 14);
-        b.put("+\r\n");
+        b.putAscii("+\r\n");
     }
 
     private void doResumeSend(
@@ -480,12 +728,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     }
 
     private boolean isJson(HttpConnectionContext transientContext) {
-        return Chars.equalsNc("json", transientContext.getRequestHeader().getUrlParam("fmt"));
-    }
-
-    private void throwHttpException(CharSequence message) {
-        transientState.snapshotStateAndCloseWriter();
-        throw HttpException.instance(message);
+        return Utf8s.equalsNcAscii("json", transientContext.getRequestHeader().getUrlParam(URL_PARAM_FMT));
     }
 
     private void sendResponse(HttpConnectionContext context)
@@ -504,8 +747,13 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         doResumeSend(state, socket);
     }
 
+    private void throwHttpException(CharSequence message) {
+        transientState.snapshotStateAndCloseWriter();
+        throw HttpException.instance(message);
+    }
+
     static {
-        atomicityParamMap.put("skipRow", Atomicity.SKIP_ROW);
-        atomicityParamMap.put("abort", Atomicity.SKIP_ALL);
+        atomicityParamMap.put(new Utf8String("skipRow"), Atomicity.SKIP_ROW);
+        atomicityParamMap.put(new Utf8String("abort"), Atomicity.SKIP_ALL);
     }
 }

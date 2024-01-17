@@ -94,7 +94,6 @@ public class HttpClientMain {
                     System.out.println(System.currentTimeMillis() - t);
                     System.out.println("done: " + i +", chunks: "+chunkCount);
                 }
-
             }
         }
     }

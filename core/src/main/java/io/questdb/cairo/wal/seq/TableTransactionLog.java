@@ -87,15 +87,9 @@ public class TableTransactionLog implements Closeable {
     }
 
     public boolean reload(Path path) {
-        if (txnMem.isOpen()) {
-            long maxTxnInFile = txnMem.getLong(MAX_TXN_OFFSET);
-            if (maxTxnInFile == maxTxn.get()) {
-                return false;
-            }
-            txnMem.close(false);
-            txnMetaMem.close(false);
-            txnMetaMemIndex.close(false);
-        }
+        txnMem.close(false);
+        txnMetaMem.close(false);
+        txnMetaMemIndex.close(false);
         open(path);
         return true;
     }
@@ -107,7 +101,7 @@ public class TableTransactionLog implements Closeable {
     }
 
     private static int openFileRO(final FilesFacade ff, final Path path, final String fileName) {
-        final int rootLen = path.length();
+        final int rootLen = path.size();
         path.concat(fileName).$();
         try {
             return TableUtils.openRO(ff, path, LOG);
@@ -245,7 +239,7 @@ public class TableTransactionLog implements Closeable {
     }
 
     void openFiles(Path path) {
-        final int pathLength = path.length();
+        final int pathLength = path.size();
         openSmallFile(ff, path, pathLength, txnMem, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);
         openSmallFile(ff, path, pathLength, txnMetaMem, TXNLOG_FILE_NAME_META_VAR, MemoryTag.MMAP_TX_LOG);
         openSmallFile(ff, path, pathLength, txnMetaMemIndex, TXNLOG_FILE_NAME_META_INX, MemoryTag.MMAP_TX_LOG);
@@ -324,7 +318,6 @@ public class TableTransactionLog implements Closeable {
                 txnMetaIndexFd = openFileRO(ff, path, TXNLOG_FILE_NAME_META_INX);
                 long txnCount = ff.readNonNegativeLong(txnFd, MAX_TXN_OFFSET);
                 if (txnCount > -1L) {
-
                     long maxStructureVersion = ff.readNonNegativeLong(txnFd, HEADER_SIZE + (txnCount - 1) * RECORD_SIZE + TX_LOG_STRUCTURE_VERSION_OFFSET);
                     if (maxStructureVersion > structureVersionLo) {
                         txnMetaOffset = ff.readNonNegativeLong(txnMetaIndexFd, structureVersionLo * Long.BYTES);
@@ -400,6 +393,19 @@ public class TableTransactionLog implements Closeable {
         }
 
         @Override
+        public boolean extend() {
+            final long newTxnCount = ff.readNonNegativeLong(fd, MAX_TXN_OFFSET);
+            if (newTxnCount > txnCount) {
+                remap(newTxnCount);
+
+                this.txnLo = txn - 1;
+                this.txnOffset -= RECORD_SIZE;
+                return true;
+            }
+            return false;
+        }
+
+        @Override
         public int getSegmentId() {
             return Unsafe.getUnsafe().getInt(address + txnOffset + TX_LOG_SEGMENT_OFFSET);
         }
@@ -439,16 +445,8 @@ public class TableTransactionLog implements Closeable {
         }
 
         @Override
-        public boolean setPosition() {
-            final long newTxnCount = ff.readNonNegativeLong(fd, MAX_TXN_OFFSET);
-            if (newTxnCount > txnCount) {
-                remap(newTxnCount);
-
-                this.txnLo = txn - 1;
-                this.txnOffset -= RECORD_SIZE;
-                return true;
-            }
-            return false;
+        public long getMaxTxn() {
+            return txnCount - 1;
         }
 
         @Override

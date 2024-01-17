@@ -74,7 +74,7 @@ public final class TestUtilsTest extends AbstractCairoTest {
                 RecordCursorFactory factory = select(query);
                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)
         ) {
-            TestUtils.addAllRecordsToMap(cursor, factory.getMetadata(), map);
+            TestUtils.addAllRecordsToMap(sink, cursor, factory.getMetadata(), map);
         }
     }
 }

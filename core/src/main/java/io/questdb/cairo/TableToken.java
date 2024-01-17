@@ -24,44 +24,61 @@
 
 package io.questdb.cairo;
 
-import io.questdb.std.Sinkable;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.GcUtf8String;
+import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 
 public class TableToken implements Sinkable {
     @NotNull
     private final GcUtf8String dirName;
     private final boolean isProtected;
+    private final boolean isSystem;
     private final boolean isWal;
     private final int tableId;
     @NotNull
     private final String tableName;
 
-    public TableToken(@NotNull String tableName, @NotNull String dirName, int tableId, boolean isWal, boolean isProtected) {
-        this(tableName, new GcUtf8String(dirName), tableId, isWal, isProtected);
+    public TableToken(@NotNull String tableName, @NotNull String dirName, int tableId, boolean isWal, boolean isSystem, boolean isProtected) {
+        this(tableName, new GcUtf8String(dirName), tableId, isWal, isSystem, isProtected);
     }
 
-    private TableToken(@NotNull String tableName, @NotNull GcUtf8String dirName, int tableId, boolean isWal, boolean isProtected) {
+    private TableToken(@NotNull String tableName, @NotNull GcUtf8String dirName, int tableId, boolean isWal, boolean isSystem, boolean isProtected) {
         this.tableName = tableName;
         this.dirName = dirName;
         this.tableId = tableId;
         this.isWal = isWal;
+        this.isSystem = isSystem;
         this.isProtected = isProtected;
     }
 
     @Override
     public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
+        if (this == o) {
+            return true;
+        }
+        if (o == null || getClass() != o.getClass()) {
+            return false;
+        }
 
         TableToken that = (TableToken) o;
 
-        if (tableId != that.tableId) return false;
-        if (isWal != that.isWal) return false;
-        if (isProtected != that.isProtected) return false;
-        if (!tableName.equals(that.tableName)) return false;
+        if (tableId != that.tableId) {
+            return false;
+        }
+        if (isWal != that.isWal) {
+            return false;
+        }
+        if (isSystem != that.isSystem) {
+            return false;
+        }
+        if (isProtected != that.isProtected) {
+            return false;
+        }
+        if (!tableName.equals(that.tableName)) {
+            return false;
+        }
         return dirName.equals(that.dirName);
     }
 
@@ -102,17 +119,21 @@ public class TableToken implements Sinkable {
         return isProtected;
     }
 
+    public boolean isSystem() {
+        return isSystem;
+    }
+
     public boolean isWal() {
         return isWal;
     }
 
     public TableToken renamed(String newName) {
-        return new TableToken(newName, dirName, tableId, isWal, isProtected);
+        return new TableToken(newName, dirName, tableId, isWal, isSystem, isProtected);
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        sink.encodeUtf8(tableName);
+    public void toSink(@NotNull CharSinkBase<?> sink) {
+        sink.put(tableName);
     }
 
     @Override
@@ -122,6 +143,7 @@ public class TableToken implements Sinkable {
                 ", dirName=" + dirName +
                 ", tableId=" + tableId +
                 ", isWal=" + isWal +
+                ", isSystem=" + isSystem +
                 '}';
     }
 }

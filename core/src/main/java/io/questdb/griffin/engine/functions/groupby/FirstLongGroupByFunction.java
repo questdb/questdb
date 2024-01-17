@@ -36,8 +36,8 @@ import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 public class FirstLongGroupByFunction extends LongFunction implements GroupByFunction, UnaryFunction {
-    private final Function arg;
-    private int valueIndex;
+    protected final Function arg;
+    protected int valueIndex;
 
     public FirstLongGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
@@ -45,7 +45,7 @@ public class FirstLongGroupByFunction extends LongFunction implements GroupByFun
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putLong(this.valueIndex, this.arg.getLong(record));
+        mapValue.putLong(valueIndex, arg.getLong(record));
     }
 
     @Override
@@ -60,7 +60,7 @@ public class FirstLongGroupByFunction extends LongFunction implements GroupByFun
 
     @Override
     public long getLong(Record rec) {
-        return rec.getLong(this.valueIndex);
+        return rec.getLong(valueIndex);
     }
 
     @Override
@@ -76,7 +76,7 @@ public class FirstLongGroupByFunction extends LongFunction implements GroupByFun
 
     @Override
     public void setLong(MapValue mapValue, long value) {
-        mapValue.putTimestamp(this.valueIndex, value);
+        mapValue.putTimestamp(valueIndex, value);
     }
 
     @Override

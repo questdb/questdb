@@ -54,11 +54,12 @@ public class EqLong256StrFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        final Function arg = args.getQuick(1);
-        if (ColumnType.isNull(arg.getType())) {
-            return new Func(arg);
+        Function leftArg = args.getQuick(0);
+        Function rightArg = args.getQuick(1);
+        if (ColumnType.isNull(rightArg.getType())) {
+            return new Func(leftArg);
         }
-        return DECODER.get().newInstance(args.getQuick(0), arg.getStr(null));
+        return DECODER.get().newInstance(leftArg, rightArg.getStr(null));
     }
 
     private static class Func extends NegatableBooleanFunction implements UnaryFunction {

@@ -68,10 +68,25 @@ public class RetryIODispatcherTest extends AbstractTest {
             "\r\n" +
             "[\r\n" +
             "  {\r\n" +
-            "    \"name\": \"date\",\r\n" +
-            "    \"type\": \"DATE\",\r\n" +
-            "    \"pattern\": \"d MMMM y.\",\r\n" +
-            "    \"locale\": \"ru-RU\"\r\n" +
+            "    \"name\": \"Dispatching_base_num\",\r\n" +
+            "    \"type\": \"STRING\"\r\n" +
+            "  },\r\n" +
+            "  {\r\n" +
+            "    \"name\": \"Pickup_DateTime\",\r\n" +
+            "    \"type\": \"TIMESTAMP\",\r\n" +
+            "    \"pattern\": \"yyyy-MM-dd HH:mm:ss\"\r\n" +
+            "  },\r\n" +
+            "  {\r\n" +
+            "    \"name\": \"DropOff_datetime\",\r\n" +
+            "    \"type\": \"STRING\"\r\n" +
+            "  },\r\n" +
+            "  {\r\n" +
+            "    \"name\": \"PUlocationID\",\r\n" +
+            "    \"type\": \"STRING\"\r\n" +
+            "  },\r\n" +
+            "  {\r\n" +
+            "    \"name\": \"DOlocationID\",\r\n" +
+            "    \"type\": \"STRING\"\r\n" +
             "  }\r\n" +
             "]\r\n" +
             "\r\n" +
@@ -113,7 +128,7 @@ public class RetryIODispatcherTest extends AbstractTest {
             "Transfer-Encoding: chunked\r\n" +
             "Content-Type: text/plain; charset=utf-8\r\n" +
             "\r\n" +
-            "0666\r\n" +
+            "0a0e\r\n" +
             "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
             "|      Location:  |                          fhv_tripdata_2017-02.csv  |        Pattern  | Locale  |      Errors  |\r\n" +
             "|   Partition by  |                                              NONE  |                 |         |              |\r\n" +
@@ -127,6 +142,14 @@ public class RetryIODispatcherTest extends AbstractTest {
             "|              2  |                                  DropOff_datetime  |                   STRING  |           0  |\r\n" +
             "|              3  |                                      PUlocationID  |                   STRING  |           0  |\r\n" +
             "|              4  |                                      DOlocationID  |                   STRING  |           0  |\r\n" +
+            "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+            "|  Idx  |            Csv name  |     Csv type  |        Table column  |   Table type  |                   Status  |\r\n" +
+            "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+            "|    0  |Dispatching_base_num  |       STRING  |Dispatching_base_num  |       STRING  |                       OK  |\r\n" +
+            "|    1  |     Pickup_DateTime  |    TIMESTAMP  |     Pickup_DateTime  |    TIMESTAMP  |                       OK  |\r\n" +
+            "|    2  |    DropOff_datetime  |       STRING  |    DropOff_datetime  |       STRING  |                       OK  |\r\n" +
+            "|    3  |        PUlocationID  |       STRING  |        PUlocationID  |       STRING  |                       OK  |\r\n" +
+            "|    4  |        DOlocationID  |       STRING  |        DOlocationID  |       STRING  |                       OK  |\r\n" +
             "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
             "\r\n" +
             "00\r\n" +

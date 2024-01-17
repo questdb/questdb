@@ -36,6 +36,7 @@ class TextImportProcessorState implements Mutable, Closeable {
     public int columnIndex = 0;
     public TextLoaderCompletedState completeState;
     boolean analysed = false;
+    String errorMessage;
     boolean forceHeader = false;
     long hi;
     boolean json = false;
@@ -58,6 +59,7 @@ class TextImportProcessorState implements Mutable, Closeable {
         json = false;
         state = STATE_OK;
         textLoader.clear();
+        errorMessage = null;
     }
 
     @Override

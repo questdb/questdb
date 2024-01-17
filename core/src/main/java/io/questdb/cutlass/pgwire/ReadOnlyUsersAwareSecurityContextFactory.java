@@ -18,7 +18,7 @@ public final class ReadOnlyUsersAwareSecurityContextFactory implements SecurityC
     }
 
     @Override
-    public SecurityContext getInstance(CharSequence principal, int interfaceId) {
+    public SecurityContext getInstance(CharSequence principal, byte authType, byte interfaceId) {
         switch (interfaceId) {
             case SecurityContextFactory.HTTP:
                 return httpReadOnly ? ReadOnlySecurityContext.INSTANCE : AllowAllSecurityContext.INSTANCE;

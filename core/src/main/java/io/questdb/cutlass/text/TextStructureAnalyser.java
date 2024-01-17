@@ -26,15 +26,14 @@ package io.questdb.cutlass.text;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
+import io.questdb.cutlass.text.schema2.Column;
 import io.questdb.cutlass.text.schema2.SchemaV2;
 import io.questdb.cutlass.text.types.TypeAdapter;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
-import io.questdb.std.str.DirectByteCharSequence;
-import io.questdb.std.str.DirectCharSink;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.*;
 
 import java.io.Closeable;
 
@@ -44,6 +43,8 @@ public class TextStructureAnalyser implements CsvTextLexer.Listener, Mutable, Cl
     private final IntList _histogram = new IntList();
     private final ObjList<CharSequence> columnNames = new ObjList<>();
     private final ObjList<TypeAdapter> columnTypes = new ObjList<>();
+    private final ObjList<ObjList<TypeAdapter>> fieldTypeAdapters = new ObjList<>();
+    private final ObjList<IntList> fieldTypeAdaptersIndexes = new ObjList<>();
     private final SchemaV2 schema;
     private final StringSink tempSink = new StringSink();
     private final TypeManager typeManager;
@@ -77,6 +78,7 @@ public class TextStructureAnalyser implements CsvTextLexer.Listener, Mutable, Cl
         columnTypes.clear();
         forceHeader = false;
         fieldTypeAdapters.clear();
+        fieldTypeAdaptersIndexes.clear();
         requiredColumnHi = 0;
     }
 
@@ -128,14 +130,38 @@ public class TextStructureAnalyser implements CsvTextLexer.Listener, Mutable, Cl
             }
         }
 
-
         int schemaColumnCount = schema.getColumnCount();
-        // override calculated types with user-supplied information
+
+        // override calculated types with user-supplied information if at least one format is set
         if (schemaColumnCount > 0) {
-            for (int i = 0, k = columnNames.size(); i < k; i++) {
-                TypeAdapter type = schema.findFirstFormat(columnNames.getQuick(i));
-                if (type != null) {
-                    columnTypes.setQuick(i, type);
+            if (hasHeader && schema.getFileColumnNameToColumnMap().size() > 0) {
+                for (int i = 0, k = columnNames.size(); i < k; i++) {
+                    Column column = schema.getFileColumnNameToColumnMap().get(columnNames.getQuick(i));
+                    if (column != null) {
+                        if (column.isTableInsertNull() || column.isFileColumnIgnore()) {
+                            columnTypes.setQuick(i, TypeAdapter.NoopTypeAdapter.INSTANCE);
+                        } else if (column.getFormatCount() > 0) {
+                            TypeAdapter type = column.getFormat(0);
+                            if (type != null) {
+                                columnTypes.setQuick(i, type);
+                            }
+                        }
+                    }
+                }
+            }
+            if (schema.getFileColumnIndexToColumnMap().size() > 0) {
+                for (int i = 0, k = columnNames.size(); i < k; i++) {
+                    Column column = schema.getFileColumnIndexToColumnMap().get(i);
+                    if (column != null) {
+                        if (column.isTableInsertNull() || column.isFileColumnIgnore()) {
+                            columnTypes.setQuick(i, TypeAdapter.NoopTypeAdapter.INSTANCE);
+                        } else if (column.getFormatCount() > 0) {
+                            TypeAdapter type = column.getFormat(0);
+                            if (type != null) {
+                                columnTypes.setQuick(i, type);
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -144,8 +170,6 @@ public class TextStructureAnalyser implements CsvTextLexer.Listener, Mutable, Cl
     public boolean hasHeader() {
         return hasHeader;
     }
-
-    private final ObjList<ObjList<TypeAdapter>> fieldTypeAdapters = new ObjList<>();
 
     /**
      * Initializes the instance to prepare for data consumption from the CsvTextLexer
@@ -164,38 +188,55 @@ public class TextStructureAnalyser implements CsvTextLexer.Listener, Mutable, Cl
         this.requiredColumnHi = requiredColumnTypes.getColumnCount();
         if (this.requiredColumnHi > 0) {
             IntObjHashMap<ObjList<TypeAdapter>> typeAdapterMap = typeManager.getTypeAdapterMap();
+            IntObjHashMap<IntList> typeAdapterIndexMap = typeManager.getTypeAdapterIndexMap();
+
             for (int i = 0; i < requiredColumnHi; i++) {
                 int columnType = requiredColumnTypes.getColumnType(i);
                 if (columnType != ColumnType.TYPES_SIZE) {
                     fieldTypeAdapters.add(typeAdapterMap.get(columnType));
+                    fieldTypeAdaptersIndexes.add(typeAdapterIndexMap.get(columnType));
                 } else {
-                    fieldTypeAdapters.add(typeManager.getTypeAdapterList());
+                    fieldTypeAdapters.add(typeManager.getDefaultTypeAdapterList());
+                    fieldTypeAdaptersIndexes.add(typeManager.getTypeAdapterIndexList());
                 }
             }
         }
     }
 
     @Override
-    public void onFields(long line, ObjList<DirectByteCharSequence> values, int fieldCount) {
+    public void onFields(long line, ObjList<DirectUtf8String> values, int fieldCount) {
         // keep first line in case it's a header
         if (line == 0) {
             seedFields(fieldCount);
             stashPossibleHeader(values, fieldCount);
         }
 
+        final int allTypeAdapterCount = typeManager.getAllProbeCount();
         for (int i = 0; i < fieldCount; i++) {
-            DirectByteCharSequence cs = values.getQuick(i);
-            if (cs.length() == 0) {
+            DirectUtf8Sequence cs = values.getQuick(i);
+            if (cs.size() == 0) {
                 _blanks.increment(i);
             }
 
-            final ObjList<TypeAdapter> typeAdapterList =  requiredColumnHi > 0 && i < requiredColumnHi ? fieldTypeAdapters.getQuick(i) : typeManager.getTypeAdapterList();
-            final int typeAdapterCount = typeAdapterList.size();
-            int offset = i * typeAdapterCount;
-            for (int k = 0; k < typeAdapterCount; k++) {
-                final TypeAdapter typeAdapter = typeAdapterList.getQuick(k);
-                if (typeAdapter.probe(cs)) {
-                    _histogram.increment(k + offset);
+            final ObjList<TypeAdapter> typeAdapterList;
+            final IntList typeAdapterIndexList;
+            if (requiredColumnHi > 0 && i < requiredColumnHi) {
+                typeAdapterList = fieldTypeAdapters.getQuick(i);
+                typeAdapterIndexList = fieldTypeAdaptersIndexes.getQuick(i);
+            } else {
+                typeAdapterList = typeManager.getDefaultTypeAdapterList();
+                typeAdapterIndexList = typeManager.getTypeAdapterIndexList();
+            }
+
+            if (typeAdapterList != null) {
+                int offset = i * allTypeAdapterCount;
+                int fieldTypeAdapterCount = typeAdapterList.size();
+                for (int k = 0; k < fieldTypeAdapterCount; k++) {
+                    final TypeAdapter typeAdapter = typeAdapterList.getQuick(k);
+                    if (typeAdapter.probe(cs)) {
+                        int adapterIdx = typeAdapterIndexList.getQuick(k);
+                        _histogram.increment(adapterIdx + offset);
+                    }
                 }
             }
         }
@@ -213,7 +254,7 @@ public class TextStructureAnalyser implements CsvTextLexer.Listener, Mutable, Cl
      */
     private boolean calcTypes(long count, boolean setDefault) {
         boolean allStrings = true;
-        int probeCount = typeManager.getProbeCount();
+        int probeCount = typeManager.getAllProbeCount();
         for (int i = 0; i < fieldCount; i++) {
             int offset = i * probeCount;
             int blanks = _blanks.getQuick(i);
@@ -302,17 +343,17 @@ public class TextStructureAnalyser implements CsvTextLexer.Listener, Mutable, Cl
     }
 
     private void seedFields(int count) {
-        this._histogram.setAll((fieldCount = count) * typeManager.getProbeCount(), 0);
+        this._histogram.setAll((fieldCount = count) * typeManager.getAllProbeCount(), 0);
         this._blanks.setAll(count, 0);
         this.columnTypes.extendAndSet(count - 1, null);
         this.columnNames.setAll(count, "");
     }
 
-    private void stashPossibleHeader(ObjList<DirectByteCharSequence> values, int hi) {
+    private void stashPossibleHeader(ObjList<DirectUtf8String> values, int hi) {
         for (int i = 0; i < hi; i++) {
-            DirectByteCharSequence value = values.getQuick(i);
+            DirectUtf8Sequence value = values.getQuick(i);
             utf8Sink.clear();
-            if (Chars.utf8toUtf16(value.getLo(), value.getHi(), utf8Sink)) {
+            if (Utf8s.utf8ToUtf16(value.lo(), value.hi(), utf8Sink)) {
                 columnNames.setQuick(i, normalise(utf8Sink));
             } else {
                 LOG.info().$("utf8 error [table=").$(tableName).$(", line=0, col=").$(i).$(']').$();

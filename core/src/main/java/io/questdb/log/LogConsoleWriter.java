@@ -69,7 +69,7 @@ public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogW
             if (interceptor != null) {
                 interceptor.onLog(sink);
             }
-            Files.append(fd, sink.getAddress(), sink.length());
+            Files.append(fd, sink.ptr(), sink.size());
         }
     }
 

@@ -28,21 +28,27 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cutlass.text.types.TypeAdapter;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
-import io.questdb.std.Sinkable;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.Sinkable;
 
 public class Column implements Mutable, Sinkable {
     private final ObjList<TypeAdapter> formats = new ObjList<>();
     private int columnType;
+    private boolean fileColumnIgnore;
     private int fileColumnIndex;
     private CharSequence fileColumnName;
     private CharSequence tableColumnName;
 
-    public Column(CharSequence fileColumnName, int fileColumnIndex, int columnType, CharSequence tableColumnName) {
+    // if CSV has fewer columns than the table, the schema must have explicit "insert NULL" attribute for those columns
+    private boolean tableInsertNull;
+
+    public Column(CharSequence fileColumnName, int fileColumnIndex, boolean fileColumnIgnore, int columnType, CharSequence tableColumnName, boolean tableInsertNull) {
         this.columnType = columnType;
         this.fileColumnIndex = fileColumnIndex;
         this.fileColumnName = fileColumnName;
+        this.fileColumnIgnore = fileColumnIgnore;
         this.tableColumnName = tableColumnName;
+        this.tableInsertNull = tableInsertNull;
     }
 
     public void addAllFormats(ObjList<TypeAdapter> formats) {
@@ -66,6 +72,10 @@ public class Column implements Mutable, Sinkable {
         return columnType;
     }
 
+    public int getFileColumnIndex() {
+        return fileColumnIndex;
+    }
+
     public CharSequence getFileColumnName() {
         return fileColumnName;
     }
@@ -86,22 +96,34 @@ public class Column implements Mutable, Sinkable {
         return tableColumnName != null ? tableColumnName : fileColumnName;
     }
 
+    public boolean isFileColumnIgnore() {
+        return fileColumnIgnore;
+    }
+
+    // does it make sense to require users to map columns not present in the file ?
+    // they'd be set to default values anyway
+    public boolean isTableInsertNull() {
+        return tableInsertNull;
+    }
+
     @Override
-    public void toSink(CharSink sink) {
-        sink.put('{');
-        sink.put("\"file_column_name\":\"").put(fileColumnName).put("\",");
-        sink.put("\"file_column_index\":").put(fileColumnIndex).put(',');
-        sink.put("\"column_type\":\"").put(ColumnType.nameOf(columnType)).put("\",");
-        sink.put("\"table_column_name\":\"").put(tableColumnName).put("\",");
-        sink.put("\"formats\":").put('[');
+    public void toSink(CharSinkBase<?> sink) {
+        sink.putAscii('{');
+        sink.putAscii("\"file_column_name\":\"").put(fileColumnName).putAscii("\",");
+        sink.putAscii("\"file_column_index\":").put(fileColumnIndex).putAscii(',');
+        sink.putAscii("\"file_column_ignore\":").put(fileColumnIgnore).putAscii(',');
+        sink.putAscii("\"column_type\":\"").put(ColumnType.nameOf(columnType)).putAscii("\",");
+        sink.putAscii("\"table_column_name\":\"").put(tableColumnName).putAscii("\",");
+        sink.putAscii("\"insert_null\":\"").put(tableInsertNull).putAscii("\",");
+        sink.putAscii("\"formats\":").putAscii('[');
         for (int i = 0, n = formats.size(); i < n; i++) {
             if (i > 0) {
-                sink.put(',');
+                sink.putAscii(',');
             }
             TypeAdapter format = this.formats.getQuick(i);
             format.toSink(sink);
         }
-        sink.put(']');
-        sink.put('}');
+        sink.putAscii(']');
+        sink.putAscii('}');
     }
 }

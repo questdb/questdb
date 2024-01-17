@@ -41,8 +41,8 @@ import io.questdb.network.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
-import io.questdb.std.str.ByteCharSequence;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -69,7 +69,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     protected LineTcpReceiverConfiguration lineTcpConfiguration;
     protected long microSecondTicks;
     protected int nWriterThreads;
-    protected NoNetworkIOJob noNetworkIOJob = new NoNetworkIOJob();
+    protected NoNetworkIOJob noNetworkIOJob;
     protected String recvBuffer;
     protected LineTcpMeasurementScheduler scheduler;
     protected boolean stringAsTagSupported;
@@ -92,6 +92,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         autoCreateNewColumns = true;
         autoCreateNewTables = true;
         lineTcpConfiguration = createNoAuthReceiverConfiguration(provideLineTcpNetworkFacade());
+        noNetworkIOJob = new NoNetworkIOJob(lineTcpConfiguration);
     }
 
     private static WorkerPool createWorkerPool(final int workerCount, final boolean haltOnError) {
@@ -110,7 +111,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             public boolean haltOnError() {
                 return haltOnError;
             }
-        }, metrics.health());
+        }, metrics);
     }
 
     protected void assertTable(CharSequence expected, String tableName) {
@@ -383,12 +384,16 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     }
 
     static class NoNetworkIOJob implements NetworkIOJob {
-        private final ByteCharSequenceObjHashMap<TableUpdateDetails> localTableUpdateDetailsByTableName = new ByteCharSequenceObjHashMap<>();
-        private final ObjList<SymbolCache> unusedSymbolCaches = new ObjList<>();
+        private final Utf8StringObjHashMap<TableUpdateDetails> localTableUpdateDetailsByTableName = new Utf8StringObjHashMap<>();
+        private final WeakClosableObjectPool<SymbolCache> unusedSymbolCaches;
         private LineTcpMeasurementScheduler scheduler;
 
+        NoNetworkIOJob(LineTcpReceiverConfiguration config) {
+            unusedSymbolCaches = new WeakClosableObjectPool<SymbolCache>(() -> new SymbolCache(config), 10, true);
+        }
+
         @Override
-        public void addTableUpdateDetails(ByteCharSequence tableNameUtf8, TableUpdateDetails tableUpdateDetails) {
+        public void addTableUpdateDetails(Utf8String tableNameUtf8, TableUpdateDetails tableUpdateDetails) {
             localTableUpdateDetailsByTableName.put(tableNameUtf8, tableUpdateDetails);
         }
 
@@ -397,12 +402,12 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         }
 
         @Override
-        public TableUpdateDetails getLocalTableDetails(DirectByteCharSequence tableName) {
+        public TableUpdateDetails getLocalTableDetails(DirectUtf8Sequence tableName) {
             return localTableUpdateDetailsByTableName.get(tableName);
         }
 
         @Override
-        public ObjList<SymbolCache> getUnusedSymbolCaches() {
+        public Pool<SymbolCache> getSymbolCachePool() {
             return unusedSymbolCaches;
         }
 
@@ -414,17 +419,6 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         @Override
         public void releaseWalTableDetails() {
             scheduler.releaseWalTableDetails(localTableUpdateDetailsByTableName);
-        }
-
-        @Override
-        public TableUpdateDetails removeTableUpdateDetails(DirectByteCharSequence tableNameUtf8) {
-            final int keyIndex = localTableUpdateDetailsByTableName.keyIndex(tableNameUtf8);
-            if (keyIndex < 0) {
-                TableUpdateDetails tud = localTableUpdateDetailsByTableName.valueAtQuick(keyIndex);
-                localTableUpdateDetailsByTableName.removeAt(keyIndex);
-                return tud;
-            }
-            return null;
         }
 
         @Override

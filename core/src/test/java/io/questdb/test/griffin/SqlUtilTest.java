@@ -88,6 +88,27 @@ public class SqlUtilTest {
     }
 
     @Test
+    public void testImplicitCastStrAsIPv4() {
+        Assert.assertEquals(0, SqlUtil.implicitCastStrAsIPv4(null));
+        Assert.assertEquals(201741578, SqlUtil.implicitCastStrAsIPv4("12.6.85.10"));
+        Assert.assertEquals(4738954, SqlUtil.implicitCastStrAsIPv4("0.72.79.138"));
+
+        try {
+            SqlUtil.implicitCastStrAsIPv4("77823.23232.23232.33");
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertEquals("invalid ipv4 format: 77823.23232.23232.33", e.getFlyweightMessage());
+        }
+
+        try {
+            SqlUtil.implicitCastStrAsIPv4("hello");
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertEquals("invalid ipv4 format: hello", e.getFlyweightMessage());
+        }
+    }
+
+    @Test
     public void testImplicitCastStrAsLong256() {
         Assert.assertEquals(Constants.getNullConstant(ColumnType.LONG256), SqlUtil.implicitCastStrAsLong256(null));
         Assert.assertEquals(Constants.getNullConstant(ColumnType.LONG256), SqlUtil.implicitCastStrAsLong256(""));
@@ -125,12 +146,60 @@ public class SqlUtilTest {
     }
 
     @Test
+    public void testParseMicros() throws SqlException {
+        Assert.assertEquals(1, SqlUtil.expectMicros("1us", 12));
+        Assert.assertEquals(1000, SqlUtil.expectMicros("1ms", 12));
+        Assert.assertEquals(2000000, SqlUtil.expectMicros("2s", 12));
+        Assert.assertEquals(180000000, SqlUtil.expectMicros("3m", 12));
+        Assert.assertEquals(14400000000L, SqlUtil.expectMicros("4h", 12));
+        Assert.assertEquals(432000000000L, SqlUtil.expectMicros("5d", 12));
+    }
+
+    @Test
     public void testParseMicrosSansQualifier() {
         try {
             SqlUtil.expectMicros("125", 12);
             Assert.fail();
         } catch (SqlException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), "expected interval qualifier");
+        }
+    }
+
+    @Test
+    public void testParseMicrosTooLongQualifier() {
+        try {
+            SqlUtil.expectMicros("125usu", 12);
+            Assert.fail();
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "expected 1/2 letter interval qualifier in 125us");
+        }
+    }
+
+    @Test
+    public void testParseSeconds() throws SqlException {
+        Assert.assertEquals(1, SqlUtil.expectSeconds("1s", 12));
+        Assert.assertEquals(120, SqlUtil.expectSeconds("2m", 12));
+        Assert.assertEquals(10800, SqlUtil.expectSeconds("3h", 12));
+        Assert.assertEquals(345600, SqlUtil.expectSeconds("4d", 12));
+    }
+
+    @Test
+    public void testParseSecondsSansQualifier() {
+        try {
+            SqlUtil.expectSeconds("125", 12);
+            Assert.fail();
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "expected interval qualifier");
+        }
+    }
+
+    @Test
+    public void testParseSecondsTooLongQualifier() {
+        try {
+            SqlUtil.expectSeconds("125us", 12);
+            Assert.fail();
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "expected single letter interval qualifier in 125us");
         }
     }
 
@@ -163,6 +232,7 @@ public class SqlUtilTest {
         Assert.assertEquals("2022-11-20T10:30:55.123Z", Dates.toString(SqlUtil.implicitCastStrAsDate("2022-11-20T10:30:55.123Z")));
         Assert.assertEquals("2022-11-20T10:30:55.000Z", Dates.toString(SqlUtil.implicitCastStrAsDate("2022-11-20 10:30:55Z")));
         Assert.assertEquals("2022-11-20T00:00:00.000Z", Dates.toString(SqlUtil.implicitCastStrAsDate("2022-11-20 Z")));
+        Assert.assertEquals("2022-11-20T00:00:00.000Z", Dates.toString(SqlUtil.implicitCastStrAsDate("2022-11-20")));
         Assert.assertEquals("2022-11-20T10:30:55.123Z", Dates.toString(SqlUtil.implicitCastStrAsDate("2022-11-20 10:30:55.123Z")));
         Assert.assertEquals("1970-01-01T00:00:00.200Z", Dates.toString(SqlUtil.implicitCastStrAsDate("200")));
         Assert.assertEquals("1969-12-31T23:59:59.100Z", Dates.toString(SqlUtil.implicitCastStrAsDate("-900")));
@@ -247,27 +317,6 @@ public class SqlUtilTest {
     }
 
     @Test
-    public void testImplicitCastStrAsIPv4() {
-        Assert.assertEquals(0, SqlUtil.implicitCastStrAsIPv4(null));
-        Assert.assertEquals(201741578, SqlUtil.implicitCastStrAsIPv4("12.6.85.10"));
-        Assert.assertEquals(4738954, SqlUtil.implicitCastStrAsIPv4("0.72.79.138"));
-
-        try {
-            SqlUtil.implicitCastStrAsIPv4("77823.23232.23232.33");
-            Assert.fail();
-        } catch (ImplicitCastException e) {
-            TestUtils.assertEquals("invalid ipv4 format: 77823.23232.23232.33", e.getFlyweightMessage());
-        }
-
-        try {
-            SqlUtil.implicitCastStrAsIPv4("hello");
-            Assert.fail();
-        } catch (ImplicitCastException e) {
-            TestUtils.assertEquals("invalid ipv4 format: hello", e.getFlyweightMessage());
-        }
-    }
-
-    @Test
     public void testParseStrLong() {
         Assert.assertEquals(Numbers.LONG_NaN, SqlUtil.implicitCastStrAsLong(null));
         Assert.assertEquals(222221211212123L, SqlUtil.implicitCastStrAsLong("222221211212123"));
@@ -317,9 +366,6 @@ public class SqlUtilTest {
 
     @Test
     public void testParseStrTimestamp() {
-        // this is required to initialize calendar indexes ahead of using it
-        // otherwise sink can end up having odd characters
-        TimestampFormatUtils.init();
         Assert.assertEquals(Numbers.LONG_NaN, SqlUtil.implicitCastStrAsTimestamp(null));
         Assert.assertEquals("2022-11-20T10:30:55.123999Z", Timestamps.toUSecString(SqlUtil.implicitCastStrAsTimestamp("2022-11-20T10:30:55.123999Z")));
         Assert.assertEquals("2022-11-20T10:30:55.000000Z", Timestamps.toUSecString(SqlUtil.implicitCastStrAsTimestamp("2022-11-20 10:30:55Z")));
@@ -345,6 +391,12 @@ public class SqlUtilTest {
         } catch (ImplicitCastException e) {
             TestUtils.assertContains("inconvertible value: " + c + " [CHAR -> GEOHASH(1c)]", e.getFlyweightMessage());
         }
+    }
+
+    static {
+        // this is required to initialize calendar indexes ahead of using it
+        // otherwise sink can end up having odd characters
+        TimestampFormatUtils.init();
     }
 
 

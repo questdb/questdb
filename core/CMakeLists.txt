@@ -58,6 +58,8 @@ set(
         src/main/c/share/cpprt_overrides.h
         src/main/c/share/cpprt_overrides.cpp
         src/main/c/share/dedup.cpp
+        src/main/c/share/byte_sink.cpp
+        src/main/c/share/byte_sink.h
 )
 
 # JNI includes

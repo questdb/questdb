@@ -26,7 +26,6 @@ package io.questdb.cairo.map;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryR;
@@ -36,7 +35,7 @@ import org.jetbrains.annotations.TestOnly;
 
 /**
  * Storage structure to support queries such as "select distinct ...",
- * group by queries and analytic functions. It can be thought of as a
+ * group by queries and window functions. It can be thought of as a
  * hash map with composite keys and values. Composite key is allowed
  * to contain any number of fields of any type. In practice key will
  * be a record of columns, including both of variable-length (string and binary)
@@ -191,7 +190,7 @@ public class CompactMap implements Map, Reopenable {
     }
 
     @Override
-    public RecordCursor getCursor() {
+    public MapRecordCursor getCursor() {
         cursor.of(currentEntryOffset + currentEntrySize);
         return cursor;
     }

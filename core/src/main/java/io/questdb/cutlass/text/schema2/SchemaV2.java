@@ -29,7 +29,8 @@ import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.text.TextException;
 import io.questdb.cutlass.text.types.TypeAdapter;
 import io.questdb.std.*;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.Nullable;
 
 public class SchemaV2 implements Mutable, Sinkable {
@@ -52,8 +53,10 @@ public class SchemaV2 implements Mutable, Sinkable {
             final Column column = new Column(
                     columnNameStr,
                     -1,
+                    false,
                     columnType,
-                    null
+                    null,
+                    false
             );
             column.addFormat(format);
             this.columnList.add(column);
@@ -66,8 +69,10 @@ public class SchemaV2 implements Mutable, Sinkable {
     public void addColumn(
             CharSequence fileColumnName,
             int fileColumnIndex,
+            boolean fileColumnIgnore,
             int columnType,
             CharSequence tableColumnName,
+            boolean tableInsertNull,
             @Transient ObjList<TypeAdapter> formats
     ) throws JsonException {
         final int fileColumnNameMapIndex;
@@ -96,8 +101,8 @@ public class SchemaV2 implements Mutable, Sinkable {
         final int tableColumnNameMapIndex;
         if (tableColumnName != null) {
             tableColumnNameMapIndex = tableColumnNameToColumnMap.keyIndex(tableColumnName);
-            if (fileColumnIndexMapIndex < 0) {
-                throw TextException.$("schema error, duplicate file column index [table_column_name=").put(tableColumnName).put(']');
+            if (tableColumnNameMapIndex < 0) {
+                throw TextException.$("schema error, duplicate table column name [table_column_name=").put(tableColumnName).put(']');
             }
         } else {
             tableColumnNameMapIndex = -1;
@@ -109,8 +114,10 @@ public class SchemaV2 implements Mutable, Sinkable {
         final Column column = new Column(
                 fileColumnNameStr,
                 fileColumnIndex,
+                fileColumnIgnore,
                 columnType,
-                tableColumnNameStr
+                tableColumnNameStr,
+                tableInsertNull
         );
         column.addAllFormats(formats);
         this.columnList.add(column);
@@ -144,9 +151,12 @@ public class SchemaV2 implements Mutable, Sinkable {
     public void clear() {
         columnList.clear();
         fileColumnNameToColumnMap.clear();
+        fileColumnIndexToColumnMap.clear();
+        tableColumnNameToColumnMap.clear();
+
         // formats are keyed on column type, we could reduce allocation by
         // reusing lists for each type
-        for (int i = 0, n = ColumnType.MAX; i < n; i++) {
+        for (int i = 0, n = ColumnType.NULL; i < n; i++) {
             ObjList<TypeAdapter> formats = this.formats.get(i);
             if (formats != null) {
                 formats.clear();
@@ -157,6 +167,14 @@ public class SchemaV2 implements Mutable, Sinkable {
 
     public @Nullable TypeAdapter findFirstFormat(CharSequence columnName) {
         final Column column = fileColumnNameToColumnMap.get(columnName);
+        if (column != null && column.getFormatCount() > 0) {
+            return column.getFormat(0);
+        }
+        return null;
+    }
+
+    public @Nullable TypeAdapter findFirstFormat(int columnIndex) {
+        final Column column = fileColumnIndexToColumnMap.get(columnIndex);
         if (column != null && column.getFormatCount() > 0) {
             return column.getFormat(0);
         }
@@ -196,16 +214,16 @@ public class SchemaV2 implements Mutable, Sinkable {
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        sink.put('{');
-        sink.put("\"columns\":").put('[');
+    public void toSink(CharSinkBase<?> sink) {
+        sink.putAscii('{');
+        sink.putAscii("\"columns\":").putAscii('[');
         for (int i = 0, n = columnList.size(); i < n; i++) {
             columnList.getQuick(i).toSink(sink);
         }
-        sink.put(']').put(',');
-        sink.putQuoted("formats").put(": {");
+        sink.putAscii(']').putAscii(',');
+        sink.putAsciiQuoted("formats").putAscii(": {");
         int formatCount = 0;
-        for (int i = 0; i < ColumnType.MAX; i++) {
+        for (int i = 0; i < ColumnType.NULL; i++) {
             ObjList<TypeAdapter> formats = this.formats.get(i);
             if (formats != null && formats.size() > 0) {
                 if (formatCount > 0) {
@@ -219,11 +237,11 @@ public class SchemaV2 implements Mutable, Sinkable {
                     }
                     formats.getQuick(j).toSink(sink);
                 }
-                sink.put(']');
+                sink.putAscii(']');
             }
         }
-        sink.put('}').put(',');
-        sink.putQuoted("formats_action").put(':').putQuoted(formatsAction == FORMATS_ACTION_ADD ? "ADD" : (formatsAction == FORMATS_ACTION_REPLACE ? "REPLACE" : "UNKNOWN"));
-        sink.put('}');
+        sink.putAscii('}').putAscii(',');
+        sink.putAsciiQuoted("formats_action").putAscii(':').putAsciiQuoted(formatsAction == FORMATS_ACTION_ADD ? "ADD" : (formatsAction == FORMATS_ACTION_REPLACE ? "REPLACE" : "UNKNOWN"));
+        sink.putAscii('}');
     }
 }

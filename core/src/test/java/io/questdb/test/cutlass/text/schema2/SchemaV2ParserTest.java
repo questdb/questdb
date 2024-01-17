@@ -112,7 +112,7 @@ public class SchemaV2ParserTest {
                         "  },\n" +
                         "  \"formats_action\": \"ADD\"\n" +
                         "}",
-                "{\"columns\":[{\"file_column_name\":\"x\",\"file_column_index\":0,\"column_type\":\"TIMESTAMP\",\"table_column_name\":\"x\",\"formats\":[{\"pattern\":\"yyyy-MM-dd'T'HH:mm:ss*SSSZZZZ\",\"locale\":\"en\",\"utf8\":false}]}],\"formats\": {\"TIMESTAMP\": [{\"pattern\":\"yyyy-MM-dd'T'HH:mm:ss*SSSZZZZ\",\"locale\":\"en\",\"utf8\":false},{\"pattern\":\"yyyy-MM-dd'T'HH:mm:ss*SSSZZZZ\",\"locale\":\"en\",\"utf8\":true}]},\"formats_action\":\"ADD\"}"
+                "{\"columns\":[{\"file_column_name\":\"x\",\"file_column_index\":0,\"file_column_ignore\":false,\"column_type\":\"TIMESTAMP\",\"table_column_name\":\"x\",\"insert_null\":\"false\",\"formats\":[{\"pattern\":\"yyyy-MM-dd'T'HH:mm:ss*SSSZZZZ\",\"locale\":\"en\",\"utf8\":false}]}],\"formats\": {\"TIMESTAMP\": [{\"pattern\":\"yyyy-MM-dd'T'HH:mm:ss*SSSZZZZ\",\"locale\":\"en\",\"utf8\":false},{\"pattern\":\"yyyy-MM-dd'T'HH:mm:ss*SSSZZZZ\",\"locale\":\"en\",\"utf8\":true}]},\"formats_action\":\"ADD\"}"
         );
     }
 
@@ -192,147 +192,6 @@ public class SchemaV2ParserTest {
                         "}",
                 201,
                 "TIMESTAMP format pattern is required"
-        );
-    }
-
-    @Test
-    public void testFailFormatsTypeAsObject() {
-        assertException(
-                "{\n" +
-                        "  \"formats\": {\n" +
-                        "    \"DATE\": {},\n" +
-                        "    \"TIMESTAMP\": [\n" +
-                        "      {\n" +
-                        "        \"pattern\": \"yyyy-MM-dd'T'HH:mm:ss*SSSZZZZ\",\n" +
-                        "        \"locale\": \"en\",\n" +
-                        "        \"utf8\": false\n" +
-                        "      }\n" +
-                        "    ]\n" +
-                        "  },\n" +
-                        "  \"formats_action\": \"Add\"\n" +
-                        "}",
-                30,
-                "array expected"
-        );
-    }
-
-    @Test
-    public void testFailFormatsTypeAsScalar() {
-        assertException(
-                "{\n" +
-                        "  \"formats\": {\n" +
-                        "    \"DATE\": -1,\n" +
-                        "    \"TIMESTAMP\": [\n" +
-                        "      {\n" +
-                        "        \"pattern\": \"yyyy-MM-dd'T'HH:mm:ss*SSSZZZZ\",\n" +
-                        "        \"locale\": \"en\",\n" +
-                        "        \"utf8\": false\n" +
-                        "      }\n" +
-                        "    ]\n" +
-                        "  },\n" +
-                        "  \"formats_action\": \"Add\"\n" +
-                        "}",
-                30,
-                "array expected"
-        );
-    }
-
-    @Test
-    public void testFailFormatsInvalidType() {
-        assertException(
-                "{\n" +
-                        "  \"formats\": {\n" +
-                        "    \"OK\": [\n" +
-                        "      {\n" +
-                        "        \"pattern\": \"yyyy-MM-dd'T'HH:mm:ss*SSSZZZZ\",\n" +
-                        "        \"locale\": \"en\",\n" +
-                        "        \"utf8\": false\n" +
-                        "      }\n" +
-                        "    ]\n" +
-                        "  },\n" +
-                        "  \"formats_action\": \"Add\"\n" +
-                        "}",
-                23,
-                "Invalid column type [tag=OK]"
-        );
-    }
-
-    @Test
-    public void testFailFormatsInvalidLocale() {
-        assertException(
-                "{\n" +
-                        "  \"formats\": {\n" +
-                        "    \"timestamp\": [\n" +
-                        "      {\n" +
-                        "        \"pattern\": \"yyyy-MM-dd'T'HH:mm:ss*SSSZZZZ\",\n" +
-                        "        \"locale\": \"where?\",\n" +
-                        "        \"utf8\": false\n" +
-                        "      }\n" +
-                        "    ]\n" +
-                        "  },\n" +
-                        "  \"formats_action\": \"Add\"\n" +
-                        "}",
-                116,
-                "Invalid timestamp locale [tag=where?]"
-        );
-    }
-
-    @Test
-    public void testFailFormatsInvalidUtf8Flag() {
-        assertException(
-                "{\n" +
-                        "  \"formats\": {\n" +
-                        "    \"timestamp\": [\n" +
-                        "      {\n" +
-                        "        \"pattern\": \"yyyy-MM-dd'T'HH:mm:ss*SSSZZZZ\",\n" +
-                        "        \"locale\": \"ja\",\n" +
-                        "        \"utf8\": 3\n" +
-                        "      }\n" +
-                        "    ]\n" +
-                        "  },\n" +
-                        "  \"formats_action\": \"Add\"\n" +
-                        "}",
-                137,
-                "boolean value expected [tag=3]"
-        );
-    }
-
-    @Test
-    public void testFailFormatsUtf8AsArray() {
-        assertException(
-                "{\n" +
-                        "  \"formats\": {\n" +
-                        "    \"timestamp\": [\n" +
-                        "      {\n" +
-                        "        \"pattern\": \"yyyy-MM-dd'T'HH:mm:ss*SSSZZZZ\",\n" +
-                        "        \"locale\": \"ja\",\n" +
-                        "        \"utf8\": []\n" +
-                        "      }\n" +
-                        "    ]\n" +
-                        "  },\n" +
-                        "  \"formats_action\": \"Add\"\n" +
-                        "}",
-                137,
-                "scalar value expected"
-        );
-    }
-
-    @Test
-    public void testFormatsTypeCaseInsensitive() throws JsonException {
-        assertJson(
-                "{\n" +
-                        "  \"formats\": {\n" +
-                        "    \"timeStamp\": [\n" +
-                        "      {\n" +
-                        "        \"pattern\": \"yyyy-MM-dd'T'HH:mm:ss*SSSZZZZ\",\n" +
-                        "        \"locale\": \"en\",\n" +
-                        "        \"utf8\": false\n" +
-                        "      }\n" +
-                        "    ]\n" +
-                        "  },\n" +
-                        "  \"formats_action\": \"Add\"\n" +
-                        "}",
-                "{\"columns\":[],\"formats\": {\"TIMESTAMP\": [{\"pattern\":\"yyyy-MM-dd'T'HH:mm:ss*SSSZZZZ\",\"locale\":\"en\",\"utf8\":false}]},\"formats_action\":\"ADD\"}"
         );
     }
 
@@ -462,6 +321,128 @@ public class SchemaV2ParserTest {
                         "}",
                 17,
                 "object expected"
+        );
+    }
+
+    @Test
+    public void testFailFormatsInvalidLocale() {
+        assertException(
+                "{\n" +
+                        "  \"formats\": {\n" +
+                        "    \"timestamp\": [\n" +
+                        "      {\n" +
+                        "        \"pattern\": \"yyyy-MM-dd'T'HH:mm:ss*SSSZZZZ\",\n" +
+                        "        \"locale\": \"where?\",\n" +
+                        "        \"utf8\": false\n" +
+                        "      }\n" +
+                        "    ]\n" +
+                        "  },\n" +
+                        "  \"formats_action\": \"Add\"\n" +
+                        "}",
+                116,
+                "Invalid timestamp locale [tag=where?]"
+        );
+    }
+
+    @Test
+    public void testFailFormatsInvalidType() {
+        assertException(
+                "{\n" +
+                        "  \"formats\": {\n" +
+                        "    \"OK\": [\n" +
+                        "      {\n" +
+                        "        \"pattern\": \"yyyy-MM-dd'T'HH:mm:ss*SSSZZZZ\",\n" +
+                        "        \"locale\": \"en\",\n" +
+                        "        \"utf8\": false\n" +
+                        "      }\n" +
+                        "    ]\n" +
+                        "  },\n" +
+                        "  \"formats_action\": \"Add\"\n" +
+                        "}",
+                23,
+                "Invalid column type [tag=OK]"
+        );
+    }
+
+    @Test
+    public void testFailFormatsInvalidUtf8Flag() {
+        assertException(
+                "{\n" +
+                        "  \"formats\": {\n" +
+                        "    \"timestamp\": [\n" +
+                        "      {\n" +
+                        "        \"pattern\": \"yyyy-MM-dd'T'HH:mm:ss*SSSZZZZ\",\n" +
+                        "        \"locale\": \"ja\",\n" +
+                        "        \"utf8\": 3\n" +
+                        "      }\n" +
+                        "    ]\n" +
+                        "  },\n" +
+                        "  \"formats_action\": \"Add\"\n" +
+                        "}",
+                137,
+                "boolean value expected [tag=3]"
+        );
+    }
+
+    @Test
+    public void testFailFormatsTypeAsObject() {
+        assertException(
+                "{\n" +
+                        "  \"formats\": {\n" +
+                        "    \"DATE\": {},\n" +
+                        "    \"TIMESTAMP\": [\n" +
+                        "      {\n" +
+                        "        \"pattern\": \"yyyy-MM-dd'T'HH:mm:ss*SSSZZZZ\",\n" +
+                        "        \"locale\": \"en\",\n" +
+                        "        \"utf8\": false\n" +
+                        "      }\n" +
+                        "    ]\n" +
+                        "  },\n" +
+                        "  \"formats_action\": \"Add\"\n" +
+                        "}",
+                30,
+                "array expected"
+        );
+    }
+
+    @Test
+    public void testFailFormatsTypeAsScalar() {
+        assertException(
+                "{\n" +
+                        "  \"formats\": {\n" +
+                        "    \"DATE\": -1,\n" +
+                        "    \"TIMESTAMP\": [\n" +
+                        "      {\n" +
+                        "        \"pattern\": \"yyyy-MM-dd'T'HH:mm:ss*SSSZZZZ\",\n" +
+                        "        \"locale\": \"en\",\n" +
+                        "        \"utf8\": false\n" +
+                        "      }\n" +
+                        "    ]\n" +
+                        "  },\n" +
+                        "  \"formats_action\": \"Add\"\n" +
+                        "}",
+                30,
+                "array expected"
+        );
+    }
+
+    @Test
+    public void testFailFormatsUtf8AsArray() {
+        assertException(
+                "{\n" +
+                        "  \"formats\": {\n" +
+                        "    \"timestamp\": [\n" +
+                        "      {\n" +
+                        "        \"pattern\": \"yyyy-MM-dd'T'HH:mm:ss*SSSZZZZ\",\n" +
+                        "        \"locale\": \"ja\",\n" +
+                        "        \"utf8\": []\n" +
+                        "      }\n" +
+                        "    ]\n" +
+                        "  },\n" +
+                        "  \"formats_action\": \"Add\"\n" +
+                        "}",
+                137,
+                "scalar value expected"
         );
     }
 
@@ -622,6 +603,25 @@ public class SchemaV2ParserTest {
     }
 
     @Test
+    public void testFormatsTypeCaseInsensitive() throws JsonException {
+        assertJson(
+                "{\n" +
+                        "  \"formats\": {\n" +
+                        "    \"timeStamp\": [\n" +
+                        "      {\n" +
+                        "        \"pattern\": \"yyyy-MM-dd'T'HH:mm:ss*SSSZZZZ\",\n" +
+                        "        \"locale\": \"en\",\n" +
+                        "        \"utf8\": false\n" +
+                        "      }\n" +
+                        "    ]\n" +
+                        "  },\n" +
+                        "  \"formats_action\": \"Add\"\n" +
+                        "}",
+                "{\"columns\":[],\"formats\": {\"TIMESTAMP\": [{\"pattern\":\"yyyy-MM-dd'T'HH:mm:ss*SSSZZZZ\",\"locale\":\"en\",\"utf8\":false}]},\"formats_action\":\"ADD\"}"
+        );
+    }
+
+    @Test
     public void testMultipleColumnFormats() throws Exception {
         assertJson(
                 "{\n" +
@@ -661,7 +661,7 @@ public class SchemaV2ParserTest {
                         "  },\n" +
                         "  \"formats_action\": \"ADD\"\n" +
                         "}",
-                "{\"columns\":[{\"file_column_name\":\"x\",\"file_column_index\":0,\"column_type\":\"TIMESTAMP\",\"table_column_name\":\"x\",\"formats\":[{\"pattern\":\"yyyy-MM-dd'T'HH:mm:ss*SSSZZZZ\",\"locale\":\"en\",\"utf8\":false},{\"pattern\":\"yyyy-MM-ddTHH:mm:ss.SSSUUUz\",\"locale\":\"ja\",\"utf8\":true}]}],\"formats\": {\"TIMESTAMP\": [{\"pattern\":\"yyyy-MM-dd'T'HH:mm:ss*SSSZZZZ\",\"locale\":\"en\",\"utf8\":false},{\"pattern\":\"yyyy-MM-dd'T'HH:mm:ss*SSSZZZZ\",\"locale\":\"en\",\"utf8\":false}]},\"formats_action\":\"ADD\"}"
+                "{\"columns\":[{\"file_column_name\":\"x\",\"file_column_index\":0,\"file_column_ignore\":false,\"column_type\":\"TIMESTAMP\",\"table_column_name\":\"x\",\"insert_null\":\"false\",\"formats\":[{\"pattern\":\"yyyy-MM-dd'T'HH:mm:ss*SSSZZZZ\",\"locale\":\"en\",\"utf8\":false},{\"pattern\":\"yyyy-MM-ddTHH:mm:ss.SSSUUUz\",\"locale\":\"ja\",\"utf8\":true}]}],\"formats\": {\"TIMESTAMP\": [{\"pattern\":\"yyyy-MM-dd'T'HH:mm:ss*SSSZZZZ\",\"locale\":\"en\",\"utf8\":false},{\"pattern\":\"yyyy-MM-dd'T'HH:mm:ss*SSSZZZZ\",\"locale\":\"en\",\"utf8\":false}]},\"formats_action\":\"ADD\"}"
         );
     }
 
@@ -687,7 +687,11 @@ public class SchemaV2ParserTest {
                         "  },\n" +
                         "  \"formats_action\": \"Add\"\n" +
                         "}",
-                "{\"columns\":[],\"formats\": {\"DATE\": [{\"pattern\":\"dd/MM/y\",\"locale\":\"ja\",\"utf8\":true}],\"TIMESTAMP\": [{\"pattern\":\"yyyy-MM-dd'T'HH:mm:ss*SSSZZZZ\",\"locale\":\"en\",\"utf8\":false}]},\"formats_action\":\"ADD\"}"
+                "{\"columns\":[]," +
+                        "\"formats\": " +
+                        "{\"DATE\": [{\"pattern\":\"dd/MM/y\",\"locale\":\"ja\",\"utf8\":true}]," +
+                        "\"TIMESTAMP\": [{\"pattern\":\"yyyy-MM-dd'T'HH:mm:ss*SSSZZZZ\",\"locale\":\"en\",\"utf8\":false}]}," +
+                        "\"formats_action\":\"ADD\"}"
         );
     }
 

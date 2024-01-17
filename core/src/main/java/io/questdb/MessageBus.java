@@ -43,9 +43,15 @@ public interface MessageBus extends Closeable {
 
     CairoConfiguration getConfiguration();
 
-    MPSequence getIndexerPubSequence();
-    
     MPSequence getCopyRequestPubSeq();
+
+    MPSequence getGroupByMergeShardPubSeq();
+
+    RingQueue<GroupByMergeShardTask> getGroupByMergeShardQueue();
+
+    MCSequence getGroupByMergeShardSubSeq();
+
+    MPSequence getIndexerPubSequence();
 
     RingQueue<ColumnIndexerTask> getIndexerQueue();
 
@@ -96,10 +102,6 @@ public interface MessageBus extends Closeable {
     int getPageFrameReduceShardCount();
 
     MCSequence getPageFrameReduceSubSeq(int shard);
-
-    FanOut getQueryCacheEventFanOut();
-
-    MPSequence getQueryCacheEventPubSeq();
 
     FanOut getTableWriterEventFanOut();
 

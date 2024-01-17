@@ -25,10 +25,10 @@
 package io.questdb.cutlass.text.types;
 
 import io.questdb.cairo.TableWriter;
-import io.questdb.std.Sinkable;
-import io.questdb.std.str.CharSink;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.CharSinkBase;
 import io.questdb.std.str.DirectCharSink;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.Sinkable;
 
 public interface TypeAdapter extends Sinkable {
 
@@ -38,16 +38,42 @@ public interface TypeAdapter extends Sinkable {
         return false;
     }
 
-    boolean probe(DirectByteCharSequence text);
+    boolean probe(DirectUtf8Sequence text);
 
-    void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception;
+    @Override
+    default void toSink(CharSinkBase<?> sink) {
+        sink.putAscii("{}");
+    }
 
-    default void write(TableWriter.Row row, int column, DirectByteCharSequence value, DirectCharSink utf8Sink) throws Exception {
+    default void write(TableWriter.Row row, int column, DirectUtf8Sequence value, DirectCharSink utf16Sink) throws Exception {
         write(row, column, value);
     }
 
-    @Override
-    default void toSink(CharSink sink) {
-        sink.put("{}");
+    void write(TableWriter.Row row, int column, DirectUtf8Sequence value) throws Exception;
+
+    class NoopTypeAdapter implements TypeAdapter {
+
+        public static final NoopTypeAdapter INSTANCE = new NoopTypeAdapter();
+
+        private NoopTypeAdapter() {
+        }
+
+
+        @Override
+        public int getType() {
+            return -1;
+        }
+
+        @Override
+        public boolean probe(DirectUtf8Sequence text) {
+            return false;
+        }
+
+        @Override
+        public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) throws Exception {
+            // do nothing
+        }
     }
 }
+
+

@@ -90,11 +90,6 @@ public class CompactMapValue implements MapValue {
     }
 
     @Override
-    public long getAddress() {
-        return currentValueOffset;
-    }
-
-    @Override
     public boolean getBool(int index) {
         return entries.getBool(getValueColumnOffset(index));
     }
@@ -187,6 +182,11 @@ public class CompactMapValue implements MapValue {
     }
 
     @Override
+    public long getStartAddress() {
+        return currentValueOffset;
+    }
+
+    @Override
     public long getTimestamp(int index) {
         return getLong(index);
     }
@@ -194,6 +194,11 @@ public class CompactMapValue implements MapValue {
     @Override
     public boolean isNew() {
         return _new;
+    }
+
+    @Override
+    public void maxLong(int index, long value) {
+        throw new UnsupportedOperationException();
     }
 
     @Override

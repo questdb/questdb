@@ -39,6 +39,7 @@ import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -98,6 +99,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private final IntList taskDistribution;
     private final TextDelimiterScanner textDelimiterScanner;
     private final TextStructureAnalyser textStructureAnalyser;
+    private final ObjectPool<TimestampToDateAdapter> timestampToDateAdapterPool;
     private final Path tmpPath;
     private final TypeManager typeManager;
     private final DirectCharSink utf8Sink;
@@ -184,6 +186,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         this.atomicity = Atomicity.SKIP_COL;
         this.createdWorkDir = false;
         this.otherToTimestampAdapterPool = new ObjectPool<>(OtherToTimestampAdapter::new, 4);
+        this.timestampToDateAdapterPool = new ObjectPool<>(TimestampToDateAdapter::new, 4);
         this.inputFilePath = new Path();
         this.tmpPath = new Path();
 
@@ -255,7 +258,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     if (!ff.rmdir(path)) {
                         LOG.error()
                                 .$("could not overwrite table [tableName='").utf8(tableName)
-                                .$("',path='").utf8(path)
+                                .$("',path='").$(path)
                                 .$(", errno=").$(ff.errno())
                                 .I$();
                         throw CairoException.critical(ff.errno()).put("could not overwrite [tableName=").put(tableName).put("]");
@@ -335,13 +338,13 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     }
 
     public void of(
-            CharSequence tableName,
-            CharSequence inputFileName,
+            String tableName,
+            String inputFileName,
             long importId,
             int partitionBy,
             byte columnDelimiter,
-            CharSequence timestampColumn,
-            CharSequence timestampFormat,
+            String timestampColumn,
+            String timestampFormat,
             boolean forceHeader,
             ExecutionCircuitBreaker circuitBreaker,
             int atomicity
@@ -380,13 +383,13 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
     @TestOnly
     public void of(
-            CharSequence tableName,
-            CharSequence inputFileName,
+            String tableName,
+            String inputFileName,
             long importId,
             int partitionBy,
             byte columnDelimiter,
-            CharSequence timestampColumn,
-            CharSequence tsFormat,
+            String timestampColumn,
+            String tsFormat,
             boolean forceHeader,
             ExecutionCircuitBreaker circuitBreaker
     ) {
@@ -406,13 +409,13 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
     @TestOnly
     public void of(
-            CharSequence tableName,
-            CharSequence inputFileName,
+            String tableName,
+            String inputFileName,
             long importId,
             int partitionBy,
             byte columnDelimiter,
-            CharSequence timestampColumn,
-            CharSequence timestampFormat,
+            String timestampColumn,
+            String timestampFormat,
             boolean forceHeader
     ) {
         of(
@@ -451,7 +454,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     schema.addColumn(timestampColumn, ColumnType.TIMESTAMP, timestampAdapter);
                 }
 
-                // todo: reuse
                 ArrayColumnTypes requiredTypes = new ArrayColumnTypes();
                 textStructureAnalyser.of(tableName, forceHeader, requiredTypes);
                 lexer.parse(buf, buf + n, textAnalysisMaxLines, textStructureAnalyser);
@@ -829,8 +831,13 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 // use when populating this field
                 switch (ColumnType.tagOf(columnType)) {
                     case ColumnType.DATE:
-                        logTypeError(i, detectedType);
-                        types.setQuick(i, BadDateAdapter.INSTANCE);
+                        // TODO: replace with better type detection
+                        if (detectedAdapter instanceof TimestampAdapter) {
+                            types.setQuick(i, timestampToDateAdapterPool.next().of((TimestampAdapter) detectedAdapter));
+                        } else {
+                            logTypeError(i, detectedType);
+                            types.setQuick(i, BadDateAdapter.INSTANCE);
+                        }
                         break;
                     case ColumnType.TIMESTAMP:
                         if (detectedAdapter instanceof TimestampCompatibleAdapter) {
@@ -859,7 +866,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         this.metadata = metadata;
         this.writer = writer;//next call can throw exception
 
-        // authorize only columns present in the file 
+        // authorize only columns present in the file
         securityContext.authorizeInsert(tableToken);
 
         // add table columns missing in input file
@@ -929,8 +936,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 final Path srcPath = localImportJob.getTmpPath1().of(importRoot).concat(tableName).put('_').put(index);
                 final Path dstPath = localImportJob.getTmpPath2().of(configuration.getRoot()).concat(tableToken);
 
-                final int srcPlen = srcPath.length();
-                final int dstPlen = dstPath.length();
+                final int srcPlen = srcPath.size();
+                final int dstPlen = dstPath.size();
 
                 if (!ff.exists(dstPath.slash$())) {
                     if (ff.mkdirs(dstPath, configuration.getMkDirMode()) != 0) {
@@ -1299,7 +1306,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             long size = totalSizes.getQuick(i);
 
             partitionNameSink.clear();
-            dirFormat.format(distinctKeys.get(i), null, null, partitionNameSink);
+            dirFormat.format(distinctKeys.get(i), DateFormatUtils.EN_LOCALE, null, partitionNameSink);
             String dirName = partitionNameSink.toString();
 
             partitions.add(new PartitionInfo(key, dirName, size));

@@ -27,13 +27,14 @@ package io.questdb.log;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
 import io.questdb.network.Net;
-import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
-import io.questdb.std.Sinkable;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
 
@@ -55,7 +56,7 @@ import java.io.File;
  * structure it should be possible to log between 1,000,000 and 10,000,000 messages per second to SSD device.
  * </p>
  */
-public final class Logger implements LogRecord, Log {
+public final class Logger extends AbstractLogRecord implements Log {
     private final RingQueue<LogRecordSink> advisoryRing;
     private final Sequence advisorySeq;
     private final MicrosecondClock clock;
@@ -99,16 +100,9 @@ public final class Logger implements LogRecord, Log {
     }
 
     @Override
-    public void $() {
-        sink().putEOL();
-        Holder h = tl.get();
-        h.seq.done(h.cursor);
-    }
-
-    @Override
-    public LogRecord $(CharSequence sequence) {
+    public LogRecord $(@Nullable Utf8Sequence sequence) {
         if (sequence == null) {
-            sink().put("null");
+            sink().putAscii("null");
         } else {
             sink().put(sequence);
         }
@@ -116,8 +110,35 @@ public final class Logger implements LogRecord, Log {
     }
 
     @Override
-    public LogRecord $(CharSequence sequence, int lo, int hi) {
-        sink().put(sequence, lo, hi);
+    public LogRecord $(@Nullable DirectUtf8Sequence sequence) {
+        if (sequence == null) {
+            sink().putAscii("null");
+        } else {
+            sink().put(sequence);
+        }
+        return this;
+    }
+
+    @Override
+    public void $() {
+        sink().putEOL();
+        Holder h = tl.get();
+        h.seq.done(h.cursor);
+    }
+
+    @Override
+    public LogRecord $(@Nullable CharSequence sequence) {
+        if (sequence == null) {
+            sink().putAscii("null");
+        } else {
+            sink().putAscii(sequence);
+        }
+        return this;
+    }
+
+    @Override
+    public LogRecord $(@NotNull CharSequence sequence, int lo, int hi) {
+        sink().putAscii(sequence, lo, hi);
         return this;
     }
 
@@ -152,23 +173,15 @@ public final class Logger implements LogRecord, Log {
     }
 
     @Override
-    public LogRecord $(Throwable e) {
-        if (e != null) {
-            sink().put(Misc.EOL).put(e);
-        }
-        return this;
-    }
-
-    @Override
-    public LogRecord $(File x) {
+    public LogRecord $(@Nullable File x) {
         sink().put(x == null ? "null" : x.getAbsolutePath());
         return this;
     }
 
     @Override
-    public LogRecord $(Object x) {
+    public LogRecord $(@Nullable Object x) {
         if (x == null) {
-            sink().put("null");
+            sink().putAscii("null");
         } else {
             try {
                 sink().put(x.toString());
@@ -183,9 +196,9 @@ public final class Logger implements LogRecord, Log {
     }
 
     @Override
-    public LogRecord $(Sinkable x) {
+    public LogRecord $(@Nullable Sinkable x) {
         if (x == null) {
-            sink().put("null");
+            sink().putAscii("null");
         } else {
             try {
                 x.toSink(sink());
@@ -231,7 +244,7 @@ public final class Logger implements LogRecord, Log {
 
     @Override
     public LogRecord $utf8(long lo, long hi) {
-        sink().putUtf8(lo, hi);
+        sink().put(lo, hi);
         return this;
     }
 
@@ -310,11 +323,11 @@ public final class Logger implements LogRecord, Log {
     }
 
     @Override
-    public LogRecord utf8(CharSequence sequence) {
+    public LogRecord utf8(@Nullable CharSequence sequence) {
         if (sequence == null) {
-            sink().put("null");
+            sink().putAscii("null");
         } else {
-            sink().encodeUtf8(sequence);
+            sink().put(sequence);
         }
         return this;
     }
@@ -407,7 +420,8 @@ public final class Logger implements LogRecord, Log {
         return this;
     }
 
-    private CharSink sink() {
+    @Override
+    protected LogRecordSink sink() {
         Holder h = tl.get();
         return h.ring.get(h.cursor);
     }

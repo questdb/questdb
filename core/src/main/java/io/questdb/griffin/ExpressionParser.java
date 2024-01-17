@@ -85,7 +85,7 @@ public class ExpressionParser {
         if (tokLen > 1) {
             if (tokLen >= 3 && tok.charAt(tokLen - 3) == '/') { // '/dd'
                 short bits = (short) (10 * tok.charAt(tokLen - 2) + tok.charAt(tokLen - 1) - 528); // 10 * 48 + 48
-                if (bits >= 1 && bits <= ColumnType.GEO_HASH_MAX_BITS_LENGTH) {
+                if (bits >= 1 && bits <= ColumnType.GEOLONG_MAX_BITS) {
                     return Numbers.encodeLowHighShorts((short) 3, bits);
                 }
                 throw SqlException.$(position, "invalid bits size for GEOHASH constant: ").put(tok);
@@ -165,7 +165,12 @@ public class ExpressionParser {
         return argStackDepth - node.paramCount + 1;
     }
 
-    private int processLambdaQuery(GenericLexer lexer, ExpressionParserListener listener, int argStackDepth) throws SqlException {
+    private int processLambdaQuery(
+            GenericLexer lexer,
+            ExpressionParserListener listener,
+            int argStackDepth,
+            SqlParserCallback sqlParserCallback
+    ) throws SqlException {
         // It is highly likely this expression parser will be re-entered when
         // parsing sub-query. To prevent sub-query consuming operation stack we must add a
         // control node, which would prevent such consumption
@@ -187,7 +192,7 @@ public class ExpressionParser {
         // validate is Query is allowed
         onNode(listener, node, argStackDepth, false);
         // we can compile query if all is well
-        node.queryModel = sqlParser.parseAsSubQuery(lexer, null, true);
+        node.queryModel = sqlParser.parseAsSubQuery(lexer, null, true, sqlParserCallback);
         argStackDepth = onNode(listener, node, argStackDepth, false);
 
         // pop our control node if sub-query hasn't done it
@@ -203,7 +208,7 @@ public class ExpressionParser {
         return argStackDepth;
     }
 
-    void parseExpr(GenericLexer lexer, ExpressionParserListener listener) throws SqlException {
+    void parseExpr(GenericLexer lexer, ExpressionParserListener listener, SqlParserCallback sqlParserCallback) throws SqlException {
         try {
             int paramCount = 0;
             int braceCount = 0;
@@ -245,7 +250,7 @@ public class ExpressionParser {
                         break;
                     case '.':
                         // Check what is on stack. If we have 'a .b' we have to stop processing
-                        if (thisBranch == BRANCH_LITERAL || thisBranch == BRANCH_CONSTANT) {
+                        if (thisBranch == BRANCH_LITERAL || thisBranch == BRANCH_CONSTANT) {//here
                             char c = lexer.getContent().charAt(lastPos - 1);
                             if (GenericLexer.WHITESPACE_CH.contains(c)) {
                                 lexer.unparseLast();
@@ -268,7 +273,9 @@ public class ExpressionParser {
                         if (prevBranch == BRANCH_DOT || prevBranch == BRANCH_DOT_DEREFERENCE) {
                             throw SqlException.$(lastPos, "too many dots");
                         }
-
+                        if (thisBranch == BRANCH_CASE_CONTROL) {
+                            throw SqlException.$(lastPos, "unexpected dot");
+                        }
                         if (prevBranch == BRANCH_RIGHT_PARENTHESIS) {
                             thisBranch = BRANCH_DOT_DEREFERENCE;
                         } else {
@@ -717,7 +724,7 @@ public class ExpressionParser {
                             if (betweenCount > 0) {
                                 throw SqlException.$(lastPos, "constant expected");
                             }
-                            argStackDepth = processLambdaQuery(lexer, listener, argStackDepth);
+                            argStackDepth = processLambdaQuery(lexer, listener, argStackDepth, sqlParserCallback);
                         } else {
                             processDefaultBranch = true;
                         }

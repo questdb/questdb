@@ -136,14 +136,14 @@ public class LogFileWriter extends SynchronizedJob implements Closeable, LogWrit
     }
 
     private void copyToBuffer(LogRecordSink sink) {
-        final int l = sink.length();
-        if ((sink.getLevel() & this.level) != 0 && l > 0) {
-            if (_wptr + l >= lim) {
+        final int size = sink.size();
+        if ((sink.getLevel() & this.level) != 0 && size > 0) {
+            if (_wptr + size >= lim) {
                 flush();
             }
 
-            Vect.memcpy(_wptr, sink.getAddress(), l);
-            _wptr += l;
+            Vect.memcpy(_wptr, sink.ptr(), size);
+            _wptr += size;
         }
     }
 

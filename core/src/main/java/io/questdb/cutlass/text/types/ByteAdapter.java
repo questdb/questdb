@@ -28,7 +28,8 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.std.Numbers;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.NumericException;
+import io.questdb.std.str.DirectUtf8Sequence;
 
 public final class ByteAdapter extends AbstractTypeAdapter {
 
@@ -43,12 +44,17 @@ public final class ByteAdapter extends AbstractTypeAdapter {
     }
 
     @Override
-    public boolean probe(DirectByteCharSequence text) {
-        throw new UnsupportedOperationException();
+    public boolean probe(DirectUtf8Sequence text) {
+        try {
+            int val = Numbers.parseInt(text);
+            return val >= Byte.MIN_VALUE && val <= Byte.MAX_VALUE;
+        } catch (NumericException e) {
+            return false;
+        }
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
+    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) throws Exception {
         row.putByte(column, SqlKeywords.isNullKeyword(value) ? (byte) 0 : (byte) Numbers.parseInt(value));
     }
 }

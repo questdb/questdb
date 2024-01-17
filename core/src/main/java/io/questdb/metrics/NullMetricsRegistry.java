@@ -24,7 +24,8 @@
 
 package io.questdb.metrics;
 
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.BorrowableUtf8Sink;
+import org.jetbrains.annotations.NotNull;
 
 public class NullMetricsRegistry implements MetricsRegistry {
 
@@ -43,9 +44,13 @@ public class NullMetricsRegistry implements MetricsRegistry {
     }
 
     @Override
-    public CounterWithTwoLabels newCounter(CharSequence name,
-                                           CharSequence labelName0, CharSequence[] labelValues0,
-                                           CharSequence labelName1, CharSequence[] labelValues1) {
+    public CounterWithTwoLabels newCounter(
+            CharSequence name,
+            CharSequence labelName0,
+            CharSequence[] labelValues0,
+            CharSequence labelName1,
+            CharSequence[] labelValues1
+    ) {
         return NullCounter.INSTANCE;
     }
 
@@ -70,6 +75,6 @@ public class NullMetricsRegistry implements MetricsRegistry {
     }
 
     @Override
-    public void scrapeIntoPrometheus(CharSink sink) {
+    public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
     }
 }

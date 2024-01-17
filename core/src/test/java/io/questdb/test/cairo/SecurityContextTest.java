@@ -44,7 +44,7 @@ public class SecurityContextTest {
     private static final LongList permissions = new LongList();
     private final static String tableName = "tab";
     private static final Object[] THREE_PARAM_ARGS = {permissions, tableName, columns};
-    private static final TableToken userTableToken = new TableToken(tableName, tableName, 0, false, false);
+    private static final TableToken userTableToken = new TableToken(tableName, tableName, 0, false, false, false);
     private static final Object[] ONE_PARAM_ARGS = {userTableToken};
     private static final Object[] TWO_PARAM_ARGS = {userTableToken, columns};
 
@@ -64,11 +64,6 @@ public class SecurityContextTest {
                             method.invoke(sc, sc);
                         } else if (name.equals("authorizeTableBackup")) {
                             method.invoke(sc, new ObjHashSet<CharSequence>());
-                        } else if (name.startsWith("authorizeShow")
-                                || name.equals("authorizeAddPassword") || name.equals("authorizeRemovePassword")
-                                || name.equals("authorizeCreateJwk") || name.equals("authorizeDropJwk")
-                                || name.equals("authorizeAssignServiceAccount") || name.equals("authorizeUnassignServiceAccount")) {
-                            method.invoke(sc, "userName");
                         } else {
                             method.invoke(sc, ONE_PARAM_ARGS);
                         }
@@ -104,11 +99,6 @@ public class SecurityContextTest {
                                 method.invoke(sc, sc);
                             } else if (name.equals("authorizeTableBackup")) {
                                 method.invoke(sc, new ObjHashSet<CharSequence>());
-                            } else if (name.startsWith("authorizeShow")
-                                    || name.equals("authorizeAddPassword") || name.equals("authorizeRemovePassword")
-                                    || name.equals("authorizeCreateJwk") || name.equals("authorizeDropJwk")
-                                    || name.equals("authorizeAssignServiceAccount") || name.equals("authorizeUnassignServiceAccount")) {
-                                method.invoke(sc, "userName");
                             } else {
                                 method.invoke(sc, ONE_PARAM_ARGS);
                             }
@@ -144,7 +134,8 @@ public class SecurityContextTest {
                     switch (parameters.length) {
                         case 0:
                             method.invoke(sc, NO_PARAM_ARGS);
-                            if (name.startsWith("authorizeShow") || name.startsWith("authorizeAdminAction")) {
+                            if (name.startsWith("authorizeAdminAction")
+                                    || name.equals("authorizeHttp") || name.equals("authorizePGWire") || name.equals("authorizeLineTcp")) {
                                 continue;
                             }
                             Assert.fail();
@@ -154,11 +145,6 @@ public class SecurityContextTest {
                                 method.invoke(sc, sc);
                             } else if (name.equals("authorizeTableBackup")) {
                                 method.invoke(sc, new ObjHashSet<CharSequence>());
-                            } else if (name.startsWith("authorizeShow")
-                                    || name.equals("authorizeAddPassword") || name.equals("authorizeRemovePassword")
-                                    || name.equals("authorizeCreateJwk") || name.equals("authorizeDropJwk")
-                                    || name.equals("authorizeAssignServiceAccount") || name.equals("authorizeUnassignServiceAccount")) {
-                                method.invoke(sc, "userName");
                             } else {
                                 method.invoke(sc, ONE_PARAM_ARGS);
                             }

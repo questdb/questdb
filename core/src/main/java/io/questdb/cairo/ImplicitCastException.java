@@ -28,6 +28,8 @@ import io.questdb.std.Chars;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.Nullable;
 
 public class ImplicitCastException extends RuntimeException implements FlyweightMessageContainer {
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
@@ -92,6 +94,22 @@ public class ImplicitCastException extends RuntimeException implements Flyweight
                 .put(']');
     }
 
+    public static ImplicitCastException inconvertibleValue(Utf8Sequence value, int fromType, int toType) {
+        ImplicitCastException ice = instance();
+        ice.put("inconvertible value: ");
+        if (value != null) {
+            ice.put('`').put(value.asAsciiCharSequence()).put('`');
+        } else {
+            ice.put("null");
+        }
+
+        return ice.put(" [")
+                .put(ColumnType.nameOf(fromType))
+                .put(" -> ")
+                .put(ColumnType.nameOf(toType))
+                .put(']');
+    }
+
     public static ImplicitCastException inconvertibleValue(long value, int fromType, int toType) {
         return instance().put("inconvertible value: ")
                 .put(value)
@@ -138,7 +156,7 @@ public class ImplicitCastException extends RuntimeException implements Flyweight
         return this;
     }
 
-    public ImplicitCastException put(CharSequence cs) {
+    public ImplicitCastException put(@Nullable CharSequence cs) {
         message.put(cs);
         return this;
     }

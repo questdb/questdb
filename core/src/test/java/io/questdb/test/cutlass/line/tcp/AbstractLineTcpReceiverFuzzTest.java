@@ -103,6 +103,33 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
         });
     }
 
+    public void runTest() throws Exception {
+        runTest((factoryType, thread, token, event, segment, position) -> {
+            String tableName = token.getTableName();
+            if (walEnabled) {
+                // There is no locking as such in WAL, so we treat writer return as an unlock event.
+                if (PoolListener.isWalOrWriter(factoryType) && event == PoolListener.EV_GET) {
+                    handleWriterUnlockEvent(tableName);
+                    handleWriterGetEvent(tableName);
+                }
+                if (PoolListener.isWalOrWriter(factoryType) && event == PoolListener.EV_RETURN) {
+                    handleWriterUnlockEvent(tableName);
+                    handleWriterReturnEvent(tableName);
+                }
+            } else {
+                if (factoryType == PoolListener.SRC_SEQUENCER_METADATA && event == PoolListener.EV_UNLOCKED) {
+                    handleWriterUnlockEvent(tableName);
+                }
+                if (PoolListener.isWalOrWriter(factoryType) && event == PoolListener.EV_GET) {
+                    handleWriterGetEvent(tableName);
+                }
+                if (PoolListener.isWalOrWriter(factoryType) && event == PoolListener.EV_RETURN) {
+                    handleWriterReturnEvent(tableName);
+                }
+            }
+        }, 250);
+    }
+
     @Before
     public void setUp() {
         super.setUp();
@@ -467,33 +494,6 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
 
     protected CharSequence pickTableName(int threadId) {
         return getTableName(pinTablesToThreads ? threadId : random.nextInt(numOfTables), true);
-    }
-
-    void runTest() throws Exception {
-        runTest((factoryType, thread, token, event, segment, position) -> {
-            String tableName = token.getTableName();
-            if (walEnabled) {
-                // There is no locking as such in WAL, so we treat writer return as an unlock event.
-                if (PoolListener.isWalOrWriter(factoryType) && event == PoolListener.EV_GET) {
-                    handleWriterUnlockEvent(tableName);
-                    handleWriterGetEvent(tableName);
-                }
-                if (PoolListener.isWalOrWriter(factoryType) && event == PoolListener.EV_RETURN) {
-                    handleWriterUnlockEvent(tableName);
-                    handleWriterReturnEvent(tableName);
-                }
-            } else {
-                if (factoryType == PoolListener.SRC_METADATA && event == PoolListener.EV_UNLOCKED) {
-                    handleWriterUnlockEvent(tableName);
-                }
-                if (PoolListener.isWalOrWriter(factoryType) && event == PoolListener.EV_GET) {
-                    handleWriterGetEvent(tableName);
-                }
-                if (PoolListener.isWalOrWriter(factoryType) && event == PoolListener.EV_RETURN) {
-                    handleWriterReturnEvent(tableName);
-                }
-            }
-        }, 250);
     }
 
     void runTest(PoolListener listener, long minIdleMsBeforeWriterRelease) throws Exception {

@@ -27,7 +27,6 @@ package io.questdb.cairo.security;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.griffin.engine.functions.catalogue.Constants;
-import io.questdb.std.LongList;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
@@ -35,19 +34,7 @@ import org.jetbrains.annotations.NotNull;
 public class AllowAllSecurityContext implements SecurityContext {
     public static final AllowAllSecurityContext INSTANCE = new AllowAllSecurityContext();
 
-    private AllowAllSecurityContext() {
-    }
-
-    @Override
-    public void assumeServiceAccount(CharSequence serviceAccountName) {
-    }
-
-    @Override
-    public void authorizeAddPassword(CharSequence userOrServiceAccountName) {
-    }
-
-    @Override
-    public void authorizeAddUser() {
+    protected AllowAllSecurityContext() {
     }
 
     @Override
@@ -103,27 +90,7 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeAssignServiceAccount(CharSequence serviceAccountName) {
-    }
-
-    @Override
     public void authorizeCopyCancel(SecurityContext cancellingSecurityContext) {
-    }
-
-    @Override
-    public void authorizeCreateGroup() {
-    }
-
-    @Override
-    public void authorizeCreateJwk(CharSequence userOrServiceAccountName) {
-    }
-
-    @Override
-    public void authorizeCreateServiceAccount() {
-    }
-
-    @Override
-    public void authorizeCreateUser() {
     }
 
     @Override
@@ -131,31 +98,7 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeDisableUser() {
-    }
-
-    @Override
-    public void authorizeDropGroup() {
-    }
-
-    @Override
-    public void authorizeDropJwk(CharSequence userOrServiceAccountName) {
-    }
-
-    @Override
-    public void authorizeDropServiceAccount() {
-    }
-
-    @Override
-    public void authorizeDropUser() {
-    }
-
-    @Override
-    public void authorizeEnableUser() {
-    }
-
-    @Override
-    public void authorizeGrant(LongList permissions, CharSequence tableName, @NotNull ObjList<CharSequence> columns) {
+    public void authorizeHttp() {
     }
 
     @Override
@@ -163,11 +106,11 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeRemovePassword(CharSequence userOrServiceAccountName) {
+    public void authorizeLineTcp() {
     }
 
     @Override
-    public void authorizeRemoveUser() {
+    public void authorizePGWire() {
     }
 
     @Override
@@ -180,38 +123,6 @@ public class AllowAllSecurityContext implements SecurityContext {
 
     @Override
     public void authorizeSelectOnAnyColumn(TableToken tableToken) {
-    }
-
-    @Override
-    public void authorizeShowGroups() {
-    }
-
-    @Override
-    public void authorizeShowGroups(CharSequence userName) {
-    }
-
-    @Override
-    public void authorizeShowPermissions(CharSequence entityName) {
-    }
-
-    @Override
-    public void authorizeShowServiceAccount(CharSequence serviceAccountName) {
-    }
-
-    @Override
-    public void authorizeShowServiceAccounts() {
-    }
-
-    @Override
-    public void authorizeShowServiceAccounts(CharSequence userOrGroupName) {
-    }
-
-    @Override
-    public void authorizeShowUser(CharSequence userName) {
-    }
-
-    @Override
-    public void authorizeShowUsers() {
     }
 
     @Override
@@ -247,20 +158,11 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeUnassignServiceAccount(CharSequence serviceAccountName) {
-    }
-
-    @Override
-    public void exitServiceAccount(CharSequence serviceAccountName) {
+    public void checkEntityEnabled() {
     }
 
     @Override
     public String getPrincipal() {
         return Constants.USER_NAME;
-    }
-
-    @Override
-    public boolean isEnabled() {
-        return true;
     }
 }

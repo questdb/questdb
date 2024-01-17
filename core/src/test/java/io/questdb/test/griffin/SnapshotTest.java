@@ -60,7 +60,7 @@ public class SnapshotTest extends AbstractCairoTest {
             }
 
             @Override
-            public long getTimeout() {
+            public long getQueryTimeout() {
                 return 100;
             }
         };
@@ -87,7 +87,7 @@ public class SnapshotTest extends AbstractCairoTest {
 
         super.setUp();
         path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory()).slash();
-        rootLen = path.length();
+        rootLen = path.size();
         testFilesFacade.errorOnSync = false;
         circuitBreaker.setTimeout(Long.MAX_VALUE);
     }
@@ -148,8 +148,10 @@ public class SnapshotTest extends AbstractCairoTest {
 
             ddl("snapshot prepare");
 
-            insert("insert into " + tableName +
-                    " select x+20 x, timestamp_sequence(100000000000, 100000000000) ts from long_sequence(3)");
+            insert(
+                    "insert into " + tableName +
+                            " select x+20 x, timestamp_sequence(100000000000, 100000000000) ts from long_sequence(3)"
+            );
 
             // Release all readers and writers, but keep the snapshot dir around.
             engine.clear();
@@ -320,6 +322,16 @@ public class SnapshotTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSnapshotPrepareCheckTableMetadataFilesForNonWalSystemTable() throws Exception {
+        final String sysTableName = configuration.getSystemTableNamePrefix() + "test_non_wal";
+        testSnapshotPrepareCheckTableMetadataFiles(
+                "create table '" + sysTableName + "' (a symbol, b double, c long);",
+                null,
+                sysTableName
+        );
+    }
+
+    @Test
     public void testSnapshotPrepareCheckTableMetadataFilesForPartitionedTable() throws Exception {
         final String tableName = "test";
         testSnapshotPrepareCheckTableMetadataFiles(
@@ -347,6 +359,16 @@ public class SnapshotTest extends AbstractCairoTest {
                 "create table " + tableName + " (a symbol index capacity 128, b double, c long)",
                 null,
                 tableName
+        );
+    }
+
+    @Test
+    public void testSnapshotPrepareCheckTableMetadataFilesForWalSystemTable() throws Exception {
+        final String sysTableName = configuration.getSystemTableNamePrefix() + "test_wal";
+        testSnapshotPrepareCheckTableMetadataFiles(
+                "create table '" + sysTableName + "' (ts timestamp, a symbol, b double, c long) timestamp(ts) partition by day wal;",
+                null,
+                sysTableName
         );
     }
 
@@ -487,7 +509,7 @@ public class SnapshotTest extends AbstractCairoTest {
 
             circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
                 @Override
-                public long getTimeout() {
+                public long getQueryTimeout() {
                     return 10;
                 }
             };
@@ -527,7 +549,7 @@ public class SnapshotTest extends AbstractCairoTest {
 
             circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
                 @Override
-                public long getTimeout() {
+                public long getQueryTimeout() {
                     return 10;
                 }
             };
@@ -631,10 +653,11 @@ public class SnapshotTest extends AbstractCairoTest {
             drop("drop table test;");
             drainWalQueue();
 
-            assertSql("count\n0\n", "select count() from tables() where name = 'test';");
+            assertSql("count\n0\n", "select count() from tables() where table_name = 'test';");
 
-            // Release all readers and writers, but keep the snapshot dir around.
+            // Release readers, writers and table name registry files, but keep the snapshot dir around.
             engine.clear();
+            engine.closeNameRegistry();
             snapshotInstanceId = restartedId;
             engine.recoverSnapshot();
             engine.reloadTableNames();
@@ -642,7 +665,7 @@ public class SnapshotTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Dropped table should be there.
-            assertSql("count\n1\n", "select count() from tables() where name = 'test';");
+            assertSql("count\n1\n", "select count() from tables() where table_name = 'test';");
             assertSql(
                     "ts\tname\tval\n" +
                             "2023-09-20T12:39:01.933062Z\tfoobar\t42\n",
@@ -667,11 +690,12 @@ public class SnapshotTest extends AbstractCairoTest {
             ddl("rename table test to test2;");
             drainWalQueue();
 
-            assertSql("count\n0\n", "select count() from tables() where name = 'test';");
-            assertSql("count\n1\n", "select count() from tables() where name = 'test2';");
+            assertSql("count\n0\n", "select count() from tables() where table_name = 'test';");
+            assertSql("count\n1\n", "select count() from tables() where table_name = 'test2';");
 
-            // Release all readers and writers, but keep the snapshot dir around.
+            // Release readers, writers and table name registry files, but keep the snapshot dir around.
             engine.clear();
+            engine.closeNameRegistry();
             snapshotInstanceId = restartedId;
             engine.recoverSnapshot();
             engine.reloadTableNames();
@@ -679,8 +703,8 @@ public class SnapshotTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Renamed table should be there under the original name.
-            assertSql("count\n1\n", "select count() from tables() where name = 'test';");
-            assertSql("count\n0\n", "select count() from tables() where name = 'test2';");
+            assertSql("count\n1\n", "select count() from tables() where table_name = 'test';");
+            assertSql("count\n0\n", "select count() from tables() where table_name = 'test2';");
         });
     }
 
@@ -1041,7 +1065,7 @@ public class SnapshotTest extends AbstractCairoTest {
 
                 TableToken tableToken = engine.verifyTableName(tableName);
                 path.concat(tableToken);
-                int tableNameLen = path.length();
+                int tableNameLen = path.size();
                 FilesFacade ff = configuration.getFilesFacade();
                 try (TableReader tableReader = newTableReader(configuration, "t")) {
                     try (TableReaderMetadata metadata0 = tableReader.getMetadata()) {
@@ -1115,7 +1139,6 @@ public class SnapshotTest extends AbstractCairoTest {
         });
     }
 
-    @SuppressWarnings("SameParameterValue")
     private void testSnapshotPrepareCheckTableMetadataFiles(String ddl, String ddl2, String tableName) throws Exception {
         assertMemoryLeak(() -> {
             try (Path path = new Path(); Path copyPath = new Path()) {
@@ -1131,9 +1154,9 @@ public class SnapshotTest extends AbstractCairoTest {
 
                 TableToken tableToken = engine.verifyTableName(tableName);
                 path.concat(tableToken);
-                int tableNameLen = path.length();
+                int tableNameLen = path.size();
                 copyPath.concat(tableToken);
-                int copyTableNameLen = copyPath.length();
+                int copyTableNameLen = copyPath.size();
 
                 // _meta
                 path.concat(TableUtils.META_FILE_NAME).$();

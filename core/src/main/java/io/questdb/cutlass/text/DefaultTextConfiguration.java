@@ -50,7 +50,7 @@ public class DefaultTextConfiguration implements TextConfiguration {
                 new DateFormatFactory(),
                 DateLocaleFactory.INSTANCE,
                 new TimestampFormatFactory(),
-                DateFormatUtils.enLocale
+                DateFormatUtils.EN_LOCALE
         );
 
         try (JsonLexer lexer = new JsonLexer(1024, 1024)) {
@@ -67,7 +67,7 @@ public class DefaultTextConfiguration implements TextConfiguration {
 
     @Override
     public DateLocale getDefaultDateLocale() {
-        return DateFormatUtils.enLocale;
+        return DateFormatUtils.EN_LOCALE;
     }
 
     @Override

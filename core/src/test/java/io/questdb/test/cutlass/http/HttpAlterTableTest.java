@@ -25,13 +25,8 @@
 package io.questdb.test.cutlass.http;
 
 import io.questdb.Metrics;
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.wal.ApplyWal2TableJob;
-import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.test.AbstractTest;
-import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.Timeout;
@@ -183,18 +178,11 @@ public class HttpAlterTableTest extends AbstractTest {
     }
 
     private void testJsonQuery(Metrics metrics, HttpQueryTestBuilder.HttpClientCode code) throws Exception {
-        final String baseDir = root;
-        CairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir) {
-            @Override
-            public int getQueryCacheEventQueueCapacity() {
-                return 1;
-            }
-        };
         new HttpQueryTestBuilder()
                 .withWorkerCount(2)
                 .withTempFolder(root)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withMetrics(metrics)
-                .run(configuration, code);
+                .run(code);
     }
 }

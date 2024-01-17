@@ -102,6 +102,11 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
     }
 
     @Override
+    public boolean usesIndex() {
+        return base.usesIndex();
+    }
+
+    @Override
     protected void _close() {
         base.close();
         cursor.close();
@@ -193,7 +198,9 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
 
         @Override
         public void toTop() {
-            mapCursor.toTop();
+            if (mapCursor != null) {
+                mapCursor.toTop();
+            }
         }
 
         private void buildMap() {

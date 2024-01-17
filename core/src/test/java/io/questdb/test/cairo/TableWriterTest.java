@@ -49,6 +49,8 @@ import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -76,24 +78,6 @@ public class TableWriterTest extends AbstractCairoTest {
         if (configuration.mangleTableDirNames()) {
             PRODUCT_FS += TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
         }
-    }
-
-    @Test
-    public void tesFrequentCommit() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            int N = 100000;
-            create(FF, PartitionBy.NONE, N);
-            try (TableWriter writer = newTableWriter(configuration, PRODUCT, metrics)) {
-
-                long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
-
-                Rnd rnd = new Rnd();
-                for (int i = 0; i < N; i++) {
-                    ts = populateRow(writer, rnd, ts, 60L * 60000L * 1000L);
-                    writer.commit();
-                }
-            }
-        });
     }
 
     @Test
@@ -127,7 +111,7 @@ public class TableWriterTest extends AbstractCairoTest {
         class X extends TestFilesFacadeImpl {
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.contains(name, abcColumnNamePattern)) {
+                if (Utf8s.containsAscii(name, abcColumnNamePattern)) {
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -135,13 +119,13 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public boolean remove(LPSZ name) {
-                return !Chars.endsWith(name, TableUtils.META_FILE_NAME) && super.remove(name);
+                return !Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME) && super.remove(name);
             }
 
             @Override
             public int rename(LPSZ name1, LPSZ name2) {
-                if (Chars.endsWith(name1, TableUtils.META_FILE_NAME)
-                        && !Chars.contains(name2, ".prev")) {
+                if (Utf8s.endsWithAscii(name1, TableUtils.META_FILE_NAME)
+                        && !Utf8s.containsAscii(name2, ".prev")) {
                     return -1;
                 }
                 return super.rename(name1, name2);
@@ -167,7 +151,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public int rename(LPSZ from, LPSZ to) {
-                return (!Chars.contains(to, TableUtils.META_PREV_FILE_NAME) || --count <= 0)
+                return (!Utf8s.containsAscii(to, TableUtils.META_PREV_FILE_NAME) || --count <= 0)
                         && super.rename(from, to) == Files.FILES_RENAME_OK ? Files.FILES_RENAME_OK
                         : Files.FILES_RENAME_ERR_OTHER;
             }
@@ -181,7 +165,7 @@ public class TableWriterTest extends AbstractCairoTest {
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public boolean touch(LPSZ path) {
-                return !Chars.contains(path, abcColumnNamePattern) && super.touch(path);
+                return !Utf8s.containsAscii(path, abcColumnNamePattern) && super.touch(path);
             }
         };
         testAddColumnRecoverableNoFault(ff);
@@ -248,7 +232,7 @@ public class TableWriterTest extends AbstractCairoTest {
             Thread writeDataThread = new Thread(() -> {
                 TestUtils.await(barrier);
                 int i = 0;
-                while (columnsAdded.get() < totalColAddCount && exceptions.size() == 0) {
+                while (columnsAdded.get() < totalColAddCount && exceptions.isEmpty()) {
                     try (TableWriter writer = getWriter(tableToken)) {
                         TableWriter.Row row = writer.newRow((i++) * Timestamps.HOUR_MICROS);
                         row.append();
@@ -294,7 +278,7 @@ public class TableWriterTest extends AbstractCairoTest {
             writeDataThread.join();
             addColumnsThread.join();
 
-            if (exceptions.size() != 0) {
+            if (!exceptions.isEmpty()) {
                 for (Throwable ex : exceptions) {
                     ex.printStackTrace();
                 }
@@ -332,12 +316,12 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public boolean exists(LPSZ path) {
-                return Chars.contains(path, abcColumnNamePatternK) || super.exists(path);
+                return Utf8s.containsAscii(path, abcColumnNamePatternK) || super.exists(path);
             }
 
             @Override
             public boolean remove(LPSZ name) {
-                return !Chars.contains(name, abcColumnNamePatternK) && super.remove(name);
+                return !Utf8s.containsAscii(name, abcColumnNamePatternK) && super.remove(name);
             }
         });
     }
@@ -348,7 +332,7 @@ public class TableWriterTest extends AbstractCairoTest {
         testAddColumnRecoverableFault(new TestFilesFacadeImpl() {
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.contains(name, abcColumnNamePattern)) {
+                if (Utf8s.containsAscii(name, abcColumnNamePattern)) {
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -362,7 +346,7 @@ public class TableWriterTest extends AbstractCairoTest {
         testAddColumnRecoverableFault(new TestFilesFacadeImpl() {
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.contains(name, abcColumnNamePattern)) {
+                if (Utf8s.containsAscii(name, abcColumnNamePattern)) {
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -378,7 +362,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.contains(name, abcColumnNamePattern)) {
+                if (Utf8s.containsAscii(name, abcColumnNamePattern)) {
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -386,9 +370,8 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public int rename(LPSZ from, LPSZ to) {
-                return !(Chars.endsWith(from, TableUtils.META_PREV_FILE_NAME) && --count == 0)
-                        && super.rename(from, to) == Files.FILES_RENAME_OK ? Files.FILES_RENAME_OK
-                        : Files.FILES_RENAME_ERR_OTHER;
+                return !(Utf8s.endsWithAscii(from, TableUtils.META_PREV_FILE_NAME) && --count == 0)
+                        && super.rename(from, to) == Files.FILES_RENAME_OK ? Files.FILES_RENAME_OK : Files.FILES_RENAME_ERR_OTHER;
             }
         });
     }
@@ -399,7 +382,7 @@ public class TableWriterTest extends AbstractCairoTest {
         testAddColumnRecoverableFault(new TestFilesFacadeImpl() {
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.contains(name, abcColumnNamePattern)) {
+                if (Utf8s.containsAscii(name, abcColumnNamePattern)) {
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -416,7 +399,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.contains(name, abcColumnNamePattern)) {
+                if (Utf8s.containsAscii(name, abcColumnNamePattern)) {
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -424,10 +407,9 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public int rename(LPSZ from, LPSZ to) {
-                return (!Chars.contains(from, TableUtils.META_PREV_FILE_NAME) || --count <= 0)
-                        && (!Chars.contains(to, TableUtils.META_PREV_FILE_NAME) || --toCount <= 0)
-                        && super.rename(from, to) == Files.FILES_RENAME_OK ? Files.FILES_RENAME_OK
-                        : Files.FILES_RENAME_ERR_OTHER;
+                return (!Utf8s.containsAscii(from, TableUtils.META_PREV_FILE_NAME) || --count <= 0)
+                        && (!Utf8s.containsAscii(to, TableUtils.META_PREV_FILE_NAME) || --toCount <= 0)
+                        && super.rename(from, to) == Files.FILES_RENAME_OK ? Files.FILES_RENAME_OK : Files.FILES_RENAME_ERR_OTHER;
             }
         });
     }
@@ -441,12 +423,12 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public boolean exists(LPSZ path) {
-                return Chars.contains(path, TableUtils.META_SWAP_FILE_NAME) || super.exists(path);
+                return Utf8s.containsAscii(path, TableUtils.META_SWAP_FILE_NAME) || super.exists(path);
             }
 
             @Override
             public boolean remove(LPSZ name) {
-                if (Chars.contains(name, TableUtils.META_SWAP_FILE_NAME)) {
+                if (Utf8s.containsAscii(name, TableUtils.META_SWAP_FILE_NAME)) {
                     return --count < 0;
                 }
                 return super.remove(name);
@@ -476,7 +458,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public int openRO(LPSZ name) {
-                if (Chars.endsWith(name, TableUtils.META_FILE_NAME) && --counter == 0) {
+                if (Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME) && --counter == 0) {
                     return -1;
                 }
                 return super.openRO(name);
@@ -521,7 +503,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public int openRO(LPSZ name) {
-                if (Chars.endsWith(name, TableUtils.META_FILE_NAME) && --counter == 0) {
+                if (Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME) && --counter == 0) {
                     return -1;
                 }
                 return super.openRO(name);
@@ -529,7 +511,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public boolean remove(LPSZ name) {
-                return !Chars.endsWith(name, TableUtils.META_FILE_NAME) && super.remove(name);
+                return !Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME) && super.remove(name);
             }
         }
         testAddColumnErrorFollowedByRepairFail(new X());
@@ -542,7 +524,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public int openRO(LPSZ name) {
-                if (Chars.endsWith(name, TableUtils.META_FILE_NAME) && --counter == 0) {
+                if (Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME) && --counter == 0) {
                     return -1;
                 }
                 return super.openRO(name);
@@ -550,9 +532,8 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public int rename(LPSZ from, LPSZ to) {
-                return !Chars.endsWith(from, TableUtils.META_PREV_FILE_NAME)
-                        && super.rename(from, to) == Files.FILES_RENAME_OK ? Files.FILES_RENAME_OK
-                        : Files.FILES_RENAME_ERR_OTHER;
+                return !Utf8s.endsWithAscii(from, TableUtils.META_PREV_FILE_NAME)
+                        && super.rename(from, to) == Files.FILES_RENAME_OK ? Files.FILES_RENAME_OK : Files.FILES_RENAME_ERR_OTHER;
             }
         }
         testAddColumnErrorFollowedByRepairFail(new X());
@@ -570,12 +551,12 @@ public class TableWriterTest extends AbstractCairoTest {
 
                 @Override
                 public boolean exists(LPSZ path) {
-                    return Chars.endsWith(path, TableUtils.META_SWAP_FILE_NAME) || super.exists(path);
+                    return Utf8s.endsWithAscii(path, TableUtils.META_SWAP_FILE_NAME) || super.exists(path);
                 }
 
                 @Override
                 public boolean remove(LPSZ name) {
-                    if (Chars.endsWith(name, TableUtils.META_SWAP_FILE_NAME)) {
+                    if (Utf8s.endsWithAscii(name, TableUtils.META_SWAP_FILE_NAME)) {
                         return deleteAttempted = true;
                     }
                     return super.remove(name);
@@ -604,12 +585,12 @@ public class TableWriterTest extends AbstractCairoTest {
         testAddColumnRecoverableFault(new TestFilesFacadeImpl() {
             @Override
             public boolean exists(LPSZ path) {
-                return Chars.contains(path, TableUtils.META_SWAP_FILE_NAME) || super.exists(path);
+                return Utf8s.containsAscii(path, TableUtils.META_SWAP_FILE_NAME) || super.exists(path);
             }
 
             @Override
             public boolean remove(LPSZ name) {
-                return !Chars.contains(name, TableUtils.META_SWAP_FILE_NAME) && super.remove(name);
+                return !Utf8s.containsAscii(name, TableUtils.META_SWAP_FILE_NAME) && super.remove(name);
             }
         });
     }
@@ -636,7 +617,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public int openRO(LPSZ name) {
-                if (Chars.endsWith(name, "supplier.d") && count-- == 0) {
+                if (Utf8s.endsWithAscii(name, "supplier.d") && count-- == 0) {
                     return -1;
                 }
                 return super.openRO(name);
@@ -661,7 +642,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public boolean touch(LPSZ path) {
-                if (Chars.endsWith(path, "supplier.v") && --count == 0) {
+                if (Utf8s.endsWithAscii(path, "supplier.v") && --count == 0) {
                     return false;
                 }
                 return super.touch(path);
@@ -805,7 +786,7 @@ public class TableWriterTest extends AbstractCairoTest {
             Rnd rnd = new Rnd();
             class X extends FilesFacadeImpl {
                 @Override
-                public boolean rmdir(Path name) {
+                public boolean rmdir(Path name, boolean lazy) {
                     return false;
                 }
             }
@@ -922,19 +903,19 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.contains(name, "2013-03-04") && Chars.endsWith(name, "category.k")) {
+                if (Utf8s.containsAscii(name, "2013-03-04") && Utf8s.endsWithAscii(name, "category.k")) {
                     return this.fd = super.openRW(name, opts);
                 }
                 return super.openRW(name, opts);
             }
 
             @Override
-            public boolean rmdir(Path name) {
+            public boolean rmdir(Path name, boolean lazy) {
                 if (this.fd != -1) {
                     // Access denied, file is open
                     return false;
                 }
-                return super.rmdir(name);
+                return super.rmdir(name, lazy);
             }
         };
 
@@ -1182,11 +1163,11 @@ public class TableWriterTest extends AbstractCairoTest {
                 boolean fail = false;
 
                 @Override
-                public boolean rmdir(Path name) {
+                public boolean rmdir(Path name, boolean lazy) {
                     if (fail) {
                         return false;
                     }
-                    return super.rmdir(name);
+                    return super.rmdir(name, lazy);
                 }
             }
 
@@ -1282,7 +1263,7 @@ public class TableWriterTest extends AbstractCairoTest {
         testConstructor(new TestFilesFacadeImpl() {
             @Override
             public int mkdirs(Path path, int mode) {
-                if (Chars.endsWith(path, "default" + Files.SEPARATOR)) {
+                if (Utf8s.endsWithAscii(path, "default" + Files.SEPARATOR)) {
                     return -1;
                 }
                 return super.mkdirs(path, mode);
@@ -1299,7 +1280,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
                 @Override
                 public int openRW(LPSZ name, long opts) {
-                    if (Chars.endsWith(name, PRODUCT_FS + ".lock")) {
+                    if (Utf8s.endsWithAscii(name, PRODUCT_FS + ".lock")) {
                         ran = true;
                         return -1;
                     }
@@ -1342,7 +1323,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, TableUtils.TXN_FILE_NAME) && --count == 0) {
+                if (Utf8s.endsWithAscii(name, TableUtils.TXN_FILE_NAME) && --count == 0) {
                     return fd = super.openRW(name, opts);
                 }
                 return super.openRW(name, opts);
@@ -1355,7 +1336,7 @@ public class TableWriterTest extends AbstractCairoTest {
         testConstructor(new TestFilesFacadeImpl() {
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, "productName.i")) {
+                if (Utf8s.endsWithAscii(name, "productName.i")) {
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -1371,7 +1352,7 @@ public class TableWriterTest extends AbstractCairoTest {
         testConstructor(new TestFilesFacadeImpl() {
             @Override
             public boolean exists(LPSZ path) {
-                return !Chars.endsWith(path, "category.o") && super.exists(path);
+                return !Utf8s.endsWithAscii(path, "category.o") && super.exists(path);
             }
         }, false);
     }
@@ -1384,7 +1365,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public int openRW(LPSZ path, long opts) {
-                if (Chars.endsWith(path, TableUtils.TODO_FILE_NAME) && --counter == 0) {
+                if (Utf8s.endsWithAscii(path, TableUtils.TODO_FILE_NAME) && --counter == 0) {
                     return -1;
                 }
                 return super.openRW(path, opts);
@@ -1399,7 +1380,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, TableUtils.TXN_FILE_NAME) && --count == 0) {
+                if (Utf8s.endsWithAscii(name, TableUtils.TXN_FILE_NAME) && --count == 0) {
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -1424,7 +1405,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, "supplier.d")) {
+                if (Utf8s.endsWithAscii(name, "supplier.d")) {
                     return fd = super.openRW(name, opts);
                 }
                 return super.openRW(name, opts);
@@ -1448,7 +1429,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, "productName.i")) {
+                if (Utf8s.endsWithAscii(name, "productName.i")) {
                     return fd = super.openRW(name, opts);
                 }
                 return super.openRW(name, opts);
@@ -1473,7 +1454,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, "productName.i")) {
+                if (Utf8s.endsWithAscii(name, "productName.i")) {
                     return fd = super.openRW(name, opts);
                 }
                 return super.openRW(name, opts);
@@ -1497,7 +1478,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, "price.d")) {
+                if (Utf8s.endsWithAscii(name, "price.d")) {
                     return fd = super.openRW(name, opts);
                 }
                 return super.openRW(name, opts);
@@ -1537,7 +1518,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, "price.d")) {
+                if (Utf8s.endsWithAscii(name, "price.d")) {
                     return fd = super.openRW(name, opts);
                 }
                 return super.openRW(name, opts);
@@ -1576,7 +1557,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, "price.d")) {
+                if (Utf8s.endsWithAscii(name, "price.d")) {
                     return fd = super.openRW(name, opts);
                 }
                 return super.openRW(name, opts);
@@ -1617,7 +1598,7 @@ public class TableWriterTest extends AbstractCairoTest {
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public long length(LPSZ name) {
-                if (Chars.endsWith(name, TableUtils.TODO_FILE_NAME)) {
+                if (Utf8s.endsWithAscii(name, TableUtils.TODO_FILE_NAME)) {
                     return 12;
                 }
                 return super.length(name);
@@ -1725,6 +1706,24 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testDefaultPartition() throws Exception {
         populateTable();
+    }
+
+    @Test
+    public void testFrequentCommit() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            int N = 100000;
+            create(FF, PartitionBy.NONE, N);
+            try (TableWriter writer = newTableWriter(configuration, PRODUCT, metrics)) {
+
+                long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+
+                Rnd rnd = new Rnd();
+                for (int i = 0; i < N; i++) {
+                    ts = populateRow(writer, rnd, ts, 60L * 60000L * 1000L);
+                    writer.commit();
+                }
+            }
+        });
     }
 
     @Test
@@ -1871,7 +1870,7 @@ public class TableWriterTest extends AbstractCairoTest {
         testConstructor(new TestFilesFacadeImpl() {
             @Override
             public int openRO(LPSZ name) {
-                if (Chars.endsWith(name, TableUtils.META_FILE_NAME)) {
+                if (Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME)) {
                     return -1;
                 }
                 return super.openRO(name);
@@ -2163,7 +2162,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.contains(name, TableUtils.META_SWAP_FILE_NAME)) {
+                if (Utf8s.containsAscii(name, TableUtils.META_SWAP_FILE_NAME)) {
                     hit = true;
                     return -1;
                 }
@@ -2186,7 +2185,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public boolean exists(LPSZ path) {
-                if (Chars.contains(path, TableUtils.META_PREV_FILE_NAME)) {
+                if (Utf8s.containsAscii(path, TableUtils.META_PREV_FILE_NAME)) {
                     exists++;
                     return true;
                 }
@@ -2195,7 +2194,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public boolean remove(LPSZ name) {
-                if (Chars.contains(name, TableUtils.META_PREV_FILE_NAME)) {
+                if (Utf8s.containsAscii(name, TableUtils.META_PREV_FILE_NAME)) {
                     removes++;
                     return false;
                 }
@@ -2216,7 +2215,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public boolean remove(LPSZ name) {
-                if (Chars.endsWith(name, "supplier.d")) {
+                if (Utf8s.endsWithAscii(name, "supplier.d")) {
                     count++;
                     return false;
                 }
@@ -2237,7 +2236,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public boolean remove(LPSZ name) {
-                if (Chars.endsWith(name, "supplier.d")) {
+                if (Utf8s.endsWithAscii(name, "supplier.d")) {
                     count++;
                     return false;
                 }
@@ -2258,7 +2257,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public boolean exists(LPSZ path) {
-                if (Chars.contains(path, TableUtils.META_PREV_FILE_NAME) && --count > 0) {
+                if (Utf8s.containsAscii(path, TableUtils.META_PREV_FILE_NAME) && --count > 0) {
                     return true;
                 }
                 return super.exists(path);
@@ -2266,7 +2265,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public boolean remove(LPSZ name) {
-                return !Chars.contains(name, TableUtils.META_PREV_FILE_NAME) && super.remove(name);
+                return !Utf8s.containsAscii(name, TableUtils.META_PREV_FILE_NAME) && super.remove(name);
             }
 
             @Override
@@ -2283,12 +2282,12 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public boolean exists(LPSZ path) {
-                return Chars.contains(path, TableUtils.META_SWAP_FILE_NAME) || super.exists(path);
+                return Utf8s.containsAscii(path, TableUtils.META_SWAP_FILE_NAME) || super.exists(path);
             }
 
             @Override
             public boolean remove(LPSZ name) {
-                if (Chars.contains(name, TableUtils.META_SWAP_FILE_NAME)) {
+                if (Utf8s.containsAscii(name, TableUtils.META_SWAP_FILE_NAME)) {
                     hit = true;
                     return false;
                 }
@@ -2320,7 +2319,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public int rename(LPSZ from, LPSZ to) {
-                if (Chars.endsWith(to, TableUtils.META_FILE_NAME) && count-- > 0) {
+                if (Utf8s.endsWithAscii(to, TableUtils.META_FILE_NAME) && count-- > 0) {
                     return Files.FILES_RENAME_ERR_OTHER;
                 }
                 return super.rename(from, to);
@@ -2418,7 +2417,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.contains(name, TableUtils.META_SWAP_FILE_NAME)) {
+                if (Utf8s.containsAscii(name, TableUtils.META_SWAP_FILE_NAME)) {
                     hit = true;
                     return -1;
                 }
@@ -2441,7 +2440,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public boolean exists(LPSZ path) {
-                if (Chars.contains(path, TableUtils.META_PREV_FILE_NAME)) {
+                if (Utf8s.containsAscii(path, TableUtils.META_PREV_FILE_NAME)) {
                     exists++;
                     return true;
                 }
@@ -2450,7 +2449,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public boolean remove(LPSZ name) {
-                if (Chars.contains(name, TableUtils.META_PREV_FILE_NAME)) {
+                if (Utf8s.containsAscii(name, TableUtils.META_PREV_FILE_NAME)) {
                     removes++;
                     return false;
                 }
@@ -2471,7 +2470,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public boolean remove(LPSZ name) {
-                if (Chars.endsWith(name, "supplier.c")) {
+                if (Utf8s.endsWithAscii(name, "supplier.c")) {
                     count++;
                     return false;
                 }
@@ -2492,7 +2491,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public boolean remove(LPSZ name) {
-                if (Chars.endsWith(name, "supplier.d")) {
+                if (Utf8s.endsWithAscii(name, "supplier.d")) {
                     count++;
                     return false;
                 }
@@ -2513,7 +2512,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public boolean exists(LPSZ path) {
-                if (Chars.contains(path, TableUtils.META_PREV_FILE_NAME) && --count > 0) {
+                if (Utf8s.containsAscii(path, TableUtils.META_PREV_FILE_NAME) && --count > 0) {
                     return true;
                 }
                 return super.exists(path);
@@ -2521,7 +2520,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public boolean remove(LPSZ name) {
-                return !Chars.contains(name, TableUtils.META_PREV_FILE_NAME) && super.remove(name);
+                return !Utf8s.containsAscii(name, TableUtils.META_PREV_FILE_NAME) && super.remove(name);
             }
 
             @Override
@@ -2538,12 +2537,12 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public boolean exists(LPSZ path) {
-                return Chars.contains(path, TableUtils.META_SWAP_FILE_NAME) || super.exists(path);
+                return Utf8s.containsAscii(path, TableUtils.META_SWAP_FILE_NAME) || super.exists(path);
             }
 
             @Override
             public boolean remove(LPSZ name) {
-                if (Chars.contains(name, TableUtils.META_SWAP_FILE_NAME)) {
+                if (Utf8s.containsAscii(name, TableUtils.META_SWAP_FILE_NAME)) {
                     hit = true;
                     return false;
                 }
@@ -2575,7 +2574,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public int rename(LPSZ from, LPSZ to) {
-                if (Chars.endsWith(to, TableUtils.META_FILE_NAME) && count-- > 0) {
+                if (Utf8s.endsWithAscii(to, TableUtils.META_FILE_NAME) && count-- > 0) {
                     return Files.FILES_RENAME_ERR_OTHER;
                 }
                 return super.rename(from, to);
@@ -2669,12 +2668,12 @@ public class TableWriterTest extends AbstractCairoTest {
             boolean removeAttempted = false;
 
             @Override
-            public boolean rmdir(Path from) {
-                if (Chars.endsWith(from, "2013-03-12.0")) {
+            public boolean rmdir(Path from, boolean lazy) {
+                if (Utf8s.endsWithAscii(from, "2013-03-12.0")) {
                     removeAttempted = true;
                     return false;
                 }
-                return super.rmdir(from);
+                return super.rmdir(from, lazy);
             }
         }
 
@@ -2720,12 +2719,12 @@ public class TableWriterTest extends AbstractCairoTest {
             boolean removeAttempted = false;
 
             @Override
-            public boolean rmdir(Path path) {
-                if (Chars.endsWith(path, "2013-03-12.0")) {
+            public boolean rmdir(Path path, boolean lazy) {
+                if (Utf8s.endsWithAscii(path, "2013-03-12.0")) {
                     removeAttempted = true;
                     return false;
                 }
-                return super.rmdir(path);
+                return super.rmdir(path, lazy);
             }
         }
 
@@ -3127,7 +3126,7 @@ public class TableWriterTest extends AbstractCairoTest {
         testConstructor(new TestFilesFacadeImpl() {
             @Override
             public boolean exists(LPSZ path) {
-                return !Chars.endsWith(path, TableUtils.TXN_FILE_NAME) && super.exists(path);
+                return !Utf8s.endsWithAscii(path, TableUtils.TXN_FILE_NAME) && super.exists(path);
             }
         });
     }
@@ -3170,6 +3169,41 @@ public class TableWriterTest extends AbstractCairoTest {
                 TestUtils.assertEquals(boring, r.getSym(1).toString());
             }
         }
+    }
+
+    @Test
+    public void testWriterMemoryLimit() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            int N = 100000;
+            try {
+                Unsafe.setWriterMemLimit(configuration.getO3ColumnMemorySize());
+                create(FF, PartitionBy.DAY, N);
+                try (TableWriter writer = newTableWriter(configuration, PRODUCT, metrics)) {
+                    try {
+                        // Write O3
+                        Rnd rnd = new Rnd();
+                        long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+                        populateRow(writer, rnd, ts, 60L * 60000L * 1000L);
+                        populateRow(writer, rnd, ts - 1000, 60L * 60000L * 1000L);
+
+                        Assert.fail("writer creation should fail");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getMessage(), "table writing memory limit reached");
+                    }
+
+                    writer.rollback();
+                    Unsafe.setWriterMemLimit(2L * (writer.getColumnCount() + 1) * configuration.getO3ColumnMemorySize());
+                    Rnd rnd = new Rnd();
+                    long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+                    populateRow(writer, rnd, ts, 60L * 60000L * 1000L);
+                    populateRow(writer, rnd, ts - 1000, 60L * 60000L * 1000L);
+
+                    writer.commit();
+                }
+            } finally {
+                Unsafe.setWriterMemLimit(0);
+            }
+        });
     }
 
     private static void danglingO3TransactionModifier(TableWriter w, Rnd rnd, long timestamp, long increment) {
@@ -3912,10 +3946,10 @@ public class TableWriterTest extends AbstractCairoTest {
 
                 try (Path path = new Path()) {
                     path.of(root).concat(model.getName());
-                    final int plen = path.length();
+                    final int plen = path.size();
                     FF.iterateDir(path.$(), (pUtf8NameZ, type) -> {
                         if (FF.isDirOrSoftLinkDirNoDots(path, plen, pUtf8NameZ, type)) {
-                            int nlen = path.length();
+                            int nlen = path.size();
                             Assert.assertFalse(FF.exists(path.trimTo(nlen).concat("supplier.i").$()));
                             Assert.assertFalse(FF.exists(path.trimTo(nlen).concat("supplier.d").$()));
                             Assert.assertFalse(FF.exists(path.trimTo(nlen).concat("supplier.top").$()));
@@ -3992,7 +4026,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 try (Path path = new Path()) {
                     tableToken = writer.getTableToken();
                     path.of(root).concat(tableToken);
-                    final int plen = path.length();
+                    final int plen = path.size();
                     long colVersion = writer.getTxn() - 1;
 
                     if (columnTypeTag == ColumnType.SYMBOL) {
@@ -4004,7 +4038,7 @@ public class TableWriterTest extends AbstractCairoTest {
                     path.trimTo(plen);
                     FF.iterateDir(path.$(), (pUtf8NameZ, type) -> {
                         if (FF.isDirOrSoftLinkDirNoDots(path, plen, pUtf8NameZ, type)) {
-                            int nlen = path.length();
+                            int nlen = path.size();
                             Assert.assertTrue(FF.exists(path.trimTo(nlen).concat("sup.d." + colVersion).$()));
                             if (columnTypeTag == ColumnType.BINARY || columnTypeTag == ColumnType.STRING) {
                                 Assert.assertTrue(FF.exists(path.trimTo(nlen).concat("sup.i." + colVersion).$()));
@@ -4026,14 +4060,14 @@ public class TableWriterTest extends AbstractCairoTest {
 
             try (Path path = new Path()) {
                 path.of(root).concat(tableToken);
-                final int plen = path.length();
+                final int plen = path.size();
                 Assert.assertFalse(FF.exists(path.trimTo(plen).concat("supplier.v").$()));
                 Assert.assertFalse(FF.exists(path.trimTo(plen).concat("supplier.o").$()));
                 Assert.assertFalse(FF.exists(path.trimTo(plen).concat("supplier.c").$()));
                 Assert.assertFalse(FF.exists(path.trimTo(plen).concat("supplier.k").$()));
                 FF.iterateDir(path.$(), (pUtf8NameZ, type) -> {
                     if (FF.isDirOrSoftLinkDirNoDots(path, plen, pUtf8NameZ, type)) {
-                        int nlen = path.length();
+                        int nlen = path.size();
                         Assert.assertFalse(FF.exists(path.trimTo(nlen).concat("supplier.d").$()));
                         if (columnTypeTag == ColumnType.BINARY || columnTypeTag == ColumnType.STRING) {
                             Assert.assertFalse(FF.exists(path.trimTo(nlen).concat("supplier.i").$()));
@@ -4128,7 +4162,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
                 @Override
                 public int openRW(LPSZ name, long opts) {
-                    if (Chars.endsWith(name, "bin.i")) {
+                    if (Utf8s.endsWithAscii(name, "bin.i")) {
                         return fd = super.openRW(name, opts);
                     }
                     return super.openRW(name, opts);
@@ -4438,7 +4472,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
         @Override
         public int rename(LPSZ from, LPSZ to) {
-            if (Chars.contains(to, TableUtils.META_PREV_FILE_NAME)) {
+            if (Utf8s.containsAscii(to, TableUtils.META_PREV_FILE_NAME)) {
                 hit = true;
                 return Files.FILES_RENAME_ERR_OTHER;
             }
@@ -4456,7 +4490,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
         @Override
         public int rename(LPSZ from, LPSZ to) {
-            if (Chars.endsWith(from, TableUtils.META_SWAP_FILE_NAME)) {
+            if (Utf8s.endsWithAscii(from, TableUtils.META_SWAP_FILE_NAME)) {
                 hit = true;
                 return Files.FILES_RENAME_ERR_OTHER;
             }

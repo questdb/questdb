@@ -25,7 +25,9 @@
 package io.questdb.test;
 
 import io.questdb.Bootstrap;
+import io.questdb.PropBootstrapConfiguration;
 import io.questdb.PropServerConfiguration;
+import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
@@ -36,13 +38,20 @@ import io.questdb.std.Files;
 import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Rule;
 import org.junit.rules.Timeout;
+import org.postgresql.util.PSQLException;
 
 import java.io.PrintWriter;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.TimeUnit;
 
@@ -72,10 +81,22 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
         AbstractTest.setUpStatic();
         TestUtils.unchecked(() -> {
             dbPath = new Path().of(root).concat(PropServerConfiguration.DB_DIRECTORY).$();
-            dbPathLen = dbPath.length();
+            dbPathLen = dbPath.size();
             auxPath = new Path();
             dbPath.trimTo(dbPathLen).$();
         });
+    }
+
+    public static TestServerMain startWithEnvVariables(String... envs) {
+        assert envs.length % 2 == 0;
+
+        Map<String, String> envMap = new HashMap<>();
+        for (int i = 0; i < envs.length; i += 2) {
+            envMap.put(envs[i], envs[i + 1]);
+        }
+        TestServerMain serverMain = new TestServerMain(newBootstrapWithEnvVariables(envMap));
+        serverMain.start();
+        return serverMain;
     }
 
     @AfterClass
@@ -83,6 +104,56 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
         dbPath = Misc.free(dbPath);
         auxPath = Misc.free(auxPath);
         AbstractTest.tearDownStatic();
+    }
+
+    @NotNull
+    private static Bootstrap newBootstrapWithEnvVariables(Map<String, String> envs) {
+        Map<String, String> env = new HashMap<>(System.getenv());
+
+        env.putAll(envs);
+        return new Bootstrap(
+                new PropBootstrapConfiguration() {
+                    @Override
+                    public Map<String, String> getEnv() {
+                        return env;
+                    }
+                },
+                getServerMainArgs()
+        );
+    }
+
+    protected static void assertQueryFails(
+            String username,
+            String password,
+            int port,
+            String queryText,
+            String exceptionMessageMustContain,
+            String assertionFailureMessage
+    ) throws SQLException {
+        try (Connection conn = getConnection(username, password, port)) {
+            conn.createStatement().execute(queryText);
+            Assert.fail(assertionFailureMessage);
+        } catch (PSQLException e) {
+            TestUtils.assertContains(e.getMessage(), exceptionMessageMustContain);
+        }
+    }
+
+    protected static void assertQuerySucceeds(
+            String username,
+            String password,
+            int port,
+            String queryText,
+            String assertionFailureMessage
+    ) throws SQLException {
+        try (Connection conn = getConnection(username, password, port)) {
+            conn.createStatement().execute(queryText);
+        } catch (PSQLException e) {
+            throw new AssertionError(assertionFailureMessage, e);
+        }
+    }
+
+    protected static void createDummyConfiguration(String... extra) throws Exception {
+        createDummyConfigurationInRoot(root, extra);
     }
 
     protected static void createDummyConfiguration(
@@ -97,7 +168,6 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
         TestUtils.createTestPath(confPath);
         String file = confPath + Files.SEPARATOR + "server.conf";
         try (PrintWriter writer = new PrintWriter(file, CHARSET)) {
-
             // enable all services, but UDP; it has to be enabled per test
             writer.println(HTTP_ENABLED + "=true");
             writer.println(HTTP_MIN_ENABLED + "=true");
@@ -112,6 +182,7 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
             writer.println(CAIRO_WAL_ENABLED_DEFAULT + "=false");
             writer.println(METRICS_ENABLED + "=false");
             writer.println(TELEMETRY_ENABLED + "=false");
+            writer.println(TELEMETRY_DISABLE_COMPLETELY + "=true");
 
             // configure endpoints
             writer.println(HTTP_BIND_TO + "=0.0.0.0:" + httpPort);
@@ -133,7 +204,9 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
             // extra
             if (extra != null) {
                 for (String s : extra) {
-                    writer.println(s);
+                    // '\' is interpreted by java.util.Properties as an escape character
+                    // and we don't want that for Windows paths.
+                    writer.println(s.replace("\\", "\\\\"));
                 }
             }
         }
@@ -144,6 +217,8 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
             writer.println("");
         }
 
+        // note: nice try, but this is not used!
+        // at this point LogFactory has been initialized already
         // logs
         file = confPath + Files.SEPARATOR + "log.conf";
         System.setProperty("out", file);
@@ -152,10 +227,6 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
             writer.println("w.stdout.class=io.questdb.log.LogConsoleWriter");
             writer.println("w.stdout.level=INFO");
         }
-    }
-
-    protected static void createDummyConfiguration(String... extra) throws Exception {
-        createDummyConfigurationInRoot(root, extra);
     }
 
     protected static void createDummyConfigurationInRoot(String root, String... extra) throws Exception {
@@ -186,6 +257,14 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
         System.arraycopy(args, 0, extendedArgs, 0, argsLen);
         System.arraycopy(moreArgs, 0, extendedArgs, argsLen, extLen);
         return extendedArgs;
+    }
+
+    protected static Connection getConnection(String username, String password, int port) throws SQLException {
+        Properties properties = new Properties();
+        properties.setProperty("user", username);
+        properties.setProperty("password", password);
+        final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", port);
+        return DriverManager.getConnection(url, properties);
     }
 
     protected static String getPgConnectionUri(int pgPort) {

@@ -35,6 +35,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TestFilesFacade;
@@ -55,6 +56,8 @@ public class TextLoaderTest extends AbstractCairoTest {
     private static final ByteManipulator ENTITY_MANIPULATOR = (index, len, b) -> b;
     private static final String PATH_SEP_REGEX = Os.isWindows() ?
             String.format("[%c%c]", Files.SEPARATOR, Files.SEPARATOR) : String.valueOf(Files.SEPARATOR);
+    private static final Utf8String TEST_TABLE_NAME = new Utf8String("test");
+    private static final Utf8String TEST_TS_COL_NAME = new Utf8String("ts");
     private static final JsonLexer jsonLexer = new JsonLexer(1024, 1024);
 
     @AfterClass
@@ -96,11 +99,21 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "1\t0\t0\t2022-01-04T09:58:58.225032Z";
 
             configureLoaderDefaults(textLoader);
+            String json = "[\n" +
+                    "  { \"name\": \"timing\", \"type\": \"TIMESTAMP\", \"pattern\": \"yyyy-MM-ddTHH:mm:ss.SSSUUUZ\" }, " +
+                    "  { \"name\": \"a\", \"type\": \"INT\" }, " +
+                    "  { \"name\": \"b\", \"type\": \"INT\" }, " +
+                    "  { \"name\": \"c\", \"type\": \"INT\" } " +
+                    "]";
+            playJson(textLoader, json);
+            textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
             playText0(textLoader, csv1, 1024, ENTITY_MANIPULATOR);
             assertTable(expected1);
             textLoader.clear();
 
             configureLoaderDefaults(textLoader);
+            playJson(textLoader, json);
+            textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
             playText0(textLoader, csv2, 1024, ENTITY_MANIPULATOR);
             assertTable(expected2);
             textLoader.clear();
@@ -269,7 +282,16 @@ public class TextLoaderTest extends AbstractCairoTest {
                                 return b;
                         }
                     },
-                    "{\"columnCount\":9,\"columns\":[{\"index\":0,\"name\":\"№ПП\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"ОбъектыКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":2,\"name\":\"ВидКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":3,\"name\":\"ТемаКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":4,\"name\":\"ПроверяемыйПериод\",\"type\":\"STRING\"},{\"index\":5,\"name\":\"НачалоПроверки\",\"type\":\"STRING\"},{\"index\":6,\"name\":\"ОкончаниеПроверки\",\"type\":\"STRING\"},{\"index\":7,\"name\":\"ВыявленныеНарушенияНедостатки\",\"type\":\"STRING\"},{\"index\":8,\"name\":\"РезультатыПроверки\",\"type\":\"STRING\"}],\"timestampIndex\":-1}",
+                    "{\"columnCount\":9,\"columns\":[" +
+                            "{\"index\":0,\"name\":\"№ПП\",\"type\":\"STRING\"}," +
+                            "{\"index\":1,\"name\":\"ОбъектыКонтрольногоМероприятия\",\"type\":\"STRING\"}," +
+                            "{\"index\":2,\"name\":\"ВидКонтрольногоМероприятия\",\"type\":\"STRING\"}," +
+                            "{\"index\":3,\"name\":\"ТемаКонтрольногоМероприятия\",\"type\":\"STRING\"}," +
+                            "{\"index\":4,\"name\":\"ПроверяемыйПериод\",\"type\":\"STRING\"}," +
+                            "{\"index\":5,\"name\":\"НачалоПроверки\",\"type\":\"STRING\"}," +
+                            "{\"index\":6,\"name\":\"ОкончаниеПроверки\",\"type\":\"STRING\"}," +
+                            "{\"index\":7,\"name\":\"ВыявленныеНарушенияНедостатки\",\"type\":\"STRING\"}," +
+                            "{\"index\":8,\"name\":\"РезультатыПроверки\",\"type\":\"STRING\"}],\"timestampIndex\":-1}",
                     36,
                     36,
                     true,
@@ -563,7 +585,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                 180_000_000,
                 721,
                 2_000_000,
-                2);
+                2
+        );
     }
 
     @Test
@@ -676,7 +699,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "host_99,us-east-1,us-east-1a,31,Ubuntu16.10,x86,SF,19,1,staging,7,58,75,50,42,88,59,32,64,33,2016-01-01T00:00:00.000000Z\n";
 
             textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-            textLoader.configureDestination("test", true, false, 0, PartitionBy.DAY, "timestamp", null);
+            textLoader.configureDestination(TEST_TABLE_NAME, true, false, 0, PartitionBy.DAY, new Utf8String("timestamp"), null);
             textLoader.configureColumnDelimiter((byte) ',');
             playText0(textLoader, csv, 1024, ENTITY_MANIPULATOR);
             drainWalQueue();
@@ -783,7 +806,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "host_99\tus-east-1\tus-east-1a\t31\tUbuntu16.10\tx86\tSF\t19\t1\tstaging\t7\t58\t75\t50\t42\t88\t59\t32\t64\t33\t2016-01-01T00:00:00.000000Z\n");
 
             assertSql(
-                    "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\n" +
+                    "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\n" +
                             "1\ttest\ttimestamp\tDAY\t1000\t300000000\ttrue\ttest~1\tfalse\n",
                     "tables"
             );
@@ -934,7 +957,7 @@ public class TextLoaderTest extends AbstractCairoTest {
 
     @Test
     public void testDateFormatNoLocale() throws Exception {
-        DateLocale locale = io.questdb.std.datetime.millitime.DateFormatUtils.enLocale;
+        DateLocale locale = io.questdb.std.datetime.millitime.DateFormatUtils.EN_LOCALE;
         assertNoLeak(textLoader -> {
             String csv = "\"name\",\"date\"\n" +
                     "\"Всероссийские спортивные соревнования школьников «ПРЕЗИДЕНТСКИЕ СОСТЯЗАНИЯ»\",\"3 " + locale.getMonth(6) + " 2017 г.\"\n" +
@@ -1085,10 +1108,25 @@ public class TextLoaderTest extends AbstractCairoTest {
             // which makes 14.4 not to parse
             playText(
                     textLoader,
+                    "{ \"columns\" : [ " +
+                            "{ \"file_column_name\": \"type\", \"column_type\": \"STRING\"  }, " +
+                            "{ \"file_column_name\": \"value\", \"column_type\": \"INT\"  }, " +
+                            "{ \"file_column_name\": \"active\", \"column_type\": \"BOOLEAN\"  }, " +
+                            "{ \"file_column_name\": \"desc\", \"column_type\": \"STRING\"  }, " +
+                            "{ \"file_column_name\": \"grp\", \"column_type\": \"STRING\"  }, " +
+                            "] }",
+                    2,
+                    false,
                     csv,
                     85,
                     expected,
-                    "{\"columnCount\":5,\"columns\":[{\"index\":0,\"name\":\"type\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"value\",\"type\":\"INT\"},{\"index\":2,\"name\":\"active\",\"type\":\"BOOLEAN\"},{\"index\":3,\"name\":\"desc\",\"type\":\"STRING\"},{\"index\":4,\"name\":\"grp\",\"type\":\"STRING\"}],\"timestampIndex\":-1}",
+                    "{\"columnCount\":5," +
+                            "\"columns\":[" +
+                            "{\"index\":0,\"name\":\"type\",\"type\":\"STRING\"}," +
+                            "{\"index\":1,\"name\":\"value\",\"type\":\"INT\"}," +
+                            "{\"index\":2,\"name\":\"active\",\"type\":\"BOOLEAN\"}," +
+                            "{\"index\":3,\"name\":\"desc\",\"type\":\"STRING\"}," +
+                            "{\"index\":4,\"name\":\"grp\",\"type\":\"STRING\"}],\"timestampIndex\":-1}",
                     5,
                     4,
                     true
@@ -1119,10 +1157,25 @@ public class TextLoaderTest extends AbstractCairoTest {
             // at buffer size 250 "value" is type is determined as DOUBLE
             playText(
                     textLoader,
+                    "{ \"columns\" : [ " +
+                            "{ \"file_column_name\": \"type\", \"column_type\": \"STRING\"  }, " +
+                            "{ \"file_column_name\": \"value\", \"column_type\": \"DOUBLE\"  }, " +
+                            "{ \"file_column_name\": \"active\", \"column_type\": \"BOOLEAN\"  }, " +
+                            "{ \"file_column_name\": \"desc\", \"column_type\": \"STRING\"  }, " +
+                            "{ \"file_column_name\": \"grp\", \"column_type\": \"STRING\"  }, " +
+                            "] }",
+                    2,
+                    false,
                     csv,
                     250,
                     expected,
-                    "{\"columnCount\":5,\"columns\":[{\"index\":0,\"name\":\"type\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"value\",\"type\":\"DOUBLE\"},{\"index\":2,\"name\":\"active\",\"type\":\"BOOLEAN\"},{\"index\":3,\"name\":\"desc\",\"type\":\"STRING\"},{\"index\":4,\"name\":\"grp\",\"type\":\"STRING\"}],\"timestampIndex\":-1}",
+                    "{\"columnCount\":5," +
+                            "\"columns\":[" +
+                            "{\"index\":0,\"name\":\"type\",\"type\":\"STRING\"}," +
+                            "{\"index\":1,\"name\":\"value\",\"type\":\"DOUBLE\"}," +
+                            "{\"index\":2,\"name\":\"active\",\"type\":\"BOOLEAN\"}," +
+                            "{\"index\":3,\"name\":\"desc\",\"type\":\"STRING\"}," +
+                            "{\"index\":4,\"name\":\"grp\",\"type\":\"STRING\"}],\"timestampIndex\":-1}",
                     5,
                     5,
                     true
@@ -1147,12 +1200,27 @@ public class TextLoaderTest extends AbstractCairoTest {
             textLoader.setForceHeaders(true);
             textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
             // at buffer size 250 "value" is type is determined as DOUBLE
+
             playText(
                     textLoader,
+                    " { \"columns\": [" +
+                            "{ \"file_column_name\": \"type\", \"column_type\":\"STRING\" }, " +
+                            "{ \"file_column_name\": \"value\", \"column_type\":\"STRING\" }, " +
+                            "{ \"file_column_name\": \"active\", \"column_type\":\"STRING\" }, " +
+                            "{ \"file_column_name\": \"desc\", \"column_type\":\"STRING\" }, " +
+                            "{ \"file_column_name\": \"_1\", \"column_type\":\"INT\", \"formats\" : [ { \"pattern\": \"bogus\" } ] } " +
+                            "] }",
+                    2,
+                    false,
                     csv,
                     90,
                     expected,
-                    "{\"columnCount\":5,\"columns\":[{\"index\":0,\"name\":\"type\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"value\",\"type\":\"STRING\"},{\"index\":2,\"name\":\"active\",\"type\":\"STRING\"},{\"index\":3,\"name\":\"desc\",\"type\":\"STRING\"},{\"index\":4,\"name\":\"_1\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
+                    "{\"columnCount\":5,\"columns\":[" +
+                            "{\"index\":0,\"name\":\"type\",\"type\":\"STRING\"}," +
+                            "{\"index\":1,\"name\":\"value\",\"type\":\"STRING\"}," +
+                            "{\"index\":2,\"name\":\"active\",\"type\":\"STRING\"}," +
+                            "{\"index\":3,\"name\":\"desc\",\"type\":\"STRING\"}," +
+                            "{\"index\":4,\"name\":\"_1\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
                     2,
                     2,
                     true
@@ -1329,7 +1397,7 @@ public class TextLoaderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testImportNullForAllTypesWithDesignatedColumnWhenTableExists() throws Exception {
+    public void testImportNullForAllTypesWithDesignatedTsColumnWhenTableExists() throws Exception {
         assertNoLeak(
                 engine,
                 textLoader -> {
@@ -1384,18 +1452,39 @@ public class TextLoaderTest extends AbstractCairoTest {
                             PartitionBy.NONE
                     );
                     textLoader.setForceHeaders(true);
-                    playText(engine,
+                    playText(
+                            engine,
                             textLoader,
+                            "{ \"columns\": [ " +
+                                    // if other columns contain only bad data, they can be marked with 'file_column_ignore'
+                                    "{ \"file_column_name\": \"byte\",  \"column_type\": \"byte\", \"formats\": [{ \"pattern\": \"bogus\"}] }, " +
+                                    "{ \"file_column_name\": \"short\", \"column_type\": \"short\", \"formats\": [{ \"pattern\": \"bogus\"}] }, " +
+                                    "{ \"file_column_name\": \"char\",  \"column_type\": \"char\", \"formats\": [{ \"pattern\": \"bogus\"}] }, " +
+                                    "{ \"file_column_name\": \"int\",   \"column_type\": \"int\", \"formats\": [{ \"pattern\": \"bogus\"}] }, " +
+                                    "{ \"file_column_name\": \"long\",  \"column_type\": \"long\", \"formats\": [{ \"pattern\": \"bogus\"}] }, " +
+                                    "{ \"file_column_name\": \"boolean\", \"column_type\": \"boolean\", \"formats\": [{ \"pattern\": \"bogus\"}] }, " +
+                                    "{ \"file_column_name\": \"float\",   \"column_type\": \"float\", \"formats\": [{ \"pattern\": \"bogus\"}] }, " +
+                                    "{ \"file_column_name\": \"double\",  \"column_type\": \"double\", \"formats\": [{ \"pattern\": \"bogus\"}] }, " +
+                                    "{ \"file_column_name\": \"string\",  \"column_type\": \"string\", \"formats\": [{ \"pattern\": \"bogus\"}] }, " +
+                                    "{ \"file_column_name\": \"symbol\",  \"column_type\": \"symbol\", \"formats\": [{ \"pattern\": \"bogus\"}] }, " +
+                                    "{ \"file_column_name\": \"long256\", \"column_type\": \"long256\", \"formats\": [{ \"pattern\": \"bogus\"}] }, " +
+                                    "{ \"file_column_name\": \"timestamp\", \"column_type\": \"timestamp\", \"formats\": [{ \"pattern\": \"bogus\"}] }, " +
+                                    "{ \"file_column_name\": \"date\",     \"column_type\": \"date\", \"formats\": [{ \"pattern\": \"bogus\"}] } " +
+                                    "] }",
+                            2,
+                            true,
                             csv,
                             1024,
                             expected,
+                            ENTITY_MANIPULATOR,
                             expectedMetadata,
                             3,
                             3,
                             true,
                             true
                     );
-                });
+                }
+        );
     }
 
     @Test
@@ -1426,14 +1515,15 @@ public class TextLoaderTest extends AbstractCairoTest {
                                 -1,
                                 -1,
                                 true,
-                                        true
+                                true
 
                         );
                         Assert.fail("cannot insert null timestamp in designated column");
-                    } catch (TextException expected) {
-                        Assert.assertEquals("not a timestamp 'ts'", expected.getMessage());
+                    } catch (CairoException expected) {
+                        TestUtils.assertContains(expected.getMessage(), "column type mismatch");
                     }
-                });
+                }
+        );
     }
 
     @Test
@@ -1457,9 +1547,13 @@ public class TextLoaderTest extends AbstractCairoTest {
                         playText(
                                 engine,
                                 textLoader,
+                                "{ \"columns\": [{ \"file_column_name\": \"ts\", \"column_type\": \"TIMESTAMP\" }] }",
+                                2,
+                                true,
                                 csv,
                                 1024,
                                 "ts\n",
+                                ENTITY_MANIPULATOR,
                                 "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"ts\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":0}",
                                 1,
                                 0,
@@ -1467,10 +1561,11 @@ public class TextLoaderTest extends AbstractCairoTest {
                                 true
                         );
                         Assert.fail("cannot insert null timestamp in designated column");
-                    } catch (TextException expected) {
-                        Assert.assertEquals("not a timestamp 'ts'", expected.getMessage());
+                    } catch (CairoException expected) {
+                        TestUtils.assertContains(expected.getMessage(), "column type mismatch");
                     }
-                });
+                }
+        );
     }
 
     @Test
@@ -1517,7 +1612,6 @@ public class TextLoaderTest extends AbstractCairoTest {
                                 "0.711850374\n" +
                                 "0.241364223\n";
 
-
                         String csv = "s\n" +
                                 "0.503555892\n" +
                                 "0.537083585\n" +
@@ -1548,16 +1642,21 @@ public class TextLoaderTest extends AbstractCairoTest {
                         playText(
                                 engine,
                                 textLoader,
+                                "{ \"columns\": [{ \"file_column_name\": \"s\", \"column_type\": \"DOUBLE\" }] }",
+                                2,
+                                false,
                                 csv,
                                 1024,
                                 expected,
+                                ENTITY_MANIPULATOR,
                                 "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"s\",\"type\":\"DOUBLE\"}],\"timestampIndex\":-1}",
                                 23,
                                 23,
                                 true,
                                 true
                         );
-                    });
+                    }
+            );
         }
     }
 
@@ -1627,7 +1726,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                                 true,
                                 true
                         );
-                    });
+                    }
+            );
         }
     }
 
@@ -1638,7 +1738,10 @@ public class TextLoaderTest extends AbstractCairoTest {
 
     @Test
     public void testImportTimestampFromEpochNominatedTimestamp() throws Exception {
-        assertTimestampAsLong("timestamp(ts) partition by DAY", "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"StrSym\",\"type\":\"SYMBOL\"},{\"index\":1,\"name\":\"ts\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":1}");
+        assertTimestampAsLong("timestamp(ts) partition by DAY",
+                "{\"columnCount\":2,\"columns\":[" +
+                        "{\"index\":0,\"name\":\"StrSym\",\"type\":\"SYMBOL\"}," +
+                        "{\"index\":1,\"name\":\"ts\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":1}");
     }
 
     @Test
@@ -1680,10 +1783,19 @@ public class TextLoaderTest extends AbstractCairoTest {
                         playText(
                                 engine,
                                 textLoader,
+                                "{ \"columns\": [ " +
+                                        "{ \"file_column_name\": \"StrSym\", \"column_type\": \"STRING\" }," +
+                                        "{ \"file_column_name\": \"ts\", \"column_type\": \"TIMESTAMP\" }" +
+                                        " ] }",
+                                2,
+                                false,
                                 csv,
                                 1024,
                                 expected,
-                                "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"StrSym\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"ts\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":1}",
+                                ENTITY_MANIPULATOR,
+                                "{\"columnCount\":2,\"columns\":[" +
+                                        "{\"index\":0,\"name\":\"StrSym\",\"type\":\"STRING\"}," +
+                                        "{\"index\":1,\"name\":\"ts\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":1}",
                                 5,
                                 5,
                                 true,
@@ -1814,6 +1926,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "{\"columnCount\":20,\"columns\":[{\"index\":0,\"name\":\"VendorID\",\"type\":\"INT\"},{\"index\":1,\"name\":\"lpep_pickup_datetime\",\"type\":\"TIMESTAMP\"},{\"index\":2,\"name\":\"Lpep_dropoff_datetime\",\"type\":\"TIMESTAMP\"},{\"index\":3,\"name\":\"Store_and_fwd_flag\",\"type\":\"CHAR\"},{\"index\":4,\"name\":\"RateCodeID\",\"type\":\"INT\"},{\"index\":5,\"name\":\"Pickup_longitude\",\"type\":\"INT\"},{\"index\":6,\"name\":\"Pickup_latitude\",\"type\":\"INT\"},{\"index\":7,\"name\":\"Dropoff_longitude\",\"type\":\"DOUBLE\"},{\"index\":8,\"name\":\"Dropoff_latitude\",\"type\":\"DOUBLE\"},{\"index\":9,\"name\":\"Passenger_count\",\"type\":\"INT\"},{\"index\":10,\"name\":\"Trip_distance\",\"type\":\"DOUBLE\"},{\"index\":11,\"name\":\"Fare_amount\",\"type\":\"DOUBLE\"},{\"index\":12,\"name\":\"Extra\",\"type\":\"DOUBLE\"},{\"index\":13,\"name\":\"MTA_tax\",\"type\":\"DOUBLE\"},{\"index\":14,\"name\":\"Tip_amount\",\"type\":\"DOUBLE\"},{\"index\":15,\"name\":\"Tolls_amount\",\"type\":\"INT\"},{\"index\":16,\"name\":\"Ehail_fee\",\"type\":\"STRING\"},{\"index\":17,\"name\":\"Total_amount\",\"type\":\"DOUBLE\"},{\"index\":18,\"name\":\"Payment_type\",\"type\":\"INT\"},{\"index\":19,\"name\":\"Trip_type\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
                     14,
                     14,
+                    false,
                     false
             );
         });
@@ -1928,7 +2041,6 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "\t6\t4527\t2.48986426275223\t2015-01-16T19:15:09.000000Z\t2015-01-16T19:15:09.000000Z\t2015-01-16T00:00:00.000000Z\t2719\tfalse\t67489936\n" +
                     "CMP1\t7\t6460\t6.39910243218765\t2015-01-17T19:15:09.000000Z\t2015-01-17T19:15:09.000000Z\t2015-01-17T00:00:00.000000Z\t5142\ttrue\t69744070\n";
 
-
             String csv = "StrSym,Int Sym,Int_Col,DoubleCol,IsoDate,Fmt1Date,Fmt2Date,Phone,boolean,long\n" +
                     "CMP1,7,8284,3.2045788760297,2015-01-13T19:15:09.000Z,2015-01-13 19:15:09,01/13/2015,8284,TRUE,10239799\n" +
                     "CMP2,3,1066,7.5186683377251,2015-01-14T19:15:09.000Z,2015-01-14 19:15:09,01/14/2015,1066,FALSE,23331405\n" +
@@ -1943,7 +2055,18 @@ public class TextLoaderTest extends AbstractCairoTest {
                     csv,
                     260,
                     expected,
-                    "{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"StrSym\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"IntSym\",\"type\":\"INT\"},{\"index\":2,\"name\":\"Int_Col\",\"type\":\"INT\"},{\"index\":3,\"name\":\"DoubleCol\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"IsoDate\",\"type\":\"TIMESTAMP\"},{\"index\":5,\"name\":\"Fmt1Date\",\"type\":\"TIMESTAMP\"},{\"index\":6,\"name\":\"Fmt2Date\",\"type\":\"TIMESTAMP\"},{\"index\":7,\"name\":\"Phone\",\"type\":\"INT\"},{\"index\":8,\"name\":\"boolean\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"long\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
+                    "{\"columnCount\":10," +
+                            "\"columns\":[" +
+                            "{\"index\":0,\"name\":\"StrSym\",\"type\":\"STRING\"}," +
+                            "{\"index\":1,\"name\":\"IntSym\",\"type\":\"INT\"}," +
+                            "{\"index\":2,\"name\":\"Int_Col\",\"type\":\"INT\"}," +
+                            "{\"index\":3,\"name\":\"DoubleCol\",\"type\":\"DOUBLE\"}," +
+                            "{\"index\":4,\"name\":\"IsoDate\",\"type\":\"TIMESTAMP\"}," +
+                            "{\"index\":5,\"name\":\"Fmt1Date\",\"type\":\"TIMESTAMP\"}," +
+                            "{\"index\":6,\"name\":\"Fmt2Date\",\"type\":\"TIMESTAMP\"}," +
+                            "{\"index\":7,\"name\":\"Phone\",\"type\":\"INT\"}," +
+                            "{\"index\":8,\"name\":\"boolean\",\"type\":\"BOOLEAN\"}," +
+                            "{\"index\":9,\"name\":\"long\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
                     5,
                     4,
                     true
@@ -2035,13 +2158,13 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "CMP1,5,4938,4.42754498450086,2015-02-09T19:15:09.000Z,2015-02-09 19:15:09,02/09/2015,7817,FALSE,61983099\n";
 
             configureLoaderDefaults(textLoader);
-
-            playJson(textLoader, ("[\n" +
-                    "  {\n" +
-                    "    \"name\": \"f3\",\n" +
-                    "    \"type\": \"FLOAT\"\n" +
-                    "  }\n" +
-                    "]"));
+            textLoader.setSchemaVersion(2);
+            playJson(textLoader, ("{" +
+                    "  \"columns\": [" +
+                    "    {  \"file_column_index\": 3, \"column_type\": \"FLOAT\" } " +
+                    "  ]," +
+                    "  \"formats_action\": \"ADD\"\n" +
+                    "}"));
             textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
             playText(
                     textLoader,
@@ -2087,13 +2210,13 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "CMP1,5,4938,4.42754498450086,2015-02-09T19:15:09.000Z,2015-02-09 19:15:09,02/09/2015,7817,FALSE,61983099\n";
 
             configureLoaderDefaults(textLoader, (byte) ',');
-
-            playJson(textLoader, ("[\n" +
-                    "  {\n" +
-                    "    \"name\": \"f1\",\n" +
-                    "    \"type\": \"BYTE\"\n" +
-                    "  }\n" +
-                    "]"));
+            textLoader.setSchemaVersion(2);
+            playJson(textLoader, ("{" +
+                    "  \"columns\": [" +
+                    "    {  \"file_column_index\": 1, \"column_type\": \"BYTE\" }, " +
+                    "  ]," +
+                    "  \"formats_action\": \"ADD\"\n" +
+                    "}"));
             textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
             playText(
                     textLoader,
@@ -2139,24 +2262,31 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "CMP1,5,4938,4.42754498450086,2015-02-09T19:15:09.000Z,2015-02-09 19:15:09,02/09/2015,7817,FALSE,61983099\n";
 
             configureLoaderDefaults(textLoader);
-
-            playJson(textLoader, ("[\n" +
-                    "  {\n" +
-                    "    \"name\": \"f1\",\n" +
-                    "    \"type\": \"short\"\n" +
-                    "  },\n" +
-                    "  {\n" +
-                    "    \"name\": \"f2\",\n" +
-                    "    \"type\": \"short\"\n" +
-                    "  }\n" +
-                    "]"));
+            textLoader.setSchemaVersion(2);
+            playJson(textLoader, ("{" +
+                    "  \"columns\": [" +
+                    "    {  \"file_column_index\": 1, \"column_type\": \"SHORT\", \"table_column_name\": \"f1\" }, " +
+                    "    {  \"file_column_index\": 2, \"column_type\": \"SHORT\", \"table_column_name\": \"f2\" } " +
+                    "  ]," +
+                    "  \"formats_action\": \"ADD\"\n" +
+                    "}"));
             textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
             playText(
                     textLoader,
                     csv,
                     1024,
                     expected,
-                    "{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"f1\",\"type\":\"SHORT\"},{\"index\":2,\"name\":\"f2\",\"type\":\"SHORT\"},{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"f4\",\"type\":\"TIMESTAMP\"},{\"index\":5,\"name\":\"f5\",\"type\":\"TIMESTAMP\"},{\"index\":6,\"name\":\"f6\",\"type\":\"TIMESTAMP\"},{\"index\":7,\"name\":\"f7\",\"type\":\"INT\"},{\"index\":8,\"name\":\"f8\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"f9\",\"type\":\"LONG\"}],\"timestampIndex\":-1}",
+                    "{\"columnCount\":10,\"columns\":[" +
+                            "{\"index\":0,\"name\":\"f0\",\"type\":\"STRING\"}," +
+                            "{\"index\":1,\"name\":\"f1\",\"type\":\"SHORT\"}," +
+                            "{\"index\":2,\"name\":\"f2\",\"type\":\"SHORT\"}," +
+                            "{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"}," +
+                            "{\"index\":4,\"name\":\"f4\",\"type\":\"TIMESTAMP\"}," +
+                            "{\"index\":5,\"name\":\"f5\",\"type\":\"TIMESTAMP\"}," +
+                            "{\"index\":6,\"name\":\"f6\",\"type\":\"TIMESTAMP\"}," +
+                            "{\"index\":7,\"name\":\"f7\",\"type\":\"INT\"}," +
+                            "{\"index\":8,\"name\":\"f8\",\"type\":\"BOOLEAN\"}," +
+                            "{\"index\":9,\"name\":\"f9\",\"type\":\"LONG\"}],\"timestampIndex\":-1}",
                     12,
                     12,
                     false
@@ -2165,7 +2295,10 @@ public class TextLoaderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOverrideStringWithShort() throws Exception {
+    public void testOverrideStringWithShortResultsInTypeMismatchError() throws Exception {
+        /* Overriding column type with one that is not compatible (according to text analyser) is not possible anymore
+         *  If column contains garbage it's better to mark it with file_column_ignore=true and insert_null=true instead. */
+
         assertNoLeak(loader -> {
 
             String expected = "f0\tf1\tf2\tf3\tf4\tf5\tf6\tf7\tf8\tf9\n" +
@@ -2185,29 +2318,27 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "CMP1,5,4938,4.42754498450086,2015-02-09T19:15:09.000Z,2015-02-09 19:15:09,02/09/2015,7817,FALSE,61983099\n";
 
             configureLoaderDefaults(loader, (byte) ',');
-
-            playJson(loader, ("[\n" +
-                    "  {\n" +
-                    "    \"name\": \"f0\",\n" +
-                    "    \"type\": \"short\",\n" +
-                    "    \"meta\": \"hello\"\n" +
-                    "  },\n" +
-                    "  {\n" +
-                    "    \"name\": \"f2\",\n" +
-                    "    \"type\": \"short\"\n" +
-                    "  }\n" +
-                    "]"));
-            loader.setState(TextLoader.ANALYZE_STRUCTURE);
-            playText(
-                    loader,
-                    csv,
-                    1024,
-                    expected,
-                    "{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"SHORT\"},{\"index\":1,\"name\":\"f1\",\"type\":\"INT\"},{\"index\":2,\"name\":\"f2\",\"type\":\"SHORT\"},{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"f4\",\"type\":\"TIMESTAMP\"},{\"index\":5,\"name\":\"f5\",\"type\":\"TIMESTAMP\"},{\"index\":6,\"name\":\"f6\",\"type\":\"TIMESTAMP\"},{\"index\":7,\"name\":\"f7\",\"type\":\"INT\"},{\"index\":8,\"name\":\"f8\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"f9\",\"type\":\"LONG\"}],\"timestampIndex\":-1}",
-                    12,
-                    1,
-                    false
-            );
+            try {
+                playText(
+                        loader,
+                        "{ \"columns\": [ " +
+                                "  { \"file_column_index\": \"0\", \"column_type\": \"SHORT\" }," +
+                                "  { \"file_column_index\": \"2\", \"column_type\": \"SHORT\" } " +
+                                "] }",
+                        2,
+                        true,
+                        csv,
+                        1024,
+                        expected,
+                        "{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"SHORT\"},{\"index\":1,\"name\":\"f1\",\"type\":\"INT\"},{\"index\":2,\"name\":\"f2\",\"type\":\"SHORT\"},{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"f4\",\"type\":\"TIMESTAMP\"},{\"index\":5,\"name\":\"f5\",\"type\":\"TIMESTAMP\"},{\"index\":6,\"name\":\"f6\",\"type\":\"TIMESTAMP\"},{\"index\":7,\"name\":\"f7\",\"type\":\"INT\"},{\"index\":8,\"name\":\"f8\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"f9\",\"type\":\"LONG\"}],\"timestampIndex\":-1}",
+                        12,
+                        1,
+                        false
+                );
+                Assert.fail("!");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "column type mismatch");
+            }
         });
     }
 
@@ -2242,20 +2373,28 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "CMP1,5,4938,4.42754498450086,2015-02-09T19:15:09.000Z,2015-02-09 19:15:09,02/09/2015,7817,FALSE,61983099\n";
 
             configureLoaderDefaults(textLoader);
-
-            playJson(textLoader, ("[\n" +
-                    "  {\n" +
-                    "    \"name\": \"f0\",\n" +
-                    "    \"type\": \"SYMBOL\"\n" +
-                    "  }\n" +
-                    "]"));
+            textLoader.setSchemaVersion(2);
+            playJson(textLoader, ("{ \"columns\": [ " +
+                    "  { \"file_column_index\": \"0\", \"column_type\": \"SYMBOL\" }\n" +
+                    "] }"));
             textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
             playText(
                     textLoader,
                     csv,
                     1024,
                     expected,
-                    "{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"SYMBOL\"},{\"index\":1,\"name\":\"f1\",\"type\":\"INT\"},{\"index\":2,\"name\":\"f2\",\"type\":\"INT\"},{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"f4\",\"type\":\"TIMESTAMP\"},{\"index\":5,\"name\":\"f5\",\"type\":\"TIMESTAMP\"},{\"index\":6,\"name\":\"f6\",\"type\":\"TIMESTAMP\"},{\"index\":7,\"name\":\"f7\",\"type\":\"INT\"},{\"index\":8,\"name\":\"f8\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"f9\",\"type\":\"LONG\"}],\"timestampIndex\":-1}",
+                    "{\"columnCount\":10," +
+                            "\"columns\":[" +
+                            "{\"index\":0,\"name\":\"f0\",\"type\":\"SYMBOL\"}," +
+                            "{\"index\":1,\"name\":\"f1\",\"type\":\"INT\"}," +
+                            "{\"index\":2,\"name\":\"f2\",\"type\":\"INT\"}," +
+                            "{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"}," +
+                            "{\"index\":4,\"name\":\"f4\",\"type\":\"TIMESTAMP\"}," +
+                            "{\"index\":5,\"name\":\"f5\",\"type\":\"TIMESTAMP\"}," +
+                            "{\"index\":6,\"name\":\"f6\",\"type\":\"TIMESTAMP\"}," +
+                            "{\"index\":7,\"name\":\"f7\",\"type\":\"INT\"}," +
+                            "{\"index\":8,\"name\":\"f8\",\"type\":\"BOOLEAN\"}," +
+                            "{\"index\":9,\"name\":\"f9\",\"type\":\"LONG\"}],\"timestampIndex\":-1}",
                     12,
                     12,
                     false
@@ -2381,7 +2520,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                                 true,
                                 true
                         );
-                    });
+                    }
+            );
         }
     }
 
@@ -2506,8 +2646,16 @@ public class TextLoaderTest extends AbstractCairoTest {
 
             configureLoaderDefaults(textLoader);
             textLoader.setForceHeaders(false);
+
             playText(
                     textLoader,
+                    "{" +
+                            "  \"columns\": [" +
+                            "    {  \"file_column_name\": \"ts\", \"column_type\": \"TIMESTAMP\", \"formats\": [ { \"pattern\": \"yyyy-MM-ddTHH:mm:ss.SSSUUU\" } ] }, " +
+                            "    {  \"file_column_name\": \"a\", \"column_type\": \"CHAR\" } " +
+                            "  ] }",
+                    2,
+                    false,
                     csv,
                     200,
                     expected,
@@ -2716,7 +2864,7 @@ public class TextLoaderTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampFormatNoLocale() throws Exception {
-        DateLocale locale = DateFormatUtils.enLocale;
+        DateLocale locale = DateFormatUtils.EN_LOCALE;
         assertNoLeak(textLoader -> {
             String csv = "\"name\",\"date\"\n" +
                     "\"Всероссийские спортивные соревнования школьников «ПРЕЗИДЕНТСКИЕ СОСТЯЗАНИЯ»\",\"3 " + locale.getMonth(6) + " 2017 г.\"\n" +
@@ -2759,7 +2907,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                 180_000_000,
                 721,
                 300000000,
-                1000);
+                1000
+        );
     }
 
     @Test
@@ -2771,7 +2920,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                 -1,
                 -1,
                 300000000,
-                1000);
+                1000
+        );
     }
 
     @Test
@@ -3016,10 +3166,17 @@ public class TextLoaderTest extends AbstractCairoTest {
             configureLoaderDefaults(textLoader);
             playText(
                     textLoader,
+                    "{ \"columns\": [ " +
+                            "{ \"file_column_index\": 0, \"table_column_name\": \"col_b\" }, " +
+                            "{ \"file_column_index\": 1, \"table_column_name\": \"col_a\" }" +
+                            "] }",
+                    2,
+                    true,
                     csv,
                     1024,
                     expected,
-                    "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"col_b\",\"type\":\"LONG\"},{\"index\":1,\"name\":\"col_a\",\"type\":\"LONG\"}],\"timestampIndex\":-1}",
+                    "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"col_b\",\"type\":\"LONG\"}," +
+                            "{\"index\":1,\"name\":\"col_a\",\"type\":\"LONG\"}],\"timestampIndex\":-1}",
                     2,
                     2,
                     false
@@ -3081,6 +3238,14 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "werop\t90\t\n";
 
             ddl("create table test(a string, d binary)");
+            textLoader.setSchemaVersion(2);
+            playJson(textLoader, "{" +
+                    "  \"columns\": [" +
+                    "    {  \"file_column_index\": 0, \"column_type\": \"STRING\", \"table_column_name\": \"a\" }, " +
+                    "    {  \"file_column_index\": 1, \"column_type\": \"BINARY\", \"table_column_name\": \"d\" } " +
+                    "  ]," +
+                    "  \"formats_action\": \"ADD\"\n" +
+                    "}");
             configureLoaderDefaults(textLoader);
             try {
                 playText(
@@ -3092,7 +3257,6 @@ public class TextLoaderTest extends AbstractCairoTest {
                         3,
                         3,
                         false
-
                 );
                 Assert.fail();
             } catch (CairoException e) {
@@ -3115,6 +3279,14 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "werop\t1970-01-01T00:00:00.000090Z\n";
 
             ddl("create table test(a string, b timestamp)");
+            textLoader.setSchemaVersion(2);
+            playJson(textLoader, "{" +
+                    "  \"columns\": [" +
+                    "    {  \"file_column_index\": 0, \"column_type\": \"STRING\", \"table_column_name\": \"a\" }, " +
+                    "    {  \"file_column_index\": 1, \"column_type\": \"TIMESTAMP\", \"table_column_name\": \"b\", \"formats\": [ {  \"pattern\": \"EPU+\", \"utf8\": false } ]  } " +
+                    "  ]," +
+                    "  \"formats_action\": \"ADD\"\n" +
+                    "}");
             configureLoaderDefaults(textLoader);
             playText(
                     textLoader, csv, 1024,
@@ -3128,7 +3300,7 @@ public class TextLoaderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWriteToExistingCannotConvertDate() throws Exception {
+    public void testWriteToExistingDateColumnInterpretsNumbersAsEpochMillis() throws Exception {
         assertNoLeak(textLoader -> {
             String csv = "abcd,10\n" +
                     "efg,45\n" +
@@ -3136,25 +3308,36 @@ public class TextLoaderTest extends AbstractCairoTest {
 
             // we would mis-detect type and have no date parser to try loading data with
             String expected = "a\tb\n" +
-                    "abcd\t\n" +
-                    "efg\t\n" +
-                    "werop\t\n";
+                    "abcd\t1970-01-01T00:00:00.010Z\n" +
+                    "efg\t1970-01-01T00:00:00.045Z\n" +
+                    "werop\t1970-01-01T00:00:00.090Z\n";
 
             ddl("create table test(a string, b date)");
             configureLoaderDefaults(textLoader);
             playText(
-                    textLoader, csv, 1024,
+                    textLoader,
+                    "{ \"columns\": [ " +
+                            "{ \"file_column_index\": 0, \"table_column_name\": \"a\" }, " +
+                            "{ \"file_column_index\": 1, \"table_column_name\": \"b\" }" +
+                            "] }",
+                    2,
+                    true,
+                    csv,
+                    1024,
                     expected,
-                    "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"b\",\"type\":\"DATE\"}],\"timestampIndex\":-1}",
+                    "{\"columnCount\":2,\"columns\":[" +
+                            "{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"}," +
+                            "{\"index\":1,\"name\":\"b\",\"type\":\"DATE\"}],\"timestampIndex\":-1}",
                     3,
                     3,
                     false
+
             );
         });
     }
 
     @Test
-    public void testWriteToExistingTableBadDateColumn() throws Exception {
+    public void testWriteToExistingTableBadDateColumnViaMappingWithBogusPatternAndSkipColumnOnError() throws Exception {
         assertNoLeak(textLoader -> {
             String expected = "t\ts\tv\n" +
                     "\tGOOG\t10.0\n" +
@@ -3166,15 +3349,19 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "bad_data,GOOG,15\n" +
                     "bad_data,GOOG,20\n";
 
-            ddl(
-                    "create table test" +
-                            "(t date" +
-                            ", s symbol" +
-                            ", v double)"
-            );
-            configureLoaderDefaults(textLoader);
+            ddl("create table test" +
+                    "(t date" +
+                    ", s symbol" +
+                    ", v double)");
+            configureLoaderDefaults(textLoader, (byte) -1, Atomicity.SKIP_COL);
+
             playText(
                     textLoader,
+                    "{ \"columns\": [ " +
+                            "{ \"file_column_name\": \"t\", \"column_type\": \"DATE\", \"formats\": [ { \"pattern\": \"bad_data\" } ] } " + // format forces the type, even if it doesn't match file data
+                            "] }",
+                    2,
+                    true,
                     csv,
                     1024,
                     expected,
@@ -3187,7 +3374,44 @@ public class TextLoaderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWriteToExistingTableBadTimestampColumn() throws Exception {
+    public void testWriteToExistingTableBadDateColumnViaMappingWithFileColumnIgnore() throws Exception {
+        assertNoLeak(textLoader -> {
+            String expected = "t\ts\tv\n" +
+                    "\tGOOG\t10.0\n" +
+                    "\tGOOG\t15.0\n" +
+                    "\tGOOG\t20.0\n";
+
+            String csv = "t,s,v\n" +
+                    "bad_data,GOOG,10\n" +
+                    "bad_data,GOOG,15\n" +
+                    "bad_data,GOOG,20\n";
+
+            ddl("create table test" +
+                    "(t date" +
+                    ", s symbol" +
+                    ", v double)");
+            configureLoaderDefaults(textLoader);
+
+            playText(
+                    textLoader,
+                    "{ \"columns\": [ " +
+                            "{ \"file_column_name\": \"t\", \"file_column_ignore\": true } " +
+                            "] }",
+                    2,
+                    true,
+                    csv,
+                    1024,
+                    expected,
+                    "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"t\",\"type\":\"DATE\"},{\"index\":1,\"name\":\"s\",\"type\":\"SYMBOL\"},{\"index\":2,\"name\":\"v\",\"type\":\"DOUBLE\"}],\"timestampIndex\":-1}",
+                    3,
+                    3,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testWriteToExistingTableBadTimestampColumnViaMappingWithFileColumnIgnore() throws Exception {
         assertNoLeak(textLoader -> {
             String expected = "t\ts\tv\n" +
                     "\tGOOG\t10.0\n" +
@@ -3203,6 +3427,11 @@ public class TextLoaderTest extends AbstractCairoTest {
             configureLoaderDefaults(textLoader);
             playText(
                     textLoader,
+                    "{ \"columns\": [ " +
+                            "{ \"file_column_name\": \"t\", \"file_column_ignore\": true } " +
+                            "] }",
+                    2,
+                    true,
                     csv,
                     1024,
                     expected,
@@ -3227,21 +3456,30 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "2019-11-12T00:00:00.000Z,GOOG,2019-11-12T00:00:00.000Z,2019-11-12T00:00:00.000Z,15\n" +
                     "2019-11-13T00:00:00.000Z,GOOG,2019-11-13T00:00:00.000Z,2019-11-13T00:00:00.000Z,20\n";
 
-            ddl(
-                    "create table test" +
-                            "(t1 timestamp" +
-                            ", s symbol" +
-                            ", t2 timestamp" +
-                            ", t3 timestamp" +
-                            ", v double)"
+            ddl("create table test" +
+                    "(t1 timestamp" +
+                    ", s symbol" +
+                    ", t2 timestamp" +
+                    ", t3 timestamp" +
+                    ", v double)"
             );
             configureLoaderDefaults(textLoader);
             playText(
                     textLoader,
+                    "{ \"columns\": [ " +
+                            "{ \"file_column_name\": \"t\", \"table_column_name\": \"t1\" } " +
+                            "] }",
+                    2,
+                    true,
                     csv,
                     1024,
                     expected,
-                    "{\"columnCount\":5,\"columns\":[{\"index\":0,\"name\":\"t1\",\"type\":\"TIMESTAMP\"},{\"index\":1,\"name\":\"s\",\"type\":\"SYMBOL\"},{\"index\":2,\"name\":\"t2\",\"type\":\"TIMESTAMP\"},{\"index\":3,\"name\":\"t3\",\"type\":\"TIMESTAMP\"},{\"index\":4,\"name\":\"v\",\"type\":\"DOUBLE\"}],\"timestampIndex\":-1}",
+                    "{\"columnCount\":5,\"columns\":[" +
+                            "{\"index\":0,\"name\":\"t1\",\"type\":\"TIMESTAMP\"}," +
+                            "{\"index\":1,\"name\":\"s\",\"type\":\"SYMBOL\"}," +
+                            "{\"index\":2,\"name\":\"t2\",\"type\":\"TIMESTAMP\"}," +
+                            "{\"index\":3,\"name\":\"t3\",\"type\":\"TIMESTAMP\"}," +
+                            "{\"index\":4,\"name\":\"v\",\"type\":\"DOUBLE\"}],\"timestampIndex\":-1}",
                     3,
                     3,
                     false
@@ -3250,7 +3488,78 @@ public class TextLoaderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWriteToExistingTableTooFewColumns() throws Exception {
+    public void testWriteToExistingTableTooManyColumns() throws Exception {
+        assertNoLeak(textLoader -> {
+            String expected = "a\tb\tc\td\te\tf\tg\th\ti\tk\tt\n" +
+                    "\"CMP2\t8\t8000\t2.2764\t2015-01-29T19:15:09.000Z\t2015-01-29T19:15:09.000Z\t2015-01-29T00:00:00.000Z\t323\ttrue\t14925407\t\n" +
+                    "CMP1\t2\t1581\t9.0142\t2015-01-30T19:15:09.000Z\t2015-01-30T19:15:09.000Z\t2015-01-30T00:00:00.000Z\t9138\tfalse\t68225213\t\n" +
+                    "CMP2\t8\t7067\t9.6284\t2015-01-31T19:15:09.000Z\t2015-01-31T19:15:09.000Z\t2015-01-31T00:00:00.000Z\t8197\ttrue\t58403960\t\n" +
+                    "CMP1\t8\t5313\t8.8776\t2015-02-01T19:15:09.000Z\t2015-02-01T19:15:09.000Z\t2015-02-01T00:00:00.000Z\t2733\tfalse\t69698373\t\n" +
+                    "\t4\t3883\t7.9687\t2015-02-02T19:15:09.000Z\t2015-02-02T19:15:09.000Z\t2015-02-02T00:00:00.000Z\t6912\ttrue\t91147394\t\n" +
+                    "CMP1\t7\t4256\t2.4655\t2015-02-03T19:15:09.000Z\t2015-02-03T19:15:09.000Z\t2015-02-03T00:00:00.000Z\t9453\tfalse\t50278940\t\n" +
+                    "CMP2\t4\t155\t5.0855\t2015-02-04T19:15:09.000Z\t2015-02-04T19:15:09.000Z\t2015-02-04T00:00:00.000Z\t8919\ttrue\t8671995\t\n" +
+                    "CMP1\t7\t4486\tNaN\t2015-02-05T19:15:09.000Z\t2015-02-05T19:15:09.000Z\t2015-02-05T00:00:00.000Z\t8670\tfalse\t751877\t\n" +
+                    "CMP2\t2\t6641\t0.0382\t2015-02-06T19:15:09.000Z\t2015-02-06T19:15:09.000Z\t2015-02-06T00:00:00.000Z\t8331\ttrue\t40909232527\t\n" +
+                    "CMP1\t1\t3579\t0.8497\t2015-02-07T19:15:09.000Z\t2015-02-07T19:15:09.000Z\t2015-02-07T00:00:00.000Z\t9592\tfalse\t11490662\t\n" +
+                    "CMP2\t2\t4770\t2.8509\t2015-02-08T19:15:09.000Z\t2015-02-08T19:15:09.000Z\t2015-02-08T00:00:00.000Z\t253\ttrue\t33766814\t\n" +
+                    "CMP1\t5\t4938\t4.4275\t2015-02-09T19:15:09.000Z\t2015-02-09T19:15:09.000Z\t2015-02-09T00:00:00.000Z\t7817\tfalse\t61983099\t\n";
+
+            String csv = "\"\"\"CMP2\",8,8000,2.27636352181435,2015-01-29T19:15:09.000Z,2015-01-29 19:15:09,01/29/2015,323,TRUE,14925407\n" +
+                    "CMP1,2,1581,9.01423481060192,2015-01-30T19:15:09.000Z,2015-01-30 19:15:09,01/30/2015,9138,FALSE,68225213\n" +
+                    "CMP2,8,7067,9.6284336107783,2015-01-31T19:15:09.000Z,2015-01-31 19:15:09,01/31/2015,8197,TRUE,58403960\n" +
+                    "CMP1,8,5313,8.87764661805704,2015-02-01T19:15:09.000Z,2015-02-01 19:15:09,02/01/2015,2733,FALSE,69698373\n" +
+                    ",4,3883,7.96873019309714,2015-02-02T19:15:09.000Z,2015-02-02 19:15:09,02/02/2015,6912,TRUE,91147394\n" +
+                    "CMP1,7,4256,2.46553522534668,2015-02-03T19:15:09.000Z,2015-02-03 19:15:09,02/03/2015,9453,FALSE,50278940\n" +
+                    "CMP2,4,155,5.08547495584935,2015-02-04T19:15:09.000Z,2015-02-04 19:15:09,02/04/2015,8919,TRUE,8671995\n" +
+                    "\"CMP1\",7,4486,,2015-02-05T19:15:09.000Z,2015-02-05 19:15:09,02/05/2015,8670,FALSE,751877\n" +
+                    "CMP2,2,6641,0.0381825352087617,2015-02-06T19:15:09.000Z,2015-02-06 19:15:09,02/06/2015,8331,TRUE,40909232527\n" +
+                    "CMP1,1,3579,0.849663221742958,2015-02-07T19:15:09.000Z,2015-02-07 19:15:09,02/07/2015,9592,FALSE,11490662\n" +
+                    "CMP2,2,4770,2.85092033445835,2015-02-08T19:15:09.000Z,2015-02-08 19:15:09,02/08/2015,253,TRUE,33766814\n" +
+                    "CMP1,5,4938,4.42754498450086,2015-02-09T19:15:09.000Z,2015-02-09 19:15:09,02/09/2015,7817,FALSE,61983099\n";
+
+            ddl("create table test" +
+                    "(a symbol" +
+                    ", b int" +
+                    ", c long" +
+                    ", d float" +
+                    ", e date" +
+                    ", f date" +
+                    ", g date" +
+                    ", h long" +
+                    ", i boolean" +
+                    ", k long" +
+                    ", t timestamp)");
+            configureLoaderDefaults(textLoader);
+            playText(
+                    textLoader,
+                    "{ \"columns\": [ " +
+                            "{ \"file_column_index\": 0, \"table_column_name\": \"a\" }, " +
+                            "{ \"file_column_index\": 1, \"table_column_name\": \"b\" }, " +
+                            "{ \"file_column_index\": 2, \"table_column_name\": \"c\" }, " +
+                            "{ \"file_column_index\": 3, \"table_column_name\": \"d\" }, " +
+                            "{ \"file_column_index\": 4, \"table_column_name\": \"e\" }, " +
+                            "{ \"file_column_index\": 5, \"table_column_name\": \"f\" }, " +
+                            "{ \"file_column_index\": 6, \"table_column_name\": \"g\" }, " +
+                            "{ \"file_column_index\": 7, \"table_column_name\": \"h\" }, " +
+                            "{ \"file_column_index\": 8, \"table_column_name\": \"i\" }, " +
+                            "{ \"file_column_index\": 9, \"table_column_name\": \"k\" }, " +
+                            "{ \"table_column_name\": \"t\", \"insert_null\": \"true\" }, " +
+                            "] }",
+                    2,
+                    true,
+                    csv,
+                    1024,
+                    expected,
+                    "{\"columnCount\":11,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"SYMBOL\"},{\"index\":1,\"name\":\"b\",\"type\":\"INT\"},{\"index\":2,\"name\":\"c\",\"type\":\"LONG\"},{\"index\":3,\"name\":\"d\",\"type\":\"FLOAT\"},{\"index\":4,\"name\":\"e\",\"type\":\"DATE\"},{\"index\":5,\"name\":\"f\",\"type\":\"DATE\"},{\"index\":6,\"name\":\"g\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"h\",\"type\":\"LONG\"},{\"index\":8,\"name\":\"i\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"k\",\"type\":\"LONG\"},{\"index\":10,\"name\":\"t\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":-1}",
+                    12,
+                    12,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testWriteToExistingTableWithNoHeaderAndTooFewColumns() throws Exception {
         assertNoLeak(textLoader -> {
             String csv = "\"\"\"CMP2\",8,8000,2.27636352181435,2015-01-29T19:15:09.000Z,2015-01-29 19:15:09,01/29/2015,323,TRUE,14925407\n" +
                     "CMP1,2,1581,9.01423481060192,2015-01-30T19:15:09.000Z,2015-01-30 19:15:09,01/30/2015,9138,FALSE,68225213\n" +
@@ -3271,67 +3580,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                 playText0(textLoader, csv, 1024, ENTITY_MANIPULATOR);
                 Assert.fail();
             } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "column count mismatch [textColumnCount=10, tableColumnCount=2, table=test]");
+                TestUtils.assertContains(e.getFlyweightMessage(), "unmapped csv column");
             }
-        });
-    }
-
-    @Test
-    public void testWriteToExistingTableTooManyColumns() throws Exception {
-        assertNoLeak(textLoader -> {
-            String expected = "a\tb\tc\td\te\tf\tg\th\ti\tk\tt\n" +
-                    "\"CMP2\t8\t8000\t2.2764\t2015-01-29T19:15:09.000000Z\t2015-01-29T19:15:09.000000Z\t2015-01-29T00:00:00.000000Z\t323\ttrue\t14925407\t\n" +
-                    "CMP1\t2\t1581\t9.0142\t2015-01-30T19:15:09.000000Z\t2015-01-30T19:15:09.000000Z\t2015-01-30T00:00:00.000000Z\t9138\tfalse\t68225213\t\n" +
-                    "CMP2\t8\t7067\t9.6284\t2015-01-31T19:15:09.000000Z\t2015-01-31T19:15:09.000000Z\t2015-01-31T00:00:00.000000Z\t8197\ttrue\t58403960\t\n" +
-                    "CMP1\t8\t5313\t8.8776\t2015-02-01T19:15:09.000000Z\t2015-02-01T19:15:09.000000Z\t2015-02-01T00:00:00.000000Z\t2733\tfalse\t69698373\t\n" +
-                    "\t4\t3883\t7.9687\t2015-02-02T19:15:09.000000Z\t2015-02-02T19:15:09.000000Z\t2015-02-02T00:00:00.000000Z\t6912\ttrue\t91147394\t\n" +
-                    "CMP1\t7\t4256\t2.4655\t2015-02-03T19:15:09.000000Z\t2015-02-03T19:15:09.000000Z\t2015-02-03T00:00:00.000000Z\t9453\tfalse\t50278940\t\n" +
-                    "CMP2\t4\t155\t5.0855\t2015-02-04T19:15:09.000000Z\t2015-02-04T19:15:09.000000Z\t2015-02-04T00:00:00.000000Z\t8919\ttrue\t8671995\t\n" +
-                    "CMP1\t7\t4486\tNaN\t2015-02-05T19:15:09.000000Z\t2015-02-05T19:15:09.000000Z\t2015-02-05T00:00:00.000000Z\t8670\tfalse\t751877\t\n" +
-                    "CMP2\t2\t6641\t0.0382\t2015-02-06T19:15:09.000000Z\t2015-02-06T19:15:09.000000Z\t2015-02-06T00:00:00.000000Z\t8331\ttrue\t40909232527\t\n" +
-                    "CMP1\t1\t3579\t0.8497\t2015-02-07T19:15:09.000000Z\t2015-02-07T19:15:09.000000Z\t2015-02-07T00:00:00.000000Z\t9592\tfalse\t11490662\t\n" +
-                    "CMP2\t2\t4770\t2.8509\t2015-02-08T19:15:09.000000Z\t2015-02-08T19:15:09.000000Z\t2015-02-08T00:00:00.000000Z\t253\ttrue\t33766814\t\n" +
-                    "CMP1\t5\t4938\t4.4275\t2015-02-09T19:15:09.000000Z\t2015-02-09T19:15:09.000000Z\t2015-02-09T00:00:00.000000Z\t7817\tfalse\t61983099\t\n";
-
-            String csv = "\"\"\"CMP2\",8,8000,2.27636352181435,2015-01-29T19:15:09.000Z,2015-01-29 19:15:09,01/29/2015,323,TRUE,14925407\n" +
-                    "CMP1,2,1581,9.01423481060192,2015-01-30T19:15:09.000Z,2015-01-30 19:15:09,01/30/2015,9138,FALSE,68225213\n" +
-                    "CMP2,8,7067,9.6284336107783,2015-01-31T19:15:09.000Z,2015-01-31 19:15:09,01/31/2015,8197,TRUE,58403960\n" +
-                    "CMP1,8,5313,8.87764661805704,2015-02-01T19:15:09.000Z,2015-02-01 19:15:09,02/01/2015,2733,FALSE,69698373\n" +
-                    ",4,3883,7.96873019309714,2015-02-02T19:15:09.000Z,2015-02-02 19:15:09,02/02/2015,6912,TRUE,91147394\n" +
-                    "CMP1,7,4256,2.46553522534668,2015-02-03T19:15:09.000Z,2015-02-03 19:15:09,02/03/2015,9453,FALSE,50278940\n" +
-                    "CMP2,4,155,5.08547495584935,2015-02-04T19:15:09.000Z,2015-02-04 19:15:09,02/04/2015,8919,TRUE,8671995\n" +
-                    "\"CMP1\",7,4486,,2015-02-05T19:15:09.000Z,2015-02-05 19:15:09,02/05/2015,8670,FALSE,751877\n" +
-                    "CMP2,2,6641,0.0381825352087617,2015-02-06T19:15:09.000Z,2015-02-06 19:15:09,02/06/2015,8331,TRUE,40909232527\n" +
-                    "CMP1,1,3579,0.849663221742958,2015-02-07T19:15:09.000Z,2015-02-07 19:15:09,02/07/2015,9592,FALSE,11490662\n" +
-                    "CMP2,2,4770,2.85092033445835,2015-02-08T19:15:09.000Z,2015-02-08 19:15:09,02/08/2015,253,TRUE,33766814\n" +
-                    "CMP1,5,4938,4.42754498450086,2015-02-09T19:15:09.000Z,2015-02-09 19:15:09,02/09/2015,7817,FALSE,61983099\n";
-
-            ddl(
-                    "create table test" +
-                            "(a symbol" +
-                            ", b int" +
-                            ", c long" +
-                            ", d float" +
-                            ", e date" +
-                            ", f date" +
-                            ", g date" +
-                            ", h long" +
-                            ", i boolean" +
-                            ", k long" +
-                            ", t timestamp)"
-            );
-            configureLoaderDefaults(textLoader);
-            // todo: CSV input does look like DATE, target column type is DATE, but we load as timestamp and failing?
-            playText(
-                    textLoader,
-                    csv,
-                    1024,
-                    expected,
-                    "{\"columnCount\":11,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"SYMBOL\"},{\"index\":1,\"name\":\"b\",\"type\":\"INT\"},{\"index\":2,\"name\":\"c\",\"type\":\"LONG\"},{\"index\":3,\"name\":\"d\",\"type\":\"FLOAT\"},{\"index\":4,\"name\":\"e\",\"type\":\"DATE\"},{\"index\":5,\"name\":\"f\",\"type\":\"DATE\"},{\"index\":6,\"name\":\"g\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"h\",\"type\":\"LONG\"},{\"index\":8,\"name\":\"i\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"k\",\"type\":\"LONG\"},{\"index\":10,\"name\":\"t\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":-1}",
-                    12,
-                    12,
-                    false
-            );
         });
     }
 
@@ -3351,10 +3601,21 @@ public class TextLoaderTest extends AbstractCairoTest {
             configureLoaderDefaults(textLoader);
             playText(
                     textLoader,
+                    "{" +
+                            "  \"columns\": [" +
+                            "    {  \"file_column_index\": \"0\", \"table_column_name\": \"a\", \"column_type\": \"STRING\" }, " +
+                            "    {  \"file_column_index\": \"1\", \"table_column_name\": \"b\", \"column_type\": \"INT\" }," +
+                            "    {  \"table_column_name\": \"d\", \"insert_null\": \"true\" }" +
+                            "  ] }",
+                    2,
+                    true,
                     csv,
                     1024,
                     expected,
-                    "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"b\",\"type\":\"INT\"},{\"index\":2,\"name\":\"d\",\"type\":\"BINARY\"}],\"timestampIndex\":-1}",
+                    "{\"columnCount\":3,\"columns\":[" +
+                            "{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"}," +
+                            "{\"index\":1,\"name\":\"b\",\"type\":\"INT\"}," +
+                            "{\"index\":2,\"name\":\"d\",\"type\":\"BINARY\"}],\"timestampIndex\":-1}",
                     3,
                     3,
                     false
@@ -3379,6 +3640,7 @@ public class TextLoaderTest extends AbstractCairoTest {
             }
 
             if (firstBufSize < len) {
+                // analyze structure call
                 textLoader.parse(buf, buf + firstBufSize, AllowAllSecurityContext.INSTANCE);
                 textLoader.setState(TextLoader.LOAD_DATA);
 
@@ -3510,19 +3772,29 @@ public class TextLoaderTest extends AbstractCairoTest {
 
                         configureLoaderDefaults(textLoader, (byte) ',');
                         textLoader.setForceHeaders(false);
+
+                        // mapping number to timestamp requires explicit mapping because we can't guess the time unit
                         playText(
                                 engine,
                                 textLoader,
+                                "{ \"columns\": [ " +
+                                        "{ \"file_column_name\": \"StrSym\", \"column_type\": \"TIMESTAMP\" }, " +
+                                        "{ \"file_column_name\": \"ts\", \"column_type\": \"TIMESTAMP\", \"formats\": [ { \"pattern\": \"EPU+\"  } ]  }" +
+                                        " ] }",
+                                2,
+                                true,
                                 csv,
                                 1024,
                                 expected,
+                                ENTITY_MANIPULATOR,
                                 expectedMeta,
                                 5,
                                 5,
                                 true,
                                 false
                         );
-                    });
+                    }
+            );
         }
     }
 
@@ -3540,7 +3812,7 @@ public class TextLoaderTest extends AbstractCairoTest {
 
     private void configureLoaderDefaults(TextLoader textLoader, byte columnSeparator, int atomicity, boolean overwrite) {
         textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-        textLoader.configureDestination("test", false, overwrite, atomicity, PartitionBy.NONE, null, null);
+        textLoader.configureDestination(TEST_TABLE_NAME, false, overwrite, atomicity, PartitionBy.NONE, null, null);
         if (columnSeparator > 0) {
             textLoader.configureColumnDelimiter(columnSeparator);
         }
@@ -3548,13 +3820,13 @@ public class TextLoaderTest extends AbstractCairoTest {
 
     private void configureLoaderDefaults(TextLoader textLoader, int atomicity, boolean overwrite, int partitionBy) {
         textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-        textLoader.configureDestination("test", false, overwrite, atomicity, partitionBy, "ts", null);
+        textLoader.configureDestination(TEST_TABLE_NAME, false, overwrite, atomicity, partitionBy, TEST_TS_COL_NAME, null);
         textLoader.configureColumnDelimiter((byte) 44);
     }
 
     private void configureLoaderDefaults2(TextLoader textLoader) {
         textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-        textLoader.configureDestination("test", false,false, Atomicity.SKIP_COL, PartitionBy.DAY, "ts", null);
+        textLoader.configureDestination(TEST_TABLE_NAME, false, false, Atomicity.SKIP_COL, PartitionBy.DAY, TEST_TS_COL_NAME, null);
         textLoader.configureColumnDelimiter((byte) 44);
     }
 
@@ -3623,7 +3895,7 @@ public class TextLoaderTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean rmdir(Path name) {
+            public boolean rmdir(Path name, boolean lazy) {
                 final String dirName = extractLast(name);
                 if (!dirName.equals("seq")) {
                     rmdirCallCount.getAndIncrement();
@@ -3631,7 +3903,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                         Assert.fail(dirName + " not expected");
                     }
                 }
-                return super.rmdir(name);
+                return super.rmdir(name, lazy);
             }
 
             @Override
@@ -3676,7 +3948,18 @@ public class TextLoaderTest extends AbstractCairoTest {
                         playText(
                                 engine,
                                 textLoader,
-                                "ts,int\n2021-01-01T00:04:00.000000Z,3\n2021-01-01T00:05:00.000000Z,4\n2021-01-02T00:05:31.000000Z,6\n2021-01-01T00:01:00.000000Z,1\n2021-01-01T00:01:30.000000Z,2\n2021-01-02T00:00:30.000000Z,5\n",
+                                "{ \"columns\": [ " +
+                                        "{ \"file_column_name\": \"ts\", \"column_type\": \"TIMESTAMP\" }, " +
+                                        "{ \"file_column_name\": \"int\", \"column_type\": \"INT\" } " +
+                                        "] }",
+                                2,
+                                false,
+                                "ts,int\n2021-01-01T00:04:00.000000Z,3\n" +
+                                        "2021-01-01T00:05:00.000000Z,4\n" +
+                                        "2021-01-02T00:05:31.000000Z,6\n" +
+                                        "2021-01-01T00:01:00.000000Z,1\n" +
+                                        "2021-01-01T00:01:30.000000Z,2\n" +
+                                        "2021-01-02T00:00:30.000000Z,5\n",
                                 1024,
                                 "ts\tint\n" +
                                         "2021-01-01T00:01:00.000000Z\t1\n" +
@@ -3685,6 +3968,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                                         "2021-01-01T00:05:00.000000Z\t4\n" +
                                         "2021-01-02T00:00:30.000000Z\t5\n" +
                                         "2021-01-02T00:05:31.000000Z\t6\n",
+                                ENTITY_MANIPULATOR,
                                 "{\"columnCount\":2,\"columns\":[" +
                                         "{\"index\":0,\"name\":\"ts\",\"type\":\"TIMESTAMP\"}," +
                                         "{\"index\":1,\"name\":\"int\",\"type\":\"INT\"}]," +
@@ -3744,11 +4028,51 @@ public class TextLoaderTest extends AbstractCairoTest {
             boolean skipLinesWithExtraValues,
             boolean testLoadingIntoExistingTable // only possible when CSV has headers and they map exactly to the target table
     ) throws Exception {
+        playText(engine,
+                textLoader,
+                null,
+                1,
+                false,
+                text,
+                firstBufSize,
+                expected,
+                manipulator,
+                expectedMetadata,
+                expectedParsedLineCount,
+                expectedWrittenLineCount,
+                skipLinesWithExtraValues,
+                testLoadingIntoExistingTable);
+    }
+
+    private void playText(
+            CairoEngine engine,
+            TextLoader textLoader,
+            String jsonText,
+            int jsonSchemaVersion,
+            boolean analyzeJsonOnFirstRun,
+            String text,
+            final int firstBufSize,
+            String expected,
+            ByteManipulator manipulator,
+            CharSequence expectedMetadata,
+            long expectedParsedLineCount,
+            long expectedWrittenLineCount,
+            boolean skipLinesWithExtraValues,
+            boolean testLoadingIntoExistingTable // only possible when CSV has headers and they map exactly to the target table
+    ) throws Exception {
         textLoader.setSkipLinesWithExtraValues(skipLinesWithExtraValues);
         boolean forceHeader = textLoader.isForceHeaders();
         byte delimiter = textLoader.getColumnDelimiter();
         int maxUncommittedRows = textLoader.getMaxUncommittedRows();
         long o3MaxLag = textLoader.getO3MaxLag();
+
+        if (jsonText != null && analyzeJsonOnFirstRun) {
+            textLoader.setState(TextLoader.LOAD_JSON_METADATA);
+            textLoader.setSchemaVersion(jsonSchemaVersion);
+            playJson(textLoader, jsonText);
+        }
+
+        textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
         playText0(textLoader, text, firstBufSize, manipulator);
         sink.clear();
         textLoader.getMetadata().toJson(sink);
@@ -3770,11 +4094,73 @@ public class TextLoaderTest extends AbstractCairoTest {
             if (delimiter > 0) {
                 textLoader.configureColumnDelimiter(delimiter);
             }
+            if (jsonText != null) {
+                textLoader.setState(TextLoader.LOAD_JSON_METADATA);
+                textLoader.setSchemaVersion(jsonSchemaVersion);
+                playJson(textLoader, jsonText);
+                textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
+            }
             textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
             playText0(textLoader, text, firstBufSize, manipulator);
             assertTable(expected);
             textLoader.clear();
         }
+    }
+
+    private void playText(
+            TextLoader textLoader,
+            String text,
+            final int firstBufSize,
+            String expected,
+            CharSequence expectedMetadata,
+            long expectedParsedLineCount,
+            long expectedWrittenLineCount,
+            boolean skipLinesWithExtraValues,
+            boolean testLoadingIntoExistingTable
+    ) throws Exception {
+        playText(
+                engine,
+                textLoader,
+                text,
+                firstBufSize,
+                expected,
+                expectedMetadata,
+                expectedParsedLineCount,
+                expectedWrittenLineCount,
+                skipLinesWithExtraValues,
+                testLoadingIntoExistingTable
+        );
+    }
+
+    private void playText(
+            TextLoader textLoader,
+            String jsonText,
+            int jsonSchemaVersion,
+            boolean analyzeJsonOnFirstImport,
+            String text,
+            final int firstBufSize,
+            String expected,
+            CharSequence expectedMetadata,
+            long expectedParsedLineCount,
+            long expectedWrittenLineCount,
+            boolean testLoadingIntoExistingTable
+    ) throws Exception {
+        playText(
+                engine,
+                textLoader,
+                jsonText,
+                jsonSchemaVersion,
+                analyzeJsonOnFirstImport,
+                text,
+                firstBufSize,
+                expected,
+                ENTITY_MANIPULATOR,
+                expectedMetadata,
+                expectedParsedLineCount,
+                expectedWrittenLineCount,
+                true,
+                testLoadingIntoExistingTable
+        );
     }
 
     private void playText(
@@ -3836,8 +4222,7 @@ public class TextLoaderTest extends AbstractCairoTest {
     ) throws Exception {
         assertNoLeak(
                 textLoader -> {
-                    String createStmt = "create table test(ts timestamp, int int) timestamp(ts) " + createStmtExtra;
-                    ddl(createStmt);
+                    ddl("create table test(ts timestamp, int int) timestamp(ts) " + createStmtExtra);
                     configureLoaderDefaults(
                             textLoader,
                             Atomicity.SKIP_ROW,
@@ -3845,6 +4230,10 @@ public class TextLoaderTest extends AbstractCairoTest {
                             partitionBy
                     );
                     textLoader.setForceHeaders(true);
+                    textLoader.setState(TextLoader.LOAD_JSON_METADATA);
+                    textLoader.setSchemaVersion(1);
+                    playJson(textLoader, "[ { \"name\": \"ts\", \"type\": \"TIMESTAMP\", \"pattern\": \"yyyy-MM-ddTHH:mm:ss.SSSUUUZ\" }, " +
+                            "{ \"name\": \"int\", \"type\": \"INT\"} ]");
                     textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
                     playText0(
                             textLoader,

@@ -25,11 +25,23 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.DataFrame;
+import io.questdb.cairo.sql.RecordCursor;
 import org.jetbrains.annotations.Nullable;
 
 public class FullBwdDataFrameCursor extends AbstractFullDataFrameCursor {
     private int skipToPartitionIndex = -1;
     private long skipToPosition = -1;
+
+    @Override
+    public void calculateSize(RecordCursor.Counter counter) {
+        while (partitionIndex > -1) {
+            final long hi = reader.openPartition(partitionIndex);
+            if (hi > 0) {
+                counter.add(hi);
+            }
+            partitionIndex--;
+        }
+    }
 
     @Override
     public DataFrame next() {
@@ -43,14 +55,13 @@ public class FullBwdDataFrameCursor extends AbstractFullDataFrameCursor {
                 frame.rowHi = hi;
                 partitionIndex--;
                 return frame;
-
             }
         }
         return null;
     }
 
     @Override
-    public @Nullable DataFrame skipTo(long rowCount) {
+    public @Nullable DataFrame skipTo(RecordCursor.Counter rowsToSkip) {
         int partitionCount = getTableReader().getPartitionCount();
 
         if (partitionCount < 1) {
@@ -58,7 +69,7 @@ public class FullBwdDataFrameCursor extends AbstractFullDataFrameCursor {
         }
 
         if (skipToPartitionIndex == -1) {
-            skipToPosition = rowCount;
+            skipToPosition = rowsToSkip.get();
             skipToPartitionIndex = partitionCount - 1;
         }
 
@@ -70,13 +81,17 @@ public class FullBwdDataFrameCursor extends AbstractFullDataFrameCursor {
                 continue;
             }
             if (partitionRows > skipToPosition) {
+                rowsToSkip.dec(skipToPosition);
                 break;
             }
-            if (skipToPartitionIndex == 0) {
+
+            rowsToSkip.dec(partitionRows);
+
+            if (skipToPartitionIndex != 0) {
+                skipToPosition -= partitionRows;
+            } else {
                 skipToPosition = -1;
                 break;
-            } else {
-                skipToPosition -= partitionRows;
             }
             skipToPartitionIndex--;
         }
