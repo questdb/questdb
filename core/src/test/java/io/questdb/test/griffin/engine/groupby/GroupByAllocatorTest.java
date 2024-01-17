@@ -29,8 +29,11 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -229,6 +232,79 @@ public class GroupByAllocatorTest extends AbstractCairoTest {
                         // Touch the tail part of the memory to make sure it's allocated.
                         Unsafe.getUnsafe().putByte(ptr + j, (byte) j);
                     }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRealloc2() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        final int M = 1 + rnd.nextInt(100);
+        final int minChunkSize = rnd.nextInt(64) + 1;
+        final int N = M + rnd.nextInt(1000);
+
+        final CairoConfiguration config = new DefaultCairoConfiguration(root) {
+            @Override
+            public long getGroupByAllocatorDefaultChunkSize() {
+                return minChunkSize;
+            }
+        };
+        assertMemoryLeak(() -> {
+            try (GroupByAllocator allocator = new GroupByAllocator(config)) {
+                ObjList<Thread> threads = new ObjList<>();
+                int threadCount = 10;
+                long[] ptrs = new long[threadCount];
+                for (int th = 0; th < threadCount; th++) {
+                    int threadId = th;
+                    Thread thread = new Thread(() -> {
+
+                        int size = M;
+                        long ptr = allocator.malloc(size);
+                        // Touch the first byte to make sure the memory is allocated.
+                        Unsafe.getUnsafe().putByte(ptr, (byte) threadId);
+                        ptr = allocator.malloc(size);
+                        Unsafe.getUnsafe().putByte(ptr, (byte) threadId);
+
+                        // This call should lead to slow path (malloc + memcpy).
+                        ptr = allocator.realloc(ptr, size, size + minChunkSize);
+                        Unsafe.getUnsafe().putByte(ptr, (byte) threadId);
+
+                        ptr = allocator.malloc(size);
+                        for (int i = 0; i < size; i++) {
+                            Unsafe.getUnsafe().putByte(ptr + i, (byte) threadId);
+                        }
+                        for (int i = 0; i < N; i++) {
+                            ptr = allocator.realloc(ptr, size, ++size);
+                            for (int j = 0; j < M; j++) {
+                                Assert.assertEquals(threadId, Unsafe.getUnsafe().getByte(ptr + j));
+                            }
+                            for (int j = M; j < size; j++) {
+                                // Touch the tail part of the memory to make sure it's allocated.
+                                Unsafe.getUnsafe().putByte(ptr + j, (byte) 123);
+                            }
+                        }
+                        ptrs[threadId] = ptr;
+                    });
+                    threads.add(thread);
+                    thread.start();
+                }
+
+                for (int i = 0, n = threads.size(); i < n; i++) {
+                    threads.getQuick(i).join();
+                }
+
+                // ralloc on another thread
+                for (int threadId = 0; threadId < threadCount; threadId++) {
+                    long ptr = ptrs[threadId];
+                    ptr = allocator.realloc(ptr, N, 2 * N);
+                    for (int j = 0; j < M; j++) {
+                        Assert.assertEquals(threadId, Unsafe.getUnsafe().getByte(ptr + j));
+                    }
+                    for (int j = M; j < N; j++) {
+                        Assert.assertEquals(123, Unsafe.getUnsafe().getByte(ptr + j));
+                    }
+                    allocator.free(ptr, 2 * N);
                 }
             }
         });

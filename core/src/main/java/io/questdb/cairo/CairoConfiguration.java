@@ -144,9 +144,6 @@ public interface CairoConfiguration {
     @NotNull
     DateLocale getDefaultDateLocale();
 
-    @NotNull
-    CharSequence getDefaultMapType();
-
     boolean getDefaultSymbolCacheFlag();
 
     int getDefaultSymbolCapacity();
@@ -438,6 +435,8 @@ public interface CairoConfiguration {
     int getSqlSortValueMaxPages();
 
     int getSqlSortValuePageSize();
+
+    int getSqlUnorderedMapMaxEntrySize();
 
     int getSqlWindowInitialRangeBufferSize();
 

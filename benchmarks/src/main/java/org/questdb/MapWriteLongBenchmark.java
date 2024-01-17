@@ -26,9 +26,10 @@ package org.questdb;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SingleColumnType;
-import io.questdb.cairo.map.FastMap;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.map.OrderedMap;
+import io.questdb.cairo.map.Unordered8Map;
 import io.questdb.std.Rnd;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
@@ -40,19 +41,20 @@ import java.util.HashMap;
 import java.util.concurrent.TimeUnit;
 
 @State(Scope.Thread)
-@BenchmarkMode(Mode.AverageTime)
-@OutputTimeUnit(TimeUnit.MICROSECONDS)
-public class FastMapWriteLongBenchmark {
+@BenchmarkMode(Mode.SampleTime)
+@OutputTimeUnit(TimeUnit.NANOSECONDS)
+public class MapWriteLongBenchmark {
 
     private static final int N = 1_000_000;
-    private static final FastMap fmap = new FastMap(1024 * 1024, new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), 64, 0.5f, 1024);
     private static final double loadFactor = 0.7;
+    private static final OrderedMap orderedMap = new OrderedMap(1024 * 1024, new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), 64, loadFactor, 1024);
     private static final HashMap<Long, Long> hmap = new HashMap<>(64, (float) loadFactor);
+    private static final Unordered8Map u8map = new Unordered8Map(new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), 64, loadFactor, 1024);
     private final Rnd rnd = new Rnd();
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
-                .include(FastMapWriteLongBenchmark.class.getSimpleName())
+                .include(MapWriteLongBenchmark.class.getSimpleName())
                 .warmupIterations(3)
                 .measurementIterations(3)
                 .forks(1)
@@ -68,14 +70,15 @@ public class FastMapWriteLongBenchmark {
 
     @Setup(Level.Iteration)
     public void reset() {
-        fmap.clear();
+        orderedMap.clear();
+        u8map.clear();
         hmap.clear();
         rnd.reset();
     }
 
     @Benchmark
-    public void testFastMap() {
-        MapKey key = fmap.withKey();
+    public void testOrderedMap() {
+        MapKey key = orderedMap.withKey();
         key.putLong(rnd.nextLong(N));
         MapValue values = key.createValue();
         values.putLong(0, rnd.nextLong());
@@ -84,5 +87,13 @@ public class FastMapWriteLongBenchmark {
     @Benchmark
     public void testHashMap() {
         hmap.put(rnd.nextLong(N), rnd.nextLong());
+    }
+
+    @Benchmark
+    public void testUnordered8Map() {
+        MapKey key = u8map.withKey();
+        key.putLong(rnd.nextLong(N));
+        MapValue values = key.createValue();
+        values.putLong(0, rnd.nextLong());
     }
 }

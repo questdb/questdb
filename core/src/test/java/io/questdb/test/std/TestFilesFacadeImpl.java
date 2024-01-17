@@ -106,12 +106,17 @@ public class TestFilesFacadeImpl extends FilesFacadeImpl {
         super.remove(name);
     }
 
+    @Override
+    public boolean removeQuiet(LPSZ name) {
+        return !checkRemove(name) && super.removeQuiet(name);
+    }
+
     private static synchronized boolean checkRemove(LPSZ name) {
         if (openPaths.keyIndex(name) < 0) {
             LOG.info().$("cannot remove, file is open: ").$(name).$(", fd=").$(getFdByPath(name)).$();
             // For reproducing test failures which happen on Windows only while debugging on another OS, change this to
-            // return true;
-            return Os.isWindows();
+             return false;
+//            return true;
         }
         return false;
     }

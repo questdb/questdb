@@ -40,7 +40,7 @@ import java.util.concurrent.TimeUnit;
 @State(Scope.Thread)
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
-public class FastMapMergeBenchmark {
+public class OrderedMapMergeBenchmark {
 
     private static final int commonKeysRatio = 10;
     private static final int keyCapacity = 1024;
@@ -48,16 +48,16 @@ public class FastMapMergeBenchmark {
     private static final int nKeys = 1_500_000;
     private static final int nMaps = 64;
     private static final int pageSize = 32 * 1024;
-    private final FastMap destMap;
+    private final OrderedMap destMap;
     private final MapValueMergeFunction mergeFunction = (destValue, srcValue) -> {
         destValue.addLong(0, srcValue.getLong(0));
         destValue.addLong(1, srcValue.getLong(1));
         destValue.addDouble(2, srcValue.getDouble(2));
         destValue.addLong(3, srcValue.getLong(3));
     };
-    private final ObjList<FastMap> srcMaps = new ObjList<>(nMaps);
+    private final ObjList<OrderedMap> srcMaps = new ObjList<>(nMaps);
 
-    public FastMapMergeBenchmark() {
+    public OrderedMapMergeBenchmark() {
         ArrayColumnTypes keyTypes = new ArrayColumnTypes();
         keyTypes.add(ColumnType.LONG);
         keyTypes.add(ColumnType.INT);
@@ -66,15 +66,15 @@ public class FastMapMergeBenchmark {
         valueTypes.add(ColumnType.LONG);
         valueTypes.add(ColumnType.DOUBLE);
         valueTypes.add(ColumnType.LONG);
-        destMap = new FastMap(pageSize, keyTypes, valueTypes, keyCapacity, loadFactor, Integer.MAX_VALUE);
+        destMap = new OrderedMap(pageSize, keyTypes, valueTypes, keyCapacity, loadFactor, Integer.MAX_VALUE);
         for (int i = 0; i < nMaps; i++) {
-            srcMaps.add(new FastMap(pageSize, keyTypes, valueTypes, keyCapacity, loadFactor, Integer.MAX_VALUE));
+            srcMaps.add(new OrderedMap(pageSize, keyTypes, valueTypes, keyCapacity, loadFactor, Integer.MAX_VALUE));
         }
     }
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
-                .include(FastMapMergeBenchmark.class.getSimpleName())
+                .include(OrderedMapMergeBenchmark.class.getSimpleName())
                 .warmupIterations(3)
                 .measurementIterations(3)
                 .forks(1)
@@ -142,9 +142,6 @@ public class FastMapMergeBenchmark {
 
         for (int i = 0; i < nMaps; i++) {
             destMap.merge(srcMaps.getQuick(i), mergeFunction);
-        }
-
-        for (int i = 0; i < nMaps; i++) {
             srcMaps.getQuick(i).close();
         }
 

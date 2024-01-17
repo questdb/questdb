@@ -160,7 +160,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 @Transient @NotNull ArrayColumnTypes valueTypes
         ) {
             super(functions);
-            this.dataMap = MapFactory.createMap(configuration, keyTypes, valueTypes);
+            this.dataMap = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes);
             this.groupByFunctionsUpdater = groupByFunctionsUpdater;
             this.allocator = new GroupByAllocator(configuration);
             GroupByUtils.setAllocator(groupByFunctions, allocator);

@@ -590,33 +590,46 @@ public class TableNameRegistryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFuzz() {
-        int threadCount = 4;
-        CyclicBarrier barrier = new CyclicBarrier(threadCount);
-        SOCountDownLatch haltLatch = new SOCountDownLatch(threadCount);
-        AtomicInteger errorCounter = new AtomicInteger();
-        for (int i = 0; i < threadCount; i++) {
-            int k = i;
-            new Thread(() -> {
-                TestUtils.await(barrier);
-                try {
-                    testFuzz0(k);
-                } catch (Throwable e) {
-                    LOG.error().$(e).I$();
-                    errorCounter.incrementAndGet();
-                } finally {
-                    haltLatch.countDown();
-                }
-            }).start();
-        }
+    public void testFuzz() throws Exception {
+        assertMemoryLeak(() -> {
+            int threadCount = 4;
+            CyclicBarrier barrier = new CyclicBarrier(threadCount);
+            Rnd rnd = TestUtils.generateRandom(LOG);
 
-        haltLatch.await();
-        engine.reconcileTableNameRegistryState();
+            AtomicInteger errorCounter = new AtomicInteger();
+            ObjList<Thread> threads = new ObjList<>();
 
-        simulateEngineRestart();
-        engine.reconcileTableNameRegistryState();
+            for (int i = 0; i < threadCount; i++) {
+                int k = i;
+                long seed1 = rnd.nextLong();
+                long seed2 = rnd.nextLong();
 
-        Assert.assertEquals(0, errorCounter.get());
+                Thread th = new Thread(() -> {
+                    TestUtils.await(barrier);
+                    try {
+                        testFuzz0(k, seed1, seed2);
+                    } catch (Throwable e) {
+                        LOG.error().$(e).I$();
+                        errorCounter.incrementAndGet();
+                    } finally {
+                        Path.clearThreadLocals();
+                    }
+                });
+                th.start();
+                threads.add(th);
+            }
+
+            for (int i = 0; i < threadCount; i++) {
+                threads.getQuick(i).join();
+            }
+
+            Assert.assertEquals(0, errorCounter.get());
+
+            engine.reconcileTableNameRegistryState();
+
+            simulateEngineRestart();
+            engine.reconcileTableNameRegistryState();
+        });
     }
 
     @Test
@@ -852,12 +865,12 @@ public class TableNameRegistryTest extends AbstractCairoTest {
         return ss.toString();
     }
 
-    private void testFuzz0(int thread) throws SqlException {
+    private void testFuzz0(int thread, long seed1, long seed2) throws SqlException {
         // create sequence of metadata events for single table, it will always begin with CREATE=0
         // number of events in the sequence
         final int maxSteps = 100;
         final int loopCounter = 8;
-        final Rnd rnd = TestUtils.generateRandom(LOG);
+        final Rnd rnd = new Rnd(seed1, seed2);
 
         try (WalPurgeJob purgeJob = new WalPurgeJob(engine, FilesFacadeImpl.INSTANCE, () -> 0)) {
 
@@ -871,7 +884,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                 // drop = 2
                 // reload = 3
 
-                IntList steps = new IntList(maxSteps);
+                IntList steps = new IntList(n);
                 // the initial step is always "create"
                 for (int i = 0; i < n; i++) {
                     steps.add(rnd.nextInt(FUZZ_APPLY + 1));
