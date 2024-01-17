@@ -87,6 +87,12 @@ public interface Sender extends Closeable {
         return new LineSenderBuilder();
     }
 
+    /**
+     * Construct a new Sender instance with default settings.
+     *
+     * @param url full URL to a QuestDB server.
+     * @return a new Sender instance with default settings.
+     */
     static Sender withDefaultsFromUrl(CharSequence url) {
         return builder().url(url).build();
     }
