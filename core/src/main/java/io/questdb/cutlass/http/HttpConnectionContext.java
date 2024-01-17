@@ -819,7 +819,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             try {
                 final byte requiredAuthType = processor.getRequiredAuthType();
                 if (newRequest && processor.requiresAuthentication() && !configureSecurityContext()) {
-                    return rejectUnauthenticatedRequest(url.toString(), requiredAuthType);
+                    return rejectUnauthenticatedRequest(url, requiredAuthType);
                 }
 
                 if (newRequest && configuration.areCookiesEnabled()) {
@@ -977,7 +977,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return rejectRequest(HTTP_NOT_FOUND, userMessage, null, null);
     }
 
-    private boolean rejectUnauthenticatedRequest(CharSequence url, byte requiredAuthType) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    private boolean rejectUnauthenticatedRequest(Utf8Sequence url, byte requiredAuthType) throws PeerDisconnectedException, PeerIsSlowToReadException {
         reset();
         LOG.error().$("rejecting unauthenticated request [fd=").$(getFd()).$(", url=").$(url).I$();
         if (requiredAuthType == SecurityContext.AUTH_TYPE_CREDENTIALS) {

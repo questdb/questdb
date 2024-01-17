@@ -25,7 +25,6 @@
 package io.questdb.cutlass.http.processors;
 
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.http.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -58,11 +57,6 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
         this.recvBufferSize = recvBufferSize;
         this.maxResponseContentLength = maxResponseContentLength;
         this.configuration = configuration;
-    }
-
-    @Override
-    public byte getRequiredAuthType() {
-        return SecurityContext.AUTH_TYPE_CREDENTIALS;
     }
 
     @Override
