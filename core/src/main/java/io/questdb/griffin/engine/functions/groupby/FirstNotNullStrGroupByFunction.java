@@ -27,7 +27,7 @@ package io.questdb.griffin.engine.functions.groupby;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.std.str.DirectCharSink;
+import io.questdb.std.str.DirectUtf16Sink;
 import org.jetbrains.annotations.NotNull;
 
 public class FirstNotNullStrGroupByFunction extends FirstStrGroupByFunction {
@@ -41,7 +41,7 @@ public class FirstNotNullStrGroupByFunction extends FirstStrGroupByFunction {
         if (mapValue.getBool(valueIndex + 1)) {
             final CharSequence str = arg.getStr(record);
             if (str != null) {
-                final DirectCharSink sink = sinks.getQuick(mapValue.getInt(valueIndex));
+                final DirectUtf16Sink sink = sinks.getQuick(mapValue.getInt(valueIndex));
                 sink.put(str);
                 mapValue.putBool(valueIndex + 1, false);
             }

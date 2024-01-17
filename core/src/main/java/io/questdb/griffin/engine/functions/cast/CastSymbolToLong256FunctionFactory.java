@@ -30,7 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.*;
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.CharSink;
 
 public class CastSymbolToLong256FunctionFactory implements FunctionFactory {
     @Override
@@ -43,7 +43,7 @@ public class CastSymbolToLong256FunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    static void appendLong256(CharSequence value, Long256Impl long256Builder, CharSinkBase<?> sink) {
+    static void appendLong256(CharSequence value, Long256Impl long256Builder, CharSink<?> sink) {
         if (Numbers.extractLong256(value, value.length(), long256Builder)) {
             Numbers.appendLong256(
                     long256Builder.getLong0(),
@@ -65,7 +65,7 @@ public class CastSymbolToLong256FunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getLong256(Record rec, CharSinkBase<?> sink) {
+        public void getLong256(Record rec, CharSink<?> sink) {
             final CharSequence value = arg.getSymbol(rec);
             if (value != null) {
                 appendLong256(value, long256builder, sink);

@@ -27,7 +27,7 @@ package io.questdb.test.log;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogLevel;
-import io.questdb.log.LogRecordSink;
+import io.questdb.log.LogRecordUtf8Sink;
 import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -41,11 +41,11 @@ import org.junit.Test;
 
 import java.io.Closeable;
 
-import static io.questdb.log.LogRecordSink.EOL_LENGTH;
+import static io.questdb.log.LogRecordUtf8Sink.EOL_LENGTH;
 
-public class LogRecordSinkTest {
+public class LogRecordUtf8SinkTest {
 
-    private static final Log LOG = LogFactory.getLog(LogRecordSinkTest.class);
+    private static final Log LOG = LogFactory.getLog(LogRecordUtf8SinkTest.class);
 
     private StringSink sink;
 
@@ -127,7 +127,7 @@ public class LogRecordSinkTest {
             final int buffSize = len * 3;
             final long buffPtr = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
             try {
-                LogRecordSink recordSink = new LogRecordSink(buffPtr, buffSize);
+                LogRecordUtf8Sink recordSink = new LogRecordUtf8Sink(buffPtr, buffSize);
                 recordSink.setLevel(LogLevel.ERROR);
                 Assert.assertEquals(LogLevel.ERROR, recordSink.getLevel());
                 Assert.assertEquals(buffPtr, recordSink.ptr());
@@ -187,7 +187,7 @@ public class LogRecordSinkTest {
             final int len = msgBytes.length;
             final long msgPtr = Unsafe.malloc(len + EOL_LENGTH, MemoryTag.NATIVE_DEFAULT);
             try {
-                LogRecordSink logRecord = new LogRecordSink(msgPtr, len + EOL_LENGTH);
+                LogRecordUtf8Sink logRecord = new LogRecordUtf8Sink(msgPtr, len + EOL_LENGTH);
                 for (int i = 0; i < len; i++) {
                     logRecord.put(msgBytes[i]);
                 }
@@ -207,7 +207,7 @@ public class LogRecordSinkTest {
             final int buffSize = len * 3;
             final long buffPtr = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
             try {
-                LogRecordSink recordSink = new LogRecordSink(buffPtr, buffSize);
+                LogRecordUtf8Sink recordSink = new LogRecordUtf8Sink(buffPtr, buffSize);
                 recordSink.put(expected.substring(1, len - 1));
                 recordSink.toSink(sink);
                 TestUtils.assertEquals(expected.substring(1, len - 1), sink);
@@ -225,7 +225,7 @@ public class LogRecordSinkTest {
             final int buffSize = len * 3;
             final long buffPtr = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
             try {
-                LogRecordSink recordSink = new LogRecordSink(buffPtr, buffSize);
+                LogRecordUtf8Sink recordSink = new LogRecordUtf8Sink(buffPtr, buffSize);
                 recordSink.put(expected, 2, len - 1);
                 recordSink.toSink(sink);
                 Assert.assertEquals(expected.substring(2, len - 1), sink.toString());
@@ -243,7 +243,7 @@ public class LogRecordSinkTest {
             final int buffSize = len * 3;
             final long buffPtr = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
             try {
-                LogRecordSink recordSink = new LogRecordSink(buffPtr, buffSize);
+                LogRecordUtf8Sink recordSink = new LogRecordUtf8Sink(buffPtr, buffSize);
                 recordSink.put(expected, 2, len - 1);
                 recordSink.toSink(sink);
                 Assert.assertEquals(expected.substring(2, len - 1), sink.toString());
@@ -258,7 +258,7 @@ public class LogRecordSinkTest {
         runTestUtf8LineTrimmingImpl((msg, utf8ByteLen, sinkMaxLen, expectedLen) -> {
             final long msgPtr = Unsafe.malloc(utf8ByteLen + EOL_LENGTH, MemoryTag.NATIVE_DEFAULT);
             try {
-                LogRecordSink logRecord = new LogRecordSink(msgPtr, sinkMaxLen + EOL_LENGTH);
+                LogRecordUtf8Sink logRecord = new LogRecordUtf8Sink(msgPtr, sinkMaxLen + EOL_LENGTH);
                 logRecord.put(msg);
                 Assert.assertEquals(expectedLen, logRecord.size());
                 if (sinkMaxLen > 0) {
@@ -280,7 +280,7 @@ public class LogRecordSinkTest {
         runTestUtf8LineTrimmingImpl((msg, utf8ByteLen, sinkMaxLen, expectedLen) -> {
             final long msgPtr = Unsafe.malloc(utf8ByteLen + EOL_LENGTH, MemoryTag.NATIVE_DEFAULT);
             try {
-                LogRecordSink logRecord = new LogRecordSink(msgPtr, sinkMaxLen + EOL_LENGTH);
+                LogRecordUtf8Sink logRecord = new LogRecordUtf8Sink(msgPtr, sinkMaxLen + EOL_LENGTH);
                 logRecord.put(msg);
                 Assert.assertEquals(expectedLen, logRecord.size());
             } finally {
@@ -295,8 +295,8 @@ public class LogRecordSinkTest {
             final Utf8 utf8 = new Utf8(msg);
             final long msgPtr = Unsafe.malloc(utf8ByteLen + EOL_LENGTH, MemoryTag.NATIVE_DEFAULT);
             try {
-                LogRecordSink logRecord = new LogRecordSink(msgPtr, sinkMaxLen + EOL_LENGTH);
-                logRecord.put(utf8.lo(), utf8.hi());
+                LogRecordUtf8Sink logRecord = new LogRecordUtf8Sink(msgPtr, sinkMaxLen + EOL_LENGTH);
+                logRecord.putUtf8(utf8.lo(), utf8.hi());
                 Assert.assertEquals(expectedLen, logRecord.size());
             } finally {
                 Unsafe.free(msgPtr, utf8ByteLen + EOL_LENGTH, MemoryTag.NATIVE_DEFAULT);
@@ -311,7 +311,7 @@ public class LogRecordSinkTest {
             final Utf8String utf8 = new Utf8String(msg);
             final long msgPtr = Unsafe.malloc(utf8ByteLen + EOL_LENGTH, MemoryTag.NATIVE_DEFAULT);
             try {
-                LogRecordSink logRecord = new LogRecordSink(msgPtr, sinkMaxLen + EOL_LENGTH);
+                LogRecordUtf8Sink logRecord = new LogRecordUtf8Sink(msgPtr, sinkMaxLen + EOL_LENGTH);
                 logRecord.put(utf8);
                 Assert.assertEquals(expectedLen, logRecord.size());
             } finally {

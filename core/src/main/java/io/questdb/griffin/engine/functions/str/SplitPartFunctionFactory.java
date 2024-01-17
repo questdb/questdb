@@ -35,7 +35,7 @@ import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.*;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
@@ -103,7 +103,7 @@ public class SplitPartFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getStr(Record rec, CharSink sink) {
+        public void getStr(Record rec, Utf16Sink sink) {
             getStr0(rec, sink, false);
         }
 
@@ -129,7 +129,7 @@ public class SplitPartFunctionFactory implements FunctionFactory {
         }
 
         @Nullable
-        private <S extends CharSink> S getStr0(Record rec, S sink, boolean clearSink) {
+        private <S extends Utf16Sink> S getStr0(Record rec, S sink, boolean clearSink) {
             CharSequence str = strFunc.getStr(rec);
             CharSequence delimiter = delimiterFunc.getStr(rec);
             int index = getIndex(rec);

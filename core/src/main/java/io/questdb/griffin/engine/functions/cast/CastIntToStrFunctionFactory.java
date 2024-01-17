@@ -31,7 +31,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.*;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.StringSink;
 
 public class CastIntToStrFunctionFactory implements FunctionFactory {
@@ -71,7 +71,7 @@ public class CastIntToStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getStr(Record rec, CharSink sink) {
+        public void getStr(Record rec, Utf16Sink sink) {
             final int value = arg.getInt(rec);
             if (value == Numbers.INT_NaN) {
                 return;

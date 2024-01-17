@@ -11620,7 +11620,7 @@ create table tab as (
 
     @FunctionalInterface
     interface ResultProducer {
-        void produce(String[] paramVals, boolean[] isBindVals, String[] bindVals, CharSink output);
+        void produce(String[] paramVals, boolean[] isBindVals, String[] bindVals, Utf16Sink output);
     }
 
     private static class DelayingNetworkFacade extends NetworkFacadeImpl {

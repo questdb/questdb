@@ -37,7 +37,7 @@ import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.StringSink;
 
 public class ConcatFunctionFactory implements FunctionFactory {
@@ -61,68 +61,68 @@ public class ConcatFunctionFactory implements FunctionFactory {
         return new ConcatFunction(functions);
     }
 
-    private static void sinkBin(CharSink sink, Function function, Record record) {
+    private static void sinkBin(Utf16Sink sink, Function function, Record record) {
         sink.put('[');
         sink.put(']');
     }
 
-    private static void sinkBool(CharSink sink, Function function, Record record) {
+    private static void sinkBool(Utf16Sink sink, Function function, Record record) {
         sink.put(function.getBool(record));
     }
 
-    private static void sinkByte(CharSink sink, Function function, Record record) {
+    private static void sinkByte(Utf16Sink sink, Function function, Record record) {
         sink.put(function.getByte(record));
     }
 
-    private static void sinkChar(CharSink sink, Function function, Record record) {
+    private static void sinkChar(Utf16Sink sink, Function function, Record record) {
         sink.put(function.getChar(record));
     }
 
-    private static void sinkDate(CharSink sink, Function function, Record record) {
+    private static void sinkDate(Utf16Sink sink, Function function, Record record) {
         sink.put(function.getDate(record));
     }
 
-    private static void sinkDouble(CharSink sink, Function function, Record record) {
+    private static void sinkDouble(Utf16Sink sink, Function function, Record record) {
         sink.put(function.getDouble(record));
     }
 
-    private static void sinkFloat(CharSink sink, Function function, Record record) {
+    private static void sinkFloat(Utf16Sink sink, Function function, Record record) {
         sink.put(function.getFloat(record), 3);
     }
 
-    private static void sinkInt(CharSink sink, Function function, Record record) {
+    private static void sinkInt(Utf16Sink sink, Function function, Record record) {
         sink.put(function.getInt(record));
     }
 
-    private static void sinkLong(CharSink sink, Function function, Record record) {
+    private static void sinkLong(Utf16Sink sink, Function function, Record record) {
         sink.put(function.getLong(record));
     }
 
-    private static void sinkLong256(CharSink sink, Function function, Record record) {
+    private static void sinkLong256(Utf16Sink sink, Function function, Record record) {
         function.getLong256(record, sink);
     }
 
-    private static void sinkNull(CharSink sink, Function function, Record record) {
+    private static void sinkNull(Utf16Sink sink, Function function, Record record) {
         // ignore nulls
     }
 
-    private static void sinkShort(CharSink sink, Function function, Record record) {
+    private static void sinkShort(Utf16Sink sink, Function function, Record record) {
         sink.put(function.getShort(record));
     }
 
-    private static void sinkStr(CharSink sink, Function function, Record record) {
+    private static void sinkStr(Utf16Sink sink, Function function, Record record) {
         function.getStr(record, sink);
     }
 
-    private static void sinkSymbol(CharSink sink, Function function, Record record) {
+    private static void sinkSymbol(Utf16Sink sink, Function function, Record record) {
         sink.put(function.getSymbol(record));
     }
 
-    private static void sinkTimestamp(CharSink sink, Function function, Record record) {
+    private static void sinkTimestamp(Utf16Sink sink, Function function, Record record) {
         sink.put(function.getTimestamp(record));
     }
 
-    private static void sinkUuid(CharSink sink, Function function, Record record) {
+    private static void sinkUuid(Utf16Sink sink, Function function, Record record) {
         long lo = function.getLong128Lo(record);
         long hi = function.getLong128Hi(record);
         SqlUtil.implicitCastUuidAsStr(lo, hi, sink);
@@ -130,7 +130,7 @@ public class ConcatFunctionFactory implements FunctionFactory {
 
     @FunctionalInterface
     private interface TypeAdapter {
-        void sink(CharSink sink, Function function, Record record);
+        void sink(Utf16Sink sink, Function function, Record record);
     }
 
     private static class ConcatFunction extends StrFunction implements MultiArgFunction {
@@ -155,7 +155,7 @@ public class ConcatFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getStr(Record rec, CharSink sink) {
+        public void getStr(Record rec, Utf16Sink sink) {
             for (int i = 0; i < functionCount; i++) {
                 adaptors.getQuick(i).sink(sink, functions.getQuick(i), rec);
             }

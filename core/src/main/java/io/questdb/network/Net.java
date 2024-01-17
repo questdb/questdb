@@ -27,7 +27,7 @@ package io.questdb.network;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StdoutSink;
@@ -76,7 +76,7 @@ public final class Net {
         return Files.bumpFileCount(accept0(serverFd));
     }
 
-    public static void appendIP4(CharSinkBase<?> sink, long ip) {
+    public static void appendIP4(CharSink<?> sink, long ip) {
         sink.put((ip >> 24) & 0xff).putAscii('.')
                 .put((ip >> 16) & 0xff).putAscii('.')
                 .put((ip >> 8) & 0xff).putAscii('.')

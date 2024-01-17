@@ -26,7 +26,7 @@ package io.questdb.std;
 
 import io.questdb.griffin.SqlException;
 import io.questdb.std.str.AbstractCharSequence;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -161,7 +161,7 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
     }
 
     public boolean hasUnparsed() {
-        return unparsed.size() > 0;
+        return !unparsed.isEmpty();
     }
 
     public CharSequence immutableBetween(int lo, int hi) {
@@ -328,7 +328,7 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
 
     public void stash() {
         int count = 0;
-        while (unparsed.size() > 0) {
+        while (!unparsed.isEmpty()) {
             parkedUnparsed.push(unparsed.pop());
             parkedPosition.push(unparsedPosition.pop());
             parkedPosition.push(unparsedPosition.pop());
@@ -444,7 +444,7 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         @NotNull
         @Override
         public String toString() {
-            final CharSink b = Misc.getThreadLocalSink();
+            final Utf16Sink b = Misc.getThreadLocalSink();
             b.put(cs0);
             if (sep != NO_SEPARATOR) {
                 b.put(sep);

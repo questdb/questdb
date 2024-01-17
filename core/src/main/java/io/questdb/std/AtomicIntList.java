@@ -24,7 +24,7 @@
 
 package io.questdb.std;
 
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 
 import java.util.Arrays;
 
@@ -114,7 +114,7 @@ public class AtomicIntList {
 
     @Override
     public String toString() {
-        CharSink b = Misc.getThreadLocalSink();
+        Utf16Sink b = Misc.getThreadLocalSink();
         int[] data = this.data;
         int pos = this.pos;
         b.put('[');

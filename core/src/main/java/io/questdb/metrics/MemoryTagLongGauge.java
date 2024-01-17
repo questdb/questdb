@@ -26,7 +26,7 @@ package io.questdb.metrics;
 
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.BorrowableUtf8Sink;
 import org.jetbrains.annotations.NotNull;
 
@@ -81,13 +81,13 @@ public class MemoryTagLongGauge implements LongGauge {
         // do nothing as this gauge is RO view of memory tag stats
     }
 
-    private void appendMetricName(CharSinkBase<?> sink) {
+    private void appendMetricName(CharSink<?> sink) {
         sink.putAscii(PrometheusFormatUtils.METRIC_NAME_PREFIX);
         sink.putAscii(MEMORY_TAG_PREFIX);
         sink.put(getName());
     }
 
-    private void appendType(CharSinkBase<?> sink) {
+    private void appendType(CharSink<?> sink) {
         sink.putAscii(PrometheusFormatUtils.TYPE_PREFIX);
         sink.putAscii(MEMORY_TAG_PREFIX);
         sink.put(getName());
