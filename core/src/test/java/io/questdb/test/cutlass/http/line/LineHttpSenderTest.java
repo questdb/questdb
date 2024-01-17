@@ -42,11 +42,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         "i int, l long, ip ipv4, g geohash(4c), ts timestamp) timestamp(ts) partition by DAY WAL");
 
                 int port = IlpHttpUtils.getHttpPort(serverMain);
-                try (Sender sender = Sender.builder()
-                        .url("http://localhost:" + port)
-                        .build()
-                ) {
-
+                try (Sender sender = Sender.withDefaultsFromUrl("http://localhost:" + port)) {
                     sender.table("ex_tbl")
                             .doubleColumn("b", 1234)
                             .at(1233456, ChronoUnit.NANOS);
