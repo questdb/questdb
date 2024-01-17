@@ -107,8 +107,6 @@ public interface CharSink<T extends CharSink<?>> {
         return putAscii(value ? "true" : "false");
     }
 
-    T put(byte b);
-
     /**
      * Treats the input char as an ASCII one. If a UTF-8 char is provided instead,
      * a corrupted char may be written into the sink depending on the implementation.

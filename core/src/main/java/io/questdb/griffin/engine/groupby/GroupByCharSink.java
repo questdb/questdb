@@ -91,11 +91,6 @@ public class GroupByCharSink implements CharSink<GroupByCharSink>, CharSequence,
     }
 
     @Override
-    public GroupByCharSink put(byte b) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public GroupByCharSink put(@Nullable CharSequence cs) {
         if (cs != null) {
             int thatLen = cs.length();

@@ -430,7 +430,7 @@ public final class Files {
         final int len = readTo.size();
         final int bufSize = 1024;
         readTo.zeroPad(bufSize);
-        // readlink copies link target into the give buffer, without zero-terminating it
+        // readlink copies link target into the give buffer, without null-terminating it
         // the buffer therefor is filled with zeroes. It is also possible that buffer is
         // not large enough to copy the entire target. We detect this by checking the return
         // value. If the value is the same as the buffer size we make an assumption that

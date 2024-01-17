@@ -46,6 +46,15 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
     }
 
     /**
+     * Writes out bytes (8bits) to physical storage verbatim. This method is not commonly implemented on
+     * {@link CharSink}. For writing ASCII (8-byte) characters please see {@link #putAscii(char)}
+     *
+     * @param b byte value
+     * @return this sink for daisy-chaining
+     */
+    Utf8Sink put(byte b);
+
+    /**
      * Encodes the given char sequence from UTF-16 to UTF-8 and writes it to the sink.
      */
     default Utf8Sink put(@Nullable CharSequence cs) {

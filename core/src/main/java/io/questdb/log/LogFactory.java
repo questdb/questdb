@@ -982,7 +982,7 @@ public class LogFactory implements Closeable {
 
         @Override
         public LogRecord put(byte b) {
-            return null;
+            return this;
         }
 
         @Override
@@ -992,7 +992,7 @@ public class LogFactory implements Closeable {
 
         @Override
         public LogRecord putUtf8(long lo, long hi) {
-            return null;
+            return this;
         }
 
         @Override

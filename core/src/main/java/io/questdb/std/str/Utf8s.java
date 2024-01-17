@@ -715,9 +715,9 @@ public final class Utf8s {
     }
 
     /**
-     * Copies UTF8 zero-terminated string into UTF8 sink excluding zero byte.
+     * Copies UTF8 null-terminated string into UTF8 sink excluding zero byte.
      *
-     * @param addr pointer at the beginning of UTF8 zero-terminated string
+     * @param addr pointer at the beginning of UTF8 null-terminated string
      * @param sink copy target
      */
     public static void utf8ZCopy(long addr, Utf8Sink sink) {

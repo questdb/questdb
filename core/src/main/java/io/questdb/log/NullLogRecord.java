@@ -46,17 +46,17 @@ final class NullLogRecord implements LogRecord {
 
     @Override
     public Utf8Sink putUtf8(long lo, long hi) {
-        return null;
+        return this;
     }
 
     @Override
     public Utf8Sink put(@Nullable Utf8Sequence us) {
-        return null;
+        return this;
     }
 
     @Override
     public Utf8Sink put(byte b) {
-        return null;
+        return this;
     }
 
     @Override

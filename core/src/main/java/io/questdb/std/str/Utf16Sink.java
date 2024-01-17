@@ -30,19 +30,17 @@ import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.std.Numbers.hexDigits;
 
+/**
+ * Family of sinks that write out <b>character</b> value as UTF16 encoded bytes. This interface
+ * is separate from {@link CharSink} to achieve two goals:
+ * <ul>
+ *     <li>Avoid using these sinks as the target of UTF16-to-UTF8 conversions</li>
+ *     <li>Group implementations in easy to understand hierarchy</li>
+ * </ul>
+ *
+ *
+ */
 public interface Utf16Sink extends CharSink<Utf16Sink> {
-
-    /**
-     * Special behaviour of UTF16 sinks is to tread byte as INT
-     *
-     * @param b byte, which numeric number is written out
-     * @return sink for daisy-chaining
-     */
-    @Override
-    default Utf16Sink put(byte b) {
-        return put((int) b);
-    }
-
     default Utf16Sink put(@Nullable Utf8Sequence us) {
         if (us != null) {
             Utf8s.utf8ToUtf16(us, this);

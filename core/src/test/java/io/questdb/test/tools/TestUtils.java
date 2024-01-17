@@ -1450,6 +1450,7 @@ public final class TestUtils {
                 putGeoHash(r.getGeoLong(i), ColumnType.getGeoHashBits(columnType), sink);
                 break;
             case ColumnType.BYTE:
+                // as int
                 sink.put(r.getByte(i));
                 break;
             case ColumnType.BOOLEAN:
