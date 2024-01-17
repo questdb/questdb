@@ -111,7 +111,7 @@ open module io.questdb {
     exports io.questdb.client;
     exports io.questdb.std.bytes;
     exports io.questdb.std.histogram.org.HdrHistogram.packedarray;
-    exports io.questdb.std.hyperloglog;
+    exports io.questdb.griffin.engine.groupby.hyperloglog;
 
     provides FunctionFactory with
             // query activity functions

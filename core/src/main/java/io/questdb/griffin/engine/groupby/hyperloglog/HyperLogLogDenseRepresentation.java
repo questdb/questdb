@@ -22,34 +22,51 @@
  *
  ******************************************************************************/
 
-package io.questdb.std.hyperloglog;
+package io.questdb.griffin.engine.groupby.hyperloglog;
+
+import io.questdb.griffin.engine.groupby.GroupByAllocator;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 
 import java.util.Arrays;
 
-import static io.questdb.std.hyperloglog.BiasCorrectionData.BIAS_DATA;
-import static io.questdb.std.hyperloglog.BiasCorrectionData.RAW_ESTIMATE_DATA;
-import static io.questdb.std.hyperloglog.BiasCorrectionData.THRESHOLD_DATA;
+import static io.questdb.griffin.engine.groupby.hyperloglog.BiasCorrectionData.RAW_ESTIMATE_DATA;
+import static io.questdb.griffin.engine.groupby.hyperloglog.BiasCorrectionData.THRESHOLD_DATA;
 
-public class HyperLogLogDenseRepresentation implements HyperLogLogRepresentation {
+/**
+ * The memory layout is as follows:
+ * <pre>
+ * |  type  | cached cardinality |   registers       |
+ * +--------+--------------------+-------------------+
+ * | 1 byte |       8 bytes      | 2^precision bytes |
+ * +--------+--------------------+-------------------+
+ * </pre>
+ *
+ * The first two fields (type and cached cardinality) are used by {@link HyperLogLog}.
+ */
+public class HyperLogLogDenseRepresentation {
     private static final int KNN_K = 6;
     static final int MIN_PRECISION = 4;
     static final int MAX_PRECISION = 18;
     private static final double[] RECIPROCALS_OF_POWER_OF_2 = new double[Long.SIZE - MIN_PRECISION + 2];
+    private static final long HEADER_SIZE = Byte.BYTES + Long.BYTES;
 
+    private final int registerCount;
     private final int precision;
-    private final byte[] registers;
     private final double alphaMM;
     private final int biasCorrectionThreshold;
     private final int biasCorrectionDataIndex;
     private final long leadingZerosMask;
 
+    private GroupByAllocator allocator;
+    private long ptr;
+
     public HyperLogLogDenseRepresentation(int precision) {
-        int registerCount = 1 << precision;
+        this.registerCount = 1 << precision;
         this.precision = precision;
         this.biasCorrectionThreshold = 5 * registerCount;
         this.biasCorrectionDataIndex = precision - MIN_PRECISION;
         this.leadingZerosMask = 1L << (precision - 1);
-        this.registers = new byte[registerCount];
         switch (registerCount) {
             case 16:
                 alphaMM = 0.673 * registerCount * registerCount;
@@ -65,25 +82,54 @@ public class HyperLogLogDenseRepresentation implements HyperLogLogRepresentation
         }
     }
 
-    @Override
+    static long calculateSizeInBytes(int precision) {
+        int registerCount = 1 << precision;
+        return HEADER_SIZE + registerCount;
+    }
+
+    public HyperLogLogDenseRepresentation of(long ptr) {
+        if (ptr == 0) {
+            this.ptr = allocator.malloc(HEADER_SIZE + registerCount);
+            Vect.memset(this.ptr + HEADER_SIZE, registerCount, 0);
+        } else {
+            this.ptr = ptr;
+        }
+        return this;
+    }
+
+    public long ptr() {
+        return ptr;
+    }
+
+    public void setAllocator(GroupByAllocator allocator) {
+        this.allocator = allocator;
+    }
+
     public void add(long hash) {
         int registerIdx = computeRegisterIndex(hash);
         byte leadingZeros = computeNumberOfLeadingZeros(hash);
         add(registerIdx, leadingZeros);
     }
 
-    @Override
+    void copyTo(HyperLogLogDenseRepresentation dst) {
+        for (int i = 0; i < registerCount; i++) {
+            byte srcVal = get(i);
+            dst.add(i, srcVal);
+        }
+    }
+
     public long computeCardinality() {
         double sum = 0;
         int emptyRegisterCount = 0;
-        for (byte registerValue : registers) {
+        for (int i = 0; i < registerCount; i++) {
+            byte registerValue = get(i);
             sum += RECIPROCALS_OF_POWER_OF_2[registerValue];
             if (registerValue == 0) {
                 emptyRegisterCount++;
             }
         }
         if (emptyRegisterCount > 0) {
-            double h = linearCounting(registers.length, emptyRegisterCount);
+            double h = linearCounting(registerCount, emptyRegisterCount);
             if (h < THRESHOLD_DATA[biasCorrectionDataIndex]) {
                 return Math.round(h);
             }
@@ -127,27 +173,12 @@ public class HyperLogLogDenseRepresentation implements HyperLogLogRepresentation
             }
         }
 
-        double[] biasVector = BIAS_DATA[biasCorrectionDataIndex];
+        double[] biasVector = BiasCorrectionData.BIAS_DATA[biasCorrectionDataIndex];
         double biasTotal = 0.0;
         for (int i = left; i < right; i++) {
             biasTotal += biasVector[i];
         }
         return biasTotal / KNN_K;
-    }
-
-    @Override
-    public boolean isFull() {
-        return false;
-    }
-
-    @Override
-    public HyperLogLogRepresentation convertToDense() {
-        return this;
-    }
-
-    @Override
-    public void clear() {
-        Arrays.fill(registers, (byte) 0);
     }
 
     private int computeRegisterIndex(long hash) {
@@ -159,10 +190,18 @@ public class HyperLogLogDenseRepresentation implements HyperLogLogRepresentation
     }
 
     void add(int position, byte value) {
-        byte curVal = registers[position];
+        byte curVal = get(position);
         if (curVal < value) {
-            registers[position] = value;
+            set(position, value);
         }
+    }
+
+    private byte get(int idx) {
+        return Unsafe.getUnsafe().getByte(ptr + HEADER_SIZE + idx);
+    }
+
+    private void set(int idx, byte val) {
+        Unsafe.getUnsafe().putByte(ptr + HEADER_SIZE + idx, val);
     }
 
     static {

@@ -36,7 +36,7 @@ public class ApproxCountDistinctIPv4GroupByFunctionFactoryTest extends AbstractC
                         "a\t1\n" +
                         "b\t1\n" +
                         "c\t1\n",
-                "select a, approx_count_distinct('127.0.0.1'::ipv4) from x",
+                "select a, approx_count_distinct('127.0.0.1'::ipv4) from x order by a",
                 "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
                 null,
                 true,
@@ -61,11 +61,11 @@ public class ApproxCountDistinctIPv4GroupByFunctionFactoryTest extends AbstractC
     public void testExpression() throws Exception {
         final String expected = "a\tapprox_count_distinct\n" +
                 "a\t6\n" +
-                "c\t8\n" +
-                "b\t6\n";
+                "b\t6\n" +
+                "c\t8\n";
         assertQuery(
                 expected,
-                "select a, approx_count_distinct(s + 42) from x",
+                "select a, approx_count_distinct(s + 42) from x order by a",
                 "create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_ipv4('1.1.1.1/16', 0) s from long_sequence(20)))",
                 null,
                 true,
@@ -73,7 +73,7 @@ public class ApproxCountDistinctIPv4GroupByFunctionFactoryTest extends AbstractC
         );
         // addition shouldn't affect the number of distinct values,
         // so the result should stay the same
-        assertSql(expected, "select a, approx_count_distinct(s) from x");
+        assertSql(expected, "select a, approx_count_distinct(s) from x order by a");
     }
 
     @Test
@@ -81,12 +81,12 @@ public class ApproxCountDistinctIPv4GroupByFunctionFactoryTest extends AbstractC
         assertQuery(
                 "a\tapprox_count_distinct\n" +
                         "a\t2\n" +
-                        "f\t6\n" +
+                        "b\t1\n" +
                         "c\t2\n" +
-                        "e\t5\n" +
                         "d\t4\n" +
-                        "b\t1\n",
-                "select a, approx_count_distinct(s) from x",
+                        "e\t5\n" +
+                        "f\t6\n",
+                "select a, approx_count_distinct(s) from x order by a",
                 "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_ipv4('1.1.1.1/16', 0) s, timestamp_sequence(0, 100000) ts from long_sequence(20)) timestamp(ts))",
                 null,
                 true,
@@ -132,7 +132,7 @@ public class ApproxCountDistinctIPv4GroupByFunctionFactoryTest extends AbstractC
                         "a\t0\n" +
                         "b\t0\n" +
                         "c\t0\n",
-                "select a, approx_count_distinct(cast(null as IPV4)) from x",
+                "select a, approx_count_distinct(cast(null as IPV4)) from x order by a",
                 "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
                 null,
                 true,

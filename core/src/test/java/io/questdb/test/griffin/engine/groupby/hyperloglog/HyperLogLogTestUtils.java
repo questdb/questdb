@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.std.hyperloglog;
+package io.questdb.test.griffin.engine.groupby.hyperloglog;
 
 import static org.junit.Assert.assertTrue;
 

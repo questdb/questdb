@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.std.hyperloglog;
+package io.questdb.griffin.engine.groupby.hyperloglog;
 
 /**
  * The following tables are taken from
@@ -31,7 +31,7 @@ package io.questdb.std.hyperloglog;
  * {@link BiasCorrectionData#RAW_ESTIMATE_DATA} in non-decreasing order and
  * updating the corresponding elements in {@link BiasCorrectionData#BIAS_DATA}
  * to match those in {@link BiasCorrectionData#RAW_ESTIMATE_DATA}. The data is
- * sorted to enable the use of binary search in {@link io.questdb.std.hyperloglog.HyperLogLogDenseRepresentation}.
+ * sorted to enable the use of binary search in {@link HyperLogLogDenseRepresentation}.
  */
 class BiasCorrectionData {
 

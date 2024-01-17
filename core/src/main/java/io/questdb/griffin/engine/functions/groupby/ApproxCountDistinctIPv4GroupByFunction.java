@@ -32,56 +32,58 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.groupby.GroupByAllocator;
+import io.questdb.griffin.engine.groupby.hyperloglog.HyperLogLog;
 import io.questdb.std.Hash;
 import io.questdb.std.Numbers;
-import io.questdb.std.ObjList;
-import io.questdb.std.hyperloglog.HyperLogLog;
 
 public class ApproxCountDistinctIPv4GroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
     private final Function arg;
-    private final ObjList<HyperLogLog> hyperLogLogs = new ObjList<>();
-    private int nextHyperLogLogIndex;
+    private final HyperLogLog hllA;
+    private final HyperLogLog hllB;
     private int valueIndex;
     private int overwrittenFlagIndex;
-    private int hyperLogLogIndex;
+    private int hllPtrIndex;
 
     public ApproxCountDistinctIPv4GroupByFunction(Function arg) {
         this.arg = arg;
+        this.hllA = new HyperLogLog();
+        this.hllB = new HyperLogLog();
     }
 
     @Override
     public void clear() {
-        hyperLogLogs.clear();
-        nextHyperLogLogIndex = 0;
+        hllA.resetPtr();
+        hllB.resetPtr();
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        final HyperLogLog hyperLogLog;
-        if (hyperLogLogs.size() <= nextHyperLogLogIndex) {
-            hyperLogLogs.extendAndSet(nextHyperLogLogIndex, hyperLogLog = new HyperLogLog());
-        } else {
-            hyperLogLog = hyperLogLogs.getQuick(nextHyperLogLogIndex);
-            hyperLogLog.clear();
-        }
-
         final int val = arg.getIPv4(record);
         if (val != Numbers.IPv4_NULL) {
             final long hash = Hash.murmur3ToLong(val);
-            hyperLogLog.add(hash);
+            hllA.of(0).add(hash);
+            mapValue.putLong(hllPtrIndex, hllA.ptr());
+        } else {
+            mapValue.putLong(hllPtrIndex, 0);
         }
-        mapValue.putInt(hyperLogLogIndex, nextHyperLogLogIndex++);
         mapValue.putBool(overwrittenFlagIndex, false);
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        final HyperLogLog hyperLogLog = hyperLogLogs.getQuick(mapValue.getInt(hyperLogLogIndex));
         final int val = arg.getIPv4(record);
         if (val != Numbers.IPv4_NULL) {
             final long hash = Hash.murmur3ToLong(val);
-            hyperLogLog.add(hash);
+            long ptr = mapValue.getLong(hllPtrIndex);
+            hllA.of(ptr).add(hash);
+            mapValue.putLong(hllPtrIndex, hllA.ptr());
         }
+    }
+
+    @Override
+    public int getValueIndex() {
+        return valueIndex;
     }
 
     @Override
@@ -94,12 +96,13 @@ public class ApproxCountDistinctIPv4GroupByFunction extends LongFunction impleme
         if (rec.getBool(overwrittenFlagIndex)) {
             return rec.getLong(valueIndex);
         }
-        if (hyperLogLogs.size() == 0) {
-            return Numbers.LONG_NaN;
-        }
 
-        final HyperLogLog hyperLogLog = hyperLogLogs.getQuick(rec.getInt(hyperLogLogIndex));
-        return hyperLogLog.computeCardinality();
+        long ptr = rec.getLong(hllPtrIndex);
+        if (ptr == 0) {
+            return 0;
+        }
+        hllA.of(ptr);
+        return hllA.computeCardinality();
     }
 
     @Override
@@ -113,18 +116,68 @@ public class ApproxCountDistinctIPv4GroupByFunction extends LongFunction impleme
     }
 
     @Override
+    public boolean isParallelismSupported() {
+        return true;
+    }
+
+    @Override
     public boolean isReadThreadSafe() {
         return false;
     }
 
     @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        if (srcValue.getBool(overwrittenFlagIndex)) {
+            long srcCount = srcValue.getLong(valueIndex);
+            if (srcCount == 0 || srcCount == Numbers.LONG_NaN) {
+                return;
+            }
+            // TODO: How to handle the case when srcCount is not equal to 0 and not equal to NaN? This can occur as a
+            //  result of interpolation. Interpolation (sample by) doesn't support parallel execution yet.
+        }
+
+        long srcPtr = srcValue.getLong(hllPtrIndex);
+        if (srcPtr == 0) {
+            return;
+        }
+
+        if (destValue.getBool(overwrittenFlagIndex)) {
+            long dstCount = destValue.getLong(valueIndex);
+            if (dstCount == 0 || dstCount == Numbers.LONG_NaN) {
+                destValue.putBool(overwrittenFlagIndex, false);
+                destValue.putLong(hllPtrIndex, srcPtr);
+                return;
+            }
+            // TODO: Same here.
+        }
+
+        long destPtr = destValue.getLong(hllPtrIndex);
+        if (destPtr == 0) {
+            destValue.putBool(overwrittenFlagIndex, false);
+            destValue.putLong(hllPtrIndex, srcPtr);
+            return;
+        }
+
+        hllA.of(destPtr);
+        hllB.of(srcPtr);
+        long mergedPtr = HyperLogLog.merge(hllA, hllB);
+
+        destValue.putBool(overwrittenFlagIndex, false);
+        destValue.putLong(hllPtrIndex, mergedPtr);
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        this.overwrittenFlagIndex = valueIndex + 1;
-        this.hyperLogLogIndex = valueIndex + 2;
+        setValueIndex(columnTypes.getColumnCount());
         columnTypes.add(ColumnType.LONG);
         columnTypes.add(ColumnType.BOOLEAN);
-        columnTypes.add(ColumnType.INT);
+        columnTypes.add(ColumnType.LONG);
+    }
+
+    @Override
+    public void setAllocator(GroupByAllocator allocator) {
+        hllA.setAllocator(allocator);
+        hllB.setAllocator(allocator);
     }
 
     @Override
@@ -142,8 +195,16 @@ public class ApproxCountDistinctIPv4GroupByFunction extends LongFunction impleme
         overwrite(mapValue, Numbers.LONG_NaN);
     }
 
+    @Override
+    public void setValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
+        this.overwrittenFlagIndex = valueIndex + 1;
+        this.hllPtrIndex = valueIndex + 2;
+    }
+
     private void overwrite(MapValue mapValue, long value) {
         mapValue.putLong(valueIndex, value);
         mapValue.putBool(overwrittenFlagIndex, true);
+        mapValue.putLong(hllPtrIndex, 0);
     }
 }
