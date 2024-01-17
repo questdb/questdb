@@ -54,8 +54,6 @@ import java.security.PublicKey;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
-import static io.questdb.cutlass.line.tcp.LineTcpConnectionContext.IOContextResult.NEEDS_DISCONNECT;
-
 
 abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     static final int FD = 1_000_000;
@@ -235,8 +233,12 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     }
 
     protected boolean handleContextIO0() {
-        if (context.handleIO(noNetworkIOJob) == NEEDS_DISCONNECT) {
-            disconnected = true;
+        switch (context.handleIO(noNetworkIOJob)) {
+            case QUEUE_FULL:
+                return true;
+            case NEEDS_DISCONNECT:
+                disconnected = true;
+                break;
         }
         context.commitWalTables(Long.MAX_VALUE);
         scheduler.doMaintenance(noNetworkIOJob.localTableUpdateDetailsByTableName, noNetworkIOJob.getWorkerId(), Long.MAX_VALUE);

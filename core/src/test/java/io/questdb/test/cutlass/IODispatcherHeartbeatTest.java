@@ -512,7 +512,7 @@ public class IODispatcherHeartbeatTest {
             super.close();
         }
 
-        IODispatcher<TestContext> getDispatcher() {
+        public IODispatcher<TestContext> getDispatcher() {
             return dispatcher;
         }
 
