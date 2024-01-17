@@ -27,7 +27,7 @@ package io.questdb.griffin.engine.groupby;
 import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.AbstractCharSequence;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -45,7 +45,7 @@ import org.jetbrains.annotations.Nullable;
  * +---------------------+-------------------+------------+
  * </pre>
  */
-public class GroupByCharSink implements CharSink<GroupByCharSink>, CharSequence, Mutable {
+public class GroupByCharSink implements Utf16Sink, CharSequence, Mutable {
     private static final long HEADER_SIZE = 2 * Integer.BYTES;
     private static final long LEN_OFFSET = Integer.BYTES;
     private static final int MIN_CAPACITY = 16;
