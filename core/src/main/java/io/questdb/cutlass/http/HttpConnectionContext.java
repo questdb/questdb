@@ -783,7 +783,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     // read headers
                     read = socket.recv(recvBuffer, recvBufferSize);
                     LOG.debug().$("recv [fd=").$(getFd()).$(", count=").$(read).I$();
-                    if (read < 0) {
+                    if (read < 0 && !headerParser.onRecvError(read)) {
                         LOG.debug()
                                 .$("done [fd=").$(getFd())
                                 .$(", errno=").$(nf.errno())
