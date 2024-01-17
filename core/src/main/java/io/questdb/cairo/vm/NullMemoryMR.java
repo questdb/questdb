@@ -27,7 +27,7 @@ package io.questdb.cairo.vm;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.*;
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 
 public class NullMemoryMR implements MemoryMR {
@@ -107,16 +107,16 @@ public class NullMemoryMR implements MemoryMR {
         return Numbers.LONG_NaN;
     }
 
-    public long getLong128Hi(long offset) {
+    public long getLong128Hi() {
         return Numbers.LONG_NaN;
     }
 
-    public long getLong128Lo(long offset) {
+    public long getLong128Lo() {
         return Numbers.LONG_NaN;
     }
 
     @Override
-    public void getLong256(long offset, CharSinkBase<?> sink) {
+    public void getLong256(long offset, CharSink<?> sink) {
     }
 
     @Override

@@ -29,7 +29,7 @@ import io.questdb.metrics.CounterImpl;
 import io.questdb.metrics.LongGauge;
 import io.questdb.metrics.LongGaugeImpl;
 import io.questdb.std.*;
-import io.questdb.std.str.FlyweightDirectCharSink;
+import io.questdb.std.str.FlyweightDirectUtf16Sink;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -118,7 +118,7 @@ public class AssociativeCacheTest {
     public void testImmutableKeys() {
         final AssociativeCache<String> cache = new AssociativeCache<>(8, 8);
         long mem = Unsafe.malloc(1024, MemoryTag.NATIVE_DEFAULT);
-        final FlyweightDirectCharSink dcs = new FlyweightDirectCharSink();
+        final FlyweightDirectUtf16Sink dcs = new FlyweightDirectUtf16Sink();
 
         try {
             Unsafe.getUnsafe().putChar(mem, 'A');

@@ -31,8 +31,8 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
-import io.questdb.std.str.CharSinkBase;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.StringSink;
 
 public abstract class CharFunction implements ScalarFunction {
@@ -120,7 +120,7 @@ public abstract class CharFunction implements ScalarFunction {
     }
 
     @Override
-    public void getLong256(Record rec, CharSinkBase<?> sink) {
+    public void getLong256(Record rec, CharSink<?> sink) {
         throw new UnsupportedOperationException();
     }
 
@@ -156,7 +156,7 @@ public abstract class CharFunction implements ScalarFunction {
     }
 
     @Override
-    public final void getStr(Record rec, CharSink sink) {
+    public final void getStr(Record rec, Utf16Sink sink) {
         final char value = getChar(rec);
         if (value > 0) {
             sink.put(value);

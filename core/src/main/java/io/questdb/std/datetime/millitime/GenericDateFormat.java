@@ -31,7 +31,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.datetime.AbstractDateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -45,7 +45,7 @@ public class GenericDateFormat extends AbstractDateFormat {
     }
 
     @Override
-    public void format(long datetime, @NotNull DateLocale locale, @Nullable CharSequence timeZoneName, @NotNull CharSinkBase<?> sink) {
+    public void format(long datetime, @NotNull DateLocale locale, @Nullable CharSequence timeZoneName, @NotNull CharSink<?> sink) {
         int day = -1;
         int month = -1;
         int year = Integer.MIN_VALUE;

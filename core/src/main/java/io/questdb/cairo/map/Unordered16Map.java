@@ -419,7 +419,7 @@ public class Unordered16Map implements Map, Reopenable {
             }
 
             long newAddr = getStartAddress(newMemStart, Hash.hashLong128(key1, key2) & newMask);
-            while (Unsafe.getUnsafe().getLong(newAddr) != 0) {
+            while (Unsafe.getUnsafe().getLong(newAddr) != 0 || Unsafe.getUnsafe().getLong(newAddr + 8L) != 0) {
                 newAddr += entrySize;
                 if (newAddr >= newMemLimit) {
                     newAddr = newMemStart;

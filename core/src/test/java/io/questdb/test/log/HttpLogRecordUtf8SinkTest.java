@@ -24,8 +24,8 @@
 
 package io.questdb.test.log;
 
-import io.questdb.log.HttpLogRecordSink;
-import io.questdb.log.LogRecordSink;
+import io.questdb.log.HttpLogRecordUtf8Sink;
+import io.questdb.log.LogRecordUtf8Sink;
 import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -37,7 +37,7 @@ import org.junit.Test;
 
 import java.util.function.Consumer;
 
-public class HttpLogRecordSinkTest {
+public class HttpLogRecordUtf8SinkTest {
 
     private static final int bufferSize = 1024;
 
@@ -134,7 +134,7 @@ public class HttpLogRecordSinkTest {
             final int len = msgBytes.length;
             final long msgPtr = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
             try {
-                LogRecordSink logRecord = new LogRecordSink(msgPtr, len);
+                LogRecordUtf8Sink logRecord = new LogRecordUtf8Sink(msgPtr, len);
                 logRecord.put(msg);
                 alertBuilder.put(logRecord).$();
                 Assert.assertEquals(
@@ -165,7 +165,7 @@ public class HttpLogRecordSinkTest {
             final int len = msgBytes.length + Misc.EOL.length();
             final long msgPtr = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
             try {
-                LogRecordSink logRecord = new LogRecordSink(msgPtr, len);
+                LogRecordUtf8Sink logRecord = new LogRecordUtf8Sink(msgPtr, len);
                 logRecord.put(msg);
                 alertBuilder.put(logRecord).$();
                 Assert.assertEquals(
@@ -209,7 +209,7 @@ public class HttpLogRecordSinkTest {
             final int len = msgBytes.length + Misc.EOL.length();
             final long msgPtr = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
             try {
-                LogRecordSink logRecord = new LogRecordSink(msgPtr, len);
+                LogRecordUtf8Sink logRecord = new LogRecordUtf8Sink(msgPtr, len);
                 logRecord.put(msg);
                 alertBuilder.put(logRecord).put(s -> s.put("Tres, Dos, Uno, Zero!!")).$();
                 Assert.assertEquals(
@@ -232,10 +232,10 @@ public class HttpLogRecordSinkTest {
         });
     }
 
-    private static void withHttpLogRecordSink(Consumer<HttpLogRecordSink> consumer) throws Exception {
+    private static void withHttpLogRecordSink(Consumer<HttpLogRecordUtf8Sink> consumer) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final long bufferPtr = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
-            final HttpLogRecordSink alertBuilder = new HttpLogRecordSink(bufferPtr, bufferSize);
+            final HttpLogRecordUtf8Sink alertBuilder = new HttpLogRecordUtf8Sink(bufferPtr, bufferSize);
             alertBuilder.putHeader("localhost");
             alertBuilder.setMark();
             Assert.assertEquals(

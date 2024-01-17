@@ -30,8 +30,7 @@ import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.AbstractCharSequence;
-import io.questdb.std.str.AbstractCharSink;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 
@@ -42,7 +41,7 @@ public class LineUdpLexer implements Mutable, Closeable {
     protected final CharSequenceCache charSequenceCache;
     private final ArrayBackedCharSequence cs = new ArrayBackedCharSequence();
     private final FloatingCharSequence floatingCharSequence = new FloatingCharSequence();
-    private final ArrayBackedCharSink sink = new ArrayBackedCharSink();
+    private final ArrayBackedUtf16Sink sink = new ArrayBackedUtf16Sink();
     private long buffer;
     private long bufferHi;
     private long dstPos = 0;
@@ -402,10 +401,10 @@ public class LineUdpLexer implements Mutable, Closeable {
         }
     }
 
-    private class ArrayBackedCharSink extends AbstractCharSink {
+    private class ArrayBackedUtf16Sink implements Utf16Sink {
 
         @Override
-        public CharSink put(char c) {
+        public Utf16Sink put(char c) {
             if (dstPos == bufferHi) {
                 extend();
             }

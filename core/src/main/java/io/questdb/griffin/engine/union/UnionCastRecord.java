@@ -28,8 +28,8 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSinkBase;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 
 public class UnionCastRecord extends AbstractUnionRecord {
 
@@ -188,7 +188,7 @@ public class UnionCastRecord extends AbstractUnionRecord {
     }
 
     @Override
-    public void getLong256(int col, CharSinkBase<?> sink) {
+    public void getLong256(int col, CharSink<?> sink) {
         if (useA) {
             castFunctionsA.getQuick(col).getLong256(recordA, sink);
         } else {
@@ -235,7 +235,7 @@ public class UnionCastRecord extends AbstractUnionRecord {
     }
 
     @Override
-    public void getStr(int col, CharSink sink) {
+    public void getStr(int col, Utf16Sink sink) {
         if (useA) {
             castFunctionsA.getQuick(col).getStr(recordA, sink);
         } else {

@@ -24,7 +24,7 @@
 
 package io.questdb.metrics;
 
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.BorrowableUtf8Sink;
 import org.jetbrains.annotations.NotNull;
 
@@ -74,12 +74,12 @@ public class VirtualLongGauge implements LongGauge {
         // do nothing as this gauge is RO view of some stat
     }
 
-    private void appendMetricName(CharSinkBase<?> sink) {
+    private void appendMetricName(CharSink<?> sink) {
         sink.putAscii(PrometheusFormatUtils.METRIC_NAME_PREFIX);
         sink.put(getName());
     }
 
-    private void appendType(CharSinkBase<?> sink) {
+    private void appendType(CharSink<?> sink) {
         sink.putAscii(PrometheusFormatUtils.TYPE_PREFIX);
         sink.put(getName());
         sink.putAscii(" gauge\n");

@@ -24,7 +24,7 @@
 
 package io.questdb.std.str;
 
-import io.questdb.std.Mutable;
-
-public interface MutableCharSink extends CharSink, CharSequence, Mutable {
+public final class CharSinkEncoding {
+    public static final int UTF16 = 16;
+    public static final int UTF8 = 8;
 }

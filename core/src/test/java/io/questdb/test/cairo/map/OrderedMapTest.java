@@ -37,6 +37,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.HashMap;
+
 public class OrderedMapTest extends AbstractCairoTest {
 
     @Test
@@ -771,6 +773,43 @@ public class OrderedMapTest extends AbstractCairoTest {
                         Assert.assertEquals(i, record.getInt(0));
                         i++;
                     }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testFuzz() throws Exception {
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        TestUtils.assertMemoryLeak(() -> {
+            SingleColumnType keyTypes = new SingleColumnType(ColumnType.STRING);
+            SingleColumnType valueTypes = new SingleColumnType(ColumnType.LONG);
+
+            HashMap<String, Long> oracle = new HashMap<>();
+            try (OrderedMap map = new OrderedMap(1024, keyTypes, valueTypes, 64, 0.8, Integer.MAX_VALUE)) {
+                final int N = 100000;
+                for (int i = 0; i < N; i++) {
+                    MapKey key = map.withKey();
+                    CharSequence s = rnd.nextString(i % 64);
+                    key.putStr(s);
+
+                    MapValue value = key.createValue();
+                    value.putLong(0, s.length());
+
+                    oracle.put(Chars.toString(s), (long) s.length());
+                }
+
+                Assert.assertEquals(oracle.size(), map.size());
+
+                // assert map contents
+                for (java.util.Map.Entry<String, Long> e : oracle.entrySet()) {
+                    MapKey key = map.withKey();
+                    key.putStr(e.getKey());
+
+                    MapValue value = key.findValue();
+                    Assert.assertFalse(value.isNew());
+                    Assert.assertEquals(e.getKey().length(), value.getLong(0));
+                    Assert.assertEquals((long) e.getValue(), value.getLong(0));
                 }
             }
         });

@@ -293,7 +293,7 @@ public class LogAlertSocketWriterTest {
                         writer.setReconnectDelay("100");
                         writer.bindProperties(LogFactory.getInstance());
 
-                        LogRecordSink recordSink = new LogRecordSink(logRecordBuffPtr, logRecordBuffSize);
+                        LogRecordUtf8Sink recordSink = new LogRecordUtf8Sink(logRecordBuffPtr, logRecordBuffSize);
                         recordSink.setLevel(LogLevel.ERROR);
                         recordSink.put("A \"simple\" $message$\n");
 
@@ -534,7 +534,7 @@ public class LogAlertSocketWriterTest {
                         }
                         writer.bindProperties(LogFactory.getInstance());
 
-                        LogRecordSink recordSink = new LogRecordSink(logRecordBuffPtr, logRecordBuffSize);
+                        LogRecordUtf8Sink recordSink = new LogRecordUtf8Sink(logRecordBuffPtr, logRecordBuffSize);
                         recordSink.setLevel(LogLevel.ERROR);
                         recordSink.put("A \"simple\" $message$\n");
 

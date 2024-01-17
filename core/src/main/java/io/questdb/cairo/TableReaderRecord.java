@@ -29,7 +29,7 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Long128;
 import io.questdb.std.Long256;
 import io.questdb.std.Rows;
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 
@@ -196,7 +196,7 @@ public class TableReaderRecord implements Record, Sinkable {
     }
 
     @Override
-    public void getLong256(int col, CharSinkBase<?> sink) {
+    public void getLong256(int col, CharSink<?> sink) {
         final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
         final long offset = getAdjustedRecordIndex(col) * Long256.BYTES;
         final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
@@ -313,7 +313,7 @@ public class TableReaderRecord implements Record, Sinkable {
     }
 
     @Override
-    public void toSink(@NotNull CharSinkBase<?> sink) {
+    public void toSink(@NotNull CharSink<?> sink) {
         sink.putAscii("TableReaderRecord [columnBase=").put(columnBase).putAscii(", recordIndex=").put(recordIndex).putAscii(']');
     }
 

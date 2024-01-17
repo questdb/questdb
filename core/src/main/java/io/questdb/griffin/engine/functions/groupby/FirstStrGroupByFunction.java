@@ -34,7 +34,7 @@ import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.DirectCharSink;
+import io.questdb.std.str.DirectUtf16Sink;
 import org.jetbrains.annotations.NotNull;
 
 public class FirstStrGroupByFunction extends StrFunction implements GroupByFunction, UnaryFunction {
@@ -42,7 +42,7 @@ public class FirstStrGroupByFunction extends StrFunction implements GroupByFunct
     private static final int LIST_CLEAR_THRESHOLD = 64;
 
     protected final Function arg;
-    protected final ObjList<DirectCharSink> sinks = new ObjList<>();
+    protected final ObjList<DirectUtf16Sink> sinks = new ObjList<>();
     protected int valueIndex;
     private int sinkIndex = 0;
 
@@ -61,7 +61,7 @@ public class FirstStrGroupByFunction extends StrFunction implements GroupByFunct
         }
         // Reset capacity on the remaining ones.
         for (int i = 0, n = sinks.size(); i < n; i++) {
-            DirectCharSink sink = sinks.getQuick(i);
+            DirectUtf16Sink sink = sinks.getQuick(i);
             if (sink != null) {
                 sink.resetCapacity();
             }
@@ -76,12 +76,12 @@ public class FirstStrGroupByFunction extends StrFunction implements GroupByFunct
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        final DirectCharSink sink;
+        final DirectUtf16Sink sink;
         final CharSequence str = arg.getStr(record);
         final int strLen = str != null ? str.length() : 0;
 
         if (sinks.size() <= sinkIndex) {
-            sinks.extendAndSet(sinkIndex, sink = new DirectCharSink(Math.max(INITIAL_SINK_CAPACITY, strLen)));
+            sinks.extendAndSet(sinkIndex, sink = new DirectUtf16Sink(Math.max(INITIAL_SINK_CAPACITY, strLen)));
         } else {
             sink = sinks.getQuick(sinkIndex);
             sink.clear();
