@@ -251,9 +251,7 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
                     // This is not allowed
                     request.putEOL();
 
-                    HttpClient.ResponseHeaders resp = request.send(5000);
-
-                    try {
+                    try (HttpClient.ResponseHeaders resp = request.send(5000)) {
                         resp.await();
                         Assert.fail();
                     } catch (HttpClientException e) {
@@ -616,28 +614,32 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
 
                 try (HttpClient httpClient = HttpClientFactory.newInstance(new DefaultHttpClientConfiguration())) {
                     HttpClient.Request request = httpClient.newRequest("localhost", getHttpPort(serverMain));
-                    HttpClient.ResponseHeaders resp = request.PUT()
-                            .url("/write ")
-                            .withContent()
-                            .putAscii(line)
-                            .putAscii(line)
-                            .send();
-
-                    resp.await();
-                    TestUtils.assertEquals("404", resp.getStatusCode());
+                    try (
+                            HttpClient.ResponseHeaders resp = request.PUT()
+                                    .url("/write ")
+                                    .withContent()
+                                    .putAscii(line)
+                                    .putAscii(line)
+                                    .send()
+                    ) {
+                        resp.await();
+                        TestUtils.assertEquals("404", resp.getStatusCode());
+                    }
                 }
 
                 try (HttpClient httpClient = HttpClientFactory.newInstance(new DefaultHttpClientConfiguration())) {
                     HttpClient.Request request = httpClient.newRequest("localhost", getHttpPort(serverMain));
-                    HttpClient.ResponseHeaders resp = request.GET()
-                            .url("/api/v2/write ")
-                            .withContent()
-                            .putAscii(line)
-                            .putAscii(line)
-                            .send();
-
-                    resp.await();
-                    TestUtils.assertEquals("404", resp.getStatusCode());
+                    try (
+                            HttpClient.ResponseHeaders resp = request.GET()
+                                    .url("/api/v2/write ")
+                                    .withContent()
+                                    .putAscii(line)
+                                    .putAscii(line)
+                                    .send()
+                    ) {
+                        resp.await();
+                        TestUtils.assertEquals("404", resp.getStatusCode());
+                    }
                 }
             }
         });
@@ -659,7 +661,6 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
                                     .putAscii("m1,tag1=value1 f1=1i,x=12i")
                                     .send()
                     ) {
-
                         resp.await();
                         TestUtils.assertEquals("400", resp.getStatusCode());
                     }

@@ -132,9 +132,10 @@ public class LineRawHttpTest extends AbstractBootstrapTest {
                         }
 
                         request.putEOL().putAscii("0").putEOL().putEOL();
-                        HttpClient.ResponseHeaders resp = request.send(5000);
-                        resp.await();
-                        totalCount += count;
+                        try (HttpClient.ResponseHeaders resp = request.send(5000)) {
+                            resp.await();
+                            totalCount += count;
+                        }
                     }
                 }
 

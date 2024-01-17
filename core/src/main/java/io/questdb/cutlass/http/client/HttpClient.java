@@ -52,6 +52,7 @@ public abstract class HttpClient implements QuietCloseable {
     private final ObjectPool<DirectUtf8String> csPool = new ObjectPool<>(DirectUtf8String.FACTORY, 64);
     private final int defaultTimeout;
     private final Request request = new Request();
+    private final ResponseHeaders responseHeaders;
     private final SocketFactory socketFactory;
     protected Socket socket;
     private long bufLo;
@@ -59,7 +60,6 @@ public abstract class HttpClient implements QuietCloseable {
     private CharSequence host;
     private int port;
     private long ptr = bufLo;
-    private ResponseHeaders responseHeaders;
 
     public HttpClient(HttpClientConfiguration configuration, SocketFactory socketFactory) {
         this.nf = configuration.getNetworkFacade();

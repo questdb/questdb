@@ -42,7 +42,6 @@ import java.util.regex.Pattern;
 public class TestHttpClient implements QuietCloseable {
     private final HttpClient httpClient = HttpClientFactory.newInstance();
     private final StringSink sink = new StringSink();
-    private boolean keepConnection;
 
     public void assertGet(CharSequence expectedResponse, CharSequence sql) {
         assertGet(expectedResponse, sql, null, null);
@@ -83,24 +82,18 @@ public class TestHttpClient implements QuietCloseable {
             @Nullable CharSequence password,
             @Nullable CharSequence token
     ) {
-        try {
-            HttpClient.Request req = httpClient.newRequest("localhost", 9001);
-            req.GET().url(url);
+        HttpClient.Request req = httpClient.newRequest("localhost", 9001);
+        req.GET().url(url);
 
-            if (queryParams != null) {
-                for (int i = 0, n = queryParams.size(); i < n; i++) {
-                    CharSequence name = queryParams.keys().getQuick(i);
-                    req.query(name, queryParams.get(name));
-                }
-            }
-
-            reqToSink(req, sink, username, password, token, null, null);
-            TestUtils.assertEquals(expectedResponse, sink);
-        } finally {
-            if (!keepConnection) {
-                httpClient.disconnect();
+        if (queryParams != null) {
+            for (int i = 0, n = queryParams.size(); i < n; i++) {
+                CharSequence name = queryParams.keys().getQuick(i);
+                req.query(name, queryParams.get(name));
             }
         }
+
+        reqToSink(req, sink, username, password, token, null, null);
+        TestUtils.assertEquals(expectedResponse, sink);
     }
 
     public void assertGet(
@@ -121,14 +114,8 @@ public class TestHttpClient implements QuietCloseable {
             @Nullable CharSequence password,
             @Nullable CharSequence token
     ) {
-        try {
-            toSink0(url, sql, sink, username, password, token, null, null);
-            TestUtils.assertEquals(expectedResponse, sink);
-        } finally {
-            if (!keepConnection) {
-                httpClient.disconnect();
-            }
-        }
+        toSink0(url, sql, sink, username, password, token, null, null);
+        TestUtils.assertEquals(expectedResponse, sink);
     }
 
     public void assertGetRegexp(
@@ -141,16 +128,10 @@ public class TestHttpClient implements QuietCloseable {
             @Nullable CharSequenceObjHashMap<String> queryParams,
             CharSequence expectedStatus
     ) {
-        try {
-            toSink0(url, sql, sink, username, password, token, queryParams, expectedStatus);
-            Pattern pattern = Pattern.compile(expectedResponseRegexp);
-            String message = "Expected response to match regexp " + expectedResponseRegexp + " but got " + sink + " which does not match";
-            Assert.assertTrue(message, pattern.matcher(sink).matches());
-        } finally {
-            if (!keepConnection) {
-                httpClient.disconnect();
-            }
-        }
+        toSink0(url, sql, sink, username, password, token, queryParams, expectedStatus);
+        Pattern pattern = Pattern.compile(expectedResponseRegexp);
+        String message = "Expected response to match regexp " + expectedResponseRegexp + " but got " + sink + " which does not match";
+        Assert.assertTrue(message, pattern.matcher(sink).matches());
     }
 
     public void assertGetRegexp(
@@ -173,18 +154,8 @@ public class TestHttpClient implements QuietCloseable {
         return sink;
     }
 
-    public void setKeepConnection(boolean keepConnection) {
-        this.keepConnection = keepConnection;
-    }
-
     public void toSink(CharSequence url, CharSequence sql, StringSink sink) {
-        try {
-            toSink0(url, sql, sink, null, null, null, null, null);
-        } finally {
-            if (!keepConnection) {
-                httpClient.disconnect();
-            }
-        }
+        toSink0(url, sql, sink, null, null, null, null, null);
     }
 
     private void reqToSink(
@@ -213,19 +184,20 @@ public class TestHttpClient implements QuietCloseable {
             }
         }
 
-        HttpClient.ResponseHeaders rsp = req.send();
-        rsp.await();
+        try (HttpClient.ResponseHeaders rsp = req.send()) {
+            rsp.await();
 
-        if (expectedStatus != null) {
-            TestUtils.assertEquals(expectedStatus, rsp.getStatusCode());
-        }
+            if (expectedStatus != null) {
+                TestUtils.assertEquals(expectedStatus, rsp.getStatusCode());
+            }
 
-        ChunkedResponse chunkedResponse = rsp.getChunkedResponse();
-        Chunk chunk;
+            ChunkedResponse chunkedResponse = rsp.getChunkedResponse();
+            Chunk chunk;
 
-        sink.clear();
-        while ((chunk = chunkedResponse.recv()) != null) {
-            Utf8s.utf8ToUtf16(chunk.lo(), chunk.hi(), sink);
+            sink.clear();
+            while ((chunk = chunkedResponse.recv()) != null) {
+                Utf8s.utf8ToUtf16(chunk.lo(), chunk.hi(), sink);
+            }
         }
     }
 

@@ -44,34 +44,36 @@ public class HttpClientMain {
             for (int i = 0; i < 1; i++) {
                 HttpClient.Request req = client.newRequest("localhost", 9000);
 
-                HttpClient.ResponseHeaders rsp = req
-                        .GET()
-                        .url("/exec")
-//                        .query("query", "cpu%20limit%20400000")
-                        .query("query", "cpu limit 2")
-//                        .query("query", "cpu")
-                        .header("Accept", "gzip, deflate, br")
-                        .header("SomethingElse", "vlad")
-                        .authBasic("vlad", "hello")
-                        .send();
+                try (
+                        HttpClient.ResponseHeaders rsp = req
+                                .GET()
+                                .url("/exec")
+                                //.query("query", "cpu%20limit%20400000")
+                                .query("query", "cpu limit 2")
+                                //.query("query", "cpu")
+                                .header("Accept", "gzip, deflate, br")
+                                .header("SomethingElse", "vlad")
+                                .authBasic("vlad", "hello")
+                                .send()
+                ) {
+                    rsp.await();
 
-                rsp.await();
+                    if (rsp.isChunked()) {
 
-                if (rsp.isChunked()) {
+                        jsonToTableSerializer.clear();
 
-                    jsonToTableSerializer.clear();
+                        ChunkedResponse chunkedRsp = rsp.getChunkedResponse();
+                        Chunk chunk;
 
-                    ChunkedResponse chunkedRsp = rsp.getChunkedResponse();
-                    Chunk chunk;
-
-                    long t = System.currentTimeMillis();
-                    int chunkCount = 0;
-                    while ((chunk = chunkedRsp.recv()) != null) {
-                        jsonToTableSerializer.parse(chunk.lo(), chunk.hi());
-                        chunkCount++;
+                        long t = System.currentTimeMillis();
+                        int chunkCount = 0;
+                        while ((chunk = chunkedRsp.recv()) != null) {
+                            jsonToTableSerializer.parse(chunk.lo(), chunk.hi());
+                            chunkCount++;
+                        }
+                        System.out.println(System.currentTimeMillis() - t);
+                        System.out.println("done: " + i + ", chunks: " + chunkCount);
                     }
-                    System.out.println(System.currentTimeMillis() - t);
-                    System.out.println("done: " + i + ", chunks: " + chunkCount);
                 }
             }
         }

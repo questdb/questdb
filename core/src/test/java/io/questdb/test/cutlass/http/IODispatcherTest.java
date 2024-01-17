@@ -142,7 +142,6 @@ public class IODispatcherTest extends AbstractTest {
     public void setUp() {
         super.setUp();
         SharedRandom.RANDOM.set(new Rnd());
-        testHttpClient.setKeepConnection(false);
     }
 
     @Override
@@ -930,15 +929,13 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
-    public void testHttpClientSupportsConnectionReuse() throws Exception {
+    public void testHttpClientSupportsReuse() throws Exception {
         getSimpleTester().run(engine -> {
-            testHttpClient.setKeepConnection(true);
             testHttpClient.assertGet(
                     "{\"query\":\"SELECT 'foo'\",\"columns\":[{\"name\":\"foo\",\"type\":\"STRING\"}],\"timestamp\":-1,\"dataset\":[[\"foo\"]],\"count\":1}",
                     "SELECT 'foo'"
             );
             // This time it's fine to disconnect after the request.
-            testHttpClient.setKeepConnection(false);
             testHttpClient.assertGet(
                     "{\"query\":\"SELECT 'bar'\",\"columns\":[{\"name\":\"bar\",\"type\":\"STRING\"}],\"timestamp\":-1,\"dataset\":[[\"bar\"]],\"count\":1}",
                     "SELECT 'bar'"
@@ -8435,7 +8432,8 @@ public class IODispatcherTest extends AbstractTest {
             commands = new ObjList(
                     select1,
                     select2,
-                    selectWithJoin);
+                    selectWithJoin
+            );
         }
 
 
