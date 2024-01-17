@@ -1043,7 +1043,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 simpleResponse().sendStatusWithCookie(rejectCode, rejectMessage, rejectCookieName, rejectCookieValue);
             }
             reset();
-            dispatcher.registerChannel(HttpConnectionContext.this, IOOperation.READ);
         }
     }
 }
