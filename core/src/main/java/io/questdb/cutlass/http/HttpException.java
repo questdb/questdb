@@ -26,7 +26,7 @@ package io.questdb.cutlass.http;
 
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.ThreadLocal;
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -78,7 +78,7 @@ public class HttpException extends RuntimeException implements Sinkable, Flyweig
     }
 
     @Override
-    public void toSink(@NotNull CharSinkBase<?> sink) {
+    public void toSink(@NotNull CharSink<?> sink) {
         sink.put(message);
     }
 }

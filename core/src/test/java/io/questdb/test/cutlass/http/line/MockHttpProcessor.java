@@ -58,7 +58,7 @@ final class MockHttpProcessor implements HttpRequestProcessor, HttpMultipartCont
             throw new AssertionError("No response configured for request: " + actualRequest);
         }
         if (response.responseContent != null) {
-            HttpChunkedResponseSocket chunkedResponseSocket = context.getChunkedResponseSocket();
+            HttpChunkedResponse chunkedResponseSocket = context.getChunkedResponse();
             chunkedResponseSocket.status(response.responseStatusCode, response.contentType);
             chunkedResponseSocket.sendHeader();
             chunkedResponseSocket.putAscii(response.responseContent);

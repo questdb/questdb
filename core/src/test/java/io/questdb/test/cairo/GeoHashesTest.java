@@ -27,7 +27,7 @@ package io.questdb.test.cairo;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.std.*;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.StringSink;
 import org.junit.Assert;
 import org.junit.Test;
@@ -701,6 +701,6 @@ public class GeoHashesTest {
 
     @FunctionalInterface
     private interface StringConverter {
-        void convert(long hash, int size, CharSink sink);
+        void convert(long hash, int size, Utf16Sink sink);
     }
 }

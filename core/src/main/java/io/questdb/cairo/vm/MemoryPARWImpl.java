@@ -49,7 +49,7 @@ public class MemoryPARWImpl implements MemoryARW {
     private final int maxPages;
     private final StraddlingPageLong256FromCharSequenceDecoder straddlingPageLong256Decoder = new StraddlingPageLong256FromCharSequenceDecoder();
     private final StringSink utf16Sink = new StringSink();
-    private final FlyweightDirectCharSink utf8FloatingSink = new FlyweightDirectCharSink();
+    private final FlyweightDirectUtf16Sink utf8FloatingSink = new FlyweightDirectUtf16Sink();
     protected int memoryTag;
     private long absolutePointer;
     private long appendPointer = -1;
@@ -230,7 +230,7 @@ public class MemoryPARWImpl implements MemoryARW {
         return getLong0(offset);
     }
 
-    public void getLong256(long offset, CharSinkBase<?> sink) {
+    public void getLong256(long offset, CharSink<?> sink) {
         final long a, b, c, d;
         if (roOffsetLo < offset && offset < roOffsetHi - Long256.BYTES) {
             a = Unsafe.getUnsafe().getLong(absolutePointer + offset);

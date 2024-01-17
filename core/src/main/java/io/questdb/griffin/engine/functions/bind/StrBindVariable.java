@@ -32,7 +32,7 @@ import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.StringSink;
 
 public class StrBindVariable extends StrFunction implements ScalarFunction, Mutable {
@@ -51,7 +51,7 @@ public class StrBindVariable extends StrFunction implements ScalarFunction, Muta
     }
 
     @Override
-    public void getStr(Record rec, CharSink sink) {
+    public void getStr(Record rec, Utf16Sink sink) {
         if (isNull) {
             sink.put((CharSequence) null);
         } else {

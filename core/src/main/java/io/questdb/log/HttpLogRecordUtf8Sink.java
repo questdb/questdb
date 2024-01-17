@@ -26,12 +26,11 @@ package io.questdb.log;
 
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Sinkable;
-import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
-public class HttpLogRecordSink extends LogRecordSink {
+public class HttpLogRecordUtf8Sink extends LogRecordUtf8Sink {
 
     public static final String CRLF = "\r\n";
     private static final String CL_MARKER = "#########"; // with 9 digits, max content length = 999999999 bytes (953MB)
@@ -42,11 +41,11 @@ public class HttpLogRecordSink extends LogRecordSink {
     private boolean hasContentLengthMarker;
     private long mark = MARK_NOT_SET;
 
-    public HttpLogRecordSink(LogAlertSocket alertSkt) {
+    public HttpLogRecordUtf8Sink(LogAlertSocket alertSkt) {
         this(alertSkt.getOutBufferPtr(), alertSkt.getOutBufferSize());
     }
 
-    public HttpLogRecordSink(long address, long addressSize) {
+    public HttpLogRecordUtf8Sink(long address, long addressSize) {
         super(address, addressSize);
         contentLengthEnd = _wptr;
         bodyStart = _wptr;
@@ -92,7 +91,7 @@ public class HttpLogRecordSink extends LogRecordSink {
         return mark;
     }
 
-    public HttpLogRecordSink put(LogRecordSink logRecord) {
+    public HttpLogRecordUtf8Sink put(LogRecordUtf8Sink logRecord) {
         final int len = logRecord.size();
         final long address = logRecord.ptr();
         for (long p = address, limit = address + len; p < limit; p++) {
@@ -125,37 +124,37 @@ public class HttpLogRecordSink extends LogRecordSink {
     }
 
     @Override
-    public HttpLogRecordSink put(@Nullable CharSequence cs) {
+    public HttpLogRecordUtf8Sink put(@Nullable CharSequence cs) {
         super.put(cs);
         return this;
     }
 
     @Override
-    public HttpLogRecordSink put(@NotNull CharSequence cs, int lo, int hi) {
+    public HttpLogRecordUtf8Sink put(@NotNull CharSequence cs, int lo, int hi) {
         super.put(cs, lo, hi);
         return this;
     }
 
     @Override
-    public HttpLogRecordSink put(@Nullable Sinkable sinkable) {
+    public HttpLogRecordUtf8Sink put(@Nullable Sinkable sinkable) {
         super.put(sinkable);
         return this;
     }
 
     @Override
-    public HttpLogRecordSink put(char c) {
+    public HttpLogRecordUtf8Sink put(char c) {
         super.put(c);
         return this;
     }
 
     @Override
-    public HttpLogRecordSink putAscii(@Nullable CharSequence cs) {
+    public HttpLogRecordUtf8Sink putAscii(@Nullable CharSequence cs) {
         super.putAscii(cs);
         return this;
     }
 
     @Override
-    public HttpLogRecordSink putAscii(char c) {
+    public HttpLogRecordUtf8Sink putAscii(char c) {
         super.putAscii(c);
         return this;
     }
@@ -168,7 +167,7 @@ public class HttpLogRecordSink extends LogRecordSink {
         hasContentLengthMarker = true;
     }
 
-    public HttpLogRecordSink putHeader(CharSequence localHostIp) {
+    public HttpLogRecordUtf8Sink putHeader(CharSequence localHostIp) {
         clear();
         putAscii("POST /api/v1/alerts HTTP/1.1").putAscii(CRLF)
                 .putAscii("Host: ").put(localHostIp).putAscii(CRLF)
@@ -181,18 +180,13 @@ public class HttpLogRecordSink extends LogRecordSink {
         return this;
     }
 
-    public HttpLogRecordSink rewindToMark() {
+    public HttpLogRecordUtf8Sink rewindToMark() {
         _wptr = mark == MARK_NOT_SET ? address : mark;
         return this;
     }
 
-    public HttpLogRecordSink setMark() {
+    public HttpLogRecordUtf8Sink setMark() {
         mark = _wptr;
         return this;
-    }
-
-    @Override
-    public @NotNull String toString() {
-        return Utf8s.stringFromUtf8Bytes(address, _wptr);
     }
 }

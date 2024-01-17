@@ -36,7 +36,7 @@ import io.questdb.griffin.engine.functions.*;
 import io.questdb.griffin.engine.functions.constants.Constants;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 
@@ -223,7 +223,7 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
 
         protected abstract long getValue(Record rec);
 
-        protected abstract void print(long value, CharSink sink);
+        protected abstract void print(long value, Utf16Sink sink);
     }
 
     private static class CastByteFunc extends GeoByteFunction implements UnaryFunction {
@@ -259,7 +259,7 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        protected void print(long value, CharSink sink) {
+        protected void print(long value, Utf16Sink sink) {
             GeoHashes.appendBinaryStringUnsafe(value, bits, sink);
         }
     }
@@ -276,7 +276,7 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        protected void print(long value, CharSink sink) {
+        protected void print(long value, Utf16Sink sink) {
             GeoHashes.appendCharsUnsafe(value, bits, sink);
         }
     }
@@ -314,7 +314,7 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        protected void print(long value, CharSink sink) {
+        protected void print(long value, Utf16Sink sink) {
             GeoHashes.appendBinaryStringUnsafe(value, bits, sink);
         }
     }
@@ -331,7 +331,7 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        protected void print(long value, CharSink sink) {
+        protected void print(long value, Utf16Sink sink) {
             GeoHashes.appendCharsUnsafe(value, bits, sink);
         }
     }
@@ -369,7 +369,7 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        protected void print(long value, CharSink sink) {
+        protected void print(long value, Utf16Sink sink) {
             GeoHashes.appendBinaryStringUnsafe(value, bits, sink);
         }
     }
@@ -386,7 +386,7 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        protected void print(long value, CharSink sink) {
+        protected void print(long value, Utf16Sink sink) {
             GeoHashes.appendCharsUnsafe(value, bits, sink);
         }
     }
@@ -424,7 +424,7 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        protected void print(long value, CharSink sink) {
+        protected void print(long value, Utf16Sink sink) {
             GeoHashes.appendBinaryStringUnsafe(value, bits, sink);
         }
     }
@@ -441,7 +441,7 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        protected void print(long value, CharSink sink) {
+        protected void print(long value, Utf16Sink sink) {
             GeoHashes.appendCharsUnsafe(value, bits, sink);
         }
     }

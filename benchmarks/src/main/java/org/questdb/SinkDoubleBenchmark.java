@@ -28,7 +28,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.FlyweightDirectCharSink;
+import io.questdb.std.str.FlyweightDirectUtf16Sink;
 import io.questdb.std.str.Utf8s;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
@@ -43,7 +43,7 @@ import java.util.concurrent.TimeUnit;
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class SinkDoubleBenchmark {
     private final static double d = 78899.9;
-    private final static FlyweightDirectCharSink directSink = new FlyweightDirectCharSink();
+    private final static FlyweightDirectUtf16Sink directSink = new FlyweightDirectUtf16Sink();
     private final static long l = 2298989898L;
     private final static long memSize = 1024 * 16;
     private long mem;

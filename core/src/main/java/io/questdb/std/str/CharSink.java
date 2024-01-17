@@ -24,42 +24,151 @@
 
 package io.questdb.std.str;
 
-import io.questdb.std.Unsafe;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public interface CharSink extends CharSinkBase<CharSink> {
+/**
+ * Sink interface that does not expose storage format. Users of this interface must not make any assumptions about
+ * storage format.
+ *
+ * @param <T>
+ */
+@SuppressWarnings("unchecked")
+public interface CharSink<T extends CharSink<?>> {
 
-    default CharSink put(@Nullable Utf8Sequence us) {
-        if (us != null) {
-            Utf8s.utf8ToUtf16(us, this);
+    /**
+     * Treats the input char as an ASCII one and writes it into the sink n times.
+     * If a UTF-8 char is provided instead, a corrupted char may be written into
+     * the sink depending on the implementation.
+     */
+    default void fillAscii(char c, int n) {
+        for (int i = 0; i < n; i++) {
+            putAscii(c);
         }
-        return this;
     }
 
-    default CharSink put(@Nullable Utf8Sequence us, int lo, int hi) {
-        if (us != null) {
-            Utf8s.utf8ToUtf16(us, lo, hi, this);
+    default T put(@NotNull CharSequence cs, int lo, int hi) {
+        for (int i = lo; i < hi; i++) {
+            put(cs.charAt(i));
         }
-        return this;
+        return (T) this;
     }
 
-    default CharSink put(long lo, long hi) {
-        for (long addr = lo; addr < hi; addr += Character.BYTES) {
-            put(Unsafe.getUnsafe().getChar(addr));
+    default T put(@Nullable Sinkable sinkable) {
+        if (sinkable != null) {
+            sinkable.toSink(this);
         }
-        return this;
+        return (T) this;
     }
 
-    default CharSink put(char @NotNull [] chars, int start, int len) {
+    T put(char c);
+
+    default T put(@Nullable CharSequence cs) {
+        if (cs != null) {
+            for (int i = 0, n = cs.length(); i < n; i++) {
+                put(cs.charAt(i));
+            }
+        }
+        return (T) this;
+    }
+
+    T put(@Nullable Utf8Sequence us);
+
+    default T put(int value) {
+        Numbers.append(this, value);
+        return (T) this;
+    }
+
+    default T put(long value) {
+        Numbers.append(this, value);
+        return (T) this;
+    }
+
+    default T put(float value, int scale) {
+        Numbers.append(this, value, scale);
+        return (T) this;
+    }
+
+    default T put(double value) {
+        Numbers.append(this, value);
+        return (T) this;
+    }
+
+    default T put(double value, int scale) {
+        Numbers.append(this, value, scale);
+        return (T) this;
+    }
+
+    default T put(boolean value) {
+        return putAscii(value ? "true" : "false");
+    }
+
+    /**
+     * Treats the input char as an ASCII one. If a UTF-8 char is provided instead,
+     * a corrupted char may be written into the sink depending on the implementation.
+     */
+    T putAscii(char c);
+
+    /**
+     * Treats the input char sequence as an ASCII-only one. If a sequence with UTF-8 chars
+     * is provided instead, corrupted chars may be written into the sink depending on
+     * the implementation.
+     */
+    T putAscii(@Nullable CharSequence cs);
+
+    /**
+     * Treats the input char array segment as an ASCII-only one. If an array with UTF-8 chars
+     * is provided instead, corrupted chars may be written into the sink depending on
+     * the implementation.
+     */
+    default T putAscii(char @NotNull [] chars, int start, int len) {
         for (int i = 0; i < len; i++) {
-            put(chars[i + start]);
+            putAscii(chars[i + start]);
         }
-        return this;
+        return (T) this;
     }
 
-    default CharSink putUtf8(long lo, long hi) {
-        Utf8s.utf8ToUtf16(lo, hi, this);
-        return this;
+    /**
+     * Treats the input char sequence segment as an ASCII-only one. If a sequence
+     * with UTF-8 chars is provided instead, corrupted chars may be written into
+     * the sink depending on the implementation.
+     */
+    default T putAscii(@NotNull CharSequence cs, int start, int len) {
+        for (int i = start; i < len; i++) {
+            putAscii(cs.charAt(i));
+        }
+        return (T) this;
     }
+
+    default T putAsciiQuoted(@NotNull CharSequence cs) {
+        putAscii('\"').putAscii(cs).putAscii('\"');
+        return (T) this;
+    }
+
+    default T putEOL() {
+        return putAscii(Misc.EOL);
+    }
+
+    default T putISODate(long value) {
+        TimestampFormatUtils.appendDateTimeUSec(this, value);
+        return (T) this;
+    }
+
+    default T putISODateMillis(long value) {
+        DateFormatUtils.appendDateTime(this, value);
+        return (T) this;
+    }
+
+    default T putQuoted(@NotNull CharSequence cs) {
+        putAscii('\"').put(cs).putAscii('\"');
+        return (T) this;
+    }
+
+    T putUtf8(long lo, long hi);
+
+    int getEncoding();
 }

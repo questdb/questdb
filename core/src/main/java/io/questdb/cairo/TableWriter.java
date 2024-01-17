@@ -5996,7 +5996,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                     o3PartitionUpdRemaining.incrementAndGet();
                     final O3Basket o3Basket = o3BasketPool.next();
-                    o3Basket.ensureCapacity(configuration, columnCount, indexCount);
+                    o3Basket.checkCapacity(configuration, columnCount, indexCount);
 
                     AtomicInteger columnCounter = o3ColumnCounters.next();
 

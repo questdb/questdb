@@ -223,7 +223,7 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
     }
 
     @Override
-    public AbstractLineSender put(long lo, long hi) {
+    public AbstractLineSender putUtf8(long lo, long hi) {
         throw new UnsupportedOperationException();
     }
 

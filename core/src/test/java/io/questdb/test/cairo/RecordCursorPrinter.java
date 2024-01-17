@@ -29,7 +29,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.log.Log;
 import io.questdb.log.LogRecord;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 import io.questdb.test.tools.TestUtils;
 
 public class RecordCursorPrinter {
@@ -40,7 +40,7 @@ public class RecordCursorPrinter {
         this.delimiter = '\t';
     }
 
-    public void print(RecordCursor cursor, RecordMetadata metadata, boolean header, CharSink sink) {
+    public void print(RecordCursor cursor, RecordMetadata metadata, boolean header, Utf16Sink sink) {
         if (header) {
             printHeader(metadata, sink);
         }
@@ -67,29 +67,17 @@ public class RecordCursorPrinter {
         }
     }
 
-    public void print(Record r, RecordMetadata m, CharSink sink) {
+    public void print(Record r, RecordMetadata m, Utf16Sink sink) {
         printRecordNoNl(r, m, sink);
         sink.putAscii("\n");
     }
 
-    public void printFullColumn(RecordCursor cursor, RecordMetadata metadata, int i, boolean header, CharSink sink) {
-        if (header) {
-            printHeader(metadata, sink);
-        }
-
-        final Record record = cursor.getRecord();
-        while (cursor.hasNext()) {
-            TestUtils.printColumn(record, metadata, i, sink, printTypes);
-            sink.putAscii('\n');
-        }
-    }
-
-    public void printHeader(RecordMetadata metadata, CharSink sink) {
+    public void printHeader(RecordMetadata metadata, Utf16Sink sink) {
         printHeaderNoNl(metadata, sink);
         sink.putAscii('\n');
     }
 
-    public void printHeaderNoNl(RecordMetadata metadata, CharSink sink) {
+    public void printHeaderNoNl(RecordMetadata metadata, Utf16Sink sink) {
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             if (i > 0) {
                 sink.put(delimiter);
@@ -98,7 +86,7 @@ public class RecordCursorPrinter {
         }
     }
 
-    public void printRecordNoNl(Record r, RecordMetadata m, CharSink sink) {
+    public void printRecordNoNl(Record r, RecordMetadata m, Utf16Sink sink) {
         for (int i = 0, sz = m.getColumnCount(); i < sz; i++) {
             if (i > 0) {
                 sink.put(delimiter);
