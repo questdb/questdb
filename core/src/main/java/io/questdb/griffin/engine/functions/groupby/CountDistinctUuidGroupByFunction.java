@@ -65,8 +65,11 @@ public final class CountDistinctUuidGroupByFunction extends LongFunction impleme
         long hi = arg.getLong128Hi(record);
         if (!Uuid.isNull(lo, hi)) {
             mapValue.putLong(valueIndex, 1L);
-            lo = (lo == 0) ? Numbers.LONG_NaN : lo;
-            hi = (hi == 0) ? Numbers.LONG_NaN : hi;
+            // Remap zero since it's used as the no entry key.
+            if (lo == 0 && hi == 0) {
+                lo = Numbers.LONG_NaN;
+                hi = Numbers.LONG_NaN;
+            }
             setA.of(0).add(lo, hi);
             mapValue.putLong(valueIndex + 1, setA.ptr());
         } else {
@@ -81,8 +84,11 @@ public final class CountDistinctUuidGroupByFunction extends LongFunction impleme
         long hi = arg.getLong128Hi(record);
         if (!Uuid.isNull(lo, hi)) {
             long ptr = mapValue.getLong(valueIndex + 1);
-            lo = (lo == 0) ? Numbers.LONG_NaN : lo;
-            hi = (hi == 0) ? Numbers.LONG_NaN : hi;
+            // Remap zero since it's used as the no entry key.
+            if (lo == 0 && hi == 0) {
+                lo = Numbers.LONG_NaN;
+                hi = Numbers.LONG_NaN;
+            }
             final int index = setA.of(ptr).keyIndex(lo, hi);
             if (index >= 0) {
                 setA.addAt(index, lo, hi);
@@ -119,7 +125,7 @@ public final class CountDistinctUuidGroupByFunction extends LongFunction impleme
 
     @Override
     public boolean isParallelismSupported() {
-        return true;
+        return UnaryFunction.super.isParallelismSupported();
     }
 
     @Override

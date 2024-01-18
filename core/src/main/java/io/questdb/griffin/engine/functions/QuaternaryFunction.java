@@ -34,77 +34,80 @@ public interface QuaternaryFunction extends Function {
 
     @Override
     default void close() {
-        getZero().close();
-        getOne().close();
-        getTwo().close();
-        getThree().close();
+        getFunc0().close();
+        getFunc1().close();
+        getFunc2().close();
+        getFunc3().close();
     }
 
-    Function getZero();
-    Function getOne();
-    Function getTwo();
-    Function getThree();
+    Function getFunc0();
+
+    Function getFunc1();
+
+    Function getFunc2();
+
+    Function getFunc3();
 
     @Override
     default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        getZero().init(symbolTableSource, executionContext);
-        getOne().init(symbolTableSource, executionContext);
-        getTwo().init(symbolTableSource, executionContext);
-        getThree().init(symbolTableSource, executionContext);
+        getFunc0().init(symbolTableSource, executionContext);
+        getFunc1().init(symbolTableSource, executionContext);
+        getFunc2().init(symbolTableSource, executionContext);
+        getFunc3().init(symbolTableSource, executionContext);
     }
 
     @Override
     default void initCursor() {
-        getZero().initCursor();
-        getOne().initCursor();
-        getTwo().initCursor();
-        getThree().initCursor();
+        getFunc0().initCursor();
+        getFunc1().initCursor();
+        getFunc2().initCursor();
+        getFunc3().initCursor();
     }
 
     @Override
     default boolean isConstant() {
         return
-            getZero().isConstant() &&
-            getOne().isConstant() &&
-            getTwo().isConstant() &&
-            getThree().isConstant();
+            getFunc0().isConstant() &&
+            getFunc1().isConstant() &&
+            getFunc2().isConstant() &&
+            getFunc3().isConstant();
     }
 
     @Override
     default boolean isParallelismSupported() {
-        return getZero().isParallelismSupported() && getOne().isParallelismSupported() && getTwo().isParallelismSupported() && getThree().isParallelismSupported();
+        return getFunc0().isParallelismSupported() && getFunc1().isParallelismSupported() && getFunc2().isParallelismSupported() && getFunc3().isParallelismSupported();
     }
 
     @Override
     default boolean isReadThreadSafe() {
-        return getZero().isReadThreadSafe() && getOne().isReadThreadSafe() && getTwo().isReadThreadSafe() && getThree().isReadThreadSafe();
+        return getFunc0().isReadThreadSafe() && getFunc1().isReadThreadSafe() && getFunc2().isReadThreadSafe() && getFunc3().isReadThreadSafe();
     }
 
     @Override
     default boolean isRuntimeConstant() {
-        boolean arc = getZero().isRuntimeConstant();
-        boolean brc = getOne().isRuntimeConstant();
-        boolean crc = getTwo().isRuntimeConstant();
-        boolean drc = getThree().isRuntimeConstant();
+        boolean arc = getFunc0().isRuntimeConstant();
+        boolean brc = getFunc1().isRuntimeConstant();
+        boolean crc = getFunc2().isRuntimeConstant();
+        boolean drc = getFunc3().isRuntimeConstant();
 
-        boolean ac = getZero().isConstant();
-        boolean bc = getOne().isConstant();
-        boolean cc = getTwo().isConstant();
-        boolean dc = getThree().isConstant();
+        boolean ac = getFunc0().isConstant();
+        boolean bc = getFunc1().isConstant();
+        boolean cc = getFunc2().isConstant();
+        boolean dc = getFunc3().isConstant();
 
         return (ac || arc) && (bc || brc) && (cc || crc) && (dc || drc) &&  (arc || brc || crc || drc);
     }
 
     @Override
     default void toPlan(PlanSink sink) {
-        sink.val(getName()).val('(').val(getZero()).val(',').val(getOne()).val(',').val(getTwo()).val(',').val(getThree()).val(')');
+        sink.val(getName()).val('(').val(getFunc0()).val(',').val(getFunc1()).val(',').val(getFunc2()).val(',').val(getFunc3()).val(')');
     }
 
     @Override
     default void toTop() {
-        getZero().toTop();
-        getOne().toTop();
-        getTwo().toTop();
-        getThree().toTop();
+        getFunc0().toTop();
+        getFunc1().toTop();
+        getFunc2().toTop();
+        getFunc3().toTop();
     }
 }

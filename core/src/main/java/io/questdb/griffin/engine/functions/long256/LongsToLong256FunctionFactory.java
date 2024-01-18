@@ -80,28 +80,28 @@ public final class LongsToLong256FunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Function getZero() {
+        public Function getFunc0() {
             return l0;
         }
 
         @Override
-        public Function getOne() {
+        public Function getFunc1() {
             return l1;
         }
 
         @Override
-        public Function getTwo() {
+        public Function getFunc2() {
             return l2;
         }
 
         @Override
-        public Function getThree() {
+        public Function getFunc3() {
             return l3;
         }
 
         @Override
         public void getLong256(Record rec, CharSinkBase<?> sink) {
-            Numbers.appendLong256(this.l0.getLong(rec), this.l1.getLong(rec), this.l2.getLong(rec), this.l3.getLong(rec), sink);
+            Numbers.appendLong256(l0.getLong(rec), l1.getLong(rec), l2.getLong(rec), l3.getLong(rec), sink);
         }
 
         @Override
@@ -110,7 +110,7 @@ public final class LongsToLong256FunctionFactory implements FunctionFactory {
             long l1 = this.l1.getLong(rec);
             long l2 = this.l2.getLong(rec);
             long l3 = this.l3.getLong(rec);
-            if (l0 == Numbers.LONG_NaN && l1 == Numbers.LONG_NaN && l2 == Numbers.LONG_NaN && l3 == Numbers.LONG_NaN) {
+            if (Long256Impl.isNull(l0, l1, l2, l3)) {
                 return Long256Impl.NULL_LONG256;
             }
             long256a.setAll(l0, l1, l2, l3);
@@ -123,7 +123,7 @@ public final class LongsToLong256FunctionFactory implements FunctionFactory {
             long l1 = this.l1.getLong(rec);
             long l2 = this.l2.getLong(rec);
             long l3 = this.l3.getLong(rec);
-            if (l0 == Numbers.LONG_NaN && l1 == Numbers.LONG_NaN && l2 == Numbers.LONG_NaN && l3 == Numbers.LONG_NaN) {
+            if (Long256Impl.isNull(l0, l1, l2, l3)) {
                 return Long256Impl.NULL_LONG256;
             }
             long256b.setAll(l0, l1, l2, l3);

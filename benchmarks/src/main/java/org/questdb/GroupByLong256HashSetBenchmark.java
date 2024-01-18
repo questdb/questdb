@@ -52,7 +52,7 @@ public class GroupByLong256HashSetBenchmark {
 
     private static final Rnd rnd = new Rnd();
 
-    @Param({"5000", "50000", "500000", "5000000"})
+    @Param({"1250", "12500", "125000", "1250000"})
     public int size;
 
     private static final GroupByAllocator allocator = new GroupByAllocator(new DefaultCairoConfiguration(null) {

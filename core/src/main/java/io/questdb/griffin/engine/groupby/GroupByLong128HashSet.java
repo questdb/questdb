@@ -38,9 +38,9 @@ import io.questdb.std.Vect;
  * Buffer layout is the following:
  * <pre>
  * | capacity (in long128s) | size (in long128s) | size limit (in long128s) | padding | long128 array |
- * +---------------------+-----------------+-----------------------+---------+------------+
- * |       4 bytes       |     4 bytes     |       4 bytes         | 4 bytes |     -      |
- * +---------------------+-----------------+-----------------------+---------+------------+
+ * +------------------------+--------------------+--------------------------+---------+---------------+
+ * |        4 bytes         |       4 bytes      |         4 bytes          | 4 bytes |       -       |
+ * +------------------------+--------------------+--------------------------+---------+---------------+
  * </pre>
  */
 public class GroupByLong128HashSet {
@@ -93,18 +93,17 @@ public class GroupByLong128HashSet {
     public int capacity() {
         return ptr != 0 ? Unsafe.getUnsafe().getInt(ptr) : 0;
     }
-    public long loKeyAt(int index) {
-        return Unsafe.getUnsafe().getLong(ptr + HEADER_SIZE + 16L * index);
-    }
-    public long hiKeyAt(int index) {
-        return Unsafe.getUnsafe().getLong(ptr + HEADER_SIZE + (16L * index) + 8L);
+
+    public long keyAddrAt(int index) {
+            return ptr + HEADER_SIZE + 16L * index;
     }
 
     public int keyIndex(long lo, long hi) {
         int hashCode = Hash.hashLong128(lo, hi);
         int index = hashCode & mask;
-        long loKey = loKeyAt(index);
-        long hiKey = hiKeyAt(index);
+        long keyAddr = keyAddrAt(index);
+        long loKey = Unsafe.getUnsafe().getLong(keyAddr);
+        long hiKey = Unsafe.getUnsafe().getLong(keyAddr + 8L);
         if (loKey == noKeyValue && hiKey == noKeyValue) {
             return index;
         }
@@ -140,6 +139,7 @@ public class GroupByLong128HashSet {
             }
         }
     }
+
     public GroupByLong128HashSet of(long ptr) {
         if (ptr == 0) {
             this.ptr = allocator.malloc(HEADER_SIZE + 16L * initialCapacity);
@@ -158,6 +158,7 @@ public class GroupByLong128HashSet {
     public long ptr() {
         return ptr;
     }
+
     public void resetPtr() {
         ptr = 0;
     }
@@ -177,8 +178,9 @@ public class GroupByLong128HashSet {
     private int probe(long lo, long hi, int index) {
         do {
             index = (index + 1) & mask;
-            long loKey = loKeyAt(index);
-            long hiKey = hiKeyAt(index);
+            long p = keyAddrAt(index);
+            long loKey = Unsafe.getUnsafe().getLong(p);
+            long hiKey = Unsafe.getUnsafe().getLong(p + 8L);
             if (loKey == noKeyValue && hiKey == noKeyValue) {
                 return index;
             }
@@ -217,8 +219,9 @@ public class GroupByLong128HashSet {
     }
 
     private void setKeyAt(int index, long lo, long hi) {
-        Unsafe.getUnsafe().putLong(ptr + HEADER_SIZE + 16L * index, lo);
-        Unsafe.getUnsafe().putLong(ptr + HEADER_SIZE + (16L * index) + 8L, hi);
+        long p = keyAddrAt(index);
+        Unsafe.getUnsafe().putLong(p, lo);
+        Unsafe.getUnsafe().putLong(p + 8L, hi);
     }
 
     private void zero(long ptr, int cap) {

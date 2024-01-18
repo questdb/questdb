@@ -58,7 +58,9 @@ public final class Hash {
     }
 
     public static int hashLong256(long key1, long key2, long key3, long key4) {
-        long h = key1 * M2 + key2 + key3 + key4;
+        long h = key1 * M2 + key2;
+        h = (h * M2) + key3;
+        h = (h * M2) + key4;
         h *= M2;
         return (int) (h ^ h >>> 32);
     }
