@@ -599,7 +599,11 @@ public class TextLoader implements Closeable, Mutable {
                         // We will determine column type on the server even though we're not importing this file.
                         // We are helping user to map the column.
                         // If user specified the type we try to validate it against the data.
-                        unmappedCsvColumnIndexes.add(i);
+                        if (column != null) {
+                            wrongTargetSchemaColumnIndexes.add(schemaColumnList.indexOf(column));
+                        } else {
+                            unmappedCsvColumnIndexes.add(i);
+                        }
                         requiredColumnTypes.add(mappingColumnType > -1 ? mappingColumnType : ColumnType.TYPES_SIZE);
                         remapIndex.add(-1);
                     }
@@ -1232,7 +1236,6 @@ public class TextLoader implements Closeable, Mutable {
         final ObjList<CharSequence> csvHeaderNames = textStructureAnalyser.getColumnNames();
         ObjList<TypeAdapter> csvColumnTypes = textStructureAnalyser.getColumnTypes();
 
-        // TODO: update schema instead of creating new columns to show: csv columns and unmapped schema and table columns
         // prepare column mapping primarily based on csv file content
         mappingColumns.clear();
         for (int i = 0, n = csvHeaderNames.size(); i < n; i++) {
@@ -1262,10 +1265,11 @@ public class TextLoader implements Closeable, Mutable {
 
             column.errors |= typeMismatchCsvColumnIndexes.contains(i) ? CsvColumnMapping.STATUS_MISTYPED : 0;
 
-            Column schemaColumn;
+            Column schemaColumn = null;
             if (csvHeaderPresent && column.csvColumnName != null) {
                 schemaColumn = schema.getFileColumnNameToColumnMap().get(column.csvColumnName);
-            } else {
+            }
+            if (schemaColumn == null && column.csvColumnIndex > -1) {
                 schemaColumn = schema.getFileColumnIndexToColumnMap().get(column.csvColumnIndex);
             }
 

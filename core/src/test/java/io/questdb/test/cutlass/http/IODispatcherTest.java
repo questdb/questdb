@@ -2803,6 +2803,54 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testImportWithMappingPointingToDeletedColumnFails() throws Exception {
+        testImport(
+                engine -> {
+                    try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                        engine.ddl("create table test (col_a int, col_b long)", executionContext);
+                        engine.ddl("alter table test drop column col_a", executionContext);
+
+                        testHttpClient.assertSendMultipart(
+                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                        "|      Location:  |                                              test  |        Pattern  | Locale  |      Errors  |\r\n" +
+                                        "|   Partition by  |                                              NONE  |                 |         |              |\r\n" +
+                                        "|      Timestamp  |                                              NONE  |                 |         |              |\r\n" +
+                                        "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                        "|   Rows handled  |                                                 0  |                 |         |              |\r\n" +
+                                        "|  Rows imported  |                                                 0  |                 |         |              |\r\n" +
+                                        "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                        "|  Idx  |            Csv name  |     Csv type  |        Table column  |   Table type  |                   Status  |\r\n" +
+                                        "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                        "|    0  |               col_a  |         LONG  |               col_a  |      UNKNOWN  |            BAD TABLE REF  |\r\n" +
+                                        "|    1  |               col_b  |         LONG  |               col_b  |         LONG  |                       OK  |\r\n" +
+                                        "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                        "|  Errors                                                                                                         |\r\n" +
+                                        "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                        "|  column mapping is invalid [unmapped_schema_column_indexes=[0,0]]                                               |\r\n" +
+                                        "+-----------------------------------------------------------------------------------------------------------------+\r\n",
+                                "{  \"columns\": [ " +
+                                        "{  \"file_column_index\": 0,  \"column_type\": \"LONG\",  \"table_column_name\": \"col_a\" }," +
+                                        "    { \"file_column_index\": 1, \"column_type\": \"LONG\",  \"table_column_name\": \"col_b\" }\r\n" +
+                                        "  ] }",
+                                TextImportProcessor.SCHEMA_V2,
+                                "col_a,col_b\r\n" +
+                                        "1000,1000\r\n" +
+                                        "2000,2000\r\n" +
+                                        "3000,3000\r\n",
+                                null,
+                                "test",
+                                null,
+                                null,
+                                null,
+                                null,
+                                null
+                        );
+                    }
+                }
+        );
+    }
+
+    @Test
     public void testImportWithSingleCharacterColumnName() throws Exception {
         testImport(
                 engine -> testHttpClient.assertSendMultipart(
@@ -2824,6 +2872,85 @@ public class IODispatcherTest extends AbstractTest {
                         null
                 )
         );
+    }
+
+    @Test
+    public void testImportWithTruncateOptionRemovesPriorData() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(2)
+                .withHttpServerConfigBuilder(
+                        new HttpServerConfigurationBuilder()
+                                .withNetwork(NetworkFacadeImpl.INSTANCE)
+                                .withDumpingTraffic(false)
+                                .withAllowDeflateBeforeSend(false)
+                                .withHttpProtocolVersion("HTTP/1.1 ")
+                                .withServerKeepAlive(true)
+                )
+                .run(
+                        null,
+                        engine -> {
+                            try (SqlExecutionContext context = TestUtils.createSqlExecutionCtx(engine)) {
+                                engine.ddl("create table truncate_test (ts timestamp, value double) timestamp(ts)", context);
+                                engine.insert("insert into truncate_test " +
+                                        "select x::timestamp as ts, rnd_double() value from long_sequence(10)), timestamp(ts)", context);
+                            }
+
+                            sendAndReceive(
+                                    NetworkFacadeImpl.INSTANCE,
+                                    "POST /upload?fmt=json&overwrite=false&truncate=true&forceHeader=true&name=truncate_test HTTP/1.1\r\n" +
+                                            "Host: localhost:9001\r\n" +
+                                            "Connection: keep-alive\r\n" +
+                                            "Content-Length: 832\r\n" +
+                                            "Accept: */*\r\n" +
+                                            "Origin: http://localhost:9000\r\n" +
+                                            "X-Requested-With: XMLHttpRequest\r\n" +
+                                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/77.0.3865.120 Safari/537.36\r\n" +
+                                            "Sec-Fetch-Mode: cors\r\n" +
+                                            "Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                                            "Sec-Fetch-Site: same-origin\r\n" +
+                                            "Referer: http://localhost:9000/index.html\r\n" +
+                                            "Accept-Encoding: gzip, deflate, br\r\n" +
+                                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                                            "\r\n" +
+                                            "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                                            "Content-Disposition: form-data; name=\"data\"\r\n" +
+                                            "\r\n" +
+                                            "ts,value\r\n" +
+                                            "\r\n" +
+                                            "\r\n" +
+                                            "2014-03-01 00:00:00,12.345\r\n" +
+                                            "2015-03-01 00:00:00,0.123\r\n" +
+                                            "2016-03-01 00:00:00,129.78\r\n" +
+                                            "\r\n" +
+                                            "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--",
+                                    "HTTP/1.1 200 OK\r\n" +
+                                            "Server: questDB/1.0\r\n" +
+                                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                            "Transfer-Encoding: chunked\r\n" +
+                                            "Content-Type: application/json; charset=utf-8\r\n" +
+                                            "\r\n" +
+                                            "0259\r\n" +
+                                            "{\"status\":\"OK\",\"location\":\"truncate_test\",\"rowsRejected\":0,\"rowsImported\":3,\"header\":true,\"partitionBy\":\"NONE\",\"timestamp\":\"ts\",\"columns\":[{\"name\":\"ts\",\"type\":\"TIMESTAMP\",\"size\":8,\"errors\":0},{\"name\":\"value\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0}],\"mapping\":[{\"file_column_name\":\"ts\",\"file_column_index\":0,\"file_column_ignore\":false,\"column_type\":\"TIMESTAMP\",\"table_column_name\":\"ts\",\"formats\":[{\"pattern\":\"yyyy-MM-dd HH:mm:ss\",\"locale\":\"en\",\"utf8\":false}]},{\"file_column_name\":\"value\",\"file_column_index\":1,\"file_column_ignore\":false,\"column_type\":\"DOUBLE\",\"table_column_name\":\"value\",\"formats\":[{}]}]}\r\n" +
+                                            "00\r\n" +
+                                            "\r\n",
+                                    1,
+                                    0,
+                                    false,
+                                    false,
+                                    false
+                            );
+
+                            testHttpClient.assertGet(
+                                    "/query",
+                                    "{\"query\":\"select * from truncate_test\",\"columns\":[{\"name\":\"ts\",\"type\":\"TIMESTAMP\"},{\"name\":\"value\",\"type\":\"DOUBLE\"}],\"timestamp\":0," +
+                                            "\"dataset\":[" +
+                                            "[\"2014-03-01T00:00:00.000000Z\",12.345]," +
+                                            "[\"2015-03-01T00:00:00.000000Z\",0.123]," +
+                                            "[\"2016-03-01T00:00:00.000000Z\",129.78]],\"count\":3}",
+                                    "select * from truncate_test");
+                        }
+                );
     }
 
     @Test
