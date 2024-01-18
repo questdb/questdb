@@ -137,14 +137,14 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testBadUrl() throws Exception {
-        assertConstructionFails("tcp://:9000", "host cannot be empty");
-        assertConstructionFails("tcp://", "host cannot be empty");
-        assertConstructionFails("badbadschema://", "invalid url protocol [url=badbadschema://]");
-        assertConstructionFails("whatisthis", "invalid url protocol");
-        assertConstructionFails("tcp://localhost:notprot", "invalid port in url [url=tcp://localhost:notprot]");
-        assertConstructionFails("tcp://127.0.0.1:-123", "invalid port in url [url=tcp://127.0.0.1:-123]");
-        assertConstructionFails("tcp://white space:9000", "host cannot contain a whitespace [url=tcp://white space:9000]");
-        assertConstructionFails("tcp://with/slash:9000", "host cannot contain a slash [url=tcp://with/slash:9000]");
+        assertUrlFails("tcp://:9000", "host cannot be empty");
+        assertUrlFails("tcp://", "host cannot be empty");
+        assertUrlFails("badbadschema://", "invalid url protocol [url=badbadschema://]");
+        assertUrlFails("whatisthis", "invalid url protocol");
+        assertUrlFails("tcp://localhost:notprot", "invalid port in url [url=tcp://localhost:notprot]");
+        assertUrlFails("tcp://127.0.0.1:-123", "invalid port in url [url=tcp://127.0.0.1:-123]");
+        assertUrlFails("tcp://white space:9000", "host cannot contain a whitespace [url=tcp://white space:9000]");
+        assertUrlFails("tcp://with/slash:9000", "host cannot contain a slash [url=tcp://with/slash:9000]");
     }
 
     @Test
@@ -648,10 +648,10 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
         });
     }
 
-    private static void assertConstructionFails(String url, String expectedError) throws Exception {
+    private static void assertUrlFails(String url, String expectedError) throws Exception {
         assertMemoryLeak(() -> {
             try {
-                Sender.withDefaultsFromUrl(url);
+                Sender.builder().url(url);
                 fail("should fail with blank host");
             } catch (LineSenderException e) {
                 TestUtils.assertContains(e.getMessage(), expectedError);
