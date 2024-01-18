@@ -31,7 +31,7 @@ import io.questdb.std.datetime.AbstractDateFormat;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
 public class DateFormatCompiler {
@@ -1291,15 +1291,15 @@ public class DateFormatCompiler {
         int adjustYearIndex = asm.poolMethod(DateFormatUtils.class, "adjustYear", "(I)I");
         int adjustYearMillenniumIndex = asm.poolMethod(DateFormatUtils.class, "adjustYearMillennium", "(I)I");
         int parseYearGreedyIndex = asm.poolMethod(DateFormatUtils.class, "parseYearGreedy", "(Ljava/lang/CharSequence;II)J");
-        int appendEraIndex = asm.poolMethod(DateFormatUtils.class, "appendEra", "(Lio/questdb/std/str/CharSinkBase;ILio/questdb/std/datetime/DateLocale;)V");
-        int appendAmPmIndex = asm.poolMethod(DateFormatUtils.class, "appendAmPm", "(Lio/questdb/std/str/CharSinkBase;ILio/questdb/std/datetime/DateLocale;)V");
-        int appendHour12Index = asm.poolMethod(DateFormatUtils.class, "appendHour12", "(Lio/questdb/std/str/CharSinkBase;I)V");
-        int appendHour12PaddedIndex = asm.poolMethod(DateFormatUtils.class, "appendHour12Padded", "(Lio/questdb/std/str/CharSinkBase;I)V");
-        int appendHour121Index = asm.poolMethod(DateFormatUtils.class, "appendHour121", "(Lio/questdb/std/str/CharSinkBase;I)V");
-        int appendHour121PaddedIndex = asm.poolMethod(DateFormatUtils.class, "appendHour121Padded", "(Lio/questdb/std/str/CharSinkBase;I)V");
-        int appendYear000Index = asm.poolMethod(TimestampFormatUtils.class, "appendYear000", "(Lio/questdb/std/str/CharSinkBase;I)V");
-        int append00Index = asm.poolMethod(DateFormatUtils.class, "append00", "(Lio/questdb/std/str/CharSinkBase;I)V");
-        int append0Index = asm.poolMethod(DateFormatUtils.class, "append0", "(Lio/questdb/std/str/CharSinkBase;I)V");
+        int appendEraIndex = asm.poolMethod(DateFormatUtils.class, "appendEra", "(Lio/questdb/std/str/CharSink;ILio/questdb/std/datetime/DateLocale;)V");
+        int appendAmPmIndex = asm.poolMethod(DateFormatUtils.class, "appendAmPm", "(Lio/questdb/std/str/CharSink;ILio/questdb/std/datetime/DateLocale;)V");
+        int appendHour12Index = asm.poolMethod(DateFormatUtils.class, "appendHour12", "(Lio/questdb/std/str/CharSink;I)V");
+        int appendHour12PaddedIndex = asm.poolMethod(DateFormatUtils.class, "appendHour12Padded", "(Lio/questdb/std/str/CharSink;I)V");
+        int appendHour121Index = asm.poolMethod(DateFormatUtils.class, "appendHour121", "(Lio/questdb/std/str/CharSink;I)V");
+        int appendHour121PaddedIndex = asm.poolMethod(DateFormatUtils.class, "appendHour121Padded", "(Lio/questdb/std/str/CharSink;I)V");
+        int appendYear000Index = asm.poolMethod(TimestampFormatUtils.class, "appendYear000", "(Lio/questdb/std/str/CharSink;I)V");
+        int append00Index = asm.poolMethod(DateFormatUtils.class, "append00", "(Lio/questdb/std/str/CharSink;I)V");
+        int append0Index = asm.poolMethod(DateFormatUtils.class, "append0", "(Lio/questdb/std/str/CharSink;I)V");
 
         int parseOffsetIndex = asm.poolMethod(Dates.class, "parseOffset", "(Ljava/lang/CharSequence;II)J");
         int getYearIndex = asm.poolMethod(Dates.class, "getYear", "(J)I");
@@ -1315,16 +1315,16 @@ public class DateFormatCompiler {
         int getWeekOfMonthIndex = asm.poolMethod(Dates.class, "getWeekOfMonth", "(J)I");
         int getWeekOfYearIndex = asm.poolMethod(Dates.class, "getWeekOfYear", "(J)I");
 
-        int sinkPutIntIndex = asm.poolInterfaceMethod(CharSinkBase.class, "put", "(I)Lio/questdb/std/str/CharSinkBase;");
-        int sinkPutStrIndex = asm.poolInterfaceMethod(CharSinkBase.class, "put", "(Ljava/lang/CharSequence;)Lio/questdb/std/str/CharSinkBase;");
-        int sinkPutChrIndex = asm.poolInterfaceMethod(CharSinkBase.class, "put", "(C)Lio/questdb/std/str/CharSinkBase;");
+        int sinkPutIntIndex = asm.poolInterfaceMethod(CharSink.class, "put", "(I)Lio/questdb/std/str/CharSink;");
+        int sinkPutStrIndex = asm.poolInterfaceMethod(CharSink.class, "put", "(Ljava/lang/CharSequence;)Lio/questdb/std/str/CharSink;");
+        int sinkPutChrIndex = asm.poolInterfaceMethod(CharSink.class, "put", "(C)Lio/questdb/std/str/CharSink;");
 
         int charAtIndex = asm.poolInterfaceMethod(charSequenceClassIndex, "charAt", "(I)C");
 
         int parseNameIndex = asm.poolUtf8("parse");
         int parseSigIndex = asm.poolUtf8("(Ljava/lang/CharSequence;IILio/questdb/std/datetime/DateLocale;)J");
         int formatNameIndex = asm.poolUtf8("format");
-        int formatSigIndex = asm.poolUtf8("(JLio/questdb/std/datetime/DateLocale;Ljava/lang/CharSequence;Lio/questdb/std/str/CharSinkBase;)V");
+        int formatSigIndex = asm.poolUtf8("(JLio/questdb/std/datetime/DateLocale;Ljava/lang/CharSequence;Lio/questdb/std/str/CharSink;)V");
 
         // pool only delimiters over 1 char in length
         // when delimiter is 1 char we would use shorter code path

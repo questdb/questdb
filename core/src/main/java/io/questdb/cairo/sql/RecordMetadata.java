@@ -30,7 +30,7 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableDescriptor;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 
 /**
  * Retrieve metadata of a table record (row) such as the column count, the type of column by numeric index,
@@ -200,7 +200,7 @@ public interface RecordMetadata extends ColumnTypes, Plannable, TableDescriptor 
      *
      * @param sink a character sink to write to
      */
-    default void toJson(CharSink sink) {
+    default void toJson(Utf16Sink sink) {
         sink.put('{');
         sink.putQuoted("columnCount").put(':').put(getColumnCount());
         sink.put(',');

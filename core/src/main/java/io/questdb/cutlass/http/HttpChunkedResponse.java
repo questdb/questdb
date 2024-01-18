@@ -22,36 +22,28 @@
  *
  ******************************************************************************/
 
-package io.questdb.std.str;
+package io.questdb.cutlass.http;
 
-import org.jetbrains.annotations.NotNull;
+import io.questdb.network.PeerDisconnectedException;
+import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.std.str.Utf8Sink;
 
-import static io.questdb.std.Numbers.hexDigits;
+public interface HttpChunkedResponse extends Utf8Sink {
+    void bookmark();
 
-public abstract class AbstractCharSink implements CharSink {
+    void done() throws PeerDisconnectedException, PeerIsSlowToReadException;
 
-    public void putAsPrintable(CharSequence nonPrintable) {
-        for (int i = 0, n = nonPrintable.length(); i < n; i++) {
-            char c = nonPrintable.charAt(i);
-            if (c > 0x1F && c != 0x7F) {
-                put(c);
-            } else {
-                put('\\');
-                put('u');
+    HttpResponseHeader headers();
 
-                final int s = (int) c & 0xFF;
-                put('0');
-                put('0');
-                put(hexDigits[s / 0x10]);
-                put(hexDigits[s % 0x10]);
-            }
-        }
-    }
+    boolean resetToBookmark();
 
-    public CharSink repeat(@NotNull CharSequence value, int n) {
-        for (int i = 0; i < n; i++) {
-            put(value);
-        }
-        return this;
-    }
+    void sendChunk(boolean done) throws PeerDisconnectedException, PeerIsSlowToReadException;
+
+    void sendHeader() throws PeerDisconnectedException, PeerIsSlowToReadException;
+
+    void shutdownWrite();
+
+    void status(int status, CharSequence contentType);
+
+    int writeBytes(long srcAddr, int len);
 }

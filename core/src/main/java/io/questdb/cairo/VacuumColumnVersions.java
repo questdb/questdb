@@ -194,8 +194,7 @@ public class VacuumColumnVersions implements Closeable {
     private void visitTableFiles(long pUtf8NameZ, int type) {
         if (type != DT_DIR) {
             fileNameSink.clear();
-            boolean validUtf8 = Utf8s.utf8ToUtf16Z(pUtf8NameZ, fileNameSink);
-            assert validUtf8 : "invalid UTF-8 in file name";
+            Utf8s.utf8ZCopy(pUtf8NameZ, fileNameSink);
             if (Files.notDots(fileNameSink)) {
                 int dotIndex = Utf8s.indexOfAscii(fileNameSink, '.');
                 if (dotIndex > 0) {
