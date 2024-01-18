@@ -409,7 +409,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     }
 
     @SuppressWarnings("StatementWithEmptyBody")
-    private void busyRcvLoop(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, PeerIsSlowToWriteException {
+    private void busyRcvLoop(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext)
+            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, PeerIsSlowToWriteException {
         reset();
         if (configuration.getServerKeepAlive()) {
             while (handleClientRecv(selector, rescheduleContext)) ;
@@ -583,7 +584,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException, PeerIsSlowToWriteException {
         if (newRequest) {
             if (!headerParser.hasBoundary()) {
-                return failRequest("Bad request. Form data in multipart POST expected.");
+                LOG.error().$("Bad request. Form data in multipart POST expected.").$(". Disconnecting [fd=").$(getFd()).I$();
+                throw registerDispatcherDisconnect(DISCONNECT_REASON_PROTOCOL_VIOLATION);
             }
             processor.onHeadersReady(this);
             multipartContentParser.of(headerParser.getBoundary());
@@ -755,11 +757,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         }
     }
 
-    private boolean failRequest(String errorMessage) throws ServerDisconnectException {
-        LOG.error().$(errorMessage).$(". Disconnecting [fd=").$(getFd()).I$();
-        throw registerDispatcherDisconnect(DISCONNECT_REASON_PROTOCOL_VIOLATION);
-    }
-
     private HttpRequestProcessor getHttpRequestProcessor(HttpRequestProcessorSelector selector) {
         HttpRequestProcessor processor;
         final Utf8Sequence url = headerParser.getUrl();
@@ -820,7 +817,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             try {
                 if (newRequest) {
                     if (processor.requiresAuthentication() && !configureSecurityContext()) {
-                        processor = rejectUnauthorized(null);
+                        processor = rejectRequest(HTTP_UNAUTHORIZED, null, null, null);
                     }
 
                     if (configuration.areCookiesEnabled()) {
@@ -973,10 +970,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
     private HttpRequestProcessor rejectForbiddenRequest(CharSequence userMessage) throws PeerDisconnectedException, PeerIsSlowToReadException {
         return rejectRequest(HTTP_FORBIDDEN, userMessage, null, null);
-    }
-
-    private HttpRequestProcessor rejectUnauthorized(CharSequence userMessage) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        return rejectRequest(HTTP_UNAUTHORIZED, userMessage, null, null);
     }
 
     private void shiftReceiveBufferUnprocessedBytes(long start, int receivedBytes) {
