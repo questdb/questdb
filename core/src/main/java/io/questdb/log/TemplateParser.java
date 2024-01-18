@@ -31,7 +31,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.Utf8StringSink;
 import org.jetbrains.annotations.NotNull;
@@ -88,7 +88,7 @@ public class TemplateParser implements Sinkable {
     }
 
     @Override
-    public void toSink(@NotNull CharSinkBase<?> sink) {
+    public void toSink(@NotNull CharSink<?> sink) {
         for (int i = 0, n = templateNodes.size(); i < n; i++) {
             sink.put(templateNodes.getQuick(i));
         }
@@ -119,7 +119,7 @@ public class TemplateParser implements Sinkable {
         final DateFormat dateFormat = dateCompiler.compile(originalTxt, actualStart, actualEnd, false);
         templateNodes.add(new TemplateNode(TemplateNode.TYPE_DATE, DATE_FORMAT_KEY) {
             @Override
-            public void toSink(@NotNull CharSinkBase<?> sink) {
+            public void toSink(@NotNull CharSink<?> sink) {
                 dateFormat.format(dateValue.get(), TimestampFormatUtils.EN_LOCALE, null, sink);
             }
         });
@@ -134,7 +134,7 @@ public class TemplateParser implements Sinkable {
         envStartIdxs.put(envKey, dollarOffset);
         templateNodes.add(new TemplateNode(TemplateNode.TYPE_ENV, envKey) {
             @Override
-            public void toSink(@NotNull CharSinkBase<?> sink) {
+            public void toSink(@NotNull CharSink<?> sink) {
                 sink.put(envVal);
             }
         });
@@ -143,7 +143,7 @@ public class TemplateParser implements Sinkable {
     private void addStaticTemplateNode(int start, int end, boolean needsUtf8Encoding) {
         templateNodes.add(new TemplateNode(TemplateNode.TYPE_STATIC, null) {
             @Override
-            public void toSink(@NotNull CharSinkBase<?> sink) {
+            public void toSink(@NotNull CharSink<?> sink) {
                 if (needsUtf8Encoding) {
                     sink.put(originalTxt, start, end);
                 } else {

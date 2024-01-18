@@ -29,8 +29,8 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
-import io.questdb.std.str.CharSinkBase;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 
 public abstract class AbstractGeoHashFunction implements ScalarFunction {
 
@@ -106,7 +106,7 @@ public abstract class AbstractGeoHashFunction implements ScalarFunction {
     }
 
     @Override
-    public final void getLong256(Record rec, CharSinkBase<?> sink) {
+    public final void getLong256(Record rec, CharSink<?> sink) {
         throw new UnsupportedOperationException();
     }
 
@@ -136,7 +136,7 @@ public abstract class AbstractGeoHashFunction implements ScalarFunction {
     }
 
     @Override
-    public final void getStr(Record rec, CharSink sink) {
+    public final void getStr(Record rec, Utf16Sink sink) {
         throw new UnsupportedOperationException();
     }
 

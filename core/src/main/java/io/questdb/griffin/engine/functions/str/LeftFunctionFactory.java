@@ -38,7 +38,7 @@ import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
@@ -90,7 +90,7 @@ public class LeftFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getStr(Record rec, CharSink sink) {
+        public void getStr(Record rec, Utf16Sink sink) {
             CharSequence str = strFunc.getStr(rec);
             if (str != null) {
                 final int len = str.length();
@@ -161,7 +161,7 @@ public class LeftFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getStr(Record rec, CharSink sink) {
+        public void getStr(Record rec, Utf16Sink sink) {
             final CharSequence str = strFunc.getStr(rec);
             final int count = this.countFunc.getInt(rec);
             if (str != null && count != Numbers.INT_NaN) {

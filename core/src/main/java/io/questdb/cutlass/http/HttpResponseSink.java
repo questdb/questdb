@@ -48,9 +48,9 @@ import static io.questdb.std.Chars.isBlank;
 public class HttpResponseSink implements Closeable, Mutable {
     private final static Log LOG = LogFactory.getLog(HttpResponseSink.class);
     private static final IntObjHashMap<String> httpStatusMap = new IntObjHashMap<>();
-    private final ChunkBuffer buffer;
+    private final ChunkUtf8Sink buffer;
     private final ChunkedResponseImpl chunkedResponse = new ChunkedResponseImpl();
-    private final ChunkBuffer compressOutBuffer;
+    private final ChunkUtf8Sink compressOutBuffer;
     private final boolean connectionCloseHeader;
     private final boolean cookiesEnabled;
     private final boolean dumpNetworkTraffic;
@@ -76,8 +76,8 @@ public class HttpResponseSink implements Closeable, Mutable {
     public HttpResponseSink(HttpContextConfiguration configuration) {
         final int responseBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
         this.nf = configuration.getNetworkFacade();
-        this.buffer = new ChunkBuffer(responseBufferSize);
-        this.compressOutBuffer = new ChunkBuffer(responseBufferSize);
+        this.buffer = new ChunkUtf8Sink(responseBufferSize);
+        this.compressOutBuffer = new ChunkUtf8Sink(responseBufferSize);
         this.headerImpl = new HttpResponseHeaderImpl(configuration.getClock());
         this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
         this.httpVersion = configuration.getHttpVersion();
@@ -106,7 +106,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         socket = null;
     }
 
-    public HttpChunkedResponseSocket getChunkedSocket() {
+    public HttpChunkedResponse getChunkedResponse() {
         return chunkedResponse;
     }
 
@@ -255,7 +255,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
     }
 
-    private void sendBuffer(ChunkBuffer sendBuf) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    private void sendBuffer(ChunkUtf8Sink sendBuf) throws PeerDisconnectedException, PeerIsSlowToReadException {
         int available = (int) sendBuf.getReadNAvailable();
         int nSend = Math.min(forceSendFragmentationChunkSize, available);
         while (nSend > 0) {
@@ -305,7 +305,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
     }
 
-    private class ChunkBuffer implements Utf8Sink, Closeable, Mutable, Reopenable {
+    private class ChunkUtf8Sink implements Utf8Sink, Closeable, Mutable, Reopenable {
         private static final String EOF_CHUNK = "\r\n00\r\n\r\n";
         private static final int MAX_CHUNK_HEADER_SIZE = 12;
         private final long bufSize;
@@ -314,7 +314,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         private long bufStart;
         private long bufStartOfData;
 
-        private ChunkBuffer(int bufSize) {
+        private ChunkUtf8Sink(int bufSize) {
             this.bufSize = bufSize;
         }
 
@@ -339,7 +339,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
 
         @Override
-        public Utf8Sink put(long lo, long hi) {
+        public Utf8Sink putUtf8(long lo, long hi) {
             final int size = Bytes.checkedLoHiSize(lo, hi, 0);
             final long dest = getWriteAddress(size);
             Vect.memcpy(dest, lo, size);
@@ -426,7 +426,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
     }
 
-    private class ChunkedResponseImpl extends ResponseSinkImpl implements HttpChunkedResponseSocket {
+    private class ChunkedResponseImpl extends ResponseSinkImpl implements HttpChunkedResponse {
         private long bookmark = 0;
 
         @Override
@@ -493,7 +493,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         public int writeBytes(long srcAddr, int len) {
             assert len > 0;
             len = (int) Math.min(len, buffer.getWriteNAvailable());
-            put(srcAddr, srcAddr + len);
+            putUtf8(srcAddr, srcAddr + len);
             return len;
         }
     }
@@ -540,8 +540,8 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
 
         @Override
-        public Utf8Sink put(long lo, long hi) {
-            buffer.put(lo, hi);
+        public Utf8Sink putUtf8(long lo, long hi) {
+            buffer.putUtf8(lo, hi);
             return this;
         }
 
@@ -669,8 +669,8 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
 
         @Override
-        public Utf8Sink put(long lo, long hi) {
-            buffer.put(lo, hi);
+        public Utf8Sink putUtf8(long lo, long hi) {
+            buffer.putUtf8(lo, hi);
             return this;
         }
 

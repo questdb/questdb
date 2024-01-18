@@ -24,16 +24,16 @@
 
 package io.questdb.log;
 
-import io.questdb.std.str.CharSinkBase;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
 
-public interface LogRecord extends CharSinkBase<LogRecord> {
+public interface LogRecord extends Utf8Sink {
 
     void $();
 

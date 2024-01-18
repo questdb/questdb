@@ -177,6 +177,21 @@ public class HttpHeaderParserTest {
     }
 
     @Test
+    public void testContentLengthLarge() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            String v = "Content-Length: 81136060058\r\n" +
+                    "\r\n";
+            long p = TestUtils.toMemory(v);
+            try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
+                hp.parse(p, p + v.length(), false, false);
+                Assert.assertEquals(81136060058L, hp.getContentLength());
+            } finally {
+                Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
     public void testContentTypeAndCharset() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             String v = "Content-Type: text/html; charset=utf-8\r\n" +

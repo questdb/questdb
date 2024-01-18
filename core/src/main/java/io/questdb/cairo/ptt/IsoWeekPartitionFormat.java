@@ -29,7 +29,7 @@ import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -38,7 +38,7 @@ import static io.questdb.std.datetime.microtime.TimestampFormatUtils.WEEK_FORMAT
 public class IsoWeekPartitionFormat implements DateFormat {
 
     @Override
-    public void format(long timestamp, @NotNull DateLocale locale, @Nullable CharSequence timeZoneName, @NotNull CharSinkBase<?> sink) {
+    public void format(long timestamp, @NotNull DateLocale locale, @Nullable CharSequence timeZoneName, @NotNull CharSink<?> sink) {
         long weekTime = timestamp - Timestamps.floorWW(timestamp);
         WEEK_FORMAT.format(timestamp, locale, timeZoneName, sink);
 

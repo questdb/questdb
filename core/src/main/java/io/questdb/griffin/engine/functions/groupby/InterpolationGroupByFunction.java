@@ -33,8 +33,8 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.groupby.InterpolationUtil;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
+import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.CharSinkBase;
 
 public class InterpolationGroupByFunction implements GroupByFunction {
     private final GroupByFunction wrappedFunction;
@@ -178,7 +178,7 @@ public class InterpolationGroupByFunction implements GroupByFunction {
     }
 
     @Override
-    public void getLong256(Record rec, CharSinkBase<?> sink) {
+    public void getLong256(Record rec, CharSink<?> sink) {
         wrappedFunction.getLong256(rec, sink);
     }
 
@@ -222,12 +222,12 @@ public class InterpolationGroupByFunction implements GroupByFunction {
     }
 
     @Override
-    public void getStr(Record rec, CharSink sink) {
+    public void getStr(Record rec, Utf16Sink sink) {
         wrappedFunction.getStr(rec, sink);
     }
 
     @Override
-    public void getStr(Record rec, CharSink sink, int arrayIndex) {
+    public void getStr(Record rec, Utf16Sink sink, int arrayIndex) {
         wrappedFunction.getStr(rec, sink, arrayIndex);
     }
 

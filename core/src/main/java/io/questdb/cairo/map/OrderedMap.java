@@ -500,7 +500,7 @@ public class OrderedMap implements Map, Reopenable {
 
         mask = (int) newKeyCapacity - 1;
         DirectIntList newOffsets = new DirectIntList(newKeyCapacity << 1, listMemoryTag);
-        newOffsets.setPos((long) newKeyCapacity << 1);
+        newOffsets.setPos(newKeyCapacity << 1);
         newOffsets.zero(0);
 
         for (int i = 0, k = (int) (offsets.size() / 2); i < k; i++) {
@@ -596,7 +596,7 @@ public class OrderedMap implements Map, Reopenable {
 
         public FixedSizeKey init() {
             super.init();
-            checkSize(keySize);
+            checkCapacity(keySize);
             return this;
         }
 
@@ -782,7 +782,7 @@ public class OrderedMap implements Map, Reopenable {
             }
         }
 
-        protected void checkSize(long requiredKeySize) {
+        protected void checkCapacity(long requiredKeySize) {
             long requiredSize = requiredKeySize + valueSize;
             if (appendAddress + requiredSize > heapLimit) {
                 long delta = resize(requiredSize, appendAddress);
@@ -816,7 +816,7 @@ public class OrderedMap implements Map, Reopenable {
 
         @Override
         public void copyFromRawKey(long srcPtr, long srcSize) {
-            checkSize(srcSize);
+            checkCapacity(srcSize);
             Vect.memcpy(appendAddress, srcPtr, srcSize);
             appendAddress += srcSize;
         }
@@ -836,7 +836,7 @@ public class OrderedMap implements Map, Reopenable {
                     throw CairoException.nonCritical().put("binary column is too large");
                 }
 
-                checkSize((int) len);
+                checkCapacity((int) len);
                 int l = (int) (len - Integer.BYTES);
                 Unsafe.getUnsafe().putInt(appendAddress, l);
                 value.copyTo(appendAddress + Integer.BYTES, 0, l);
@@ -846,21 +846,21 @@ public class OrderedMap implements Map, Reopenable {
 
         @Override
         public void putBool(boolean value) {
-            checkSize(1L);
+            checkCapacity(1L);
             Unsafe.getUnsafe().putByte(appendAddress, (byte) (value ? 1 : 0));
             appendAddress += 1;
         }
 
         @Override
         public void putByte(byte value) {
-            checkSize(1L);
+            checkCapacity(1L);
             Unsafe.getUnsafe().putByte(appendAddress, value);
             appendAddress += 1L;
         }
 
         @Override
         public void putChar(char value) {
-            checkSize(2L);
+            checkCapacity(2L);
             Unsafe.getUnsafe().putChar(appendAddress, value);
             appendAddress += 2L;
         }
@@ -872,35 +872,35 @@ public class OrderedMap implements Map, Reopenable {
 
         @Override
         public void putDouble(double value) {
-            checkSize(8L);
+            checkCapacity(8L);
             Unsafe.getUnsafe().putDouble(appendAddress, value);
             appendAddress += 8L;
         }
 
         @Override
         public void putFloat(float value) {
-            checkSize(4L);
+            checkCapacity(4L);
             Unsafe.getUnsafe().putFloat(appendAddress, value);
             appendAddress += 4L;
         }
 
         @Override
         public void putInt(int value) {
-            checkSize(4L);
+            checkCapacity(4L);
             Unsafe.getUnsafe().putInt(appendAddress, value);
             appendAddress += 4L;
         }
 
         @Override
         public void putLong(long value) {
-            checkSize(8L);
+            checkCapacity(8L);
             Unsafe.getUnsafe().putLong(appendAddress, value);
             appendAddress += 8L;
         }
 
         @Override
         public void putLong128(long lo, long hi) {
-            checkSize(16L);
+            checkCapacity(16L);
             Unsafe.getUnsafe().putLong(appendAddress, lo);
             Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, hi);
             appendAddress += 16L;
@@ -908,7 +908,7 @@ public class OrderedMap implements Map, Reopenable {
 
         @Override
         public void putLong256(Long256 value) {
-            checkSize(32L);
+            checkCapacity(32L);
             Unsafe.getUnsafe().putLong(appendAddress, value.getLong0());
             Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, value.getLong1());
             Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 2, value.getLong2());
@@ -918,7 +918,7 @@ public class OrderedMap implements Map, Reopenable {
 
         @Override
         public void putShort(short value) {
-            checkSize(2L);
+            checkCapacity(2L);
             Unsafe.getUnsafe().putShort(appendAddress, value);
             appendAddress += 2L;
         }
@@ -931,7 +931,7 @@ public class OrderedMap implements Map, Reopenable {
             }
 
             int len = value.length();
-            checkSize(((long) len << 1) + 4L);
+            checkCapacity(((long) len << 1) + 4L);
             Unsafe.getUnsafe().putInt(appendAddress, len);
             appendAddress += 4L;
             for (int i = 0; i < len; i++) {
@@ -943,7 +943,7 @@ public class OrderedMap implements Map, Reopenable {
         @Override
         public void putStr(CharSequence value, int lo, int hi) {
             int len = hi - lo;
-            checkSize(((long) len << 1) + 4L);
+            checkCapacity(((long) len << 1) + 4L);
             Unsafe.getUnsafe().putInt(appendAddress, len);
             appendAddress += 4L;
             for (int i = lo; i < hi; i++) {
@@ -960,7 +960,7 @@ public class OrderedMap implements Map, Reopenable {
             }
 
             int len = value.length();
-            checkSize(((long) len << 1) + 4L);
+            checkCapacity(((long) len << 1) + 4L);
             Unsafe.getUnsafe().putInt(appendAddress, len);
             appendAddress += 4L;
             for (int i = 0; i < len; i++) {
@@ -972,7 +972,7 @@ public class OrderedMap implements Map, Reopenable {
         @Override
         public void putStrLowerCase(CharSequence value, int lo, int hi) {
             int len = hi - lo;
-            checkSize(((long) len << 1) + 4L);
+            checkCapacity(((long) len << 1) + 4L);
             Unsafe.getUnsafe().putInt(appendAddress, len);
             appendAddress += 4L;
             for (int i = lo; i < hi; i++) {
@@ -988,12 +988,12 @@ public class OrderedMap implements Map, Reopenable {
 
         @Override
         public void skip(int bytes) {
-            checkSize(bytes);
+            checkCapacity(bytes);
             appendAddress += bytes;
         }
 
         private void putVarSizeNull() {
-            checkSize(4L);
+            checkCapacity(4L);
             Unsafe.getUnsafe().putInt(appendAddress, TableUtils.NULL_LEN);
             appendAddress += 4L;
         }
