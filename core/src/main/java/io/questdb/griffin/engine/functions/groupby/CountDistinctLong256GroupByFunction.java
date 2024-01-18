@@ -58,20 +58,24 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
         final Long256 l256 = arg.getLong256A(record);
-        long l0 = l256.getLong0();
-        long l1 = l256.getLong1();
-        long l2 = l256.getLong2();
-        long l3 = l256.getLong3();
 
         if (isNotNull(l256)) {
             mapValue.putLong(valueIndex, 1L);
+            long l0 = l256.getLong0();
+            long l1 = l256.getLong1();
+            long l2 = l256.getLong2();
+            long l3 = l256.getLong3();
             // Remap zero since it's used as the no entry key.
-            if (l0 == 0 && l1 == 0 && l2 == 0 && l3 == 0) {
-                l0 = Numbers.LONG_NaN;
-                l1 = Numbers.LONG_NaN;
-                l2 = Numbers.LONG_NaN;
-                l3 = Numbers.LONG_NaN;
-            }
+//            if (l0 == 0 && l1 == 0 && l2 == 0 && l3 == 0) {
+//                l0 = Numbers.LONG_NaN;
+//                l1 = Numbers.LONG_NaN;
+//                l2 = Numbers.LONG_NaN;
+//                l3 = Numbers.LONG_NaN;
+//            }
+            l0 = l0 == 0 ? Numbers.LONG_NaN : l0;
+            l1 = l1 == 0 ? Numbers.LONG_NaN : l1;
+            l2 = l2 == 0 ? Numbers.LONG_NaN : l2;
+            l3 = l3 == 0 ? Numbers.LONG_NaN : l3;
             setA.of(0).add(l0, l1, l2, l3);
             mapValue.putLong(valueIndex + 1, setA.ptr());
         } else {
@@ -83,20 +87,24 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
     @Override
     public void computeNext(MapValue mapValue, Record record) {
         final Long256 l256 = arg.getLong256A(record);
-        long l0 = l256.getLong0();
-        long l1 = l256.getLong1();
-        long l2 = l256.getLong2();
-        long l3 = l256.getLong3();
 
         if (isNotNull(l256)) {
+            long l0 = l256.getLong0();
+            long l1 = l256.getLong1();
+            long l2 = l256.getLong2();
+            long l3 = l256.getLong3();
             long ptr = mapValue.getLong(valueIndex + 1);
             // Remap zero since it's used as the no entry key.
-            if (l0 == 0 && l1 == 0 && l2 == 0 && l3 == 0) {
-                l0 = Numbers.LONG_NaN;
-                l1 = Numbers.LONG_NaN;
-                l2 = Numbers.LONG_NaN;
-                l3 = Numbers.LONG_NaN;
-            }
+//            if (l0 == 0 && l1 == 0 && l2 == 0 && l3 == 0) {
+//                l0 = Numbers.LONG_NaN;
+//                l1 = Numbers.LONG_NaN;
+//                l2 = Numbers.LONG_NaN;
+//                l3 = Numbers.LONG_NaN;
+//            }
+            l0 = l0 == 0 ? Numbers.LONG_NaN : l0;
+            l1 = l1 == 0 ? Numbers.LONG_NaN : l1;
+            l2 = l2 == 0 ? Numbers.LONG_NaN : l2;
+            l3 = l3 == 0 ? Numbers.LONG_NaN : l3;
             final int index = setA.of(ptr).keyIndex(l0, l1, l2, l3);
             if (index >= 0) {
                 setA.addAt(index, l0, l1, l2, l3);

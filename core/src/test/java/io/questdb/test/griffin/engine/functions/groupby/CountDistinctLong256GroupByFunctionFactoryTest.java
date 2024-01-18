@@ -215,4 +215,20 @@ public class CountDistinctLong256GroupByFunctionFactoryTest extends AbstractCair
                 false
         );
     }
+
+    @Test
+    public void testMappingZeroToNulls() throws Exception {
+        // this is to ensure that to_long256(15, 0, 15, 0) and to_long256(15, null, 15, null) don't map to the same value
+        assertQuery(
+                "a\ts\tts\n",
+                "select * from x",
+                "create table x ( a SYMBOL, s long256, ts TIMESTAMP ) timestamp(ts)",
+                "ts",
+                true
+        );
+
+        insert("insert into x values ('a', to_long256(5, 10, 5, 10), '2021-05-21'), ('a', to_long256(10, 0, 10, 0), '2021-05-21'), ('a', to_long256(15, 0, 15, 0), '2021-05-21'), ('a', to_long256(15, null, 15, null), '2021-05-21')");
+        assertSql("a\ts\n" +
+                "a\t4\n", "select a, count_distinct(s) as s from x order by a");
+    }
 }

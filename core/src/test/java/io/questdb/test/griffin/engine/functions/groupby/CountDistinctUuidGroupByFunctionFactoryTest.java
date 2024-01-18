@@ -215,4 +215,21 @@ public class CountDistinctUuidGroupByFunctionFactoryTest extends AbstractCairoTe
                 false
         );
     }
+
+
+    @Test
+    public void testMappingZeroToNulls() throws Exception {
+        // this is to ensure that to_uuid(15, 0) and to_uuid(15, null) don't map to the same value
+        assertQuery(
+                "a\ts\tts\n",
+                "select * from x",
+                "create table x ( a SYMBOL, s UUID, ts TIMESTAMP ) timestamp(ts)",
+                "ts",
+                true
+        );
+
+        insert("insert into x values ('a', to_uuid(5, 10), '2021-05-21'), ('a', to_uuid(10, 0), '2021-05-21'), ('a', to_uuid(15, 0), '2021-05-21'), ('a', to_uuid(15, null), '2021-05-21')");
+        assertSql("a\ts\n" +
+                          "a\t4\n", "select a, count_distinct(s) as s from x order by a");
+    }
 }
