@@ -33,7 +33,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrArrayFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 
 public class CurrentSchemasFunctionFactory implements FunctionFactory {
 
@@ -60,7 +60,7 @@ public class CurrentSchemasFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getStr(Record rec, CharSink sink) {
+        public void getStr(Record rec, Utf16Sink sink) {
             sink.put(getStr(rec));
         }
 
@@ -70,7 +70,7 @@ public class CurrentSchemasFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getStr(Record rec, CharSink sink, int arrayIndex) {
+        public void getStr(Record rec, Utf16Sink sink, int arrayIndex) {
             sink.put(getStr(rec, arrayIndex));
         }
 

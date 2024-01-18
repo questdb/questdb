@@ -24,7 +24,7 @@
 
 package io.questdb.std;
 
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
@@ -124,7 +124,7 @@ public class Long256Impl implements Long256, Sinkable {
     }
 
     @Override
-    public void toSink(@NotNull CharSinkBase<?> sink) {
+    public void toSink(@NotNull CharSink<?> sink) {
         Numbers.appendLong256(l0, l1, l2, l3, sink);
     }
 

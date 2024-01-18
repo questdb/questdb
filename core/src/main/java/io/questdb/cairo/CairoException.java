@@ -29,7 +29,7 @@ import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Os;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -295,7 +295,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     @Override
-    public void toSink(@NotNull CharSinkBase<?> sink) {
+    public void toSink(@NotNull CharSink<?> sink) {
         sink.putAscii('[').put(errno).putAscii("]: ").put(message);
     }
 

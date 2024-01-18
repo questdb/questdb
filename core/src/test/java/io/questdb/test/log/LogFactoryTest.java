@@ -301,7 +301,7 @@ public class LogFactoryTest {
                     return seq.consumeAll(ring, this::log);
                 }
 
-                private void log(LogRecordSink record) {
+                private void log(LogRecordUtf8Sink record) {
                     sink.clear();
                     sink.put((Sinkable) record);
                     latch.countDown();
@@ -424,7 +424,7 @@ public class LogFactoryTest {
             factory.add(new LogWriterConfig(LogLevel.INFO | LogLevel.DEBUG, (ring, seq, level) -> {
                 LogFileWriter w = new LogFileWriter(ring, seq, level);
                 w.setLocation(x.getAbsolutePath());
-                final QueueConsumer<LogRecordSink> consumer = w.getMyConsumer();
+                final QueueConsumer<LogRecordUtf8Sink> consumer = w.getMyConsumer();
                 w.setMyConsumer(slot -> {
                     xLatch.countDown();
                     consumer.consume(slot);
@@ -435,7 +435,7 @@ public class LogFactoryTest {
             factory.add(new LogWriterConfig(LogLevel.DEBUG | LogLevel.ERROR, (ring, seq, level) -> {
                 LogFileWriter w = new LogFileWriter(ring, seq, level);
                 w.setLocation(y.getAbsolutePath());
-                final QueueConsumer<LogRecordSink> consumer = w.getMyConsumer();
+                final QueueConsumer<LogRecordUtf8Sink> consumer = w.getMyConsumer();
                 w.setMyConsumer(slot -> {
                     yLatch.countDown();
                     consumer.consume(slot);
@@ -547,8 +547,8 @@ public class LogFactoryTest {
             Assert.assertTrue(Files.touch(path.concat("mylog-2015-05-03.log.2").$()));
         }
 
-        RingQueue<LogRecordSink> queue = new RingQueue<>(
-                LogRecordSink::new,
+        RingQueue<LogRecordUtf8Sink> queue = new RingQueue<>(
+                LogRecordUtf8Sink::new,
                 1024,
                 1024,
                 MemoryTag.NATIVE_DEFAULT
@@ -600,7 +600,7 @@ public class LogFactoryTest {
                 final long available = pubSeq.available();
 
                 while (cursor < available && published < toPublish) {
-                    LogRecordSink sink = queue.get(cursor++);
+                    LogRecordUtf8Sink sink = queue.get(cursor++);
                     sink.setLevel(LogLevel.INFO);
                     sink.put("test");
                     published++;

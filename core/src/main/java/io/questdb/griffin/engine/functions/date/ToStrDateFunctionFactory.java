@@ -40,7 +40,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.millitime.DateFormatCompiler;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
@@ -113,7 +113,7 @@ public class ToStrDateFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getStr(Record rec, CharSink sink) {
+        public void getStr(Record rec, Utf16Sink sink) {
             long value = arg.getDate(rec);
             if (value == Numbers.LONG_NaN) {
                 return;
@@ -153,7 +153,7 @@ public class ToStrDateFunctionFactory implements FunctionFactory {
             return sink;
         }
 
-        private void toSink(long value, CharSink sink) {
+        private void toSink(long value, Utf16Sink sink) {
             format.format(value, locale, "Z", sink);
         }
     }

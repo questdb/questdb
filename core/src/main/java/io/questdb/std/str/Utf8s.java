@@ -463,7 +463,7 @@ public final class Utf8s {
         if (hi == lo) {
             return "";
         }
-        CharSink b = Misc.getThreadLocalSink();
+        Utf16Sink b = Misc.getThreadLocalSink();
         utf8ToUtf16(lo, hi, b);
         return b.toString();
     }
@@ -472,7 +472,7 @@ public final class Utf8s {
         if (seq.size() == 0) {
             return "";
         }
-        CharSink b = Misc.getThreadLocalSink();
+        Utf16Sink b = Misc.getThreadLocalSink();
         utf8ToUtf16(seq, b);
         return b.toString();
     }
@@ -522,7 +522,7 @@ public final class Utf8s {
         return 0;
     }
 
-    public static int utf8DecodeMultiByte(long lo, long hi, int b, CharSinkBase<?> sink) {
+    public static int utf8DecodeMultiByte(long lo, long hi, int b, Utf16Sink sink) {
         if (b >> 5 == -2 && (b & 30) != 0) {
             return utf8Decode2Bytes(lo, hi, b, sink);
         }
@@ -534,7 +534,7 @@ public final class Utf8s {
 
     public static CharSequence utf8ToUtf16(
             @NotNull DirectUtf8Sequence utf8CharSeq,
-            @NotNull MutableCharSink tempSink,
+            @NotNull MutableUtf16Sink tempSink,
             boolean hasNonAsciiChars
     ) {
         if (hasNonAsciiChars) {
@@ -550,7 +550,7 @@ public final class Utf8s {
      *
      * @return true if input is proper UTF-8 and false otherwise.
      */
-    public static boolean utf8ToUtf16(long lo, long hi, @NotNull CharSinkBase<?> sink) {
+    public static boolean utf8ToUtf16(long lo, long hi, @NotNull Utf16Sink sink) {
         long p = lo;
         while (p < hi) {
             byte b = Unsafe.getUnsafe().getByte(p);
@@ -575,7 +575,7 @@ public final class Utf8s {
      *
      * @return true if input is proper UTF-8 and false otherwise.
      */
-    public static boolean utf8ToUtf16(@NotNull Utf8Sequence seq, int seqLo, int seqHi, @NotNull CharSinkBase<?> sink) {
+    public static boolean utf8ToUtf16(@NotNull Utf8Sequence seq, int seqLo, int seqHi, @NotNull Utf16Sink sink) {
         int i = seqLo;
         while (i < seqHi) {
             byte b = seq.byteAt(i);
@@ -600,7 +600,7 @@ public final class Utf8s {
      *
      * @return true if input is proper UTF-8 and false otherwise.
      */
-    public static boolean utf8ToUtf16(@NotNull Utf8Sequence seq, @NotNull CharSinkBase<?> sink) {
+    public static boolean utf8ToUtf16(@NotNull Utf8Sequence seq, @NotNull Utf16Sink sink) {
         return utf8ToUtf16(seq, 0, seq.size(), sink);
     }
 
@@ -624,7 +624,7 @@ public final class Utf8s {
      * @param terminator terminator byte, must be a valid ASCII character
      * @return number of bytes read or -1 if input sequence is invalid.
      */
-    public static int utf8ToUtf16(@NotNull Utf8Sequence seq, @NotNull CharSinkBase<?> sink, byte terminator) {
+    public static int utf8ToUtf16(@NotNull Utf8Sequence seq, @NotNull Utf16Sink sink, byte terminator) {
         assert terminator >= 0 : "terminator must be ASCII character";
 
         int i = 0;
@@ -657,7 +657,7 @@ public final class Utf8s {
      *
      * @return true if input is proper UTF-8 and false otherwise.
      */
-    public static boolean utf8ToUtf16EscConsecutiveQuotes(long lo, long hi, @NotNull CharSink sink) {
+    public static boolean utf8ToUtf16EscConsecutiveQuotes(long lo, long hi, @NotNull Utf16Sink sink) {
         long p = lo;
         int quoteCount = 0;
 
@@ -685,14 +685,14 @@ public final class Utf8s {
         return true;
     }
 
-    public static void utf8ToUtf16Unchecked(@NotNull DirectUtf8Sequence utf8CharSeq, @NotNull MutableCharSink tempSink) {
+    public static void utf8ToUtf16Unchecked(@NotNull DirectUtf8Sequence utf8CharSeq, @NotNull MutableUtf16Sink tempSink) {
         tempSink.clear();
         if (!utf8ToUtf16(utf8CharSeq.lo(), utf8CharSeq.hi(), tempSink)) {
             throw CairoException.nonCritical().put("invalid UTF8 in value for ").put(utf8CharSeq);
         }
     }
 
-    public static boolean utf8ToUtf16Z(long lo, CharSinkBase<?> sink) {
+    public static boolean utf8ToUtf16Z(long lo, Utf16Sink sink) {
         long p = lo;
         while (true) {
             byte b = Unsafe.getUnsafe().getByte(p);
@@ -712,6 +712,23 @@ public final class Utf8s {
             }
         }
         return true;
+    }
+
+    /**
+     * Copies UTF8 null-terminated string into UTF8 sink excluding zero byte.
+     *
+     * @param addr pointer at the beginning of UTF8 null-terminated string
+     * @param sink copy target
+     */
+    public static void utf8ZCopy(long addr, Utf8Sink sink) {
+        long p = addr;
+        while (true) {
+            byte b = Unsafe.getUnsafe().getByte(p++);
+            if (b == 0) {
+                break;
+            }
+            sink.put(b);
+        }
     }
 
     private static int encodeUtf16Surrogate(@NotNull Utf8Sink sink, char c, @NotNull CharSequence in, int pos, int hi) {
@@ -767,7 +784,7 @@ public final class Utf8s {
         return b > 64 && b < 91 ? (byte) (b + 32) : b;
     }
 
-    private static int utf8Decode2Bytes(@NotNull Utf8Sequence seq, int index, int b1, @NotNull CharSinkBase<?> sink) {
+    private static int utf8Decode2Bytes(@NotNull Utf8Sequence seq, int index, int b1, @NotNull Utf16Sink sink) {
         if (seq.size() - index < 2) {
             return -1;
         }
@@ -779,7 +796,7 @@ public final class Utf8s {
         return 2;
     }
 
-    private static int utf8Decode2Bytes(long lo, long hi, int b1, @NotNull CharSinkBase<?> sink) {
+    private static int utf8Decode2Bytes(long lo, long hi, int b1, @NotNull Utf16Sink sink) {
         if (hi - lo < 2) {
             return -1;
         }
@@ -791,7 +808,7 @@ public final class Utf8s {
         return 2;
     }
 
-    private static int utf8Decode2BytesZ(long lo, int b1, @NotNull CharSinkBase<?> sink) {
+    private static int utf8Decode2BytesZ(long lo, int b1, @NotNull Utf16Sink sink) {
         byte b2 = Unsafe.getUnsafe().getByte(lo + 1);
         if (b2 == 0) {
             return -1;
@@ -803,7 +820,7 @@ public final class Utf8s {
         return 2;
     }
 
-    private static int utf8Decode3Byte0(int b1, @NotNull CharSinkBase<?> sink, byte b2, byte b3) {
+    private static int utf8Decode3Byte0(int b1, @NotNull Utf16Sink sink, byte b2, byte b3) {
         if (isMalformed3(b1, b2, b3)) {
             return -1;
         }
@@ -815,7 +832,7 @@ public final class Utf8s {
         return 3;
     }
 
-    private static int utf8Decode3Bytes(long lo, long hi, int b1, @NotNull CharSinkBase<?> sink) {
+    private static int utf8Decode3Bytes(long lo, long hi, int b1, @NotNull Utf16Sink sink) {
         if (hi - lo < 3) {
             return -1;
         }
@@ -824,7 +841,7 @@ public final class Utf8s {
         return utf8Decode3Byte0(b1, sink, b2, b3);
     }
 
-    private static int utf8Decode3Bytes(@NotNull Utf8Sequence seq, int index, int b1, @NotNull CharSinkBase<?> sink) {
+    private static int utf8Decode3Bytes(@NotNull Utf8Sequence seq, int index, int b1, @NotNull Utf16Sink sink) {
         if (seq.size() - index < 3) {
             return -1;
         }
@@ -833,7 +850,7 @@ public final class Utf8s {
         return utf8Decode3Byte0(b1, sink, b2, b3);
     }
 
-    private static int utf8Decode3BytesZ(long lo, int b1, @NotNull CharSinkBase<?> sink) {
+    private static int utf8Decode3BytesZ(long lo, int b1, @NotNull Utf16Sink sink) {
         byte b2 = Unsafe.getUnsafe().getByte(lo + 1);
         if (b2 == 0) {
             return -1;
@@ -845,7 +862,7 @@ public final class Utf8s {
         return utf8Decode3Byte0(b1, sink, b2, b3);
     }
 
-    private static int utf8Decode4Bytes(long lo, long hi, int b, @NotNull CharSinkBase<?> sink) {
+    private static int utf8Decode4Bytes(long lo, long hi, int b, @NotNull Utf16Sink sink) {
         if (b >> 3 != -2 || hi - lo < 4) {
             return -1;
         }
@@ -855,7 +872,7 @@ public final class Utf8s {
         return utf8Decode4Bytes0(b, sink, b2, b3, b4);
     }
 
-    private static int utf8Decode4Bytes(@NotNull Utf8Sequence seq, int index, int b, @NotNull CharSinkBase<?> sink) {
+    private static int utf8Decode4Bytes(@NotNull Utf8Sequence seq, int index, int b, @NotNull Utf16Sink sink) {
         if (b >> 3 != -2 || seq.size() - index < 4) {
             return -1;
         }
@@ -865,7 +882,7 @@ public final class Utf8s {
         return utf8Decode4Bytes0(b, sink, b2, b3, b4);
     }
 
-    private static int utf8Decode4Bytes0(int b, @NotNull CharSinkBase<?> sink, byte b2, byte b3, byte b4) {
+    private static int utf8Decode4Bytes0(int b, @NotNull Utf16Sink sink, byte b2, byte b3, byte b4) {
         if (isMalformed4(b2, b3, b4)) {
             return -1;
         }
@@ -878,7 +895,7 @@ public final class Utf8s {
         return -1;
     }
 
-    private static int utf8Decode4BytesZ(long lo, int b, CharSinkBase<?> sink) {
+    private static int utf8Decode4BytesZ(long lo, int b, Utf16Sink sink) {
         if (b >> 3 != -2) {
             return -1;
         }
@@ -897,7 +914,7 @@ public final class Utf8s {
         return utf8Decode4Bytes0(b, sink, b2, b3, b4);
     }
 
-    private static int utf8DecodeMultiByte(Utf8Sequence seq, int index, int b, @NotNull CharSinkBase<?> sink) {
+    private static int utf8DecodeMultiByte(Utf8Sequence seq, int index, int b, @NotNull Utf16Sink sink) {
         if (b >> 5 == -2 && (b & 30) != 0) {
             return utf8Decode2Bytes(seq, index, b, sink);
         }
@@ -907,7 +924,7 @@ public final class Utf8s {
         return utf8Decode4Bytes(seq, index, b, sink);
     }
 
-    private static int utf8DecodeMultiByteZ(long lo, int b, @NotNull CharSinkBase<?> sink) {
+    private static int utf8DecodeMultiByteZ(long lo, int b, @NotNull Utf16Sink sink) {
         if (b >> 5 == -2 && (b & 30) != 0) {
             return utf8Decode2BytesZ(lo, b, sink);
         }

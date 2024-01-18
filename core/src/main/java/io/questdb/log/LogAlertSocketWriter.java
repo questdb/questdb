@@ -53,7 +53,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     private static final String NAMESPACE_ENV = "NAMESPACE";
     private static final String ORG_ID_ENV = "ORGID";
     private final TemplateParser alertTemplate = new TemplateParser();
-    private final RingQueue<LogRecordSink> alertsSourceQueue;
+    private final RingQueue<LogRecordUtf8Sink> alertsSourceQueue;
     private final MicrosecondClock clock;
     private final FilesFacade ff;
     private final int level;
@@ -61,7 +61,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     private final CharSequenceObjHashMap<CharSequence> properties;
     private final Utf8StringSink sink = new Utf8StringSink();
     private final SCSequence writeSequence;
-    private HttpLogRecordSink alertSink;
+    private HttpLogRecordUtf8Sink alertSink;
     private String alertTargets;
     private ObjList<TemplateNode> alertTemplateNodes;
     private int alertTemplateNodesLen;
@@ -74,9 +74,9 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     private String outBufferSize;
     private String reconnectDelay;
     private LogAlertSocket socket;
-    private final QueueConsumer<LogRecordSink> alertsProcessor = this::onLogRecord;
+    private final QueueConsumer<LogRecordUtf8Sink> alertsProcessor = this::onLogRecord;
 
-    public LogAlertSocketWriter(RingQueue<LogRecordSink> alertsSrc, SCSequence writeSequence, int level) {
+    public LogAlertSocketWriter(RingQueue<LogRecordUtf8Sink> alertsSrc, SCSequence writeSequence, int level) {
         this(
                 FilesFacadeImpl.INSTANCE,
                 NetworkFacadeImpl.INSTANCE,
@@ -92,7 +92,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
             FilesFacade ff,
             NetworkFacade nf,
             MicrosecondClock clock,
-            RingQueue<LogRecordSink> alertsSrc,
+            RingQueue<LogRecordUtf8Sink> alertsSrc,
             SCSequence writeSequence,
             int level,
             CharSequenceObjHashMap<CharSequence> properties
@@ -192,7 +192,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
                 nDefaultPort,
                 log
         );
-        alertSink = new HttpLogRecordSink(socket)
+        alertSink = new HttpLogRecordUtf8Sink(socket)
                 .putHeader(LogAlertSocket.localHostIp)
                 .setMark();
         loadLogAlertTemplate();
@@ -205,7 +205,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     }
 
     @TestOnly
-    public HttpLogRecordSink getAlertSink() {
+    public HttpLogRecordUtf8Sink getAlertSink() {
         return alertSink;
     }
 
@@ -245,7 +245,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     }
 
     @TestOnly
-    public void onLogRecord(LogRecordSink logRecord) {
+    public void onLogRecord(LogRecordUtf8Sink logRecord) {
         final int len = logRecord.size();
         if ((logRecord.getLevel() & level) != 0 && len > 0) {
             alertTemplate.setDateValue(clock.getTicks());

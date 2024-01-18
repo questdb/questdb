@@ -37,17 +37,17 @@ public class O3Basket implements Mutable {
     private int indexerPointer;
     private int partCounterPointer;
 
+    public void checkCapacity(CairoConfiguration configuration, int columnCount, int indexCount) {
+        if (this.columnCount == columnCount && this.indexCount == indexCount) {
+            return;
+        }
+        checkCapacity0(configuration, columnCount, indexCount);
+    }
+
     @Override
     public void clear() {
         indexerPointer = 0;
         partCounterPointer = 0;
-    }
-
-    public void ensureCapacity(CairoConfiguration configuration, int columnCount, int indexCount) {
-        if (this.columnCount == columnCount && this.indexCount == indexCount) {
-            return;
-        }
-        ensureCapacity0(configuration, columnCount, indexCount);
     }
 
     public BitmapIndexWriter nextIndexer() {
@@ -58,7 +58,7 @@ public class O3Basket implements Mutable {
         return partCounters.getQuick(partCounterPointer++);
     }
 
-    private void ensureCapacity0(CairoConfiguration configuration, int columnCount, int indexCount) {
+    private void checkCapacity0(CairoConfiguration configuration, int columnCount, int indexCount) {
         if (this.columnCount < columnCount) {
             for (int i = this.columnCount; i < columnCount; i++) {
                 partCounters.add(new O3MutableAtomicInteger());

@@ -34,7 +34,7 @@ import io.questdb.cutlass.text.types.TimestampAdapter;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.str.DirectCharSink;
+import io.questdb.std.str.DirectUtf16Sink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -194,7 +194,7 @@ public class CsvFileIndexerTest extends AbstractCairoTest {
             };
 
             try (CsvFileIndexer indexer = new CsvFileIndexer(conf);
-                 DirectCharSink sink = new DirectCharSink(engine.getConfiguration().getTextConfiguration().getUtf8SinkSize())) {
+                 DirectUtf16Sink sink = new DirectUtf16Sink(engine.getConfiguration().getTextConfiguration().getUtf8SinkSize())) {
 
                 long length = ff.length(Path.getThreadLocal(inputRoot).concat(fileName).$());
 
@@ -229,7 +229,7 @@ public class CsvFileIndexerTest extends AbstractCairoTest {
         });
     }
 
-    private TimestampAdapter getAdapter(DirectCharSink sink) {
+    private TimestampAdapter getAdapter(DirectUtf16Sink sink) {
         TextConfiguration textConfiguration = engine.getConfiguration().getTextConfiguration();
         TypeManager typeManager = new TypeManager(textConfiguration, sink);
         DateFormat dateFormat = typeManager.getInputFormatConfiguration().getTimestampFormatFactory().get("yyyy-MM-ddTHH:mm:ss.SSSZ");
