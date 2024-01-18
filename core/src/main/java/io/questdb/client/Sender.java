@@ -606,19 +606,23 @@ public interface Sender extends Closeable {
                         .put("[configured-port=").put(port).put("]");
             }
             int hostStart;
-            if (Chars.startsWith(url, "http://")) {
+            if (Chars.startsWith(url, "http://") || Chars.startsWith(url, "HTTP://")) {
                 hostStart = 7;
-            } else if (Chars.startsWith(url, "https://")) {
+                protocol = PROTOCOL_HTTP;
+            } else if (Chars.startsWith(url, "https://") || Chars.startsWith(url, "HTTPS://")) {
                 enableTls();
                 hostStart = 8;
+                protocol = PROTOCOL_HTTP;
+            } else if (Chars.startsWith(url, "tcp://") || Chars.startsWith(url, "TCP://")) {
+                hostStart = 6;
+                protocol = PROTOCOL_TCP;
             } else {
                 throw new LineSenderException("invalid url protocol ")
                         .put("[url=").put(url).put("]");
             }
-            protocol = PROTOCOL_HTTP;
             int hostEnd = Chars.indexOf(url, hostStart, ':');
             if (hostEnd == -1) {
-                port = DEFAULT_HTTP_PORT;
+                port = (protocol == PROTOCOL_HTTP) ? DEFAULT_HTTP_PORT : DEFAULT_TCP_PORT;
                 hostEnd = Chars.indexOf(url, hostStart, '/');
                 if (hostEnd == -1) {
                     hostEnd = url.length();
@@ -630,12 +634,32 @@ public interface Sender extends Closeable {
                 }
                 try {
                     port = Numbers.parseInt(url, hostEnd + 1, portEnd);
+                    if (port < 1 || port > 65535) {
+                        throw new LineSenderException("invalid port in url ")
+                                .put("[url=").put(url).put("]");
+                    }
                 } catch (NumericException e) {
                     throw new LineSenderException("invalid port in url ")
                             .put("[url=").put(url).put("]");
                 }
             }
-            host = url.subSequence(hostStart, hostEnd).toString();
+            CharSequence hostSeq = url.subSequence(hostStart, hostEnd);
+            if (Chars.isBlank(hostSeq)) {
+                throw new LineSenderException("host cannot be empty")
+                        .put("[url=").put(url).put("]");
+            }
+            for (int i = 0, n = hostSeq.length(); i < n; i++) {
+                char c = hostSeq.charAt(i);
+                if (Character.isWhitespace(c)) {
+                    throw new LineSenderException("host cannot contain a whitespace ")
+                            .put("[url=").put(url).put("]");
+                }
+                if (c == '/') {
+                    throw new LineSenderException("host cannot contain a slash ")
+                            .put("[url=").put(url).put("]");
+                }
+            }
+            host = Chars.toString(hostSeq);
             return this;
         }
 

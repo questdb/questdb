@@ -136,6 +136,18 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testBadUrl() throws Exception {
+        assertConstructionFails("tcp://:9000", "host cannot be empty");
+        assertConstructionFails("tcp://", "host cannot be empty");
+        assertConstructionFails("badbadschema://", "invalid url protocol [url=badbadschema://]");
+        assertConstructionFails("whatisthis", "invalid url protocol");
+        assertConstructionFails("tcp://localhost:notprot", "invalid port in url [url=tcp://localhost:notprot]");
+        assertConstructionFails("tcp://127.0.0.1:-123", "invalid port in url [url=tcp://127.0.0.1:-123]");
+        assertConstructionFails("tcp://white space:9000", "host cannot contain a whitespace [url=tcp://white space:9000]");
+        assertConstructionFails("tcp://with/slash:9000", "host cannot contain a slash [url=tcp://with/slash:9000]");
+    }
+
+    @Test
     public void testBufferSizeDoubleSet() throws Exception {
         assertMemoryLeak(() -> {
             Sender.LineSenderBuilder builder = Sender.builder().bufferCapacity(1024);
@@ -534,6 +546,42 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testTcpSchemaUrlBuilder() throws Exception {
+        runInContext(r -> {
+            String url = "tcp://" + LOCALHOST + ":" + bindPort;
+            try (Sender sender = Sender.builder().url(url).build()) {
+                sender.table("mytable").symbol("symbol", "symbol").atNow();
+                sender.flush();
+                assertTableExistsEventually(engine, "mytable");
+            }
+        });
+    }
+
+    @Test
+    public void testTcpSchemaUrlBuilderUpperCase() throws Exception {
+        runInContext(r -> {
+            String url = "TCP://" + LOCALHOST + ":" + bindPort;
+            try (Sender sender = Sender.builder().url(url).build()) {
+                sender.table("mytable").symbol("symbol", "symbol").atNow();
+                sender.flush();
+                assertTableExistsEventually(engine, "mytable");
+            }
+        });
+    }
+
+    @Test
+    public void testTcpSchemaWithDefaults() throws Exception {
+        runInContext(r -> {
+            String url = "tcp://" + LOCALHOST + ":" + bindPort;
+            try (Sender sender = Sender.withDefaultsFromUrl(url)) {
+                sender.table("mytable").symbol("symbol", "symbol").atNow();
+                sender.flush();
+                assertTableExistsEventually(engine, "mytable");
+            }
+        });
+    }
+
+    @Test
     public void testTlsDoubleSet() throws Exception {
         assertMemoryLeak(() -> {
             Sender.LineSenderBuilder builder = Sender.builder().enableTls();
@@ -596,6 +644,17 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
                 fail("HTTP token should not be supported for TCP");
             } catch (LineSenderException e) {
                 TestUtils.assertContains(e.getMessage(), "username/password authentication is not supported for TCP protocol");
+            }
+        });
+    }
+
+    private static void assertConstructionFails(String url, String expectedError) throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                Sender.withDefaultsFromUrl(url);
+                fail("should fail with blank host");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), expectedError);
             }
         });
     }
