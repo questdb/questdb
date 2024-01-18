@@ -26,8 +26,8 @@ package io.questdb.test.tools;
 
 import io.questdb.*;
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
@@ -68,6 +68,7 @@ import java.sql.Timestamp;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -802,6 +803,13 @@ public final class TestUtils {
     public static void await(CyclicBarrier barrier) {
         try {
             barrier.await();
+        } catch (Throwable ignore) {
+        }
+    }
+
+    public static void await(CountDownLatch latch) {
+        try {
+            latch.await();
         } catch (Throwable ignore) {
         }
     }

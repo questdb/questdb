@@ -315,7 +315,7 @@ public final class LineHttpSender implements Sender {
                     // we did our best, give up
                     pendingRows = 0;
                     request = newRequest();
-                    throw new LineSenderException("Could not flush buffer: ").put(url).put(" Connection Failed");
+                    throw new LineSenderException("Could not flush buffer: ").put(url).put(" Connection Failed").put(": ").put(e.getMessage());
                 }
                 retryBackoff = backoff(retryBackoff);
             }

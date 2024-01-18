@@ -16,6 +16,7 @@ import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.concurrent.CountDownLatch;
 import java.util.function.Consumer;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
@@ -229,6 +230,31 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 .replyWithContent(400, "Bad Request", "text/plain");
 
         testWithMock(mockHttpProcessor, errorVerifier("Could not flush buffer: Bad Request [http-status=400]"));
+    }
+
+    @Test
+    public void testTimeout() throws Exception {
+        CountDownLatch delayLatch = new CountDownLatch(1);
+        MockHttpProcessor mock = new MockHttpProcessor()
+                .delayedReplyWithStatus(204, delayLatch);
+
+        testWithMock(mock, sender -> {
+                    sender.table("test")
+                            .symbol("sym", "bol")
+                            .doubleColumn("x", 1.0)
+                            .atNow();
+                    try {
+                        sender.flush();
+                        Assert.fail("Exception expected");
+                    } catch (LineSenderException e) {
+                        TestUtils.assertContains(e.getMessage(), "Could not flush buffer: http://localhost:9001/write?precision=n Connection Failed: timed out [errno=35]");
+                    } finally {
+                        delayLatch.countDown();
+                    }
+                }, senderBuilder -> senderBuilder
+                        .httpTimeout(100)
+                        .maxRetries(0)
+        );
     }
 
     @Test

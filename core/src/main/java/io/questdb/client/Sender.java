@@ -260,10 +260,12 @@ public interface Sender extends Closeable {
         private static final byte BUFFER_CAPACITY_DEFAULT = 0;
         private static final int DEFAULT_BUFFER_CAPACITY = 64 * 1024;
         private static final int DEFAULT_HTTP_PORT = 9000;
+        private static final int DEFAULT_HTTP_TIMEOUT = 60_000;
         private static final int DEFAULT_MAXIMUM_BUFFER_CAPACITY = 20 * 1024 * 1024; // 20MB -- todo: sync with Rust client
         private static final int DEFAULT_MAX_PENDING_ROWS = 10_000;
         private static final int DEFAULT_MAX_RETRIES = 3;
         private static final int DEFAULT_TCP_PORT = 9009;
+        private static final int HTTP_TIMEOUT_DEFAULT = -1;
         private static final int MAX_PENDING_ROWS_DEFAULT = -1;
         private static final int MAX_RETRIES_DEFAULT = -1;
         private static final int MIN_BUFFER_SIZE_FOR_AUTH = 512 + 1; // challenge size + 1;
@@ -273,6 +275,7 @@ public interface Sender extends Closeable {
         private static final int PROTOCOL_DEFAULT = PROTOCOL_TCP;
         private int bufferCapacity = BUFFER_CAPACITY_DEFAULT;
         private String host;
+        private int httpTimeout = HTTP_TIMEOUT_DEFAULT;
         private String httpToken;
         private String keyId;
         private int maxPendingRows = MAX_PENDING_ROWS_DEFAULT;
@@ -287,6 +290,11 @@ public interface Sender extends Closeable {
             @Override
             public int getMaximumRequestBufferSize() {
                 return maximumBufferCapacity == BUFFER_CAPACITY_DEFAULT ? DEFAULT_MAXIMUM_BUFFER_CAPACITY : maximumBufferCapacity;
+            }
+
+            @Override
+            public int getTimeout() {
+                return httpTimeout == HTTP_TIMEOUT_DEFAULT ? DEFAULT_HTTP_TIMEOUT : httpTimeout;
             }
         };
         private String password;
@@ -417,8 +425,6 @@ public interface Sender extends Closeable {
                 return new LineHttpSender(host, port, httpClientConfiguration, tlsConfig, actualMaxPendingRows, httpToken, username, password, actualMaxRetries);
             }
             assert protocol == PROTOCOL_TCP;
-
-
             LineChannel channel = new PlainTcpLineChannel(nf, host, port, bufferCapacity * 2);
             LineTcpSender sender;
             if (tlsEnabled) {
@@ -502,6 +508,27 @@ public interface Sender extends Closeable {
             }
             this.username = username;
             this.password = password;
+            return this;
+        }
+
+        /**
+         * Set timeout is milliseconds for HTTP requests. This is only used when communicating over HTTP protocol.
+         *
+         * @param httpTimeoutMillis timeout is milliseconds for HTTP requests.
+         * @return this instance for method chaining
+         */
+        public LineSenderBuilder httpTimeout(int httpTimeoutMillis) {
+            if (this.httpTimeout != HTTP_TIMEOUT_DEFAULT) {
+                throw new LineSenderException("HTTP timeout was already configured ")
+                        .put("[configured-timeout=").put(this.httpTimeout)
+                        .put(", timeout=").put(httpTimeoutMillis).put("]");
+            }
+            if (httpTimeoutMillis < 1) {
+                throw new LineSenderException("HTTP timeout must be positive ")
+                        .put("[timeout=").put(httpTimeoutMillis).put("]");
+
+            }
+            this.httpTimeout = httpTimeoutMillis;
             return this;
         }
 
@@ -718,6 +745,9 @@ public interface Sender extends Closeable {
                 }
                 if (maxRetries != MAX_RETRIES_DEFAULT) {
                     throw new LineSenderException("retrying is not supported for TCP protocol");
+                }
+                if (httpTimeout != HTTP_TIMEOUT_DEFAULT) {
+                    throw new LineSenderException("HTTP timeout is not supported for TCP protocol");
                 }
             } else {
                 throw new LineSenderException("unsupported protocol ")

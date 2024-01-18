@@ -7,11 +7,13 @@ import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.test.tools.TestUtils;
 
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 final class MockHttpProcessor implements HttpRequestProcessor, HttpMultipartContentListener {
@@ -21,6 +23,18 @@ final class MockHttpProcessor implements HttpRequestProcessor, HttpMultipartCont
     private final Queue<Response> responses = new ConcurrentLinkedQueue<>();
     private ActualRequest actualRequest = new ActualRequest();
     private ExpectedRequest expectedRequest = new ExpectedRequest();
+
+    public MockHttpProcessor delayedReplyWithStatus(int statusCode, CountDownLatch delayLatch) {
+        Response response = new Response();
+        response.responseStatusCode = statusCode;
+        response.delayLatch = delayLatch;
+        responses.add(response);
+
+        expectedRequests.add(expectedRequest);
+        expectedRequest = new ExpectedRequest();
+
+        return this;
+    }
 
     @Override
     public void onChunk(long lo, long hi) {
@@ -56,6 +70,9 @@ final class MockHttpProcessor implements HttpRequestProcessor, HttpMultipartCont
         Response response = responses.poll();
         if (response == null) {
             throw new AssertionError("No response configured for request: " + actualRequest);
+        }
+        if (response.delayLatch != null) {
+            TestUtils.await(response.delayLatch);
         }
         if (response.responseContent != null) {
             HttpChunkedResponse chunkedResponseSocket = context.getChunkedResponse();
@@ -159,6 +176,7 @@ final class MockHttpProcessor implements HttpRequestProcessor, HttpMultipartCont
 
     private static class Response {
         private String contentType;
+        private CountDownLatch delayLatch;
         private String responseContent;
         private int responseStatusCode;
     }
