@@ -32,7 +32,6 @@ import io.questdb.cutlass.text.Atomicity;
 import io.questdb.cutlass.text.TextException;
 import io.questdb.cutlass.text.TextLoadWarning;
 import io.questdb.cutlass.text.TextLoader;
-import io.questdb.cutlass.text.schema2.Column;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
@@ -161,7 +160,8 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                     getAtomicity(rh.getUrlParam(URL_PARAM_ATOMICITY)),
                     partitionBy,
                     isTimestampColumnNameBlank ? null : timestampColumnName,
-                    null
+                    null,
+                    Utf8s.equalsIgnoreCaseNcAscii("true", rh.getUrlParam(URL_PARAM_TRUNCATE))
             );
 
             DirectUtf8Sequence o3MaxLagChars = rh.getUrlParam(URL_PARAM_O3_MAX_LAG);
@@ -190,7 +190,11 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
 
             boolean forceHeader = Utf8s.equalsIgnoreCaseNcAscii("true", rh.getUrlParam(URL_PARAM_FORCE_HEADER));
             transientState.textLoader.setForceHeaders(forceHeader);
-            transientState.textLoader.setSkipLinesWithExtraValues(Utf8s.equalsIgnoreCaseNcAscii("true", rh.getUrlParam(URL_PARAM_SKIP_LEV)));
+            DirectUtf8Sequence skipLev = rh.getUrlParam(URL_PARAM_SKIP_LEV);
+            if (skipLev == null) {
+                skipLev = rh.getUrlParam(URL_PARAM_SKIP_LINE_EXTRA_VALUES);
+            }
+            transientState.textLoader.setSkipLinesWithExtraValues(Utf8s.equalsIgnoreCaseNcAscii("true", skipLev));
             DirectUtf8Sequence delimiter = rh.getUrlParam(URL_PARAM_DELIMITER);
             if (delimiter != null && delimiter.size() == 1) {
                 transientState.textLoader.configureColumnDelimiter(delimiter.byteAt(0));
@@ -328,7 +332,6 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     // add list of errors, e.g. unmapped schema or table columns
     private static void putErrors(TextImportProcessorState state, HttpChunkedResponseSocket socket) {
         IntList unmappedSchemaColumnIndexes = state.textLoader.getUnmappedSchemaColumnIndexes();
-        //ObjList<CharSequence> unmappedTableColumns = state.textLoader.getUnmappedTableColumns();
 
         if (state.errorMessage == null
                 && unmappedSchemaColumnIndexes.size() == 0) {
@@ -344,76 +347,6 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         sep(socket);
 
         putMultiline(socket, state.errorMessage);
-
-        StringSink sink = new StringSink();
-        if (unmappedSchemaColumnIndexes.size() > 0) {
-            sink.clear();
-            sink.put("Unmapped schema columns: ");
-            ObjList<Column> schemaColumnList = state.textLoader.getSchema().getColumnList();
-
-            for (int i = 0, n = unmappedSchemaColumnIndexes.size(); i < n; i++) {
-                Column column = schemaColumnList.getQuick(unmappedSchemaColumnIndexes.getQuick(i));
-
-                int csvColumnIndex = column.getFileColumnIndex();
-                CharSequence csvColumnName = column.getFileColumnName();
-                int csvColumnType = column.getColumnType();
-                CharSequence tableColumnName = column.getTableColumnName();
-
-                if (i > 0) {
-                    sink.put(',');
-                }
-
-                boolean isFirst = true;
-
-                sink.put("[");
-                if (csvColumnIndex > -1) {
-                    if (!isFirst) {
-                        sink.put(',');
-                    }
-                    isFirst = false;
-                    sink.put("csvIndex=").put(csvColumnIndex);
-                }
-                if (csvColumnName != null) {
-                    if (!isFirst) {
-                        sink.put(',');
-                    }
-                    isFirst = false;
-                    sink.put("csvColumnName=").put(csvColumnName);
-                }
-                if (csvColumnType > -1) {
-                    if (!isFirst) {
-                        sink.put(',');
-                    }
-                    isFirst = false;
-                    sink.put("csvColumnType=").put(ColumnType.nameOf(csvColumnType));
-                }
-
-                if (tableColumnName != null) {
-                    if (!isFirst) {
-                        sink.put(',');
-                    }
-                    sink.put("tableColumnName=").put(tableColumnName);
-                }
-                sink.put(']');
-            }
-            putMultiline(socket, sink);
-        }
-        /* unmapped table columns are shown in mapping
-        if (unmappedTableColumns.size() > 0) {
-            sink.clear();
-            sink.put("unmapped table columns = ");
-            for (int i = 0, n = unmappedTableColumns.size(); i < n; i += 2) {
-                if (i > 0) {
-                    sink.put(',');
-                }
-                sink.put("[")
-                        .put("columnName=").put(unmappedTableColumns.getQuick(i))
-                        .put(",columnType=").put(unmappedTableColumns.getQuick(i + 1))
-                        .put(']');
-            }
-
-            putMultiline(socket, sink);
-        }*/
     }
 
     // add mapping for all matching columns in format
@@ -450,7 +383,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                 pad(socket, CSV_COL_IDX_PAD, sink);
 
                 sink.clear();
-                sink.put(column.getCsvColumnName() != null ? column.getCsvColumnName() : "UNKNOWN");
+                sink.put(column.getCsvColumnName() != null ? column.getCsvColumnName() : (column.getCsvColumnIndex() != -1 ? "" : "UNKNOWN"));
                 pad(socket, CSV_COL_NAME_PAD, sink);
 
                 sink.clear();
@@ -462,7 +395,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                 pad(socket, TABLE_COL_NAME_PAD, sink);
 
                 sink.clear();
-                sink.put(ColumnType.nameOf(column.getTableColumnType()));
+                sink.put(column.getTableColumnType() > -1 ? ColumnType.nameOf(column.getTableColumnType()) : "UNKNOWN");
                 pad(socket, TABLE_COL_TYPE_PAD, sink);
 
                 sink.clear();
@@ -551,7 +484,6 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                                 .putAsciiQuoted("errors").putAscii(':').put(errors.getQuick(state.columnIndex));
                         socket.putAscii('}');
                     }
-                    //TODO: refactor
                     if (state.columnIndex == columnCount) {
                         socket.bookmark();
                         socket.putAscii(']').putAscii(',');

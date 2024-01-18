@@ -248,6 +248,8 @@ public class TypeManager implements Mutable {
 
     private void addDefaultAdapters() {
         defaultTypeAdapterList.add(getTypeAdapter(ColumnType.CHAR));
+        // TODO: it might be safer to push INT to non-default list to avoid choosing INT when start of file contains small
+        // values that grow beyond INTs range later on ()
         defaultTypeAdapterList.add(getTypeAdapter(ColumnType.INT));
         defaultTypeAdapterList.add(getTypeAdapter(ColumnType.LONG));
         defaultTypeAdapterList.add(getTypeAdapter(ColumnType.DOUBLE));

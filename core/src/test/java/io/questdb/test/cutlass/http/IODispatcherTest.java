@@ -1428,22 +1428,16 @@ public class IODispatcherTest extends AbstractTest {
                                     "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
                                     "|  Idx  |            Csv name  |     Csv type  |        Table column  |   Table type  |                   Status  |\r\n" +
                                     "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
-                                    "|    0  |             UNKNOWN  |       STRING  |             UNKNOWN  |      unknown  |                 UNMAPPED  |\r\n" +
-                                    "|    1  |             UNKNOWN  |       STRING  |             UNKNOWN  |      unknown  |                 UNMAPPED  |\r\n" +
-                                    "|    2  |             UNKNOWN  |       STRING  |             UNKNOWN  |      unknown  |                 UNMAPPED  |\r\n" +
-                                    "|    3  |             UNKNOWN  |       STRING  |             UNKNOWN  |      unknown  |                 UNMAPPED  |\r\n" +
-                                    "|    4  |             UNKNOWN  |         CHAR  |             UNKNOWN  |      unknown  |                 UNMAPPED  |\r\n" +
-                                    "|    5  |             UNKNOWN  |         CHAR  |             UNKNOWN  |      unknown  |                 UNMAPPED  |\r\n" +
-                                    "|       |             UNKNOWN  |      UNKNOWN  |Dispatching_base_num  |       STRING  |                 UNMAPPED  |\r\n" +
-                                    "|       |             UNKNOWN  |      UNKNOWN  |     Pickup_DateTime  |    TIMESTAMP  |                 UNMAPPED  |\r\n" +
-                                    "|       |             UNKNOWN  |      UNKNOWN  |    DropOff_datetime  |       STRING  |                 UNMAPPED  |\r\n" +
-                                    "|       |             UNKNOWN  |      UNKNOWN  |        PUlocationID  |       STRING  |                 UNMAPPED  |\r\n" +
-                                    "|       |             UNKNOWN  |      UNKNOWN  |        DOlocationID  |       STRING  |                 UNMAPPED  |\r\n" +
+                                    "|    0  |                      |       STRING  |             UNKNOWN  |      UNKNOWN  |                 UNMAPPED  |\r\n" +
+                                    "|    1  |                      |       STRING  |             UNKNOWN  |      UNKNOWN  |                 UNMAPPED  |\r\n" +
+                                    "|    2  |                      |       STRING  |             UNKNOWN  |      UNKNOWN  |                 UNMAPPED  |\r\n" +
+                                    "|    3  |                      |       STRING  |             UNKNOWN  |      UNKNOWN  |                 UNMAPPED  |\r\n" +
+                                    "|    4  |                      |         CHAR  |             UNKNOWN  |      UNKNOWN  |                 UNMAPPED  |\r\n" +
+                                    "|    5  |                      |         CHAR  |             UNKNOWN  |      UNKNOWN  |                 UNMAPPED  |\r\n" +
                                     "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
                                     "|  Errors                                                                                                         |\r\n" +
                                     "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
-                                    "|  mapping error(s) [unmapped schema column(s),unmapped csv column(s),unmapped table column(s)]                   |\r\n" +
-                                    "|  Unmapped schema columns: [csvColumnName=date,csvColumnType=DATE]                                               |\r\n" +
+                                    "|  column mapping is invalid [unmapped_schema_column_indexes=[0],unmapped_csv_column_indexes=[0,1,2,3,4,5]]       |\r\n" +
                                     "+-----------------------------------------------------------------------------------------------------------------+\r\n",
                             "[\r\n" +
                                     "  {\r\n" +
@@ -1729,8 +1723,8 @@ public class IODispatcherTest extends AbstractTest {
                                                 "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
                                                 "|  Idx  |            Csv name  |     Csv type  |        Table column  |   Table type  |                   Status  |\r\n" +
                                                 "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
-                                                "|    0  |             UNKNOWN  |    TIMESTAMP  |                  ts  |    TIMESTAMP  |                       OK  |\r\n" +
-                                                "|    1  |             UNKNOWN  |          INT  |               value  |          INT  |                       OK  |\r\n" +
+                                                "|    0  |                      |    TIMESTAMP  |                  ts  |    TIMESTAMP  |                       OK  |\r\n" +
+                                                "|    1  |                      |          INT  |               value  |          INT  |                       OK  |\r\n" +
                                                 "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
                                                 "\r\n" +
                                                 "00\r\n" +
@@ -2061,14 +2055,12 @@ public class IODispatcherTest extends AbstractTest {
                                         "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
                                         "|  Idx  |            Csv name  |     Csv type  |        Table column  |   Table type  |                   Status  |\r\n" +
                                         "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
-                                        "|    0  |             UNKNOWN  |          INT  |             UNKNOWN  |      unknown  |                 UNMAPPED  |\r\n" +
-                                        "|    1  |             UNKNOWN  |          INT  |             UNKNOWN  |      unknown  |                 UNMAPPED  |\r\n" +
-                                        "|       |             UNKNOWN  |      UNKNOWN  |               col_a  |          INT  |                 UNMAPPED  |\r\n" +
-                                        "|       |             UNKNOWN  |      UNKNOWN  |               col_b  |         LONG  |                 UNMAPPED  |\r\n" +
+                                        "|    0  |                      |          INT  |             UNKNOWN  |      UNKNOWN  |                 UNMAPPED  |\r\n" +
+                                        "|    1  |                      |          INT  |             UNKNOWN  |      UNKNOWN  |                 UNMAPPED  |\r\n" +
                                         "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
                                         "|  Errors                                                                                                         |\r\n" +
                                         "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
-                                        "|  mapping error(s) [unmapped csv column(s),unmapped table column(s)]                                             |\r\n" +
+                                        "|  column mapping is invalid [unmapped_csv_column_indexes=[0,1]]                                                  |\r\n" +
                                         "+-----------------------------------------------------------------------------------------------------------------+\r\n",
                                 null,
                                 "1000,1000\r\n" +
@@ -2107,8 +2099,8 @@ public class IODispatcherTest extends AbstractTest {
                                         "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
                                         "|  Idx  |            Csv name  |     Csv type  |        Table column  |   Table type  |                   Status  |\r\n" +
                                         "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
-                                        "|    0  |             UNKNOWN  |          INT  |               col_a  |          INT  |                       OK  |\r\n" +
-                                        "|    1  |             UNKNOWN  |         LONG  |               col_b  |         LONG  |                       OK  |\r\n" +
+                                        "|    0  |                      |          INT  |               col_a  |          INT  |                       OK  |\r\n" +
+                                        "|    1  |                      |         LONG  |               col_b  |         LONG  |                       OK  |\r\n" +
                                         "+-----------------------------------------------------------------------------------------------------------------+\r\n",
                                 "{\n" +
                                         "  \"columns\": [\r\n" +
@@ -2458,9 +2450,9 @@ public class IODispatcherTest extends AbstractTest {
                         "Transfer-Encoding: chunked\r\n" +
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "\r\n" +
-                        "13e6\r\n" +
+                        "122e\r\n" +
                         "{\"status\":\"OK\",\"location\":\"clipboard-157200856\",\"rowsRejected\":0,\"rowsImported\":59,\"header\":true,\"partitionBy\":\"NONE\",\"columns\":[{\"name\":\"VendorID\",\"type\":\"INT\",\"size\":4,\"errors\":0},{\"name\":\"lpep_pickup_datetime\",\"type\":\"TIMESTAMP\",\"size\":8,\"errors\":0},{\"name\":\"Lpep_dropoff_datetime\",\"type\":\"TIMESTAMP\",\"size\":8,\"errors\":0},{\"name\":\"Store_and_fwd_flag\",\"type\":\"CHAR\",\"size\":2,\"errors\":0},{\"name\":\"RateCodeID\",\"type\":\"INT\",\"size\":4,\"errors\":0},{\"name\":\"Pickup_longitude\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Pickup_latitude\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Dropoff_longitude\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Dropoff_latitude\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Passenger_count\",\"type\":\"INT\",\"size\":4,\"errors\":0},{\"name\":\"Trip_distance\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Fare_amount\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Extra\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"MTA_tax\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Tip_amount\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Tolls_amount\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Ehail_fee\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Total_amount\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Payment_type\",\"type\":\"INT\",\"size\":4,\"errors\":0},{\"name\":\"Trip_type\",\"type\":\"INT\",\"size\":4,\"errors\":0}]," +
-                        "\"mapping\":[{\"file_column_name\":\"VendorID\",\"file_column_index\":0,\"file_column_ignore\":false,\"column_type\":\"INT\",\"table_column_name\":\"VendorID\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"lpep_pickup_datetime\",\"file_column_index\":1,\"file_column_ignore\":false,\"column_type\":\"TIMESTAMP\",\"table_column_name\":\"lpep_pickup_datetime\",\"insert_null\":\"false\",\"formats\":[{\"pattern\":\"yyyy-MM-dd HH:mm:ss\",\"locale\":\"en\",\"utf8\":false}]},{\"file_column_name\":\"Lpep_dropoff_datetime\",\"file_column_index\":2,\"file_column_ignore\":false,\"column_type\":\"TIMESTAMP\",\"table_column_name\":\"Lpep_dropoff_datetime\",\"insert_null\":\"false\",\"formats\":[{\"pattern\":\"yyyy-MM-dd HH:mm:ss\",\"locale\":\"en\",\"utf8\":false}]},{\"file_column_name\":\"Store_and_fwd_flag\",\"file_column_index\":3,\"file_column_ignore\":false,\"column_type\":\"CHAR\",\"table_column_name\":\"Store_and_fwd_flag\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"RateCodeID\",\"file_column_index\":4,\"file_column_ignore\":false,\"column_type\":\"INT\",\"table_column_name\":\"RateCodeID\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Pickup_longitude\",\"file_column_index\":5,\"file_column_ignore\":false,\"column_type\":\"DOUBLE\",\"table_column_name\":\"Pickup_longitude\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Pickup_latitude\",\"file_column_index\":6,\"file_column_ignore\":false,\"column_type\":\"DOUBLE\",\"table_column_name\":\"Pickup_latitude\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Dropoff_longitude\",\"file_column_index\":7,\"file_column_ignore\":false,\"column_type\":\"DOUBLE\",\"table_column_name\":\"Dropoff_longitude\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Dropoff_latitude\",\"file_column_index\":8,\"file_column_ignore\":false,\"column_type\":\"DOUBLE\",\"table_column_name\":\"Dropoff_latitude\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Passenger_count\",\"file_column_index\":9,\"file_column_ignore\":false,\"column_type\":\"INT\",\"table_column_name\":\"Passenger_count\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Trip_distance\",\"file_column_index\":10,\"file_column_ignore\":false,\"column_type\":\"DOUBLE\",\"table_column_name\":\"Trip_distance\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Fare_amount\",\"file_column_index\":11,\"file_column_ignore\":false,\"column_type\":\"DOUBLE\",\"table_column_name\":\"Fare_amount\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Extra\",\"file_column_index\":12,\"file_column_ignore\":false,\"column_type\":\"DOUBLE\",\"table_column_name\":\"Extra\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"MTA_tax\",\"file_column_index\":13,\"file_column_ignore\":false,\"column_type\":\"DOUBLE\",\"table_column_name\":\"MTA_tax\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Tip_amount\",\"file_column_index\":14,\"file_column_ignore\":false,\"column_type\":\"DOUBLE\",\"table_column_name\":\"Tip_amount\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Tolls_amount\",\"file_column_index\":15,\"file_column_ignore\":false,\"column_type\":\"DOUBLE\",\"table_column_name\":\"Tolls_amount\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Ehail_fee\",\"file_column_index\":16,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Ehail_fee\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Total_amount\",\"file_column_index\":17,\"file_column_ignore\":false,\"column_type\":\"DOUBLE\",\"table_column_name\":\"Total_amount\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Payment_type\",\"file_column_index\":18,\"file_column_ignore\":false,\"column_type\":\"INT\",\"table_column_name\":\"Payment_type\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Trip_type\",\"file_column_index\":19,\"file_column_ignore\":false,\"column_type\":\"INT\",\"table_column_name\":\"Trip_type\",\"insert_null\":\"false\",\"formats\":[{}]}]}\r\n" +
+                        "\"mapping\":[{\"file_column_name\":\"VendorID\",\"file_column_index\":0,\"file_column_ignore\":false,\"column_type\":\"INT\",\"table_column_name\":\"VendorID\",\"formats\":[{}]},{\"file_column_name\":\"lpep_pickup_datetime\",\"file_column_index\":1,\"file_column_ignore\":false,\"column_type\":\"TIMESTAMP\",\"table_column_name\":\"lpep_pickup_datetime\",\"formats\":[{\"pattern\":\"yyyy-MM-dd HH:mm:ss\",\"locale\":\"en\",\"utf8\":false}]},{\"file_column_name\":\"Lpep_dropoff_datetime\",\"file_column_index\":2,\"file_column_ignore\":false,\"column_type\":\"TIMESTAMP\",\"table_column_name\":\"Lpep_dropoff_datetime\",\"formats\":[{\"pattern\":\"yyyy-MM-dd HH:mm:ss\",\"locale\":\"en\",\"utf8\":false}]},{\"file_column_name\":\"Store_and_fwd_flag\",\"file_column_index\":3,\"file_column_ignore\":false,\"column_type\":\"CHAR\",\"table_column_name\":\"Store_and_fwd_flag\",\"formats\":[{}]},{\"file_column_name\":\"RateCodeID\",\"file_column_index\":4,\"file_column_ignore\":false,\"column_type\":\"INT\",\"table_column_name\":\"RateCodeID\",\"formats\":[{}]},{\"file_column_name\":\"Pickup_longitude\",\"file_column_index\":5,\"file_column_ignore\":false,\"column_type\":\"DOUBLE\",\"table_column_name\":\"Pickup_longitude\",\"formats\":[{}]},{\"file_column_name\":\"Pickup_latitude\",\"file_column_index\":6,\"file_column_ignore\":false,\"column_type\":\"DOUBLE\",\"table_column_name\":\"Pickup_latitude\",\"formats\":[{}]},{\"file_column_name\":\"Dropoff_longitude\",\"file_column_index\":7,\"file_column_ignore\":false,\"column_type\":\"DOUBLE\",\"table_column_name\":\"Dropoff_longitude\",\"formats\":[{}]},{\"file_column_name\":\"Dropoff_latitude\",\"file_column_index\":8,\"file_column_ignore\":false,\"column_type\":\"DOUBLE\",\"table_column_name\":\"Dropoff_latitude\",\"formats\":[{}]},{\"file_column_name\":\"Passenger_count\",\"file_column_index\":9,\"file_column_ignore\":false,\"column_type\":\"INT\",\"table_column_name\":\"Passenger_count\",\"formats\":[{}]},{\"file_column_name\":\"Trip_distance\",\"file_column_index\":10,\"file_column_ignore\":false,\"column_type\":\"DOUBLE\",\"table_column_name\":\"Trip_distance\",\"formats\":[{}]},{\"file_column_name\":\"Fare_amount\",\"file_column_index\":11,\"file_column_ignore\":false,\"column_type\":\"DOUBLE\",\"table_column_name\":\"Fare_amount\",\"formats\":[{}]},{\"file_column_name\":\"Extra\",\"file_column_index\":12,\"file_column_ignore\":false,\"column_type\":\"DOUBLE\",\"table_column_name\":\"Extra\",\"formats\":[{}]},{\"file_column_name\":\"MTA_tax\",\"file_column_index\":13,\"file_column_ignore\":false,\"column_type\":\"DOUBLE\",\"table_column_name\":\"MTA_tax\",\"formats\":[{}]},{\"file_column_name\":\"Tip_amount\",\"file_column_index\":14,\"file_column_ignore\":false,\"column_type\":\"DOUBLE\",\"table_column_name\":\"Tip_amount\",\"formats\":[{}]},{\"file_column_name\":\"Tolls_amount\",\"file_column_index\":15,\"file_column_ignore\":false,\"column_type\":\"DOUBLE\",\"table_column_name\":\"Tolls_amount\",\"formats\":[{}]},{\"file_column_name\":\"Ehail_fee\",\"file_column_index\":16,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Ehail_fee\",\"formats\":[{}]},{\"file_column_name\":\"Total_amount\",\"file_column_index\":17,\"file_column_ignore\":false,\"column_type\":\"DOUBLE\",\"table_column_name\":\"Total_amount\",\"formats\":[{}]},{\"file_column_name\":\"Payment_type\",\"file_column_index\":18,\"file_column_ignore\":false,\"column_type\":\"INT\",\"table_column_name\":\"Payment_type\",\"formats\":[{}]},{\"file_column_name\":\"Trip_type\",\"file_column_index\":19,\"file_column_ignore\":false,\"column_type\":\"INT\",\"table_column_name\":\"Trip_type\",\"formats\":[{}]}]}\r\n" +
                         "00\r\n" +
                         "\r\n",
                 "POST /upload?fmt=json&overwrite=true&forceHeader=true&name=clipboard-157200856 HTTP/1.1\r\n" +
@@ -2624,11 +2616,11 @@ public class IODispatcherTest extends AbstractTest {
                         "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
                         "|  Idx  |            Csv name  |     Csv type  |        Table column  |   Table type  |                   Status  |\r\n" +
                         "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
-                        "|    0  |             UNKNOWN  |       STRING  |                  f0  |       STRING  |                       OK  |\r\n" +
-                        "|    1  |             UNKNOWN  |       STRING  |                  f1  |       STRING  |                       OK  |\r\n" +
-                        "|    2  |             UNKNOWN  |       STRING  |                  f2  |       STRING  |                       OK  |\r\n" +
-                        "|    3  |             UNKNOWN  |       DOUBLE  |                  f3  |       DOUBLE  |                       OK  |\r\n" +
-                        "|    4  |             UNKNOWN  |    TIMESTAMP  |                  f4  |    TIMESTAMP  |                       OK  |\r\n" +
+                        "|    0  |                      |       STRING  |                  f0  |       STRING  |                       OK  |\r\n" +
+                        "|    1  |                      |       STRING  |                  f1  |       STRING  |                       OK  |\r\n" +
+                        "|    2  |                      |       STRING  |                  f2  |       STRING  |                       OK  |\r\n" +
+                        "|    3  |                      |       DOUBLE  |                  f3  |       DOUBLE  |                       OK  |\r\n" +
+                        "|    4  |                      |    TIMESTAMP  |                  f4  |    TIMESTAMP  |                       OK  |\r\n" +
                         "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
                         "\r\n" +
                         "00\r\n" +
@@ -2664,8 +2656,8 @@ public class IODispatcherTest extends AbstractTest {
                         "Transfer-Encoding: chunked\r\n" +
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "\r\n" +
-                        "1389\r\n" +
-                        "{\"status\":\"OK\",\"location\":\"clipboard-157200856\",\"rowsRejected\":59,\"rowsImported\":59,\"header\":true,\"partitionBy\":\"NONE\",\"columns\":[{\"name\":\"VendorID\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"lpep_pickup_datetime\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Lpep_dropoff_datetime\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Store_and_fwd_flag\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"RateCodeID\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Pickup_longitude\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Pickup_latitude\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Dropoff_longitude\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Dropoff_latitude\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Passenger_count\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Trip_distance\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Fare_amount\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Extra\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"MTA_tax\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Tip_amount\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Tolls_amount\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Ehail_fee\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Total_amount\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Payment_type\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Trip_type\",\"type\":\"STRING\",\"size\":0,\"errors\":0}],\"mapping\":[{\"file_column_name\":\"VendorID\",\"file_column_index\":0,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"VendorID\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"lpep_pickup_datetime\",\"file_column_index\":1,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"lpep_pickup_datetime\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Lpep_dropoff_datetime\",\"file_column_index\":2,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Lpep_dropoff_datetime\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Store_and_fwd_flag\",\"file_column_index\":3,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Store_and_fwd_flag\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"RateCodeID\",\"file_column_index\":4,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"RateCodeID\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Pickup_longitude\",\"file_column_index\":5,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Pickup_longitude\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Pickup_latitude\",\"file_column_index\":6,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Pickup_latitude\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Dropoff_longitude\",\"file_column_index\":7,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Dropoff_longitude\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Dropoff_latitude\",\"file_column_index\":8,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Dropoff_latitude\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Passenger_count\",\"file_column_index\":9,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Passenger_count\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Trip_distance\",\"file_column_index\":10,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Trip_distance\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Fare_amount\",\"file_column_index\":11,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Fare_amount\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Extra\",\"file_column_index\":12,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Extra\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"MTA_tax\",\"file_column_index\":13,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"MTA_tax\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Tip_amount\",\"file_column_index\":14,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Tip_amount\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Tolls_amount\",\"file_column_index\":15,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Tolls_amount\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Ehail_fee\",\"file_column_index\":16,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Ehail_fee\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Total_amount\",\"file_column_index\":17,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Total_amount\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Payment_type\",\"file_column_index\":18,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Payment_type\",\"insert_null\":\"false\",\"formats\":[{}]},{\"file_column_name\":\"Trip_type\",\"file_column_index\":19,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Trip_type\",\"insert_null\":\"false\",\"formats\":[{}]}]}\r\n" +
+                        "11d1\r\n" +
+                        "{\"status\":\"OK\",\"location\":\"clipboard-157200856\",\"rowsRejected\":59,\"rowsImported\":59,\"header\":true,\"partitionBy\":\"NONE\",\"columns\":[{\"name\":\"VendorID\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"lpep_pickup_datetime\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Lpep_dropoff_datetime\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Store_and_fwd_flag\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"RateCodeID\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Pickup_longitude\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Pickup_latitude\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Dropoff_longitude\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Dropoff_latitude\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Passenger_count\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Trip_distance\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Fare_amount\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Extra\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"MTA_tax\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Tip_amount\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Tolls_amount\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Ehail_fee\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Total_amount\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Payment_type\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Trip_type\",\"type\":\"STRING\",\"size\":0,\"errors\":0}],\"mapping\":[{\"file_column_name\":\"VendorID\",\"file_column_index\":0,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"VendorID\",\"formats\":[{}]},{\"file_column_name\":\"lpep_pickup_datetime\",\"file_column_index\":1,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"lpep_pickup_datetime\",\"formats\":[{}]},{\"file_column_name\":\"Lpep_dropoff_datetime\",\"file_column_index\":2,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Lpep_dropoff_datetime\",\"formats\":[{}]},{\"file_column_name\":\"Store_and_fwd_flag\",\"file_column_index\":3,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Store_and_fwd_flag\",\"formats\":[{}]},{\"file_column_name\":\"RateCodeID\",\"file_column_index\":4,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"RateCodeID\",\"formats\":[{}]},{\"file_column_name\":\"Pickup_longitude\",\"file_column_index\":5,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Pickup_longitude\",\"formats\":[{}]},{\"file_column_name\":\"Pickup_latitude\",\"file_column_index\":6,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Pickup_latitude\",\"formats\":[{}]},{\"file_column_name\":\"Dropoff_longitude\",\"file_column_index\":7,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Dropoff_longitude\",\"formats\":[{}]},{\"file_column_name\":\"Dropoff_latitude\",\"file_column_index\":8,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Dropoff_latitude\",\"formats\":[{}]},{\"file_column_name\":\"Passenger_count\",\"file_column_index\":9,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Passenger_count\",\"formats\":[{}]},{\"file_column_name\":\"Trip_distance\",\"file_column_index\":10,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Trip_distance\",\"formats\":[{}]},{\"file_column_name\":\"Fare_amount\",\"file_column_index\":11,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Fare_amount\",\"formats\":[{}]},{\"file_column_name\":\"Extra\",\"file_column_index\":12,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Extra\",\"formats\":[{}]},{\"file_column_name\":\"MTA_tax\",\"file_column_index\":13,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"MTA_tax\",\"formats\":[{}]},{\"file_column_name\":\"Tip_amount\",\"file_column_index\":14,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Tip_amount\",\"formats\":[{}]},{\"file_column_name\":\"Tolls_amount\",\"file_column_index\":15,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Tolls_amount\",\"formats\":[{}]},{\"file_column_name\":\"Ehail_fee\",\"file_column_index\":16,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Ehail_fee\",\"formats\":[{}]},{\"file_column_name\":\"Total_amount\",\"file_column_index\":17,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Total_amount\",\"formats\":[{}]},{\"file_column_name\":\"Payment_type\",\"file_column_index\":18,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Payment_type\",\"formats\":[{}]},{\"file_column_name\":\"Trip_type\",\"file_column_index\":19,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Trip_type\",\"formats\":[{}]}]}\r\n" +
                         "00\r\n" +
                         "\r\n",
                 "POST /upload?fmt=json&overwrite=true&forceHeader=true&skipLev=true&name=clipboard-157200856 HTTP/1.1\r\n" +
@@ -2758,14 +2750,67 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testImportWithIncompleteMappingFailsInJsonFormat() throws Exception {
+        testImportWithBadMappingFailsInTextFormat("json",
+                "{\"status\":\"ERROR\",\"location\":\"test\",\"rowsRejected\":0,\"rowsImported\":0,\"header\":true,\"partitionBy\":\"NONE\"," +
+                        "\"errors\":[\"column mapping is invalid [unmapped_schema_column_indexes=[0,1,2,3,5,6],unmapped_csv_column_indexes=[1,2,3,4,5,6],ambiguous_table_column_names=[dup1]]\"]," +
+                        "\"columns\":[]," +
+                        "\"mapping\":[" +
+                        "{\"file_column_name\":\"col_a\",\"file_column_index\":0,\"file_column_ignore\":false,\"column_type\":\"INT\",\"table_column_name\":\"col_a\",\"formats\":[{}]}," +
+                        "{\"file_column_name\":\"short\",\"file_column_index\":1,\"file_column_ignore\":false,\"column_type\":\"SHORT\",\"table_column_name\":\"\",\"formats\":[{},\"errors\": [\"Unmapped column\",\"Bad table column reference\"]]}," +
+                        "{\"file_column_name\":\"bad_short\",\"file_column_index\":2,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"\",\"formats\":[{},\"errors\": [\"Unmapped column\",\"Bad table column reference\"]]}," +
+                        "{\"file_column_name\":\"byte\",\"file_column_index\":3,\"file_column_ignore\":false,\"column_type\":\"BYTE\",\"table_column_name\":\"\",\"formats\":[{},\"errors\": [\"Unmapped column\",\"Bad table column reference\"]]}," +
+                        "{\"file_column_name\":\"bad_byte\",\"file_column_index\":4,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"\",\"formats\":[{},\"errors\": [\"Unmapped column\",\"Bad table column reference\"]]}," +
+                        "{\"file_column_name\":\"int\",\"file_column_index\":5,\"file_column_ignore\":false,\"column_type\":\"INT\",\"table_column_name\":\"\",\"formats\":[{},\"errors\": [\"Unmapped column\",\"Bad table column reference\"]]}," +
+                        "{\"file_column_name\":\"other\",\"file_column_index\":6,\"file_column_ignore\":false,\"column_type\":\"CHAR\",\"table_column_name\":\"\",\"formats\":[{},\"errors\": [\"Unmapped column\"]]}," +
+                        "{\"file_column_name\":\"d\",\"file_column_index\":7,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"dup1\",\"formats\":[{},\"errors\": [\"Duplicate table column reference\"]]}," +
+                        "{\"file_column_name\":\"dup1\",\"file_column_index\":8,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"dup1\",\"formats\":[{},\"errors\": [\"Duplicate table column reference\"]]}," +
+                        "{\"file_column_name\":\"wrong_csv\",\"file_column_index\":-1,\"file_column_ignore\":false,\"column_type\":\"\",\"table_column_name\":\"col_c\",\"formats\":[,\"errors\": [\"Bad csv column reference\"]]}," +
+                        "{\"file_column_name\":\"bogus\",\"file_column_index\":-1,\"file_column_ignore\":false,\"column_type\":\"\",\"table_column_name\":\"bogus\",\"formats\":[,\"errors\": [\"Bad csv column reference\",\"Bad table column reference\"]]}]}");
+    }
+
+    @Test
+    public void testImportWithIncompleteMappingFailsInTextFormat() throws Exception {
+        testImportWithBadMappingFailsInTextFormat(null,
+                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                        "|      Location:  |                                              test  |        Pattern  | Locale  |      Errors  |\r\n" +
+                        "|   Partition by  |                                              NONE  |                 |         |              |\r\n" +
+                        "|      Timestamp  |                                              NONE  |                 |         |              |\r\n" +
+                        "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                        "|   Rows handled  |                                                 0  |                 |         |              |\r\n" +
+                        "|  Rows imported  |                                                 0  |                 |         |              |\r\n" +
+                        "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                        "|  Idx  |            Csv name  |     Csv type  |        Table column  |   Table type  |                   Status  |\r\n" +
+                        "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                        "|    0  |               col_a  |          INT  |               col_a  |          INT  |                       OK  |\r\n" +
+                        "|    1  |               short  |        SHORT  |             UNKNOWN  |      UNKNOWN  |   UNMAPPED,BAD TABLE REF  |\r\n" +
+                        "|    2  |           bad_short  |       STRING  |             UNKNOWN  |      UNKNOWN  |   UNMAPPED,BAD TABLE REF  |\r\n" +
+                        "|    3  |                byte  |         BYTE  |             UNKNOWN  |      UNKNOWN  |   UNMAPPED,BAD TABLE REF  |\r\n" +
+                        "|    4  |            bad_byte  |       STRING  |             UNKNOWN  |      UNKNOWN  |   UNMAPPED,BAD TABLE REF  |\r\n" +
+                        "|    5  |                 int  |          INT  |             UNKNOWN  |      UNKNOWN  |   UNMAPPED,BAD TABLE REF  |\r\n" +
+                        "|    6  |               other  |         CHAR  |             UNKNOWN  |      UNKNOWN  |                 UNMAPPED  |\r\n" +
+                        "|    7  |                   d  |       STRING  |                dup1  |       STRING  |            DUP TABLE REF  |\r\n" +
+                        "|    8  |                dup1  |       STRING  |                dup1  |       STRING  |            DUP TABLE REF  |\r\n" +
+                        "|       |           wrong_csv  |      UNKNOWN  |               col_c  |      UNKNOWN  |              BAD CSV REF  |\r\n" +
+                        "|       |               bogus  |      UNKNOWN  |               bogus  |      UNKNOWN  |BAD CSV REF,BAD TABLE REF  |\r\n" +
+                        "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                        "|  Errors                                                                                                         |\r\n" +
+                        "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                        "|  column mapping is invalid [unmapped_schema_column_indexes=[0,1,2,3,5,6],unmapped_csv_column_indexes=[1,2,3,4,  |\r\n" +
+                        "|  6],ambiguous_table_column_names=[dup1]]                                                                        |\r\n" +
+                        "+-----------------------------------------------------------------------------------------------------------------+\r\n"
+        );
+    }
+
+    @Test
     public void testImportWithSingleCharacterColumnName() throws Exception {
         testImport(
                 engine -> testHttpClient.assertSendMultipart(
                         "{\"status\":\"OK\",\"location\":\"test\",\"rowsRejected\":0,\"rowsImported\":1,\"header\":true,\"partitionBy\":\"MONTH\",\"timestamp\":\"ts\"," +
                                 "\"columns\":[{\"name\":\"ts\",\"type\":\"TIMESTAMP\",\"size\":8,\"errors\":0},{\"name\":\"a\",\"type\":\"CHAR\",\"size\":2,\"errors\":0}]," +
                                 "\"mapping\":[" +
-                                "{\"file_column_name\":\"ts\",\"file_column_index\":0,\"file_column_ignore\":false,\"column_type\":\"TIMESTAMP\",\"table_column_name\":\"ts\",\"insert_null\":\"false\",\"formats\":[{\"pattern\":\"yyyy-MM-ddTHH:mm:ss.SSSUUUz\",\"locale\":\"en\",\"utf8\":false}]}," +
-                                "{\"file_column_name\":\"a\",\"file_column_index\":1,\"file_column_ignore\":false,\"column_type\":\"CHAR\",\"table_column_name\":\"a\",\"insert_null\":\"false\",\"formats\":[{}]}]" +
+                                "{\"file_column_name\":\"ts\",\"file_column_index\":0,\"file_column_ignore\":false,\"column_type\":\"TIMESTAMP\",\"table_column_name\":\"ts\",\"formats\":[{\"pattern\":\"yyyy-MM-ddTHH:mm:ss.SSSUUUz\",\"locale\":\"en\",\"utf8\":false}]}," +
+                                "{\"file_column_name\":\"a\",\"file_column_index\":1,\"file_column_ignore\":false,\"column_type\":\"CHAR\",\"table_column_name\":\"a\",\"formats\":[{}]}]" +
                                 "}",
                         null,
                         "ts,a\r\n" +
@@ -5478,8 +5523,8 @@ public class IODispatcherTest extends AbstractTest {
                                     "{\"name\":\"f0\",\"type\":\"LONG256\",\"size\":32,\"errors\":0}," +
                                     "{\"name\":\"f1\",\"type\":\"CHAR\",\"size\":2,\"errors\":0}]," +
                                     "\"mapping\":[" +
-                                    "{\"file_column_name\":\"\",\"file_column_index\":0,\"file_column_ignore\":false,\"column_type\":\"LONG256\",\"table_column_name\":\"f0\",\"insert_null\":\"false\",\"formats\":[{}]}," +
-                                    "{\"file_column_name\":\"\",\"file_column_index\":1,\"file_column_ignore\":false,\"column_type\":\"CHAR\",\"table_column_name\":\"f1\",\"insert_null\":\"false\",\"formats\":[{}]}" +
+                                    "{\"file_column_name\":\"\",\"file_column_index\":0,\"file_column_ignore\":false,\"column_type\":\"LONG256\",\"table_column_name\":\"f0\",\"formats\":[{}]}," +
+                                    "{\"file_column_name\":\"\",\"file_column_index\":1,\"file_column_ignore\":false,\"column_type\":\"CHAR\",\"table_column_name\":\"f1\",\"formats\":[{}]}" +
                                     "]}",
                             null,
                             "0x5c504ed432cb51138bcf09aa5e8a410dd4a1e204ef84bfed1be16dfba1b22060,a\n" +
@@ -8334,8 +8379,8 @@ public class IODispatcherTest extends AbstractTest {
                 "{\"name\":\"int\",\"type\":\"INT\",\"size\":4,\"errors\":0}" +
                 "]," +
                 "\"mapping\":[" +
-                "{\"file_column_name\":\"ts\",\"file_column_index\":0,\"file_column_ignore\":false,\"column_type\":\"TIMESTAMP\",\"table_column_name\":\"ts\",\"insert_null\":\"false\",\"formats\":[{\"pattern\":\"yyyy-MM-dd HH:mm:ss\",\"locale\":\"en\",\"utf8\":false}]}," +
-                "{\"file_column_name\":\"int\",\"file_column_index\":1,\"file_column_ignore\":false,\"column_type\":\"INT\",\"table_column_name\":\"int\",\"insert_null\":\"false\",\"formats\":[{}]}]" +
+                "{\"file_column_name\":\"ts\",\"file_column_index\":0,\"file_column_ignore\":false,\"column_type\":\"TIMESTAMP\",\"table_column_name\":\"ts\",\"formats\":[{\"pattern\":\"yyyy-MM-dd HH:mm:ss\",\"locale\":\"en\",\"utf8\":false}]}," +
+                "{\"file_column_name\":\"int\",\"file_column_index\":1,\"file_column_ignore\":false,\"column_type\":\"INT\",\"table_column_name\":\"int\",\"formats\":[{}]}]" +
                 "}\r\n";
 
         testImport(
@@ -8345,7 +8390,7 @@ public class IODispatcherTest extends AbstractTest {
                         "Transfer-Encoding: chunked\r\n" +
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "\r\n" +
-                        (partitionBy == PartitionBy.DAY ? "0275\r\n" : "0276\r\n") +
+                        (partitionBy == PartitionBy.DAY ? "0249\r\n" : "024a\r\n") +
                         expectedMetadata +
                         "00\r\n" +
                         "\r\n",
@@ -8438,8 +8483,8 @@ public class IODispatcherTest extends AbstractTest {
                 "{\"name\":\"ts\",\"type\":\"TIMESTAMP\",\"size\":8,\"errors\":0}," +
                 "{\"name\":\"int\",\"type\":\"INT\",\"size\":4,\"errors\":0}" +
                 "],\"mapping\":[" +
-                "{\"file_column_name\":\"ts\",\"file_column_index\":0,\"file_column_ignore\":false,\"column_type\":\"TIMESTAMP\",\"table_column_name\":\"ts\",\"insert_null\":\"false\",\"formats\":[{\"pattern\":\"yyyy-MM-dd HH:mm:ss\",\"locale\":\"en\",\"utf8\":false}]}," +
-                "{\"file_column_name\":\"int\",\"file_column_index\":1,\"file_column_ignore\":false,\"column_type\":\"INT\",\"table_column_name\":\"int\",\"insert_null\":\"false\",\"formats\":[{}]}]" +
+                "{\"file_column_name\":\"ts\",\"file_column_index\":0,\"file_column_ignore\":false,\"column_type\":\"TIMESTAMP\",\"table_column_name\":\"ts\",\"formats\":[{\"pattern\":\"yyyy-MM-dd HH:mm:ss\",\"locale\":\"en\",\"utf8\":false}]}," +
+                "{\"file_column_name\":\"int\",\"file_column_index\":1,\"file_column_ignore\":false,\"column_type\":\"INT\",\"table_column_name\":\"int\",\"formats\":[{}]}]" +
                 "}\r\n";
 
         testImport(
@@ -8449,7 +8494,7 @@ public class IODispatcherTest extends AbstractTest {
                         "Transfer-Encoding: chunked\r\n" +
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "\r\n" +
-                        "0275\r\n" +
+                        "0249\r\n" +
                         expectedMetadata +
                         "00\r\n" +
                         "\r\n",
@@ -8576,6 +8621,42 @@ public class IODispatcherTest extends AbstractTest {
                         testHttpClient.assertGet(url, expectedResponse, "SELECT * FROM y");
                     }
                 });
+    }
+
+    private void testImportWithBadMappingFailsInTextFormat(String responseFormat, String expected) throws Exception {
+        // mapping specifies non-default types and response shows those that
+        testImport(
+                engine -> {
+                    try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                        engine.ddl("create table test (col_a int, col_b long, col_c long, dup1 string)", executionContext);
+
+                        testHttpClient.assertSendMultipart(expected,
+                                "{  \"columns\": [  " +
+                                        " {  \"file_column_name\": \"short\", \"column_type\": \"short\" }, " +
+                                        " {  \"file_column_name\": \"bad_short\", \"column_type\": \"short\" }, " +
+                                        " {  \"file_column_name\": \"byte\", \"column_type\": \"byte\" }, " +
+                                        " {  \"file_column_name\": \"bad_byte\", \"column_type\": \"byte\" }, " +
+                                        " {  \"file_column_name\": \"wrong_csv\", \"table_column_name\": \"col_c\" }, " +
+                                        " {  \"file_column_name\": \"int\", \"table_column_name\": \"wrong_table\" }, " +
+                                        " {  \"file_column_name\": \"bogus\", \"table_column_name\": \"bogus\"  }, " +
+                                        " {  \"file_column_index\": 7, \"table_column_name\": \"dup1\"  } " +
+                                        "  ] }",
+                                TextImportProcessor.SCHEMA_V2,
+                                "col_a,short,bad_short,byte,bad_byte,int,other,d,dup1\r\n" +
+                                        "1000,10,1,1,200,1,a,uu,x\r\n" +
+                                        "2000,20,50000,2,1,2,b,ee,y\r\n" +
+                                        "3000,30,111111,3,-150,3,c,ff,z\r\n",
+                                null,
+                                "test",
+                                responseFormat,
+                                null,
+                                null,
+                                null,
+                                null
+                        );
+                    }
+                }
+        );
     }
 
     private HttpQueryTestBuilder testJsonQuery(int recordCount, String request, String expectedResponse, int requestCount, boolean telemetry) throws Exception {

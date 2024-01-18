@@ -47,11 +47,10 @@ public class SchemaV2Parser implements JsonParser, Mutable, Closeable {
     private static final int LVL_1_FORMATS = 2;
     private static final int LVL_1_FORMATS_ACTION = 3;
     private static final int LVL_2_COLUMN_TYPE = 3;
-    private static final int LVL_2_FILE_COLUMN_IGNORE = 6;
+    private static final int LVL_2_FILE_COLUMN_IGNORE = 5;
     private static final int LVL_2_FILE_COLUMN_INDEX = 2;
     private static final int LVL_2_FILE_COLUMN_NAME = 1;
-    private static final int LVL_2_FORMATS = 7;
-    private static final int LVL_2_TABLE_COLUMN_INSERT_NULL = 5;
+    private static final int LVL_2_FORMATS = 6;
     private static final int LVL_2_TABLE_COLUMN_NAME = 4;
     private static final int LVL_3_LOCALE = 2;
     private static final int LVL_3_PATTERN = 1;
@@ -94,7 +93,6 @@ public class SchemaV2Parser implements JsonParser, Mutable, Closeable {
     private int lvl3Index;
     private SchemaV2 schema;
     private int state = S_NEED_OBJECT;
-    private boolean tableColumnInsertNull;
     private CharSequence tableColumnName;
 
     public SchemaV2Parser(TextConfiguration textConfiguration, TypeManager typeManager) {
@@ -206,7 +204,6 @@ public class SchemaV2Parser implements JsonParser, Mutable, Closeable {
                                     case LVL_2_FILE_COLUMN_IGNORE:
                                     case LVL_2_COLUMN_TYPE:
                                     case LVL_2_TABLE_COLUMN_NAME:
-                                    case LVL_2_TABLE_COLUMN_INSERT_NULL:
                                         state = S_NEED_PROPERTY_VALUE;
                                         break;
                                     case LVL_2_FORMATS:
@@ -282,9 +279,6 @@ public class SchemaV2Parser implements JsonParser, Mutable, Closeable {
                                     case LVL_2_TABLE_COLUMN_NAME:
                                         tableColumnName = copy(tag);
                                         break;
-                                    case LVL_2_TABLE_COLUMN_INSERT_NULL:
-                                        tableColumnInsertNull = Chars.equalsIgnoreCaseNc("true", tag);
-                                        break;
                                     case LVL_2_FORMATS:
                                         // expect array of formats
                                         break;
@@ -334,7 +328,6 @@ public class SchemaV2Parser implements JsonParser, Mutable, Closeable {
                                         fileColumnIgnore,
                                         columnType,
                                         tableColumnName,
-                                        tableColumnInsertNull,
                                         formatsInFlight
                                 );
                                 formatsInFlight.clear();
@@ -412,7 +405,6 @@ public class SchemaV2Parser implements JsonParser, Mutable, Closeable {
         fileColumnIndex = -1;
         fileColumnIgnore = false;
         tableColumnName = null;
-        tableColumnInsertNull = false;
         columnType = -1;
     }
 
@@ -479,7 +471,6 @@ public class SchemaV2Parser implements JsonParser, Mutable, Closeable {
         lvl2Branches.put("file_column_ignore", LVL_2_FILE_COLUMN_IGNORE);
         lvl2Branches.put("column_type", LVL_2_COLUMN_TYPE);
         lvl2Branches.put("table_column_name", LVL_2_TABLE_COLUMN_NAME);
-        lvl2Branches.put("insert_null", LVL_2_TABLE_COLUMN_INSERT_NULL);
         lvl2Branches.put("formats", LVL_2_FORMATS);
 
         lvl3Branches.put("pattern", LVL_3_PATTERN);

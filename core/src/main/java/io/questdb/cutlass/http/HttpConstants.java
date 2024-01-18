@@ -64,12 +64,14 @@ public final class HttpConstants {
     public static final Utf8String URL_PARAM_QUERY = new Utf8String("query");
     public static final Utf8String URL_PARAM_QUOTE_LARGE_NUM = new Utf8String("quoteLargeNum");
     public static final Utf8String URL_PARAM_SKIP_LEV = new Utf8String("skipLev");
+    public static final Utf8String URL_PARAM_SKIP_LINE_EXTRA_VALUES = new Utf8String("skipLineExtraValues");
     public static final Utf8String URL_PARAM_SRC = new Utf8String("src");
     public static final Utf8String URL_PARAM_STATUS_FORMAT = new Utf8String("f");
     public static final Utf8String URL_PARAM_STATUS_TABLE_NAME = new Utf8String("j");
     public static final Utf8String URL_PARAM_TABLE_NAME = new Utf8String("tableName");
     public static final Utf8String URL_PARAM_TIMESTAMP = new Utf8String("timestamp");
     public static final Utf8String URL_PARAM_TIMINGS = new Utf8String("timings");
+    public static final Utf8String URL_PARAM_TRUNCATE = new Utf8String("truncate");
     public static final Utf8String URL_PARAM_WAL = new Utf8String("wal");
 
     private HttpConstants() {

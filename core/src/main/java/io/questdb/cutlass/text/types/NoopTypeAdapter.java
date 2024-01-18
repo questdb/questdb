@@ -25,32 +25,31 @@
 package io.questdb.cutlass.text.types;
 
 import io.questdb.cairo.TableWriter;
-import io.questdb.std.str.CharSinkBase;
-import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.str.DirectUtf8Sequence;
-import io.questdb.std.str.Sinkable;
 
-public interface TypeAdapter extends Sinkable {
+/*
+   Type adapter that does exactly nothing. It's used to ignore csv columns during csv import.
+*/
+public class NoopTypeAdapter implements TypeAdapter {
 
-    int getType();
+    public static final io.questdb.cutlass.text.types.NoopTypeAdapter INSTANCE = new io.questdb.cutlass.text.types.NoopTypeAdapter();
 
-    default boolean isIndexed() {
+    private NoopTypeAdapter() {
+    }
+
+
+    @Override
+    public int getType() {
+        return -1;
+    }
+
+    @Override
+    public boolean probe(DirectUtf8Sequence text) {
         return false;
     }
 
-    boolean probe(DirectUtf8Sequence text);
-
     @Override
-    default void toSink(CharSinkBase<?> sink) {
-        sink.putAscii("{}");
+    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) throws Exception {
+        // do nothing
     }
-
-    default void write(TableWriter.Row row, int column, DirectUtf8Sequence value, DirectCharSink utf16Sink) throws Exception {
-        write(row, column, value);
-    }
-
-    void write(TableWriter.Row row, int column, DirectUtf8Sequence value) throws Exception;
-
 }
-
-

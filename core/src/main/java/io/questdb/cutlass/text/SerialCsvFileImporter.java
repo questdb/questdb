@@ -181,7 +181,8 @@ public final class SerialCsvFileImporter implements Closeable {
                 atomicity != -1 ? atomicity : Atomicity.SKIP_ROW,
                 PartitionBy.NONE,
                 timestampColumn != null ? new Utf8String(timestampColumn) : null,
-                timestampFormat != null ? new Utf8String(timestampFormat) : null
+                timestampFormat != null ? new Utf8String(timestampFormat) : null,
+                false
         );
     }
 }

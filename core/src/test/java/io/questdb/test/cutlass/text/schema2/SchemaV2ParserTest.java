@@ -112,7 +112,7 @@ public class SchemaV2ParserTest {
                         "  },\n" +
                         "  \"formats_action\": \"ADD\"\n" +
                         "}",
-                "{\"columns\":[{\"file_column_name\":\"x\",\"file_column_index\":0,\"file_column_ignore\":false,\"column_type\":\"TIMESTAMP\",\"table_column_name\":\"x\",\"insert_null\":\"false\",\"formats\":[{\"pattern\":\"yyyy-MM-dd'T'HH:mm:ss*SSSZZZZ\",\"locale\":\"en\",\"utf8\":false}]}],\"formats\": {\"TIMESTAMP\": [{\"pattern\":\"yyyy-MM-dd'T'HH:mm:ss*SSSZZZZ\",\"locale\":\"en\",\"utf8\":false},{\"pattern\":\"yyyy-MM-dd'T'HH:mm:ss*SSSZZZZ\",\"locale\":\"en\",\"utf8\":true}]},\"formats_action\":\"ADD\"}"
+                "{\"columns\":[{\"file_column_name\":\"x\",\"file_column_index\":0,\"file_column_ignore\":false,\"column_type\":\"TIMESTAMP\",\"table_column_name\":\"x\",\"formats\":[{\"pattern\":\"yyyy-MM-dd'T'HH:mm:ss*SSSZZZZ\",\"locale\":\"en\",\"utf8\":false}]}],\"formats\": {\"TIMESTAMP\": [{\"pattern\":\"yyyy-MM-dd'T'HH:mm:ss*SSSZZZZ\",\"locale\":\"en\",\"utf8\":false},{\"pattern\":\"yyyy-MM-dd'T'HH:mm:ss*SSSZZZZ\",\"locale\":\"en\",\"utf8\":true}]},\"formats_action\":\"ADD\"}"
         );
     }
 
@@ -661,7 +661,7 @@ public class SchemaV2ParserTest {
                         "  },\n" +
                         "  \"formats_action\": \"ADD\"\n" +
                         "}",
-                "{\"columns\":[{\"file_column_name\":\"x\",\"file_column_index\":0,\"file_column_ignore\":false,\"column_type\":\"TIMESTAMP\",\"table_column_name\":\"x\",\"insert_null\":\"false\",\"formats\":[{\"pattern\":\"yyyy-MM-dd'T'HH:mm:ss*SSSZZZZ\",\"locale\":\"en\",\"utf8\":false},{\"pattern\":\"yyyy-MM-ddTHH:mm:ss.SSSUUUz\",\"locale\":\"ja\",\"utf8\":true}]}],\"formats\": {\"TIMESTAMP\": [{\"pattern\":\"yyyy-MM-dd'T'HH:mm:ss*SSSZZZZ\",\"locale\":\"en\",\"utf8\":false},{\"pattern\":\"yyyy-MM-dd'T'HH:mm:ss*SSSZZZZ\",\"locale\":\"en\",\"utf8\":false}]},\"formats_action\":\"ADD\"}"
+                "{\"columns\":[{\"file_column_name\":\"x\",\"file_column_index\":0,\"file_column_ignore\":false,\"column_type\":\"TIMESTAMP\",\"table_column_name\":\"x\",\"formats\":[{\"pattern\":\"yyyy-MM-dd'T'HH:mm:ss*SSSZZZZ\",\"locale\":\"en\",\"utf8\":false},{\"pattern\":\"yyyy-MM-ddTHH:mm:ss.SSSUUUz\",\"locale\":\"ja\",\"utf8\":true}]}],\"formats\": {\"TIMESTAMP\": [{\"pattern\":\"yyyy-MM-dd'T'HH:mm:ss*SSSZZZZ\",\"locale\":\"en\",\"utf8\":false},{\"pattern\":\"yyyy-MM-dd'T'HH:mm:ss*SSSZZZZ\",\"locale\":\"en\",\"utf8\":false}]},\"formats_action\":\"ADD\"}"
         );
     }
 

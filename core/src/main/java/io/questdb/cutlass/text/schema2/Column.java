@@ -39,16 +39,12 @@ public class Column implements Mutable, Sinkable {
     private CharSequence fileColumnName;
     private CharSequence tableColumnName;
 
-    // if CSV has fewer columns than the table, the schema must have explicit "insert NULL" attribute for those columns
-    private boolean tableInsertNull;
-
-    public Column(CharSequence fileColumnName, int fileColumnIndex, boolean fileColumnIgnore, int columnType, CharSequence tableColumnName, boolean tableInsertNull) {
+    public Column(CharSequence fileColumnName, int fileColumnIndex, boolean fileColumnIgnore, int columnType, CharSequence tableColumnName) {
         this.columnType = columnType;
         this.fileColumnIndex = fileColumnIndex;
         this.fileColumnName = fileColumnName;
         this.fileColumnIgnore = fileColumnIgnore;
         this.tableColumnName = tableColumnName;
-        this.tableInsertNull = tableInsertNull;
     }
 
     public void addAllFormats(ObjList<TypeAdapter> formats) {
@@ -66,6 +62,7 @@ public class Column implements Mutable, Sinkable {
         fileColumnName = null;
         columnType = -1;
         formats.clear();
+        fileColumnIgnore = false;
     }
 
     public int getColumnType() {
@@ -100,12 +97,6 @@ public class Column implements Mutable, Sinkable {
         return fileColumnIgnore;
     }
 
-    // does it make sense to require users to map columns not present in the file ?
-    // they'd be set to default values anyway
-    public boolean isTableInsertNull() {
-        return tableInsertNull;
-    }
-
     @Override
     public void toSink(CharSinkBase<?> sink) {
         sink.putAscii('{');
@@ -114,7 +105,6 @@ public class Column implements Mutable, Sinkable {
         sink.putAscii("\"file_column_ignore\":").put(fileColumnIgnore).putAscii(',');
         sink.putAscii("\"column_type\":\"").put(ColumnType.nameOf(columnType)).putAscii("\",");
         sink.putAscii("\"table_column_name\":\"").put(tableColumnName).putAscii("\",");
-        sink.putAscii("\"insert_null\":\"").put(tableInsertNull).putAscii("\",");
         sink.putAscii("\"formats\":").putAscii('[');
         for (int i = 0, n = formats.size(); i < n; i++) {
             if (i > 0) {

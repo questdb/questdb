@@ -31,6 +31,7 @@ import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.cutlass.text.*;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
@@ -50,6 +51,7 @@ import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class TextLoaderTest extends AbstractCairoTest {
 
@@ -699,7 +701,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "host_99,us-east-1,us-east-1a,31,Ubuntu16.10,x86,SF,19,1,staging,7,58,75,50,42,88,59,32,64,33,2016-01-01T00:00:00.000000Z\n";
 
             textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-            textLoader.configureDestination(TEST_TABLE_NAME, true, false, 0, PartitionBy.DAY, new Utf8String("timestamp"), null);
+            textLoader.configureDestination(TEST_TABLE_NAME, true, false, 0, PartitionBy.DAY, new Utf8String("timestamp"), null, false);
             textLoader.configureColumnDelimiter((byte) ',');
             playText0(textLoader, csv, 1024, ENTITY_MANIPULATOR);
             drainWalQueue();
@@ -1808,6 +1810,90 @@ public class TextLoaderTest extends AbstractCairoTest {
                     }
             );
         }
+    }
+
+    @Test
+    public void testImportToExistingTableWithTruncateOption() throws Exception {
+        String[] ddlOptions = new String[]{
+                "",
+                "timestamp(ts)",
+                "timestamp(ts) partition by day bypass wal",
+                "timestamp(ts) partition by day wal"};
+        int[] partitionByOptions = new int[]{PartitionBy.NONE, PartitionBy.NONE, PartitionBy.DAY, PartitionBy.DAY};
+
+        for (int i = 0; i < ddlOptions.length; i++) {
+            final String ddlOption = ddlOptions[i];
+            final Utf8String timestamp = ddlOption.length() > 0 ? new Utf8String("ts") : null;
+            final int partitionBy = partitionByOptions[i];
+
+            assertNoLeak(textLoader -> {
+                ddl("create table test(" +
+                        "ts timestamp, " +
+                        "x long ) " + ddlOption);
+                insert("insert into test select x::timestamp, x from long_sequence(1000)");
+                drainWalQueue();
+                assertSql("count\n1000\n", "select count(*) from test");
+
+                String csv = "ts,x\n" +
+                        "2021-01-02T03:04:05.000000Z,1\n" +
+                        "2021-02-03T04:05:06.000000Z,2\n";
+                textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
+                textLoader.configureDestination(TEST_TABLE_NAME, true, false, 0, partitionBy, timestamp, null, true);
+                textLoader.configureColumnDelimiter((byte) ',');
+                playText0(textLoader, csv, 1024, ENTITY_MANIPULATOR);
+                drainWalQueue();
+                assertTable("ts\tx\n" +
+                        "2021-01-02T03:04:05.000000Z\t1\n" +
+                        "2021-02-03T04:05:06.000000Z\t2\n");
+                textLoader.clear();
+            });
+
+            drop("drop table test");
+        }
+    }
+
+    @Test
+    public void testImportToExistingTableWithTruncateOptionFailsOnTableLock() throws Exception {
+        assertNoLeak(textLoader -> {
+            ddl("create table test(" +
+                    "ts timestamp, " +
+                    "x long ) timestamp(ts)");
+            insert("insert into test select x::timestamp, x from long_sequence(1000)");
+            drainWalQueue();
+            assertSql("count\n1000\n", "select count(*) from test");
+
+            TableToken tableToken = engine.getTableTokenIfExists("test");
+            if (engine.lockReaders(tableToken)) {
+                try {
+                    final SOCountDownLatch latch = new SOCountDownLatch(1);
+                    AtomicReference<Throwable> error = new AtomicReference<>();
+
+                    new Thread(() -> {
+                        try {
+                            String csv = "ts,x\n" +
+                                    "2021-01-02T03:04:05.000000Z,1\n" +
+                                    "2021-02-03T04:05:06.000000Z,2\n";
+                            textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
+                            textLoader.configureDestination(TEST_TABLE_NAME, true, false, 0, PartitionBy.NONE, new Utf8String("ts"), null, true);
+                            textLoader.configureColumnDelimiter((byte) ',');
+                            playText0(textLoader, csv, 1024, ENTITY_MANIPULATOR);
+                        } catch (Throwable t) {
+                            error.set(t);
+                        } finally {
+                            latch.countDown();
+                        }
+                    }).start();
+                    latch.await();
+
+                    Assert.assertNotNull(error.get());
+                    TestUtils.assertContains(error.get().getMessage(), "can't lock readers to perform table truncate on 'test'");
+                } finally {
+                    engine.unlockReaders(tableToken);
+                }
+            }
+
+            textLoader.clear();
+        });
     }
 
     @Test
@@ -3542,8 +3628,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                             "{ \"file_column_index\": 6, \"table_column_name\": \"g\" }, " +
                             "{ \"file_column_index\": 7, \"table_column_name\": \"h\" }, " +
                             "{ \"file_column_index\": 8, \"table_column_name\": \"i\" }, " +
-                            "{ \"file_column_index\": 9, \"table_column_name\": \"k\" }, " +
-                            "{ \"table_column_name\": \"t\", \"insert_null\": \"true\" }, " +
+                            "{ \"file_column_index\": 9, \"table_column_name\": \"k\" } " +
                             "] }",
                     2,
                     true,
@@ -3580,7 +3665,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                 playText0(textLoader, csv, 1024, ENTITY_MANIPULATOR);
                 Assert.fail();
             } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "unmapped csv column");
+                TestUtils.assertContains(e.getFlyweightMessage(), "column mapping is invalid");
             }
         });
     }
@@ -3604,8 +3689,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "{" +
                             "  \"columns\": [" +
                             "    {  \"file_column_index\": \"0\", \"table_column_name\": \"a\", \"column_type\": \"STRING\" }, " +
-                            "    {  \"file_column_index\": \"1\", \"table_column_name\": \"b\", \"column_type\": \"INT\" }," +
-                            "    {  \"table_column_name\": \"d\", \"insert_null\": \"true\" }" +
+                            "    {  \"file_column_index\": \"1\", \"table_column_name\": \"b\", \"column_type\": \"INT\" }" +
                             "  ] }",
                     2,
                     true,
@@ -3812,7 +3896,7 @@ public class TextLoaderTest extends AbstractCairoTest {
 
     private void configureLoaderDefaults(TextLoader textLoader, byte columnSeparator, int atomicity, boolean overwrite) {
         textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-        textLoader.configureDestination(TEST_TABLE_NAME, false, overwrite, atomicity, PartitionBy.NONE, null, null);
+        textLoader.configureDestination(TEST_TABLE_NAME, false, overwrite, atomicity, PartitionBy.NONE, null, null, false);
         if (columnSeparator > 0) {
             textLoader.configureColumnDelimiter(columnSeparator);
         }
@@ -3820,13 +3904,13 @@ public class TextLoaderTest extends AbstractCairoTest {
 
     private void configureLoaderDefaults(TextLoader textLoader, int atomicity, boolean overwrite, int partitionBy) {
         textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-        textLoader.configureDestination(TEST_TABLE_NAME, false, overwrite, atomicity, partitionBy, TEST_TS_COL_NAME, null);
+        textLoader.configureDestination(TEST_TABLE_NAME, false, overwrite, atomicity, partitionBy, TEST_TS_COL_NAME, null, false);
         textLoader.configureColumnDelimiter((byte) 44);
     }
 
     private void configureLoaderDefaults2(TextLoader textLoader) {
         textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-        textLoader.configureDestination(TEST_TABLE_NAME, false, false, Atomicity.SKIP_COL, PartitionBy.DAY, TEST_TS_COL_NAME, null);
+        textLoader.configureDestination(TEST_TABLE_NAME, false, false, Atomicity.SKIP_COL, PartitionBy.DAY, TEST_TS_COL_NAME, null, false);
         textLoader.configureColumnDelimiter((byte) 44);
     }
 

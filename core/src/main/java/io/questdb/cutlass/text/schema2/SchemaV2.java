@@ -55,8 +55,7 @@ public class SchemaV2 implements Mutable, Sinkable {
                     -1,
                     false,
                     columnType,
-                    null,
-                    false
+                    null
             );
             column.addFormat(format);
             this.columnList.add(column);
@@ -72,7 +71,6 @@ public class SchemaV2 implements Mutable, Sinkable {
             boolean fileColumnIgnore,
             int columnType,
             CharSequence tableColumnName,
-            boolean tableInsertNull,
             @Transient ObjList<TypeAdapter> formats
     ) throws JsonException {
         final int fileColumnNameMapIndex;
@@ -116,8 +114,7 @@ public class SchemaV2 implements Mutable, Sinkable {
                 fileColumnIndex,
                 fileColumnIgnore,
                 columnType,
-                tableColumnNameStr,
-                tableInsertNull
+                tableColumnNameStr
         );
         column.addAllFormats(formats);
         this.columnList.add(column);

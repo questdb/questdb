@@ -60,21 +60,19 @@ public class TextLoader implements Closeable, Mutable {
     private final CairoConfiguration cairoConfiguration;
     private final LongList columnErrorCounts = new LongList();
     private final MemoryMARW ddlMem = Vm.getMARWInstance();
+    private final LowerCaseCharSequenceHashSet duplicateTableColumnNames = new LowerCaseCharSequenceHashSet();
     private final CairoEngine engine;
     private final JsonLexer jsonLexer;
     private final ObjList<CsvColumnMapping> mappingColumns = new ObjList<>();
-    // indexes of CSV columns that are explicitly typed and their types do not match
-    // types of table column names
-    private final IntList mistypedCsvColumnIndexes = new IntList();
     private final ObjectPool<OtherToTimestampAdapter> otherToTimestampAdapterPool = new ObjectPool<>(OtherToTimestampAdapter::new, 4);
     private final ObjList<ParserMethod> parseMethods = new ObjList<>();
     private final Path path = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
+    /* maps csv columns to table writer column indexes (these may not be the same as column indexes) */
     private final IntList remapIndex = new IntList();
     private final SchemaV2 schema = new SchemaV2();
     private final SchemaV1Parser schemaV1Parser;
     private final SchemaV2Parser schemaV2Parser;
-    private final ObjList<CharSequence> tableColumnNamesNotInSchema = new ObjList<>();
-    private final LowerCaseCharSequenceHashSet tableColumnNamesNotInSchemaSet = new LowerCaseCharSequenceHashSet();
+    private final LowerCaseCharSequenceHashSet tableColumnNamesSet = new LowerCaseCharSequenceHashSet();
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
     private final int textAnalysisMaxLines;
     private final TextConfiguration textConfiguration;
@@ -86,15 +84,14 @@ public class TextLoader implements Closeable, Mutable {
     private final IntList typeMismatchCsvColumnIndexes = new IntList();
     // indexes of CSV columns that could not have been mapped to the table columns
     private final IntList unmappedCsvColumnIndexes = new IntList();
+    private final DirectCharSink utf8Sink;
+    // indexes of columns that do not match a csv file column (file_column_name or file_column_index is wrong)
+    private final IntList wrongSourceSchemaColumnIndexes = new IntList();
     // We are looking for CSV columns that are not mapped at all, or
     // mapped to non-existing table columns. This list will contain
     // column indexes in the CSV schema that we could not map to the
     // table column names
-    private final IntList unmappedSchemaColumnIndexes = new IntList();
-    // list of table column indexes that have not been mapped in schema
-    private final IntList unmappedTableColumnIndexes = new IntList();
-
-    private final DirectCharSink utf8Sink;
+    private final IntList wrongTargetSchemaColumnIndexes = new IntList();
     private int atomicity;
     private byte columnDelimiter = -1;
     private CharSequence designatedTimestampColumnName;
@@ -119,6 +116,7 @@ public class TextLoader implements Closeable, Mutable {
     private TimestampAdapter timestampAdapter;
     // index of designated timestamp column in the csv
     private int timestampIndex = NO_INDEX;
+    private boolean truncateTable;
     private boolean walTable;
     private int warnings;
     private TableWriterAPI writer;
@@ -177,18 +175,16 @@ public class TextLoader implements Closeable, Mutable {
         skipLinesWithExtraValues = true;
         ignoreEverything = false;
 
-        unmappedSchemaColumnIndexes.clear();
-        unmappedTableColumnIndexes.clear();
+        wrongTargetSchemaColumnIndexes.clear();
+        wrongSourceSchemaColumnIndexes.clear();
         unmappedCsvColumnIndexes.clear();
-        mistypedCsvColumnIndexes.clear();
         schema.clear();
-        tableColumnNamesNotInSchema.clear();
-        tableColumnNamesNotInSchemaSet.clear();
-        //tableColumnNamesAmbiguouslyReferencedFromSchema.clear();
         typeMismatchCsvColumnIndexes.clear();
         mappingColumns.clear();
         schemaVersion = 1;
         getWriterFailed = false;
+        duplicateTableColumnNames.clear();
+        tableColumnNamesSet.clear();
     }
 
     public void clearSchemas() {
@@ -233,7 +229,8 @@ public class TextLoader implements Closeable, Mutable {
             int atomicity,
             int partitionBy,
             @Nullable Utf8Sequence timestampColumnName,
-            @Nullable Utf8Sequence timestampFormat
+            @Nullable Utf8Sequence timestampFormat,
+            boolean truncate
     ) {
         final String tableNameUtf16 = Utf8s.toString(tableName);
         final String timestampColumnUtf16 = Utf8s.toString(timestampColumnName);
@@ -242,13 +239,14 @@ public class TextLoader implements Closeable, Mutable {
         this.tableName = tableNameUtf16;
         this.walTable = walTable;
         this.overwriteTable = overwrite;
+        this.truncateTable = !overwrite && truncate;
         this.atomicity = atomicity;
         this.partitionBy = partitionBy;
         this.schemaTimestampColumnName = timestampColumnUtf16;
         this.textDelimiterScanner.setTableName(tableNameUtf16);
         this.schemaV1Parser.setTableName(tableNameUtf16);
         this.tableTimestampColumnName = timestampColumnUtf16;
-        //this.schema.clear();//TODO: schema is normally parsed before data section!
+
         if (timestampFormat != null) {
             DateFormat dateFormat = typeManager.getInputFormatConfiguration().getTimestampFormatFactory().get(timestampFormatUtf16);
             this.timestampAdapter = (TimestampAdapter) typeManager.nextTimestampAdapter(
@@ -262,6 +260,7 @@ public class TextLoader implements Closeable, Mutable {
         LOG.info()
                 .$("configured [table=`").$(tableName)
                 .$("`, overwrite=").$(overwrite)
+                .$("`, truncate=").$(truncate)
                 .$(", atomicity=").$(atomicity)
                 .$(", partitionBy=").$(PartitionBy.toString(partitionBy))
                 .$(", timestamp=").$(timestampColumnName)
@@ -326,7 +325,7 @@ public class TextLoader implements Closeable, Mutable {
     }
 
     public IntList getUnmappedSchemaColumnIndexes() {
-        return unmappedSchemaColumnIndexes;
+        return wrongTargetSchemaColumnIndexes;
     }
 
     public int getWarnings() {
@@ -453,6 +452,7 @@ public class TextLoader implements Closeable, Mutable {
         final int columnNamesSize = columnNames.size();
         assert columnNamesSize == columnTypes.size();
 
+        // don't add old schema columns to schema if writer acquisition failed and import is being re-tried
         if (schemaVersion != 2 && !getWriterFailed) {
             for (int i = 0; i < columnNamesSize; i++) {
                 TypeAdapter columnType = columnTypes.getQuick(i);
@@ -462,9 +462,6 @@ public class TextLoader implements Closeable, Mutable {
 
         TableToken tableToken = engine.getTableTokenIfExists(tableName);
         final int tableStatus = engine.getTableStatus(path, tableToken);
-
-        // csv column count on the final pass, it should be the same value as csvColumnCount unless there is a bug
-        int finalPassCsvColumnCount;
 
         if (tableStatus == TableUtils.TABLE_EXISTS && !overwriteTable) {
             securityContext.authorizeInsert(tableToken);
@@ -486,49 +483,11 @@ public class TextLoader implements Closeable, Mutable {
                 warnings |= TextLoadWarning.PARTITION_TYPE_MISMATCH;
             }
             partitionBy = tablePartitionBy;
+            checkO3Options(false);
 
-            //TODO: refactor
-            if ((o3MaxLag > -1 || maxUncommittedRows > -1)) {
-                LOG.info().$("cannot update metadata attributes o3MaxLag and maxUncommittedRows when the table exists and parameter overwrite is false").$();
-            }
-            if (PartitionBy.isPartitioned(partitionBy)) {
-                // We want to limit memory consumption during the import, so make sure
-                // to use table's maxUncommittedRows and o3MaxLag if they're not set.
-                if (o3MaxLag == -1 && !writer.getMetadata().isWalEnabled()) {
-                    o3MaxLag = TableUtils.getO3MaxLag(writer.getMetadata(), engine);
-                    LOG.info().$("using table's o3MaxLag ").$(o3MaxLag).$(", table=").utf8(tableName).$();
-                }
-                if (maxUncommittedRows == -1) {
-                    maxUncommittedRows = TableUtils.getMaxUncommittedRows(writer.getMetadata(), engine);
-                    LOG.info().$("using table's maxUncommittedRows ").$(maxUncommittedRows).$(", table=").utf8(tableName).$();
-                }
-            }
-
-            // validate table schema JSON that is supplied to us
-            // to ensure we have no ambiguities as to mapping columns from CSV to the
-            // table and also their types
             final TableRecordMetadata existingTableMetadata = writer.getMetadata();
-            final int tableColumnCount = getColumnCount(existingTableMetadata);
 
-            // we are looking for unmapped  columns in the target table
-            for (int i = 0; i < tableColumnCount; i++) {
-                TableColumnMetadata columnMetadata = existingTableMetadata.getColumnMetadata(i);
-                if (columnMetadata.isDeleted()) {
-                    continue;
-                }
-
-                String tableColumnName = existingTableMetadata.getColumnName(i);
-                Column column = schema.getTableColumnNameToColumnMap().get(tableColumnName);
-                if (column == null) {
-                    column = schema.getFileColumnNameToColumnMap().get(tableColumnName);
-                    if (column == null) {
-                        tableColumnNamesNotInSchema.add(tableColumnName);
-                        tableColumnNamesNotInSchemaSet.add(tableColumnName);
-                        unmappedTableColumnIndexes.add(i);
-                    }
-                }
-            }
-
+            // validate schema against table metadata
             // schema column list may not define CSV columns fully, it could:
             // 1. define all columns
             // 2. define fewer number of columns that CSV has
@@ -541,42 +500,24 @@ public class TextLoader implements Closeable, Mutable {
                 CharSequence tableColumnName = column.getTableColumnName();
                 int tableColumnIndex;
 
-                // new v2 schema allows user to specify table column name
                 if (tableColumnName != null) {
                     tableColumnIndex = existingTableMetadata.getColumnIndexQuiet(tableColumnName);
-                    if (tableColumnIndex == -1) {
-                        // zero out column name that did not match anything in the table
-                        // assuming user is providing explicit mapping
-                        tableColumnName = null;
-                    }
+                } else if (fileColumnName != null) {
+                    tableColumnIndex = existingTableMetadata.getColumnIndexQuiet(fileColumnName);
                 } else {
-                    // either v1 schema that doesn't allow setting target column name or user didn't provide it, so we use file column name instead
-                    if (fileColumnName != null) {
-                        tableColumnIndex = existingTableMetadata.getColumnIndexQuiet(fileColumnName);
-                        if (tableColumnIndex == -1) {
-                            // zero out column name that did not match anything in the table
-                            // assuming user is providing explicit mapping
-                            tableColumnName = null;
-                        } else {
-                            tableColumnName = existingTableMetadata.getColumnName(tableColumnIndex);
-                        }
-                    } else {
-                        // no csv or table column name provided
-                        tableColumnName = null;
-                    }
+                    continue;
                 }
 
-                if (tableColumnName == null) {
-                    unmappedSchemaColumnIndexes.add(i);
+                if (tableColumnIndex == -1 ||
+                        existingTableMetadata.getColumnMetadata(tableColumnIndex).isDeleted()) {
+                    wrongTargetSchemaColumnIndexes.add(i);
                 }
             }
 
-            // We cannot trust the schema to have correct order of columns as
-            // found in the CSV file. Instead, we are going to read header names from the file and see
-            // if we can alter unmapped column list (map some more columns) and set the
-            // required column types
+            // We cannot trust the schema to have correct order of columns as found in the CSV file.
+            // Instead, we are going to read header names from the file and see
+            // if we can alter unmapped column list (map some more columns) and set the required column types
 
-            // at this stage required column types is empty
             final ArrayColumnTypes requiredColumnTypes = new ArrayColumnTypes();
             textStructureAnalyser.of(getTableName(), forceHeaders, requiredColumnTypes);
             parse(lo, hi, textAnalysisMaxLines, textStructureAnalyser);
@@ -589,6 +530,7 @@ public class TextLoader implements Closeable, Mutable {
             // Technically we cannot import data when we find ambiguously mapped columns. However, to provide
             // better diagnostics we will analyse the CSV header regardless
             final int csvColumnCount;
+
             if (csvHeaderPresent) {
                 // use combination of schema mappings and CSV headers to create list of required types for
                 // which we need to establish the formatters
@@ -597,53 +539,69 @@ public class TextLoader implements Closeable, Mutable {
                 csvColumnCount = csvHeaderNames.size();
                 remapIndex.ensureCapacity(csvColumnCount);
 
+                for (int i = 0, n = schemaColumnList.size(); i < n; i++) {
+                    wrongSourceSchemaColumnIndexes.add(i);
+                }
+
                 for (int i = 0; i < csvColumnCount; i++) {
                     final CharSequence headerName = csvHeaderNames.getQuick(i);
-                    final CharSequence tableColumnName;
-                    //final int csvColumnType;
+                    CharSequence tableColumnName;
+                    final int mappingColumnType;
 
                     Column column = schema.getFileColumnNameToColumnMap().get(headerName);
                     if (column != null) {
                         tableColumnName = column.getTableOrFileColumnName();
-                        //csvColumnType = column.getColumnType();
+                        mappingColumnType = column.getColumnType();
+                        wrongSourceSchemaColumnIndexes.remove(schemaColumnList.indexOf(column));
                     } else {
                         column = schema.getFileColumnIndexToColumnMap().get(i);
                         if (column != null) {
-                            tableColumnName = column.getTableOrFileColumnName();
-                            //csvColumnType = column.getColumnType();
+                            tableColumnName = column.getTableColumnName();
+                            mappingColumnType = column.getColumnType();
+                            wrongSourceSchemaColumnIndexes.remove(schemaColumnList.indexOf(column));
                         } else {
                             tableColumnName = headerName;
-                            // column type is undefined
-                            //csvColumnType = -1;
+                            mappingColumnType = -1;
                         }
                     }
 
+                    // two csv columns can map to same table column if they have the same header or
+                    // csv column specified by index is mapped by file name
+                    if (tableColumnNamesSet.contains(tableColumnName)) {
+                        duplicateTableColumnNames.add(tableColumnName);
+                    }
+
                     tableColumnNames.add(tableColumnName);
+                    tableColumnNamesSet.add(tableColumnName);
 
                     if (column != null && column.isFileColumnIgnore()) {
                         // ignore column during mapping
                         requiredColumnTypes.add(-1);
-                        remapIndex.setQuick(i, -1);
+                        remapIndex.setQuick(i, -1);// NoopTypeAdapter will ignore remap index
                         continue;
                     }
 
-                    if (tableColumnName == null) {
-                        unmappedCsvColumnIndexes.add(i);
-                        // user did not map this colum, we will determine column type on the server
-                        // even though we're not importing this file. We are helping user to map the column.
-                        requiredColumnTypes.add(ColumnType.TYPES_SIZE);
-                    } else {
+                    if (tableColumnName != null) {
                         int tableColumnIndex = existingTableMetadata.getColumnIndexQuiet(tableColumnName);
-                        if (tableColumnIndex != -1) {
-                            // implicit csv -> table column mapping was found
-                            unmappedTableColumnIndexes.remove(tableColumnIndex);
+                        if (tableColumnIndex != -1 &&
+                                !existingTableMetadata.getColumnMetadata(tableColumnIndex).isDeleted()) {
                             int tableColumnType = existingTableMetadata.getColumnType(tableColumnIndex);
                             requiredColumnTypes.add(tableColumnType);
                             remapIndex.setQuick(i, existingTableMetadata.getWriterIndex(tableColumnIndex));
                         } else {
-                            unmappedCsvColumnIndexes.add(i);
-                            requiredColumnTypes.add(ColumnType.TYPES_SIZE);
+                            // column doesn't exist or is deleted
+                            tableColumnName = null;
                         }
+                    }
+
+                    if (tableColumnName == null) {
+                        // User did not map this column to a table column, or table column doesn't exist.
+                        // We will determine column type on the server even though we're not importing this file.
+                        // We are helping user to map the column.
+                        // If user specified the type we try to validate it against the data.
+                        unmappedCsvColumnIndexes.add(i);
+                        requiredColumnTypes.add(mappingColumnType > -1 ? mappingColumnType : ColumnType.TYPES_SIZE);
+                        remapIndex.add(-1);
                     }
                 }
             } else {
@@ -655,19 +613,14 @@ public class TextLoader implements Closeable, Mutable {
                 remapIndex.ensureCapacity(csvColumnCount);
 
                 for (int i = 0; i < csvColumnCount; i++) {
+                    //Note: we don't check via synthetic column names, e.g. f0, f1, etc.
                     Column column = schema.getFileColumnIndexToColumnMap().get(i);
                     if (column == null) {
+                        unmappedCsvColumnIndexes.add(i);
                         // auto-detect the type
                         requiredColumnTypes.add(ColumnType.TYPES_SIZE);
-                        unmappedCsvColumnIndexes.add(i);
                         tableColumnNames.add(null);
                     } else {
-                        if (column.isFileColumnIgnore()) {
-                            // ignore detection and insert default value
-                            requiredColumnTypes.add(-1);
-                            remapIndex.setQuick(i, -1);
-                        }
-
                         CharSequence tableColumnName = column.getTableOrFileColumnName();
                         tableColumnNames.add(tableColumnName);
                         int tableColumnIndex = -1;
@@ -675,8 +628,16 @@ public class TextLoader implements Closeable, Mutable {
                             tableColumnIndex = existingTableMetadata.getColumnIndexQuiet(tableColumnName);
                         }
 
-                        if (tableColumnIndex == -1) {
-                            requiredColumnTypes.add(ColumnType.TYPES_SIZE);
+                        if (column.isFileColumnIgnore()) {
+                            // ignore detection and insert default value
+                            requiredColumnTypes.add(-1);
+                            remapIndex.setQuick(i, -1);
+                            if (tableColumnIndex == -1) {
+                                unmappedCsvColumnIndexes.add(i);
+                            }
+                        } else if (tableColumnIndex == -1) {
+                            // validate against default adapters or that supplied by user
+                            requiredColumnTypes.add(column.getColumnType() > -1 ? column.getColumnType() : ColumnType.TYPES_SIZE);
                             unmappedCsvColumnIndexes.add(i);
                         } else {
                             requiredColumnTypes.add(existingTableMetadata.getColumnType(tableColumnIndex));
@@ -695,105 +656,19 @@ public class TextLoader implements Closeable, Mutable {
             textStructureAnalyser.evaluateResults(getParsedLineCount(), getErrorLineCount());
             restart(csvHeaderPresent);
 
-            if (
-                    unmappedSchemaColumnIndexes.size() == 0
-                            //&& tableColumnNamesAmbiguouslyReferencedFromSchema.size() == 0
-                            && unmappedCsvColumnIndexes.size() == 0
-                            && mistypedCsvColumnIndexes.size() == 0
-                            && unmappedTableColumnIndexes.size() == 0
-                //TODO: rework condition because csv column count doesn't need to equl table column count
-                // final mapping should be at least as big as
-                //&& csvColumnCount == tableColumnCount
+            if (wrongTargetSchemaColumnIndexes.size() > 0
+                    || wrongSourceSchemaColumnIndexes.size() > 0
+                    || unmappedCsvColumnIndexes.size() > 0
+                    || duplicateTableColumnNames.size() > 0
             ) {
-                // This is where we are going to attempt file import. Our mapping has to be
-                // perfect and unambiguous. We are using structure analyser's types only to
-                // collect formatters. Otherwise, column types must match exactly.
-                ObjList<TypeAdapter> csvColumnTypes = textStructureAnalyser.getColumnTypes();
-                finalPassCsvColumnCount = csvColumnTypes.size();
-
-                // There is small chance that we could not find formatter for the give type
-                // or perhaps due to a bug, structure analyser deviated from the prescribed
-                // column types. We must validate the types we're going to use for the import
-                int checkStatus = CHECK_OK;
-
-                if (finalPassCsvColumnCount != csvColumnCount) {
-                    checkStatus = CHECK_COLUMN_COUNT_DIVERGED;
-                }
-
-                if (checkStatus == CHECK_OK) {
-                    for (int i = 0; i < csvColumnCount; i++) {
-                        final TypeAdapter typeAdapter = csvColumnTypes.getQuick(i);
-                        final int requiredColumnType = requiredColumnTypes.getColumnType(i);
-                        if (requiredColumnType != ColumnType.TYPES_SIZE && typeAdapter.getType() != requiredColumnType) {
-                            // accept mismatches caused by limitations of type analysis
-                            if (requiredColumnType == ColumnType.SYMBOL && typeAdapter.getType() == ColumnType.STRING) {
-                                csvColumnTypes.setQuick(i, typeManager.nextSymbolAdapter(existingTableMetadata.isColumnIndexed(remapIndex.getQuick(i))));
-                                continue;
-                            } else if (requiredColumnType == ColumnType.BINARY) {
-                                throw CairoException.nonCritical().put("cannot import text into BINARY column [index=").put(i).put(']');
-                            }
-
-                            /* else if (requiredColumnType == ColumnType.TIMESTAMP) {
-                                //TODO: add epoch millis, micros and nanos formats and require user to set it explicitly
-                                /*if (typeAdapter instanceof TimestampCompatibleAdapter) {
-                                    csvColumnTypes.setQuick(i, otherToTimestampAdapterPool.next().of((TimestampCompatibleAdapter) typeAdapter));
-                                    continue;
-                                }
-                            }*/
-
-                            checkStatus = CHECK_COLUMN_TYPE_MISMATCH;
-                            typeMismatchCsvColumnIndexes.add(i);
-                        }
-                    }
-                }
-
-                if (checkStatus == CHECK_OK) {
-                    tableTypeAdapters = csvColumnTypes;
-                    int tableTimestampIndex = existingTableMetadata.getTimestampIndex();
-                    if (tableTimestampIndex == -1) {
-                        timestampIndex = NO_INDEX;
-                    } else {
-                        timestampIndex = remapIndex.indexOf(tableTimestampIndex);
-                        if (timestampIndex < 0) {
-                            timestampIndex = NO_INDEX;
-                        }
-                    }
-
-                    if (tableTimestampIndex > -1 && timestampIndex == -1) {
-                        throw CairoException.nonCritical().put("designated timestamp column missing");
-                    }
-
-                    if (timestampIndex != NO_INDEX
-                            && timestampAdapter == null
-                            && ColumnType.isTimestamp(this.tableTypeAdapters.getQuick(timestampIndex).getType())
-                    ) {
-                        this.timestampAdapter = (TimestampAdapter) this.tableTypeAdapters.getQuick(timestampIndex);
-                    }
-
-                    updateMapping(csvHeaderPresent, tableColumnNames, existingTableMetadata);
-
-                    // when metadata is set, text output displays import stats
-                    metadata = GenericRecordMetadata.copyDense(writer.getMetadata());
-                    parse(lo, hi, Integer.MAX_VALUE);
-                    state = LOAD_DATA;
-                } else {
-                    updateMapping(csvHeaderPresent, tableColumnNames, existingTableMetadata);
-
-                    if (checkStatus == CHECK_COLUMN_COUNT_DIVERGED) {
-                        throw CairoException.nonCritical().put("column number mismatch");
-                    } else if (checkStatus == CHECK_COLUMN_TYPE_MISMATCH) {
-                        throw CairoException.nonCritical().put("column type mismatch");
-                    }
-                }
-            } else {
                 updateMapping(csvHeaderPresent, tableColumnNames, existingTableMetadata);
 
-                CairoException exception = CairoException.nonCritical().put("mapping error(s) [");
+                CairoException exception = CairoException.nonCritical().put("column mapping is invalid [");
                 boolean isFirst = true;
 
-                if (unmappedSchemaColumnIndexes.size() > 0) {
+                if (wrongTargetSchemaColumnIndexes.size() > 0) {
                     isFirst = false;
-                    exception.put("unmapped schema column(s)");
+                    exception.put("unmapped_schema_column_indexes=").put(wrongTargetSchemaColumnIndexes);
                 }
 
                 if (unmappedCsvColumnIndexes.size() > 0) {
@@ -801,28 +676,121 @@ public class TextLoader implements Closeable, Mutable {
                         exception.put(",");
                     }
                     isFirst = false;
-                    exception.put("unmapped csv column(s)");
-
+                    exception.put("unmapped_csv_column_indexes=").put(unmappedCsvColumnIndexes);
                 }
 
-                if (mistypedCsvColumnIndexes.size() > 0) {
+                if (duplicateTableColumnNames.size() > 0) {
                     if (!isFirst) {
                         exception.put(",");
                     }
                     isFirst = false;
-                    exception.put("mistyped csv columns");
-                }
-
-                if (unmappedTableColumnIndexes.size() > 0) {
-                    if (!isFirst) {
-                        exception.put(",");
-                    }
-                    exception.put("unmapped table column(s)");
+                    exception.put("ambiguous_table_column_names=").put(duplicateTableColumnNames);
                 }
 
                 exception.put(']');
                 throw exception;
             }
+
+            // This is where we are going to attempt file import. Our mapping has to be
+            // perfect and unambiguous. We are using structure analyser's types only to
+            // collect formatters. Otherwise, column types must match exactly.
+            ObjList<TypeAdapter> csvColumnTypes = textStructureAnalyser.getColumnTypes();
+
+            // csv column count on the final pass, it should be the same value as csvColumnCount unless there is a bug
+            int finalPassCsvColumnCount = csvColumnTypes.size();
+
+            // There is small chance that we could not find formatter for the give type
+            // or perhaps due to a bug, structure analyser deviated from the prescribed
+            // column types. We must validate the types we're going to use for the import
+            int checkStatus = CHECK_OK;
+
+            if (finalPassCsvColumnCount != csvColumnCount) {
+                checkStatus = CHECK_COLUMN_COUNT_DIVERGED;
+            }
+
+            if (checkStatus == CHECK_OK) {
+                for (int i = 0; i < csvColumnCount; i++) {
+                    final TypeAdapter typeAdapter = csvColumnTypes.getQuick(i);
+                    final int requiredColumnType = requiredColumnTypes.getColumnType(i);
+
+                    if (requiredColumnType != ColumnType.TYPES_SIZE && typeAdapter.getType() != requiredColumnType) {
+                        // accept mismatch caused by limitations of type analysis
+                        if (requiredColumnType == ColumnType.SYMBOL && typeAdapter.getType() == ColumnType.STRING) {
+                            boolean indexed = false;
+                            CharSequence tableColumnName = tableColumnNames.get(i);
+                            if (tableColumnName != null) {
+                                int tableColumnIndex = existingTableMetadata.getColumnIndexQuiet(tableColumnName);
+                                if (tableColumnIndex != -1) {
+                                    indexed = existingTableMetadata.isColumnIndexed(tableColumnIndex);
+                                }
+                            }
+
+                            csvColumnTypes.setQuick(i, typeManager.nextSymbolAdapter(indexed));
+                            continue;
+                        } else if (requiredColumnType == ColumnType.BINARY) {
+                            throw CairoException.nonCritical().put("cannot import text into BINARY column [index=").put(i).put(']');
+                        }
+
+                        checkStatus = CHECK_COLUMN_TYPE_MISMATCH;
+                        typeMismatchCsvColumnIndexes.add(i);
+                    }
+                }
+            }
+
+            if (checkStatus != CHECK_OK) {
+                updateMapping(csvHeaderPresent, tableColumnNames, existingTableMetadata);
+
+                if (checkStatus == CHECK_COLUMN_COUNT_DIVERGED) {
+                    throw CairoException.nonCritical().put("column number mismatch");
+                } else {
+                    throw CairoException.nonCritical().put("column type mismatch");
+                }
+            }
+
+            tableTypeAdapters = csvColumnTypes;
+            int tableTimestampIndex = existingTableMetadata.getTimestampIndex();
+            if (tableTimestampIndex == -1) {
+                timestampIndex = NO_INDEX;
+            } else {
+                timestampIndex = remapIndex.indexOf(tableTimestampIndex);
+                if (timestampIndex < 0) {
+                    timestampIndex = NO_INDEX;
+                }
+            }
+
+            if (tableTimestampIndex > -1 && timestampIndex == -1) {
+                throw CairoException.nonCritical().put("designated timestamp column missing");
+            }
+
+            if (timestampIndex != NO_INDEX
+                    && timestampAdapter == null
+                    && ColumnType.isTimestamp(this.tableTypeAdapters.getQuick(timestampIndex).getType())
+            ) {
+                this.timestampAdapter = (TimestampAdapter) this.tableTypeAdapters.getQuick(timestampIndex);
+            }
+
+            updateMapping(csvHeaderPresent, tableColumnNames, existingTableMetadata);
+
+            if (truncateTable) {
+                if (writer.getMetadata().isWalEnabled()) {
+                    writer.truncateSoft();
+                } else {
+                    if (engine.lockReaders(tableToken)) {
+                        try {
+                            writer.truncate();
+                        } finally {
+                            engine.unlockReaders(tableToken);
+                        }
+                    } else {
+                        throw CairoException.nonCritical().put("can't lock readers to perform table truncate on '").put(tableToken).put("'");
+                    }
+                }
+            }
+
+            // when metadata is set, text output displays import stats
+            metadata = GenericRecordMetadata.copyDense(writer.getMetadata());
+            parse(lo, hi, Integer.MAX_VALUE);
+            state = LOAD_DATA;
         } else {
             // we are importing into a new table, there are no required column types
             // we're merging auto-detected column names and types with those provided in the schema
@@ -839,22 +807,6 @@ public class TextLoader implements Closeable, Mutable {
             final ObjList<CharSequence> csvHeaderNames = textStructureAnalyser.getColumnNames();
             final int csvColumnCount = csvHeaderNames.size();
 
-            // validate schema against detected list of columns
-            // don't check mapping if target table doesn't exist or is going to be overwritten
-            /*
-            final ObjList<Column> schemaColumnList = schema.getColumnList();
-            for (int i = 0, m = schemaColumnList.size(); i < m; i++) {
-                Column column = schemaColumnList.get(i);
-                CharSequence fileColumnName = column.getFileColumnName();
-                int fileColumnIndex = column.getFileColumnIndex();
-
-                // if file column name or fileColumnIndex is specified, it has to match csv
-                if ((fileColumnName != null && !csvHeaderNames.contains(fileColumnName))
-                        || (fileColumnIndex > -1 && fileColumnIndex >= csvColumnCount)) {
-                    unmappedSchemaColumnIndexes.add(i);
-                }
-            }*/
-
             if (csvHeaderPresent) {
                 // When CSV header present we could merge schema using column names
                 // lookup column names and types from the schema
@@ -867,11 +819,7 @@ public class TextLoader implements Closeable, Mutable {
                         // it will be used as new table column name
                         if (column.getTableColumnName() != null) {
                             tableColumnNames.add(column.getTableColumnName());
-                            if (column.getColumnType() != -1) {
-                                requiredColumnTypes.add(column.getColumnType());
-                            } else {
-                                requiredColumnTypes.add(ColumnType.TYPES_SIZE);
-                            }
+                            requiredColumnTypes.add(column.getColumnType() != -1 ? column.getColumnType() : ColumnType.TYPES_SIZE);
                         } else {
                             tableColumnNames.add(headerName);
                             requiredColumnTypes.add(ColumnType.TYPES_SIZE);
@@ -882,11 +830,7 @@ public class TextLoader implements Closeable, Mutable {
                         column = schema.getFileColumnIndexToColumnMap().get(i);
                         if (column != null && column.getTableColumnName() != null) {
                             tableColumnNames.add(column.getFileColumnName());
-                            if (column.getColumnType() != -1) {
-                                requiredColumnTypes.add(column.getColumnType());
-                            } else {
-                                requiredColumnTypes.add(ColumnType.TYPES_SIZE);
-                            }
+                            requiredColumnTypes.add(column.getColumnType() != -1 ? column.getColumnType() : ColumnType.TYPES_SIZE);
                         } else {
                             tableColumnNames.add(headerName);
                             requiredColumnTypes.add(ColumnType.TYPES_SIZE);
@@ -895,7 +839,6 @@ public class TextLoader implements Closeable, Mutable {
                 }
             } else {
                 // when header is not present we can look up column names by csv column indexes
-                // TODO: should we still support synthetic column names with schema v1 ?
                 for (int i = 0; i < csvColumnCount; i++) {
                     Column column = schema.getFileColumnIndexToColumnMap().get(i);
                     if (column != null) {
@@ -904,11 +847,8 @@ public class TextLoader implements Closeable, Mutable {
                         } else {
                             tableColumnNames.add(csvHeaderNames.getQuick(i));
                         }
-                        if (column.getColumnType() != -1) {
-                            requiredColumnTypes.add(column.getColumnType());
-                        } else {
-                            requiredColumnTypes.add(ColumnType.TYPES_SIZE);
-                        }
+
+                        requiredColumnTypes.add(column.getColumnType() != -1 ? column.getColumnType() : ColumnType.TYPES_SIZE);
                     } else {
                         tableColumnNames.add(csvHeaderNames.getQuick(i));
                         requiredColumnTypes.add(ColumnType.TYPES_SIZE);
@@ -925,18 +865,11 @@ public class TextLoader implements Closeable, Mutable {
             restart(csvHeaderPresent);
 
             ObjList<TypeAdapter> csvColumnTypes = textStructureAnalyser.getColumnTypes();
-            finalPassCsvColumnCount = csvColumnTypes.size();
+            int finalPassCsvColumnCount = csvColumnTypes.size();
 
             // There is small chance that we could not find formatter for the give type
             // or perhaps due to a bug, structure analyser deviated from the prescribed
             // column types. We must validate the types we're going to use for the import
-
-            /*
-            if (unmappedSchemaColumnIndexes.size() > 0) {
-                updateMapping(csvHeaderPresent, tableColumnNames, null);
-                throw CairoException.nonCritical().put("unmapped schema column(s)");
-            }*/
-
             int checkStatus = CHECK_OK;
             if (finalPassCsvColumnCount != csvColumnCount) {
                 checkStatus = CHECK_COLUMN_COUNT_DIVERGED;
@@ -960,73 +893,57 @@ public class TextLoader implements Closeable, Mutable {
                 }
             }
 
-            //TODO: should schema override list of columns if parser can't detect the structure ?
             if (csvColumnCount == 0) {
                 throw CairoException.nonCritical().put("cannot determine text structure");
             }
 
-            if (checkStatus == CHECK_OK) {
-                boolean tableRecreated = false;
-                // we can create table now and try importing
-                switch (tableStatus) {
-                    case TableUtils.TABLE_DOES_NOT_EXIST:
-                        tableToken = createTable(tableColumnNames, csvColumnTypes, securityContext, path);
-                        writer = engine.getTableWriterAPI(tableToken, WRITER_LOCK_REASON);
-                        metadata = GenericRecordMetadata.copyDense(writer.getMetadata());
-                        designatedTimestampColumnName = getDesignatedTimestampColumnName(metadata);
-                        designatedTimestampIndex = writer.getMetadata().getTimestampIndex();
-                        break;
-                    case TableUtils.TABLE_EXISTS:
-                        securityContext.authorizeTableDrop(tableToken);
-                        engine.drop(path, tableToken);
-                        tableToken = createTable(tableColumnNames, csvColumnTypes, securityContext, path);
-                        writer = engine.getTableWriterAPI(tableToken, WRITER_LOCK_REASON);
-                        metadata = GenericRecordMetadata.copyDense(writer.getMetadata());
-                        tableRecreated = true;
-                        break;
-                    default:
-                        throw CairoException.nonCritical().put("name is reserved [table=").put(tableName).put(']');
-                }
-
-                //TODO: refactor
-                if (!tableRecreated && (o3MaxLag > -1 || maxUncommittedRows > -1)) {
-                    LOG.info().$("cannot update metadata attributes o3MaxLag and maxUncommittedRows when the table exists and parameter overwrite is false").$();
-                }
-                if (PartitionBy.isPartitioned(partitionBy)) {
-                    // We want to limit memory consumption during the import, so make sure
-                    // to use table's maxUncommittedRows and o3MaxLag if they're not set.
-                    if (o3MaxLag == -1 && !writer.getMetadata().isWalEnabled()) {
-                        o3MaxLag = TableUtils.getO3MaxLag(writer.getMetadata(), engine);
-                        LOG.info().$("using table's o3MaxLag ").$(o3MaxLag).$(", table=").utf8(tableName).$();
-                    }
-                    if (maxUncommittedRows == -1) {
-                        maxUncommittedRows = TableUtils.getMaxUncommittedRows(writer.getMetadata(), engine);
-                        LOG.info().$("using table's maxUncommittedRows ").$(maxUncommittedRows).$(", table=").utf8(tableName).$();
-                    }
-                }
-
-                updateMapping(csvHeaderPresent, tableColumnNames, writer.getMetadata());
-
-                columnErrorCounts.seed(getColumnCount(writer.getMetadata()), 0);
-                if (
-                        timestampIndex != NO_INDEX
-                                && timestampAdapter == null
-                                && ColumnType.isTimestamp(this.tableTypeAdapters.getQuick(timestampIndex).getType())
-                ) {
-                    this.timestampAdapter = (TimestampAdapter) this.tableTypeAdapters.getQuick(timestampIndex);
-                }
-
-                parse(lo, hi, Integer.MAX_VALUE);
-                state = LOAD_DATA;
-            } else {
+            if (checkStatus != CHECK_OK) {
                 updateMapping(csvHeaderPresent, tableColumnNames, null);
 
                 if (checkStatus == CHECK_COLUMN_COUNT_DIVERGED) {
                     throw CairoException.nonCritical().put("column number mismatch");
-                } else if (checkStatus == CHECK_COLUMN_TYPE_MISMATCH) {
+                } else {
                     throw CairoException.nonCritical().put("column type mismatch");
                 }
             }
+
+            boolean tableRecreated = false;
+            // we can create table now and try importing
+            switch (tableStatus) {
+                case TableUtils.TABLE_DOES_NOT_EXIST:
+                    tableToken = createTable(tableColumnNames, csvColumnTypes, securityContext, path);
+                    writer = engine.getTableWriterAPI(tableToken, WRITER_LOCK_REASON);
+                    metadata = GenericRecordMetadata.copyDense(writer.getMetadata());
+                    designatedTimestampColumnName = getDesignatedTimestampColumnName(metadata);
+                    designatedTimestampIndex = writer.getMetadata().getTimestampIndex();
+                    break;
+                case TableUtils.TABLE_EXISTS:
+                    securityContext.authorizeTableDrop(tableToken);
+                    engine.drop(path, tableToken);
+                    tableToken = createTable(tableColumnNames, csvColumnTypes, securityContext, path);
+                    writer = engine.getTableWriterAPI(tableToken, WRITER_LOCK_REASON);
+                    metadata = GenericRecordMetadata.copyDense(writer.getMetadata());
+                    tableRecreated = true;
+                    break;
+                default:
+                    throw CairoException.nonCritical().put("name is reserved [table=").put(tableName).put(']');
+            }
+
+            checkO3Options(tableRecreated);
+            updateMapping(csvHeaderPresent, tableColumnNames, writer.getMetadata());
+
+            columnErrorCounts.seed(getColumnCount(writer.getMetadata()), 0);
+
+            if (
+                    timestampIndex != NO_INDEX
+                            && timestampAdapter == null
+                            && ColumnType.isTimestamp(this.tableTypeAdapters.getQuick(timestampIndex).getType())
+            ) {
+                this.timestampAdapter = (TimestampAdapter) this.tableTypeAdapters.getQuick(timestampIndex);
+            }
+
+            parse(lo, hi, Integer.MAX_VALUE);
+            state = LOAD_DATA;
         }
 
 /*
@@ -1112,6 +1029,24 @@ public class TextLoader implements Closeable, Mutable {
             parse(lo, hi, Integer.MAX_VALUE);
             state = LOAD_DATA;
 */
+    }
+
+    private void checkO3Options(boolean tableRecreated) {
+        if (!tableRecreated && (o3MaxLag > -1 || maxUncommittedRows > -1)) {
+            LOG.info().$("cannot update metadata attributes o3MaxLag and maxUncommittedRows when the table exists and parameter overwrite is false").$();
+        }
+        if (PartitionBy.isPartitioned(partitionBy)) {
+            // We want to limit memory consumption during the import, so make sure
+            // to use table's maxUncommittedRows and o3MaxLag if they're not set.
+            if (o3MaxLag == -1 && !writer.getMetadata().isWalEnabled()) {
+                o3MaxLag = TableUtils.getO3MaxLag(writer.getMetadata(), engine);
+                LOG.info().$("using table's o3MaxLag ").$(o3MaxLag).$(", table=").utf8(tableName).$();
+            }
+            if (maxUncommittedRows == -1) {
+                maxUncommittedRows = TableUtils.getMaxUncommittedRows(writer.getMetadata(), engine);
+                LOG.info().$("using table's maxUncommittedRows ").$(maxUncommittedRows).$(", table=").utf8(tableName).$();
+            }
+        }
     }
 
     private void checkUncommittedRowCount() {
@@ -1219,10 +1154,10 @@ public class TextLoader implements Closeable, Mutable {
                 .$(']').$();
     }
 
-    private boolean onField(long line, DirectUtf8Sequence dus, TableWriter.Row w, int i) {
+    private boolean onField(long line, DirectUtf8Sequence dus, TableWriter.Row row, int i) {
         try {
             final int tableIndex = remapIndex.size() > 0 ? remapIndex.get(i) : i;
-            tableTypeAdapters.getQuick(i).write(w, tableIndex, dus);
+            tableTypeAdapters.getQuick(i).write(row, tableIndex, dus);
         } catch (Exception ignore) {
             logError(line, i, dus);
             switch (atomicity) {
@@ -1230,7 +1165,7 @@ public class TextLoader implements Closeable, Mutable {
                     writer.rollback();
                     throw CairoException.nonCritical().put("bad syntax [line=").put(line).put(", col=").put(i).put(']');
                 case Atomicity.SKIP_ROW:
-                    w.cancel();
+                    row.cancel();
                     return true;
                 default:
                     // SKIP column
@@ -1298,7 +1233,7 @@ public class TextLoader implements Closeable, Mutable {
         ObjList<TypeAdapter> csvColumnTypes = textStructureAnalyser.getColumnTypes();
 
         // TODO: update schema instead of creating new columns to show: csv columns and unmapped schema and table columns
-        // prepare column mapping based on csv file content, not schema sent by user
+        // prepare column mapping primarily based on csv file content
         mappingColumns.clear();
         for (int i = 0, n = csvHeaderNames.size(); i < n; i++) {
             CsvColumnMapping column = new CsvColumnMapping();
@@ -1314,15 +1249,18 @@ public class TextLoader implements Closeable, Mutable {
                         column.tableColumnType = tableMetadata.getColumnType(tableColumnIndex);
                     }
                 }
-                // tableColumnType defaults to -1
                 column.errors = 0;
+                if (duplicateTableColumnNames.contains(column.tableColumnName)) {
+                    column.errors |= CsvColumnMapping.STATUS_DUPLICATE_TARGET;
+                }
+                // tableColumnType defaults to -1
             } else {
                 column.tableColumnName = null;
                 column.tableColumnType = -1;
                 column.errors |= CsvColumnMapping.STATUS_UNMAPPED;
             }
 
-            column.errors |= mistypedCsvColumnIndexes.contains(i) || typeMismatchCsvColumnIndexes.contains(i) ? CsvColumnMapping.STATUS_MISTYPED : 0;
+            column.errors |= typeMismatchCsvColumnIndexes.contains(i) ? CsvColumnMapping.STATUS_MISTYPED : 0;
 
             Column schemaColumn;
             if (csvHeaderPresent && column.csvColumnName != null) {
@@ -1331,26 +1269,39 @@ public class TextLoader implements Closeable, Mutable {
                 schemaColumn = schema.getFileColumnIndexToColumnMap().get(column.csvColumnIndex);
             }
 
-            if (schemaColumn != null && schemaColumn.isFileColumnIgnore()) {
-                column.csvColumnIgnore = true;
+            if (schemaColumn != null) {
+                if (schemaColumn.isFileColumnIgnore()) {
+                    column.csvColumnIgnore = true;
+                } else {
+                    int schemaColumnIndex = schema.getColumnList().indexOf(schemaColumn);
+                    if (wrongTargetSchemaColumnIndexes.contains(schemaColumnIndex)) {
+                        column.errors |= CsvColumnMapping.STATUS_BAD_TARGET;
+                    }
+                }
             }
 
             mappingColumns.add(column);
         }
 
-        // add unmapped table columns (these need to be added to schema properly, e.g. with 'insert null'  ) )
-        if (unmappedTableColumnIndexes.size() > 0) {
-            for (int i = 0, n = unmappedTableColumnIndexes.size(); i < n; i++) {
-                int tableColumnIdx = unmappedTableColumnIndexes.getQuick(i);
-                TableColumnMetadata column = tableMetadata.getColumnMetadata(tableColumnIdx);
+        if (wrongSourceSchemaColumnIndexes.size() > 0) {
+            for (int i = 0, n = wrongSourceSchemaColumnIndexes.size(); i < n; i++) {
+                int schemaColumnIndex = wrongSourceSchemaColumnIndexes.getQuick(i);
+                Column column = schema.getColumn(schemaColumnIndex);
+                if (column != null) {
+                    CsvColumnMapping csvColumn = new CsvColumnMapping();
+                    csvColumn.csvColumnIndex = column.getFileColumnIndex();
+                    csvColumn.csvColumnName = column.getFileColumnName();
+                    csvColumn.tableColumnName = column.getTableColumnName();
+                    csvColumn.tableColumnType = column.getColumnType();
+                    csvColumn.csvColumnAdapter = column.getColumnType() > -1 ? typeManager.getTypeAdapter(column.getColumnType()) : null;
+                    csvColumn.errors = CsvColumnMapping.STATUS_BAD_SOURCE;
 
-                CsvColumnMapping csvColumn = new CsvColumnMapping();
-                csvColumn.csvColumnIndex = -1;
-                csvColumn.tableColumnName = column.getName();
-                csvColumn.tableColumnType = column.getType();
-                csvColumn.errors = CsvColumnMapping.STATUS_UNMAPPED;
+                    if (wrongTargetSchemaColumnIndexes.contains(schemaColumnIndex)) {
+                        csvColumn.errors |= CsvColumnMapping.STATUS_BAD_TARGET;
+                    }
 
-                mappingColumns.add(csvColumn);
+                    mappingColumns.add(csvColumn);
+                }
             }
         }
 
@@ -1365,19 +1316,21 @@ public class TextLoader implements Closeable, Mutable {
     // TODO: merge with schema column
     public static class CsvColumnMapping implements Sinkable {
 
-        static final int STATUS_IGNORED = 4;//not really an error
-        static final int STATUS_MAX_EXP = 1;
+        static final int STATUS_BAD_SOURCE = 4;
+        static final int STATUS_BAD_TARGET = 8;
+        static final int STATUS_DUPLICATE_TARGET = 16;
+        static final int STATUS_MAX_EXP = 4;
         static final int STATUS_MISTYPED = 2;
         static final int STATUS_UNMAPPED = 1;
+        private static final IntObjHashMap<String> typeMessageMap = new IntObjHashMap<>();
         private static final IntObjHashMap<String> typeNameMap = new IntObjHashMap<>();
-        TypeAdapter csvColumnAdapter;
-        boolean csvColumnIgnore;
-        int csvColumnIndex;
-        CharSequence csvColumnName;
-        int errors;
-        CharSequence tableColumnName;
-        int tableColumnType = -1;
-        boolean tableInsertNull;
+        private TypeAdapter csvColumnAdapter;
+        private boolean csvColumnIgnore;
+        private int csvColumnIndex;
+        private CharSequence csvColumnName;
+        private int errors;
+        private CharSequence tableColumnName;
+        private int tableColumnType = -1;
 
         public void errorsToSink(@NotNull CharSinkBase<?> sink) {
             if (errors != 0) {
@@ -1427,11 +1380,28 @@ public class TextLoader implements Closeable, Mutable {
             sink.putAscii("\"file_column_name\":\"").put(csvColumnName).putAscii("\",");
             sink.putAscii("\"file_column_index\":").put(csvColumnIndex).putAscii(',');
             sink.putAscii("\"file_column_ignore\":").put(csvColumnIgnore).putAscii(',');
-            sink.putAscii("\"column_type\":\"").putAscii(ColumnType.nameOf(csvColumnAdapter.getType())).putAscii("\",");
+            sink.putAscii("\"column_type\":\"").putAscii(csvColumnAdapter != null ? ColumnType.nameOf(csvColumnAdapter.getType()) : "").putAscii("\",");
             sink.putAscii("\"table_column_name\":\"").put(tableColumnName).putAscii("\",");
-            sink.putAscii("\"insert_null\":\"").put(tableInsertNull).putAscii("\",");
             sink.putAscii("\"formats\":").putAscii('[');
-            csvColumnAdapter.toSink(sink);
+            if (csvColumnAdapter != null) {
+                csvColumnAdapter.toSink(sink);
+            }
+            if (errors != 0) {
+                sink.putAscii(",\"errors\": [");
+                boolean isFirst = true;
+                for (int exp = 0; exp <= STATUS_MAX_EXP; exp++) {
+                    int error = 1 << exp;
+                    if ((errors & error) != 0) {
+                        if (!isFirst) {
+                            sink.put(',');
+                        }
+                        isFirst = false;
+
+                        sink.putQuoted(messageOf(error));
+                    }
+                }
+                sink.putAscii(']');
+            }
             sink.putAscii(']');
             sink.putAscii('}');
         }
@@ -1488,18 +1458,34 @@ public class TextLoader implements Closeable, Mutable {
             sink.put(']');
         }
 
+        static CharSequence messageOf(int errorType) {
+            final int index = typeMessageMap.keyIndex(errorType);
+            if (index > -1) {
+                return "UNKNOWN";
+            }
+            return typeMessageMap.valueAtQuick(index);
+        }
+
         static CharSequence nameOf(int errorType) {
             final int index = typeNameMap.keyIndex(errorType);
             if (index > -1) {
-                return "unknown";
+                return "UNKNOWN";
             }
             return typeNameMap.valueAtQuick(index);
         }
 
         static {
-            typeNameMap.put(STATUS_IGNORED, "IGNORED");
             typeNameMap.put(STATUS_MISTYPED, "MISTYPED");
             typeNameMap.put(STATUS_UNMAPPED, "UNMAPPED");
+            typeNameMap.put(STATUS_BAD_SOURCE, "BAD CSV REF");
+            typeNameMap.put(STATUS_BAD_TARGET, "BAD TABLE REF");
+            typeNameMap.put(STATUS_DUPLICATE_TARGET, "DUP TABLE REF");
+
+            typeMessageMap.put(STATUS_MISTYPED, "Type mismatch");
+            typeMessageMap.put(STATUS_UNMAPPED, "Unmapped column");
+            typeMessageMap.put(STATUS_BAD_SOURCE, "Bad csv column reference");
+            typeMessageMap.put(STATUS_BAD_TARGET, "Bad table column reference");
+            typeMessageMap.put(STATUS_DUPLICATE_TARGET, "Duplicate table column reference");
         }
     }
 

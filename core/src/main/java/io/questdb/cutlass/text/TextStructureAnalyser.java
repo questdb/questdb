@@ -28,6 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cutlass.text.schema2.Column;
 import io.questdb.cutlass.text.schema2.SchemaV2;
+import io.questdb.cutlass.text.types.NoopTypeAdapter;
 import io.questdb.cutlass.text.types.TypeAdapter;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.log.Log;
@@ -134,12 +135,13 @@ public class TextStructureAnalyser implements CsvTextLexer.Listener, Mutable, Cl
 
         // override calculated types with user-supplied information if at least one format is set
         if (schemaColumnCount > 0) {
+            // match via header name
             if (hasHeader && schema.getFileColumnNameToColumnMap().size() > 0) {
                 for (int i = 0, k = columnNames.size(); i < k; i++) {
                     Column column = schema.getFileColumnNameToColumnMap().get(columnNames.getQuick(i));
                     if (column != null) {
-                        if (column.isTableInsertNull() || column.isFileColumnIgnore()) {
-                            columnTypes.setQuick(i, TypeAdapter.NoopTypeAdapter.INSTANCE);
+                        if (column.isFileColumnIgnore()) {
+                            columnTypes.setQuick(i, NoopTypeAdapter.INSTANCE);
                         } else if (column.getFormatCount() > 0) {
                             TypeAdapter type = column.getFormat(0);
                             if (type != null) {
@@ -149,12 +151,13 @@ public class TextStructureAnalyser implements CsvTextLexer.Listener, Mutable, Cl
                     }
                 }
             }
+            // match via column index
             if (schema.getFileColumnIndexToColumnMap().size() > 0) {
                 for (int i = 0, k = columnNames.size(); i < k; i++) {
                     Column column = schema.getFileColumnIndexToColumnMap().get(i);
                     if (column != null) {
-                        if (column.isTableInsertNull() || column.isFileColumnIgnore()) {
-                            columnTypes.setQuick(i, TypeAdapter.NoopTypeAdapter.INSTANCE);
+                        if (column.isFileColumnIgnore()) {
+                            columnTypes.setQuick(i, NoopTypeAdapter.INSTANCE);
                         } else if (column.getFormatCount() > 0) {
                             TypeAdapter type = column.getFormat(0);
                             if (type != null) {

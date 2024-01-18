@@ -24,7 +24,11 @@
 
 package io.questdb.std;
 
-public class LowerCaseCharSequenceHashSet extends AbstractLowerCaseCharSequenceHashSet {
+import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.Sinkable;
+import org.jetbrains.annotations.NotNull;
+
+public class LowerCaseCharSequenceHashSet extends AbstractLowerCaseCharSequenceHashSet implements Sinkable {
 
     private static final int MIN_INITIAL_CAPACITY = 16;
 
@@ -97,6 +101,22 @@ public class LowerCaseCharSequenceHashSet extends AbstractLowerCaseCharSequenceH
 
     public CharSequence keyAt(int index) {
         return keys[-index - 1];
+    }
+
+    @Override
+    public void toSink(@NotNull CharSinkBase<?> sink) {
+        sink.put('[');
+        boolean isFirst = true;
+        for (int i = 0, n = keys.length; i < n; i++) {
+            if (keys[i] != noEntryKey) {
+                if (!isFirst) {
+                    sink.put(',');
+                }
+                isFirst = false;
+                sink.put(keys[i]);
+            }
+        }
+        sink.put(']');
     }
 
     private void rehash() {

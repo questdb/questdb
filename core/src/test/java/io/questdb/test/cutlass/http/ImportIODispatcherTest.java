@@ -224,7 +224,7 @@ public class ImportIODispatcherTest extends AbstractTest {
             "Transfer-Encoding: chunked\r\n" +
             "Content-Type: application/json; charset=utf-8\r\n" +
             "\r\n" +
-            "03aa\r\n" +
+            "0368\r\n" +
             "{\"status\":\"OK\"," +
             "\"location\":\"trips\"," +
             "\"rowsRejected\":0," +
@@ -238,9 +238,9 @@ public class ImportIODispatcherTest extends AbstractTest {
             "{\"name\":\"DropOff_datetime\",\"type\":\"STRING\",\"size\":0,\"errors\":0}" +
             "]," +
             "\"mapping\":[" +
-            "{\"file_column_name\":\"Col1\",\"file_column_index\":0,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Col1\",\"insert_null\":\"false\",\"formats\":[{}]}," +
-            "{\"file_column_name\":\"Pickup_DateTime\",\"file_column_index\":1,\"file_column_ignore\":false,\"column_type\":\"TIMESTAMP\",\"table_column_name\":\"Pickup_DateTime\",\"insert_null\":\"false\",\"formats\":[{\"pattern\":\"yyyy-MM-dd HH:mm:ss\",\"locale\":\"en\",\"utf8\":false}]}," +
-            "{\"file_column_name\":\"DropOff_datetime\",\"file_column_index\":2,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"DropOff_datetime\",\"insert_null\":\"false\",\"formats\":[{}]}]" +
+            "{\"file_column_name\":\"Col1\",\"file_column_index\":0,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Col1\",\"formats\":[{}]}," +
+            "{\"file_column_name\":\"Pickup_DateTime\",\"file_column_index\":1,\"file_column_ignore\":false,\"column_type\":\"TIMESTAMP\",\"table_column_name\":\"Pickup_DateTime\",\"formats\":[{\"pattern\":\"yyyy-MM-dd HH:mm:ss\",\"locale\":\"en\",\"utf8\":false}]}," +
+            "{\"file_column_name\":\"DropOff_datetime\",\"file_column_index\":2,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"DropOff_datetime\",\"formats\":[{}]}]" +
             "}\r\n" +
             "00\r\n" +
             "\r\n";
@@ -282,7 +282,7 @@ public class ImportIODispatcherTest extends AbstractTest {
             "Transfer-Encoding: chunked\r\n" +
             "Content-Type: application/json; charset=utf-8\r\n" +
             "\r\n" +
-            "038d\r\n" +
+            "034b\r\n" +
             "{\"status\":\"OK\"," +
             "\"location\":\"trips\"," +
             "\"rowsRejected\":0," +
@@ -295,9 +295,9 @@ public class ImportIODispatcherTest extends AbstractTest {
             "{\"name\":\"DropOff_datetime\",\"type\":\"STRING\",\"size\":0,\"errors\":0}" +
             "]," +
             "\"mapping\":[" +
-            "{\"file_column_name\":\"Col1\",\"file_column_index\":0,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Col1\",\"insert_null\":\"false\",\"formats\":[{}]}," +
-            "{\"file_column_name\":\"Pickup_DateTime\",\"file_column_index\":1,\"file_column_ignore\":false,\"column_type\":\"TIMESTAMP\",\"table_column_name\":\"Pickup_DateTime\",\"insert_null\":\"false\",\"formats\":[{\"pattern\":\"yyyy-MM-dd HH:mm:ss\",\"locale\":\"en\",\"utf8\":false}]}," +
-            "{\"file_column_name\":\"DropOff_datetime\",\"file_column_index\":2,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"DropOff_datetime\",\"insert_null\":\"false\",\"formats\":[{}]}]" +
+            "{\"file_column_name\":\"Col1\",\"file_column_index\":0,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Col1\",\"formats\":[{}]}," +
+            "{\"file_column_name\":\"Pickup_DateTime\",\"file_column_index\":1,\"file_column_ignore\":false,\"column_type\":\"TIMESTAMP\",\"table_column_name\":\"Pickup_DateTime\",\"formats\":[{\"pattern\":\"yyyy-MM-dd HH:mm:ss\",\"locale\":\"en\",\"utf8\":false}]}," +
+            "{\"file_column_name\":\"DropOff_datetime\",\"file_column_index\":2,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"DropOff_datetime\",\"formats\":[{}]}]" +
             "}\r\n" +
             "00\r\n" +
             "\r\n";
@@ -335,7 +335,7 @@ public class ImportIODispatcherTest extends AbstractTest {
             "Transfer-Encoding: chunked\r\n" +
             "Content-Type: application/json; charset=utf-8\r\n" +
             "\r\n" +
-            "03e9\r\n" +
+            "03a7\r\n" +
             "{\"status\":\"OK\"," +
             "\"location\":\"trips\"," +
             "\"rowsRejected\":0," +
@@ -351,9 +351,9 @@ public class ImportIODispatcherTest extends AbstractTest {
             "{\"name\":\"DropOff_datetime\",\"type\":\"STRING\",\"size\":0,\"errors\":0}" +
             "]," +
             "\"mapping\":[" +
-            "{\"file_column_name\":\"Col1\",\"file_column_index\":0,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Col1\",\"insert_null\":\"false\",\"formats\":[{}]}," +
-            "{\"file_column_name\":\"Pickup_DateTime\",\"file_column_index\":1,\"file_column_ignore\":false,\"column_type\":\"TIMESTAMP\",\"table_column_name\":\"Pickup_DateTime\",\"insert_null\":\"false\",\"formats\":[{\"pattern\":\"yyyy-MM-dd HH:mm:ss\",\"locale\":\"en\",\"utf8\":false}]}," +
-            "{\"file_column_name\":\"DropOff_datetime\",\"file_column_index\":2,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"DropOff_datetime\",\"insert_null\":\"false\",\"formats\":[{}]}]" +
+            "{\"file_column_name\":\"Col1\",\"file_column_index\":0,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Col1\",\"formats\":[{}]}," +
+            "{\"file_column_name\":\"Pickup_DateTime\",\"file_column_index\":1,\"file_column_ignore\":false,\"column_type\":\"TIMESTAMP\",\"table_column_name\":\"Pickup_DateTime\",\"formats\":[{\"pattern\":\"yyyy-MM-dd HH:mm:ss\",\"locale\":\"en\",\"utf8\":false}]}," +
+            "{\"file_column_name\":\"DropOff_datetime\",\"file_column_index\":2,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"DropOff_datetime\",\"formats\":[{}]}]" +
             "}\r\n" +
             "00\r\n" +
             "\r\n";
