@@ -247,7 +247,10 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                         sender.flush();
                         Assert.fail("Exception expected");
                     } catch (LineSenderException e) {
-                        TestUtils.assertContains(e.getMessage(), "Could not flush buffer: http://localhost:9001/write?precision=n Connection Failed: timed out [errno=35]");
+                        TestUtils.assertContains(
+                                e.getMessage(),
+                                "Could not flush buffer: http://localhost:9001/write?precision=n Connection Failed: timed out [errno="  //errno depends on OS
+                        );
                     } finally {
                         delayLatch.countDown();
                     }
