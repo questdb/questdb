@@ -84,7 +84,7 @@ public class MaxTimestampGroupByFunction extends TimestampFunction implements Gr
 
     @Override
     public boolean isParallelismSupported() {
-        return true;
+        return UnaryFunction.super.isParallelismSupported();
     }
 
     @Override

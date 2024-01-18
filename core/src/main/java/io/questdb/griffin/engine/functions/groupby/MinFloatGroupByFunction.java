@@ -83,7 +83,7 @@ public class MinFloatGroupByFunction extends FloatFunction implements GroupByFun
 
     @Override
     public boolean isParallelismSupported() {
-        return true;
+        return UnaryFunction.super.isParallelismSupported();
     }
 
     @Override

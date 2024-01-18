@@ -84,7 +84,7 @@ public class MaxIntGroupByFunction extends IntFunction implements GroupByFunctio
 
     @Override
     public boolean isParallelismSupported() {
-        return true;
+        return UnaryFunction.super.isParallelismSupported();
     }
 
     @Override
