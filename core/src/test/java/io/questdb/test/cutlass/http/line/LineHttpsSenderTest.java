@@ -96,6 +96,7 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
                     sender.flush(); // make sure a connection is established
                     tlsProxy.killConnections();
                     sender.table(tableName).longColumn("value", 42).atNow();
+                    sender.flush();
                 }
                 assertTableSizeEventually(serverMain.getEngine(), tableName, 2);
             }
@@ -133,7 +134,12 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
                 serverMain.start();
                 int port = tlsProxy.getListeningPort();
                 String url = "https://localhost:" + port;
-                try (Sender sender = Sender.builder().url(url).advancedTls().disableCertificateValidation().build()) {
+                try (Sender sender = Sender.builder()
+                        .url(url)
+                        .advancedTls()
+                        .disableCertificateValidation()
+                        .maxRetryMillis(500)
+                        .build()) {
                     sender.table(tableName).longColumn("value", 42).atNow();
                     sender.flush(); // make sure a connection is established
 
@@ -192,7 +198,6 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
     @Test
     public void testServerNotTrusted() throws Exception {
         String tableName = UUID.randomUUID().toString();
-        String truststore = TestUtils.getTestResourcePath(TRUSTSTORE_PATH);
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
@@ -200,7 +205,11 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
                 serverMain.start();
                 int port = tlsProxy.getListeningPort();
                 String url = "https://localhost:" + port;
-                try (Sender sender = Sender.builder().url(url).build()) {
+                try (Sender sender = Sender.builder()
+                        .url(url)
+                        .maxRetryMillis(1000)
+                        .build()
+                ) {
                     try {
                         sender.table(tableName).longColumn("value", 42).atNow();
                         sender.flush();

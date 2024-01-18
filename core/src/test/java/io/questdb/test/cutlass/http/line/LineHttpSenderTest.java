@@ -356,6 +356,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         .longColumn("water_level", i)
                         .at(timestamp, ChronoUnit.MICROS);
             }
+            sender.flush();
         }
     }
 }

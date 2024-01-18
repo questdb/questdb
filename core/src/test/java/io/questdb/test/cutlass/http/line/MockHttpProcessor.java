@@ -23,12 +23,26 @@ final class MockHttpProcessor implements HttpRequestProcessor, HttpMultipartCont
     private final Queue<Response> responses = new ConcurrentLinkedQueue<>();
     private ActualRequest actualRequest = new ActualRequest();
     private ExpectedRequest expectedRequest = new ExpectedRequest();
+    private Response lastResortResponse;
 
     public MockHttpProcessor delayedReplyWithStatus(int statusCode, CountDownLatch delayLatch) {
         Response response = new Response();
         response.responseStatusCode = statusCode;
         response.delayLatch = delayLatch;
         responses.add(response);
+
+        expectedRequests.add(expectedRequest);
+        expectedRequest = new ExpectedRequest();
+
+        return this;
+    }
+
+    public MockHttpProcessor keepReplyingWithContent(int statusCode, String responseContent, String contentType) {
+        Response response = new Response();
+        response.responseStatusCode = statusCode;
+        response.responseContent = responseContent;
+        response.contentType = contentType;
+        lastResortResponse = response;
 
         expectedRequests.add(expectedRequest);
         expectedRequest = new ExpectedRequest();
@@ -68,6 +82,9 @@ final class MockHttpProcessor implements HttpRequestProcessor, HttpMultipartCont
         actualRequest = new ActualRequest();
 
         Response response = responses.poll();
+        if (response == null) {
+            response = lastResortResponse;
+        }
         if (response == null) {
             throw new AssertionError("No response configured for request: " + actualRequest);
         }
@@ -124,7 +141,7 @@ final class MockHttpProcessor implements HttpRequestProcessor, HttpMultipartCont
             } while (actualRequest == null && System.nanoTime() < deadline);
             verifyInteraction(expectedRequest, actualRequest, i);
         }
-        if (!recordedRequests.isEmpty()) {
+        if (!recordedRequests.isEmpty() && lastResortResponse == null) {
             throw new AssertionError("Unexpected requests: " + recordedRequests);
         }
     }

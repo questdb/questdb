@@ -129,7 +129,10 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
 
     @Test
     public void testMaxRequestBufferSizeExceeded() {
-        try (Sender sender = Sender.builder().url("http://localhost:1").maximumBufferCapacity(65536).build()) {
+        try (Sender sender = Sender.builder().url("http://localhost:1")
+                .maximumBufferCapacity(65536)
+                .build()
+        ) {
             for (int i = 0; i < 100000; i++) {
                 sender.table("test")
                         .symbol("sym", "bol")
@@ -146,6 +149,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     public void testNoConnection() {
         try (Sender sender = Sender.builder()
                 .url("http://127.0.0.1:1")
+                .maxRetryMillis(1000)
                 .build()) {
             sender.table("test")
                     .symbol("sym", "bol")
@@ -190,13 +194,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     public void testRetryOn500_exceeded() throws Exception {
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
                 .withExpectedContent("test,sym=bol x=1.0\n")
-                .replyWithContent(500, "Internal Server Error", HttpConstants.CONTENT_TYPE_JSON)
-                .withExpectedContent("test,sym=bol x=1.0\n")
-                .replyWithContent(500, "Internal Server Error", HttpConstants.CONTENT_TYPE_JSON)
-                .withExpectedContent("test,sym=bol x=1.0\n")
-                .replyWithContent(500, "Internal Server Error", HttpConstants.CONTENT_TYPE_JSON)
-                .withExpectedContent("test,sym=bol x=1.0\n")
-                .replyWithContent(500, "Internal Server Error", HttpConstants.CONTENT_TYPE_JSON);
+                .keepReplyingWithContent(500, "Internal Server Error", HttpConstants.CONTENT_TYPE_JSON);
 
         testWithMock(mockHttpProcessor, sender -> {
             sender.table("test")
@@ -209,7 +207,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
             } catch (LineSenderException e) {
                 TestUtils.assertContains(e.getMessage(), "Could not flush buffer: Internal Server Error [http-status=500]");
             }
-        });
+        }, c -> c.maxRetryMillis(1000));
     }
 
     @Test
@@ -219,7 +217,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 .replyWithContent(500, "do not dare to retry", "plain/text");
 
         testWithMock(mockHttpProcessor, errorVerifier("Could not flush buffer: do not dare to retry [http-status=500]"),
-                senderBuilder -> senderBuilder.maxRetries(0)
+                senderBuilder -> senderBuilder.maxRetryMillis(0)
         );
     }
 
@@ -256,7 +254,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                     }
                 }, senderBuilder -> senderBuilder
                         .httpTimeout(100)
-                        .maxRetries(0)
+                        .maxRetryMillis(0)
         );
     }
 

@@ -45,6 +45,7 @@ import java.io.Closeable;
 import java.security.PrivateKey;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Influx Line Protocol client to feed data to a remote QuestDB instance.
@@ -263,11 +264,11 @@ public interface Sender extends Closeable {
         private static final int DEFAULT_HTTP_TIMEOUT = 60_000;
         private static final int DEFAULT_MAXIMUM_BUFFER_CAPACITY = 20 * 1024 * 1024; // 20MB -- todo: sync with Rust client
         private static final int DEFAULT_MAX_PENDING_ROWS = 10_000;
-        private static final int DEFAULT_MAX_RETRIES = 3;
+        private static final long DEFAULT_MAX_RETRY_NANOS = TimeUnit.SECONDS.toNanos(10); // keep sync with the contract of the configuration method
         private static final int DEFAULT_TCP_PORT = 9009;
         private static final int HTTP_TIMEOUT_DEFAULT = -1;
         private static final int MAX_PENDING_ROWS_DEFAULT = -1;
-        private static final int MAX_RETRIES_DEFAULT = -1;
+        private static final int MAX_RETRY_MILLIS_DEFAULT = -1;
         private static final int MIN_BUFFER_SIZE_FOR_AUTH = 512 + 1; // challenge size + 1;
         private static final byte PORT_DEFAULT = 0;
         private static final int PROTOCOL_HTTP = 1;
@@ -279,7 +280,7 @@ public interface Sender extends Closeable {
         private String httpToken;
         private String keyId;
         private int maxPendingRows = MAX_PENDING_ROWS_DEFAULT;
-        private int maxRetries = MAX_RETRIES_DEFAULT;
+        private int maxRetryMillis = MAX_RETRY_MILLIS_DEFAULT;
         private int maximumBufferCapacity = DEFAULT_MAXIMUM_BUFFER_CAPACITY;
         private final HttpClientConfiguration httpClientConfiguration = new DefaultHttpClientConfiguration() {
             @Override
@@ -416,13 +417,13 @@ public interface Sender extends Closeable {
                             .put("]");
                 }
                 int actualMaxPendingRows = maxPendingRows == MAX_PENDING_ROWS_DEFAULT ? DEFAULT_MAX_PENDING_ROWS : maxPendingRows;
-                int actualMaxRetries = maxRetries == MAX_RETRIES_DEFAULT ? DEFAULT_MAX_RETRIES : maxRetries;
+                long actualMaxRetriesNanos = maxRetryMillis == MAX_RETRY_MILLIS_DEFAULT ? DEFAULT_MAX_RETRY_NANOS : maxRetryMillis * 1_000_000L;
                 ClientTlsConfiguration tlsConfig = null;
                 if (tlsEnabled) {
                     assert (trustStorePath == null) == (trustStorePassword == null); //either both null or both non-null
                     tlsConfig = new ClientTlsConfiguration(trustStorePath, trustStorePassword, tlsValidationMode == TlsValidationMode.DEFAULT ? ClientTlsConfiguration.TLS_VALIDATION_MODE_FULL : ClientTlsConfiguration.TLS_VALIDATION_MODE_NONE);
                 }
-                return new LineHttpSender(host, port, httpClientConfiguration, tlsConfig, actualMaxPendingRows, httpToken, username, password, actualMaxRetries);
+                return new LineHttpSender(host, port, httpClientConfiguration, tlsConfig, actualMaxPendingRows, httpToken, username, password, actualMaxRetriesNanos);
             }
             assert protocol == PROTOCOL_TCP;
             LineChannel channel = new PlainTcpLineChannel(nf, host, port, bufferCapacity * 2);
@@ -566,12 +567,29 @@ public interface Sender extends Closeable {
             return this;
         }
 
-        public LineSenderBuilder maxRetries(int maxRetries) {
-            if (this.maxRetries != MAX_RETRIES_DEFAULT) {
+        /**
+         * Configure maximum number of retries. This is only used when communicating over HTTP protocol.
+         * <br>
+         * When a server returns an error, the Sender will retry sending the same request until it either succeeds
+         * or the maximum retrying time is exceeded. This setting effectively controls the maximum server outage
+         * time. If the server is down for longer than this time then the Sender will give up and throw an exception.
+         * <br>
+         * Setting this value to zero disables retries. In this case the Sender will throw an exception immediately.
+         * Sender does not retry when there is a failure during close(). For this reason it's recommended to call
+         * {@link #flush()} explicitly before closing the Sender.
+         *
+         * <br>
+         * Default: 10,000 milliseconds.
+         *
+         * @param maxRetryMillis maximum retry time in milliseconds.
+         * @return this instance for method chaining
+         */
+        public LineSenderBuilder maxRetryMillis(int maxRetryMillis) {
+            if (this.maxRetryMillis != MAX_RETRY_MILLIS_DEFAULT) {
                 throw new LineSenderException("max retries was already configured ")
-                        .put("[max-retries=").put(this.maxRetries).put("]");
+                        .put("[max-retries=").put(this.maxRetryMillis).put("]");
             }
-            this.maxRetries = maxRetries;
+            this.maxRetryMillis = maxRetryMillis;
             return this;
         }
 
@@ -743,7 +761,7 @@ public interface Sender extends Closeable {
                 if (httpToken != null) {
                     throw new LineSenderException("HTTP token authentication is not supported for TCP protocol");
                 }
-                if (maxRetries != MAX_RETRIES_DEFAULT) {
+                if (maxRetryMillis != MAX_RETRY_MILLIS_DEFAULT) {
                     throw new LineSenderException("retrying is not supported for TCP protocol");
                 }
                 if (httpTimeout != HTTP_TIMEOUT_DEFAULT) {

@@ -18,7 +18,6 @@ import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
-import java.io.IOException;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.concurrent.ThreadLocalRandom;
@@ -32,7 +31,7 @@ public final class LineHttpSender implements Sender {
     private final String authToken;
     private final String host;
     private final int maxPendingRows;
-    private final int maxRetries;
+    private final long maxRetriesNanos;
     private final String password;
     private final int port;
     private final CharSequence questdbVersion;
@@ -45,9 +44,9 @@ public final class LineHttpSender implements Sender {
     private HttpClient.Request request;
     private RequestState state = RequestState.EMPTY;
 
-    public LineHttpSender(String host, int port, HttpClientConfiguration clientConfiguration, ClientTlsConfiguration tlsConfig, int maxPendingRows, String authToken, String username, String password, int maxRetries) {
+    public LineHttpSender(String host, int port, HttpClientConfiguration clientConfiguration, ClientTlsConfiguration tlsConfig, int maxPendingRows, String authToken, String username, String password, long maxRetriesNanos) {
         assert authToken == null || (username == null && password == null);
-        this.maxRetries = maxRetries;
+        this.maxRetriesNanos = maxRetriesNanos;
         this.host = host;
         this.port = port;
         this.maxPendingRows = maxPendingRows;
@@ -288,7 +287,8 @@ public final class LineHttpSender implements Sender {
             return;
         }
 
-        int remainingRetries = maxRetries;
+        // do not retry if we are closing! todo: is this a good idea?
+        long retryingDeadlineNanos = System.nanoTime() + (closing ? 0 : maxRetriesNanos);
         int retryBackoff = RETRY_INITIAL_BACKOFF_MS;
         for (; ; ) {
             try {
@@ -300,7 +300,7 @@ public final class LineHttpSender implements Sender {
                     break;
                 }
                 if (isRetryableHttpStatus(statusCode)) {
-                    if (remainingRetries-- == 0) {
+                    if (System.nanoTime() > retryingDeadlineNanos) {
                         handleHttpErrorResponse(statusCode, response);
                     }
                     client.disconnect(); // forces reconnect, just in case
@@ -311,7 +311,7 @@ public final class LineHttpSender implements Sender {
             } catch (HttpClientException e) {
                 // this is a network error, we can retry
                 client.disconnect(); // forces reconnect
-                if (remainingRetries-- == 0) {
+                if (System.nanoTime() > retryingDeadlineNanos) {
                     // we did our best, give up
                     pendingRows = 0;
                     request = newRequest();
@@ -461,7 +461,7 @@ public final class LineHttpSender implements Sender {
         private State state = State.INIT;
 
         @Override
-        public void close() throws IOException {
+        public void close() {
             Misc.free(lexer);
         }
 
