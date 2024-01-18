@@ -929,6 +929,7 @@ public class OrderedMap implements Map, Reopenable {
 
         @Override
         public void putLong256(long l0, long l1, long l2, long l3) {
+            checkCapacity(32L);
             Unsafe.getUnsafe().putLong(appendAddress, l0);
             Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, l1);
             Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 2, l2);
