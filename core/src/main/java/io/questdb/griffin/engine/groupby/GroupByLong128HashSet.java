@@ -95,7 +95,7 @@ public class GroupByLong128HashSet {
     }
 
     public long keyAddrAt(int index) {
-            return ptr + HEADER_SIZE + 16L * index;
+        return ptr + HEADER_SIZE + 16L * index;
     }
 
     public int keyIndex(long lo, long hi) {
