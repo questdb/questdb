@@ -66,12 +66,10 @@ public final class CountDistinctUuidGroupByFunction extends LongFunction impleme
         if (!Uuid.isNull(lo, hi)) {
             mapValue.putLong(valueIndex, 1L);
             // Remap zero since it's used as the no entry key.
-//            if (lo == 0 && hi == 0) {
-//                lo = Numbers.LONG_NaN;
-//                hi = Numbers.LONG_NaN;
-//            }
-            lo = lo == 0 ? Numbers.LONG_NaN : lo;
-            hi = hi == 0 ? Numbers.LONG_NaN : hi;
+            if (lo == 0 && hi == 0) {
+                lo = Numbers.LONG_NaN;
+                hi = Numbers.LONG_NaN;
+            }
             setA.of(0).add(lo, hi);
             mapValue.putLong(valueIndex + 1, setA.ptr());
         } else {
@@ -87,12 +85,10 @@ public final class CountDistinctUuidGroupByFunction extends LongFunction impleme
         if (!Uuid.isNull(lo, hi)) {
             long ptr = mapValue.getLong(valueIndex + 1);
             // Remap zero since it's used as the no entry key.
-//            if (lo == 0 && hi == 0) {
-//                lo = Numbers.LONG_NaN;
-//                hi = Numbers.LONG_NaN;
-//            }
-            lo = lo == 0 ? Numbers.LONG_NaN : lo;
-            hi = hi == 0 ? Numbers.LONG_NaN : hi;
+            if (lo == 0 && hi == 0) {
+                lo = Numbers.LONG_NaN;
+                hi = Numbers.LONG_NaN;
+            }
             final int index = setA.of(ptr).keyIndex(lo, hi);
             if (index >= 0) {
                 setA.addAt(index, lo, hi);
