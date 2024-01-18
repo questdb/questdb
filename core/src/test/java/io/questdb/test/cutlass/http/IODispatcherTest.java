@@ -1573,7 +1573,7 @@ public class IODispatcherTest extends AbstractTest {
                                     "    },\r\n" +
                                     "  ]\r\n" +
                                     "}\r\n",
-                            "schemaV2",
+                            TextImportProcessor.SCHEMA_V2,
                             "t1,t2,t3,t4\n" +
                                     "2023-07-01T14:59:55.711'+0000',2023-07-01T14:59:55.711111222'+0000',2023-03-12'T'17:56:22'-0700',2023-08-20'T'13:20:10*633+0000\n" +
                                     "2023-07-01T14:59:55.711'+0000',2023-07-01T14:59:55.711111222'+0000',2023-03-12'T'17:56:22'-0700',2023-08-20'T'13:20:10*633+0000",
@@ -2545,6 +2545,37 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testImportOfUnstructuredTextFailsOnDelimiterDetection() throws Exception {
+        testImport(
+                engine -> {
+                    try (SqlExecutionContext context = TestUtils.createSqlExecutionCtx(engine)) {
+                        engine.ddl("create table skip_test ( ts timestamp, x long ) ", context);
+                    }
+
+                    testHttpClient.assertSendMultipart(
+                            "{\"status\":\"ERROR\",\"location\":\"skip_test\",\"rowsRejected\":0,\"rowsImported\":0,\"header\":false,\"partitionBy\":\"NONE\"," +
+                                    "\"errors\":[\"Text delimiter can't be detected automatically. Please set it manually.\"],\"columns\":[],\"mapping\":[]}",
+                            null,
+                            null,
+                            "mangled,, header, should, be , ignored, 1 \r\n" +
+                                    "yada, yada, yada\r\n" +
+                                    "blah, blah, blah\r\n" +
+                                    "ts,x\r\n" +
+                                    "2021-01-02T03:04:05.000000Z,1\r\n" +
+                                    "2021-02-03T04:05:06.000000Z,2\r\n",
+                            null,
+                            "skip_test",
+                            "json",
+                            null,
+                            null,
+                            null,
+                            null
+                    );
+                }
+        );
+    }
+
+    @Test
     public void testImportSettingO3MaxLagAndMaxUncommittedRows1() throws Exception {
         importWithO3MaxLagAndMaxUncommittedRowsTableNotExists(
                 240_000_000, // 4 minutes, micro precision
@@ -2750,18 +2781,54 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testImportSkippingFirstThreeMangledLines() throws Exception {
+        testImport(
+                engine -> {
+                    try (SqlExecutionContext context = TestUtils.createSqlExecutionCtx(engine)) {
+                        engine.ddl("create table skip_test ( ts timestamp, x long ) ", context);
+                    }
+
+                    testHttpClient.assertSendMultipart(
+                            "{\"status\":\"OK\",\"location\":\"skip_test\",\"rowsRejected\":0,\"rowsImported\":2,\"header\":true,\"partitionBy\":\"NONE\"," +
+                                    "\"columns\":[{\"name\":\"ts\",\"type\":\"TIMESTAMP\",\"size\":8,\"errors\":0},{\"name\":\"x\",\"type\":\"LONG\",\"size\":8,\"errors\":0}]," +
+                                    "\"mapping\":[" +
+                                    "{\"file_column_name\":\"ts\",\"file_column_index\":0,\"file_column_ignore\":false,\"column_type\":\"TIMESTAMP\",\"table_column_name\":\"ts\",\"formats\":[{\"pattern\":\"yyyy-MM-ddTHH:mm:ss.SSSUUUz\",\"locale\":\"en\",\"utf8\":false}]}," +
+                                    "{\"file_column_name\":\"x\",\"file_column_index\":1,\"file_column_ignore\":false,\"column_type\":\"LONG\",\"table_column_name\":\"x\",\"formats\":[{}]}]}",
+                            null,
+                            null,
+                            "mangled,, header, should, be , ignored, 1 \r\n" +
+                                    "yada, yada, yada\r\n" +
+                                    "blah, blah, blah\r\n" +
+                                    "ts,x\r\n" +
+                                    "2021-01-02T03:04:05.000000Z,1\r\n" +
+                                    "2021-02-03T04:05:06.000000Z,2\r\n",
+                            null,
+                            "skip_test",
+                            "json",
+                            null,
+                            null,
+                            null,
+                            null,
+                            "3",
+                            ","
+                    );
+                }
+        );
+    }
+
+    @Test
     public void testImportWithIncompleteMappingFailsInJsonFormat() throws Exception {
         testImportWithBadMappingFailsInTextFormat("json",
                 "{\"status\":\"ERROR\",\"location\":\"test\",\"rowsRejected\":0,\"rowsImported\":0,\"header\":true,\"partitionBy\":\"NONE\"," +
-                        "\"errors\":[\"column mapping is invalid [unmapped_schema_column_indexes=[0,1,2,3,5,6],unmapped_csv_column_indexes=[1,2,3,4,5,6],ambiguous_table_column_names=[dup1]]\"]," +
+                        "\"errors\":[\"column mapping is invalid [unmapped_schema_column_indexes=[0,1,2,3,5,6],unmapped_csv_column_indexes=[6],ambiguous_table_column_names=[dup1]]\"]," +
                         "\"columns\":[]," +
                         "\"mapping\":[" +
                         "{\"file_column_name\":\"col_a\",\"file_column_index\":0,\"file_column_ignore\":false,\"column_type\":\"INT\",\"table_column_name\":\"col_a\",\"formats\":[{}]}," +
-                        "{\"file_column_name\":\"short\",\"file_column_index\":1,\"file_column_ignore\":false,\"column_type\":\"SHORT\",\"table_column_name\":\"\",\"formats\":[{},\"errors\": [\"Unmapped column\",\"Bad table column reference\"]]}," +
-                        "{\"file_column_name\":\"bad_short\",\"file_column_index\":2,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"\",\"formats\":[{},\"errors\": [\"Unmapped column\",\"Bad table column reference\"]]}," +
-                        "{\"file_column_name\":\"byte\",\"file_column_index\":3,\"file_column_ignore\":false,\"column_type\":\"BYTE\",\"table_column_name\":\"\",\"formats\":[{},\"errors\": [\"Unmapped column\",\"Bad table column reference\"]]}," +
-                        "{\"file_column_name\":\"bad_byte\",\"file_column_index\":4,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"\",\"formats\":[{},\"errors\": [\"Unmapped column\",\"Bad table column reference\"]]}," +
-                        "{\"file_column_name\":\"int\",\"file_column_index\":5,\"file_column_ignore\":false,\"column_type\":\"INT\",\"table_column_name\":\"\",\"formats\":[{},\"errors\": [\"Unmapped column\",\"Bad table column reference\"]]}," +
+                        "{\"file_column_name\":\"short\",\"file_column_index\":1,\"file_column_ignore\":false,\"column_type\":\"SHORT\",\"table_column_name\":\"short\",\"formats\":[{},\"errors\": [\"Bad table column reference\"]]}," +
+                        "{\"file_column_name\":\"bad_short\",\"file_column_index\":2,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"bad_short\",\"formats\":[{},\"errors\": [\"Bad table column reference\"]]}," +
+                        "{\"file_column_name\":\"byte\",\"file_column_index\":3,\"file_column_ignore\":false,\"column_type\":\"BYTE\",\"table_column_name\":\"byte\",\"formats\":[{},\"errors\": [\"Bad table column reference\"]]}," +
+                        "{\"file_column_name\":\"bad_byte\",\"file_column_index\":4,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"bad_byte\",\"formats\":[{},\"errors\": [\"Bad table column reference\"]]}," +
+                        "{\"file_column_name\":\"int\",\"file_column_index\":5,\"file_column_ignore\":false,\"column_type\":\"INT\",\"table_column_name\":\"wrong_table\",\"formats\":[{},\"errors\": [\"Bad table column reference\"]]}," +
                         "{\"file_column_name\":\"other\",\"file_column_index\":6,\"file_column_ignore\":false,\"column_type\":\"CHAR\",\"table_column_name\":\"\",\"formats\":[{},\"errors\": [\"Unmapped column\"]]}," +
                         "{\"file_column_name\":\"d\",\"file_column_index\":7,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"dup1\",\"formats\":[{},\"errors\": [\"Duplicate table column reference\"]]}," +
                         "{\"file_column_name\":\"dup1\",\"file_column_index\":8,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"dup1\",\"formats\":[{},\"errors\": [\"Duplicate table column reference\"]]}," +
@@ -2783,11 +2850,11 @@ public class IODispatcherTest extends AbstractTest {
                         "|  Idx  |            Csv name  |     Csv type  |        Table column  |   Table type  |                   Status  |\r\n" +
                         "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
                         "|    0  |               col_a  |          INT  |               col_a  |          INT  |                       OK  |\r\n" +
-                        "|    1  |               short  |        SHORT  |             UNKNOWN  |      UNKNOWN  |   UNMAPPED,BAD TABLE REF  |\r\n" +
-                        "|    2  |           bad_short  |       STRING  |             UNKNOWN  |      UNKNOWN  |   UNMAPPED,BAD TABLE REF  |\r\n" +
-                        "|    3  |                byte  |         BYTE  |             UNKNOWN  |      UNKNOWN  |   UNMAPPED,BAD TABLE REF  |\r\n" +
-                        "|    4  |            bad_byte  |       STRING  |             UNKNOWN  |      UNKNOWN  |   UNMAPPED,BAD TABLE REF  |\r\n" +
-                        "|    5  |                 int  |          INT  |             UNKNOWN  |      UNKNOWN  |   UNMAPPED,BAD TABLE REF  |\r\n" +
+                        "|    1  |               short  |        SHORT  |               short  |      UNKNOWN  |            BAD TABLE REF  |\r\n" +
+                        "|    2  |           bad_short  |       STRING  |           bad_short  |      UNKNOWN  |            BAD TABLE REF  |\r\n" +
+                        "|    3  |                byte  |         BYTE  |                byte  |      UNKNOWN  |            BAD TABLE REF  |\r\n" +
+                        "|    4  |            bad_byte  |       STRING  |            bad_byte  |      UNKNOWN  |            BAD TABLE REF  |\r\n" +
+                        "|    5  |                 int  |          INT  |         wrong_table  |      UNKNOWN  |            BAD TABLE REF  |\r\n" +
                         "|    6  |               other  |         CHAR  |             UNKNOWN  |      UNKNOWN  |                 UNMAPPED  |\r\n" +
                         "|    7  |                   d  |       STRING  |                dup1  |       STRING  |            DUP TABLE REF  |\r\n" +
                         "|    8  |                dup1  |       STRING  |                dup1  |       STRING  |            DUP TABLE REF  |\r\n" +
@@ -2796,8 +2863,8 @@ public class IODispatcherTest extends AbstractTest {
                         "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
                         "|  Errors                                                                                                         |\r\n" +
                         "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
-                        "|  column mapping is invalid [unmapped_schema_column_indexes=[0,1,2,3,5,6],unmapped_csv_column_indexes=[1,2,3,4,  |\r\n" +
-                        "|  6],ambiguous_table_column_names=[dup1]]                                                                        |\r\n" +
+                        "|  column mapping is invalid [unmapped_schema_column_indexes=[0,1,2,3,5,6],unmapped_csv_column_indexes=[6],ambig  |\r\n" +
+                        "|  us_table_column_names=[dup1]]                                                                                  |\r\n" +
                         "+-----------------------------------------------------------------------------------------------------------------+\r\n"
         );
     }
@@ -2826,7 +2893,7 @@ public class IODispatcherTest extends AbstractTest {
                                         "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
                                         "|  Errors                                                                                                         |\r\n" +
                                         "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
-                                        "|  column mapping is invalid [unmapped_schema_column_indexes=[0,0]]                                               |\r\n" +
+                                        "|  column mapping is invalid [unmapped_schema_column_indexes=[0]]                                                 |\r\n" +
                                         "+-----------------------------------------------------------------------------------------------------------------+\r\n",
                                 "{  \"columns\": [ " +
                                         "{  \"file_column_index\": 0,  \"column_type\": \"LONG\",  \"table_column_name\": \"col_a\" }," +
@@ -2876,81 +2943,67 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testImportWithTruncateOptionRemovesPriorData() throws Exception {
-        new HttpQueryTestBuilder()
-                .withTempFolder(root)
-                .withWorkerCount(2)
-                .withHttpServerConfigBuilder(
-                        new HttpServerConfigurationBuilder()
-                                .withNetwork(NetworkFacadeImpl.INSTANCE)
-                                .withDumpingTraffic(false)
-                                .withAllowDeflateBeforeSend(false)
-                                .withHttpProtocolVersion("HTTP/1.1 ")
-                                .withServerKeepAlive(true)
-                )
-                .run(
-                        null,
-                        engine -> {
-                            try (SqlExecutionContext context = TestUtils.createSqlExecutionCtx(engine)) {
-                                engine.ddl("create table truncate_test (ts timestamp, value double) timestamp(ts)", context);
-                                engine.insert("insert into truncate_test " +
-                                        "select x::timestamp as ts, rnd_double() value from long_sequence(10)), timestamp(ts)", context);
-                            }
+        testImport(
+                engine -> {
+                    try (SqlExecutionContext context = TestUtils.createSqlExecutionCtx(engine)) {
+                        engine.ddl("create table truncate_test (ts timestamp, value double) timestamp(ts)", context);
+                        engine.insert("insert into truncate_test " +
+                                "select x::timestamp as ts, rnd_double() value from long_sequence(10)), timestamp(ts)", context);
+                    }
 
-                            sendAndReceive(
-                                    NetworkFacadeImpl.INSTANCE,
-                                    "POST /upload?fmt=json&overwrite=false&truncate=true&forceHeader=true&name=truncate_test HTTP/1.1\r\n" +
-                                            "Host: localhost:9001\r\n" +
-                                            "Connection: keep-alive\r\n" +
-                                            "Content-Length: 832\r\n" +
-                                            "Accept: */*\r\n" +
-                                            "Origin: http://localhost:9000\r\n" +
-                                            "X-Requested-With: XMLHttpRequest\r\n" +
-                                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/77.0.3865.120 Safari/537.36\r\n" +
-                                            "Sec-Fetch-Mode: cors\r\n" +
-                                            "Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
-                                            "Sec-Fetch-Site: same-origin\r\n" +
-                                            "Referer: http://localhost:9000/index.html\r\n" +
-                                            "Accept-Encoding: gzip, deflate, br\r\n" +
-                                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                                            "\r\n" +
-                                            "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
-                                            "Content-Disposition: form-data; name=\"data\"\r\n" +
-                                            "\r\n" +
-                                            "ts,value\r\n" +
-                                            "\r\n" +
-                                            "\r\n" +
-                                            "2014-03-01 00:00:00,12.345\r\n" +
-                                            "2015-03-01 00:00:00,0.123\r\n" +
-                                            "2016-03-01 00:00:00,129.78\r\n" +
-                                            "\r\n" +
-                                            "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--",
-                                    "HTTP/1.1 200 OK\r\n" +
-                                            "Server: questDB/1.0\r\n" +
-                                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                                            "Transfer-Encoding: chunked\r\n" +
-                                            "Content-Type: application/json; charset=utf-8\r\n" +
-                                            "\r\n" +
-                                            "0259\r\n" +
-                                            "{\"status\":\"OK\",\"location\":\"truncate_test\",\"rowsRejected\":0,\"rowsImported\":3,\"header\":true,\"partitionBy\":\"NONE\",\"timestamp\":\"ts\",\"columns\":[{\"name\":\"ts\",\"type\":\"TIMESTAMP\",\"size\":8,\"errors\":0},{\"name\":\"value\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0}],\"mapping\":[{\"file_column_name\":\"ts\",\"file_column_index\":0,\"file_column_ignore\":false,\"column_type\":\"TIMESTAMP\",\"table_column_name\":\"ts\",\"formats\":[{\"pattern\":\"yyyy-MM-dd HH:mm:ss\",\"locale\":\"en\",\"utf8\":false}]},{\"file_column_name\":\"value\",\"file_column_index\":1,\"file_column_ignore\":false,\"column_type\":\"DOUBLE\",\"table_column_name\":\"value\",\"formats\":[{}]}]}\r\n" +
-                                            "00\r\n" +
-                                            "\r\n",
-                                    1,
-                                    0,
-                                    false,
-                                    false,
-                                    false
-                            );
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            "POST /upload?fmt=json&overwrite=false&truncate=true&forceHeader=true&name=truncate_test HTTP/1.1\r\n" +
+                                    "Host: localhost:9001\r\n" +
+                                    "Connection: keep-alive\r\n" +
+                                    "Content-Length: 832\r\n" +
+                                    "Accept: */*\r\n" +
+                                    "Origin: http://localhost:9000\r\n" +
+                                    "X-Requested-With: XMLHttpRequest\r\n" +
+                                    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/77.0.3865.120 Safari/537.36\r\n" +
+                                    "Sec-Fetch-Mode: cors\r\n" +
+                                    "Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                                    "Sec-Fetch-Site: same-origin\r\n" +
+                                    "Referer: http://localhost:9000/index.html\r\n" +
+                                    "Accept-Encoding: gzip, deflate, br\r\n" +
+                                    "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                                    "\r\n" +
+                                    "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                                    "Content-Disposition: form-data; name=\"data\"\r\n" +
+                                    "\r\n" +
+                                    "ts,value\r\n" +
+                                    "2014-03-01 00:00:00,12.345\r\n" +
+                                    "2015-03-01 00:00:00,0.123\r\n" +
+                                    "2016-03-01 00:00:00,129.78\r\n" +
+                                    "\r\n" +
+                                    "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--",
+                            "HTTP/1.1 200 OK\r\n" +
+                                    "Server: questDB/1.0\r\n" +
+                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                    "Transfer-Encoding: chunked\r\n" +
+                                    "Content-Type: application/json; charset=utf-8\r\n" +
+                                    "\r\n" +
+                                    "0259\r\n" +
+                                    "{\"status\":\"OK\",\"location\":\"truncate_test\",\"rowsRejected\":0,\"rowsImported\":3,\"header\":true,\"partitionBy\":\"NONE\",\"timestamp\":\"ts\",\"columns\":[{\"name\":\"ts\",\"type\":\"TIMESTAMP\",\"size\":8,\"errors\":0},{\"name\":\"value\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0}],\"mapping\":[{\"file_column_name\":\"ts\",\"file_column_index\":0,\"file_column_ignore\":false,\"column_type\":\"TIMESTAMP\",\"table_column_name\":\"ts\",\"formats\":[{\"pattern\":\"yyyy-MM-dd HH:mm:ss\",\"locale\":\"en\",\"utf8\":false}]},{\"file_column_name\":\"value\",\"file_column_index\":1,\"file_column_ignore\":false,\"column_type\":\"DOUBLE\",\"table_column_name\":\"value\",\"formats\":[{}]}]}\r\n" +
+                                    "00\r\n" +
+                                    "\r\n",
+                            1,
+                            0,
+                            false,
+                            false,
+                            false
+                    );
 
-                            testHttpClient.assertGet(
-                                    "/query",
-                                    "{\"query\":\"select * from truncate_test\",\"columns\":[{\"name\":\"ts\",\"type\":\"TIMESTAMP\"},{\"name\":\"value\",\"type\":\"DOUBLE\"}],\"timestamp\":0," +
-                                            "\"dataset\":[" +
-                                            "[\"2014-03-01T00:00:00.000000Z\",12.345]," +
-                                            "[\"2015-03-01T00:00:00.000000Z\",0.123]," +
-                                            "[\"2016-03-01T00:00:00.000000Z\",129.78]],\"count\":3}",
-                                    "select * from truncate_test");
-                        }
-                );
+                    testHttpClient.assertGet(
+                            "/query",
+                            "{\"query\":\"select * from truncate_test\",\"columns\":[{\"name\":\"ts\",\"type\":\"TIMESTAMP\"},{\"name\":\"value\",\"type\":\"DOUBLE\"}],\"timestamp\":0," +
+                                    "\"dataset\":[" +
+                                    "[\"2014-03-01T00:00:00.000000Z\",12.345]," +
+                                    "[\"2015-03-01T00:00:00.000000Z\",0.123]," +
+                                    "[\"2016-03-01T00:00:00.000000Z\",129.78]],\"count\":3}",
+                            "select * from truncate_test");
+                }
+        );
     }
 
     @Test

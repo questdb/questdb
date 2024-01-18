@@ -437,7 +437,6 @@ public abstract class HttpClient implements QuietCloseable {
             return this;
         }
 
-        //TODO: check!
         public Response send() {
             assert state == STATE_URL_DONE || state == STATE_QUERY || state == STATE_HEADER;
 

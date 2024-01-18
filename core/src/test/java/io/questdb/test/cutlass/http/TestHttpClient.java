@@ -182,6 +182,46 @@ public class TestHttpClient implements QuietCloseable {
                     partitionBy,
                     forceHeader,
                     overwrite,
+                    null,
+                    null,
+                    sink
+            );
+            TestUtils.assertEquals(expectedResponse, sink);
+        } finally {
+            httpClient.disconnect();
+        }
+    }
+
+    public void assertSendMultipart(
+            CharSequence expectedResponse,
+            @Nullable CharSequence json,
+            CharSequence jsonVersion,
+            CharSequence csv,
+            CharSequence fileName,
+            @Nullable CharSequence tableName,
+            @Nullable CharSequence responseFormat,
+            @Nullable CharSequence timestampColumnName,
+            @Nullable CharSequence partitionBy,
+            @Nullable CharSequence forceHeader,
+            @Nullable CharSequence overwrite,
+            @Nullable CharSequence skipLines,
+            @Nullable CharSequence delimiter
+    ) {
+        sink.clear();
+        try {
+            toSinkImport0(
+                    tableName,
+                    json,
+                    jsonVersion,
+                    csv,
+                    fileName,
+                    responseFormat,
+                    timestampColumnName,
+                    partitionBy,
+                    forceHeader,
+                    overwrite,
+                    skipLines,
+                    delimiter,
                     sink
             );
             TestUtils.assertEquals(expectedResponse, sink);
@@ -299,6 +339,8 @@ public class TestHttpClient implements QuietCloseable {
             CharSequence partitionBy,
             CharSequence forceHeader,
             CharSequence overwrite,
+            CharSequence skipLines,
+            CharSequence delimiter,
             CharSinkBase<?> sink
     ) {
         HttpClient.Request req = httpClient.newRequest();
@@ -311,8 +353,9 @@ public class TestHttpClient implements QuietCloseable {
                 .query("partitionBy", partitionBy)
                 .query("overwrite", overwrite)
                 .query("forceHeader", forceHeader)
+                .query("skipLines", skipLines)
 //                .query("skipLev", "false")
-//                .query("delimiter", "")
+                .query("delimiter", delimiter)
 //                .query("atomicitiy", "skipCol")
         ;
 

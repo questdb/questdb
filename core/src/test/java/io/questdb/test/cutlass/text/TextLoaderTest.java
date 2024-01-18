@@ -1681,6 +1681,33 @@ public class TextLoaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testImportSkippingFirstThreeLines() throws Exception {
+        assertNoLeak(textLoader -> {
+            ddl("create table test (" +
+                    "ts timestamp, " +
+                    "x long ) ");
+            drainWalQueue();
+
+            String csv = "mangled,, header, should, be , ignored, 1 \n" +
+                    "yada, yada, yada \n" +
+                    "blah, blah, blah\n" +
+                    "ts,x\n" +
+                    "2021-01-02T03:04:05.000000Z,1\n" +
+                    "2021-02-03T04:05:06.000000Z,2\n";
+            textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
+            textLoader.configureDestination(TEST_TABLE_NAME, false, false, 0, PartitionBy.NONE, null, null, false);
+            textLoader.setSkipLines(3);
+            textLoader.configureColumnDelimiter((byte) ',');
+            playText0(textLoader, csv, 1024, ENTITY_MANIPULATOR);
+            drainWalQueue();
+            assertTable("ts\tx\n" +
+                    "2021-01-02T03:04:05.000000Z\t1\n" +
+                    "2021-02-03T04:05:06.000000Z\t2\n");
+            textLoader.clear();
+        });
+    }
+
+    @Test
     public void testImportTimestamp() throws Exception {
         final TextConfiguration textConfiguration = new DefaultTextConfiguration() {
             @Override
@@ -2174,7 +2201,7 @@ public class TextLoaderTest extends AbstractCairoTest {
             try {
                 playText0(textLoader, text, 512, ENTITY_MANIPULATOR);
             } catch (TextException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "min deviation is too high");
+                TestUtils.assertContains(e.getFlyweightMessage(), "Text delimiter can't be detected automatically. Please set it manually.");
             }
         });
     }

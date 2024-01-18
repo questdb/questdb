@@ -91,7 +91,7 @@ public class TextLoader implements Closeable, Mutable {
     // mapped to non-existing table columns. This list will contain
     // column indexes in the CSV schema that we could not map to the
     // table column names
-    private final IntList wrongTargetSchemaColumnIndexes = new IntList();
+    private final IntHashSet wrongTargetSchemaColumnIndexes = new IntHashSet();
     private int atomicity;
     private byte columnDelimiter = -1;
     private CharSequence designatedTimestampColumnName;
@@ -108,6 +108,7 @@ public class TextLoader implements Closeable, Mutable {
     private int partitionBy;
     private CharSequence schemaTimestampColumnName;
     private int schemaVersion;
+    private long skipLines;
     private boolean skipLinesWithExtraValues = true;
     private int state;
     private CharSequence tableName;
@@ -185,6 +186,7 @@ public class TextLoader implements Closeable, Mutable {
         getWriterFailed = false;
         duplicateTableColumnNames.clear();
         tableColumnNamesSet.clear();
+        skipLines = 0;
     }
 
     public void clearSchemas() {
@@ -297,7 +299,7 @@ public class TextLoader implements Closeable, Mutable {
     }
 
     public long getParsedLineCount() {
-        return lexer != null ? lexer.getLineCount() : 0;
+        return lexer != null ? Math.max(lexer.getLineCount() - lexer.getSkipLines(), 0) : 0;
     }
 
     public int getPartitionBy() {
@@ -322,10 +324,6 @@ public class TextLoader implements Closeable, Mutable {
 
     public CharSequence getTimestampCol() {
         return designatedTimestampColumnName;
-    }
-
-    public IntList getUnmappedSchemaColumnIndexes() {
-        return wrongTargetSchemaColumnIndexes;
     }
 
     public int getWarnings() {
@@ -367,6 +365,7 @@ public class TextLoader implements Closeable, Mutable {
         this.lexer = tlw.getLexer(delimiter);
         this.lexer.setTableName(tableName);
         this.lexer.setSkipLinesWithExtraValues(skipLinesWithExtraValues);
+        this.lexer.setSkipLines(skipLines);
     }
 
     public void setForceHeaders(boolean forceHeaders) {
@@ -387,6 +386,10 @@ public class TextLoader implements Closeable, Mutable {
 
     public void setSchemaVersion(int version) {
         this.schemaVersion = version;
+    }
+
+    public void setSkipLines(long skipLines) {
+        this.skipLines = skipLines;
     }
 
     public void setSkipLinesWithExtraValues(boolean skipLinesWithExtraValues) {
@@ -436,7 +439,11 @@ public class TextLoader implements Closeable, Mutable {
         if (columnDelimiter > 0) {
             setDelimiter(columnDelimiter);
         } else {
-            setDelimiter(textDelimiterScanner.scan(lo, hi));
+            try {
+                setDelimiter(textDelimiterScanner.scan(lo, hi));
+            } catch (TextException e) {
+                throw TextException.$("Text delimiter can't be detected automatically. Please set it manually.");
+            }
         }
 
         if (tableTimestampColumnName != null &&
@@ -624,29 +631,30 @@ public class TextLoader implements Closeable, Mutable {
                         // auto-detect the type
                         requiredColumnTypes.add(ColumnType.TYPES_SIZE);
                         tableColumnNames.add(null);
-                    } else {
-                        CharSequence tableColumnName = column.getTableOrFileColumnName();
-                        tableColumnNames.add(tableColumnName);
-                        int tableColumnIndex = -1;
-                        if (tableColumnName != null) {
-                            tableColumnIndex = existingTableMetadata.getColumnIndexQuiet(tableColumnName);
-                        }
+                        continue;
+                    }
 
-                        if (column.isFileColumnIgnore()) {
-                            // ignore detection and insert default value
-                            requiredColumnTypes.add(-1);
-                            remapIndex.setQuick(i, -1);
-                            if (tableColumnIndex == -1) {
-                                unmappedCsvColumnIndexes.add(i);
-                            }
-                        } else if (tableColumnIndex == -1) {
-                            // validate against default adapters or that supplied by user
-                            requiredColumnTypes.add(column.getColumnType() > -1 ? column.getColumnType() : ColumnType.TYPES_SIZE);
+                    CharSequence tableColumnName = column.getTableOrFileColumnName();
+                    tableColumnNames.add(tableColumnName);
+                    int tableColumnIndex = -1;
+                    if (tableColumnName != null) {
+                        tableColumnIndex = existingTableMetadata.getColumnIndexQuiet(tableColumnName);
+                    }
+
+                    if (column.isFileColumnIgnore()) {
+                        // ignore detection and insert default value
+                        requiredColumnTypes.add(-1);
+                        remapIndex.setQuick(i, -1);
+                        if (tableColumnIndex == -1) {
                             unmappedCsvColumnIndexes.add(i);
-                        } else {
-                            requiredColumnTypes.add(existingTableMetadata.getColumnType(tableColumnIndex));
-                            remapIndex.setQuick(i, existingTableMetadata.getWriterIndex(tableColumnIndex));
                         }
+                    } else if (tableColumnIndex == -1) {
+                        // validate against default adapters or that supplied by user
+                        requiredColumnTypes.add(column.getColumnType() > -1 ? column.getColumnType() : ColumnType.TYPES_SIZE);
+                        unmappedCsvColumnIndexes.add(i);
+                    } else {
+                        requiredColumnTypes.add(existingTableMetadata.getColumnType(tableColumnIndex));
+                        remapIndex.setQuick(i, existingTableMetadata.getWriterIndex(tableColumnIndex));
                     }
                 }
             }
@@ -654,6 +662,7 @@ public class TextLoader implements Closeable, Mutable {
             // we need to evaluate column formats for types we already know and also
             // types we do not know but that are present in the CSV file
             lexer.clear();
+            lexer.setSkipLines(skipLines);
             textStructureAnalyser.clear();
             textStructureAnalyser.of(getTableName(), forceHeaders, requiredColumnTypes);
             parse(lo, hi, textAnalysisMaxLines, textStructureAnalyser);
@@ -687,7 +696,6 @@ public class TextLoader implements Closeable, Mutable {
                     if (!isFirst) {
                         exception.put(",");
                     }
-                    isFirst = false;
                     exception.put("ambiguous_table_column_names=").put(duplicateTableColumnNames);
                 }
 
@@ -862,6 +870,7 @@ public class TextLoader implements Closeable, Mutable {
 
             // re-run analysis using the required column types, specified in the schema
             lexer.clear();
+            lexer.setSkipLines(skipLines);
             textStructureAnalyser.clear();
             textStructureAnalyser.of(getTableName(), forceHeaders, requiredColumnTypes);
             parse(lo, hi, textAnalysisMaxLines, textStructureAnalyser);

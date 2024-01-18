@@ -44,8 +44,8 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
     private int fieldIndex;
     private long fieldLo;
     private int fieldMax = -1;
-    private boolean header;
     private boolean ignoreEolOnce;
+    private boolean ignoreHeader;
     private boolean inQuote;
     private long lastLineStart;
     private long lastQuotePos = -1;
@@ -55,6 +55,7 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
     private long lineRollBufPtr;
     private int lineRollBufSize;
     private boolean rollBufferUnusable = false;
+    private long skipLines;
     private boolean skipLinesWithExtraValues;
     private CharSequence tableName;
     private Listener textLexerListener;
@@ -74,6 +75,7 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
         this.csPool.clear();
         errorCount = 0;
         fieldMax = -1;
+        skipLines = 0;
     }
 
     @Override
@@ -90,6 +92,10 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
 
     public long getLineCount() {
         return lineCount;
+    }
+
+    public long getSkipLines() {
+        return skipLines;
     }
 
     public void parse(long lo, long hi, int lineCountLimit, Listener textLexerListener) {
@@ -144,10 +150,14 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
         this.lineRollBufCur = lineRollBufPtr;
         this.useLineRollBuf = false;
         this.rollBufferUnusable = false;
-        this.header = header;
+        this.ignoreHeader = header;
         fields.clear();
         csPool.clear();
         lastLineStart = 0;
+    }
+
+    public void setSkipLines(long skipLines) {
+        this.skipLines = skipLines;
     }
 
     public void setSkipLinesWithExtraValues(boolean skipLinesWithExtraValues) {
@@ -352,7 +362,7 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
     }
 
     private void stashField(int fieldIndex) {
-        if (lineCount > 0 && fieldIndex <= fieldMax && lastQuotePos < 0) {
+        if (lineCount >= skipLines && fieldIndex <= fieldMax && lastQuotePos < 0) {
             fields.getQuick(fieldIndex).of(this.fieldLo, this.fieldHi - 1);
             this.fieldLo = this.fieldHi;
         } else {
@@ -361,8 +371,13 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
     }
 
     private void stashFieldSlow(int fieldIndex) {
-        if (lineCount == 0 && fieldIndex >= fieldMax) {
+        if (lineCount == skipLines && fieldIndex >= fieldMax) {
             addField();
+        }
+
+        if (lineCount < skipLines) {
+            this.fieldLo = this.fieldHi;
+            return;
         }
 
         if (fieldIndex > fieldMax) {
@@ -387,12 +402,17 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
             clearRollBuffer(ptr);
         }
 
-        if (header) {
-            header = false;
+        if (lineCount < skipLines) {
+            lineCount++;
             return;
         }
 
-        textLexerListener.onFields(lineCount++, fields, fieldMax + 1);
+        if (ignoreHeader) {
+            ignoreHeader = false;
+            return;
+        }
+
+        textLexerListener.onFields(lineCount++ - skipLines, fields, fieldMax + 1);
     }
 
     private void uneol(long lo) {
@@ -409,7 +429,7 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
     protected abstract void doSwitch(long lo, long hi, byte c) throws LineLimitException;
 
     protected void onColumnDelimiter(long lo) {
-        if (!eol && !inQuote && !ignoreEolOnce && lineCount > 0 && fieldIndex < fieldMax && lastQuotePos < 0) {
+        if (!eol && !inQuote && !ignoreEolOnce && lineCount > skipLines && fieldIndex < fieldMax && lastQuotePos < 0) {
             fields.getQuick(fieldIndex++).of(this.fieldLo, this.fieldHi - 1);
             this.fieldLo = this.fieldHi;
         } else {

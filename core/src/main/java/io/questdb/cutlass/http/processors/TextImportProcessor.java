@@ -73,7 +73,6 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     private static final int TO_STRING_COL4_PAD = 7;
     private static final int TO_STRING_COL5_PAD = 12;
     private static final int ERROR_LINE_PAD = TO_STRING_COL1_PAD + TO_STRING_COL2_PAD + TO_STRING_COL3_PAD + TO_STRING_COL4_PAD + TO_STRING_COL5_PAD + 12;
-    //TODO: should be lowercase!
     private static final Utf8SequenceIntHashMap atomicityParamMap = new Utf8SequenceIntHashMap();
     private final CairoEngine engine;
     private HttpConnectionContext transientContext;
@@ -163,6 +162,18 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                     null,
                     Utf8s.equalsIgnoreCaseNcAscii("true", rh.getUrlParam(URL_PARAM_TRUNCATE))
             );
+
+            DirectUtf8Sequence skipLinesParam = rh.getUrlParam(URL_PARAM_SKIP_LINES);
+            if (!Utf8s.isBlank(skipLinesParam)) {
+                try {
+                    long skipLines = Numbers.parseLong(skipLinesParam);
+                    if (skipLines > 0) {
+                        transientState.textLoader.setSkipLines(skipLines);
+                    }
+                } catch (NumericException e) {
+                    throwHttpException("invalid skipLines value, must be a positive long");
+                }
+            }
 
             DirectUtf8Sequence o3MaxLagChars = rh.getUrlParam(URL_PARAM_O3_MAX_LAG);
             if (o3MaxLagChars != null) {
@@ -331,10 +342,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
 
     // add list of errors, e.g. unmapped schema or table columns
     private static void putErrors(TextImportProcessorState state, HttpChunkedResponseSocket socket) {
-        IntList unmappedSchemaColumnIndexes = state.textLoader.getUnmappedSchemaColumnIndexes();
-
-        if (state.errorMessage == null
-                && unmappedSchemaColumnIndexes.size() == 0) {
+        if (state.errorMessage == null) {
             return;
         }
 
@@ -558,7 +566,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                 pad(socket, TO_STRING_COL2_PAD, textLoaderCompletedState.getTimestampCol() == null ? "NONE" : textLoaderCompletedState.getTimestampCol());
                 pad(socket, TO_STRING_COL3_PAD, "");
                 pad(socket, TO_STRING_COL4_PAD, "");
-                //TODO: it's unreadable; rework
+
                 if (hasFlag(textLoaderCompletedState.getWarnings(), TIMESTAMP_MISMATCH)) {
                     pad(socket, TO_STRING_COL5_PAD, OVERRIDDEN_FROM_TABLE);
                 } else {
