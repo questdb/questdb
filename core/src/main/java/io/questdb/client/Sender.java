@@ -606,23 +606,27 @@ public interface Sender extends Closeable {
         }
 
         /**
-         * Configure the maximum time the Sender will try retrying when it receives a recoverable error from a server.
+         * Configures the maximum time the Sender will spend retrying upon receiving a recoverable error from the server.
          * <br>
-         * This is only used when communicating over HTTP protocol and it's illegal to call this method when
-         * communicating over TCP protocol.
+         * This setting is applicable only when communicating over the HTTP transport, and it is illegal to invoke this
+         * method when communicating over the TCP transport.
          * <p>
-         * Recoverable errors are those that are not caused by a client sending invalid data to a server. For example
-         * a connection glitch or a server outage are recoverable errors, but an attempt to send a row with a wrong
-         * data type is not.
+         * Recoverable errors are those not caused by the client sending invalid data to the server. For instance,
+         * connection issues or server outages are considered recoverable errors, whereas attempts to send a row
+         * with an incorrect data type are not.
          * <p>
-         * Setting this value to zero disables retries entirely. In this case the Sender will throw an exception
-         * immediately. Sender does not retry when there is a failure during close(). For this reason it's recommended
-         * to call {@link #flush()} explicitly before closing the Sender.
+         * Setting this value to zero disables retries entirely. In such cases, the Sender will throw an exception
+         * immediately. It's important to note that the Sender does not retry operations that fail
+         * during {@link #close()}. Therefore, it is recommended to explicitly call {@link #flush()} before closing
+         * the Sender.
+         * <p>
+         * <b>Warning:</b> Retrying may lead to data duplication. It is advisable to use
+         * <a href="https://questdb.io/docs/concept/deduplication/">QuestDB deduplication</a> to mitigate this risk.
          * <p>
          * Default value: 10,000 milliseconds.
          *
-         * @param retryTimeoutMillis maximum retry time in milliseconds.
-         * @return this instance for method chaining
+         * @param retryTimeoutMillis the maximum retry duration in milliseconds.
+         * @return this instance, enabling method chaining.
          */
         public LineSenderBuilder retryTimeoutMillis(int retryTimeoutMillis) {
             if (this.retryTimeoutMillis != MAX_RETRY_MILLIS_DEFAULT) {
