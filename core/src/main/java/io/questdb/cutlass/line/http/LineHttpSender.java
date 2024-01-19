@@ -26,7 +26,7 @@ import java.util.concurrent.ThreadLocalRandom;
 public final class LineHttpSender implements Sender {
     private static final String PATH = "/write?precision=n";
     private static final int RETRY_BACKOFF_MULTIPLIER = 2;
-    private static final int RETRY_INITIAL_BACKOFF_MS = 100;
+    private static final int RETRY_INITIAL_BACKOFF_MS = 10;
     private static final int RETRY_MAX_BACKOFF_MS = 1000;
     private static final int RETRY_MAX_JITTER_MS = 10;
     private final String authToken;
@@ -288,8 +288,7 @@ public final class LineHttpSender implements Sender {
             return;
         }
 
-        // do not retry if we are closing! todo: is this a good idea?
-        long retryingDeadlineNanos = System.nanoTime() + (closing ? 0 : maxRetriesNanos);
+        long retryingDeadlineNanos = Long.MIN_VALUE;
         int retryBackoff = RETRY_INITIAL_BACKOFF_MS;
         for (; ; ) {
             try {
@@ -306,7 +305,9 @@ public final class LineHttpSender implements Sender {
                     break;
                 }
                 if (isRetryableHttpStatus(statusCode)) {
-                    if (System.nanoTime() > retryingDeadlineNanos) {
+                    long nowNanos = System.nanoTime();
+                    retryingDeadlineNanos = (retryingDeadlineNanos == Long.MIN_VALUE && !closing) ? nowNanos + maxRetriesNanos : retryingDeadlineNanos;
+                    if (nowNanos >= retryingDeadlineNanos) {
                         handleHttpErrorResponse(statusCode, response);
                     }
                     client.disconnect(); // forces reconnect, just in case
@@ -317,7 +318,9 @@ public final class LineHttpSender implements Sender {
             } catch (HttpClientException e) {
                 // this is a network error, we can retry
                 client.disconnect(); // forces reconnect
-                if (System.nanoTime() > retryingDeadlineNanos) {
+                long nowNanos = System.nanoTime();
+                retryingDeadlineNanos = (retryingDeadlineNanos == Long.MIN_VALUE && !closing) ? nowNanos + maxRetriesNanos : retryingDeadlineNanos;
+                if (nowNanos >= retryingDeadlineNanos) {
                     // we did our best, give up
                     pendingRows = 0;
                     request = newRequest();
