@@ -261,4 +261,34 @@ public class HyperLogLogTest extends AbstractTest {
             });
         }
     }
+
+    @Test
+    public void testAddInvalidatesCachedCardinality() throws Exception {
+        CairoConfiguration config = new DefaultCairoConfiguration(root) {
+            @Override
+            public long getGroupByAllocatorDefaultChunkSize() {
+                return 64;
+            }
+        };
+        for (int precision = 4; precision <= 18; precision++) {
+            int finalPrecision = precision;
+            assertMemoryLeak(() -> {
+                try (GroupByAllocator allocator = new GroupByAllocator(config)) {
+                    Rnd rnd = new Rnd();
+
+                    HyperLogLog hll = new HyperLogLog(finalPrecision);
+                    hll.setAllocator(allocator);
+                    hll.of(0);
+
+                    hll.add(Hash.murmur3ToLong(rnd.nextLong()));
+                    assertEquals(1, hll.computeCardinality());
+                    assertEquals(1, hll.computeCardinality());
+
+                    // add should invalidate cache
+                    hll.add(Hash.murmur3ToLong(rnd.nextLong()));
+                    assertEquals(2, hll.computeCardinality());
+                }
+            });
+        }
+    }
 }
