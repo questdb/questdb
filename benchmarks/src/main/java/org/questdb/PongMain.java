@@ -87,7 +87,7 @@ public class PongMain {
             LOG.info().$("closed").$();
         }
 
-        public void receivePing() {
+        public void receivePing() throws PeerIsSlowToWriteException, PeerIsSlowToReadException, ServerDisconnectException {
             // expect "PING"
             int n = Net.recv(getFd(), buf, (int) (bufSize - (buf - bufStart)));
             if (n > 0) {
@@ -97,7 +97,7 @@ public class PongMain {
                         // accrue protocol artefacts while they still make sense
                         buf += n;
                         // fair resource use
-                        getDispatcher().registerChannel(this, IOOperation.READ);
+                        throw registerDispatcherRead();
                     } else {
                         // reset buffer
                         this.buf = bufStart;
@@ -105,57 +105,65 @@ public class PongMain {
                         LOG.info().$(flyweight).$();
                         Utf8s.strCpy(PONG, PONG.size(), bufStart);
                         writtenLen = PONG.size();
-                        getDispatcher().registerChannel(this, IOOperation.WRITE);
+                        throw registerDispatcherWrite();
                     }
                 } else {
-                    getDispatcher().disconnect(this, DISCONNECT_REASON_PROTOCOL_VIOLATION);
+                    throw registerDispatcherDisconnect(DISCONNECT_REASON_PROTOCOL_VIOLATION);
                 }
             } else {
                 // handle peer disconnect
-                getDispatcher().disconnect(this, DISCONNECT_REASON_PEER_DISCONNECT_AT_RECV);
+                throw registerDispatcherDisconnect(DISCONNECT_REASON_PEER_DISCONNECT_AT_RECV);
             }
         }
 
-        public void sendPong() {
+        public void sendPong() throws PeerIsSlowToReadException, PeerIsSlowToWriteException, ServerDisconnectException {
             int n = Net.send(getFd(), buf, (int) (writtenLen - (buf - bufStart)));
             if (n > -1) {
                 if (n > 0) {
                     buf += n;
                     if (buf - bufStart < writtenLen) {
-                        getDispatcher().registerChannel(this, IOOperation.WRITE);
+                        throw registerDispatcherWrite();
                     } else {
                         flyweight.of(bufStart, bufStart + writtenLen);
                         LOG.info().$(flyweight).$();
                         buf = bufStart;
                         writtenLen = 0;
-                        getDispatcher().registerChannel(this, IOOperation.READ);
+                        throw registerDispatcherRead();
                     }
                 } else {
-                    getDispatcher().registerChannel(this, IOOperation.WRITE);
+                    throw registerDispatcherWrite();
                 }
             } else {
                 // handle peer disconnect
-                getDispatcher().disconnect(this, DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND);
+                throw registerDispatcherDisconnect(DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND);
             }
         }
     }
 
     private static class PongRequestProcessor implements IORequestProcessor<PongConnectionContext> {
         @Override
-        public boolean onRequest(int operation, PongConnectionContext context) {
-            switch (operation) {
-                case IOOperation.READ:
-                    context.receivePing();
-                    break;
-                case IOOperation.WRITE:
-                    context.sendPong();
-                    break;
-                case IOOperation.HEARTBEAT:
-                    context.getDispatcher().registerChannel(context, IOOperation.HEARTBEAT);
-                    return false;
-                default:
-                    context.getDispatcher().disconnect(context, DISCONNECT_REASON_UNKNOWN_OPERATION);
-                    break;
+        public boolean onRequest(int operation, PongConnectionContext context, IODispatcher<PongConnectionContext> dispatcher) {
+            try {
+                switch (operation) {
+                    case IOOperation.READ:
+                        context.receivePing();
+                        break;
+                    case IOOperation.WRITE:
+                        context.sendPong();
+                        break;
+                    case IOOperation.HEARTBEAT:
+                        dispatcher.registerChannel(context, IOOperation.HEARTBEAT);
+                        return false;
+                    default:
+                        dispatcher.disconnect(context, DISCONNECT_REASON_UNKNOWN_OPERATION);
+                        break;
+                }
+            } catch (PeerIsSlowToWriteException e) {
+                dispatcher.registerChannel(context, IOOperation.READ);
+            } catch (PeerIsSlowToReadException e) {
+                dispatcher.registerChannel(context, IOOperation.WRITE);
+            } catch (ServerDisconnectException e) {
+                dispatcher.disconnect(context, context.getDisconnectReason());
             }
             return true;
         }
