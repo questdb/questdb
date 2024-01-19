@@ -99,6 +99,14 @@ public abstract class HttpClient implements QuietCloseable {
         return request;
     }
 
+    private void checkCapacity(long capacity) {
+        long usedBytes = ptr - bufLo;
+        final long requiredSize = usedBytes + capacity;
+        if (requiredSize > bufferSize) {
+            growBuffer(requiredSize);
+        }
+    }
+
     private int dieIfNegative(int byteCount) {
         if (byteCount < 0) {
             throw new HttpClientException("peer disconnect [errno=").errno(nf.errno()).put(']');
@@ -114,14 +122,6 @@ public abstract class HttpClient implements QuietCloseable {
             throw new HttpClientException("timed out [errno=").errno(nf.errno()).put(']');
         }
         return byteCount;
-    }
-
-    private void checkCapacity(long capacity) {
-        long usedBytes = ptr - bufLo;
-        final long requiredSize = usedBytes + capacity;
-        if (requiredSize > bufferSize) {
-            growBuffer(requiredSize);
-        }
     }
 
     private void growBuffer(long requiredSize) {
@@ -315,15 +315,6 @@ public abstract class HttpClient implements QuietCloseable {
         }
 
         @Override
-        public Request putUtf8(long lo, long hi) {
-            final long size = hi - lo;
-            checkCapacity(size);
-            Vect.memcpy(ptr, lo, size);
-            ptr += size;
-            return this;
-        }
-
-        @Override
         public Request put(@Nullable CharSequence cs) {
             Utf8Sink.super.put(cs);
             return this;
@@ -363,6 +354,15 @@ public abstract class HttpClient implements QuietCloseable {
             return this;
         }
 
+        @Override
+        public Request putUtf8(long lo, long hi) {
+            final long size = hi - lo;
+            checkCapacity(size);
+            Vect.memcpy(ptr, lo, size);
+            ptr += size;
+            return this;
+        }
+
         public Request query(CharSequence name, CharSequence value) {
             assert state == STATE_URL_DONE || state == STATE_QUERY;
             if (state == STATE_URL_DONE) {
@@ -387,6 +387,9 @@ public abstract class HttpClient implements QuietCloseable {
         public ResponseHeaders send(CharSequence host, int port, int timeout) {
             assert state == STATE_URL_DONE || state == STATE_QUERY || state == STATE_HEADER || state == STATE_CONTENT;
             if (socket.isClosed()) {
+                connect(host, port);
+            } else if (nf.testConnection(socket.getFd(), responseParserBufLo, 1)) {
+                socket.close();
                 connect(host, port);
             }
 
