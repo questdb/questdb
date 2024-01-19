@@ -708,7 +708,7 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAlterTableRejectedIfTransactionPending() throws Exception {
+    public void testAlterTableAllowedWhenDataTransactionPending() throws Exception {
         assertMemoryLeak(() -> {
             TableToken tableToken = createTable(testName.getMethodName());
 
@@ -718,11 +718,14 @@ public class WalWriterTest extends AbstractCairoTest {
                 row.append();
                 // no commit intentional
                 addColumn(walWriter, "c", ColumnType.INT);
-                assertException("Exception expected");
-            } catch (Exception e) {
-                // this exception will be handled in ILP/PG/HTTP
-                assertTrue(e.getMessage().endsWith("cannot alter table with uncommitted inserts [table=testAlterTableRejectedIfTransactionPending]"));
+                walWriter.commit();
             }
+
+            drainWalQueue();
+
+
+            assertSql("a\tb\tts\tc\n" +
+                    "1\t\t1970-01-01T00:00:00.000000Z\tNaN\n", tableToken.getTableName());
         });
     }
 

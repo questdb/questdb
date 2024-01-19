@@ -98,7 +98,7 @@ final class MockHttpProcessor implements HttpRequestProcessor, HttpMultipartCont
             chunkedResponseSocket.putAscii(response.responseContent);
             chunkedResponseSocket.sendChunk(true);
         } else {
-            context.simpleResponse().sendStatus(response.responseStatusCode);
+            context.simpleResponse().sendStatusNoContent(response.responseStatusCode);
         }
     }
 
