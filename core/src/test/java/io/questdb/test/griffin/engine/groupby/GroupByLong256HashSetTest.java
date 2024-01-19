@@ -26,7 +26,6 @@ package io.questdb.test.griffin.engine.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.DefaultCairoConfiguration;
-import io.questdb.griffin.engine.functions.constants.Long256Constant;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByLong256HashSet;
 import io.questdb.std.Numbers;
@@ -34,6 +33,7 @@ import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import java.util.HashSet;
+import java.util.Objects;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -80,16 +80,16 @@ public class GroupByLong256HashSetTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSmokeWithLongNullAsNoKeyValue() throws Exception {
-        testSmoke(Numbers.LONG_NaN);
+    public void testFuzzWithLongNullAsNoKeyValue() throws Exception {
+        testFuzz(Numbers.LONG_NaN);
     }
 
     @Test
-    public void testSmokeWithZeroAsNoKeyValue() throws Exception {
-        testSmoke(0);
+    public void testFuzzWithZeroAsNoKeyValue() throws Exception {
+        testFuzz(0);
     }
 
-    private void testSmoke(long noKeyValue) throws Exception {
+    private void testFuzz(long noKeyValue) throws Exception {
         final CairoConfiguration config = new DefaultCairoConfiguration(root) {
             @Override
             public long getGroupByAllocatorDefaultChunkSize() {
@@ -99,7 +99,7 @@ public class GroupByLong256HashSetTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             Rnd rnd = new Rnd();
 
-            HashSet<Long256Constant> oracle = new HashSet<>();
+            HashSet<Long256Tuple> oracle = new HashSet<>();
             try (GroupByAllocator allocator = new GroupByAllocator(config)) {
                 GroupByLong256HashSet set = new GroupByLong256HashSet(64, 0.7, noKeyValue);
                 set.setAllocator(allocator);
@@ -113,7 +113,7 @@ public class GroupByLong256HashSetTest extends AbstractCairoTest {
                     long l2 = rnd.nextPositiveLong() + 1;
                     long l3 = rnd.nextPositiveLong() + 1;
                     set.add(l0, l1, l2, l3);
-                    oracle.add(new Long256Constant(l0, l1, l2, l3));
+                    oracle.add(new Long256Tuple(l0, l1, l2, l3));
                 }
 
                 Assert.assertEquals(N, set.size());
@@ -123,8 +123,8 @@ public class GroupByLong256HashSetTest extends AbstractCairoTest {
                 Assert.assertEquals(set.size(), oracle.size());
 
                 // check contents
-                for (Long256Constant lc : oracle) {
-                    Assert.assertTrue(set.keyIndex(lc.getLong0(), lc.getLong1(), lc.getLong2(), lc.getLong3()) < 0);
+                for (Long256Tuple lc : oracle) {
+                    Assert.assertTrue(set.keyIndex(lc.l0, lc.l1, lc.l2, lc.l3) < 0);
                 }
 
                 rnd.reset();
@@ -147,5 +147,36 @@ public class GroupByLong256HashSetTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    private static class Long256Tuple {
+        final long l0;
+        final long l1;
+        final long l2;
+        final long l3;
+
+        private Long256Tuple(long l0, long l1, long l2, long l3) {
+            this.l0 = l0;
+            this.l1 = l1;
+            this.l2 = l2;
+            this.l3 = l3;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) {
+                return true;
+            }
+            if (o == null || getClass() != o.getClass()) {
+                return false;
+            }
+            Long256Tuple long256Tuple = (Long256Tuple) o;
+            return l0 == long256Tuple.l0 && l1 == long256Tuple.l1 && l2 == long256Tuple.l2 && l3 == long256Tuple.l3;
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(l0, l1, l2, l3);
+        }
     }
 }

@@ -79,16 +79,16 @@ public class GroupByLong128HashSetTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSmokeWithLongNullAsNoKeyValue() throws Exception {
-        testSmoke(Numbers.LONG_NaN);
+    public void testFuzzWithLongNullAsNoKeyValue() throws Exception {
+        testFuzz(Numbers.LONG_NaN);
     }
 
     @Test
-    public void testSmokeWithZeroAsNoKeyValue() throws Exception {
-        testSmoke(0);
+    public void testFuzzWithZeroAsNoKeyValue() throws Exception {
+        testFuzz(0);
     }
 
-    private void testSmoke(long noKeyValue) throws Exception {
+    private void testFuzz(long noKeyValue) throws Exception {
         final CairoConfiguration config = new DefaultCairoConfiguration(root) {
             @Override
             public long getGroupByAllocatorDefaultChunkSize() {
