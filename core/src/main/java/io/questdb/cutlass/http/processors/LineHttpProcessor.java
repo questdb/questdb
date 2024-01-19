@@ -145,7 +145,7 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
         // Check state again, commit may have failed
         if (state.isOk()) {
             state.setSendStatus(SendStatus.HEADER);
-            context.simpleResponse().sendStatus(204);
+            context.simpleResponse().sendStatusNoContent(204);
         } else {
             state.setSendStatus(SendStatus.HEADER);
             sendErrorHeader(context);
