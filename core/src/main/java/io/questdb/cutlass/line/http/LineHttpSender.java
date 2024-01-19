@@ -5,6 +5,7 @@ import io.questdb.ClientTlsConfiguration;
 import io.questdb.HttpClientConfiguration;
 import io.questdb.cairo.TableUtils;
 import io.questdb.client.Sender;
+import io.questdb.cutlass.http.HttpConstants;
 import io.questdb.cutlass.http.client.*;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
@@ -296,7 +297,12 @@ public final class LineHttpSender implements Sender {
                 response.await();
                 DirectUtf8Sequence statusCode = response.getStatusCode();
                 if (isSuccessResponse(statusCode)) {
-                    consumeChunkedResponse(response);
+                    consumeChunkedResponse(response); // if any
+                    DirectUtf8Sequence connectionHeader = response.getHeader(HttpConstants.HEADER_CONNECTION);
+                    if (connectionHeader != null && Chars.equals("close", connectionHeader.asAsciiCharSequence())) {
+                        // keep-alive is not supported, we need to trigger reconnect
+                        client.disconnect();
+                    }
                     break;
                 }
                 if (isRetryableHttpStatus(statusCode)) {
