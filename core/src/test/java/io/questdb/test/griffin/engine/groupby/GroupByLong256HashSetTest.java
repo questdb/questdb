@@ -26,13 +26,14 @@ package io.questdb.test.griffin.engine.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.griffin.engine.functions.constants.Long256Constant;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
-import io.questdb.griffin.engine.groupby.GroupByLong128HashSet;
 import io.questdb.griffin.engine.groupby.GroupByLong256HashSet;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import java.util.HashSet;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -97,19 +98,34 @@ public class GroupByLong256HashSetTest extends AbstractCairoTest {
         };
         TestUtils.assertMemoryLeak(() -> {
             Rnd rnd = new Rnd();
+
+            HashSet<Long256Constant> oracle = new HashSet<>();
             try (GroupByAllocator allocator = new GroupByAllocator(config)) {
-                GroupByLong256HashSet set = new GroupByLong256HashSet(16, 0.7, noKeyValue);
+                GroupByLong256HashSet set = new GroupByLong256HashSet(64, 0.7, noKeyValue);
                 set.setAllocator(allocator);
                 set.of(0);
 
                 final int N = 1000;
 
                 for (int i = 0; i < N; i++) {
-                    set.add(rnd.nextPositiveLong() + 1, rnd.nextPositiveLong() + 1, rnd.nextPositiveLong() + 1, rnd.nextPositiveLong() + 1);
+                    long l0 = rnd.nextPositiveLong() + 1;
+                    long l1 = rnd.nextPositiveLong() + 1;
+                    long l2 = rnd.nextPositiveLong() + 1;
+                    long l3 = rnd.nextPositiveLong() + 1;
+                    set.add(l0, l1, l2, l3);
+                    oracle.add(new Long256Constant(l0, l1, l2, l3));
                 }
 
                 Assert.assertEquals(N, set.size());
                 Assert.assertTrue(set.capacity() >= N);
+
+                // check size vs oracle
+                Assert.assertEquals(set.size(), oracle.size());
+
+                // check contents
+                for (Long256Constant lc : oracle) {
+                    Assert.assertTrue(set.keyIndex(lc.getLong0(), lc.getLong1(), lc.getLong2(), lc.getLong3()) < 0);
+                }
 
                 rnd.reset();
 

@@ -218,7 +218,7 @@ public class CountDistinctLong256GroupByFunctionFactoryTest extends AbstractCair
 
     @Test
     public void testMappingZeroToNulls() throws Exception {
-        // this is to ensure that to_long256(15, 0, 15, 0) and to_long256(15, null, 15, null) don't map to the same value
+        // this is to ensure that long256s with nulls and zeros don't map to the same values
         assertQuery(
                 "a\ts\tts\n",
                 "select * from x",
@@ -227,8 +227,10 @@ public class CountDistinctLong256GroupByFunctionFactoryTest extends AbstractCair
                 true
         );
 
-        insert("insert into x values ('a', to_long256(5, 10, 5, 10), '2021-05-21'), ('a', to_long256(10, 0, 10, 0), '2021-05-21'), ('a', to_long256(15, 0, 15, 0), '2021-05-21'), ('a', to_long256(15, null, 15, null), '2021-05-21')");
+        insert("insert into x values ('a', to_long256(5, 0, 5, 5), '2021-05-21'), ('a', to_long256(5, 0, 5, 5), '2021-05-21'), ('a', to_long256(5, null, 5, 5), '2021-05-21'), ('a', to_long256(0, 5, 5, 5), '2021-05-21'), ('a', to_long256(null, 5, 5, 5), '2021-05-21')"
+                + ", ('a', to_long256(5, 5, 0, 5), '2021-05-21'), ('a', to_long256(5, 5, null, 5), '2021-05-21'), ('a', to_long256(5, 5, 5, 0), '2021-05-21'), ('a', to_long256(5, 5, 5, null), '2021-05-21')" +
+                ", ('a', to_long256(0, 0, 0, 0), '2021-05-21'), ('a', to_long256(null, null, null, null), '2021-05-21')");
         assertSql("a\ts\n" +
-                "a\t4\n", "select a, count_distinct(s) as s from x order by a");
+                "a\t9\n", "select a, count_distinct(s) as s from x order by a");
     }
 }

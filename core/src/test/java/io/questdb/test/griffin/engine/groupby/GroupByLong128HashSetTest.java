@@ -24,14 +24,15 @@
 
 package io.questdb.test.griffin.engine.groupby;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.*;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByLong128HashSet;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
+import io.questdb.std.Uuid;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import java.util.HashSet;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -96,19 +97,32 @@ public class GroupByLong128HashSetTest extends AbstractCairoTest {
         };
         TestUtils.assertMemoryLeak(() -> {
             Rnd rnd = new Rnd();
+
+            HashSet<Uuid> oracle = new HashSet<>();
             try (GroupByAllocator allocator = new GroupByAllocator(config)) {
-                GroupByLong128HashSet set = new GroupByLong128HashSet(16, 0.7, noKeyValue);
+                GroupByLong128HashSet set = new GroupByLong128HashSet(64, 0.7, noKeyValue);
                 set.setAllocator(allocator);
                 set.of(0);
 
                 final int N = 1000;
 
                 for (int i = 0; i < N; i++) {
-                    set.add(rnd.nextPositiveLong() + 1, rnd.nextPositiveLong() + 1);
+                    long l0 = rnd.nextPositiveLong() + 1;
+                    long l1 = rnd.nextPositiveLong() + 1;
+                    set.add(l0, l1);
+                    oracle.add(new Uuid(l0, l1));
                 }
 
                 Assert.assertEquals(N, set.size());
                 Assert.assertTrue(set.capacity() >= N);
+
+                // check size vs oracle
+                Assert.assertEquals(set.size(), oracle.size());
+
+                // check contents
+                for (Uuid u : oracle) {
+                    Assert.assertTrue(set.keyIndex(u.getLo(), u.getHi()) < 0);
+                }
 
                 rnd.reset();
 

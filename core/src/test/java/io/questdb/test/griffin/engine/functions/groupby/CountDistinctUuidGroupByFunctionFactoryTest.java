@@ -216,10 +216,9 @@ public class CountDistinctUuidGroupByFunctionFactoryTest extends AbstractCairoTe
         );
     }
 
-
     @Test
     public void testMappingZeroToNulls() throws Exception {
-        // this is to ensure that to_uuid(15, 0) and to_uuid(15, null) don't map to the same value
+        // this is to ensure that uuids wth nulls and zeros don't map to the same values
         assertQuery(
                 "a\ts\tts\n",
                 "select * from x",
@@ -228,8 +227,9 @@ public class CountDistinctUuidGroupByFunctionFactoryTest extends AbstractCairoTe
                 true
         );
 
-        insert("insert into x values ('a', to_uuid(5, 10), '2021-05-21'), ('a', to_uuid(10, 0), '2021-05-21'), ('a', to_uuid(15, 0), '2021-05-21'), ('a', to_uuid(15, null), '2021-05-21')");
+        insert("insert into x values ('a', to_uuid(5, 0), '2021-05-21'), ('a', to_uuid(5, 0), '2021-05-21'), ('a', to_uuid(5, null), '2021-05-21'), ('a', to_uuid(10, 0), '2021-05-21'), ('a', to_uuid(10, null), '2021-05-21')" +
+                ", ('a', to_uuid(0, 5), '2021-05-21'), ('a', to_uuid(0, 5), '2021-05-21'), ('a', to_uuid(null, 5), '2021-05-21'), ('a', to_uuid(0, 10), '2021-05-21'), ('a', to_uuid(null, 10), '2021-05-21'), ('a', to_uuid(0, 0), '2021-05-21'), ('a', to_uuid(null, null), '2021-05-21')" );
         assertSql("a\ts\n" +
-                          "a\t4\n", "select a, count_distinct(s) as s from x order by a");
+                "a\t9\n", "select a, count_distinct(s) as s from x order by a");
     }
 }
