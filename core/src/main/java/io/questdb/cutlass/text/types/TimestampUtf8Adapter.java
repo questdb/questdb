@@ -28,7 +28,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cutlass.text.Utf8Exception;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectUtf16Sink;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8s;
@@ -48,7 +48,7 @@ public class TimestampUtf8Adapter extends TimestampAdapter {
     }
 
     @Override
-    public void toSink(CharSinkBase<?> sink) {
+    public void toSink(CharSink<?> sink) {
         sink.putAscii('{');
         sink.putAsciiQuoted("pattern").put(':').putQuoted(pattern).putAscii(',');
         sink.putAsciiQuoted("locale").put(':').putQuoted(locale.getLocaleName()).putAscii(',');

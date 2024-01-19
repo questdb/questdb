@@ -32,8 +32,9 @@ import io.questdb.cutlass.http.processors.TextImportProcessor;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
@@ -157,6 +158,17 @@ public class TestHttpClient implements QuietCloseable {
         }
     }
 
+    public void assertGetRegexp(
+            CharSequence url,
+            String expectedResponseRegexp,
+            CharSequence sql,
+            @Nullable CharSequence username,
+            @Nullable CharSequence password,
+            CharSequence expectedStatus
+    ) {
+        assertGetRegexp(url, expectedResponseRegexp, sql, username, password, expectedStatus, null, null);
+    }
+
     public void assertSendMultipart(
             CharSequence expectedResponse,
             @Nullable CharSequence json,
@@ -258,17 +270,6 @@ public class TestHttpClient implements QuietCloseable {
         );
     }
 
-    public void assertGetRegexp(
-            CharSequence url,
-            String expectedResponseRegexp,
-            CharSequence sql,
-            @Nullable CharSequence username,
-            @Nullable CharSequence password,
-            CharSequence expectedStatus
-    ) {
-        assertGetRegexp(url, expectedResponseRegexp, sql, username, password, expectedStatus, null, null);
-    }
-
     @Override
     public void close() {
         Misc.free(httpClient);
@@ -366,7 +367,7 @@ public class TestHttpClient implements QuietCloseable {
             CharSequence overwrite,
             CharSequence skipLines,
             CharSequence delimiter,
-            CharSinkBase<?> sink
+            CharSink<?> sink
     ) {
         HttpClient.Request req = httpClient.newRequest();
         req
@@ -403,7 +404,7 @@ public class TestHttpClient implements QuietCloseable {
         Chunk chunk;
 
         while ((chunk = chunkedResponse.recv()) != null) {
-            Utf8s.utf8ToUtf16(chunk.lo(), chunk.hi(), sink);
+            Utf8s.utf8ToUtf16(chunk.lo(), chunk.hi(), (Utf16Sink) sink);
         }
     }
 

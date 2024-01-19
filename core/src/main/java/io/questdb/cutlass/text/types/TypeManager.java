@@ -259,7 +259,7 @@ public class TypeManager implements Mutable {
         defaultTypeAdapterList.add(getTypeAdapter(ColumnType.IPv4));
     }
 
-    private void addNonDefaultAdapters(DirectCharSink utf16Sink) {
+    private void addNonDefaultAdapters(DirectUtf16Sink utf16Sink) {
         allTypeAdapterList.add(getTypeAdapter(ColumnType.BYTE));
         allTypeAdapterList.add(getTypeAdapter(ColumnType.SHORT));
         allTypeAdapterList.add(getTypeAdapter(ColumnType.FLOAT));

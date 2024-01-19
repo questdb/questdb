@@ -26,7 +26,6 @@ package io.questdb.cutlass.http.client;
 
 import io.questdb.HttpClientConfiguration;
 import io.questdb.cutlass.http.HttpHeaderParser;
-import io.questdb.cutlass.http.ex.BufferOverflowException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.IOOperation;
@@ -106,13 +105,6 @@ public abstract class HttpClient implements QuietCloseable {
         return byteCount;
     }
 
-    private void checkCapacity(long capacity) {
-        final long requiredSize = ptr - bufLo + capacity;
-        if (requiredSize > bufferSize) {
-            throw BufferOverflowException.INSTANCE;
-        }
-    }
-
     private int recvOrDie(long addr, int timeout) {
         return recvOrDie(addr, (int) (bufferSize - (addr - bufLo)), timeout);
     }
@@ -143,7 +135,7 @@ public abstract class HttpClient implements QuietCloseable {
 
     protected abstract void setupIoWait();
 
-    public interface FormData extends CharSinkBase<Utf8Sink> {
+    public interface FormData extends CharSink<Utf8Sink> {
     }
 
     public interface MultipartRequest {
@@ -210,15 +202,40 @@ public abstract class HttpClient implements QuietCloseable {
         }
     }
 
-    private class FormDataImpl implements CharSinkBase<Utf8Sink>, FormData {
+    private class FormDataImpl implements CharSink<Utf8Sink>, FormData {
+        @Override
+        public int getEncoding() {
+            return request.getEncoding();
+        }
+
+        @Override
+        public Utf8Sink put(CharSequence cs) {
+            return request.put(cs);
+        }
+
+        @Override
+        public Utf8Sink put(@Nullable Utf8Sequence us) {
+            return request.put(us);
+        }
+
         @Override
         public Utf8Sink put(char c) {
             return request.put(c);
         }
 
         @Override
-        public Utf8Sink put(CharSequence cs) {
-            return request.put(cs);
+        public Utf8Sink putAscii(@Nullable CharSequence cs) {
+            return request.putAscii(cs);
+        }
+
+        @Override
+        public Utf8Sink putAscii(char c) {
+            return request.putAscii(c);
+        }
+
+        @Override
+        public Utf8Sink putUtf8(long lo, long hi) {
+            return request.putUtf8(lo, hi);
         }
     }
 
@@ -378,17 +395,6 @@ public abstract class HttpClient implements QuietCloseable {
         }
 
         @Override
-        public Request putUtf8(long lo, long hi) {
-            final long size = hi - lo;
-            if (ptr + size >= bufHi) {
-                doSend(bufLo, ptr);
-            }
-            Vect.memcpy(ptr, lo, size);
-            ptr += size;
-            return this;
-        }
-
-        @Override
         public Request put(@Nullable CharSequence cs) {
             Utf8Sink.super.put(cs);
             return this;
@@ -425,6 +431,17 @@ public abstract class HttpClient implements QuietCloseable {
         @Override
         public Request putQuoted(@NotNull CharSequence cs) {
             putAsciiInternal('\"').put(cs).putAsciiInternal('\"');
+            return this;
+        }
+
+        @Override
+        public Request putUtf8(long lo, long hi) {
+            final long size = hi - lo;
+            if (ptr + size >= bufHi) {
+                doSend(bufLo, ptr);
+            }
+            Vect.memcpy(ptr, lo, size);
+            ptr += size;
             return this;
         }
 

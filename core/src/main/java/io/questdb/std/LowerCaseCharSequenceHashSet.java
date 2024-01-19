@@ -24,7 +24,7 @@
 
 package io.questdb.std;
 
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 
@@ -104,7 +104,7 @@ public class LowerCaseCharSequenceHashSet extends AbstractLowerCaseCharSequenceH
     }
 
     @Override
-    public void toSink(@NotNull CharSinkBase<?> sink) {
+    public void toSink(@NotNull CharSink<?> sink) {
         sink.put('[');
         boolean isFirst = true;
         for (int i = 0, n = keys.length; i < n; i++) {

@@ -968,12 +968,12 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     }
 
     private void sendBadRequestError(CharSequence clientDiagnosticMessage) {
-        HttpChunkedResponseSocket skt = getChunkedResponseSocket();
+        HttpChunkedResponse response = getChunkedResponse();
         try {
-            skt.status(400, CONTENT_TYPE_TEXT);
-            skt.sendHeader();
-            skt.put(clientDiagnosticMessage);
-            skt.sendChunk(true);
+            response.status(400, CONTENT_TYPE_TEXT);
+            response.sendHeader();
+            response.put(clientDiagnosticMessage);
+            response.sendChunk(true);
         } catch (Throwable e) {
             LOG.error().$("could not send error response [fd=").$(socket.getFd()).I$();
         }

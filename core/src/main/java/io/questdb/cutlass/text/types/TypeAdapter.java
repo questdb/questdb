@@ -25,7 +25,7 @@
 package io.questdb.cutlass.text.types;
 
 import io.questdb.cairo.TableWriter;
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectUtf16Sink;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Sinkable;
@@ -41,7 +41,7 @@ public interface TypeAdapter extends Sinkable {
     boolean probe(DirectUtf8Sequence text);
 
     @Override
-    default void toSink(CharSinkBase<?> sink) {
+    default void toSink(CharSink<?> sink) {
         sink.putAscii("{}");
     }
 

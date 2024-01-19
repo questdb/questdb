@@ -1748,7 +1748,7 @@ public class DateFormatCompiler {
         }
 
         @Override
-        public void format(long datetime, @NotNull DateLocale locale, @Nullable CharSequence timeZoneName, @NotNull CharSinkBase<?> sink) {
+        public void format(long datetime, @NotNull DateLocale locale, @Nullable CharSequence timeZoneName, @NotNull CharSink<?> sink) {
             sink.put(datetime);
         }
 

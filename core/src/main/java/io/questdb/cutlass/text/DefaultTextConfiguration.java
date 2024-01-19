@@ -111,6 +111,11 @@ public class DefaultTextConfiguration implements TextConfiguration {
     }
 
     @Override
+    public int getSchemaColumnPoolCapacity() {
+        return 8;
+    }
+
+    @Override
     public int getTextAnalysisMaxLines() {
         return 1000;
     }

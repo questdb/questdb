@@ -481,6 +481,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int pgWorkerCount;
     private long pgWorkerSleepThreshold;
     private long pgWorkerYieldThreshold;
+    private int schemaColumnPoolCapacity;
     private boolean stringAsTagSupported;
     private boolean stringToCharCastAllowed;
     private boolean symbolAsFieldSupported;
@@ -733,6 +734,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.maxRequiredDelimiterStdDev = getDouble(properties, env, PropertyKey.HTTP_TEXT_MAX_REQUIRED_DELIMITER_STDDEV, "0.1222");
             this.maxRequiredLineLengthStdDev = getDouble(properties, env, PropertyKey.HTTP_TEXT_MAX_REQUIRED_LINE_LENGTH_STDDEV, "0.8");
             this.metadataStringPoolCapacity = getInt(properties, env, PropertyKey.HTTP_TEXT_METADATA_STRING_POOL_CAPACITY, 128);
+            this.schemaColumnPoolCapacity = getInt(properties, env, PropertyKey.HTTP_TEXT_SCHEMA_COLUMN_POOL_CAPACITY, 8);
 
             this.rollBufferLimit = getIntSize(properties, env, PropertyKey.HTTP_TEXT_ROLL_BUFFER_LIMIT, 1024 * 4096);
             this.rollBufferSize = getIntSize(properties, env, PropertyKey.HTTP_TEXT_ROLL_BUFFER_SIZE, 1024);
@@ -4238,6 +4240,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getRollBufferSize() {
             return rollBufferSize;
+        }
+
+        @Override
+        public int getSchemaColumnPoolCapacity() {
+            return schemaColumnPoolCapacity;
         }
 
         @Override

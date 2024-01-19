@@ -59,6 +59,7 @@ public class TextLoader implements Closeable, Mutable {
     private static final String WRITER_LOCK_REASON = "textLoader";
     private final CairoConfiguration cairoConfiguration;
     private final LongList columnErrorCounts = new LongList();
+    private final ObjectPool<CsvColumnMapping> csvColumnMappingPool;
     private final MemoryMARW ddlMem = Vm.getMARWInstance();
     private final LowerCaseCharSequenceHashSet duplicateTableColumnNames = new LowerCaseCharSequenceHashSet();
     private final CairoEngine engine;
@@ -69,9 +70,10 @@ public class TextLoader implements Closeable, Mutable {
     private final Path path = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
     /* maps csv columns to table writer column indexes (these may not be the same as column indexes) */
     private final IntList remapIndex = new IntList();
-    private final SchemaV2 schema = new SchemaV2();
+    private final SchemaV2 schema;
     private final SchemaV1Parser schemaV1Parser;
     private final SchemaV2Parser schemaV2Parser;
+    private final ObjList<CharSequence> tableColumnNames = new ObjList<>();
     private final LowerCaseCharSequenceHashSet tableColumnNamesSet = new LowerCaseCharSequenceHashSet();
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
     private final int textAnalysisMaxLines;
@@ -80,12 +82,11 @@ public class TextLoader implements Closeable, Mutable {
     private final TextStructureAnalyser textStructureAnalyser;
     private final TextLexerWrapper tlw;
     private final TypeManager typeManager;
-    private final DirectUtf16Sink utf8Sink;
     // indexes of csv columns, which types did not match table column types
     private final IntList typeMismatchCsvColumnIndexes = new IntList();
     // indexes of CSV columns that could not have been mapped to the table columns
     private final IntList unmappedCsvColumnIndexes = new IntList();
-    private final DirectCharSink utf8Sink;
+    private final DirectUtf16Sink utf8Sink;
     // indexes of columns that do not match a csv file column (file_column_name or file_column_index is wrong)
     private final IntList wrongSourceSchemaColumnIndexes = new IntList();
     // We are looking for CSV columns that are not mapped at all, or
@@ -95,11 +96,10 @@ public class TextLoader implements Closeable, Mutable {
     private final IntHashSet wrongTargetSchemaColumnIndexes = new IntHashSet();
     private int atomicity;
     private byte columnDelimiter = -1;
+    private boolean createTable = true;
     private CharSequence designatedTimestampColumnName;
     private int designatedTimestampIndex;
     private boolean forceHeaders = false;
-    // flag marking when table writer acquisition failed, used to skip repeating prior actions on retry to avoid e.g. duplicating columns
-    private boolean getWriterFailed = false;
     private boolean ignoreEverything = false;
     private AbstractTextLexer lexer;
     private int maxUncommittedRows = -1;
@@ -134,6 +134,7 @@ public class TextLoader implements Closeable, Mutable {
         this.utf8Sink = new DirectUtf16Sink(textConfiguration.getUtf8SinkSize());
         this.typeManager = new TypeManager(textConfiguration, utf8Sink);
         jsonLexer = new JsonLexer(textConfiguration.getJsonCacheSize(), textConfiguration.getJsonCacheLimit());
+        schema = new SchemaV2(textConfiguration);
         textStructureAnalyser = new TextStructureAnalyser(typeManager, textConfiguration, schema);
         schemaV1Parser = new SchemaV1Parser(textConfiguration, typeManager);
         schemaV2Parser = new SchemaV2Parser(textConfiguration, typeManager);
@@ -143,6 +144,7 @@ public class TextLoader implements Closeable, Mutable {
         parseMethods.extendAndSet(LOAD_JSON_METADATA, this::parseJsonMetadata);
         parseMethods.extendAndSet(ANALYZE_STRUCTURE, this::analyseTextStructure);
         parseMethods.extendAndSet(LOAD_DATA, this::parseData);
+        csvColumnMappingPool = new ObjectPool<>(CsvColumnMapping::new, textConfiguration.getSchemaColumnPoolCapacity());
     }
 
     @Override
@@ -184,10 +186,12 @@ public class TextLoader implements Closeable, Mutable {
         typeMismatchCsvColumnIndexes.clear();
         mappingColumns.clear();
         schemaVersion = 1;
-        getWriterFailed = false;
         duplicateTableColumnNames.clear();
         tableColumnNamesSet.clear();
         skipLines = 0;
+        createTable = true;
+        tableColumnNames.clear();
+        csvColumnMappingPool.clear();
     }
 
     public void clearSchemas() {
@@ -233,7 +237,7 @@ public class TextLoader implements Closeable, Mutable {
             int partitionBy,
             @Nullable Utf8Sequence timestampColumnName,
             @Nullable Utf8Sequence timestampFormat,
-            boolean truncate
+            boolean truncateTable
     ) {
         final String tableNameUtf16 = Utf8s.toString(tableName);
         final String timestampColumnUtf16 = Utf8s.toString(timestampColumnName);
@@ -242,7 +246,7 @@ public class TextLoader implements Closeable, Mutable {
         this.tableName = tableNameUtf16;
         this.walTable = walTable;
         this.overwriteTable = overwrite;
-        this.truncateTable = !overwrite && truncate;
+        this.truncateTable = !overwrite && truncateTable;
         this.atomicity = atomicity;
         this.partitionBy = partitionBy;
         this.schemaTimestampColumnName = timestampColumnUtf16;
@@ -263,7 +267,7 @@ public class TextLoader implements Closeable, Mutable {
         LOG.info()
                 .$("configured [table=`").$(tableName)
                 .$("`, overwrite=").$(overwrite)
-                .$("`, truncate=").$(truncate)
+                .$("`, truncateTable=").$(truncateTable)
                 .$(", atomicity=").$(atomicity)
                 .$(", partitionBy=").$(PartitionBy.toString(partitionBy))
                 .$(", timestamp=").$(timestampColumnName)
@@ -277,6 +281,10 @@ public class TextLoader implements Closeable, Mutable {
 
     public LongList getColumnErrorCounts() {
         return columnErrorCounts;
+    }
+
+    public boolean getCreateTable() {
+        return createTable;
     }
 
     public long getErrorLineCount() {
@@ -313,10 +321,6 @@ public class TextLoader implements Closeable, Mutable {
 
     public int getState() {
         return state;
-    }
-
-    public boolean getCreate() {
-        return textWriter.getCreate();
     }
 
     public CharSequence getTableName() {
@@ -366,6 +370,10 @@ public class TextLoader implements Closeable, Mutable {
         lexer.restart(header);
     }
 
+    public void setCreateTable(boolean createTable) {
+        this.createTable = createTable;
+    }
+
     public void setDelimiter(byte delimiter) {
         this.lexer = tlw.getLexer(delimiter);
         this.lexer.setTableName(tableName);
@@ -375,10 +383,6 @@ public class TextLoader implements Closeable, Mutable {
 
     public void setForceHeaders(boolean forceHeaders) {
         this.forceHeaders = forceHeaders;
-    }
-
-    public void setCreate(boolean create) {
-        textWriter.setCreate(create);
     }
 
     public void setIgnoreEverything(boolean ignoreEverything) {
@@ -457,7 +461,7 @@ public class TextLoader implements Closeable, Mutable {
 
         if (tableTimestampColumnName != null &&
                 timestampAdapter != null &&
-                !getWriterFailed) {
+                schema.getFileColumnNameToColumnMap().excludes(tableTimestampColumnName)) {
             schema.addColumn(tableTimestampColumnName, ColumnType.TIMESTAMP, timestampAdapter);
         }
 
@@ -469,10 +473,13 @@ public class TextLoader implements Closeable, Mutable {
         assert columnNamesSize == columnTypes.size();
 
         // don't add old schema columns to schema if writer acquisition failed and import is being re-tried
-        if (schemaVersion != 2 && !getWriterFailed) {
+        if (schemaVersion != 2) {
             for (int i = 0; i < columnNamesSize; i++) {
+                CharSequence columnName = columnNames.getQuick(i);
                 TypeAdapter columnType = columnTypes.getQuick(i);
-                schema.addColumn(columnNames.getQuick(i), columnType.getType(), columnType);
+                if (schema.getFileColumnNameToColumnMap().excludes(columnName)) {
+                    schema.addColumn(columnName, columnType.getType(), columnType);
+                }
             }
         }
 
@@ -481,12 +488,7 @@ public class TextLoader implements Closeable, Mutable {
 
         if (tableStatus == TableUtils.TABLE_EXISTS && !overwriteTable) {
             securityContext.authorizeInsert(tableToken);
-            try {
-                writer = engine.getTableWriterAPI(tableToken, WRITER_LOCK_REASON);
-            } catch (Throwable t) {
-                getWriterFailed = true;
-                throw t;
-            }
+            writer = engine.getTableWriterAPI(tableToken, WRITER_LOCK_REASON);
             designatedTimestampIndex = writer.getMetadata().getTimestampIndex();
             designatedTimestampColumnName = getDesignatedTimestampColumnName(writer.getMetadata());
 
@@ -541,8 +543,6 @@ public class TextLoader implements Closeable, Mutable {
             boolean csvHeaderPresent = textStructureAnalyser.hasHeader();
             restart(csvHeaderPresent);
 
-            final ObjList<CharSequence> tableColumnNames = new ObjList<>();
-
             // Technically we cannot import data when we find ambiguously mapped columns. However, to provide
             // better diagnostics we will analyse the CSV header regardless
             final int csvColumnCount;
@@ -553,7 +553,7 @@ public class TextLoader implements Closeable, Mutable {
                 final ObjList<CharSequence> csvHeaderNames = textStructureAnalyser.getColumnNames();
 
                 csvColumnCount = csvHeaderNames.size();
-                remapIndex.ensureCapacity(csvColumnCount);
+                remapIndex.setPos(csvColumnCount);
 
                 for (int i = 0, n = schemaColumnList.size(); i < n; i++) {
                     wrongSourceSchemaColumnIndexes.add(i);
@@ -630,7 +630,7 @@ public class TextLoader implements Closeable, Mutable {
                 // are using auto-detected types to assist the user.
 
                 csvColumnCount = textStructureAnalyser.getColumnTypes().size();
-                remapIndex.ensureCapacity(csvColumnCount);
+                remapIndex.setPos(csvColumnCount);
 
                 for (int i = 0; i < csvColumnCount; i++) {
                     //Note: we don't check via synthetic column names, e.g. f0, f1, etc.
@@ -683,7 +683,7 @@ public class TextLoader implements Closeable, Mutable {
                     || unmappedCsvColumnIndexes.size() > 0
                     || duplicateTableColumnNames.size() > 0
             ) {
-                updateMapping(csvHeaderPresent, tableColumnNames, existingTableMetadata);
+                prepareMapping(csvHeaderPresent, existingTableMetadata);
 
                 CairoException exception = CairoException.nonCritical().put("column mapping is invalid [");
                 boolean isFirst = true;
@@ -759,7 +759,7 @@ public class TextLoader implements Closeable, Mutable {
             }
 
             if (checkStatus != CHECK_OK) {
-                updateMapping(csvHeaderPresent, tableColumnNames, existingTableMetadata);
+                prepareMapping(csvHeaderPresent, existingTableMetadata);
 
                 if (checkStatus == CHECK_COLUMN_COUNT_DIVERGED) {
                     throw CairoException.nonCritical().put("column number mismatch");
@@ -790,7 +790,7 @@ public class TextLoader implements Closeable, Mutable {
                 this.timestampAdapter = (TimestampAdapter) this.tableTypeAdapters.getQuick(timestampIndex);
             }
 
-            updateMapping(csvHeaderPresent, tableColumnNames, existingTableMetadata);
+            prepareMapping(csvHeaderPresent, existingTableMetadata);
 
             if (truncateTable) {
                 if (writer.getMetadata().isWalEnabled()) {
@@ -824,7 +824,6 @@ public class TextLoader implements Closeable, Mutable {
             boolean csvHeaderPresent = textStructureAnalyser.hasHeader();
             restart(csvHeaderPresent);
 
-            final ObjList<CharSequence> tableColumnNames = new ObjList<>();
             final ObjList<CharSequence> csvHeaderNames = textStructureAnalyser.getColumnNames();
             final int csvColumnCount = csvHeaderNames.size();
 
@@ -920,7 +919,7 @@ public class TextLoader implements Closeable, Mutable {
             }
 
             if (checkStatus != CHECK_OK) {
-                updateMapping(csvHeaderPresent, tableColumnNames, null);
+                prepareMapping(csvHeaderPresent, null);
 
                 if (checkStatus == CHECK_COLUMN_COUNT_DIVERGED) {
                     throw CairoException.nonCritical().put("column number mismatch");
@@ -933,6 +932,9 @@ public class TextLoader implements Closeable, Mutable {
             // we can create table now and try importing
             switch (tableStatus) {
                 case TableUtils.TABLE_DOES_NOT_EXIST:
+                    if (!createTable) {
+                        throw CairoException.tableDoesNotExist(tableName).put(" and create param was set to false.");
+                    }
                     tableToken = createTable(tableColumnNames, csvColumnTypes, securityContext, path);
                     writer = engine.getTableWriterAPI(tableToken, WRITER_LOCK_REASON);
                     metadata = GenericRecordMetadata.copyDense(writer.getMetadata());
@@ -952,7 +954,7 @@ public class TextLoader implements Closeable, Mutable {
             }
 
             checkO3Options(tableRecreated);
-            updateMapping(csvHeaderPresent, tableColumnNames, writer.getMetadata());
+            prepareMapping(csvHeaderPresent, writer.getMetadata());
 
             columnErrorCounts.seed(getColumnCount(writer.getMetadata()), 0);
 
@@ -1122,7 +1124,7 @@ public class TextLoader implements Closeable, Mutable {
         this.tableTypeAdapters = detectedTypes;
 
         // Overwrite detected types with actual table column types.
-        remapIndex.ensureCapacity(tableTypeAdapters.size());
+        remapIndex.setPos(tableTypeAdapters.size());
         for (int i = 0, n = tableTypeAdapters.size(); i < n; i++) {
             final int columnIndex = metadata.getColumnIndexQuiet(names.getQuick(i));
             final int idx = columnIndex > -1 ? columnIndex : i; // check for strict match ?
@@ -1248,16 +1250,15 @@ public class TextLoader implements Closeable, Mutable {
         }
     }
 
-    // change existing mapping to make it as compatible with source file and target table as possible
-    private void updateMapping(boolean csvHeaderPresent, ObjList<CharSequence> tableColumnNames, TableRecordMetadata tableMetadata) {
+    // change existing mapping to make it as compatible with source file and target table as much as possible, collect errors
+    private void prepareMapping(boolean csvHeaderPresent, TableRecordMetadata tableMetadata) {
         // if header is missing input columns receive synthetic f_idx names so the number of headers should match that in file
         final ObjList<CharSequence> csvHeaderNames = textStructureAnalyser.getColumnNames();
         ObjList<TypeAdapter> csvColumnTypes = textStructureAnalyser.getColumnTypes();
 
         // prepare column mapping primarily based on csv file content
-        mappingColumns.clear();
         for (int i = 0, n = csvHeaderNames.size(); i < n; i++) {
-            CsvColumnMapping column = new CsvColumnMapping();
+            CsvColumnMapping column = csvColumnMappingPool.next();
             column.csvColumnIndex = i;
             column.csvColumnName = csvHeaderPresent ? csvHeaderNames.getQuick(i) : null;
             column.csvColumnAdapter = csvColumnTypes.getQuick(i);
@@ -1270,18 +1271,18 @@ public class TextLoader implements Closeable, Mutable {
                         column.tableColumnType = tableMetadata.getColumnType(tableColumnIndex);
                     }
                 }
-                column.errors = 0;
+                column.status = 0;
                 if (duplicateTableColumnNames.contains(column.tableColumnName)) {
-                    column.errors |= CsvColumnMapping.STATUS_DUPLICATE_TARGET;
+                    column.status |= CsvColumnMapping.STATUS_DUPLICATE_TARGET;
                 }
                 // tableColumnType defaults to -1
             } else {
                 column.tableColumnName = null;
                 column.tableColumnType = -1;
-                column.errors |= CsvColumnMapping.STATUS_UNMAPPED;
+                column.status |= CsvColumnMapping.STATUS_UNMAPPED;
             }
 
-            column.errors |= typeMismatchCsvColumnIndexes.contains(i) ? CsvColumnMapping.STATUS_MISTYPED : 0;
+            column.status |= typeMismatchCsvColumnIndexes.contains(i) ? CsvColumnMapping.STATUS_MISTYPED : 0;
 
             Column schemaColumn = null;
             if (csvHeaderPresent && column.csvColumnName != null) {
@@ -1297,7 +1298,7 @@ public class TextLoader implements Closeable, Mutable {
                 } else {
                     int schemaColumnIndex = schema.getColumnList().indexOf(schemaColumn);
                     if (wrongTargetSchemaColumnIndexes.contains(schemaColumnIndex)) {
-                        column.errors |= CsvColumnMapping.STATUS_BAD_TARGET;
+                        column.status |= CsvColumnMapping.STATUS_BAD_TARGET;
                     }
                 }
             }
@@ -1310,16 +1311,16 @@ public class TextLoader implements Closeable, Mutable {
                 int schemaColumnIndex = wrongSourceSchemaColumnIndexes.getQuick(i);
                 Column column = schema.getColumn(schemaColumnIndex);
                 if (column != null) {
-                    CsvColumnMapping csvColumn = new CsvColumnMapping();
+                    CsvColumnMapping csvColumn = csvColumnMappingPool.next();
                     csvColumn.csvColumnIndex = column.getFileColumnIndex();
                     csvColumn.csvColumnName = column.getFileColumnName();
                     csvColumn.tableColumnName = column.getTableColumnName();
                     csvColumn.tableColumnType = column.getColumnType();
                     csvColumn.csvColumnAdapter = column.getColumnType() > -1 ? typeManager.getTypeAdapter(column.getColumnType()) : null;
-                    csvColumn.errors = CsvColumnMapping.STATUS_BAD_SOURCE;
+                    csvColumn.status = CsvColumnMapping.STATUS_BAD_SOURCE;
 
                     if (wrongTargetSchemaColumnIndexes.contains(schemaColumnIndex)) {
-                        csvColumn.errors |= CsvColumnMapping.STATUS_BAD_TARGET;
+                        csvColumn.status |= CsvColumnMapping.STATUS_BAD_TARGET;
                     }
 
                     mappingColumns.add(csvColumn);
@@ -1336,7 +1337,7 @@ public class TextLoader implements Closeable, Mutable {
     }
 
     // TODO: merge with schema column
-    public static class CsvColumnMapping implements Sinkable {
+    public static class CsvColumnMapping implements Sinkable, Mutable {
 
         static final int STATUS_BAD_SOURCE = 4;
         static final int STATUS_BAD_TARGET = 8;
@@ -1350,27 +1351,19 @@ public class TextLoader implements Closeable, Mutable {
         private boolean csvColumnIgnore;
         private int csvColumnIndex;
         private CharSequence csvColumnName;
-        private int errors;
+        private int status;
         private CharSequence tableColumnName;
         private int tableColumnType = -1;
 
-        public void errorsToSink(@NotNull CharSinkBase<?> sink) {
-            if (errors != 0) {
-                boolean isFirst = true;
-                for (int exp = 0; exp <= STATUS_MAX_EXP; exp++) {
-                    int error = 1 << exp;
-                    if ((errors & error) != 0) {
-                        if (!isFirst) {
-                            sink.put(',');
-                        }
-                        isFirst = false;
-
-                        sink.put(nameOf(error));
-                    }
-                }
-            } else {
-                sink.put("OK");
-            }
+        @Override
+        public void clear() {
+            csvColumnAdapter = null;
+            csvColumnIgnore = false;
+            csvColumnIndex = -1;
+            csvColumnName = null;
+            status = 0;
+            tableColumnName = null;
+            tableColumnType = -1;
         }
 
         public TypeAdapter getCsvColumnAdapter() {
@@ -1385,8 +1378,8 @@ public class TextLoader implements Closeable, Mutable {
             return csvColumnName;
         }
 
-        public int getErrors() {
-            return errors;
+        public int getStatus() {
+            return status;
         }
 
         public CharSequence getTableColumnName() {
@@ -1397,7 +1390,26 @@ public class TextLoader implements Closeable, Mutable {
             return tableColumnType;
         }
 
-        public void toJson(CharSinkBase<?> sink) {
+        public void statusToSink(@NotNull CharSink<?> sink) {
+            if (status != 0) {
+                boolean isFirst = true;
+                for (int exp = 0; exp <= STATUS_MAX_EXP; exp++) {
+                    int error = 1 << exp;
+                    if ((status & error) != 0) {
+                        if (!isFirst) {
+                            sink.put(',');
+                        }
+                        isFirst = false;
+
+                        sink.put(nameOf(error));
+                    }
+                }
+            } else {
+                sink.put("OK");
+            }
+        }
+
+        public void toJson(CharSink<?> sink) {
             sink.putAscii('{');
             sink.putAscii("\"file_column_name\":\"").put(csvColumnName).putAscii("\",");
             sink.putAscii("\"file_column_index\":").put(csvColumnIndex).putAscii(',');
@@ -1408,12 +1420,12 @@ public class TextLoader implements Closeable, Mutable {
             if (csvColumnAdapter != null) {
                 csvColumnAdapter.toSink(sink);
             }
-            if (errors != 0) {
+            if (status != 0) {
                 sink.putAscii(",\"errors\": [");
                 boolean isFirst = true;
                 for (int exp = 0; exp <= STATUS_MAX_EXP; exp++) {
                     int error = 1 << exp;
-                    if ((errors & error) != 0) {
+                    if ((status & error) != 0) {
                         if (!isFirst) {
                             sink.put(',');
                         }
@@ -1429,7 +1441,7 @@ public class TextLoader implements Closeable, Mutable {
         }
 
         @Override
-        public void toSink(@NotNull CharSinkBase<?> sink) {
+        public void toSink(@NotNull CharSink<?> sink) {
             boolean isFirst = true;
             sink.putAscii('[');
             if (csvColumnIndex > -1) {
@@ -1469,12 +1481,12 @@ public class TextLoader implements Closeable, Mutable {
                 sink.putAscii(",tableColumnType=").putAscii(ColumnType.nameOf(tableColumnType));
             }
 
-            if (errors != 0) {
+            if (status != 0) {
                 if (!isFirst) {
                     sink.putAscii(',');
                 }
                 sink.putAscii("errors=");
-                errorsToSink(sink);
+                statusToSink(sink);
             }
 
             sink.put(']');

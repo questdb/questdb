@@ -92,7 +92,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private final ObjList<PartitionInfo> partitions;
     private final Sequence pubSeq;
     private final RingQueue<CopyTask> queue;
-    private final SchemaV2 schema = new SchemaV2();
+    private final SchemaV2 schema;
     private final IntList symbolCapacities;
     private final TableStructureAdapter targetTableStructure;
     //stores 3 values per task : index, lo, hi (lo, hi are indexes in partitionNames)
@@ -174,6 +174,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         this.inputWorkRoot = configuration.getSqlCopyInputWorkRoot();
 
         TextConfiguration textConfiguration = configuration.getTextConfiguration();
+        this.schema = new SchemaV2(textConfiguration);
         this.utf8Sink = new DirectUtf16Sink(textConfiguration.getUtf8SinkSize());
         this.typeManager = new TypeManager(textConfiguration, utf8Sink);
         this.textDelimiterScanner = new TextDelimiterScanner(textConfiguration);

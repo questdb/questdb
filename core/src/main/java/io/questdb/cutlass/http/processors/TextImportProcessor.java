@@ -200,7 +200,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
             }
 
             boolean create = !Utf8s.equalsNcAscii("false", rh.getUrlParam(URL_PARAM_CREATE));
-            transientState.textLoader.setCreate(create);
+            transientState.textLoader.setCreateTable(create);
 
             boolean forceHeader = Utf8s.equalsIgnoreCaseNcAscii("true", rh.getUrlParam(URL_PARAM_FORCE_HEADER));
             transientState.textLoader.setForceHeaders(forceHeader);
@@ -319,18 +319,6 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         return b;
     }
 
-    private static Utf8Sink pad(Utf8Sink b, int w, CharSequence value, int from, int to) {
-        to = Math.min(to, value.length());
-
-        int pad = value == null ? w : w - (to - from);
-        replicate(b, ' ', pad);
-        if (value != null) {
-            b.put(value, from, to);
-        }
-        b.putAscii("  |");
-        return b;
-    }
-
     private static Utf8Sink padRight(Utf8Sink b, int w, CharSequence value, int from, int to) {
         to = Math.min(to, value.length());
         b.putAscii("  ");
@@ -344,7 +332,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     }
 
     // add list of errors, e.g. unmapped schema or table columns
-    private static void putErrors(TextImportProcessorState state, HttpChunkedResponseSocket socket) {
+    private static void putErrors(TextImportProcessorState state, HttpChunkedResponse socket) {
         if (state.errorMessage == null) {
             return;
         }
@@ -361,9 +349,9 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     }
 
     // add mapping for all matching columns in format
-    private static void putMapping(TextImportProcessorState state, HttpChunkedResponseSocket socket) {
+    private static void putMapping(TextImportProcessorState state, HttpChunkedResponse socket) {
         ObjList<TextLoader.CsvColumnMapping> mappingColumns = state.textLoader.getMappingColumns();
-        StringSink sink = new StringSink();
+        StringSink sink = Misc.getThreadLocalSink();
 
         final int CSV_COL_IDX_PAD = 5;
         final int CSV_COL_NAME_PAD = 20;
@@ -410,7 +398,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                 pad(socket, TABLE_COL_TYPE_PAD, sink);
 
                 sink.clear();
-                column.errorsToSink(sink);
+                column.statusToSink(sink);
                 pad(socket, INFO_COL_PAD, sink);
 
                 socket.putEOL();
@@ -418,7 +406,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         }
     }
 
-    private static void putMultiline(HttpChunkedResponseSocket socket, CharSequence text) {
+    private static void putMultiline(HttpChunkedResponse socket, CharSequence text) {
         if (text == null) {
             return;
         }
@@ -496,15 +484,15 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                         response.putAscii('}');
                     }
                     if (state.columnIndex == columnCount) {
-                        socket.bookmark();
-                        socket.putAscii(']').putAscii(',');
-                        socket.putAsciiQuoted("mapping").putAscii(':').putAscii('[');
+                        response.bookmark();
+                        response.putAscii(']').putAscii(',');
+                        response.putAsciiQuoted("mapping").putAscii(':').putAscii('[');
                         state.columnIndex++;
                     }
                 } else {
-                    socket.bookmark();
-                    socket.putAscii(']').putAscii(',');
-                    socket.putAsciiQuoted("mapping").putAscii(':').putAscii('[');
+                    response.bookmark();
+                    response.putAscii(']').putAscii(',');
+                    response.putAsciiQuoted("mapping").putAscii(':').putAscii('[');
                 }
 
                 state.responseState = RESPONSE_MAPPING;
@@ -514,11 +502,11 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                 ObjList<TextLoader.CsvColumnMapping> mappingColumns = state.textLoader.getMappingColumns();
                 final int columnCount = mappingColumns.size();
                 for (; state.columnIndex < columnCount; state.columnIndex++) {
-                    socket.bookmark();
+                    response.bookmark();
                     if (state.columnIndex > 0) {
-                        socket.putAscii(',');
+                        response.putAscii(',');
                     }
-                    mappingColumns.getQuick(state.columnIndex).toJson(socket);
+                    mappingColumns.getQuick(state.columnIndex).toJson(response);
                 }
                 // fall through
                 state.responseState = RESPONSE_SUFFIX;
@@ -682,12 +670,12 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         // Copy written state to state, text loader, parser can be closed before re-attempt to send the response
         state.snapshotStateAndCloseWriter();
         if (state.json) {
-            socket.status(200, CONTENT_TYPE_JSON);
+            response.status(200, CONTENT_TYPE_JSON);
         } else {
-            socket.status(200, CONTENT_TYPE_TEXT);
+            response.status(200, CONTENT_TYPE_TEXT);
         }
-        socket.sendHeader();
-        doResumeSend(state, socket);
+        response.sendHeader();
+        doResumeSend(state, response);
     }
 
     private void throwHttpException(CharSequence message) {

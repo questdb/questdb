@@ -28,7 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cutlass.text.types.TypeAdapter;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 
 public class Column implements Mutable, Sinkable {
@@ -39,12 +39,7 @@ public class Column implements Mutable, Sinkable {
     private CharSequence fileColumnName;
     private CharSequence tableColumnName;
 
-    public Column(CharSequence fileColumnName, int fileColumnIndex, boolean fileColumnIgnore, int columnType, CharSequence tableColumnName) {
-        this.columnType = columnType;
-        this.fileColumnIndex = fileColumnIndex;
-        this.fileColumnName = fileColumnName;
-        this.fileColumnIgnore = fileColumnIgnore;
-        this.tableColumnName = tableColumnName;
+    public Column() {
     }
 
     public void addAllFormats(ObjList<TypeAdapter> formats) {
@@ -97,8 +92,18 @@ public class Column implements Mutable, Sinkable {
         return fileColumnIgnore;
     }
 
+    public Column of(CharSequence fileColumnName, int fileColumnIndex, boolean fileColumnIgnore, int columnType, CharSequence tableColumnName) {
+        this.columnType = columnType;
+        this.fileColumnIndex = fileColumnIndex;
+        this.fileColumnName = fileColumnName;
+        this.fileColumnIgnore = fileColumnIgnore;
+        this.tableColumnName = tableColumnName;
+
+        return this;
+    }
+
     @Override
-    public void toSink(CharSinkBase<?> sink) {
+    public void toSink(CharSink<?> sink) {
         sink.putAscii('{');
         sink.putAscii("\"file_column_name\":\"").put(fileColumnName).putAscii("\",");
         sink.putAscii("\"file_column_index\":").put(fileColumnIndex).putAscii(',');

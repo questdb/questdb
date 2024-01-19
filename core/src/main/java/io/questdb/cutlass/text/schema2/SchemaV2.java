@@ -26,10 +26,11 @@ package io.questdb.cutlass.text.schema2;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cutlass.json.JsonException;
+import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.TextException;
 import io.questdb.cutlass.text.types.TypeAdapter;
 import io.questdb.std.*;
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.Nullable;
 
@@ -38,11 +39,16 @@ public class SchemaV2 implements Mutable, Sinkable {
     public static final int FORMATS_ACTION_REPLACE = 2;
     // todo: schema could pool columns
     private final ObjList<Column> columnList = new ObjList<>();
+    private final ObjectPool<Column> columnPool;
     private final IntObjHashMap<Column> fileColumnIndexToColumnMap = new IntObjHashMap<>();
     private final LowerCaseCharSequenceObjHashMap<Column> fileColumnNameToColumnMap = new LowerCaseCharSequenceObjHashMap<>();
     private final IntObjHashMap<ObjList<TypeAdapter>> formats = new IntObjHashMap<>();
     private final LowerCaseCharSequenceObjHashMap<Column> tableColumnNameToColumnMap = new LowerCaseCharSequenceObjHashMap<>();
     private int formatsAction = FORMATS_ACTION_ADD;
+
+    public SchemaV2(TextConfiguration textConfiguration) {
+        columnPool = new ObjectPool<>(Column::new, textConfiguration.getSchemaColumnPoolCapacity());
+    }
 
     // legacy v1 schema interaction
     public void addColumn(CharSequence columnName, int columnType, TypeAdapter format) throws TextException {
@@ -50,7 +56,7 @@ public class SchemaV2 implements Mutable, Sinkable {
         if (index > -1) {
             final String columnNameStr = Chars.toString(columnName);
             // new column name
-            final Column column = new Column(
+            final Column column = columnPool.next().of(
                     columnNameStr,
                     -1,
                     false,
@@ -109,7 +115,7 @@ public class SchemaV2 implements Mutable, Sinkable {
         final String fileColumnNameStr = Chars.toString(fileColumnName);
         final String tableColumnNameStr = Chars.toString(tableColumnName);
         // new column name
-        final Column column = new Column(
+        final Column column = columnPool.next().of(
                 fileColumnNameStr,
                 fileColumnIndex,
                 fileColumnIgnore,
@@ -211,7 +217,7 @@ public class SchemaV2 implements Mutable, Sinkable {
     }
 
     @Override
-    public void toSink(CharSinkBase<?> sink) {
+    public void toSink(CharSink<?> sink) {
         sink.putAscii('{');
         sink.putAscii("\"columns\":").putAscii('[');
         for (int i = 0, n = columnList.size(); i < n; i++) {

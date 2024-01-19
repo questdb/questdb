@@ -30,7 +30,7 @@ import io.questdb.std.Mutable;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectUtf8Sequence;
 
 public class DateAdapter extends AbstractTypeAdapter implements Mutable, TimestampCompatibleAdapter {
@@ -73,7 +73,7 @@ public class DateAdapter extends AbstractTypeAdapter implements Mutable, Timesta
     }
 
     @Override
-    public void toSink(CharSinkBase<?> sink) {
+    public void toSink(CharSink<?> sink) {
         sink.put('{');
         sink.putQuoted("pattern").put(':').putQuoted(pattern).put(',');
         sink.putQuoted("locale").put(':').putQuoted(locale.getLocaleName()).put(',');
