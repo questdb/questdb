@@ -32,7 +32,7 @@ import io.questdb.std.DirectLongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.DirectCharSink;
+import io.questdb.std.str.DirectUtf16Sink;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
@@ -46,7 +46,7 @@ public class CopyJob extends AbstractQueueConsumerJob<CopyTask> implements Close
     private TextLexerWrapper tlw;
     private Path tmpPath1;
     private Path tmpPath2;
-    private DirectCharSink utf8Sink;
+    private DirectUtf16Sink utf8Sink;
 
     public CopyJob(MessageBus messageBus) {
         super(messageBus.getTextImportQueue(), messageBus.getTextImportSubSeq());
@@ -54,7 +54,7 @@ public class CopyJob extends AbstractQueueConsumerJob<CopyTask> implements Close
         this.fileBufSize = messageBus.getConfiguration().getSqlCopyBufferSize();
         this.fileBufAddr = Unsafe.malloc(fileBufSize, MemoryTag.NATIVE_IMPORT);
         this.indexer = new CsvFileIndexer(messageBus.getConfiguration());
-        this.utf8Sink = new DirectCharSink(messageBus.getConfiguration().getTextConfiguration().getUtf8SinkSize());
+        this.utf8Sink = new DirectUtf16Sink(messageBus.getConfiguration().getTextConfiguration().getUtf8SinkSize());
         this.mergeIndexes = new DirectLongList(INDEX_MERGE_LIST_CAPACITY, MemoryTag.NATIVE_IMPORT);
         this.tmpPath1 = new Path();
         this.tmpPath2 = new Path();

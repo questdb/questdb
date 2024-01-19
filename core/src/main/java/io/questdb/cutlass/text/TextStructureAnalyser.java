@@ -50,7 +50,7 @@ public class TextStructureAnalyser implements CsvTextLexer.Listener, Mutable, Cl
     private final StringSink tempSink = new StringSink();
     private final TypeManager typeManager;
     private final LowerCaseCharSequenceHashSet uniqueColumnNames = new LowerCaseCharSequenceHashSet();
-    private final DirectCharSink utf8Sink;
+    private final DirectUtf16Sink utf8Sink;
     private int fieldCount;
     private boolean forceHeader = false;
     private boolean hasHeader = false;
@@ -63,7 +63,7 @@ public class TextStructureAnalyser implements CsvTextLexer.Listener, Mutable, Cl
             SchemaV2 schema
     ) {
         this.typeManager = typeManager;
-        this.utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkSize());
+        this.utf8Sink = new DirectUtf16Sink(textConfiguration.getUtf8SinkSize());
         this.schema = schema;
     }
 

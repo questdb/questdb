@@ -24,7 +24,6 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -172,7 +171,7 @@ public class AggregateTest extends AbstractCairoTest {
                 "2020-01-01T00:28:47.990000Z:TIMESTAMP\t1:LONG\n" +
                 "2020-01-01T00:57:35.980000Z:TIMESTAMP\t1:LONG\n";
 
-        String sql = "select ts, count() from tt1 WHERE id > 0 LIMIT 2";
+        String sql = "select ts, count() from tt1 WHERE id > 0 ORDER BY ts LIMIT 2";
 
         assertSqlWithTypes(sql, expected);
     }
@@ -426,7 +425,7 @@ public class AggregateTest extends AbstractCairoTest {
                         "0\t17902\n" +
                         "1\t17892\n" +
                         "2\t14056\n",
-                "select hour(ts), count() from tab where val < 0.5",
+                "select hour(ts), count() from tab where val < 0.5 order by 1",
                 "create table tab as (select timestamp_sequence(0, 100000) ts, rnd_double() val from long_sequence(100000))",
                 null,
                 true,
@@ -483,7 +482,7 @@ public class AggregateTest extends AbstractCairoTest {
                         "22\t1\n" +
                         "23\t2\n",
                 "select hour(ts), count from " +
-                        "(select * from tab where ts in '1970-01-01' union all  select * from tab where ts in '1970-04-26')" +
+                        "(select * from tab where ts in '1970-01-01' union all select * from tab where ts in '1970-04-26')" +
                         "where val < 0.5 order by 1",
                 "create table tab as (select timestamp_sequence(0, 1000000000) ts, rnd_double() val from long_sequence(100000))",
                 null,
@@ -2078,7 +2077,7 @@ public class AggregateTest extends AbstractCairoTest {
         }
 
         // Insert a lot of empty rows to test function's merge correctness.
-        try (TableWriter writer = new TableWriter(engine.getConfiguration(), engine.verifyTableName("tt1"), Metrics.disabled())) {
+        try (TableWriter writer = TestUtils.newOffPoolWriter(engine.getConfiguration(), engine.verifyTableName("tt1"))) {
             for (int i = 0; i < 2 * PAGE_FRAME_MAX_ROWS; i++) {
                 TableWriter.Row row = writer.newRow();
                 row.append();
@@ -2089,7 +2088,7 @@ public class AggregateTest extends AbstractCairoTest {
         assertGroupByQuery(aggregateFunctions, aggregateColTypes, false);
 
         // Now write one more row with non-empty rows.
-        try (TableWriter writer = new TableWriter(engine.getConfiguration(), engine.verifyTableName("tt1"), Metrics.disabled())) {
+        try (TableWriter writer = newOffPoolWriter(engine.getConfiguration(), "tt1")) {
             TableWriter.Row row = writer.newRow();
             for (int i = 0; i < aggregateColTypes.length; i++) {
                 TypeVal colType = aggregateColTypes[i];

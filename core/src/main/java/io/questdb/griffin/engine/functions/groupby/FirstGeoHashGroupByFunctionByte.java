@@ -69,6 +69,16 @@ public class FirstGeoHashGroupByFunctionByte extends GeoByteFunction implements 
     }
 
     @Override
+    public int getValueIndex() {
+        return valueIndex;
+    }
+
+    @Override
+    public boolean isParallelismSupported() {
+        return false;
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.BYTE);
@@ -82,5 +92,10 @@ public class FirstGeoHashGroupByFunctionByte extends GeoByteFunction implements 
     @Override
     public void setNull(MapValue mapValue) {
         setByte(mapValue, GeoHashes.BYTE_NULL);
+    }
+
+    @Override
+    public void setValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
     }
 }

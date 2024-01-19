@@ -124,7 +124,7 @@ public class ColumnPurgeOperator implements Closeable {
     }
 
     private static boolean couldNotRemove(FilesFacade ff, Path path) {
-        if (ff.remove(path)) {
+        if (ff.removeQuiet(path)) {
             return false;
         }
 

@@ -51,12 +51,12 @@ public class IPv4Test extends AbstractCairoTest {
     public void testAggregateByIPv4() throws Exception {
         assertQuery(
                 "ip\tsum\n" +
+                        "0.0.0.1\t11644\n" +
                         "0.0.0.2\t7360\n" +
-                        "0.0.0.4\t10105\n" +
                         "0.0.0.3\t9230\n" +
-                        "0.0.0.5\t11739\n" +
-                        "0.0.0.1\t11644\n",
-                "select ip, sum (bytes) from test",
+                        "0.0.0.4\t10105\n" +
+                        "0.0.0.5\t11739\n",
+                "select ip, sum(bytes) from test order by ip",
                 "create table test as " +
                         "(" +
                         "  select" +
@@ -532,18 +532,18 @@ public class IPv4Test extends AbstractCairoTest {
     public void testCountIPv4() throws Exception {
         assertQuery(
                 "count\tbytes\n" +
+                        "12\t0\n" +
                         "8\t1\n" +
                         "10\t2\n" +
-                        "12\t7\n" +
+                        "6\t3\n" +
+                        "14\t4\n" +
                         "12\t5\n" +
                         "6\t6\n" +
-                        "12\t0\n" +
-                        "14\t4\n" +
-                        "6\t3\n" +
+                        "12\t7\n" +
                         "9\t8\n" +
                         "7\t9\n" +
                         "4\t10\n",
-                "select count(ip), bytes from test",
+                "select count(ip), bytes from test order by bytes",
                 "create table test as " +
                         "(" +
                         "  select" +
@@ -800,22 +800,22 @@ public class IPv4Test extends AbstractCairoTest {
         ddl("create table test as (select rnd_ipv4('10.5/16', 2) ip, 1 count from long_sequence(20))");
         assertSql(
                 "count\tip\n" +
-                        "1\t10.5.96.238\n" +
                         "6\t\n" +
-                        "1\t10.5.173.21\n" +
-                        "1\t10.5.250.138\n" +
-                        "1\t10.5.76.40\n" +
                         "1\t10.5.20.236\n" +
-                        "1\t10.5.95.15\n" +
-                        "1\t10.5.132.196\n" +
+                        "1\t10.5.45.159\n" +
+                        "1\t10.5.76.40\n" +
                         "1\t10.5.93.114\n" +
+                        "1\t10.5.95.15\n" +
+                        "1\t10.5.96.238\n" +
                         "1\t10.5.121.252\n" +
-                        "1\t10.5.249.199\n" +
+                        "1\t10.5.132.196\n" +
+                        "1\t10.5.170.235\n" +
+                        "1\t10.5.173.21\n" +
                         "1\t10.5.212.34\n" +
                         "1\t10.5.236.196\n" +
-                        "1\t10.5.170.235\n" +
-                        "1\t10.5.45.159\n",
-                "select count(count), ip from test group by ip"
+                        "1\t10.5.249.199\n" +
+                        "1\t10.5.250.138\n",
+                "select count(count), ip from test group by ip order by ip"
         );
     }
 
@@ -824,22 +824,22 @@ public class IPv4Test extends AbstractCairoTest {
         ddl("create table test as (select rnd_ipv4('10.5/16', 2) ip, 1 count from long_sequence(20))");
         assertSql(
                 "sum\tip\n" +
-                        "1\t10.5.96.238\n" +
                         "6\t\n" +
-                        "1\t10.5.173.21\n" +
-                        "1\t10.5.250.138\n" +
-                        "1\t10.5.76.40\n" +
                         "1\t10.5.20.236\n" +
-                        "1\t10.5.95.15\n" +
-                        "1\t10.5.132.196\n" +
+                        "1\t10.5.45.159\n" +
+                        "1\t10.5.76.40\n" +
                         "1\t10.5.93.114\n" +
+                        "1\t10.5.95.15\n" +
+                        "1\t10.5.96.238\n" +
                         "1\t10.5.121.252\n" +
-                        "1\t10.5.249.199\n" +
+                        "1\t10.5.132.196\n" +
+                        "1\t10.5.170.235\n" +
+                        "1\t10.5.173.21\n" +
                         "1\t10.5.212.34\n" +
                         "1\t10.5.236.196\n" +
-                        "1\t10.5.170.235\n" +
-                        "1\t10.5.45.159\n",
-                "select sum(count), ip from test group by ip"
+                        "1\t10.5.249.199\n" +
+                        "1\t10.5.250.138\n",
+                "select sum(count), ip from test group by ip order by ip"
         );
     }
 
@@ -848,12 +848,12 @@ public class IPv4Test extends AbstractCairoTest {
         ddl("create table test as (select rnd_ipv4('10.5.6/30', 2) ip, 1 count from long_sequence(20))");
         assertSql(
                 "sum\tip\n" +
-                        "4\t10.5.6.2\n" +
                         "6\t\n" +
-                        "1\t10.5.6.1\n" +
                         "5\t10.5.6.0\n" +
+                        "1\t10.5.6.1\n" +
+                        "4\t10.5.6.2\n" +
                         "4\t10.5.6.3\n",
-                "select sum(count), ip from test group by ip"
+                "select sum(count), ip from test group by ip order by ip"
         );
     }
 
@@ -4543,9 +4543,9 @@ public class IPv4Test extends AbstractCairoTest {
         assertSql(
                 "sym\tlast\n" +
                         "$a\t10.5.237.229\n" +
-                        "ac\t10.5.235.200\n" +
-                        "ab\t\n",
-                "select sym, last(ip) from test"
+                        "ab\t\n" +
+                        "ac\t10.5.235.200\n",
+                "select sym, last(ip) from test order by sym"
         );
     }
 

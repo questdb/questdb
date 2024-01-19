@@ -27,7 +27,7 @@ package io.questdb.griffin.engine.functions.constants;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.std.Long256Impl;
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.CharSink;
 
 public final class Long256NullConstant extends Long256Constant implements ConstantFunction {
     public static final Long256NullConstant INSTANCE = new Long256NullConstant();
@@ -37,7 +37,7 @@ public final class Long256NullConstant extends Long256Constant implements Consta
     }
 
     @Override
-    public void getLong256(Record rec, CharSinkBase<?> sink) {
+    public void getLong256(Record rec, CharSink<?> sink) {
     }
 
     @Override

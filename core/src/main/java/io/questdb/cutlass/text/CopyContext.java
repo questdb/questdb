@@ -27,6 +27,7 @@ package io.questdb.cutlass.text;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.security.DenyAllSecurityContext;
+import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.std.Mutable;
 
 import java.util.concurrent.atomic.AtomicLong;

@@ -29,15 +29,15 @@ import io.questdb.cutlass.text.Utf8Exception;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.str.CharSinkBase;
-import io.questdb.std.str.DirectCharSink;
+import io.questdb.std.str.DirectUtf16Sink;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8s;
 
 public class TimestampUtf8Adapter extends TimestampAdapter {
 
-    private final DirectCharSink utf16Sink;
+    private final DirectUtf16Sink utf16Sink;
 
-    public TimestampUtf8Adapter(DirectCharSink utf16Sink) {
+    public TimestampUtf8Adapter(DirectUtf16Sink utf16Sink) {
         this.utf16Sink = utf16Sink;
     }
 
@@ -57,7 +57,7 @@ public class TimestampUtf8Adapter extends TimestampAdapter {
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value, DirectCharSink utf16Sink) throws Exception {
+    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value, DirectUtf16Sink utf16Sink) throws Exception {
         utf16Sink.clear();
         if (!Utf8s.utf8ToUtf16EscConsecutiveQuotes(value.lo(), value.hi(), utf16Sink)) {
             throw Utf8Exception.INSTANCE;

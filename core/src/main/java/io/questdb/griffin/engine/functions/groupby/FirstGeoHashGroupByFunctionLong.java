@@ -74,6 +74,16 @@ class FirstGeoHashGroupByFunctionLong extends GeoByteFunction implements GroupBy
     }
 
     @Override
+    public int getValueIndex() {
+        return valueIndex;
+    }
+
+    @Override
+    public boolean isParallelismSupported() {
+        return false;
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.LONG);
@@ -87,5 +97,10 @@ class FirstGeoHashGroupByFunctionLong extends GeoByteFunction implements GroupBy
     @Override
     public void setNull(MapValue mapValue) {
         setLong(mapValue, GeoHashes.NULL);
+    }
+
+    @Override
+    public void setValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
     }
 }

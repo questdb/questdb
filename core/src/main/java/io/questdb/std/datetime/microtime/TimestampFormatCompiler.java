@@ -30,7 +30,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.AbstractDateFormat;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -1457,19 +1457,19 @@ public class TimestampFormatCompiler {
         int computeIndex = asm.poolMethod(TimestampFormatUtils.class, "compute", "(Lio/questdb/std/datetime/DateLocale;IIIIIIIIIIIJI)J");
         int adjustYearIndex = asm.poolMethod(TimestampFormatUtils.class, "adjustYear", "(I)I");
         int parseYearGreedyIndex = asm.poolMethod(TimestampFormatUtils.class, "parseYearGreedy", "(Ljava/lang/CharSequence;II)J");
-        int appendEraIndex = asm.poolMethod(TimestampFormatUtils.class, "appendEra", "(Lio/questdb/std/str/CharSinkBase;ILio/questdb/std/datetime/DateLocale;)V");
-        int appendAmPmIndex = asm.poolMethod(TimestampFormatUtils.class, "appendAmPm", "(Lio/questdb/std/str/CharSinkBase;ILio/questdb/std/datetime/DateLocale;)V");
-        int appendHour12Index = asm.poolMethod(TimestampFormatUtils.class, "appendHour12", "(Lio/questdb/std/str/CharSinkBase;I)V");
-        int appendHour12PaddedIndex = asm.poolMethod(TimestampFormatUtils.class, "appendHour12Padded", "(Lio/questdb/std/str/CharSinkBase;I)V");
-        int appendHour121Index = asm.poolMethod(TimestampFormatUtils.class, "appendHour121", "(Lio/questdb/std/str/CharSinkBase;I)V");
-        int appendHour121PaddedIndex = asm.poolMethod(TimestampFormatUtils.class, "appendHour121Padded", "(Lio/questdb/std/str/CharSinkBase;I)V");
-        int append00000Index = asm.poolMethod(TimestampFormatUtils.class, "append00000", "(Lio/questdb/std/str/CharSinkBase;I)V");
-        int append00Index = asm.poolMethod(TimestampFormatUtils.class, "append00", "(Lio/questdb/std/str/CharSinkBase;I)V");
-        int append0Index = asm.poolMethod(TimestampFormatUtils.class, "append0", "(Lio/questdb/std/str/CharSinkBase;I)V");
-        int appendYear000Index = asm.poolMethod(TimestampFormatUtils.class, "appendYear000", "(Lio/questdb/std/str/CharSinkBase;I)V");
-        int appendYear00Index = asm.poolMethod(TimestampFormatUtils.class, "appendYear00", "(Lio/questdb/std/str/CharSinkBase;I)V");
-        int appendYear0Index = asm.poolMethod(TimestampFormatUtils.class, "appendYear0", "(Lio/questdb/std/str/CharSinkBase;I)V");
-        int appendYearIndex = asm.poolMethod(TimestampFormatUtils.class, "appendYear", "(Lio/questdb/std/str/CharSinkBase;I)V");
+        int appendEraIndex = asm.poolMethod(TimestampFormatUtils.class, "appendEra", "(Lio/questdb/std/str/CharSink;ILio/questdb/std/datetime/DateLocale;)V");
+        int appendAmPmIndex = asm.poolMethod(TimestampFormatUtils.class, "appendAmPm", "(Lio/questdb/std/str/CharSink;ILio/questdb/std/datetime/DateLocale;)V");
+        int appendHour12Index = asm.poolMethod(TimestampFormatUtils.class, "appendHour12", "(Lio/questdb/std/str/CharSink;I)V");
+        int appendHour12PaddedIndex = asm.poolMethod(TimestampFormatUtils.class, "appendHour12Padded", "(Lio/questdb/std/str/CharSink;I)V");
+        int appendHour121Index = asm.poolMethod(TimestampFormatUtils.class, "appendHour121", "(Lio/questdb/std/str/CharSink;I)V");
+        int appendHour121PaddedIndex = asm.poolMethod(TimestampFormatUtils.class, "appendHour121Padded", "(Lio/questdb/std/str/CharSink;I)V");
+        int append00000Index = asm.poolMethod(TimestampFormatUtils.class, "append00000", "(Lio/questdb/std/str/CharSink;I)V");
+        int append00Index = asm.poolMethod(TimestampFormatUtils.class, "append00", "(Lio/questdb/std/str/CharSink;I)V");
+        int append0Index = asm.poolMethod(TimestampFormatUtils.class, "append0", "(Lio/questdb/std/str/CharSink;I)V");
+        int appendYear000Index = asm.poolMethod(TimestampFormatUtils.class, "appendYear000", "(Lio/questdb/std/str/CharSink;I)V");
+        int appendYear00Index = asm.poolMethod(TimestampFormatUtils.class, "appendYear00", "(Lio/questdb/std/str/CharSink;I)V");
+        int appendYear0Index = asm.poolMethod(TimestampFormatUtils.class, "appendYear0", "(Lio/questdb/std/str/CharSink;I)V");
+        int appendYearIndex = asm.poolMethod(TimestampFormatUtils.class, "appendYear", "(Lio/questdb/std/str/CharSink;I)V");
 
         int parseOffsetIndex = asm.poolMethod(Timestamps.class, "parseOffset", "(Ljava/lang/CharSequence;II)J");
         int getYearIndex = asm.poolMethod(Timestamps.class, "getYear", "(J)I");
@@ -1488,16 +1488,16 @@ public class TimestampFormatCompiler {
         int getWeekIndex = asm.poolMethod(Timestamps.class, "getWeek", "(J)I");
         int getWeekOfYearIndex = asm.poolMethod(Timestamps.class, "getWeekOfYear", "(J)I");
 
-        int sinkPutIntIndex = asm.poolInterfaceMethod(CharSinkBase.class, "put", "(I)Lio/questdb/std/str/CharSinkBase;");
-        int sinkPutStrIndex = asm.poolInterfaceMethod(CharSinkBase.class, "put", "(Ljava/lang/CharSequence;)Lio/questdb/std/str/CharSinkBase;");
-        int sinkPutChrIndex = asm.poolInterfaceMethod(CharSinkBase.class, "put", "(C)Lio/questdb/std/str/CharSinkBase;");
+        int sinkPutIntIndex = asm.poolInterfaceMethod(CharSink.class, "put", "(I)Lio/questdb/std/str/CharSink;");
+        int sinkPutStrIndex = asm.poolInterfaceMethod(CharSink.class, "put", "(Ljava/lang/CharSequence;)Lio/questdb/std/str/CharSink;");
+        int sinkPutChrIndex = asm.poolInterfaceMethod(CharSink.class, "put", "(C)Lio/questdb/std/str/CharSink;");
 
         int charAtIndex = asm.poolInterfaceMethod(charSequenceClassIndex, "charAt", "(I)C");
 
         int parseNameIndex = asm.poolUtf8("parse");
         int parseSigIndex = asm.poolUtf8("(Ljava/lang/CharSequence;IILio/questdb/std/datetime/DateLocale;)J");
         int formatNameIndex = asm.poolUtf8("format");
-        int formatSigIndex = asm.poolUtf8("(JLio/questdb/std/datetime/DateLocale;Ljava/lang/CharSequence;Lio/questdb/std/str/CharSinkBase;)V");
+        int formatSigIndex = asm.poolUtf8("(JLio/questdb/std/datetime/DateLocale;Ljava/lang/CharSequence;Lio/questdb/std/str/CharSink;)V");
 
         // pool only delimiters over 1 char in length
         // when delimiter is 1 char we would use shorter code path

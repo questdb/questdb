@@ -52,7 +52,17 @@ public class CountLongConstGroupByFunction extends LongFunction implements Group
     }
 
     @Override
+    public int getValueIndex() {
+        return valueIndex;
+    }
+
+    @Override
     public boolean isParallelismSupported() {
+        return true;
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
         return true;
     }
 
@@ -81,6 +91,11 @@ public class CountLongConstGroupByFunction extends LongFunction implements Group
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NaN);
+    }
+
+    @Override
+    public void setValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
     }
 
     @Override

@@ -25,8 +25,8 @@
 package io.questdb.std;
 
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.CharSinkBase;
 import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
@@ -34,7 +34,8 @@ import java.util.Arrays;
 public class IntList implements Mutable, Sinkable {
     private static final int DEFAULT_ARRAY_SIZE = 16;
     private static final int NO_ENTRY_VALUE = -1;
-    private int[] buffer;
+    private final int initialCapacity;
+    private int[] data;
     private int pos = 0;
 
     public IntList() {
@@ -42,31 +43,32 @@ public class IntList implements Mutable, Sinkable {
     }
 
     public IntList(int capacity) {
-        this.buffer = new int[Math.max(capacity, DEFAULT_ARRAY_SIZE)];
+        this.initialCapacity = capacity;
+        this.data = new int[initialCapacity];
     }
 
     public void add(int value) {
-        ensureCapacity0(pos + 1);
-        buffer[pos++] = value;
+        checkCapacity(pos + 1);
+        data[pos++] = value;
     }
 
     public void addAll(IntList that) {
         int p = pos;
         int s = that.size();
-        ensureCapacity(p + s);
-        System.arraycopy(that.buffer, 0, this.buffer, p, s);
+        setPos(p + s);
+        System.arraycopy(that.data, 0, this.data, p, s);
     }
 
     public void arrayCopy(int srcPos, int dstPos, int length) {
-        System.arraycopy(buffer, srcPos, buffer, dstPos, length);
+        System.arraycopy(data, srcPos, data, dstPos, length);
     }
 
     public int binarySearchUniqueList(int v) {
         int low = 0;
         int high = pos - 1;
         while (high - low > 65) {
-            int mid = (low + high) / 2;
-            int midVal = buffer[mid];
+            int mid = (low + high) >>> 1;
+            int midVal = data[mid];
 
             if (midVal < v)
                 low = mid + 1;
@@ -79,23 +81,22 @@ public class IntList implements Mutable, Sinkable {
         return scanSearch(v, low, high + 1);
     }
 
+    public int capacity() {
+        return data.length;
+    }
+
     public void clear() {
         pos = 0;
     }
 
     public void clear(int capacity) {
-        ensureCapacity(capacity);
+        checkCapacity(capacity);
         pos = 0;
-        Arrays.fill(buffer, NO_ENTRY_VALUE);
+        Arrays.fill(data, NO_ENTRY_VALUE);
     }
 
     public boolean contains(int value) {
         return indexOf(value, 0, pos) > -1;
-    }
-
-    public void ensureCapacity(int capacity) {
-        ensureCapacity0(capacity);
-        pos = capacity;
     }
 
     /**
@@ -107,11 +108,11 @@ public class IntList implements Mutable, Sinkable {
     }
 
     public void extendAndSet(int index, int value) {
-        ensureCapacity0(index + 1);
+        checkCapacity(index + 1);
         if (index >= pos) {
             pos = index + 1;
         }
-        buffer[index] = value;
+        data[index] = value;
     }
 
     public int get(int index) {
@@ -120,7 +121,7 @@ public class IntList implements Mutable, Sinkable {
 
     public int getLast() {
         if (pos > 0) {
-            return buffer[pos - 1];
+            return data[pos - 1];
         }
         return NO_ENTRY_VALUE;
     }
@@ -136,7 +137,7 @@ public class IntList implements Mutable, Sinkable {
      */
     public int getQuick(int index) {
         assert index < pos;
-        return buffer[index];
+        return data[index];
     }
 
     /**
@@ -153,12 +154,12 @@ public class IntList implements Mutable, Sinkable {
     }
 
     public void increment(int index) {
-        buffer[index] = buffer[index] + 1;
+        data[index] = data[index] + 1;
     }
 
     public void increment(int index, int delta) {
         assert delta > -1;
-        buffer[index] = buffer[index] + delta;
+        data[index] = data[index] + delta;
     }
 
     public int indexOf(int v) {
@@ -169,7 +170,7 @@ public class IntList implements Mutable, Sinkable {
         assert high <= pos;
 
         for (int i = low; i < high; i++) {
-            int f = buffer[i];
+            int f = data[i];
             if (f == v) {
                 return i;
             }
@@ -178,15 +179,15 @@ public class IntList implements Mutable, Sinkable {
     }
 
     public void insert(int index, int element) {
-        ensureCapacity(++pos);
-        System.arraycopy(buffer, index, buffer, index + 1, pos - index - 1);
-        buffer[index] = element;
+        setPos(++pos);
+        System.arraycopy(data, index, data, index + 1, pos - index - 1);
+        data[index] = element;
     }
 
     // increment at index and return previous value
     public int postIncrement(int index) {
-        final int prev = buffer[index];
-        buffer[index] = prev + 1;
+        final int prev = data[index];
+        data[index] = prev + 1;
         return prev;
     }
 
@@ -208,34 +209,39 @@ public class IntList implements Mutable, Sinkable {
         }
         int move = pos - index - 1;
         if (move > 0) {
-            System.arraycopy(buffer, index + 1, buffer, index, move);
+            System.arraycopy(data, index + 1, data, index, move);
         }
         int index1 = --pos;
-        buffer[index1] = NO_ENTRY_VALUE;
+        data[index1] = NO_ENTRY_VALUE;
+    }
+
+    public void restoreInitialCapacity() {
+        data = new int[initialCapacity];
+        pos = 0;
     }
 
     public void set(int index, int element) {
         if (index < pos) {
-            buffer[index] = element;
+            data[index] = element;
             return;
         }
         throw new ArrayIndexOutOfBoundsException(index);
     }
 
     public void setAll(int capacity, int value) {
-        ensureCapacity0(capacity);
+        checkCapacity(capacity);
         pos = capacity;
-        Arrays.fill(buffer, 0, pos, value);
+        Arrays.fill(data, 0, pos, value);
     }
 
-    public void setPos(int capacity) {
-        ensureCapacity(capacity);
-        pos = capacity;
+    public void setPos(int position) {
+        checkCapacity(position);
+        pos = position;
     }
 
     public void setQuick(int index, int value) {
         assert index < pos;
-        buffer[index] = value;
+        data[index] = value;
     }
 
     public int size() {
@@ -243,7 +249,7 @@ public class IntList implements Mutable, Sinkable {
     }
 
     @Override
-    public void toSink(@NotNull CharSinkBase<?> sink) {
+    public void toSink(@NotNull CharSink<?> sink) {
         sink.putAscii('[');
         for (int i = 0, k = size(); i < k; i++) {
             if (i > 0) {
@@ -254,7 +260,7 @@ public class IntList implements Mutable, Sinkable {
         sink.putAscii(']');
     }
 
-    public void toSink(CharSinkBase<?> sink, int exceptValue) {
+    public void toSink(CharSink<?> sink, int exceptValue) {
         sink.putAscii('[');
         boolean pastFirst = false;
         for (int i = 0, k = size(); i < k; i++) {
@@ -276,22 +282,22 @@ public class IntList implements Mutable, Sinkable {
      */
     @Override
     public String toString() {
-        CharSink b = Misc.getThreadLocalSink();
+        Utf16Sink b = Misc.getThreadLocalSink();
         toSink(b);
         return b.toString();
     }
 
     public void zero(int value) {
-        Arrays.fill(buffer, 0, pos, value);
+        Arrays.fill(data, 0, pos, value);
     }
 
-    private void ensureCapacity0(int capacity) {
-        int l = buffer.length;
+    private void checkCapacity(int capacity) {
+        int l = data.length;
         if (capacity > l) {
             int newCap = Math.max(l << 1, capacity);
             int[] buf = new int[newCap];
-            System.arraycopy(buffer, 0, buf, 0, l);
-            this.buffer = buf;
+            System.arraycopy(data, 0, buf, 0, l);
+            this.data = buf;
         }
     }
 
@@ -310,7 +316,7 @@ public class IntList implements Mutable, Sinkable {
 
     private int scanSearch(int v, int low, int high) {
         for (int i = low; i < high; i++) {
-            int f = buffer[i];
+            int f = data[i];
             if (f == v) {
                 return i;
             }

@@ -80,6 +80,7 @@ public class TextLoader implements Closeable, Mutable {
     private final TextStructureAnalyser textStructureAnalyser;
     private final TextLexerWrapper tlw;
     private final TypeManager typeManager;
+    private final DirectUtf16Sink utf8Sink;
     // indexes of csv columns, which types did not match table column types
     private final IntList typeMismatchCsvColumnIndexes = new IntList();
     // indexes of CSV columns that could not have been mapped to the table columns
@@ -130,7 +131,7 @@ public class TextLoader implements Closeable, Mutable {
         this.tlw = new TextLexerWrapper(engine.getConfiguration().getTextConfiguration());
         this.textConfiguration = engine.getConfiguration().getTextConfiguration();
         this.cairoConfiguration = engine.getConfiguration();
-        this.utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkSize());
+        this.utf8Sink = new DirectUtf16Sink(textConfiguration.getUtf8SinkSize());
         this.typeManager = new TypeManager(textConfiguration, utf8Sink);
         jsonLexer = new JsonLexer(textConfiguration.getJsonCacheSize(), textConfiguration.getJsonCacheLimit());
         textStructureAnalyser = new TextStructureAnalyser(typeManager, textConfiguration, schema);
@@ -314,6 +315,10 @@ public class TextLoader implements Closeable, Mutable {
         return state;
     }
 
+    public boolean getCreate() {
+        return textWriter.getCreate();
+    }
+
     public CharSequence getTableName() {
         return tableName;
     }
@@ -370,6 +375,10 @@ public class TextLoader implements Closeable, Mutable {
 
     public void setForceHeaders(boolean forceHeaders) {
         this.forceHeaders = forceHeaders;
+    }
+
+    public void setCreate(boolean create) {
+        textWriter.setCreate(create);
     }
 
     public void setIgnoreEverything(boolean ignoreEverything) {

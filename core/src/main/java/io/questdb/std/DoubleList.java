@@ -26,7 +26,7 @@ package io.questdb.std;
 
 import io.questdb.cairo.BinarySearch;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 
@@ -67,12 +67,12 @@ public class DoubleList implements Mutable, Sinkable {
     }
 
     public void add(double value) {
-        ensureCapacity(pos + 1);
+        checkCapacity(pos + 1);
         data[pos++] = value;
     }
 
     public void add(int index, double element) {
-        ensureCapacity(++pos);
+        checkCapacity(++pos);
         System.arraycopy(data, index, data, index + 1, pos - index - 1);
         data[index] = element;
     }
@@ -87,7 +87,7 @@ public class DoubleList implements Mutable, Sinkable {
         int low = 0;
         int high = pos - 1;
         while (high - low > 65) {
-            final int mid = (low + high) / 2;
+            final int mid = (low + high) >>> 1;
             final double midVal = data[mid];
             int cmp = Numbers.compare(midVal, value);
 
@@ -111,7 +111,7 @@ public class DoubleList implements Mutable, Sinkable {
         pos = 0;
     }
 
-    public void ensureCapacity(int capacity) {
+    public void checkCapacity(int capacity) {
         if (capacity < 0) {
             throw new IllegalArgumentException("Negative capacity. Integer overflow may be?");
         }
@@ -136,7 +136,7 @@ public class DoubleList implements Mutable, Sinkable {
     }
 
     public void extendAndSet(int index, double value) {
-        ensureCapacity(index + 1);
+        checkCapacity(index + 1);
         if (index >= pos) {
             pos = index + 1;
         }
@@ -237,7 +237,7 @@ public class DoubleList implements Mutable, Sinkable {
     }
 
     public void setAll(int capacity, double value) {
-        ensureCapacity(capacity);
+        checkCapacity(capacity);
         pos = capacity;
         Arrays.fill(data, value);
     }
@@ -249,7 +249,7 @@ public class DoubleList implements Mutable, Sinkable {
     }
 
     public final void setPos(int pos) {
-        ensureCapacity(pos);
+        checkCapacity(pos);
         this.pos = pos;
     }
 
@@ -267,7 +267,7 @@ public class DoubleList implements Mutable, Sinkable {
     }
 
     @Override
-    public void toSink(@NotNull CharSinkBase<?> sink) {
+    public void toSink(@NotNull CharSink<?> sink) {
         sink.putAscii('[');
         for (int i = 0, k = pos; i < k; i++) {
             if (i > 0) {
@@ -278,7 +278,7 @@ public class DoubleList implements Mutable, Sinkable {
         sink.putAscii(']');
     }
 
-    public void toSink(CharSinkBase<?> sink, double exceptValue) {
+    public void toSink(CharSink<?> sink, double exceptValue) {
         sink.putAscii('[');
         boolean pastFirst = false;
         for (int i = 0, k = size(); i < k; i++) {
@@ -297,7 +297,7 @@ public class DoubleList implements Mutable, Sinkable {
 
     @Override
     public String toString() {
-        final CharSink sb = Misc.getThreadLocalSink();
+        final Utf16Sink sb = Misc.getThreadLocalSink();
         toSink(sb);
         return sb.toString();
     }

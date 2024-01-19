@@ -357,7 +357,21 @@ public class ImportIODispatcherTest extends AbstractTest {
             "}\r\n" +
             "00\r\n" +
             "\r\n";
-
+    private final String ImportCreateParamRequestTrue =  ValidImportRequest1
+            .replace("POST /upload?name=trips HTTP",
+                    "POST /upload?name=trips&timestamp=Pickup_DateTime&createTable=true HTTP");
+    private final String ImportCreateParamRequestFalse =  ValidImportRequest1
+            .replace("POST /upload?name=trips HTTP",
+                    "POST /upload?name=trips&timestamp=Pickup_DateTime&createTable=false HTTP");
+    private final String ImportCreateParamResponse = WarningValidImportResponse1
+            .replace(
+                    "\r\n" +
+                            "|   Partition by  |                                              NONE  |                 |         |  From Table  |\r\n" +
+                            "|      Timestamp  |                                              NONE  |                 |         |  From Table  |",
+                    "\r\n" +
+                            "|   Partition by  |                                              NONE  |                 |         |              |\r\n" +
+                            "|      Timestamp  |                                   Pickup_DateTime  |                 |         |              |"
+            );
     @Rule
     public Timeout timeout = Timeout.builder()
             .withTimeout(10 * 60 * 1000, TimeUnit.MILLISECONDS)
@@ -808,6 +822,38 @@ public class ImportIODispatcherTest extends AbstractTest {
             TestUtils.removeTestPath(root);
             TestUtils.createTestPath(root);
         }
+    }
+
+    @Test
+    public void testImportWithCreateFalseAndNoTable() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(root).withWorkerCount(2)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run((engine) -> {
+                    new SendAndReceiveRequestBuilder().withExpectSendDisconnect(true).execute(ImportCreateParamRequestFalse, ImportCreateParamResponse);
+                });
+    }
+
+    @Test()
+    public void testImportWithCreateTrueAndNoTable() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(root).withWorkerCount(2)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run((engine) -> {
+                    try (SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                        new SendAndReceiveRequestBuilder().execute(ImportCreateParamRequestTrue, ImportCreateParamResponse);
+                        drainWalQueue(engine);
+                        assertSql(
+                                engine,
+                                sqlExecutionContext,
+                                "select count() from trips",
+                                Misc.getThreadLocalSink(),
+                                "count\n24\n"
+                        );
+                    }
+                });
     }
 
     @Test

@@ -827,22 +827,28 @@ public class WalWriter implements TableWriterAPI {
                 .put(", wal=").put(walId).put(']');
     }
 
-    private void cleanupSymbolMapFiles(Path path, int rootLen, CharSequence columnName) {
+    private void removeSymbolFiles(Path path, int rootLen, CharSequence columnName) {
+        // Symbol files in WAL directory are hard links to symbol files in the table.
+        // Removing them does not affect the allocated disk space, and it is just
+        // making directory tidy. On Windows OS, removing hard link can trigger
+        // ACCESS_DENIED error, caused by the fact hard link destination file is open.
+        // For those reasons we do not put maximum effort into removing the files here.
+
         path.trimTo(rootLen);
         BitmapIndexUtils.valueFileName(path, columnName, COLUMN_NAME_TXN_NONE);
-        ff.remove(path.$());
+        ff.removeQuiet(path.$());
 
         path.trimTo(rootLen);
         BitmapIndexUtils.keyFileName(path, columnName, COLUMN_NAME_TXN_NONE);
-        ff.remove(path.$());
+        ff.removeQuiet(path.$());
 
         path.trimTo(rootLen);
         TableUtils.charFileName(path, columnName, COLUMN_NAME_TXN_NONE);
-        ff.remove(path.$());
+        ff.removeQuiet(path.$());
 
         path.trimTo(rootLen);
         TableUtils.offsetFileName(path, columnName, COLUMN_NAME_TXN_NONE);
-        ff.remove(path.$());
+        ff.removeQuiet(path.$());
     }
 
     private void closeSegmentSwitchFiles(LongList newColumnFiles) {
@@ -932,7 +938,7 @@ public class WalWriter implements TableWriterAPI {
                     .$(", to=").$(path)
                     .$(", errno=").$(ff.errno())
                     .I$();
-            cleanupSymbolMapFiles(path, rootLen, columnName);
+            removeSymbolFiles(path, rootLen, columnName);
             configureEmptySymbol(columnWriterIndex);
             return;
         }
@@ -947,7 +953,7 @@ public class WalWriter implements TableWriterAPI {
                     .$(", to=").$(path)
                     .$(", errno=").$(ff.errno())
                     .I$();
-            cleanupSymbolMapFiles(path, rootLen, columnName);
+            removeSymbolFiles(path, rootLen, columnName);
             configureEmptySymbol(columnWriterIndex);
             return;
         }
@@ -962,7 +968,7 @@ public class WalWriter implements TableWriterAPI {
                     .$(", to=").$(path)
                     .$(", errno=").$(ff.errno())
                     .I$();
-            cleanupSymbolMapFiles(path, rootLen, columnName);
+            removeSymbolFiles(path, rootLen, columnName);
             configureEmptySymbol(columnWriterIndex);
             return;
         }
@@ -1315,7 +1321,7 @@ public class WalWriter implements TableWriterAPI {
         initialSymbolCounts.set(index, -1);
         localSymbolIds.set(index, 0);
         symbolMapNullFlags.set(index, false);
-        cleanupSymbolMapFiles(path, rootLen, metadata.getColumnName(index));
+        removeSymbolFiles(path, rootLen, metadata.getColumnName(index));
     }
 
     private void renameColumnFiles(int columnType, CharSequence columnName, CharSequence newName) {

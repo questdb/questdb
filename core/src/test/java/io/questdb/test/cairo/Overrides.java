@@ -52,11 +52,11 @@ public class Overrides implements ConfigurationOverrides {
     private final MicrosecondClock defaultMicrosecondClock = () -> currentMicros >= 0 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
     private MicrosecondClock testMicrosClock = defaultMicrosecondClock;
     private long dataAppendPageSize = -1;
-    private CharSequence defaultMapType;
     private int defaultTableWriteMode = SqlWalMode.WAL_NOT_SET;
     private Map<String, String> env = null;
     private FactoryProvider factoryProvider = null;
     private FilesFacade ff;
+    private long groupByAllocatorDefaultChunkSize = -1;
     private int groupByShardingThreshold = -1;
     private boolean hideTelemetryTable = false;
     private String inputRoot = null;
@@ -173,11 +173,6 @@ public class Overrides implements ConfigurationOverrides {
     }
 
     @Override
-    public CharSequence getDefaultMapType() {
-        return defaultMapType;
-    }
-
-    @Override
     public int getDefaultTableWriteMode() {
         return defaultTableWriteMode;
     }
@@ -195,6 +190,11 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public FilesFacade getFilesFacade() {
         return ff;
+    }
+
+    @Override
+    public long getGroupByAllocatorDefaultChunkSize() {
+        return groupByAllocatorDefaultChunkSize;
     }
 
     @Override
@@ -482,7 +482,6 @@ public class Overrides implements ConfigurationOverrides {
         currentMicros = -1;
         testMicrosClock = defaultMicrosecondClock;
         sampleByIndexSearchPageSize = -1;
-        defaultMapType = null;
         writerAsyncCommandBusyWaitTimeout = -1;
         writerAsyncCommandMaxTimeout = -1;
         pageFrameMaxRows = -1;
@@ -527,6 +526,7 @@ public class Overrides implements ConfigurationOverrides {
         simulateCrashEnabled = false;
         env = null;
         walMaxLagSize = -1;
+        groupByAllocatorDefaultChunkSize = -1;
         textAnalysisMaxLines = -1;
     }
 
@@ -596,11 +596,6 @@ public class Overrides implements ConfigurationOverrides {
     }
 
     @Override
-    public void setDefaultMapType(CharSequence defaultMapType) {
-        this.defaultMapType = defaultMapType;
-    }
-
-    @Override
     public void setDefaultTableWriteMode(int defaultTableWriteMode) {
         this.defaultTableWriteMode = defaultTableWriteMode;
     }
@@ -617,6 +612,11 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public void setFilesFacade(FilesFacade ff) {
         this.ff = ff;
+    }
+
+    @Override
+    public void setGroupByAllocatorDefaultChunkSize(long groupByAllocatorDefaultChunkSize) {
+        this.groupByAllocatorDefaultChunkSize = groupByAllocatorDefaultChunkSize;
     }
 
     @Override

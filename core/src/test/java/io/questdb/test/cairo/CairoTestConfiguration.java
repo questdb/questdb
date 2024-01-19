@@ -108,11 +108,6 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
-    public @NotNull CharSequence getDefaultMapType() {
-        return overrides.getDefaultMapType() == null ? super.getDefaultMapType() : overrides.getDefaultMapType();
-    }
-
-    @Override
     public Map<String, String> getEnv() {
         return overrides.getEnv();
     }
@@ -126,6 +121,11 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     public @NotNull FilesFacade getFilesFacade() {
         // This method gets called in super constructor, hence the extra null check.
         return overrides != null && overrides.getFilesFacade() != null ? overrides.getFilesFacade() : super.getFilesFacade();
+    }
+
+    @Override
+    public long getGroupByAllocatorDefaultChunkSize() {
+        return overrides != null && overrides.getGroupByAllocatorDefaultChunkSize() != -1 ? overrides.getGroupByAllocatorDefaultChunkSize() : super.getGroupByAllocatorDefaultChunkSize();
     }
 
     @Override

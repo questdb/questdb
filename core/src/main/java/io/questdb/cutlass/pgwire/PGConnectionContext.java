@@ -113,9 +113,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private static Log LOG = LogFactory.getLog(PGConnectionContext.class);
     private final BatchCallback batchCallback;
     private final ObjectPool<DirectBinarySequence> binarySequenceParamsPool;
-    //stores result format codes (0=Text,1=Binary) from the latest bind message
-    //we need it in case cursor gets invalidated and bind used non-default binary format for some column(s)
-    //pg clients (like asyncpg) fail when format sent by server is not the same as requested in bind message
+    // stores result format codes (0=Text,1=Binary) from the latest bind message
+    // we need it in case cursor gets invalidated and bind used non-default binary format for some column(s)
+    // pg clients (like asyncpg) fail when format sent by server is not the same as requested in bind message
     private final IntList bindSelectColumnFormats = new IntList();
     private final IntList bindVariableTypes = new IntList();
     private final CharacterStore characterStore;
@@ -134,7 +134,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private final ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters;
     private final QueryLogger queryLogger;
     private final int recvBufferSize;
-    private final ResponseCharSinkBase responseCharSinkBase = new ResponseCharSinkBase();
+    private final ResponseUtf8Sink responseUtf8Sink = new ResponseUtf8Sink();
     private final SecurityContextFactory securityContextFactory;
     private final IntList selectColumnTypes = new IntList();
     private final int sendBufferSize;
@@ -147,10 +147,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private final WeakSelfReturningObjectPool<TypesAndSelect> typesAndSelectPool;
     private final AssociativeCache<TypesAndUpdate> typesAndUpdateCache;
     private final WeakSelfReturningObjectPool<TypesAndUpdate> typesAndUpdatePool;
-    private final DirectCharSink utf8Sink;
+    private final DirectUtf16Sink utf8Sink;
     // this is a reference to types either from the context or named statement, where it is provided
     private IntList activeBindVariableTypes;
-    //list of pair: column types (with format flag stored in first bit) AND additional type flag
+    // list of pair: column types (with format flag stored in first bit) AND additional type flag
     private IntList activeSelectColumnTypes;
     private Authenticator authenticator;
     private BindVariableService bindVariableService;
@@ -168,8 +168,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private long maxSendRows;
     private int parsePhaseBindVariableCount;
     private boolean queryContainsSecret;
-    //command tag used when returning row count to client,
-    //see CommandComplete (B) at https://www.postgresql.org/docs/current/protocol-message-formats.html
+    // command tag used when returning row count to client,
+    // see CommandComplete (B) at https://www.postgresql.org/docs/current/protocol-message-formats.html
     private CharSequence queryTag;
     private CharSequence queryText;
     private long recvBuffer;
@@ -222,7 +222,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         );
         this.engine = engine;
         queryLogger = engine.getConfiguration().getQueryLogger();
-        this.utf8Sink = new DirectCharSink(engine.getConfiguration().getTextConfiguration().getUtf8SinkSize());
+        this.utf8Sink = new DirectUtf16Sink(engine.getConfiguration().getTextConfiguration().getUtf8SinkSize());
         this.bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
         this.recvBufferSize = Numbers.ceilPow2(configuration.getRecvBufferSize());
         this.sendBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
@@ -343,6 +343,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         freeBuffers();
         completed = true;
         prepareForNewQuery();
+        clearRecvBuffer();
         clearWriters();
         evictNamedStatementWrappersAndClear();
         clearCursorAndFactory();
@@ -357,7 +358,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         clearPool(namedStatementMap, namedStatementWrapperPool, "named statement");
 
         pendingWriters.clear();
-        responseCharSinkBase.reset();
+        responseUtf8Sink.reset();
         selectColumnTypes.clear();
         syncActions.clear();
         utf8Sink.clear();
@@ -703,12 +704,12 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private void appendBinColumn(Record record, int i) throws SqlException {
         BinarySequence sequence = record.getBin(i);
         if (sequence == null) {
-            responseCharSinkBase.setNullValue();
+            responseUtf8Sink.setNullValue();
         } else {
             // if length is above max we will error out the result set
             long blobSize = sequence.length();
             if (blobSize < maxBlobSizeOnQuery) {
-                responseCharSinkBase.put(sequence);
+                responseUtf8Sink.put(sequence);
             } else {
                 throw SqlException.position(0)
                         .put("blob is too large [blobSize=").put(blobSize)
@@ -720,133 +721,133 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     private void appendBooleanColumn(Record record, int columnIndex) {
-        responseCharSinkBase.putNetworkInt(Byte.BYTES);
-        responseCharSinkBase.put(record.getBool(columnIndex) ? 't' : 'f');
+        responseUtf8Sink.putNetworkInt(Byte.BYTES);
+        responseUtf8Sink.put(record.getBool(columnIndex) ? 't' : 'f');
     }
 
     private void appendBooleanColumnBin(Record record, int columnIndex) {
-        responseCharSinkBase.putNetworkInt(Byte.BYTES);
-        responseCharSinkBase.put(record.getBool(columnIndex) ? (byte) 1 : (byte) 0);
+        responseUtf8Sink.putNetworkInt(Byte.BYTES);
+        responseUtf8Sink.put(record.getBool(columnIndex) ? (byte) 1 : (byte) 0);
     }
 
     private void appendByteColumn(Record record, int columnIndex) {
-        long a = responseCharSinkBase.skip();
-        responseCharSinkBase.put((int) record.getByte(columnIndex));
-        responseCharSinkBase.putLenEx(a);
+        long a = responseUtf8Sink.skip();
+        responseUtf8Sink.put((int) record.getByte(columnIndex));
+        responseUtf8Sink.putLenEx(a);
     }
 
     private void appendByteColumnBin(Record record, int columnIndex) {
         final byte value = record.getByte(columnIndex);
-        responseCharSinkBase.putNetworkInt(Short.BYTES);
-        responseCharSinkBase.putNetworkShort(value);
+        responseUtf8Sink.putNetworkInt(Short.BYTES);
+        responseUtf8Sink.putNetworkShort(value);
     }
 
     private void appendCharColumn(Record record, int columnIndex) {
         final char charValue = record.getChar(columnIndex);
         if (charValue == 0) {
-            responseCharSinkBase.setNullValue();
+            responseUtf8Sink.setNullValue();
         } else {
-            long a = responseCharSinkBase.skip();
-            responseCharSinkBase.put(charValue);
-            responseCharSinkBase.putLenEx(a);
+            long a = responseUtf8Sink.skip();
+            responseUtf8Sink.put(charValue);
+            responseUtf8Sink.putLenEx(a);
         }
     }
 
     private void appendDateColumn(Record record, int columnIndex) {
         final long longValue = record.getDate(columnIndex);
         if (longValue != Numbers.LONG_NaN) {
-            final long a = responseCharSinkBase.skip();
-            PG_DATE_MILLI_TIME_Z_PRINT_FORMAT.format(longValue, DateFormatUtils.EN_LOCALE, null, responseCharSinkBase);
-            responseCharSinkBase.putLenEx(a);
+            final long a = responseUtf8Sink.skip();
+            PG_DATE_MILLI_TIME_Z_PRINT_FORMAT.format(longValue, DateFormatUtils.EN_LOCALE, null, responseUtf8Sink);
+            responseUtf8Sink.putLenEx(a);
         } else {
-            responseCharSinkBase.setNullValue();
+            responseUtf8Sink.setNullValue();
         }
     }
 
     private void appendDateColumnBin(Record record, int columnIndex) {
         final long longValue = record.getDate(columnIndex);
         if (longValue != Numbers.LONG_NaN) {
-            responseCharSinkBase.putNetworkInt(Long.BYTES);
+            responseUtf8Sink.putNetworkInt(Long.BYTES);
             // PG epoch starts at 2000 rather than 1970
-            responseCharSinkBase.putNetworkLong(longValue * 1000 - Numbers.JULIAN_EPOCH_OFFSET_USEC);
+            responseUtf8Sink.putNetworkLong(longValue * 1000 - Numbers.JULIAN_EPOCH_OFFSET_USEC);
         } else {
-            responseCharSinkBase.setNullValue();
+            responseUtf8Sink.setNullValue();
         }
     }
 
     private void appendDoubleColumn(Record record, int columnIndex) {
         final double doubleValue = record.getDouble(columnIndex);
         if (doubleValue == doubleValue) {
-            final long a = responseCharSinkBase.skip();
-            responseCharSinkBase.put(doubleValue);
-            responseCharSinkBase.putLenEx(a);
+            final long a = responseUtf8Sink.skip();
+            responseUtf8Sink.put(doubleValue);
+            responseUtf8Sink.putLenEx(a);
         } else {
-            responseCharSinkBase.setNullValue();
+            responseUtf8Sink.setNullValue();
         }
     }
 
     private void appendDoubleColumnBin(Record record, int columnIndex) {
         final double value = record.getDouble(columnIndex);
         if (value == value) {
-            responseCharSinkBase.putNetworkInt(Double.BYTES);
-            responseCharSinkBase.putNetworkDouble(value);
+            responseUtf8Sink.putNetworkInt(Double.BYTES);
+            responseUtf8Sink.putNetworkDouble(value);
         } else {
-            responseCharSinkBase.setNullValue();
+            responseUtf8Sink.setNullValue();
         }
     }
 
     private void appendFloatColumn(Record record, int columnIndex) {
         final float floatValue = record.getFloat(columnIndex);
         if (floatValue == floatValue) {
-            final long a = responseCharSinkBase.skip();
-            responseCharSinkBase.put(floatValue, 3);
-            responseCharSinkBase.putLenEx(a);
+            final long a = responseUtf8Sink.skip();
+            responseUtf8Sink.put(floatValue, 3);
+            responseUtf8Sink.putLenEx(a);
         } else {
-            responseCharSinkBase.setNullValue();
+            responseUtf8Sink.setNullValue();
         }
     }
 
     private void appendFloatColumnBin(Record record, int columnIndex) {
         final float value = record.getFloat(columnIndex);
         if (value == value) {
-            responseCharSinkBase.putNetworkInt(Float.BYTES);
-            responseCharSinkBase.putNetworkFloat(value);
+            responseUtf8Sink.putNetworkInt(Float.BYTES);
+            responseUtf8Sink.putNetworkFloat(value);
         } else {
-            responseCharSinkBase.setNullValue();
+            responseUtf8Sink.setNullValue();
         }
     }
 
     private void appendIPv4Col(Record record, int columnIndex) {
         int value = record.getIPv4(columnIndex);
         if (value == Numbers.IPv4_NULL) {
-            responseCharSinkBase.setNullValue();
+            responseUtf8Sink.setNullValue();
         } else {
-            final long a = responseCharSinkBase.skip();
-            Numbers.intToIPv4Sink(responseCharSinkBase, value);
-            responseCharSinkBase.putLenEx(a);
+            final long a = responseUtf8Sink.skip();
+            Numbers.intToIPv4Sink(responseUtf8Sink, value);
+            responseUtf8Sink.putLenEx(a);
         }
     }
 
     private void appendIntCol(Record record, int i) {
         final int intValue = record.getInt(i);
         if (intValue != Numbers.INT_NaN) {
-            final long a = responseCharSinkBase.skip();
-            responseCharSinkBase.put(intValue);
-            responseCharSinkBase.putLenEx(a);
+            final long a = responseUtf8Sink.skip();
+            responseUtf8Sink.put(intValue);
+            responseUtf8Sink.putLenEx(a);
         } else {
-            responseCharSinkBase.setNullValue();
+            responseUtf8Sink.setNullValue();
         }
     }
 
     private void appendIntColumnBin(Record record, int columnIndex) {
         final int value = record.getInt(columnIndex);
         if (value != Numbers.INT_NaN) {
-            responseCharSinkBase.ensureCapacity(8);
-            responseCharSinkBase.putIntUnsafe(0, INT_BYTES_X);
-            responseCharSinkBase.putIntUnsafe(4, Numbers.bswap(value));
-            responseCharSinkBase.bump(8);
+            responseUtf8Sink.checkCapacity(8);
+            responseUtf8Sink.putIntUnsafe(0, INT_BYTES_X);
+            responseUtf8Sink.putIntUnsafe(4, Numbers.bswap(value));
+            responseUtf8Sink.bump(8);
         } else {
-            responseCharSinkBase.setNullValue();
+            responseUtf8Sink.setNullValue();
         }
     }
 
@@ -856,45 +857,45 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 long256Value.getLong1() == Numbers.LONG_NaN &&
                 long256Value.getLong2() == Numbers.LONG_NaN &&
                 long256Value.getLong3() == Numbers.LONG_NaN) {
-            responseCharSinkBase.setNullValue();
+            responseUtf8Sink.setNullValue();
         } else {
-            final long a = responseCharSinkBase.skip();
+            final long a = responseUtf8Sink.skip();
             Numbers.appendLong256(
                     long256Value.getLong0(),
                     long256Value.getLong1(),
                     long256Value.getLong2(),
                     long256Value.getLong3(),
-                    responseCharSinkBase
+                    responseUtf8Sink
             );
-            responseCharSinkBase.putLenEx(a);
+            responseUtf8Sink.putLenEx(a);
         }
     }
 
     private void appendLongColumn(Record record, int columnIndex) {
         final long longValue = record.getLong(columnIndex);
         if (longValue != Numbers.LONG_NaN) {
-            final long a = responseCharSinkBase.skip();
-            responseCharSinkBase.put(longValue);
-            responseCharSinkBase.putLenEx(a);
+            final long a = responseUtf8Sink.skip();
+            responseUtf8Sink.put(longValue);
+            responseUtf8Sink.putLenEx(a);
         } else {
-            responseCharSinkBase.setNullValue();
+            responseUtf8Sink.setNullValue();
         }
     }
 
     private void appendLongColumnBin(Record record, int columnIndex) {
         final long longValue = record.getLong(columnIndex);
         if (longValue != Numbers.LONG_NaN) {
-            responseCharSinkBase.putNetworkInt(Long.BYTES);
-            responseCharSinkBase.putNetworkLong(longValue);
+            responseUtf8Sink.putNetworkInt(Long.BYTES);
+            responseUtf8Sink.putNetworkLong(longValue);
         } else {
-            responseCharSinkBase.setNullValue();
+            responseUtf8Sink.setNullValue();
         }
     }
 
     private void appendRecord(Record record, int columnCount) throws SqlException {
-        responseCharSinkBase.put(MESSAGE_TYPE_DATA_ROW); // data
-        final long offset = responseCharSinkBase.skip();
-        responseCharSinkBase.putNetworkShort((short) columnCount);
+        responseUtf8Sink.put(MESSAGE_TYPE_DATA_ROW); // data
+        final long offset = responseUtf8Sink.skip();
+        responseUtf8Sink.putNetworkShort((short) columnCount);
         for (int i = 0; i < columnCount; i++) {
             final int type = activeSelectColumnTypes.getQuick(2 * i);
             final short columnBinaryFlag = getColumnBinaryFlag(type);
@@ -995,7 +996,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     putGeoHashStringLongValue(record, i, activeSelectColumnTypes.getQuick(2 * i + 1));
                     break;
                 case ColumnType.NULL:
-                    responseCharSinkBase.setNullValue();
+                    responseUtf8Sink.setNullValue();
                     break;
                 case ColumnType.UUID:
                     appendUuidColumn(record, i);
@@ -1004,20 +1005,20 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     assert false;
             }
         }
-        responseCharSinkBase.putLen(offset);
+        responseUtf8Sink.putLen(offset);
         rowCount++;
     }
 
     private void appendShortColumn(Record record, int columnIndex) {
-        final long a = responseCharSinkBase.skip();
-        responseCharSinkBase.put(record.getShort(columnIndex));
-        responseCharSinkBase.putLenEx(a);
+        final long a = responseUtf8Sink.skip();
+        responseUtf8Sink.put(record.getShort(columnIndex));
+        responseUtf8Sink.putLenEx(a);
     }
 
     private void appendShortColumnBin(Record record, int columnIndex) {
         final short value = record.getShort(columnIndex);
-        responseCharSinkBase.putNetworkInt(Short.BYTES);
-        responseCharSinkBase.putNetworkShort(value);
+        responseUtf8Sink.putNetworkInt(Short.BYTES);
+        responseUtf8Sink.putNetworkShort(value);
     }
 
     private void appendSingleRecord(Record record, int columnCount) throws SqlException {
@@ -1026,7 +1027,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         } catch (NoSpaceLeftInResponseBufferException e1) {
             // oopsie, buffer is too small for single record
             LOG.error().$("not enough space in buffer for row data [buffer=").$(sendBufferSize).I$();
-            responseCharSinkBase.reset();
+            responseUtf8Sink.reset();
             freeFactory();
             throw CairoException.critical(0).put("server configuration error: not enough space in send buffer for row data");
         }
@@ -1035,22 +1036,22 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private void appendStrColumn(Record record, int columnIndex) {
         final CharSequence strValue = record.getStr(columnIndex);
         if (strValue == null) {
-            responseCharSinkBase.setNullValue();
+            responseUtf8Sink.setNullValue();
         } else {
-            final long a = responseCharSinkBase.skip();
-            responseCharSinkBase.put(strValue);
-            responseCharSinkBase.putLenEx(a);
+            final long a = responseUtf8Sink.skip();
+            responseUtf8Sink.put(strValue);
+            responseUtf8Sink.putLenEx(a);
         }
     }
 
     private void appendSymbolColumn(Record record, int columnIndex) {
         final CharSequence strValue = record.getSym(columnIndex);
         if (strValue == null) {
-            responseCharSinkBase.setNullValue();
+            responseUtf8Sink.setNullValue();
         } else {
-            final long a = responseCharSinkBase.skip();
-            responseCharSinkBase.put(strValue);
-            responseCharSinkBase.putLenEx(a);
+            final long a = responseUtf8Sink.skip();
+            responseUtf8Sink.put(strValue);
+            responseUtf8Sink.putLenEx(a);
         }
     }
 
@@ -1058,22 +1059,22 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         long a;
         long longValue = record.getTimestamp(i);
         if (longValue == Numbers.LONG_NaN) {
-            responseCharSinkBase.setNullValue();
+            responseUtf8Sink.setNullValue();
         } else {
-            a = responseCharSinkBase.skip();
-            TimestampFormatUtils.PG_TIMESTAMP_FORMAT.format(longValue, DateFormatUtils.EN_LOCALE, null, responseCharSinkBase);
-            responseCharSinkBase.putLenEx(a);
+            a = responseUtf8Sink.skip();
+            TimestampFormatUtils.PG_TIMESTAMP_FORMAT.format(longValue, DateFormatUtils.EN_LOCALE, null, responseUtf8Sink);
+            responseUtf8Sink.putLenEx(a);
         }
     }
 
     private void appendTimestampColumnBin(Record record, int columnIndex) {
         final long longValue = record.getTimestamp(columnIndex);
         if (longValue == Numbers.LONG_NaN) {
-            responseCharSinkBase.setNullValue();
+            responseUtf8Sink.setNullValue();
         } else {
-            responseCharSinkBase.putNetworkInt(Long.BYTES);
+            responseUtf8Sink.putNetworkInt(Long.BYTES);
             // PG epoch starts at 2000 rather than 1970
-            responseCharSinkBase.putNetworkLong(longValue - Numbers.JULIAN_EPOCH_OFFSET_USEC);
+            responseUtf8Sink.putNetworkLong(longValue - Numbers.JULIAN_EPOCH_OFFSET_USEC);
         }
     }
 
@@ -1081,11 +1082,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         final long lo = record.getLong128Lo(columnIndex);
         final long hi = record.getLong128Hi(columnIndex);
         if (Uuid.isNull(lo, hi)) {
-            responseCharSinkBase.setNullValue();
+            responseUtf8Sink.setNullValue();
         } else {
-            final long a = responseCharSinkBase.skip();
-            Numbers.appendUuid(lo, hi, responseCharSinkBase);
-            responseCharSinkBase.putLenEx(a);
+            final long a = responseUtf8Sink.skip();
+            Numbers.appendUuid(lo, hi, responseUtf8Sink);
+            responseUtf8Sink.putLenEx(a);
         }
     }
 
@@ -1093,11 +1094,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         final long lo = record.getLong128Lo(columnIndex);
         final long hi = record.getLong128Hi(columnIndex);
         if (Uuid.isNull(lo, hi)) {
-            responseCharSinkBase.setNullValue();
+            responseUtf8Sink.setNullValue();
         } else {
-            responseCharSinkBase.putNetworkInt(Long.BYTES * 2);
-            responseCharSinkBase.putNetworkLong(hi);
-            responseCharSinkBase.putNetworkLong(lo);
+            responseUtf8Sink.putNetworkInt(Long.BYTES * 2);
+            responseUtf8Sink.putNetworkLong(hi);
+            responseUtf8Sink.putNetworkLong(lo);
         }
     }
 
@@ -1791,7 +1792,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             throw BadProtocolException.INSTANCE;
         }
         // tell the client that SSL is supported
-        responseCharSinkBase.put(MESSAGE_TYPE_SSL_SUPPORTED_RESPONSE);
+        responseUtf8Sink.put(MESSAGE_TYPE_SSL_SUPPORTED_RESPONSE);
         tlsSessionStarting = true;
         sendAndReset();
     }
@@ -1936,13 +1937,13 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     private void prepareBindComplete() {
-        responseCharSinkBase.put(MESSAGE_TYPE_BIND_COMPLETE);
-        responseCharSinkBase.putIntDirect(INT_BYTES_X);
+        responseUtf8Sink.put(MESSAGE_TYPE_BIND_COMPLETE);
+        responseUtf8Sink.putIntDirect(INT_BYTES_X);
     }
 
     private void prepareCloseComplete() {
-        responseCharSinkBase.put(MESSAGE_TYPE_CLOSE_COMPLETE);
-        responseCharSinkBase.putIntDirect(INT_BYTES_X);
+        responseUtf8Sink.put(MESSAGE_TYPE_CLOSE_COMPLETE);
+        responseUtf8Sink.putIntDirect(INT_BYTES_X);
     }
 
     private void prepareDescribePortalResponse() {
@@ -1951,7 +1952,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 prepareRowDescription();
             } catch (NoSpaceLeftInResponseBufferException ignored) {
                 LOG.error().$("not enough space in buffer for row description [buffer=").$(sendBufferSize).I$();
-                responseCharSinkBase.reset();
+                responseUtf8Sink.reset();
                 freeFactory();
                 throw CairoException.critical(0).put("server configuration error: not enough space in send buffer for row description");
             }
@@ -1970,8 +1971,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private void prepareEmptyQueryResponse() {
         LOG.debug().$("empty").$();
-        responseCharSinkBase.put(MESSAGE_TYPE_EMPTY_QUERY);
-        responseCharSinkBase.putIntDirect(INT_BYTES_X);
+        responseUtf8Sink.put(MESSAGE_TYPE_EMPTY_QUERY);
+        responseUtf8Sink.putIntDirect(INT_BYTES_X);
     }
 
     private void prepareError(int position, CharSequence message, boolean critical, int errno) {
@@ -1990,19 +1991,19 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     private void prepareErrorResponse(int position, CharSequence message) {
-        responseCharSinkBase.put(MESSAGE_TYPE_ERROR_RESPONSE);
-        long addr = responseCharSinkBase.skip();
-        responseCharSinkBase.putAscii('C');
-        responseCharSinkBase.putZ("00000");
-        responseCharSinkBase.putAscii('M');
-        responseCharSinkBase.putZ(message);
-        responseCharSinkBase.putAscii('S');
-        responseCharSinkBase.putZ("ERROR");
+        responseUtf8Sink.put(MESSAGE_TYPE_ERROR_RESPONSE);
+        long addr = responseUtf8Sink.skip();
+        responseUtf8Sink.putAscii('C');
+        responseUtf8Sink.putZ("00000");
+        responseUtf8Sink.putAscii('M');
+        responseUtf8Sink.putZ(message);
+        responseUtf8Sink.putAscii('S');
+        responseUtf8Sink.putZ("ERROR");
         if (position > -1) {
-            responseCharSinkBase.putAscii('P').put(position + 1).put((byte) 0);
+            responseUtf8Sink.putAscii('P').put(position + 1).put((byte) 0);
         }
-        responseCharSinkBase.put((byte) 0);
-        responseCharSinkBase.putLen(addr);
+        responseUtf8Sink.put((byte) 0);
+        responseUtf8Sink.putLen(addr);
     }
 
     //clears whole state except for characterStore because top-level batch text is using it
@@ -2030,8 +2031,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     private void prepareNoDataMessage() {
-        responseCharSinkBase.put(MESSAGE_TYPE_NO_DATA);
-        responseCharSinkBase.putIntDirect(INT_BYTES_X);
+        responseUtf8Sink.put(MESSAGE_TYPE_NO_DATA);
+        responseUtf8Sink.putIntDirect(INT_BYTES_X);
     }
 
     private void prepareNonCriticalError(int position, CharSequence message) {
@@ -2043,26 +2044,26 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     private void prepareParameterDescription() {
-        responseCharSinkBase.put(MESSAGE_TYPE_PARAMETER_DESCRIPTION);
-        final long l = responseCharSinkBase.skip();
+        responseUtf8Sink.put(MESSAGE_TYPE_PARAMETER_DESCRIPTION);
+        final long l = responseUtf8Sink.skip();
         final int n = bindVariableService.getIndexedVariableCount();
-        responseCharSinkBase.putNetworkShort((short) n);
+        responseUtf8Sink.putNetworkShort((short) n);
         if (n > 0) {
             for (int i = 0; i < n; i++) {
-                responseCharSinkBase.putIntDirect(toParamType(activeBindVariableTypes.getQuick(i)));
+                responseUtf8Sink.putIntDirect(toParamType(activeBindVariableTypes.getQuick(i)));
             }
         }
-        responseCharSinkBase.putLen(l);
+        responseUtf8Sink.putLen(l);
     }
 
     private void prepareParseComplete() {
-        responseCharSinkBase.put(MESSAGE_TYPE_PARSE_COMPLETE);
-        responseCharSinkBase.putIntDirect(INT_BYTES_X);
+        responseUtf8Sink.put(MESSAGE_TYPE_PARSE_COMPLETE);
+        responseUtf8Sink.putIntDirect(INT_BYTES_X);
     }
 
     private void prepareRowDescription() {
         final RecordMetadata metadata = typesAndSelect.getFactory().getMetadata();
-        ResponseCharSinkBase sink = responseCharSinkBase;
+        ResponseUtf8Sink sink = responseUtf8Sink;
         sink.put(MESSAGE_TYPE_ROW_DESCRIPTION);
         final long addr = sink.skip();
         final int n = activeSelectColumnTypes.size() / 2;
@@ -2334,7 +2335,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 try (OperationFuture fut = cq.execute(sqlExecutionContext, tempSequence, true)) {
                     fut.await();
                 }
-                // fall thru
+                // fall through
             default:
                 // DDL
                 queryTag = TAG_OK;
@@ -2562,15 +2563,15 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private void putGeoHashStringValue(long value, int bitFlags) {
         if (value == GeoHashes.NULL) {
-            responseCharSinkBase.setNullValue();
+            responseUtf8Sink.setNullValue();
         } else {
-            final long a = responseCharSinkBase.skip();
+            final long a = responseUtf8Sink.skip();
             if (bitFlags < 0) {
-                GeoHashes.appendCharsUnsafe(value, -bitFlags, responseCharSinkBase);
+                GeoHashes.appendCharsUnsafe(value, -bitFlags, responseUtf8Sink);
             } else {
-                GeoHashes.appendBinaryStringUnsafe(value, bitFlags, responseCharSinkBase);
+                GeoHashes.appendBinaryStringUnsafe(value, bitFlags, responseUtf8Sink);
             }
-            responseCharSinkBase.putLenEx(a);
+            responseUtf8Sink.putLenEx(a);
         }
     }
 
@@ -2600,7 +2601,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private void resumeComputeCursorSizeQuery(boolean queryWasPaused) throws Exception {
         computeCursorSize();
         resumeProcessor = resumeCursorQueryRef;
-        responseCharSinkBase.bookmark();
+        responseUtf8Sink.bookmark();
         sendCursor0(currentCursor.getRecord(), currentFactory.getMetadata().getColumnCount(), resumeQueryCompleteRef);
     }
 
@@ -2612,7 +2613,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             // so we have to write the last record to the buffer once again.
             appendSingleRecord(record, columnCount);
         }
-        responseCharSinkBase.bookmark();
+        responseUtf8Sink.bookmark();
         sendCursor0(record, columnCount, resumeExecuteCompleteRef);
     }
 
@@ -2624,7 +2625,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             // so we have to write the last record to the buffer once again.
             appendSingleRecord(record, columnCount);
         }
-        responseCharSinkBase.bookmark();
+        responseUtf8Sink.bookmark();
         sendCursor0(record, columnCount, resumeQueryCompleteRef);
         sendReadyForNewQuery();
     }
@@ -2636,7 +2637,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private void sendAndReset() throws PeerDisconnectedException, PeerIsSlowToReadException {
         doSend(bufferRemainingOffset, (int) (sendBufferPtr - sendBuffer - bufferRemainingOffset));
-        responseCharSinkBase.reset();
+        responseUtf8Sink.reset();
         replyAndContinue = false;
     }
 
@@ -2652,7 +2653,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 circuitBreaker.statefulThrowExceptionIfTimeout();
             }
         }
-        responseCharSinkBase.reset();
+        responseUtf8Sink.reset();
         replyAndContinue = false;
     }
 
@@ -2667,18 +2668,18 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                         tableToken
                 )
         ) {
-            responseCharSinkBase.put(MESSAGE_TYPE_COPY_IN_RESPONSE);
-            long addr = responseCharSinkBase.skip();
-            responseCharSinkBase.put((byte) 0); // TEXT (1=BINARY, which we do not support yet)
+            responseUtf8Sink.put(MESSAGE_TYPE_COPY_IN_RESPONSE);
+            long addr = responseUtf8Sink.skip();
+            responseUtf8Sink.put((byte) 0); // TEXT (1=BINARY, which we do not support yet)
 
             try (TableWriter writer = engine.getWriter(tableToken, WRITER_LOCK_REASON)) {
                 RecordMetadata metadata = writer.getMetadata();
-                responseCharSinkBase.putNetworkShort((short) metadata.getColumnCount());
+                responseUtf8Sink.putNetworkShort((short) metadata.getColumnCount());
                 for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                    responseCharSinkBase.putNetworkShort((short) PGOids.getTypeOid(metadata.getColumnType(i)));
+                    responseUtf8Sink.putNetworkShort((short) PGOids.getTypeOid(metadata.getColumnType(i)));
                 }
             }
-            responseCharSinkBase.putLen(addr);
+            responseUtf8Sink.putLen(addr);
         } else {
             final SqlException e = SqlException.tableDoesNotExist(0, textLoader.getTableName());
             prepareNonCriticalError(e.getPosition(), e.getFlyweightMessage());
@@ -2704,7 +2705,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         computeCursorSize();
 
         resumeProcessor = cursorResumeProcessor;
-        responseCharSinkBase.bookmark();
+        responseUtf8Sink.bookmark();
         sendCursor0(currentCursor.getRecord(), currentFactory.getMetadata().getColumnCount(), commandCompleteResumeProcessor);
     }
 
@@ -2718,25 +2719,25 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 try {
                     try {
                         appendRecord(record, columnCount);
-                        responseCharSinkBase.bookmark();
+                        responseUtf8Sink.bookmark();
                     } catch (NoSpaceLeftInResponseBufferException e) {
-                        responseCharSinkBase.resetToBookmark();
+                        responseUtf8Sink.resetToBookmark();
                         sendAndReset();
                         appendSingleRecord(record, columnCount);
-                        responseCharSinkBase.bookmark();
+                        responseUtf8Sink.bookmark();
                     }
                     if (rowCount >= maxSendRows) {
                         break;
                     }
                 } catch (SqlException e) {
                     clearCursorAndFactory();
-                    responseCharSinkBase.resetToBookmark();
+                    responseUtf8Sink.resetToBookmark();
                     throw e;
                 }
             }
         } catch (DataUnavailableException e) {
             isPausedQuery = true;
-            responseCharSinkBase.resetToBookmark();
+            responseUtf8Sink.resetToBookmark();
             throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
         }
 
@@ -2766,7 +2767,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private void setResumeComputeCursorSizeExecute(boolean queryWasPaused) throws Exception {
         computeCursorSize();
         resumeProcessor = resumeCursorExecuteRef;
-        responseCharSinkBase.bookmark();
+        responseUtf8Sink.bookmark();
         sendCursor0(currentCursor.getRecord(), currentFactory.getMetadata().getColumnCount(), resumeExecuteCompleteRef);
     }
 
@@ -2879,21 +2880,21 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         if (isEmptyQuery) {
             prepareEmptyQueryResponse();
         } else {
-            responseCharSinkBase.put(MESSAGE_TYPE_COMMAND_COMPLETE);
-            long addr = responseCharSinkBase.skip();
+            responseUtf8Sink.put(MESSAGE_TYPE_COMMAND_COMPLETE);
+            long addr = responseUtf8Sink.skip();
             if (addRowCount) {
                 if (queryTag == TAG_INSERT) {
                     LOG.debug().$("insert [rowCount=").$(rowCount).I$();
-                    responseCharSinkBase.put(queryTag).putAscii(" 0 ").put(rowCount).put((byte) 0);
+                    responseUtf8Sink.put(queryTag).putAscii(" 0 ").put(rowCount).put((byte) 0);
                 } else {
                     LOG.debug().$("other [rowCount=").$(rowCount).I$();
-                    responseCharSinkBase.put(queryTag).putAscii(' ').put(rowCount).put((byte) 0);
+                    responseUtf8Sink.put(queryTag).putAscii(' ').put(rowCount).put((byte) 0);
                 }
             } else {
                 LOG.debug().$("no row count").$();
-                responseCharSinkBase.put(queryTag).put((byte) 0);
+                responseUtf8Sink.put(queryTag).put((byte) 0);
             }
-            responseCharSinkBase.putLen(addr);
+            responseUtf8Sink.putLen(addr);
         }
     }
 
@@ -2902,17 +2903,17 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             LOG.debug().$("RNQ sent").$();
             checkSendBufferFitsProtocolCommand();
 
-            responseCharSinkBase.put(MESSAGE_TYPE_READY_FOR_QUERY);
-            responseCharSinkBase.putNetworkInt(Integer.BYTES + Byte.BYTES);
+            responseUtf8Sink.put(MESSAGE_TYPE_READY_FOR_QUERY);
+            responseUtf8Sink.putNetworkInt(Integer.BYTES + Byte.BYTES);
             switch (transactionState) {
                 case IN_TRANSACTION:
-                    responseCharSinkBase.put(STATUS_IN_TRANSACTION);
+                    responseUtf8Sink.put(STATUS_IN_TRANSACTION);
                     break;
                 case ERROR_TRANSACTION:
-                    responseCharSinkBase.put(STATUS_IN_ERROR);
+                    responseUtf8Sink.put(STATUS_IN_ERROR);
                     break;
                 default:
-                    responseCharSinkBase.put(STATUS_IDLE);
+                    responseUtf8Sink.put(STATUS_IDLE);
                     break;
             }
             sendRNQ = false;
@@ -2921,8 +2922,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     void prepareSuspended() {
         LOG.debug().$("suspended").$();
-        responseCharSinkBase.put(MESSAGE_TYPE_PORTAL_SUSPENDED);
-        responseCharSinkBase.putIntDirect(INT_BYTES_X);
+        responseUtf8Sink.put(MESSAGE_TYPE_PORTAL_SUSPENDED);
+        responseUtf8Sink.putIntDirect(INT_BYTES_X);
     }
 
     void recv() throws PeerDisconnectedException, PeerIsSlowToWriteException, BadProtocolException {
@@ -3026,7 +3027,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    private class ResponseCharSinkBase implements Utf8Sink {
+    private class ResponseUtf8Sink implements Utf8Sink {
 
         private long bookmarkPtr = -1;
 
@@ -3039,7 +3040,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
 
         @Override
-        public Utf8Sink put(long lo, long hi) {
+        public Utf8Sink putUtf8(long lo, long hi) {
             // Once this is actually needed, the impl would look something like:
             // final long size = hi - lo;
             // ensureCapacity(size);
@@ -3055,7 +3056,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             if (us != null) {
                 final int size = us.size();
                 if (size > 0) {
-                    ensureCapacity(size);
+                    checkCapacity(size);
                     Utf8s.strCpy(us, size, sendBufferPtr);
                     sendBufferPtr += size;
                 }
@@ -3065,7 +3066,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
         @Override
         public Utf8Sink put(byte b) {
-            ensureCapacity(Byte.BYTES);
+            checkCapacity(Byte.BYTES);
             Unsafe.getUnsafe().putByte(sendBufferPtr++, b);
             return this;
         }
@@ -3075,7 +3076,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             if (len > maxBlobSizeOnQuery) {
                 setNullValue();
             } else {
-                ensureCapacity((int) (len + Integer.BYTES));
+                checkCapacity((int) (len + Integer.BYTES));
                 // when we reach here the "long" length would have to fit in response buffer
                 // if it was larger than integers it would never fit into integer-bound response buffer
                 putInt(sendBufferPtr, (int) len);
@@ -3088,7 +3089,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
 
         public void putIntDirect(int value) {
-            ensureCapacity(Integer.BYTES);
+            checkCapacity(Integer.BYTES);
             putIntUnsafe(0, value);
             sendBufferPtr += Integer.BYTES;
         }
@@ -3106,31 +3107,31 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
 
         public void putNetworkDouble(double value) {
-            ensureCapacity(Double.BYTES);
+            checkCapacity(Double.BYTES);
             Unsafe.getUnsafe().putDouble(sendBufferPtr, Double.longBitsToDouble(Numbers.bswap(Double.doubleToLongBits(value))));
             sendBufferPtr += Double.BYTES;
         }
 
         public void putNetworkFloat(float value) {
-            ensureCapacity(Float.BYTES);
+            checkCapacity(Float.BYTES);
             Unsafe.getUnsafe().putFloat(sendBufferPtr, Float.intBitsToFloat(Numbers.bswap(Float.floatToIntBits(value))));
             sendBufferPtr += Float.BYTES;
         }
 
         public void putNetworkInt(int value) {
-            ensureCapacity(Integer.BYTES);
+            checkCapacity(Integer.BYTES);
             putInt(sendBufferPtr, value);
             sendBufferPtr += Integer.BYTES;
         }
 
         public void putNetworkLong(long value) {
-            ensureCapacity(Long.BYTES);
+            checkCapacity(Long.BYTES);
             putLong(sendBufferPtr, value);
             sendBufferPtr += Long.BYTES;
         }
 
         public void putNetworkShort(short value) {
-            ensureCapacity(Short.BYTES);
+            checkCapacity(Short.BYTES);
             putShort(sendBufferPtr, value);
             sendBufferPtr += Short.BYTES;
         }
@@ -3141,7 +3142,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             bookmarkPtr = -1;
         }
 
-        private void ensureCapacity(long size) {
+        private void checkCapacity(long size) {
             if (sendBufferPtr + size < sendBufferLimit) {
                 return;
             }
@@ -3150,7 +3151,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
         void putZ(CharSequence value) {
             put(value);
-            ensureCapacity(Byte.BYTES);
+            checkCapacity(Byte.BYTES);
             Unsafe.getUnsafe().putByte(sendBufferPtr++, (byte) 0);
         }
 
@@ -3163,7 +3164,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
 
         long skip() {
-            ensureCapacity(Integer.BYTES);
+            checkCapacity(Integer.BYTES);
             long checkpoint = sendBufferPtr;
             sendBufferPtr += Integer.BYTES;
             return checkpoint;

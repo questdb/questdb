@@ -59,8 +59,6 @@ public interface ConfigurationOverrides {
 
     long getDataAppendPageSize();
 
-    CharSequence getDefaultMapType();
-
     int getDefaultTableWriteMode();
 
     Map<String, String> getEnv();
@@ -68,6 +66,8 @@ public interface ConfigurationOverrides {
     FactoryProvider getFactoryProvider();
 
     FilesFacade getFilesFacade();
+
+    long getGroupByAllocatorDefaultChunkSize();
 
     int getGroupByShardingThreshold();
 
@@ -209,8 +209,6 @@ public interface ConfigurationOverrides {
 
     void setDataAppendPageSize(long dataAppendPageSize);
 
-    void setDefaultMapType(CharSequence defaultMapType);
-
     void setDefaultTableWriteMode(int defaultTableWriteMode);
 
     void setEnv(Map<String, String> env);
@@ -218,6 +216,8 @@ public interface ConfigurationOverrides {
     void setFactoryProvider(FactoryProvider factoryProvider);
 
     void setFilesFacade(FilesFacade ff);
+
+    void setGroupByAllocatorDefaultChunkSize(long groupByAllocatorDefaultChunkSize);
 
     void setGroupByShardingThreshold(int groupByShardingThreshold);
 

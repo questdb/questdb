@@ -25,7 +25,6 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
-import io.questdb.MessageBusImpl;
 import io.questdb.Metrics;
 import io.questdb.cairo.frm.Frame;
 import io.questdb.cairo.frm.FrameAlgebra;
@@ -297,14 +296,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             this.ddlMem = Vm.getMARInstance(configuration.getCommitMode());
             this.metaMem = Vm.getMRInstance();
-            this.columnVersionWriter = openColumnVersionFile(configuration, path, rootLen);
-
             openMetaFile(ff, path, rootLen, metaMem);
             this.metadata = new TableWriterMetadata(this.tableToken, metaMem);
             this.partitionBy = metadata.getPartitionBy();
             this.txWriter = new TxWriter(ff, configuration).ofRW(path.concat(TXN_FILE_NAME).$(), partitionBy);
             this.txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount()).ofRW(path.trimTo(rootLen));
             path.trimTo(rootLen);
+            this.columnVersionWriter = openColumnVersionFile(configuration, path, rootLen, partitionBy != PartitionBy.NONE);
             this.o3ColumnOverrides = metadata.isWalEnabled() ? new ObjList<>() : null;
             // we have to do truncate repair at this stage of constructor
             // because this operation requires metadata
@@ -383,17 +381,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    @TestOnly
-    public TableWriter(CairoConfiguration configuration, TableToken tableToken, Metrics metrics) {
-        this(configuration, tableToken, null, new MessageBusImpl(configuration), true, DefaultLifecycleManager.INSTANCE, configuration.getRoot(), DefaultDdlListener.INSTANCE, NoOpDatabaseSnapshotAgent.INSTANCE, metrics);
-    }
-
-    @TestOnly
-    public TableWriter(CairoConfiguration configuration, TableToken tableToken, MessageBus messageBus, Metrics metrics) {
-        this(configuration, tableToken, null, messageBus, true, DefaultLifecycleManager.INSTANCE, configuration.getRoot(), DefaultDdlListener.INSTANCE, NoOpDatabaseSnapshotAgent.INSTANCE, metrics);
-    }
-
-    @TestOnly
+    // this method is public to allow testing
     public static void dispatchO3CallbackQueue0(RingQueue<O3CallbackTask> queue, int queuedCount, Sequence subSeq, SOUnboundedCountDownLatch o3DoneLatch) {
         while (!o3DoneLatch.done(queuedCount)) {
             long cursor = subSeq.next();
@@ -1516,7 +1504,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     public boolean inTransaction() {
-        return txWriter != null && (txWriter.inTransaction() || hasO3() || columnVersionWriter.hasChanges());
+        return txWriter != null && (txWriter.inTransaction() || hasO3() || (columnVersionWriter != null && columnVersionWriter.hasChanges()));
     }
 
     public boolean isDeduplicationEnabled() {
@@ -2446,10 +2434,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private static ColumnVersionWriter openColumnVersionFile(CairoConfiguration configuration, Path path, int rootLen) {
+    private static ColumnVersionWriter openColumnVersionFile(
+            CairoConfiguration configuration,
+            Path path,
+            int rootLen,
+            boolean partitioned
+    ) {
         path.concat(COLUMN_VERSION_FILE_NAME).$();
         try {
-            return new ColumnVersionWriter(configuration, path);
+            return new ColumnVersionWriter(configuration, path, partitioned);
         } finally {
             path.trimTo(rootLen);
         }
@@ -2464,16 +2457,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private static void removeFileAndOrLog(FilesFacade ff, LPSZ name) {
-        if (ff.exists(name)) {
-            if (ff.remove(name)) {
-                LOG.debug().$("removed [file=").$(name).I$();
-            } else {
-                LOG.error()
-                        .$("could not remove [errno=").$(ff.errno())
-                        .$(", file=").$(name)
-                        .I$();
-            }
+    private static void removeFileOrLog(FilesFacade ff, LPSZ name) {
+        if (!ff.removeQuiet(name)) {
+            LOG.error()
+                    .$("could not remove [errno=").$(ff.errno())
+                    .$(", file=").$(name)
+                    .I$();
         }
     }
 
@@ -2859,6 +2848,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (attachColumnVersionReader == null) {
                     attachColumnVersionReader = new ColumnVersionReader();
                 }
+                // attach partition is only possible on partitioned table
                 attachColumnVersionReader.ofRO(ff, detachedPath);
                 attachColumnVersionReader.readUnsafe();
             }
@@ -2907,9 +2897,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     if (!isIndexedNow && wasIndexedAtDetached) {
                         long columnNameTxn = attachColumnVersionReader.getColumnNameTxn(partitionTimestamp, colIdx);
                         keyFileName(detachedPath.trimTo(detachedPartitionRoot), columnName, columnNameTxn);
-                        removeFileAndOrLog(ff, detachedPath);
+                        removeFileOrLog(ff, detachedPath);
                         valueFileName(detachedPath.trimTo(detachedPartitionRoot), columnName, columnNameTxn);
-                        removeFileAndOrLog(ff, detachedPath);
+                        removeFileOrLog(ff, detachedPath);
                     } else if (isIndexedNow
                             && (!wasIndexedAtDetached || indexValueBlockCapacityNow != indexValueBlockCapacityDetached)) {
                         // Was not indexed before or value block capacity has changed
@@ -3427,7 +3417,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         int res = ff.copy(other, to);
         if (Os.isWindows() && res == -1 && ff.errno() == Files.WINDOWS_ERROR_FILE_EXISTS) {
             // Windows throws an error the destination file already exists, other platforms do not
-            if (!ff.remove(to)) {
+            if (!ff.removeQuiet(to)) {
                 // If file is open, return here so that errno is 5 in the error message
                 return -1;
             }
@@ -3474,7 +3464,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         .$("could not create index [name=").$(path)
                         .$(", errno=").$(e.getErrno())
                         .I$();
-                if (!ff.remove(path)) {
+                if (!ff.removeQuiet(path)) {
                     LOG.critical()
                             .$("could not remove '").$(path).$("'. Please remove MANUALLY.")
                             .$("[errno=").$(ff.errno())
@@ -3747,7 +3737,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return;
         }
         boolean asyncOnly = checkScoreboardHasReadersBeforeLastCommittedTxn();
-        purgingOperator.purge(path.trimTo(rootLen), tableToken, partitionBy, asyncOnly, metadata, getTruncateVersion(), getTxn());
+        purgingOperator.purge(
+                path.trimTo(rootLen),
+                tableToken,
+                partitionBy,
+                asyncOnly,
+                metadata,
+                getTruncateVersion(),
+                getTxn()
+        );
         purgingOperator.clear();
     }
 
@@ -5998,7 +5996,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                     o3PartitionUpdRemaining.incrementAndGet();
                     final O3Basket o3Basket = o3BasketPool.next();
-                    o3Basket.ensureCapacity(configuration, columnCount, indexCount);
+                    o3Basket.checkCapacity(configuration, columnCount, indexCount);
 
                     AtomicInteger columnCounter = o3ColumnCounters.next();
 
@@ -6612,10 +6610,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             setPathForPartition(path, partitionBy, partitionTimestamp, -1);
             int plen = path.size();
             long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
-            removeFileAndOrLog(ff, dFile(path, columnName, columnNameTxn));
-            removeFileAndOrLog(ff, iFile(path.trimTo(plen), columnName, columnNameTxn));
-            removeFileAndOrLog(ff, keyFileName(path.trimTo(plen), columnName, columnNameTxn));
-            removeFileAndOrLog(ff, valueFileName(path.trimTo(plen), columnName, columnNameTxn));
+            removeFileOrLog(ff, dFile(path, columnName, columnNameTxn));
+            removeFileOrLog(ff, iFile(path.trimTo(plen), columnName, columnNameTxn));
+            removeFileOrLog(ff, keyFileName(path.trimTo(plen), columnName, columnNameTxn));
+            removeFileOrLog(ff, valueFileName(path.trimTo(plen), columnName, columnNameTxn));
             path.trimTo(rootLen);
         } else {
             LOG.critical()
@@ -6677,8 +6675,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         setPathForPartition(path, partitionBy, partitionTimestamp, partitionNameTxn);
         int plen = path.size();
         long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
-        removeFileAndOrLog(ff, keyFileName(path.trimTo(plen), columnName, columnNameTxn));
-        removeFileAndOrLog(ff, valueFileName(path.trimTo(plen), columnName, columnNameTxn));
+        removeFileOrLog(ff, keyFileName(path.trimTo(plen), columnName, columnNameTxn));
+        removeFileOrLog(ff, valueFileName(path.trimTo(plen), columnName, columnNameTxn));
         path.trimTo(rootLen);
     }
 
@@ -6689,13 +6687,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void removeMetaFile() {
         try {
             path.concat(META_FILE_NAME).$();
-            if (ff.exists(path) && !ff.remove(path)) {
+            if (!ff.removeQuiet(path)) {
                 // On Windows opened file cannot be removed
                 // but can be renamed
                 other.concat(META_FILE_NAME).put('.').put(configuration.getMicrosecondClock().getTicks()).$();
                 if (ff.rename(path, other) != FILES_RENAME_OK) {
-                    LOG.error().$("could not remove [path=").$(path).$(']').$();
-                    throw CairoException.critical(ff.errno()).put("Recovery failed. Cannot remove: ").put(path);
+                    LOG.error()
+                            .$("could not rename [from=").$(path)
+                            .$(", to=").$(other)
+                            .I$();
+                    throw CairoException.critical(ff.errno()).put("Recovery failed. Could not rename: ").put(path);
                 }
             }
         } finally {
@@ -6752,10 +6753,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void removeSymbolMapFilesQuiet(CharSequence name, long columnNamTxn) {
         try {
-            removeFileAndOrLog(ff, offsetFileName(path.trimTo(rootLen), name, columnNamTxn));
-            removeFileAndOrLog(ff, charFileName(path.trimTo(rootLen), name, columnNamTxn));
-            removeFileAndOrLog(ff, keyFileName(path.trimTo(rootLen), name, columnNamTxn));
-            removeFileAndOrLog(ff, valueFileName(path.trimTo(rootLen), name, columnNamTxn));
+            removeFileOrLog(ff, offsetFileName(path.trimTo(rootLen), name, columnNamTxn));
+            removeFileOrLog(ff, charFileName(path.trimTo(rootLen), name, columnNamTxn));
+            removeFileOrLog(ff, keyFileName(path.trimTo(rootLen), name, columnNamTxn));
+            removeFileOrLog(ff, valueFileName(path.trimTo(rootLen), name, columnNamTxn));
         } finally {
             path.trimTo(rootLen);
         }
@@ -6789,7 +6790,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     other.$();
                 }
 
-                if (ff.exists(other) && !ff.remove(other)) {
+                if (!ff.removeQuiet(other)) {
                     LOG.info().$("could not remove target of rename '").$(path).$("' to '").$(other).$(" [errno=").$(ff.errno()).I$();
                     index++;
                     continue;
@@ -6967,9 +6968,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             if (ff.exists(path)) {
                 LOG.info().$("Repairing metadata from: ").$(path).$();
-                if (ff.exists(other.concat(META_FILE_NAME).$()) && !ff.remove(other)) {
-                    throw CairoException.critical(ff.errno()).put("Repair failed. Cannot replace ").put(other);
-                }
+                ff.remove(other.concat(META_FILE_NAME).$());
 
                 if (ff.rename(path, other) != FILES_RENAME_OK) {
                     throw CairoException.critical(ff.errno()).put("Repair failed. Cannot rename ").put(path).put(" -> ").put(other);

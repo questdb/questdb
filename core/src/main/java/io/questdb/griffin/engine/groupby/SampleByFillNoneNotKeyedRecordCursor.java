@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.groupby;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.ObjList;
@@ -32,6 +33,7 @@ class SampleByFillNoneNotKeyedRecordCursor extends AbstractVirtualRecordSampleBy
     private final SimpleMapValue simpleMapValue;
 
     public SampleByFillNoneNotKeyedRecordCursor(
+            CairoConfiguration configuration,
             SimpleMapValue simpleMapValue,
             ObjList<GroupByFunction> groupByFunctions,
             GroupByFunctionsUpdater groupByFunctionsUpdater,
@@ -44,6 +46,7 @@ class SampleByFillNoneNotKeyedRecordCursor extends AbstractVirtualRecordSampleBy
             int offsetFuncPos
     ) {
         super(
+                configuration,
                 recordFunctions,
                 timestampIndex,
                 timestampSampler,

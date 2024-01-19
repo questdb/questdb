@@ -27,16 +27,16 @@ package io.questdb.cutlass.text.types;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cutlass.text.Utf8Exception;
-import io.questdb.std.str.DirectCharSink;
+import io.questdb.std.str.DirectUtf16Sink;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8s;
 
 public class SymbolAdapter extends AbstractTypeAdapter {
 
     private final boolean indexed;
-    private final DirectCharSink utf16Sink;
+    private final DirectUtf16Sink utf16Sink;
 
-    public SymbolAdapter(DirectCharSink utf16Sink, boolean indexed) {
+    public SymbolAdapter(DirectUtf16Sink utf16Sink, boolean indexed) {
         this.utf16Sink = utf16Sink;
         this.indexed = indexed;
     }
@@ -63,7 +63,7 @@ public class SymbolAdapter extends AbstractTypeAdapter {
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value, DirectCharSink utf16Sink) throws Exception {
+    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value, DirectUtf16Sink utf16Sink) throws Exception {
         utf16Sink.clear();
         if (!Utf8s.utf8ToUtf16EscConsecutiveQuotes(value.lo(), value.hi(), utf16Sink)) {
             throw Utf8Exception.INSTANCE;

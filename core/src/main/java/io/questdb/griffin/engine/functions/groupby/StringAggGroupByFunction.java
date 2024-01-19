@@ -35,7 +35,7 @@ import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.DirectCharSink;
+import io.questdb.std.str.DirectUtf16Sink;
 
 class StringAggGroupByFunction extends StrFunction implements UnaryFunction, GroupByFunction {
     // Cleared function retains up to INITIAL_SINK_CAPACITY * LIST_CLEAR_THRESHOLD bytes.
@@ -43,7 +43,7 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
     private static final int LIST_CLEAR_THRESHOLD = 64;
     private final Function arg;
     private final char delimiter;
-    private final ObjList<DirectCharSink> sinks = new ObjList<>();
+    private final ObjList<DirectUtf16Sink> sinks = new ObjList<>();
     private int sinkIndex = 0;
     private int valueIndex;
 
@@ -63,7 +63,7 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
         }
         // Reset capacity on the remaining ones.
         for (int i = 0, n = sinks.size(); i < n; i++) {
-            DirectCharSink sink = sinks.getQuick(i);
+            DirectUtf16Sink sink = sinks.getQuick(i);
             if (sink != null) {
                 sink.resetCapacity();
             }
@@ -78,9 +78,9 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        final DirectCharSink sink;
+        final DirectUtf16Sink sink;
         if (sinks.size() <= sinkIndex) {
-            sinks.extendAndSet(sinkIndex, sink = new DirectCharSink(INITIAL_SINK_CAPACITY));
+            sinks.extendAndSet(sinkIndex, sink = new DirectUtf16Sink(INITIAL_SINK_CAPACITY));
         } else {
             sink = sinks.getQuick(sinkIndex);
             sink.clear();
@@ -98,7 +98,7 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        final DirectCharSink sink = sinks.getQuick(mapValue.getInt(valueIndex));
+        final DirectUtf16Sink sink = sinks.getQuick(mapValue.getInt(valueIndex));
         final CharSequence str = arg.getStr(record);
         if (str != null) {
             final boolean nullValue = mapValue.getBool(valueIndex + 1);
@@ -130,7 +130,17 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
     }
 
     @Override
+    public int getValueIndex() {
+        return valueIndex;
+    }
+
+    @Override
     public boolean isConstant() {
+        return false;
+    }
+
+    @Override
+    public boolean isParallelismSupported() {
         return false;
     }
 
@@ -149,6 +159,11 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putBool(valueIndex + 1, true);
+    }
+
+    @Override
+    public void setValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
     }
 
     @Override

@@ -48,7 +48,6 @@ import org.junit.*;
 
 import java.io.File;
 import java.util.Arrays;
-import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
@@ -3325,15 +3324,16 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "select id " +
                         "from test " +
                         "group by id " +
+                        "order by id " +
                         "limit 10")) {
 
             String expected = "id\n" +
-                    "0010cde8-12ce-40ee-8010-a928bb8b9650\n" +
                     "9f9b2131-d49f-4d1d-ab81-39815c50d341\n" +
+                    "0010cde8-12ce-40ee-8010-a928bb8b9650\n" +
                     "7bcd48d8-c77a-4655-b2a2-15ba0462ad15\n";
 
-            assertCursor(expected, factory, true, false, false);
-            assertCursor(expected, factory, true, false, false);
+            assertCursor(expected, factory, true, true, false);
+            assertCursor(expected, factory, true, true, false);
         }
     }
 
@@ -5228,36 +5228,36 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testSelectConcurrentDDL() throws Exception {
-        engine.ddl("create table x (a int, b int, c int)", sqlExecutionContext);
 
-        CyclicBarrier barrier = new CyclicBarrier(2);
+        // On Windows CI this test can fail with Metadata read timeout with small timeout.
+        node1.getConfigurationOverrides().setSpinLockTimeout(30000);
+        ddl("create table x (a int, b int, c int)");
+
+        final AtomicBoolean ddlError = new AtomicBoolean(false);
+        final CyclicBarrier barrier = new CyclicBarrier(2);
         new Thread(() -> {
             try {
                 while (barrier.getNumberWaiting() == 0) {
-                    ddl("alter table x add column d int", sqlExecutionContext);
-                    ddl("alter table x drop column d", sqlExecutionContext);
+                    ddl("alter table x add column d int");
+                    ddl("alter table x drop column d");
                 }
             } catch (SqlException e) {
+                ddlError.set(true);
                 e.printStackTrace();
             } finally {
-                try {
-                    barrier.await();
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    e.printStackTrace();
-                } catch (BrokenBarrierException e) {
-                    e.printStackTrace();
-                }
+                TestUtils.await(barrier);
             }
         }).start();
 
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+        try {
             for (int i = 0; i < 20_000; i++) {
-                Misc.freeIfCloseable(compiler.compile("select * from x", sqlExecutionContext).getRecordCursorFactory());
+                Misc.freeIfCloseable(select("select * from x"));
             }
         } finally {
             barrier.await();
         }
+
+        Assert.assertFalse(ddlError.get());
     }
 
     @Test

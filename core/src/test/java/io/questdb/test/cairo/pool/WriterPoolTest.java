@@ -199,7 +199,7 @@ public class WriterPoolTest extends AbstractCairoTest {
             // check that we can't create standalone writer either
             try {
                 //noinspection resource
-                newTableWriter(configuration, "z", metrics);
+                newOffPoolWriter(configuration, "z", metrics);
                 Assert.fail();
             } catch (CairoException ignored) {
             }
@@ -207,7 +207,7 @@ public class WriterPoolTest extends AbstractCairoTest {
             pool.unlock(zTableToken);
 
             // check if we can create standalone writer after pool unlocked it
-            writer = newTableWriter(configuration, "z", metrics);
+            writer = newOffPoolWriter(configuration, "z", metrics);
             Assert.assertNotNull(writer);
             writer.close();
 
@@ -430,7 +430,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                 final CountDownLatch done = new CountDownLatch(1);
                 final AtomicBoolean result = new AtomicBoolean();
 
-                // have new thread try to allocated this writer
+                // have new thread try to allocate this writer
                 new Thread(() -> {
                     try (TableWriter ignored = pool.get(xTableToken, "testing")) {
                         result.set(false);
@@ -670,7 +670,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                     DefaultLifecycleManager.INSTANCE,
                     configuration.getRoot(),
                     engine.getDdlListener(tableToken),
-                    NoOpDatabaseSnapshotAgent.INSTANCE,
+                    () -> false,
                     metrics
             );
             for (int i = 0; i < 100; i++) {
@@ -857,7 +857,7 @@ public class WriterPoolTest extends AbstractCairoTest {
 
             pool.close();
 
-            TableWriter writer = newTableWriter(configuration, "z", metrics);
+            TableWriter writer = newOffPoolWriter(configuration, "z", metrics);
             Assert.assertNotNull(writer);
             writer.close();
         });

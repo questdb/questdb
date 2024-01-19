@@ -72,8 +72,23 @@ public class MaxFloatGroupByFunction extends FloatFunction implements GroupByFun
     }
 
     @Override
+    public int getValueIndex() {
+        return valueIndex;
+    }
+
+    @Override
+    public boolean isConstant() {
+        return false;
+    }
+
+    @Override
     public boolean isParallelismSupported() {
-        return arg.isReadThreadSafe();
+        return true;
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return UnaryFunction.super.isReadThreadSafe();
     }
 
     @Override
@@ -99,5 +114,10 @@ public class MaxFloatGroupByFunction extends FloatFunction implements GroupByFun
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putFloat(valueIndex, Float.NaN);
+    }
+
+    @Override
+    public void setValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
     }
 }

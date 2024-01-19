@@ -124,6 +124,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         this.queryExecutors.extendAndSet(CompiledQuery.TABLE_SET_TYPE, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.CREATE_USER, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.ALTER_USER, sendConfirmation);
+        this.queryExecutors.extendAndSet(CompiledQuery.CANCEL_QUERY, sendConfirmation);
         // Query types start with 1 instead of 0, so we have to add 1 to the expected size.
         assert this.queryExecutors.size() == (CompiledQuery.TYPES_COUNT + 1);
         this.sqlExecutionContext = sqlExecutionContext;
@@ -187,7 +188,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                 compileAndExecuteQuery(state);
             }
         } catch (SqlException | ImplicitCastException e) {
-            sqlError(context.getChunkedResponseSocket(), state, e, configuration.getKeepAliveHeader());
+            sqlError(context.getChunkedResponse(), state, e, configuration.getKeepAliveHeader());
             readyForNextRequest(context);
         } catch (EntryUnavailableException e) {
             LOG.info().$("[fd=").$(context.getFd()).$("] resource busy, will retry").$();
@@ -196,7 +197,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             LOG.info().$("[fd=").$(context.getFd()).$("] data is in cold storage, will retry").$();
             throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
         } catch (CairoException e) {
-            internalError(context.getChunkedResponseSocket(), context.getLastRequestBytesSent(), e.getFlyweightMessage(),
+            internalError(context.getChunkedResponse(), context.getLastRequestBytesSent(), e.getFlyweightMessage(),
                     e.isAuthorizationError() ? 403 : 400, e, state, context.getMetrics()
             );
             readyForNextRequest(context);
@@ -207,7 +208,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             // re-throw the exception
             throw e;
         } catch (Throwable e) {
-            internalError(context.getChunkedResponseSocket(), context.getLastRequestBytesSent(), e.getMessage(),
+            internalError(context.getChunkedResponse(), context.getLastRequestBytesSent(), e.getMessage(),
                     500, e, state, context.getMetrics()
             );
             readyForNextRequest(context);
@@ -281,7 +282,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             try {
                 doResumeSend(state, context, sqlExecutionContext);
             } catch (CairoError | CairoException e) {
-                internalError(context.getChunkedResponseSocket(), context.getLastRequestBytesSent(), e.getFlyweightMessage(),
+                internalError(context.getChunkedResponse(), context.getLastRequestBytesSent(), e.getFlyweightMessage(),
                         400, e, state, context.getMetrics()
                 );
             }
@@ -303,17 +304,17 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException {
         LOG.debug().$("resume [fd=").$(context.getFd()).I$();
 
-        final HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
+        final HttpChunkedResponse response = context.getChunkedResponse();
         while (true) {
             try {
-                state.resume(socket);
+                state.resume(response);
                 break;
             } catch (DataUnavailableException e) {
-                socket.resetToBookmark();
+                response.resetToBookmark();
                 throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
             } catch (NoSpaceLeftInResponseBufferException ignored) {
-                if (socket.resetToBookmark()) {
-                    socket.sendChunk(false);
+                if (response.resetToBookmark()) {
+                    response.sendChunk(false);
                 } else {
                     // what we have here is out unit of data, column value or query
                     // is larger that response content buffer
@@ -371,12 +372,12 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             CharSequence keepAliveHeader
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         final HttpConnectionContext context = state.getHttpConnectionContext();
-        final HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
-        header(socket, context, keepAliveHeader, 200);
-        socket.put('{')
+        final HttpChunkedResponse response = context.getChunkedResponse();
+        header(response, context, keepAliveHeader, 200);
+        response.put('{')
                 .putQuoted("ddl").put(':').putQuoted("OK")
                 .put('}');
-        socket.sendChunk(true);
+        response.sendChunk(true);
         readyForNextRequest(context);
     }
 
@@ -386,25 +387,25 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             long updateRecords
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         final HttpConnectionContext context = state.getHttpConnectionContext();
-        final HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
-        header(socket, context, keepAliveHeader, 200);
-        socket.put('{')
+        final HttpChunkedResponse response = context.getChunkedResponse();
+        header(response, context, keepAliveHeader, 200);
+        response.put('{')
                 .putQuoted("ddl").put(':').putQuoted("OK").put(',')
                 .putQuoted("updated").put(':').put(updateRecords)
                 .put('}');
-        socket.sendChunk(true);
+        response.sendChunk(true);
         readyForNextRequest(context);
     }
 
     private static void sqlError(
-            HttpChunkedResponseSocket socket,
+            HttpChunkedResponse response,
             JsonQueryProcessorState state,
             FlyweightMessageContainer container,
             CharSequence keepAliveHeader
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         state.logSqlError(container);
         sendException(
-                socket,
+                response,
                 state.getHttpConnectionContext(),
                 container.getPosition(),
                 container.getFlyweightMessage(),
@@ -589,6 +590,12 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             final long updatedCount = fut.getAffectedRowsCount();
             metrics.jsonQuery().markComplete();
             sendUpdateConfirmation(state, keepAliveHeader, updatedCount);
+        } catch (CairoException e) {
+            // close e.g. when query has been cancelled
+            if (e.isInterruption()) {
+                cq.getUpdateOperation().close();
+            }
+            throw e;
         } finally {
             if (!isAsyncWait && fut != null) {
                 fut.close();
@@ -601,7 +608,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     private void internalError(
-            HttpChunkedResponseSocket socket,
+            HttpChunkedResponse response,
             long bytesSent,
             CharSequence message,
             int code,
@@ -620,7 +627,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             position = ((CairoException) e).getPosition();
         }
 
-        sendException(socket, state.getHttpConnectionContext(), position, message, state.getQuery(), configuration.getKeepAliveHeader(), code);
+        sendException(response, state.getHttpConnectionContext(), position, message, state.getQuery(), configuration.getKeepAliveHeader(), code);
     }
 
     private boolean parseUrl(
@@ -633,7 +640,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         final DirectUtf8Sequence query = header.getUrlParam(URL_PARAM_QUERY);
         if (query == null || query.size() == 0) {
             state.info().$("Empty query header received. Sending empty reply.").$();
-            sendException(context.getChunkedResponseSocket(), context, 0, "No query text", query, keepAliveHeader, 400);
+            sendBadRequestResponse(context.getChunkedResponse(), context, "No query text", query, keepAliveHeader);
             return false;
         }
 
@@ -673,7 +680,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             state.configure(header, query, skip, stop);
         } catch (Utf8Exception e) {
             state.info().$("Bad UTF8 encoding").$();
-            sendException(context.getChunkedResponseSocket(), context, 0, "Bad UTF8 encoding in query text", query, keepAliveHeader, 400);
+            sendBadRequestResponse(context.getChunkedResponse(), context, "Bad UTF8 encoding in query text", query, keepAliveHeader);
             return false;
         }
         return true;
@@ -724,19 +731,19 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     protected static void header(
-            HttpChunkedResponseSocket socket,
+            HttpChunkedResponse response,
             HttpConnectionContext context,
             CharSequence keepAliveHeader,
             int statusCode
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        socket.status(statusCode, HttpConstants.CONTENT_TYPE_JSON);
-        socket.headers().setKeepAlive(keepAliveHeader);
-        context.getCookieHandler().setCookie(socket.headers(), context.getSecurityContext());
-        socket.sendHeader();
+        response.status(statusCode, HttpConstants.CONTENT_TYPE_JSON);
+        response.headers().setKeepAlive(keepAliveHeader);
+        context.getCookieHandler().setCookie(response.headers(), context.getSecurityContext());
+        response.sendHeader();
     }
 
     static void sendException(
-            HttpChunkedResponseSocket socket,
+            HttpChunkedResponse response,
             HttpConnectionContext context,
             int position,
             CharSequence message,
@@ -744,21 +751,19 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             CharSequence keepAliveHeader,
             int code
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        header(socket, context, keepAliveHeader, code);
-        JsonQueryProcessorState.prepareExceptionJson(socket, position, message, query);
+        header(response, context, keepAliveHeader, code);
+        JsonQueryProcessorState.prepareExceptionJson(response, position, message, query);
     }
 
-    static void sendException(
-            HttpChunkedResponseSocket socket,
+    static void sendBadRequestResponse(
+            HttpChunkedResponse response,
             HttpConnectionContext context,
-            int position,
             CharSequence message,
             DirectUtf8Sequence query,
-            CharSequence keepAliveHeader,
-            int code
+            CharSequence keepAliveHeader
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        header(socket, context, keepAliveHeader, code);
-        JsonQueryProcessorState.prepareExceptionJson(socket, position, message, query);
+        header(response, context, keepAliveHeader, 400);
+        JsonQueryProcessorState.prepareBadRequestResponse(response, message, query);
     }
 
     @FunctionalInterface

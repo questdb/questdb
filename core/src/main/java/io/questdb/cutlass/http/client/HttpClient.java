@@ -26,6 +26,7 @@ package io.questdb.cutlass.http.client;
 
 import io.questdb.HttpClientConfiguration;
 import io.questdb.cutlass.http.HttpHeaderParser;
+import io.questdb.cutlass.http.ex.BufferOverflowException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.IOOperation;
@@ -103,6 +104,13 @@ public abstract class HttpClient implements QuietCloseable {
             throw new HttpClientException("peer disconnect [errno=").errno(nf.errno()).put(']');
         }
         return byteCount;
+    }
+
+    private void checkCapacity(long capacity) {
+        final long requiredSize = ptr - bufLo + capacity;
+        if (requiredSize > bufferSize) {
+            throw BufferOverflowException.INSTANCE;
+        }
     }
 
     private int recvOrDie(long addr, int timeout) {
@@ -370,7 +378,7 @@ public abstract class HttpClient implements QuietCloseable {
         }
 
         @Override
-        public Request put(long lo, long hi) {
+        public Request putUtf8(long lo, long hi) {
             final long size = hi - lo;
             if (ptr + size >= bufHi) {
                 doSend(bufLo, ptr);

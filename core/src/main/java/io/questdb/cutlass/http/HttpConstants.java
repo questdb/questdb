@@ -72,6 +72,7 @@ public final class HttpConstants {
     public static final Utf8String URL_PARAM_TABLE_NAME = new Utf8String("tableName");
     public static final Utf8String URL_PARAM_TIMESTAMP = new Utf8String("timestamp");
     public static final Utf8String URL_PARAM_TIMINGS = new Utf8String("timings");
+    public static final Utf8String URL_PARAM_CREATE = new Utf8String("create");
     public static final Utf8String URL_PARAM_TRUNCATE = new Utf8String("truncate");
     public static final Utf8String URL_PARAM_WAL = new Utf8String("wal");
 

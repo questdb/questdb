@@ -40,7 +40,7 @@ import io.questdb.mp.Sequence;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
-import io.questdb.std.str.DirectCharSink;
+import io.questdb.std.str.DirectUtf16Sink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
@@ -102,7 +102,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private final ObjectPool<TimestampToDateAdapter> timestampToDateAdapterPool;
     private final Path tmpPath;
     private final TypeManager typeManager;
-    private final DirectCharSink utf8Sink;
+    private final DirectUtf16Sink utf8Sink;
     private final int workerCount;
     private int atomicity;
     private ExecutionCircuitBreaker circuitBreaker;
@@ -174,7 +174,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         this.inputWorkRoot = configuration.getSqlCopyInputWorkRoot();
 
         TextConfiguration textConfiguration = configuration.getTextConfiguration();
-        this.utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkSize());
+        this.utf8Sink = new DirectUtf16Sink(textConfiguration.getUtf8SinkSize());
         this.typeManager = new TypeManager(textConfiguration, utf8Sink);
         this.textDelimiterScanner = new TextDelimiterScanner(textConfiguration);
         this.textStructureAnalyser = new TextStructureAnalyser(typeManager, textConfiguration, schema);
@@ -816,7 +816,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         // remap index is only needed to adjust names and types
         // workers will import data into temp tables without remapping
         final IntList remapIndex = new IntList();
-        remapIndex.ensureCapacity(types.size());
+        remapIndex.setPos(types.size());
         for (int i = 0, n = types.size(); i < n; i++) {
             final int columnIndex = metadata.getColumnIndexQuiet(names.getQuick(i));
             final int idx = columnIndex > -1 ? columnIndex : i; // check for strict match ?

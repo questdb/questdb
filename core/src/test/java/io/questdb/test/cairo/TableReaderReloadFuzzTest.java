@@ -83,14 +83,14 @@ public class TableReaderReloadFuzzTest extends AbstractCairoTest {
             CreateTableTestUtils.create(model);
         }
 
-        try (TableWriter writer = newTableWriter(configuration, tableName, metrics)) {
+        try (TableWriter writer = newOffPoolWriter(configuration, tableName, metrics)) {
             TableWriter.Row row = writer.newRow(0L);
             row.append();
             writer.commit();
 
             try (
                     SqlCompiler compiler = engine.getSqlCompiler();
-                    TableReader reader = newTableReader(configuration, tableName)
+                    TableReader reader = newOffPoolReader(configuration, tableName)
             ) {
                 TestUtils.printSql(compiler, sqlExecutionContext, tableName, sink);
 
@@ -219,8 +219,8 @@ public class TableReaderReloadFuzzTest extends AbstractCairoTest {
 
     private void testFuzzReload(int numOfReloads, int addFactor, int removeFactor, int renameFactor) {
         createTable();
-        try (TableWriter writer = newTableWriter(configuration, "all", metrics)) {
-            try (TableReader reader = newTableReader(configuration, "all")) {
+        try (TableWriter writer = newOffPoolWriter(configuration, "all", metrics)) {
+            try (TableReader reader = newOffPoolReader(configuration, "all")) {
                 for (int i = 0; i < numOfReloads; i++) {
                     ingest(writer);
                     changeTableStructure(addFactor, removeFactor, renameFactor, writer);

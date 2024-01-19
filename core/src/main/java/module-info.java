@@ -114,6 +114,10 @@ open module io.questdb {
     exports io.questdb.std.histogram.org.HdrHistogram.packedarray;
 
     provides FunctionFactory with
+            // query activity functions
+            io.questdb.griffin.engine.functions.activity.CancelQueryFunctionFactory,
+            io.questdb.griffin.engine.functions.activity.QueryActivityFunctionFactory,
+
             // test functions
             io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFactory,
             io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory,
@@ -122,6 +126,9 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.test.TestNPEFactory,
             io.questdb.griffin.engine.functions.test.TestSumTDoubleGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.test.TestSumStringGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.test.TestSleepFunctionFactory,
+
+            // bool
             io.questdb.griffin.engine.functions.bool.OrFunctionFactory,
             io.questdb.griffin.engine.functions.bool.AndFunctionFactory,
             io.questdb.griffin.engine.functions.bool.NotFunctionFactory,

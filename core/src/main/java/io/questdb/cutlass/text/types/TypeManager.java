@@ -30,7 +30,7 @@ import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
-import io.questdb.std.str.DirectCharSink;
+import io.questdb.std.str.DirectUtf16Sink;
 import org.jetbrains.annotations.TestOnly;
 
 public class TypeManager implements Mutable {
@@ -57,7 +57,7 @@ public class TypeManager implements Mutable {
 
     public TypeManager(
             TextConfiguration configuration,
-            DirectCharSink utf16Sink
+            DirectUtf16Sink utf16Sink
     ) {
         this.dateAdapterPool = new ObjectPool<>(() -> new DateUtf8Adapter(utf16Sink), configuration.getDateAdapterPoolCapacity());
         this.timestampUtf8AdapterPool = new ObjectPool<>(() -> new TimestampUtf8Adapter(utf16Sink), configuration.getTimestampAdapterPoolCapacity());

@@ -25,7 +25,7 @@
 package io.questdb.metrics;
 
 import io.questdb.std.CharSequenceHashSet;
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.BorrowableUtf8Sink;
 import org.jetbrains.annotations.NotNull;
 
@@ -74,7 +74,7 @@ public class GCMetrics implements Scrapable {
         appendCounter(sink, unknownTime, "jvm_unknown_gc_time");
     }
 
-    private void appendCounter(CharSinkBase<?> sink, long value, String name) {
+    private void appendCounter(CharSink<?> sink, long value, String name) {
         PrometheusFormatUtils.appendCounterType(name, sink);
         PrometheusFormatUtils.appendCounterNamePrefix(name, sink);
         PrometheusFormatUtils.appendSampleLineSuffix(sink, value);

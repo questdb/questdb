@@ -29,7 +29,7 @@ import io.questdb.cairo.ImplicitCastException;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.fastdouble.FastDoubleParser;
 import io.questdb.std.fastdouble.FastFloatParser;
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
@@ -76,7 +76,7 @@ public final class Numbers {
     private Numbers() {
     }
 
-    public static void append(CharSinkBase<?> sink, final float value, int scale) {
+    public static void append(CharSink<?> sink, final float value, int scale) {
         float f = value;
         if (f == Float.POSITIVE_INFINITY) {
             sink.putAscii("Infinity");
@@ -122,7 +122,7 @@ public final class Numbers {
         }
     }
 
-    public static void append(CharSinkBase<?> sink, final int value) {
+    public static void append(CharSink<?> sink, final int value) {
         int i = value;
         if (i < 0) {
             if (i == Integer.MIN_VALUE) {
@@ -156,11 +156,11 @@ public final class Numbers {
         }
     }
 
-    public static void append(CharSinkBase<?> sink, final long value) {
+    public static void append(CharSink<?> sink, final long value) {
         append(sink, value, true);
     }
 
-    public static void append(CharSinkBase<?> sink, final long value, final boolean checkNaN) {
+    public static void append(CharSink<?> sink, final long value, final boolean checkNaN) {
         long i = value;
         if (i < 0) {
             if (i == Long.MIN_VALUE) {
@@ -217,11 +217,11 @@ public final class Numbers {
         }
     }
 
-    public static void append(CharSinkBase<?> sink, double value) {
+    public static void append(CharSink<?> sink, double value) {
         append(sink, value, MAX_SCALE);
     }
 
-    public static void append(CharSinkBase<?> sink, double value, int scale) {
+    public static void append(CharSink<?> sink, double value, int scale) {
         final char[] digits = tlDoubleDigitsBuffer.get();
         final long doubleBits = Double.doubleToRawLongBits(value);
         boolean negative = (doubleBits & SIGN_BIT_MASK) != 0L;
@@ -266,7 +266,7 @@ public final class Numbers {
         }
     }
 
-    public static void appendHex(CharSinkBase<?> sink, final int value) {
+    public static void appendHex(CharSink<?> sink, final int value) {
         int i = value;
         if (i < 0) {
             if (i == Integer.MIN_VALUE) {
@@ -328,7 +328,7 @@ public final class Numbers {
         }
     }
 
-    public static void appendHex(CharSinkBase<?> sink, final long value, boolean pad) {
+    public static void appendHex(CharSink<?> sink, final long value, boolean pad) {
         if (value == Integer.MIN_VALUE) {
             sink.putAscii("NaN");
             return;
@@ -339,13 +339,13 @@ public final class Numbers {
     }
 
     /**
-     * Append a long value to a CharSinkBase in hex format.
+     * Append a long value to a CharSink in hex format.
      *
-     * @param sink       the CharSinkBase to append to
+     * @param sink       the CharSink to append to
      * @param value      the value to append
      * @param padToBytes if non-zero, pad the output to the specified number of bytes
      */
-    public static void appendHexPadded(CharSinkBase<?> sink, long value, int padToBytes) {
+    public static void appendHexPadded(CharSink<?> sink, long value, int padToBytes) {
         assert padToBytes >= 0 && padToBytes <= 8;
         // This code might be unclear, so here are some hints:
         // This method uses longHexAppender() and longHexAppender() is always padding to a whole byte. It never prints
@@ -375,7 +375,7 @@ public final class Numbers {
         longHexAppender[bit].append(sink, value);
     }
 
-    public static void appendHexPadded(CharSinkBase<?> sink, final int value) {
+    public static void appendHexPadded(CharSink<?> sink, final int value) {
         int i = value;
         if (i < 0) {
             if (i == Integer.MIN_VALUE) {
@@ -461,7 +461,7 @@ public final class Numbers {
         }
     }
 
-    public static void appendLong256(long a, long b, long c, long d, CharSinkBase<?> sink) {
+    public static void appendLong256(long a, long b, long c, long d, CharSink<?> sink) {
         if (a == Numbers.LONG_NaN && b == Numbers.LONG_NaN && c == Numbers.LONG_NaN && d == Numbers.LONG_NaN) {
             return;
         }
@@ -484,7 +484,7 @@ public final class Numbers {
         appendHex(sink, a, false);
     }
 
-    public static void appendUuid(long lo, long hi, CharSinkBase<?> sink) {
+    public static void appendUuid(long lo, long hi, CharSink<?> sink) {
         appendHexPadded(sink, (hi >> 32) & 0xFFFFFFFFL, 4);
         sink.putAscii('-');
         appendHexPadded(sink, (hi >> 16) & 0xFFFF, 2);
@@ -715,7 +715,7 @@ public final class Numbers {
         return Float.NaN;
     }
 
-    public static void intToIPv4Sink(CharSinkBase<?> sink, int value) {
+    public static void intToIPv4Sink(CharSink<?> sink, int value) {
         // NULL handling should be done outside, null here will be printed as 0.0.0.0
         append(sink, (value >> 24) & 0xff);
         sink.putAscii('.');
@@ -1668,7 +1668,7 @@ public final class Numbers {
             int significantBitCount,
             boolean negative,
             char[] digits,
-            CharSinkBase<?> out,
+            CharSink<?> out,
             int outScale
     ) {
         assert fractionBits > 0L;
@@ -1942,7 +1942,7 @@ public final class Numbers {
             int nDigits,
             boolean isNegative,
             int decExp,
-            CharSinkBase<?> sink,
+            CharSink<?> sink,
             int outScale
     ) {
         assert nDigits <= MAX_SCALE : nDigits;
@@ -2005,7 +2005,7 @@ public final class Numbers {
         }
     }
 
-    private static void appendInt10(CharSinkBase<?> sink, int i) {
+    private static void appendInt10(CharSink<?> sink, int i) {
         int c;
         sink.putAscii((char) ('0' + i / 1000000000));
         sink.putAscii((char) ('0' + (c = i % 1000000000) / 100000000));
@@ -2019,19 +2019,19 @@ public final class Numbers {
         sink.putAscii((char) ('0' + (c % 10)));
     }
 
-    private static void appendInt2(CharSinkBase<?> sink, int i) {
+    private static void appendInt2(CharSink<?> sink, int i) {
         sink.putAscii((char) ('0' + i / 10));
         sink.putAscii((char) ('0' + i % 10));
     }
 
-    private static void appendInt3(CharSinkBase<?> sink, int i) {
+    private static void appendInt3(CharSink<?> sink, int i) {
         int c;
         sink.putAscii((char) ('0' + i / 100));
         sink.putAscii((char) ('0' + (c = i % 100) / 10));
         sink.putAscii((char) ('0' + (c % 10)));
     }
 
-    private static void appendInt4(CharSinkBase<?> sink, int i) {
+    private static void appendInt4(CharSink<?> sink, int i) {
         int c;
         sink.putAscii((char) ('0' + i / 1000));
         sink.putAscii((char) ('0' + (c = i % 1000) / 100));
@@ -2039,7 +2039,7 @@ public final class Numbers {
         sink.putAscii((char) ('0' + (c % 10)));
     }
 
-    private static void appendInt5(CharSinkBase<?> sink, int i) {
+    private static void appendInt5(CharSink<?> sink, int i) {
         int c;
         sink.putAscii((char) ('0' + i / 10000));
         sink.putAscii((char) ('0' + (c = i % 10000) / 1000));
@@ -2048,7 +2048,7 @@ public final class Numbers {
         sink.putAscii((char) ('0' + (c % 10)));
     }
 
-    private static void appendInt6(CharSinkBase<?> sink, int i) {
+    private static void appendInt6(CharSink<?> sink, int i) {
         int c;
         sink.putAscii((char) ('0' + i / 100000));
         sink.putAscii((char) ('0' + (c = i % 100000) / 10000));
@@ -2058,7 +2058,7 @@ public final class Numbers {
         sink.putAscii((char) ('0' + (c % 10)));
     }
 
-    private static void appendInt7(CharSinkBase<?> sink, int i) {
+    private static void appendInt7(CharSink<?> sink, int i) {
         int c;
         sink.putAscii((char) ('0' + i / 1000000));
         sink.putAscii((char) ('0' + (c = i % 1000000) / 100000));
@@ -2069,7 +2069,7 @@ public final class Numbers {
         sink.putAscii((char) ('0' + (c % 10)));
     }
 
-    private static void appendInt8(CharSinkBase<?> sink, int i) {
+    private static void appendInt8(CharSink<?> sink, int i) {
         int c;
         sink.putAscii((char) ('0' + i / 10000000));
         sink.putAscii((char) ('0' + (c = i % 10000000) / 1000000));
@@ -2081,7 +2081,7 @@ public final class Numbers {
         sink.putAscii((char) ('0' + (c % 10)));
     }
 
-    private static void appendInt9(CharSinkBase<?> sink, int i) {
+    private static void appendInt9(CharSink<?> sink, int i) {
         int c;
         sink.putAscii((char) ('0' + i / 100000000));
         sink.putAscii((char) ('0' + (c = i % 100000000) / 10000000));
@@ -2094,7 +2094,7 @@ public final class Numbers {
         sink.putAscii((char) ('0' + (c % 10)));
     }
 
-    private static void appendLong10(CharSinkBase<?> sink, long i) {
+    private static void appendLong10(CharSink<?> sink, long i) {
         long c;
         sink.putAscii((char) ('0' + i / 1000000000L));
         sink.putAscii((char) ('0' + (c = i % 1000000000L) / 100000000));
@@ -2108,7 +2108,7 @@ public final class Numbers {
         sink.putAscii((char) ('0' + (c % 10)));
     }
 
-    private static void appendLong11(CharSinkBase<?> sink, long i) {
+    private static void appendLong11(CharSink<?> sink, long i) {
         long c;
         sink.putAscii((char) ('0' + i / 10000000000L));
         sink.putAscii((char) ('0' + (c = i % 10000000000L) / 1000000000));
@@ -2123,7 +2123,7 @@ public final class Numbers {
         sink.putAscii((char) ('0' + (c % 10)));
     }
 
-    private static void appendLong12(CharSinkBase<?> sink, long i) {
+    private static void appendLong12(CharSink<?> sink, long i) {
         long c;
         sink.putAscii((char) ('0' + i / 100000000000L));
         sink.putAscii((char) ('0' + (c = i % 100000000000L) / 10000000000L));
@@ -2139,7 +2139,7 @@ public final class Numbers {
         sink.putAscii((char) ('0' + (c % 10)));
     }
 
-    private static void appendLong13(CharSinkBase<?> sink, long i) {
+    private static void appendLong13(CharSink<?> sink, long i) {
         long c;
         sink.putAscii((char) ('0' + i / 1000000000000L));
         sink.putAscii((char) ('0' + (c = i % 1000000000000L) / 100000000000L));
@@ -2156,7 +2156,7 @@ public final class Numbers {
         sink.putAscii((char) ('0' + (c % 10)));
     }
 
-    private static void appendLong14(CharSinkBase<?> sink, long i) {
+    private static void appendLong14(CharSink<?> sink, long i) {
         long c;
         sink.putAscii((char) ('0' + i / 10000000000000L));
         sink.putAscii((char) ('0' + (c = i % 10000000000000L) / 1000000000000L));
@@ -2174,7 +2174,7 @@ public final class Numbers {
         sink.putAscii((char) ('0' + (c % 10)));
     }
 
-    private static void appendLong15(CharSinkBase<?> sink, long i) {
+    private static void appendLong15(CharSink<?> sink, long i) {
         long c;
         sink.putAscii((char) ('0' + i / 100000000000000L));
         sink.putAscii((char) ('0' + (c = i % 100000000000000L) / 10000000000000L));
@@ -2193,7 +2193,7 @@ public final class Numbers {
         sink.putAscii((char) ('0' + (c % 10)));
     }
 
-    private static void appendLong16(CharSinkBase<?> sink, long i) {
+    private static void appendLong16(CharSink<?> sink, long i) {
         long c;
         sink.putAscii((char) ('0' + i / 1000000000000000L));
         sink.putAscii((char) ('0' + (c = i % 1000000000000000L) / 100000000000000L));
@@ -2213,7 +2213,7 @@ public final class Numbers {
         sink.putAscii((char) ('0' + (c % 10)));
     }
 
-    private static void appendLong17(CharSinkBase<?> sink, long i) {
+    private static void appendLong17(CharSink<?> sink, long i) {
         long c;
         sink.putAscii((char) ('0' + i / 10000000000000000L));
         sink.putAscii((char) ('0' + (c = i % 10000000000000000L) / 1000000000000000L));
@@ -2234,7 +2234,7 @@ public final class Numbers {
         sink.putAscii((char) ('0' + (c % 10)));
     }
 
-    private static void appendLong18(CharSinkBase<?> sink, long i) {
+    private static void appendLong18(CharSink<?> sink, long i) {
         long c;
         sink.putAscii((char) ('0' + i / 100000000000000000L));
         sink.putAscii((char) ('0' + (c = i % 100000000000000000L) / 10000000000000000L));
@@ -2256,7 +2256,7 @@ public final class Numbers {
         sink.putAscii((char) ('0' + (c % 10)));
     }
 
-    private static void appendLong19(CharSinkBase<?> sink, long i) {
+    private static void appendLong19(CharSink<?> sink, long i) {
         long c;
         sink.putAscii((char) ('0' + i / 1000000000000000000L));
         sink.putAscii((char) ('0' + (c = i % 1000000000000000000L) / 100000000000000000L));
@@ -2279,34 +2279,34 @@ public final class Numbers {
         sink.putAscii((char) ('0' + (c % 10)));
     }
 
-    private static void appendLong2(CharSinkBase<?> sink, long i) {
+    private static void appendLong2(CharSink<?> sink, long i) {
         sink.putAscii((char) ('0' + i / 10));
         sink.putAscii((char) ('0' + i % 10));
     }
 
-    private static void appendLong256Four(long a, long b, long c, long d, CharSinkBase<?> sink) {
+    private static void appendLong256Four(long a, long b, long c, long d, CharSink<?> sink) {
         appendLong256Three(b, c, d, sink);
         appendHex(sink, a, true);
     }
 
-    private static void appendLong256Three(long a, long b, long c, CharSinkBase<?> sink) {
+    private static void appendLong256Three(long a, long b, long c, CharSink<?> sink) {
         appendLong256Two(b, c, sink);
         appendHex(sink, a, true);
     }
 
-    private static void appendLong256Two(long a, long b, CharSinkBase<?> sink) {
+    private static void appendLong256Two(long a, long b, CharSink<?> sink) {
         appendHex(sink, b, false);
         appendHex(sink, a, true);
     }
 
-    private static void appendLong3(CharSinkBase<?> sink, long i) {
+    private static void appendLong3(CharSink<?> sink, long i) {
         long c;
         sink.putAscii((char) ('0' + i / 100));
         sink.putAscii((char) ('0' + (c = i % 100) / 10));
         sink.putAscii((char) ('0' + (c % 10)));
     }
 
-    private static void appendLong4(CharSinkBase<?> sink, long i) {
+    private static void appendLong4(CharSink<?> sink, long i) {
         long c;
         sink.putAscii((char) ('0' + i / 1000));
         sink.putAscii((char) ('0' + (c = i % 1000) / 100));
@@ -2314,7 +2314,7 @@ public final class Numbers {
         sink.putAscii((char) ('0' + (c % 10)));
     }
 
-    private static void appendLong5(CharSinkBase<?> sink, long i) {
+    private static void appendLong5(CharSink<?> sink, long i) {
         long c;
         sink.putAscii((char) ('0' + i / 10000));
         sink.putAscii((char) ('0' + (c = i % 10000) / 1000));
@@ -2323,7 +2323,7 @@ public final class Numbers {
         sink.putAscii((char) ('0' + (c % 10)));
     }
 
-    private static void appendLong6(CharSinkBase<?> sink, long i) {
+    private static void appendLong6(CharSink<?> sink, long i) {
         long c;
         sink.putAscii((char) ('0' + i / 100000));
         sink.putAscii((char) ('0' + (c = i % 100000) / 10000));
@@ -2333,7 +2333,7 @@ public final class Numbers {
         sink.putAscii((char) ('0' + (c % 10)));
     }
 
-    private static void appendLong7(CharSinkBase<?> sink, long i) {
+    private static void appendLong7(CharSink<?> sink, long i) {
         long c;
         sink.putAscii((char) ('0' + i / 1000000));
         sink.putAscii((char) ('0' + (c = i % 1000000) / 100000));
@@ -2344,7 +2344,7 @@ public final class Numbers {
         sink.putAscii((char) ('0' + (c % 10)));
     }
 
-    private static void appendLong8(CharSinkBase<?> sink, long i) {
+    private static void appendLong8(CharSink<?> sink, long i) {
         long c;
         sink.putAscii((char) ('0' + i / 10000000));
         sink.putAscii((char) ('0' + (c = i % 10000000) / 1000000));
@@ -2356,7 +2356,7 @@ public final class Numbers {
         sink.putAscii((char) ('0' + (c % 10)));
     }
 
-    private static void appendLong9(CharSinkBase<?> sink, long i) {
+    private static void appendLong9(CharSink<?> sink, long i) {
         long c;
         sink.putAscii((char) ('0' + i / 100000000));
         sink.putAscii((char) ('0' + (c = i % 100000000) / 10000000));
@@ -2369,163 +2369,163 @@ public final class Numbers {
         sink.putAscii((char) ('0' + (c % 10)));
     }
 
-    private static void appendLongHex12(CharSinkBase<?> sink, long value) {
+    private static void appendLongHex12(CharSink<?> sink, long value) {
         appendLongHexPad(sink, hexDigits[(int) ((value >> 8) & 0xf)]);
         appendLongHex8(sink, value);
     }
 
-    private static void appendLongHex12Pad64(CharSinkBase<?> sink, long value) {
+    private static void appendLongHex12Pad64(CharSink<?> sink, long value) {
         sink.putAscii("000000000000");
         appendLongHex12(sink, value);
     }
 
-    private static void appendLongHex16(CharSinkBase<?> sink, long value) {
+    private static void appendLongHex16(CharSink<?> sink, long value) {
         sink.putAscii(hexDigits[(int) ((value >> 12) & 0xf)]);
         sink.putAscii(hexDigits[(int) ((value >> 8) & 0xf)]);
         appendLongHex8(sink, value);
     }
 
-    private static void appendLongHex16Pad64(CharSinkBase<?> sink, long value) {
+    private static void appendLongHex16Pad64(CharSink<?> sink, long value) {
         sink.putAscii("000000000000");
         appendLongHex16(sink, value);
     }
 
-    private static void appendLongHex20(CharSinkBase<?> sink, long value) {
+    private static void appendLongHex20(CharSink<?> sink, long value) {
         appendLongHexPad(sink, hexDigits[(int) ((value >> 16) & 0xf)]);
         appendLongHex16(sink, value);
     }
 
-    private static void appendLongHex20Pad64(CharSinkBase<?> sink, long value) {
+    private static void appendLongHex20Pad64(CharSink<?> sink, long value) {
         sink.putAscii("0000000000");
         appendLongHex20(sink, value);
     }
 
-    private static void appendLongHex24(CharSinkBase<?> sink, long value) {
+    private static void appendLongHex24(CharSink<?> sink, long value) {
         sink.putAscii(hexDigits[(int) ((value >> 20) & 0xf)]);
         sink.putAscii(hexDigits[(int) ((value >> 16) & 0xf)]);
         appendLongHex16(sink, value);
     }
 
-    private static void appendLongHex24Pad64(CharSinkBase<?> sink, long value) {
+    private static void appendLongHex24Pad64(CharSink<?> sink, long value) {
         sink.putAscii("0000000000");
         appendLongHex24(sink, value);
     }
 
-    private static void appendLongHex28(CharSinkBase<?> sink, long value) {
+    private static void appendLongHex28(CharSink<?> sink, long value) {
         appendLongHexPad(sink, hexDigits[(int) ((value >> 24) & 0xf)]);
         appendLongHex24(sink, value);
     }
 
-    private static void appendLongHex28Pad64(CharSinkBase<?> sink, long value) {
+    private static void appendLongHex28Pad64(CharSink<?> sink, long value) {
         sink.putAscii("00000000");
         appendLongHex28(sink, value);
     }
 
-    private static void appendLongHex32(CharSinkBase<?> sink, long value) {
+    private static void appendLongHex32(CharSink<?> sink, long value) {
         sink.putAscii(hexDigits[(int) ((value >> 28) & 0xf)]);
         sink.putAscii(hexDigits[(int) ((value >> 24) & 0xf)]);
         appendLongHex24(sink, value);
     }
 
-    private static void appendLongHex32Pad64(CharSinkBase<?> sink, long value) {
+    private static void appendLongHex32Pad64(CharSink<?> sink, long value) {
         sink.putAscii("00000000");
         appendLongHex32(sink, value);
     }
 
-    private static void appendLongHex36(CharSinkBase<?> sink, long value) {
+    private static void appendLongHex36(CharSink<?> sink, long value) {
         appendLongHexPad(sink, hexDigits[(int) ((value >> 32) & 0xf)]);
         appendLongHex32(sink, value);
     }
 
-    private static void appendLongHex36Pad64(CharSinkBase<?> sink, long value) {
+    private static void appendLongHex36Pad64(CharSink<?> sink, long value) {
         sink.putAscii("000000");
         appendLongHex36(sink, value);
     }
 
-    private static void appendLongHex4(CharSinkBase<?> sink, long value) {
+    private static void appendLongHex4(CharSink<?> sink, long value) {
         appendLongHexPad(sink, hexDigits[(int) ((value) & 0xf)]);
     }
 
-    private static void appendLongHex40(CharSinkBase<?> sink, long value) {
+    private static void appendLongHex40(CharSink<?> sink, long value) {
         sink.putAscii(hexDigits[(int) ((value >> 36) & 0xf)]);
         sink.putAscii(hexDigits[(int) ((value >> 32) & 0xf)]);
         appendLongHex32(sink, value);
     }
 
-    private static void appendLongHex40Pad64(CharSinkBase<?> sink, long value) {
+    private static void appendLongHex40Pad64(CharSink<?> sink, long value) {
         sink.putAscii("000000");
         appendLongHex40(sink, value);
     }
 
-    private static void appendLongHex44(CharSinkBase<?> sink, long value) {
+    private static void appendLongHex44(CharSink<?> sink, long value) {
         appendLongHexPad(sink, hexDigits[(int) ((value >> 40) & 0xf)]);
         appendLongHex40(sink, value);
     }
 
-    private static void appendLongHex44Pad64(CharSinkBase<?> sink, long value) {
+    private static void appendLongHex44Pad64(CharSink<?> sink, long value) {
         sink.putAscii("0000");
         appendLongHex44(sink, value);
     }
 
-    private static void appendLongHex48(CharSinkBase<?> sink, long value) {
+    private static void appendLongHex48(CharSink<?> sink, long value) {
         sink.putAscii(hexDigits[(int) ((value >> 44) & 0xf)]);
         sink.putAscii(hexDigits[(int) ((value >> 40) & 0xf)]);
         appendLongHex40(sink, value);
     }
 
-    private static void appendLongHex48Pad64(CharSinkBase<?> sink, long value) {
+    private static void appendLongHex48Pad64(CharSink<?> sink, long value) {
         sink.putAscii("0000");
         appendLongHex48(sink, value);
     }
 
-    private static void appendLongHex4Pad64(CharSinkBase<?> sink, long value) {
+    private static void appendLongHex4Pad64(CharSink<?> sink, long value) {
         sink.putAscii("00000000000000");
         appendLongHex4(sink, value);
     }
 
-    private static void appendLongHex52(CharSinkBase<?> sink, long value) {
+    private static void appendLongHex52(CharSink<?> sink, long value) {
         appendLongHexPad(sink, hexDigits[(int) ((value >> 48) & 0xf)]);
         appendLongHex48(sink, value);
     }
 
-    private static void appendLongHex52Pad64(CharSinkBase<?> sink, long value) {
+    private static void appendLongHex52Pad64(CharSink<?> sink, long value) {
         sink.putAscii("00");
         appendLongHex52(sink, value);
     }
 
-    private static void appendLongHex56(CharSinkBase<?> sink, long value) {
+    private static void appendLongHex56(CharSink<?> sink, long value) {
         sink.putAscii(hexDigits[(int) ((value >> 52) & 0xf)]);
         sink.putAscii(hexDigits[(int) ((value >> 48) & 0xf)]);
         appendLongHex48(sink, value);
     }
 
-    private static void appendLongHex56Pad64(CharSinkBase<?> sink, long value) {
+    private static void appendLongHex56Pad64(CharSink<?> sink, long value) {
         sink.putAscii("00");
         appendLongHex56(sink, value);
     }
 
-    private static void appendLongHex60(CharSinkBase<?> sink, long value) {
+    private static void appendLongHex60(CharSink<?> sink, long value) {
         appendLongHexPad(sink, hexDigits[(int) ((value >> 56) & 0xf)]);
         appendLongHex56(sink, value);
     }
 
-    private static void appendLongHex64(CharSinkBase<?> sink, long value) {
+    private static void appendLongHex64(CharSink<?> sink, long value) {
         sink.putAscii(hexDigits[(int) ((value >> 60) & 0xf)]);
         sink.putAscii(hexDigits[(int) ((value >> 56) & 0xf)]);
         appendLongHex56(sink, value);
     }
 
-    private static void appendLongHex8(CharSinkBase<?> sink, long value) {
+    private static void appendLongHex8(CharSink<?> sink, long value) {
         sink.putAscii(hexDigits[(int) ((value >> 4) & 0xf)]);
         sink.putAscii(hexDigits[(int) ((value) & 0xf)]);
     }
 
-    private static void appendLongHex8Pad64(CharSinkBase<?> sink, long value) {
+    private static void appendLongHex8Pad64(CharSink<?> sink, long value) {
         sink.putAscii("00000000000000");
         appendLongHex8(sink, value);
     }
 
-    private static void appendLongHexPad(CharSinkBase<?> sink, char hexDigit) {
+    private static void appendLongHexPad(CharSink<?> sink, char hexDigit) {
         sink.putAscii('0');
         sink.putAscii(hexDigit);
     }
@@ -2741,7 +2741,7 @@ public final class Numbers {
 
     @FunctionalInterface
     private interface LongHexAppender {
-        void append(CharSinkBase sink, long value);
+        void append(CharSink<?> sink, long value);
     }
 
     //#if jdk.version!=8

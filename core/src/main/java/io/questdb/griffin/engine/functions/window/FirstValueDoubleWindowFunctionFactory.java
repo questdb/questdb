@@ -125,7 +125,7 @@ public class FirstValueDoubleWindowFunctionFactory implements FunctionFactory {
             if (framingMode == WindowColumn.FRAMING_RANGE) {
                 // moving average over whole partition (no order by, default frame) or (order by, unbounded preceding to unbounded following)
                 if (windowContext.isDefaultFrame() && (!windowContext.isOrdered() || windowContext.getRowsHi() == Long.MAX_VALUE)) {
-                    Map map = MapFactory.createMap(
+                    Map map = MapFactory.createOrderedMap(
                             configuration,
                             partitionByKeyTypes,
                             FIRST_VALUE_COLUMN_TYPES
@@ -139,7 +139,7 @@ public class FirstValueDoubleWindowFunctionFactory implements FunctionFactory {
                     );
                 } // between unbounded preceding and current row
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createMap(
+                    Map map = MapFactory.createOrderedMap(
                             configuration,
                             partitionByKeyTypes,
                             FIRST_VALUE_COLUMN_TYPES
@@ -167,7 +167,7 @@ public class FirstValueDoubleWindowFunctionFactory implements FunctionFactory {
                     columnTypes.add(ColumnType.LONG);   // native buffer capacity
                     columnTypes.add(ColumnType.LONG);   // index of first buffered element
 
-                    Map map = MapFactory.createMap(
+                    Map map = MapFactory.createOrderedMap(
                             configuration,
                             partitionByKeyTypes,
                             columnTypes
@@ -192,7 +192,7 @@ public class FirstValueDoubleWindowFunctionFactory implements FunctionFactory {
             } else if (framingMode == WindowColumn.FRAMING_ROWS) {
                 //between unbounded preceding and current row
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createMap(
+                    Map map = MapFactory.createOrderedMap(
                             configuration,
                             partitionByKeyTypes,
                             FIRST_VALUE_COLUMN_TYPES
@@ -209,7 +209,7 @@ public class FirstValueDoubleWindowFunctionFactory implements FunctionFactory {
                     return new FirstValueOverCurrentRowFunction(args.get(0));
                 } // whole partition
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
-                    Map map = MapFactory.createMap(
+                    Map map = MapFactory.createOrderedMap(
                             configuration,
                             partitionByKeyTypes,
                             FIRST_VALUE_COLUMN_TYPES
@@ -229,7 +229,7 @@ public class FirstValueDoubleWindowFunctionFactory implements FunctionFactory {
                     columnTypes.add(ColumnType.LONG);// start offset of native array
                     columnTypes.add(ColumnType.LONG);// count of values in buffer
 
-                    Map map = MapFactory.createMap(
+                    Map map = MapFactory.createOrderedMap(
                             configuration,
                             partitionByKeyTypes,
                             columnTypes

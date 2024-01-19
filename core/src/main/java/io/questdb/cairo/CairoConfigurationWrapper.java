@@ -221,11 +221,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public @NotNull CharSequence getDefaultMapType() {
-        return delegate.getDefaultMapType();
-    }
-
-    @Override
     public boolean getDefaultSymbolCacheFlag() {
         return delegate.getDefaultSymbolCacheFlag();
     }
@@ -271,6 +266,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getGroupByAllocatorDefaultChunkSize() {
+        return delegate.getGroupByAllocatorDefaultChunkSize();
+    }
+
+    @Override
+    public long getGroupByAllocatorMaxChunkSize() {
+        return delegate.getGroupByAllocatorMaxChunkSize();
+    }
+
+    @Override
     public int getGroupByMapCapacity() {
         return delegate.getGroupByMapCapacity();
     }
@@ -283,11 +288,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getGroupByPoolCapacity() {
         return delegate.getGroupByPoolCapacity();
-    }
-
-    @Override
-    public int getGroupByShardCount() {
-        return delegate.getGroupByShardCount();
     }
 
     @Override
@@ -476,6 +476,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getQueryRegistryPoolSize() {
+        return delegate.getQueryRegistryPoolSize();
+    }
+
+    @Override
     public int getReaderPoolMaxSegments() {
         return delegate.getReaderPoolMaxSegments();
     }
@@ -543,11 +548,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getSqlColumnPoolCapacity() {
         return delegate.getSqlColumnPoolCapacity();
-    }
-
-    @Override
-    public double getSqlCompactMapLoadFactor() {
-        return delegate.getSqlCompactMapLoadFactor();
     }
 
     @Override
@@ -748,6 +748,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getSqlSortValuePageSize() {
         return delegate.getSqlSortValuePageSize();
+    }
+
+    @Override
+    public int getSqlUnorderedMapMaxEntrySize() {
+        return delegate.getSqlUnorderedMapMaxEntrySize();
     }
 
     @Override

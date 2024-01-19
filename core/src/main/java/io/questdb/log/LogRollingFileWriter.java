@@ -32,7 +32,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.DirectCharSink;
+import io.questdb.std.str.DirectUtf16Sink;
 import io.questdb.std.str.DirectUtf8StringZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -54,7 +54,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     private final DirectUtf8StringZ logFileName = new DirectUtf8StringZ();
     private final Path path = new Path();
     private final Path renameToPath = new Path();
-    private final RingQueue<LogRecordSink> ring;
+    private final RingQueue<LogRecordUtf8Sink> ring;
     private final AtomicLong rolledCounter = new AtomicLong();
     private final SCSequence subSeq;
     private long _wptr;
@@ -71,7 +71,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     // used in size limit based auto-deletion; contains [last_modification_ts, packed_file_name_offsets] pairs
     private DirectLongList logFileList;
     // used in size limit based auto-deletion; contains log file names written sequentially
-    private DirectCharSink logFileNameSink;
+    private DirectUtf16Sink logFileNameSink;
     private String logFileTemplate;
     private final FindVisitor removeExcessiveLogsRef = this::removeExcessiveLogs;
     private int nBufferSize;
@@ -85,17 +85,17 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     private String rollEvery;
     private String rollSize;
     private String sizeLimit;
-    private final QueueConsumer<LogRecordSink> copyToBufferRef = this::copyToBuffer;
+    private final QueueConsumer<LogRecordUtf8Sink> copyToBufferRef = this::copyToBuffer;
     private String spinBeforeFlush;
 
-    public LogRollingFileWriter(RingQueue<LogRecordSink> ring, SCSequence subSeq, int level) {
+    public LogRollingFileWriter(RingQueue<LogRecordUtf8Sink> ring, SCSequence subSeq, int level) {
         this(FilesFacadeImpl.INSTANCE, MicrosecondClockImpl.INSTANCE, ring, subSeq, level);
     }
 
     public LogRollingFileWriter(
             FilesFacade ff,
             MicrosecondClock clock,
-            RingQueue<LogRecordSink> ring,
+            RingQueue<LogRecordUtf8Sink> ring,
             SCSequence subSeq,
             int level
     ) {
@@ -269,7 +269,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
         }
     }
 
-    private void copyToBuffer(LogRecordSink sink) {
+    private void copyToBuffer(LogRecordUtf8Sink sink) {
         final int size = sink.size();
         if ((sink.getLevel() & this.level) != 0 && size > 0) {
             if (_wptr + size >= lim) {
@@ -394,7 +394,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
             CharSequence fileName = logFileNameSink.subSequence(startOffset, endOffset);
             path.trimTo(logDir.length()).concat(fileName).$();
             if ((totalSize += Files.length(path)) > nSizeLimit) {
-                if (!ff.remove(path)) {
+                if (!ff.removeQuiet(path)) {
                     throw new LogError("cannot remove: " + path);
                 }
             }
@@ -421,7 +421,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
             logFileName.of(filePointer);
             if (Utf8s.containsAscii(logFileName, logFileTemplate)
                     && clock.getTicks() - ff.getLastModified(path.$()) * Timestamps.MILLI_MICROS > nLifeDuration) {
-                if (!ff.remove(path)) {
+                if (!ff.removeQuiet(path)) {
                     throw new LogError("cannot remove: " + path);
                 }
             }
@@ -437,7 +437,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
                 logFileList = new DirectLongList(2 * INITIAL_LOG_FILE_LIST_SIZE, MemoryTag.NATIVE_LONG_LIST);
             }
             if (logFileNameSink == null) {
-                logFileNameSink = new DirectCharSink(INITIAL_LOG_FILE_NAME_SINK_SIZE);
+                logFileNameSink = new DirectUtf16Sink(INITIAL_LOG_FILE_NAME_SINK_SIZE);
             }
 
             ff.iterateDir(path.of(logDir).$(), removeExcessiveLogsRef);

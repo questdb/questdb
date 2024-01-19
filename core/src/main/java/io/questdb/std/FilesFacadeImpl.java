@@ -68,7 +68,7 @@ public class FilesFacadeImpl implements FilesFacade {
 
         // On other file systems we can remove file that is open, and sometimes we want to close the file descriptor
         // after the removal, in case when file descriptor is the lock FD.
-        boolean ok = remove(path);
+        boolean ok = removeQuiet(path);
         if (!isRestrictedFileSystem() && fd > -1) {
             Files.close(fd);
         }
@@ -370,8 +370,25 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public boolean remove(LPSZ name) {
-        return Files.remove(name);
+    public void remove(LPSZ name) {
+        if (!removeQuiet(name)) {
+            throw CairoException.critical(errno()).put("could not remove [file=").put(name).put(']');
+        }
+    }
+
+    @Override
+    public boolean removeQuiet(LPSZ name) {
+        boolean ok = Files.remove(name);
+        if (!ok) {
+            int errno = errno();
+            if (errno == CairoException.ERRNO_FILE_DOES_NOT_EXIST || (Os.isWindows() && errno == CairoException.ERRNO_FILE_DOES_NOT_EXIST_WIN)) {
+                return true;
+            }
+            if (Os.isWindows() && errno == CairoException.ERRNO_ACCESS_DENIED_WIN) {
+                return !exists(name);
+            }
+        }
+        return ok;
     }
 
     @Override

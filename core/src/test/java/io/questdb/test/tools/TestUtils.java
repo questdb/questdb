@@ -24,12 +24,10 @@
 
 package io.questdb.test.tools;
 
-import io.questdb.Bootstrap;
-import io.questdb.Metrics;
-import io.questdb.ServerMain;
+import io.questdb.*;
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
@@ -134,7 +132,7 @@ public final class TestUtils {
         assertContains(null, actual, expected);
     }
 
-    public static void assertCursor(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header, MutableCharSink sink) {
+    public static void assertCursor(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header, MutableUtf16Sink sink) {
         printCursor(cursor, metadata, header, sink, printer);
         assertEquals(expected, sink);
     }
@@ -656,7 +654,7 @@ public final class TestUtils {
         }
     }
 
-    public static void assertReader(CharSequence expected, TableReader reader, MutableCharSink sink) {
+    public static void assertReader(CharSequence expected, TableReader reader, MutableUtf16Sink sink) {
         assertCursor(
                 expected,
                 reader.getCursor(),
@@ -670,7 +668,7 @@ public final class TestUtils {
             CairoEngine engine,
             SqlExecutionContext sqlExecutionContext,
             CharSequence sql,
-            MutableCharSink sink,
+            MutableUtf16Sink sink,
             CharSequence expected
     ) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
@@ -682,7 +680,7 @@ public final class TestUtils {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             CharSequence sql,
-            MutableCharSink sink,
+            MutableUtf16Sink sink,
             CharSequence expected
     ) throws SqlException {
         printSql(
@@ -789,7 +787,7 @@ public final class TestUtils {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             CharSequence sql,
-            MutableCharSink sink,
+            MutableUtf16Sink sink,
             CharSequence expected
     ) throws SqlException {
         printSqlWithTypes(
@@ -1357,19 +1355,47 @@ public final class TestUtils {
         }
     }
 
-    public static void printColumn(Record r, RecordMetadata m, int i, CharSink sink) {
+    public static TableWriter newOffPoolWriter(CairoConfiguration configuration, TableToken tableToken) {
+        return newOffPoolWriter(configuration, tableToken, Metrics.disabled());
+    }
+
+    public static TableWriter newOffPoolWriter(CairoConfiguration configuration, TableToken tableToken, Metrics metrics) {
+        return newOffPoolWriter(configuration, tableToken, metrics, new MessageBusImpl(configuration));
+    }
+
+    public static TableWriter newOffPoolWriter(
+            CairoConfiguration configuration,
+            TableToken tableToken,
+            Metrics metrics,
+            MessageBus messageBus
+    ) {
+        return new TableWriter(
+                configuration,
+                tableToken,
+                null,
+                messageBus,
+                true,
+                DefaultLifecycleManager.INSTANCE,
+                configuration.getRoot(),
+                DefaultDdlListener.INSTANCE,
+                () -> false,
+                metrics
+        );
+    }
+
+    public static void printColumn(Record r, RecordMetadata m, int i, Utf16Sink sink) {
         printColumn(r, m, i, sink, false, false);
     }
 
-    public static void printColumn(Record r, RecordMetadata m, int i, CharSink sink, boolean printTypes) {
+    public static void printColumn(Record r, RecordMetadata m, int i, Utf16Sink sink, boolean printTypes) {
         printColumn(r, m, i, sink, false, printTypes);
     }
 
-    public static void printColumn(Record r, RecordMetadata m, int i, CharSink sink, boolean symbolAsString, boolean printTypes) {
+    public static void printColumn(Record r, RecordMetadata m, int i, Utf16Sink sink, boolean symbolAsString, boolean printTypes) {
         printColumn(r, m, i, sink, symbolAsString, printTypes, null);
     }
 
-    public static void printColumn(Record r, RecordMetadata m, int i, CharSink sink, boolean symbolAsString, boolean printTypes, String nullStringValue) {
+    public static void printColumn(Record r, RecordMetadata m, int i, Utf16Sink sink, boolean symbolAsString, boolean printTypes, String nullStringValue) {
         final int columnType = m.getColumnType(i);
         switch (ColumnType.tagOf(columnType)) {
             case ColumnType.DATE:
@@ -1424,6 +1450,7 @@ public final class TestUtils {
                 putGeoHash(r.getGeoLong(i), ColumnType.getGeoHashBits(columnType), sink);
                 break;
             case ColumnType.BYTE:
+                // as int
                 sink.put(r.getByte(i));
                 break;
             case ColumnType.BOOLEAN:
@@ -1461,7 +1488,7 @@ public final class TestUtils {
         }
     }
 
-    public static void printCursor(RecordCursor cursor, RecordMetadata metadata, boolean header, MutableCharSink sink, RecordCursorPrinter printer) {
+    public static void printCursor(RecordCursor cursor, RecordMetadata metadata, boolean header, MutableUtf16Sink sink, RecordCursorPrinter printer) {
         sink.clear();
         printer.print(cursor, metadata, header, sink);
     }
@@ -1470,7 +1497,7 @@ public final class TestUtils {
             CairoEngine engine,
             SqlExecutionContext sqlExecutionContext,
             CharSequence sql,
-            MutableCharSink sink
+            MutableUtf16Sink sink
     ) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             printSql(compiler, sqlExecutionContext, sql, sink);
@@ -1481,7 +1508,7 @@ public final class TestUtils {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             CharSequence sql,
-            MutableCharSink sink
+            MutableUtf16Sink sink
     ) throws SqlException {
         try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -1494,7 +1521,7 @@ public final class TestUtils {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             CharSequence sql,
-            MutableCharSink sink
+            MutableUtf16Sink sink
     ) throws SqlException {
         try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -1739,12 +1766,6 @@ public final class TestUtils {
         }
     }
 
-    private static StringSink getTlSink() {
-        StringSink ss = tlSink.get();
-        ss.clear();
-        return ss;
-    }
-
 /*
     private static RecordMetadata copySymAstStr(RecordMetadata src) {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
@@ -1761,6 +1782,12 @@ public final class TestUtils {
     }
 */
 
+    private static StringSink getTlSink() {
+        StringSink ss = tlSink.get();
+        ss.clear();
+        return ss;
+    }
+
     private static long partitionIncrement(int partitionBy, long fromTimestamp, int totalRows, int partitionCount) {
         long increment = 0;
         if (PartitionBy.isPartitioned(partitionBy)) {
@@ -1772,7 +1799,7 @@ public final class TestUtils {
         return increment;
     }
 
-    private static void putGeoHash(long hash, int bits, CharSink sink) {
+    private static void putGeoHash(long hash, int bits, Utf16Sink sink) {
         if (hash == GeoHashes.NULL) {
             return;
         }

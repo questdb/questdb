@@ -95,6 +95,11 @@ public class SymbolColumn extends SymbolFunction implements ScalarFunction {
     }
 
     @Override
+    public boolean isParallelismSupported() {
+        return true;
+    }
+
+    @Override
     public boolean isSymbolTableStatic() {
         return symbolTableStatic;
     }

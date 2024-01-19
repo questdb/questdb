@@ -33,10 +33,11 @@ import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
-import io.questdb.std.str.CharSinkBase;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 
 public abstract class StrFunction implements ScalarFunction {
+
     @Override
     public final BinarySequence getBin(Record rec) {
         throw new UnsupportedOperationException();
@@ -123,7 +124,7 @@ public abstract class StrFunction implements ScalarFunction {
     }
 
     @Override
-    public final void getLong256(Record rec, CharSinkBase<?> sink) {
+    public final void getLong256(Record rec, CharSink<?> sink) {
         throw new UnsupportedOperationException();
     }
 
@@ -148,7 +149,7 @@ public abstract class StrFunction implements ScalarFunction {
     }
 
     @Override
-    public void getStr(Record rec, CharSink sink) {
+    public void getStr(Record rec, Utf16Sink sink) {
         sink.put(getStr(rec));
     }
 
@@ -177,5 +178,4 @@ public abstract class StrFunction implements ScalarFunction {
     public final int getType() {
         return ColumnType.STRING;
     }
-
 }

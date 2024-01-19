@@ -29,7 +29,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.OrderByMnemonic;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.*;
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
@@ -132,6 +132,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     // Used to store a deep copy of the whereClause field
     // since whereClause can be changed during optimization/generation stage.
     private ExpressionNode backupWhereClause;
+
+    // where clause expressions that do not reference any tables, not necessarily constants
     private ExpressionNode constWhereClause;
     private JoinContext context;
     private boolean distinct = false;
@@ -359,6 +361,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         dependencies.clear();
         parsedWhere.clear();
         whereClause = null;
+        backupWhereClause = null;
         constWhereClause = null;
         nestedModel = null;
         tableNameExpr = null;
@@ -1097,6 +1100,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.artificialStar = artificialStar;
     }
 
+    public void setBackupWhereClause(ExpressionNode backupWhereClause) {
+        this.backupWhereClause = backupWhereClause;
+    }
+
     public void setConstWhereClause(ExpressionNode constWhereClause) {
         this.constWhereClause = constWhereClause;
     }
@@ -1254,7 +1261,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     }
 
     @Override
-    public void toSink(@NotNull CharSinkBase<?> sink) {
+    public void toSink(@NotNull CharSink<?> sink) {
         if (modelType == ExecutionModel.QUERY) {
             toSink0(sink, false, false);
         } else if (modelType == ExecutionModel.UPDATE) {
@@ -1276,7 +1283,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return aliasToColumnNameMap.get(column);
     }
 
-    private static void aliasToSink(CharSequence alias, CharSinkBase<?> sink) {
+    private static void aliasToSink(CharSequence alias, CharSink<?> sink) {
         sink.putAscii(' ');
         boolean quote = Chars.indexOf(alias, ' ') != -1;
         if (quote) {
@@ -1286,7 +1293,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
     }
 
-    private static void unitToSink(CharSinkBase<?> sink, long timeUnit) {
+    private static void unitToSink(CharSink<?> sink, long timeUnit) {
         if (timeUnit == WindowColumn.TIME_UNIT_MICROSECOND) {
             sink.putAscii(" microsecond");
         } else if (timeUnit == WindowColumn.TIME_UNIT_MILLISECOND) {
@@ -1308,7 +1315,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return modelTypeName.get(selectModelType);
     }
 
-    private void sinkColumns(CharSinkBase<?> sink, ObjList<QueryColumn> columns) {
+    private void sinkColumns(CharSink<?> sink, ObjList<QueryColumn> columns) {
         for (int i = 0, n = columns.size(); i < n; i++) {
             if (i > 0) {
                 sink.putAscii(", ");
@@ -1465,7 +1472,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     }
 
     // returns textual description of this model, e.g. select-choose [top-down-columns] bottom-up-columns from X ...
-    private void toSink0(CharSinkBase<?> sink, boolean joinSlave, boolean showOrderBy) {
+    private void toSink0(CharSink<?> sink, boolean joinSlave, boolean showOrderBy) {
         if (selectModelType == QueryModel.SELECT_MODEL_SHOW) {
             sink.put(getSelectModelTypeText());
         } else {
@@ -1699,7 +1706,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
     }
 
-    private void updateToSink(CharSinkBase<?> sink) {
+    private void updateToSink(CharSink<?> sink) {
         sink.putAscii("update ");
         tableNameExpr.toSink(sink);
         if (alias != null) {

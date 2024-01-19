@@ -27,7 +27,6 @@ package io.questdb.test.std.bytes;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.bytes.ByteSequence;
-import io.questdb.std.bytes.DirectByteSequence;
 import io.questdb.std.bytes.DirectByteSink;
 import io.questdb.std.bytes.NativeByteSink;
 import org.junit.Assert;
@@ -152,7 +151,7 @@ public class DirectByteSinkTest {
                 other.put((byte) 'z');
                 Assert.assertEquals(3, other.size());
                 Assert.assertEquals(32, other.capacity());
-                sink.put((DirectByteSequence) null).put(other);  // passed in as DirectByteSequence
+                sink.put(null).put(other);  // passed in as DirectByteSequence
                 Assert.assertEquals(43, sink.size());
                 Assert.assertEquals(64, sink.capacity());
                 Assert.assertEquals(getMemUsed.get().longValue(), 96);
@@ -181,7 +180,7 @@ public class DirectByteSinkTest {
             }
             Assert.assertEquals(oneMiB, oneMegChunk.size());
 
-            dbs.book(Integer.MAX_VALUE);
+            dbs.checkCapacity(Integer.MAX_VALUE);
 
             final int numChunks = Integer.MAX_VALUE / oneMiB;
             for (int i = 0; i < numChunks; i++) {

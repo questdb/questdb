@@ -194,8 +194,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return retryAttemptAttributes;
     }
 
-    public HttpChunkedResponseSocket getChunkedResponseSocket() {
-        return responseSink.getChunkedSocket();
+    public HttpChunkedResponse getChunkedResponse() {
+        return responseSink.getChunkedResponse();
     }
 
     public HttpCookieHandler getCookieHandler() {

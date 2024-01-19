@@ -35,17 +35,20 @@ import io.questdb.std.str.LPSZ;
 public class ColumnVersionWriter extends ColumnVersionReader {
     private final CairoConfiguration configuration;
     private final MemoryCMARW mem;
+    private final boolean partitioned;
     private boolean hasChanges;
     private long size;
     private long version;
 
+
     // size should be read from the transaction file
     // it can be zero when there are no columns deviating from the main
     // data branch
-    public ColumnVersionWriter(CairoConfiguration configuration, LPSZ fileName) {
+    public ColumnVersionWriter(CairoConfiguration configuration, LPSZ fileName, boolean partitioned) {
         final FilesFacade ff = configuration.getFilesFacade();
         this.mem = Vm.getCMARWInstance(ff, fileName, ff.getPageSize(), 0, MemoryTag.MMAP_TABLE_READER, CairoConfiguration.O_NONE);
         this.configuration = configuration;
+        this.partitioned = partitioned;
         this.size = this.mem.size();
         super.ofRO(mem);
         if (this.size > 0) {
@@ -131,18 +134,37 @@ public class ColumnVersionWriter extends ColumnVersionReader {
 
     public void truncate() {
         if (cachedColumnVersionList.size() > 0) {
-            int from = cachedColumnVersionList.binarySearchBlock(BLOCK_SIZE_MSB, COL_TOP_DEFAULT_PARTITION + 1, BinarySearch.SCAN_UP);
+
+            final long defaultPartitionTimestamp = COL_TOP_DEFAULT_PARTITION;
+            int from = cachedColumnVersionList.binarySearchBlock(BLOCK_SIZE_MSB, defaultPartitionTimestamp + 1, BinarySearch.SCAN_UP);
             if (from < 0) {
                 from = -from - 1;
             }
-            // Remove all partitions after COL_TOP_DEFAULT_PARTITION
-            if (from < cachedColumnVersionList.size()) {
-                cachedColumnVersionList.setPos(from);
+
+            if (partitioned) {
+                // Remove all partitions after COL_TOP_DEFAULT_PARTITION
+                if (from < cachedColumnVersionList.size()) {
+                    cachedColumnVersionList.setPos(from);
+                }
+                // Keep default column version but reset the added timestamp to min
+                for (int i = 0, n = cachedColumnVersionList.size(); i < n; i += BLOCK_SIZE) {
+                    cachedColumnVersionList.setQuick(i + TIMESTAMP_ADDED_PARTITION_OFFSET, defaultPartitionTimestamp);
+                }
+            } else {
+                // We have to keep all the column name txns because the files are truncated but not re-created.
+                // But we want to remove all the column tops.
+                // The column name txn can be added when the column is added via alter table or when column is updated.
+                // When ALTER table add column is executed it creates a record in the NaN partition with the column name txn
+                // and a record in 0 (default) partition with the column top.
+                // When the column is changed using UPDATE SQL, the column name txn is only set in 0 (default) partition.
+                // These 2 scenarios are test covered in TruncateTest.
+
+                // Result action is to remove all column tops and keep all column name txns.
+                for (int i = from; i < cachedColumnVersionList.size(); i += BLOCK_SIZE) {
+                    cachedColumnVersionList.setQuick(i + COLUMN_TOP_OFFSET, 0);
+                }
             }
-            // Keep default column version but reset the added timestamp to min
-            for (int i = 0, n = cachedColumnVersionList.size(); i < n; i += BLOCK_SIZE) {
-                cachedColumnVersionList.setQuick(i + TIMESTAMP_ADDED_PARTITION_OFFSET, COL_TOP_DEFAULT_PARTITION);
-            }
+
             hasChanges = true;
             commit();
         }
@@ -201,6 +223,9 @@ public class ColumnVersionWriter extends ColumnVersionReader {
     }
 
     public void upsertColumnTop(long partitionTimestamp, int columnIndex, long colTop) {
+
+        assert partitioned;
+
         int recordIndex = getRecordIndex(partitionTimestamp, columnIndex);
         if (recordIndex > -1L) {
             cachedColumnVersionList.setQuick(recordIndex + COLUMN_TOP_OFFSET, colTop);

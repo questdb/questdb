@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.engine.functions.constants.Long256Constant;
 import io.questdb.griffin.engine.functions.constants.Long256NullConstant;
 import io.questdb.griffin.model.ExpressionNode;
@@ -40,7 +41,7 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.DateFormatCompiler;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.fastdouble.FastFloatParser;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.DirectUtf8Sequence;
 import org.jetbrains.annotations.Nullable;
 
@@ -642,11 +643,20 @@ public class SqlUtil {
         }
     }
 
-    public static boolean implicitCastUuidAsStr(long lo, long hi, CharSink sink) {
+    public static boolean implicitCastUuidAsStr(long lo, long hi, Utf16Sink sink) {
         if (Uuid.isNull(lo, hi)) {
             return false;
         }
         Numbers.appendUuid(lo, hi, sink);
+        return true;
+    }
+
+    public static boolean isParallelismSupported(ObjList<Function> functions) {
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            if (!functions.getQuick(i).isParallelismSupported()) {
+                return false;
+            }
+        }
         return true;
     }
 

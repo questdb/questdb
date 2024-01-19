@@ -25,10 +25,8 @@
 package io.questdb.cairo.map;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
-import io.questdb.griffin.EmptyRecordMetadata;
-import io.questdb.std.Chars;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -38,71 +36,103 @@ public class MapFactory {
     /**
      * Creates a Map pre-allocated to a small capacity to be used in SAMPLE BY, GROUP BY queries, but not only.
      */
-    public static Map createMap(
+    public static Map createOrderedMap(
             CairoConfiguration configuration,
             @Transient @NotNull ColumnTypes keyTypes
     ) {
         final int keyCapacity = configuration.getSqlSmallMapKeyCapacity();
         final int pageSize = configuration.getSqlSmallMapPageSize();
-        CharSequence mapType = configuration.getDefaultMapType();
-        if (Chars.equalsLowerCaseAscii(mapType, "fast")) {
-            return new FastMap(
-                    pageSize,
-                    keyTypes,
-                    keyCapacity,
-                    configuration.getSqlFastMapLoadFactor(),
-                    configuration.getSqlMapMaxResizes()
-            );
-        }
-
-        if (Chars.equalsLowerCaseAscii(mapType, "compact")) {
-            return new CompactMap(
-                    pageSize,
-                    keyTypes,
-                    EmptyRecordMetadata.INSTANCE,
-                    keyCapacity,
-                    configuration.getSqlCompactMapLoadFactor(),
-                    configuration.getSqlMapMaxResizes(),
-                    configuration.getSqlMapMaxPages()
-            );
-        }
-        throw CairoException.critical(0).put("unknown map type: ").put(mapType);
+        return new OrderedMap(
+                pageSize,
+                keyTypes,
+                keyCapacity,
+                configuration.getSqlFastMapLoadFactor(),
+                configuration.getSqlMapMaxResizes()
+        );
     }
 
     /**
      * Creates a Map pre-allocated to a small capacity to be used in SAMPLE BY, GROUP BY queries, but not only.
      */
-    public static Map createMap(
+    public static Map createOrderedMap(
             CairoConfiguration configuration,
             @Transient @NotNull ColumnTypes keyTypes,
             @Transient @Nullable ColumnTypes valueTypes
     ) {
         final int keyCapacity = configuration.getSqlSmallMapKeyCapacity();
         final int pageSize = configuration.getSqlSmallMapPageSize();
-        final CharSequence mapType = configuration.getDefaultMapType();
-        if (Chars.equalsLowerCaseAscii(mapType, "fast")) {
-            return new FastMap(
-                    pageSize,
-                    keyTypes,
-                    valueTypes,
-                    keyCapacity,
-                    configuration.getSqlFastMapLoadFactor(),
-                    configuration.getSqlMapMaxResizes()
-            );
+        return new OrderedMap(
+                pageSize,
+                keyTypes,
+                valueTypes,
+                keyCapacity,
+                configuration.getSqlFastMapLoadFactor(),
+                configuration.getSqlMapMaxResizes()
+        );
+    }
+
+    /**
+     * Creates an unordered Map pre-allocated to a small capacity to be used in GROUP BY queries, but not only.
+     * <p>
+     * The returned map may actually preserve insertion order, i.e. it may be ordered, depending on the types
+     * of key and value columns.
+     */
+    public static Map createUnorderedMap(
+            CairoConfiguration configuration,
+            @Transient @NotNull ColumnTypes keyTypes,
+            @Transient @Nullable ColumnTypes valueTypes
+    ) {
+        final int keyCapacity = configuration.getSqlSmallMapKeyCapacity();
+        final int pageSize = configuration.getSqlSmallMapPageSize();
+        final int maxEntrySize = configuration.getSqlUnorderedMapMaxEntrySize();
+
+        final int keySize = totalSize(keyTypes);
+        final int valueSize = totalSize(keyTypes);
+        if (keySize > 0) {
+            if (keySize <= Long.BYTES && Long.BYTES + valueSize <= maxEntrySize) {
+                return new Unordered8Map(
+                        keyTypes,
+                        valueTypes,
+                        keyCapacity,
+                        configuration.getSqlFastMapLoadFactor(),
+                        configuration.getSqlMapMaxResizes()
+                );
+            } else if (keySize <= 2 * Long.BYTES && 2 * Long.BYTES + valueSize <= maxEntrySize) {
+                return new Unordered16Map(
+                        keyTypes,
+                        valueTypes,
+                        keyCapacity,
+                        configuration.getSqlFastMapLoadFactor(),
+                        configuration.getSqlMapMaxResizes()
+                );
+            }
         }
 
-        if (Chars.equalsLowerCaseAscii(mapType, "compact")) {
-            assert valueTypes != null;
-            return new CompactMap(
-                    pageSize,
-                    keyTypes,
-                    valueTypes,
-                    keyCapacity,
-                    configuration.getSqlCompactMapLoadFactor(),
-                    configuration.getSqlMapMaxResizes(),
-                    configuration.getSqlMapMaxPages()
-            );
+        return new OrderedMap(
+                pageSize,
+                keyTypes,
+                valueTypes,
+                keyCapacity,
+                configuration.getSqlFastMapLoadFactor(),
+                configuration.getSqlMapMaxResizes()
+        );
+    }
+
+    /**
+     * Returns total size in case of all fixed-size columns
+     * or -1 if there is a var-size column in the given list.
+     */
+    private static int totalSize(ColumnTypes types) {
+        int keySize = 0;
+        for (int i = 0, n = types.getColumnCount(); i < n; i++) {
+            final int columnType = types.getColumnType(i);
+            final int size = ColumnType.sizeOf(columnType);
+            if (size > 0) {
+                keySize += size;
+            } else {
+                return -1;
+            }
         }
-        throw CairoException.critical(0).put("unknown map type: ").put(mapType);
+        return keySize;
     }
 }

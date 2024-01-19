@@ -78,7 +78,6 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
 
     @Override
     public void close() {
-        Misc.free(filter);
         Misc.freeObjList(perWorkerFilters);
     }
 

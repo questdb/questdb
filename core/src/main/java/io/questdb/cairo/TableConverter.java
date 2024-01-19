@@ -51,11 +51,11 @@ public class TableConverter {
     ) {
         final ObjList<TableToken> convertedTables = new ObjList<>();
         if (!configuration.isTableTypeConversionEnabled()) {
-            LOG.info().$("Table type conversion is disabled").$();
+            LOG.info().$("table type conversion is disabled").$();
             return null;
         }
         if (configuration.isReadOnlyInstance()) {
-            LOG.info().$("Read only instance is not allowed to perform table type conversion").$();
+            LOG.info().$("read only instance is not allowed to perform table type conversion").$();
             return null;
         }
 
@@ -73,7 +73,7 @@ public class TableConverter {
                     }
                     try {
                         final boolean walEnabled = readWalEnabled(path, ff);
-                        LOG.info().$("Converting table [dirName=").$(dirNameSink)
+                        LOG.info().$("converting table [dirName=").$(dirNameSink)
                                 .$(", walEnabled=").$(walEnabled)
                                 .I$();
 
@@ -81,7 +81,7 @@ public class TableConverter {
                         try (final MemoryMARW metaMem = Vm.getMARWInstance()) {
                             openSmallFile(ff, path, rootLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER_METADATA);
                             if (metaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED) == walEnabled) {
-                                LOG.info().$("Skipping conversion, table already has the expected type [dirName=").$(dirNameSink)
+                                LOG.info().$("skipping conversion, table already has the expected type [dirName=").$(dirNameSink)
                                         .$(", walEnabled=").$(walEnabled)
                                         .I$();
                             } else {
@@ -113,20 +113,24 @@ public class TableConverter {
                                     path.trimTo(rootLen).concat(dirNameSink);
                                     txWriter.resetStructureVersionUnsafe();
                                 } else {
-                                    tableSequencerAPI.deregisterTable(token);
-                                    removeWalPersistence(path, rootLen, ff, dirNameSink);
+                                    if (tableSequencerAPI.prepareToConvertToNonWal(token)) {
+                                        removeWalPersistence(path, rootLen, ff, dirNameSink);
+                                    } else {
+                                        LOG.info().$("WAL table will not be converted to non-WAL, table is dropped [dirName=").$(dirNameSink).I$();
+                                        continue;
+                                    }
                                 }
                                 metaMem.putBool(TableUtils.META_OFFSET_WAL_ENABLED, walEnabled);
                                 convertedTables.add(token);
                             }
 
                             path.trimTo(rootLen).concat(dirNameSink).concat(CONVERT_FILE_NAME).$();
-                            if (!ff.remove(path)) {
-                                LOG.error().$("Could not remove _convert file [path=").$(path).I$();
+                            if (!ff.removeQuiet(path)) {
+                                LOG.critical().$("could not remove _convert file [path=").$(path).I$();
                             }
                         }
                     } catch (Exception e) {
-                        LOG.error().$("Table conversion failed [path=").$(path).$(", e=").$(e).I$();
+                        LOG.error().$("table conversion failed [path=").$(path).$(", e=").$(e).I$();
                     } finally {
                         if (txWriter != null) {
                             txWriter.close();
@@ -145,7 +149,7 @@ public class TableConverter {
         try {
             fd = ff.openRO(path);
             if (fd < 1) {
-                throw CairoException.critical(ff.errno()).put("Could not open file [path=").put(path).put(']');
+                throw CairoException.critical(ff.errno()).put("could not open file [path=").put(path).put(']');
             }
 
             final byte walType = ff.readNonNegativeByte(fd, 0);
@@ -155,7 +159,7 @@ public class TableConverter {
                 case TABLE_TYPE_NON_WAL:
                     return false;
                 default:
-                    throw CairoException.critical(ff.errno()).put("Could not read walType from file [path=").put(path).put(']');
+                    throw CairoException.critical(ff.errno()).put("could not read walType from file [path=").put(path).put(']');
             }
         } finally {
             ff.close(fd);
@@ -166,7 +170,7 @@ public class TableConverter {
         path.trimTo(rootLen).concat(dirName).concat(WalUtils.SEQ_DIR).$();
         if (!ff.rmdir(path)) {
             LOG.error()
-                    .$("Could not remove sequencer dir [errno=").$(ff.errno())
+                    .$("could not remove sequencer dir [errno=").$(ff.errno())
                     .$(", path=").$(path)
                     .I$();
         }
@@ -182,16 +186,16 @@ public class TableConverter {
                     if (CairoKeywords.isWal(name)) {
                         path.trimTo(plen).concat(name).$();
                         if (type == Files.DT_FILE && CairoKeywords.isLock(name)) {
-                            if (!ff.remove(path)) {
+                            if (!ff.removeQuiet(path)) {
                                 LOG.error()
-                                        .$("Could not remove wal lock file [errno=").$(ff.errno())
+                                        .$("could not remove wal lock file [errno=").$(ff.errno())
                                         .$(", path=").$(path)
                                         .I$();
                             }
                         } else {
                             if (!ff.rmdir(path)) {
                                 LOG.error()
-                                        .$("Could not remove wal dir [errno=").$(ff.errno())
+                                        .$("could not remove wal dir [errno=").$(ff.errno())
                                         .$(", path=").$(path)
                                         .I$();
                             }

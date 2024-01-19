@@ -45,7 +45,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.MPSequence;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
@@ -1519,7 +1519,7 @@ public final class TableUtils {
      * @param timestamp   A timestamp in the partition
      * @param nameTxn     Partition txn suffix
      */
-    public static void setSinkForPartition(CharSinkBase<?> sink, int partitionBy, long timestamp, long nameTxn) {
+    public static void setSinkForPartition(CharSink<?> sink, int partitionBy, long timestamp, long nameTxn) {
         PartitionBy.setSinkForPartition(sink, partitionBy, timestamp);
         if (nameTxn > -1L) {
             sink.put('.').put(nameTxn);
@@ -1787,7 +1787,7 @@ public final class TableUtils {
                     path.$();
                 }
 
-                if (!ff.exists(path) || ff.remove(path)) {
+                if (ff.removeQuiet(path)) {
                     try {
                         mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
                         mem.jumpTo(0);

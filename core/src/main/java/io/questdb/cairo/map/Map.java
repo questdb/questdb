@@ -26,6 +26,7 @@ package io.questdb.cairo.map;
 
 import io.questdb.cairo.Reopenable;
 import io.questdb.std.Mutable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -36,17 +37,19 @@ public interface Map extends Mutable, Closeable, Reopenable {
 
     MapRecordCursor getCursor();
 
+    /**
+     * Returns full (physical) key capacity of the map ignoring the load factor.
+     */
+    @TestOnly
+    int getKeyCapacity();
+
     MapRecord getRecord();
 
-    default void merge(Map srcMap, MapValueMergeFunction mergeFunc) {
-        throw new UnsupportedOperationException();
-    }
+    void merge(Map srcMap, MapValueMergeFunction mergeFunc);
 
     void restoreInitialCapacity();
 
-    default void setKeyCapacity(int keyCapacity) {
-        throw new UnsupportedOperationException();
-    }
+    void setKeyCapacity(int keyCapacity);
 
     long size();
 

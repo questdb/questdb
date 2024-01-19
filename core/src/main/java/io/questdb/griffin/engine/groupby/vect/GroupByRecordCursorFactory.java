@@ -28,7 +28,6 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
-import io.questdb.cutlass.text.AtomicBooleanCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -40,8 +39,8 @@ import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Worker;
 import io.questdb.std.*;
+import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.CharSinkBase;
 import io.questdb.tasks.VectorAggregateTask;
 import org.jetbrains.annotations.Nullable;
 
@@ -472,7 +471,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                         sharedCircuitBreaker
                 );
                 // we can't reallocate rosti until tasks are complete because some other thread could be using it
-                if (sharedCircuitBreaker.isCanceled()) {
+                if (sharedCircuitBreaker.checkIfTripped()) {
                     resetRostiMemorySize();
                 }
             }
@@ -612,7 +611,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             }
 
             @Override
-            public void getLong256(int col, CharSinkBase<?> sink) {
+            public void getLong256(int col, CharSink<?> sink) {
                 Long256Impl v = (Long256Impl) getLong256A(col);
                 v.toSink(sink);
             }
@@ -653,7 +652,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             }
 
             @Override
-            public void getStr(int col, CharSink sink) {
+            public void getStr(int col, Utf16Sink sink) {
             }
 
             @Override

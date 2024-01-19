@@ -83,7 +83,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String cairoAttachPartitionSuffix;
     private final CairoConfiguration cairoConfiguration = new PropCairoConfiguration();
     private final int cairoGroupByMergeShardQueueCapacity;
-    private final int cairoGroupByShardCount;
     private final int cairoGroupByShardingThreshold;
     private final int cairoMaxCrashFiles;
     private final int cairoPageFrameReduceColumnListCapacity;
@@ -113,7 +112,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int createAsSelectRetryCount;
     private final int dateAdapterPoolCapacity;
     private final String dbDirectory;
-    private final CharSequence defaultMapType;
     private final boolean defaultSymbolCacheFlag;
     private final int defaultSymbolCapacity;
     private final int detachedMkdirMode;
@@ -254,7 +252,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlCharacterStoreSequencePoolCapacity;
     private final int sqlColumnCastModelPoolCapacity;
     private final int sqlColumnPoolCapacity;
-    private final double sqlCompactMapLoadFactor;
     private final int sqlCompilerPoolCapacity;
     private final int sqlCopyBufferSize;
     private final int sqlCopyModelPoolCapacity;
@@ -268,6 +265,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlExpressionPoolCapacity;
     private final double sqlFastMapLoadFactor;
     private final int sqlFloatToStrCastScale;
+    private final long sqlGroupByAllocatorChunkSize;
+    private final long sqlGroupByAllocatorMaxChunkSize;
     private final int sqlGroupByMapCapacity;
     private final int sqlGroupByPoolCapacity;
     private final int sqlHashJoinLightValueMaxPages;
@@ -297,6 +296,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean sqlParallelFilterEnabled;
     private final boolean sqlParallelFilterPreTouchEnabled;
     private final boolean sqlParallelGroupByEnabled;
+    private final int sqlQueryRegistryPoolSize;
     private final int sqlRenameTableModelPoolCapacity;
     private final int sqlSmallMapKeyCapacity;
     private final int sqlSmallMapPageSize;
@@ -308,6 +308,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlSortValuePageSize;
     private final int sqlStrFunctionBufferMaxSize;
     private final int sqlTxnScoreboardEntryCount;
+    private final int sqlUnorderedMapMaxEntrySize;
     private final int sqlWindowColumnPoolCapacity;
     private final int sqlWindowInitialRangeBufferSize;
     private final int sqlWindowMaxRecursion;
@@ -851,7 +852,6 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             this.commitMode = getCommitMode(properties, env, PropertyKey.CAIRO_COMMIT_MODE);
             this.createAsSelectRetryCount = getInt(properties, env, PropertyKey.CAIRO_CREATE_AS_SELECT_RETRY_COUNT, 5);
-            this.defaultMapType = getString(properties, env, PropertyKey.CAIRO_DEFAULT_MAP_TYPE, "fast");
             this.defaultSymbolCacheFlag = getBoolean(properties, env, PropertyKey.CAIRO_DEFAULT_SYMBOL_CACHE_FLAG, true);
             this.defaultSymbolCapacity = getInt(properties, env, PropertyKey.CAIRO_DEFAULT_SYMBOL_CAPACITY, 256);
             this.fileOperationRetryCount = getInt(properties, env, PropertyKey.CAIRO_FILE_OPERATION_RETRY_COUNT, 30);
@@ -872,13 +872,13 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlCharacterStoreCapacity = getInt(properties, env, PropertyKey.CAIRO_CHARACTER_STORE_CAPACITY, 1024);
             this.sqlCharacterStoreSequencePoolCapacity = getInt(properties, env, PropertyKey.CAIRO_CHARACTER_STORE_SEQUENCE_POOL_CAPACITY, 64);
             this.sqlColumnPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_COLUMN_POOL_CAPACITY, 4096);
-            this.sqlCompactMapLoadFactor = getDouble(properties, env, PropertyKey.CAIRO_COMPACT_MAP_LOAD_FACTOR, "0.7");
             this.sqlExpressionPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_EXPRESSION_POOL_CAPACITY, 8192);
             this.sqlFastMapLoadFactor = getDouble(properties, env, PropertyKey.CAIRO_FAST_MAP_LOAD_FACTOR, "0.7");
             this.sqlJoinContextPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_JOIN_CONTEXT_POOL_CAPACITY, 64);
             this.sqlLexerPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_LEXER_POOL_CAPACITY, 2048);
-            this.sqlSmallMapKeyCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY, 1024);
+            this.sqlSmallMapKeyCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY, 32);
             this.sqlSmallMapPageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_SMALL_MAP_PAGE_SIZE, 32 * 1024);
+            this.sqlUnorderedMapMaxEntrySize = getInt(properties, env, PropertyKey.CAIRO_SQL_UNORDERED_MAP_MAX_ENTRY_SIZE, 24);
             this.sqlMapMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_MAP_MAX_PAGES, Integer.MAX_VALUE);
             this.sqlMapMaxResizes = getIntSize(properties, env, PropertyKey.CAIRO_SQL_MAP_MAX_RESIZES, Integer.MAX_VALUE);
             this.sqlExplainModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_EXPLAIN_MODEL_POOL_CAPACITY, 32);
@@ -925,9 +925,12 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlDoubleToStrCastScale = getInt(properties, env, PropertyKey.CAIRO_SQL_DOUBLE_CAST_SCALE, 12);
             this.sqlFloatToStrCastScale = getInt(properties, env, PropertyKey.CAIRO_SQL_FLOAT_CAST_SCALE, 4);
             this.sqlGroupByMapCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_GROUPBY_MAP_CAPACITY, 1024);
+            this.sqlGroupByAllocatorChunkSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_GROUPBY_ALLOCATOR_DEFAULT_CHUNK_SIZE, 128 * 1024);
+            this.sqlGroupByAllocatorMaxChunkSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_GROUPBY_ALLOCATOR_MAX_CHUNK_SIZE, 4 * Numbers.SIZE_1GB);
             this.sqlGroupByPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_GROUPBY_POOL_CAPACITY, 1024);
             this.sqlMaxSymbolNotEqualsCount = getInt(properties, env, PropertyKey.CAIRO_SQL_MAX_SYMBOL_NOT_EQUALS_COUNT, 100);
             this.sqlBindVariablePoolSize = getInt(properties, env, PropertyKey.CAIRO_SQL_BIND_VARIABLE_POOL_SIZE, 8);
+            this.sqlQueryRegistryPoolSize = getInt(properties, env, PropertyKey.CAIRO_SQL_QUERY_REGISTRY_POOL_SIZE, 32);
             this.sqlCountDistinctCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_COUNT_DISTINCT_CAPACITY, 16);
             this.sqlCountDistinctLoadFactor = getDouble(properties, env, PropertyKey.CAIRO_SQL_COUNT_DISTINCT_LOAD_FACTOR, "0.7");
             final String sqlCopyFormatsFile = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_FORMATS_FILE, "/text_loader.json");
@@ -938,7 +941,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
             this.sqlDistinctTimestampKeyCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_DISTINCT_TIMESTAMP_KEY_CAPACITY, 512);
             this.sqlDistinctTimestampLoadFactor = getDouble(properties, env, PropertyKey.CAIRO_SQL_DISTINCT_TIMESTAMP_LOAD_FACTOR, "0.5");
-            this.sqlPageFrameMinRows = getInt(properties, env, PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 1_000);
+            this.sqlPageFrameMinRows = getInt(properties, env, PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 100_000);
             this.sqlPageFrameMaxRows = getInt(properties, env, PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1_000_000);
 
             this.sqlJitMode = getSqlJitMode(properties, env);
@@ -1166,13 +1169,13 @@ public class PropServerConfiguration implements ServerConfiguration {
                 String floatDefaultColumnTypeName = getString(properties, env, PropertyKey.LINE_FLOAT_DEFAULT_COLUMN_TYPE, ColumnType.nameOf(ColumnType.DOUBLE));
                 this.floatDefaultColumnType = ColumnType.tagOf(floatDefaultColumnTypeName);
                 if (floatDefaultColumnType != ColumnType.DOUBLE && floatDefaultColumnType != ColumnType.FLOAT) {
-                    log.info().$("invalid default column type for float ").$(floatDefaultColumnTypeName).$("), will use DOUBLE").$();
+                    log.info().$("invalid default column type for float ").$(floatDefaultColumnTypeName).$(", will use DOUBLE").$();
                     this.floatDefaultColumnType = ColumnType.DOUBLE;
                 }
                 String integerDefaultColumnTypeName = getString(properties, env, PropertyKey.LINE_INTEGER_DEFAULT_COLUMN_TYPE, ColumnType.nameOf(ColumnType.LONG));
                 this.integerDefaultColumnType = ColumnType.tagOf(integerDefaultColumnTypeName);
                 if (integerDefaultColumnType != ColumnType.LONG && integerDefaultColumnType != ColumnType.INT && integerDefaultColumnType != ColumnType.SHORT && integerDefaultColumnType != ColumnType.BYTE) {
-                    log.info().$("invalid default column type for integer ").$(integerDefaultColumnTypeName).$("), will use LONG").$();
+                    log.info().$("invalid default column type for integer ").$(integerDefaultColumnTypeName).$(", will use LONG").$();
                     this.integerDefaultColumnType = ColumnType.LONG;
                 }
             }
@@ -1193,7 +1196,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.cairoPageFrameReduceQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, defaultReduceQueueCapacity));
             this.cairoGroupByMergeShardQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUP_BY_MERGE_QUEUE_CAPACITY, defaultReduceQueueCapacity));
             this.cairoGroupByShardingThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUP_BY_SHARDING_THRESHOLD, 10000);
-            this.cairoGroupByShardCount = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUP_BY_SHARD_COUNT, 64));
             this.cairoPageFrameReduceRowIdListCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_ROWID_LIST_CAPACITY, 256));
             this.cairoPageFrameReduceColumnListCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_COLUMN_LIST_CAPACITY, 16));
             final int defaultReduceShardCount = Math.min(sharedWorkerCount, 4);
@@ -1663,6 +1665,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             registerDeprecated(PropertyKey.LINE_TCP_TIMESTAMP);
             registerDeprecated(PropertyKey.CAIRO_QUERY_CACHE_EVENT_QUEUE_CAPACITY);
             registerDeprecated(PropertyKey.CAIRO_SQL_JIT_ROWS_THRESHOLD);
+            registerDeprecated(PropertyKey.CAIRO_COMPACT_MAP_LOAD_FACTOR);
+            registerDeprecated(PropertyKey.CAIRO_DEFAULT_MAP_TYPE);
             registerDeprecated(
                     PropertyKey.CAIRO_SQL_ANALYTIC_COLUMN_POOL_CAPACITY,
                     PropertyKey.CAIRO_SQL_WINDOW_COLUMN_POOL_CAPACITY
@@ -1999,11 +2003,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public @NotNull CharSequence getDefaultMapType() {
-            return defaultMapType;
-        }
-
-        @Override
         public boolean getDefaultSymbolCacheFlag() {
             return defaultSymbolCacheFlag;
         }
@@ -2049,6 +2048,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getGroupByAllocatorDefaultChunkSize() {
+            return sqlGroupByAllocatorChunkSize;
+        }
+
+        @Override
+        public long getGroupByAllocatorMaxChunkSize() {
+            return sqlGroupByAllocatorMaxChunkSize;
+        }
+
+        @Override
         public int getGroupByMapCapacity() {
             return sqlGroupByMapCapacity;
         }
@@ -2061,11 +2070,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getGroupByPoolCapacity() {
             return sqlGroupByPoolCapacity;
-        }
-
-        @Override
-        public int getGroupByShardCount() {
-            return cairoGroupByShardCount;
         }
 
         @Override
@@ -2249,6 +2253,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getQueryRegistryPoolSize() {
+            return sqlQueryRegistryPoolSize;
+        }
+
+        @Override
         public int getReaderPoolMaxSegments() {
             return readerPoolMaxSegments;
         }
@@ -2316,11 +2325,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlColumnPoolCapacity() {
             return sqlColumnPoolCapacity;
-        }
-
-        @Override
-        public double getSqlCompactMapLoadFactor() {
-            return sqlCompactMapLoadFactor;
         }
 
         @Override
@@ -2521,6 +2525,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlSortValuePageSize() {
             return sqlSortValuePageSize;
+        }
+
+        @Override
+        public int getSqlUnorderedMapMaxEntrySize() {
+            return sqlUnorderedMapMaxEntrySize;
         }
 
         @Override

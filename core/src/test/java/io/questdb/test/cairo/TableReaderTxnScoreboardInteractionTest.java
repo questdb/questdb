@@ -114,19 +114,19 @@ public class TableReaderTxnScoreboardInteractionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTable();
 
-            try (TableReader reader = newTableReader(configuration, "x")) {
+            try (TableReader reader = newOffPoolReader(configuration, "x")) {
                 TxnScoreboard txnScoreboard = reader.getTxnScoreboard();
                 // when table is empty the "min" is set to max long
                 Assert.assertEquals(0, txnScoreboard.getMin());
                 Assert.assertEquals(0, reader.getTxn());
             }
 
-            try (TableWriter w = newTableWriter(configuration, "x", metrics)) {
+            try (TableWriter w = newOffPoolWriter(configuration, "x", metrics)) {
                 addRow(w);
 
                 final TxnScoreboard txnScoreboard = w.getTxnScoreboard();
 
-                try (TableReader reader = newTableReader(configuration, "x")) {
+                try (TableReader reader = newOffPoolReader(configuration, "x")) {
                     Assert.assertEquals(1, reader.getTxn());
                     Assert.assertEquals(1, txnScoreboard.getMin());
                     Assert.assertEquals(1, txnScoreboard.getActiveReaderCount(1));

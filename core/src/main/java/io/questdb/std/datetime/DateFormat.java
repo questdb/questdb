@@ -25,7 +25,7 @@
 package io.questdb.std.datetime;
 
 import io.questdb.std.NumericException;
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -35,7 +35,7 @@ import org.jetbrains.annotations.Nullable;
  */
 public interface DateFormat {
 
-    void format(long datetime, @NotNull DateLocale locale, @Nullable CharSequence timeZoneName, @NotNull CharSinkBase<?> sink);
+    void format(long datetime, @NotNull DateLocale locale, @Nullable CharSequence timeZoneName, @NotNull CharSink<?> sink);
 
     long parse(@NotNull CharSequence in, @NotNull DateLocale locale) throws NumericException;
 

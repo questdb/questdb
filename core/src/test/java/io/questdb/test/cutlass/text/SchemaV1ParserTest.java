@@ -31,7 +31,7 @@ import io.questdb.cutlass.text.SchemaV1Parser;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.DirectCharSink;
+import io.questdb.std.str.DirectUtf16Sink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
@@ -39,11 +39,11 @@ public class SchemaV1ParserTest {
     private static final JsonLexer LEXER = new JsonLexer(1024, 4096);
     private static SchemaV1Parser schemaV1Parser;
     private static TypeManager typeManager;
-    private static DirectCharSink utf8Sink;
+    private static DirectUtf16Sink utf8Sink;
 
     @BeforeClass
     public static void setUpClass() {
-        utf8Sink = new DirectCharSink(1024);
+        utf8Sink = new DirectUtf16Sink(1024);
         typeManager = new TypeManager(
                 new DefaultTextConfiguration(),
                 utf8Sink

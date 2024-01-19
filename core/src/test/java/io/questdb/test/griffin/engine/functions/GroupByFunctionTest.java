@@ -31,8 +31,8 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
+import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.CharSinkBase;
 import org.junit.Test;
 
 public class GroupByFunctionTest {
@@ -136,7 +136,7 @@ public class GroupByFunctionTest {
         }
 
         @Override
-        public void getLong256(Record rec, CharSinkBase<?> sink) {
+        public void getLong256(Record rec, CharSink<?> sink) {
         }
 
         @Override
@@ -175,11 +175,11 @@ public class GroupByFunctionTest {
         }
 
         @Override
-        public void getStr(Record rec, CharSink sink) {
+        public void getStr(Record rec, Utf16Sink sink) {
         }
 
         @Override
-        public void getStr(Record rec, CharSink sink, int arrayIndex) {
+        public void getStr(Record rec, Utf16Sink sink, int arrayIndex) {
         }
 
         @Override
@@ -223,11 +223,20 @@ public class GroupByFunctionTest {
         }
 
         @Override
+        public int getValueIndex() {
+            return 0;
+        }
+
+        @Override
         public void pushValueTypes(ArrayColumnTypes columnTypes) {
         }
 
         @Override
         public void setNull(MapValue mapValue) {
+        }
+
+        @Override
+        public void setValueIndex(int valueIndex) {
         }
     };
 

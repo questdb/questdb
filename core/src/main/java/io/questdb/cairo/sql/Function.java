@@ -32,8 +32,8 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.CharSinkBase;
 
 import java.io.Closeable;
 
@@ -109,7 +109,7 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     long getLong128Lo(Record rec);
 
-    void getLong256(Record rec, CharSinkBase<?> sink);
+    void getLong256(Record rec, CharSink<?> sink);
 
     Long256 getLong256A(Record rec);
 
@@ -139,9 +139,9 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     CharSequence getStr(Record rec, int arrayIndex);
 
-    void getStr(Record rec, CharSink sink);
+    void getStr(Record rec, Utf16Sink sink);
 
-    void getStr(Record rec, CharSink sink, int arrayIndex);
+    void getStr(Record rec, Utf16Sink sink, int arrayIndex);
 
     CharSequence getStrB(Record rec);
 
@@ -173,12 +173,30 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     }
 
     /**
+     * Returns true if the function supports parallel execution, e.g. parallel filter
+     * or GROUP BY. If the method returns false, single-threaded execution plan
+     * must be chosen for the query.
+     * <p>
+     * Examples of parallelizable, but thread-unsafe function are regexp_replace() or min(str).
+     * These functions need to maintain a char sink, so they can't be accessed concurrently.
+     * On the other hand, regexp_replace() can be used in parallel filter and min(str)
+     * supports parallel aggregation and subsequent merge.
+     *
+     * @return true if the function and all of its children functions support parallel execution
+     */
+    default boolean isParallelismSupported() {
+        return true;
+    }
+
+    /**
      * Returns true if the function and all of its children functions are thread-safe
      * and, thus, can be called concurrently, false - otherwise. Used as a hint for
      * parallel SQL filters runtime, thus this method makes sense only for functions
-     * that are allowed in a filter (WHERE clause).
+     * that are allowed in WHERE or GROUP BY clause.
+     * <p>
+     * If the function is not read thread-safe, it gets cloned for each worker thread.
      *
-     * @return true if the function and all of its children functions are thread-safe
+     * @return true if the function and all of its children functions are read thread-safe
      */
     default boolean isReadThreadSafe() {
         return false;

@@ -25,15 +25,15 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.map.FastMap;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.map.OrderedMap;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 
 import java.io.Closeable;
 
@@ -45,7 +45,7 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
     private int refCount;
 
     public JoinRecordMetadata(CairoConfiguration configuration, int columnCount) {
-        this.map = new FastMap(configuration.getSqlJoinMetadataPageSize(), keyTypes, valueTypes, columnCount * 2, 0.6, configuration.getSqlJoinMetadataMaxResizes(), MemoryTag.NATIVE_JOIN_MAP);
+        this.map = new OrderedMap(configuration.getSqlJoinMetadataPageSize(), keyTypes, valueTypes, columnCount * 2, 0.6, configuration.getSqlJoinMetadataMaxResizes(), MemoryTag.NATIVE_JOIN_MAP);
         this.timestampIndex = -1;
         this.columnCount = 0;
         this.refCount = 1;
@@ -61,7 +61,7 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
             RecordMetadata metadata
     ) {
         int dot = addAlias(tableAlias, columnName);
-        final CharSink b = Misc.getThreadLocalSink();
+        final Utf16Sink b = Misc.getThreadLocalSink();
         TableColumnMetadata cm;
         if (dot == -1) {
             cm = new TableColumnMetadata(
@@ -88,7 +88,7 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
     public void add(CharSequence tableAlias, TableColumnMetadata m) {
         final CharSequence columnName = m.getName();
         final int dot = addAlias(tableAlias, columnName);
-        final CharSink b = Misc.getThreadLocalSink();
+        final Utf16Sink b = Misc.getThreadLocalSink();
         TableColumnMetadata cm;
         if (dot == -1) {
             cm = new TableColumnMetadata(

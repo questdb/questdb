@@ -29,11 +29,11 @@ import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.vm.api.MemoryR;
-import io.questdb.cutlass.text.AtomicBooleanCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
@@ -311,7 +311,7 @@ class LatestByAllIndexedRecordCursor extends AbstractDataFrameRecordCursor {
             throw t;
         } finally {
             processTasks(queuedCount);
-            if (sharedCircuitBreaker.isCanceled()) {
+            if (sharedCircuitBreaker.checkIfTripped()) {
                 LatestByArguments.releaseMemoryArray(argumentsAddress, taskCount);
                 argumentsAddress = 0;
             }

@@ -144,9 +144,6 @@ public interface CairoConfiguration {
     @NotNull
     DateLocale getDefaultDateLocale();
 
-    @NotNull
-    CharSequence getDefaultMapType();
-
     boolean getDefaultSymbolCacheFlag();
 
     int getDefaultSymbolCapacity();
@@ -171,13 +168,15 @@ public interface CairoConfiguration {
 
     int getFloatToStrCastScale();
 
+    long getGroupByAllocatorDefaultChunkSize();
+
+    long getGroupByAllocatorMaxChunkSize();
+
     int getGroupByMapCapacity();
 
     int getGroupByMergeShardQueueCapacity();
 
     int getGroupByPoolCapacity();
-
-    int getGroupByShardCount();
 
     int getGroupByShardingThreshold();
 
@@ -293,6 +292,8 @@ public interface CairoConfiguration {
         return DefaultQueryLogger.INSTANCE;
     }
 
+    int getQueryRegistryPoolSize();
+
     @NotNull
     default Rnd getRandom() {
         Rnd rnd = RANDOM.get();
@@ -348,8 +349,6 @@ public interface CairoConfiguration {
     int getSqlCharacterStoreSequencePoolCapacity();
 
     int getSqlColumnPoolCapacity();
-
-    double getSqlCompactMapLoadFactor();
 
     int getSqlCompilerPoolCapacity();
 
@@ -436,6 +435,8 @@ public interface CairoConfiguration {
     int getSqlSortValueMaxPages();
 
     int getSqlSortValuePageSize();
+
+    int getSqlUnorderedMapMaxEntrySize();
 
     int getSqlWindowInitialRangeBufferSize();
 

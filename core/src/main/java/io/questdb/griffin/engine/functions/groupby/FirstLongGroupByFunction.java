@@ -69,6 +69,16 @@ public class FirstLongGroupByFunction extends LongFunction implements GroupByFun
     }
 
     @Override
+    public int getValueIndex() {
+        return valueIndex;
+    }
+
+    @Override
+    public boolean isParallelismSupported() {
+        return false;
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.LONG);
@@ -82,5 +92,10 @@ public class FirstLongGroupByFunction extends LongFunction implements GroupByFun
     @Override
     public void setNull(MapValue mapValue) {
         setLong(mapValue, Numbers.LONG_NaN);
+    }
+
+    @Override
+    public void setValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
     }
 }
