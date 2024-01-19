@@ -253,7 +253,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                         delayLatch.countDown();
                     }
                 }, senderBuilder -> senderBuilder
-                        .httpTimeout(100)
+                        .httpTimeoutMillis(100)
                         .retryTimeoutMillis(0)
         );
     }

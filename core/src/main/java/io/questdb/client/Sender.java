@@ -251,7 +251,7 @@ public interface Sender extends Closeable {
      * Example usage:
      * <pre>{@code
      * try (Sender sender = Sender.builder()
-     *  .address("localhost:9009")
+     *  .url("http://localhost:9000")
      *  .build()) {
      *      sender.table(tableName).column("value", 42).atNow();
      *  }
@@ -325,6 +325,7 @@ public interface Sender extends Closeable {
          *
          * @param address address of a QuestDB server
          * @return this instance for method chaining.
+         * @deprecated use {@link #url(CharSequence)} instead
          */
         public LineSenderBuilder address(CharSequence address) {
             if (this.host != null) {
@@ -377,12 +378,11 @@ public interface Sender extends Closeable {
 
         /**
          * Configure capacity of an internal buffer.
-         * Bigger buffer increase batching effect.
          * <p>
          * When communicating over HTTP protocol this buffer size is treated as the initial buffer capacity. Buffer can
          * grow up to {@link #maximumBufferCapacity(int)}. You should call {@link #flush()} to send buffered data to
          * a server. Otherwise, data will be sent automatically when number of buffered rows reaches {@link #maxPendingRows(int)}.
-         * <p>
+         * <br>
          * When communicating over TCP protocol this buffer size is treated as the maximum buffer capacity. The Sender
          * will automatically flush the buffer when it reaches this capacity.
          *
@@ -401,6 +401,8 @@ public interface Sender extends Closeable {
 
         /**
          * Build a Sender instance. This method construct a Sender instance.
+         * <br>
+         * You are responsible for calling {@link #close()} when you no longer need the Sender instance.
          *
          * @return returns a configured instance of Sender.
          */
@@ -466,9 +468,14 @@ public interface Sender extends Closeable {
 
         /**
          * Configure authentication. This is needed when QuestDB server required clients to authenticate.
+         * <br>
+         * This is only used when communicating over TCP transport, and it's illegal to call this method when
+         * communicating over HTTP transport.
          *
          * @param keyId keyId the client will send to a server.
          * @return an instance of {@link AuthBuilder}. As to finish authentication configuration.
+         * @see #httpTokenAuth(String)
+         * @see #httpAuth(String, String)
          */
         public LineSenderBuilder.AuthBuilder enableAuth(String keyId) {
             if (this.keyId != null) {
@@ -492,6 +499,17 @@ public interface Sender extends Closeable {
             return this;
         }
 
+        /**
+         * Use username and password for authentication when communicating over HTTP protocol.
+         * <br>
+         * This is only used when communicating over HTTP transport, and it's illegal to call this method when
+         * communicating over TCP transport.
+         *
+         * @param username username
+         * @param password password
+         * @return this instance for method chaining
+         * @see #httpTokenAuth(String)
+         */
         public LineSenderBuilder httpAuth(String username, String password) {
             if (this.username != null) {
                 throw new LineSenderException("authentication username was already configured ")
@@ -513,12 +531,15 @@ public interface Sender extends Closeable {
         }
 
         /**
-         * Set timeout is milliseconds for HTTP requests. This is only used when communicating over HTTP protocol.
+         * Set timeout is milliseconds for HTTP requests.
+         * <br>
+         * This is only used when communicating over HTTP transport and it's illegal to call this method when
+         * communicating over TCP transport.
          *
          * @param httpTimeoutMillis timeout is milliseconds for HTTP requests.
          * @return this instance for method chaining
          */
-        public LineSenderBuilder httpTimeout(int httpTimeoutMillis) {
+        public LineSenderBuilder httpTimeoutMillis(int httpTimeoutMillis) {
             if (this.httpTimeout != HTTP_TIMEOUT_DEFAULT) {
                 throw new LineSenderException("HTTP timeout was already configured ")
                         .put("[configured-timeout=").put(this.httpTimeout)
@@ -533,6 +554,15 @@ public interface Sender extends Closeable {
             return this;
         }
 
+        /**
+         * Use HTTP Authentication token.
+         * <br>
+         * This is only used when communicating over HTTP transport, and it's illegal to
+         * call this method when communicating over TCP transport.
+         *
+         * @param token HTTP authentication token
+         * @return this instance for method chaining
+         */
         public LineSenderBuilder httpTokenAuth(String token) {
             if (this.username != null) {
                 throw new LineSenderException("authentication username was already configured ")
@@ -546,9 +576,10 @@ public interface Sender extends Closeable {
         }
 
         /**
-         * Set the maximum number of rows that can be buffered locally before they are sent to a server.
-         * This is only used when communicating over HTTP protocol and it's illegal to call this method when
-         * communicating over TCP protocol.
+         * Set the maximum number of rows that can be buffered locally before they are automatically sent to a server.
+         * <br>
+         * This is only used when communicating over HTTP transport, and it's illegal to call this method when
+         * communicating over TCP transport.
          * <br>
          * The Sender will automatically flush the buffer when it reaches this limit. You must make sure that
          * the buffer is flushed before it reaches the maximum capacity. Otherwise, the Sender will throw an exception
@@ -568,12 +599,14 @@ public interface Sender extends Closeable {
         }
 
         /**
-         * Set the maximum buffer capacity. This is only used when communicating over HTTP protocol.
+         * Set the maximum buffer capacity in bytes. This is only used when communicating over HTTP transport.
          * <br>
          * This is a hard limit on the maximum buffer capacity. The buffer cannot grow beyond this limit and Sender
          * will throw an exception if you try to accommodate more data in the buffer. To prevent this from happening
          * you should call {@link #flush()} periodically or set {@link #maxPendingRows(int)} to make sure that
          * Sender will flush the buffer automatically before it reaches the maximum capacity.
+         * <br>
+         * Default value: 20 MB.
          *
          * @param maximumBufferCapacity maximum buffer capacity in bytes.
          * @return this instance for method chaining
@@ -644,6 +677,10 @@ public interface Sender extends Closeable {
         /**
          * Configures a QuestDB server address. The address must be a full URL, including a protocol, host and port.
          * This is the preferred way of configuring a Sender.
+         * <p>
+         * Example 1: http://localhost:9000 - this will configure a Sender to communicate over HTTP transport
+         * <br>
+         * Example 2: tcp://localhost:9009 - this will configure a Sender to communicate over TCP transport
          *
          * @param url a full URL to a QuestDB server.
          * @return this instance for method chaining
