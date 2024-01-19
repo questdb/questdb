@@ -48,7 +48,7 @@ public class TableUpdateDetails implements Closeable {
     private final long commitInterval;
     private final boolean commitOnClose;
     private final DefaultColumnTypes defaultColumnTypes;
-    private final int defaultMaxUncommittedRows;
+    private final long defaultMaxUncommittedRows;
     private final CairoEngine engine;
     private final ThreadLocalDetails[] localDetailsArray;
     private final MillisecondClock millisecondClock;
@@ -118,7 +118,8 @@ public class TableUpdateDetails implements Closeable {
             Utf8String tableNameUtf8,
             Pool<SymbolCache> symbolCachePool,
             long commitInterval,
-            boolean commitOnClose
+            boolean commitOnClose,
+            long maxUncommittedRows
     ) {
         this.writerThreadId = writerThreadId;
         this.engine = engine;
@@ -128,7 +129,7 @@ public class TableUpdateDetails implements Closeable {
         final CairoConfiguration cairoConfiguration = engine.getConfiguration();
         this.millisecondClock = cairoConfiguration.getMillisecondClock();
         this.writerTickRowsCountMod = cairoConfiguration.getWriterTickRowsCountMod();
-        this.defaultMaxUncommittedRows = cairoConfiguration.getMaxUncommittedRows();
+        this.defaultMaxUncommittedRows = maxUncommittedRows;
         this.writerAPI = writer;
         this.timestampIndex = writer.getMetadata().getTimestampIndex();
         this.tableToken = writer.getTableToken();
@@ -311,7 +312,7 @@ public class TableUpdateDetails implements Closeable {
         }
     }
 
-    private int getMetaMaxUncommittedRows() {
+    private long getMetaMaxUncommittedRows() {
         if (metadataService != null) {
             return metadataService.getMetaMaxUncommittedRows();
         }

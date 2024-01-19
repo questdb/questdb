@@ -440,7 +440,8 @@ public class LineTcpMeasurementScheduler implements Closeable {
                                 Utf8String.newInstance(tableNameUtf8),
                                 netIoJob.getSymbolCachePool(),
                                 configuration.getCommitInterval(),
-                                true
+                                true,
+                                engine.getConfiguration().getMaxUncommittedRows()
                         );
                         ctx.addTableUpdateDetails(Utf8String.newInstance(tableNameUtf8), tud);
                         return tud;
