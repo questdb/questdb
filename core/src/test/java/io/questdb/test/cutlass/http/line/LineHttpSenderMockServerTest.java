@@ -149,7 +149,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     public void testNoConnection() {
         try (Sender sender = Sender.builder()
                 .url("http://127.0.0.1:1")
-                .maxRetryMillis(1000)
+                .retryTimeoutMillis(1000)
                 .build()) {
             sender.table("test")
                     .symbol("sym", "bol")
@@ -207,7 +207,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
             } catch (LineSenderException e) {
                 TestUtils.assertContains(e.getMessage(), "Could not flush buffer: Internal Server Error [http-status=500]");
             }
-        }, c -> c.maxRetryMillis(1000));
+        }, c -> c.retryTimeoutMillis(1000));
     }
 
     @Test
@@ -217,7 +217,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 .replyWithContent(500, "do not dare to retry", "plain/text");
 
         testWithMock(mockHttpProcessor, errorVerifier("Could not flush buffer: do not dare to retry [http-status=500]"),
-                senderBuilder -> senderBuilder.maxRetryMillis(0)
+                senderBuilder -> senderBuilder.retryTimeoutMillis(0)
         );
     }
 
@@ -254,7 +254,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                     }
                 }, senderBuilder -> senderBuilder
                         .httpTimeout(100)
-                        .maxRetryMillis(0)
+                        .retryTimeoutMillis(0)
         );
     }
 

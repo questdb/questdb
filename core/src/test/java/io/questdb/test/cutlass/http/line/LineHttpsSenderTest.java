@@ -125,6 +125,24 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testInvalidRetryTimeout() {
+        try {
+            Sender.builder().retryTimeoutMillis(-1);
+            Assert.fail();
+        } catch (LineSenderException e) {
+            TestUtils.assertContains(e.getMessage(), "retry timeout cannot be negative [retry-timeout-millis=-1]");
+        }
+
+        Sender.LineSenderBuilder builder = Sender.builder().retryTimeoutMillis(100);
+        try {
+            builder.retryTimeoutMillis(200);
+            Assert.fail();
+        } catch (LineSenderException e) {
+            TestUtils.assertContains(e.getMessage(), "max retries was already configured [retry-timeout-millis=100]");
+        }
+    }
+
+    @Test
     public void testRecoveryAfterInfrastructureErrorExceededRetryLimit() throws Exception {
         String tableName = "testAutoRecoveryAfterInfrastructureError";
         TestUtils.assertMemoryLeak(() -> {
@@ -138,7 +156,7 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
                         .url(url)
                         .advancedTls()
                         .disableCertificateValidation()
-                        .maxRetryMillis(500)
+                        .retryTimeoutMillis(500)
                         .build()) {
                     sender.table(tableName).longColumn("value", 42).atNow();
                     sender.flush(); // make sure a connection is established
@@ -207,7 +225,7 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
                 String url = "https://localhost:" + port;
                 try (Sender sender = Sender.builder()
                         .url(url)
-                        .maxRetryMillis(1000)
+                        .retryTimeoutMillis(1000)
                         .build()
                 ) {
                     try {

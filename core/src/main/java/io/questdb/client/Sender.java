@@ -280,7 +280,6 @@ public interface Sender extends Closeable {
         private String httpToken;
         private String keyId;
         private int maxPendingRows = MAX_PENDING_ROWS_DEFAULT;
-        private int maxRetryMillis = MAX_RETRY_MILLIS_DEFAULT;
         private int maximumBufferCapacity = DEFAULT_MAXIMUM_BUFFER_CAPACITY;
         private final HttpClientConfiguration httpClientConfiguration = new DefaultHttpClientConfiguration() {
             @Override
@@ -302,6 +301,7 @@ public interface Sender extends Closeable {
         private int port = PORT_DEFAULT;
         private PrivateKey privateKey;
         private int protocol = PROTOCOL_DEFAULT;
+        private int retryTimeoutMillis = MAX_RETRY_MILLIS_DEFAULT;
         private boolean shouldDestroyPrivKey;
         private boolean tlsEnabled;
         private TlsValidationMode tlsValidationMode = TlsValidationMode.DEFAULT;
@@ -417,7 +417,7 @@ public interface Sender extends Closeable {
                             .put("]");
                 }
                 int actualMaxPendingRows = maxPendingRows == MAX_PENDING_ROWS_DEFAULT ? DEFAULT_MAX_PENDING_ROWS : maxPendingRows;
-                long actualMaxRetriesNanos = maxRetryMillis == MAX_RETRY_MILLIS_DEFAULT ? DEFAULT_MAX_RETRY_NANOS : maxRetryMillis * 1_000_000L;
+                long actualMaxRetriesNanos = retryTimeoutMillis == MAX_RETRY_MILLIS_DEFAULT ? DEFAULT_MAX_RETRY_NANOS : retryTimeoutMillis * 1_000_000L;
                 ClientTlsConfiguration tlsConfig = null;
                 if (tlsEnabled) {
                     assert (trustStorePath == null) == (trustStorePassword == null); //either both null or both non-null
@@ -568,32 +568,6 @@ public interface Sender extends Closeable {
         }
 
         /**
-         * Configure maximum number of retries. This is only used when communicating over HTTP protocol.
-         * <br>
-         * When a server returns an error, the Sender will retry sending the same request until it either succeeds
-         * or the maximum retrying time is exceeded. This setting effectively controls the maximum server outage
-         * time. If the server is down for longer than this time then the Sender will give up and throw an exception.
-         * <br>
-         * Setting this value to zero disables retries. In this case the Sender will throw an exception immediately.
-         * Sender does not retry when there is a failure during close(). For this reason it's recommended to call
-         * {@link #flush()} explicitly before closing the Sender.
-         *
-         * <br>
-         * Default: 10,000 milliseconds.
-         *
-         * @param maxRetryMillis maximum retry time in milliseconds.
-         * @return this instance for method chaining
-         */
-        public LineSenderBuilder maxRetryMillis(int maxRetryMillis) {
-            if (this.maxRetryMillis != MAX_RETRY_MILLIS_DEFAULT) {
-                throw new LineSenderException("max retries was already configured ")
-                        .put("[max-retries=").put(this.maxRetryMillis).put("]");
-            }
-            this.maxRetryMillis = maxRetryMillis;
-            return this;
-        }
-
-        /**
          * Set the maximum buffer capacity. This is only used when communicating over HTTP protocol.
          * <br>
          * This is a hard limit on the maximum buffer capacity. The buffer cannot grow beyond this limit and Sender
@@ -628,6 +602,38 @@ public interface Sender extends Closeable {
                         .put("[configured-port=").put(port).put("]");
             }
             this.port = port;
+            return this;
+        }
+
+        /**
+         * Configure the maximum time the Sender will try retrying when it receives a recoverable error from a server.
+         * <br>
+         * This is only used when communicating over HTTP protocol and it's illegal to call this method when
+         * communicating over TCP protocol.
+         * <p>
+         * Recoverable errors are those that are not caused by a client sending invalid data to a server. For example
+         * a connection glitch or a server outage are recoverable errors, but an attempt to send a row with a wrong
+         * data type is not.
+         * <p>
+         * Setting this value to zero disables retries entirely. In this case the Sender will throw an exception
+         * immediately. Sender does not retry when there is a failure during close(). For this reason it's recommended
+         * to call {@link #flush()} explicitly before closing the Sender.
+         * <p>
+         * Default value: 10,000 milliseconds.
+         *
+         * @param retryTimeoutMillis maximum retry time in milliseconds.
+         * @return this instance for method chaining
+         */
+        public LineSenderBuilder retryTimeoutMillis(int retryTimeoutMillis) {
+            if (this.retryTimeoutMillis != MAX_RETRY_MILLIS_DEFAULT) {
+                throw new LineSenderException("max retries was already configured ")
+                        .put("[retry-timeout-millis=").put(this.retryTimeoutMillis).put("]");
+            }
+            if (retryTimeoutMillis < 0) {
+                throw new LineSenderException("retry timeout cannot be negative ")
+                        .put("[retry-timeout-millis=").put(retryTimeoutMillis).put("]");
+            }
+            this.retryTimeoutMillis = retryTimeoutMillis;
             return this;
         }
 
@@ -761,7 +767,7 @@ public interface Sender extends Closeable {
                 if (httpToken != null) {
                     throw new LineSenderException("HTTP token authentication is not supported for TCP protocol");
                 }
-                if (maxRetryMillis != MAX_RETRY_MILLIS_DEFAULT) {
+                if (retryTimeoutMillis != MAX_RETRY_MILLIS_DEFAULT) {
                     throw new LineSenderException("retrying is not supported for TCP protocol");
                 }
                 if (httpTimeout != HTTP_TIMEOUT_DEFAULT) {

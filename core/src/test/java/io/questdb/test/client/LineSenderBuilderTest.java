@@ -136,39 +136,6 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
-    public void testBadHttpTimeout() throws Exception {
-        assertMemoryLeak(() -> {
-            try {
-                Sender.builder().url("http://someurl").httpTimeout(0);
-                fail("should fail with bad http time");
-            } catch (LineSenderException e) {
-                TestUtils.assertContains(e.getMessage(), "HTTP timeout must be positive [timeout=0]");
-            }
-
-            try {
-                Sender.builder().url("http://someurl").httpTimeout(-1);
-                fail("should fail with bad http time");
-            } catch (LineSenderException e) {
-                TestUtils.assertContains(e.getMessage(), "HTTP timeout must be positive [timeout=-1]");
-            }
-
-            try {
-                Sender.builder().url("http://someurl").httpTimeout(100).httpTimeout(200);
-                fail("should fail with bad http time");
-            } catch (LineSenderException e) {
-                TestUtils.assertContains(e.getMessage(), "HTTP timeout was already configured [configured-timeout=100, timeout=200]");
-            }
-
-            try {
-                Sender.builder().address("localhost").httpTimeout(5000).build();
-                fail("should fail with bad http time");
-            } catch (LineSenderException e) {
-                TestUtils.assertContains(e.getMessage(), "HTTP timeout is not supported for TCP protocol");
-            }
-        });
-    }
-
-    @Test
     public void testBadUrl() throws Exception {
         assertUrlFails("tcp://:9000", "host cannot be empty");
         assertUrlFails("tcp://", "host cannot be empty");
@@ -464,6 +431,39 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testInvalidHttpTimeout() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                Sender.builder().url("http://someurl").httpTimeout(0);
+                fail("should fail with bad http time");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "HTTP timeout must be positive [timeout=0]");
+            }
+
+            try {
+                Sender.builder().url("http://someurl").httpTimeout(-1);
+                fail("should fail with bad http time");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "HTTP timeout must be positive [timeout=-1]");
+            }
+
+            try {
+                Sender.builder().url("http://someurl").httpTimeout(100).httpTimeout(200);
+                fail("should fail with bad http time");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "HTTP timeout was already configured [configured-timeout=100, timeout=200]");
+            }
+
+            try {
+                Sender.builder().address("localhost").httpTimeout(5000).build();
+                fail("should fail with bad http time");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "HTTP timeout is not supported for TCP protocol");
+            }
+        });
+    }
+
+    @Test
     public void testMalformedPortInAddress() throws Exception {
         assertMemoryLeak(() -> {
             Sender.LineSenderBuilder builder = Sender.builder();
@@ -492,7 +492,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     public void testMaxRetriesNotSupportedForTcp() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                Sender.builder().address(LOCALHOST).maxRetryMillis(100).build();
+                Sender.builder().address(LOCALHOST).retryTimeoutMillis(100).build();
                 fail("max retries should not be supported for TCP");
             } catch (LineSenderException e) {
                 TestUtils.assertContains(e.getMessage(), "retrying is not supported for TCP protocol");
