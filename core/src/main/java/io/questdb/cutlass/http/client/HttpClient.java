@@ -298,7 +298,6 @@ public abstract class HttpClient implements QuietCloseable {
             return put("GET ");
         }
 
-        //TODO: check
         public Request GET() {
             assert state == STATE_REQUEST;
             state = STATE_URL;
@@ -317,7 +316,6 @@ public abstract class HttpClient implements QuietCloseable {
             return put("POST ");
         }
 
-        //TODO: check
         public Request POST() {
             assert state == STATE_REQUEST;
             state = STATE_URL;
@@ -478,7 +476,7 @@ public abstract class HttpClient implements QuietCloseable {
 
         public ResponseHeaders send(CharSequence host, int port) {
             assert state == STATE_URL_DONE || state == STATE_QUERY || state == STATE_HEADER || state == STATE_CONTENT;
-            //TODO: check
+
             if (socket.isClosed()) {
                 connect(host, port);
             }
@@ -589,8 +587,6 @@ public abstract class HttpClient implements QuietCloseable {
         }
 
         private void doSend(long lo, long hi) {
-//            System.out.println("send()");
-//            Net.dumpAscii(bufLo, (int) (ptr - bufLo));
             int len = (int) (hi - lo);
             if (len > 0) {
                 long p = lo;
