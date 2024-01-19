@@ -158,7 +158,8 @@ public class IlpTudCache implements QuietCloseable {
                 nameUtf8,
                 symbolCachePool,
                 -1,
-                false
+                false,
+                Long.MAX_VALUE
         );
 
         tableUpdateDetails.putAt(key, nameUtf8, tud);

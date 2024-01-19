@@ -224,6 +224,13 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
                 ilpTudCache.setDistressed();
                 return handleCommitError(ex.getReason());
             }
+        } catch (CairoException e) {
+            if (e.isTableDropped()) {
+                tud.setIsDropped();
+                return Status.OK;
+            }
+            ilpTudCache.setDistressed();
+            throw e;
         } catch (Throwable th) {
             ilpTudCache.setDistressed();
             throw th;

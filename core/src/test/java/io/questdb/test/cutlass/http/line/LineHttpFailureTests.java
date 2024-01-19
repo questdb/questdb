@@ -665,27 +665,17 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testTableCommitFailedWhileColumnIsAdded() throws Exception {
+    public void testTableColumnAddFailedDoesNotCommit() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final FilesFacade filesFacade = new TestFilesFacadeImpl() {
-                private final AtomicInteger counter = new AtomicInteger(2);
-
-                @Override
-                public long append(int fd, long buf, int len) {
-                    if (fd == this.fd && counter.decrementAndGet() == 0) {
-                        throw new UnsupportedOperationException();
-                    }
-                    return Files.append(fd, buf, len);
-                }
+                private final AtomicInteger counter = new AtomicInteger(0);
 
                 @Override
                 public int openRW(LPSZ name, long opts) {
-                    int fd = super.openRW(name, opts);
-                    if (Utf8s.endsWithAscii(name, Files.SEPARATOR + EVENT_INDEX_FILE_NAME)
-                            && Utf8s.containsAscii(name, "drop")) {
-                        this.fd = fd;
+                    if (Utf8s.endsWithAscii(name, Files.SEPARATOR + "z.d") && counter.getAndIncrement() == 0) {
+                        throw new UnsupportedOperationException();
                     }
-                    return fd;
+                    return super.openRW(name, opts);
                 }
             };
 
@@ -706,7 +696,7 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
                     // This will trigger commit and the commit will fail
                     points.add("drop,tag1=value1 f1=1i,y=12i");
                     assertRequestErrorContains(influxDB, points, "drop,tag1=value1 f1=1i,y=12i,z=45",
-                            "{\"code\":\"internal error\",\"message\":\"commit error for table: drop, error: java.lang.UnsupportedOperationException\",\"errorId\":"
+                            "{\"code\":\"internal error\",\"message\":\"failed to parse line protocol:errors encountered on line(s):write error: drop, error: java.lang.UnsupportedOperationException\",\"line\":3,\"errorId\":"
                     );
 
 
@@ -718,7 +708,7 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
                 serverMain.waitWalTxnApplied("good", 1);
                 serverMain.assertSql("select count() from good", "count\n" +
                         "1\n");
-                serverMain.waitWalTxnApplied("drop", 1);
+                serverMain.waitWalTxnApplied("drop");
                 serverMain.assertSql("select count() from \"drop\"", "count\n" +
                         "1\n");
             }
