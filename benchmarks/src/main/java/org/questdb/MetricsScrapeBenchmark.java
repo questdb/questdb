@@ -46,7 +46,7 @@ public class MetricsScrapeBenchmark {
     private static final MetricsRegistry metricsRegistry = new MetricsRegistryImpl();
     private static final Counter counter = metricsRegistry.newCounter("counter");
     private static final LongGauge gauge = metricsRegistry.newLongGauge("gauge");
-    private static final NullCharSink sink = new NullCharSink();
+    private static final NullUtf8Sink sink = new NullUtf8Sink();
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
@@ -81,7 +81,7 @@ public class MetricsScrapeBenchmark {
         metricsRegistry.scrapeIntoPrometheus(sink);
     }
 
-    private static class NullCharSink implements BorrowableUtf8Sink {
+    private static class NullUtf8Sink implements BorrowableUtf8Sink {
 
         @Override
         public NativeByteSink borrowDirectByteSink() {
@@ -99,7 +99,7 @@ public class MetricsScrapeBenchmark {
         }
 
         @Override
-        public Utf8Sink put(long lo, long hi) {
+        public Utf8Sink putUtf8(long lo, long hi) {
             return this;
         }
 

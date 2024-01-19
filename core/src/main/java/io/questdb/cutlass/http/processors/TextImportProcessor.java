@@ -244,7 +244,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
             HttpConnectionContext context
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         context.resumeResponseSend();
-        doResumeSend(LV.get(context), context.getChunkedResponseSocket());
+        doResumeSend(LV.get(context), context.getChunkedResponse());
     }
 
     private static int getAtomicity(Utf8Sequence name) {
@@ -286,7 +286,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         }
     }
 
-    private static void resumeJson(TextImportProcessorState state, HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    private static void resumeJson(TextImportProcessorState state, HttpChunkedResponse response) throws PeerDisconnectedException, PeerIsSlowToReadException {
         final TextLoaderCompletedState completeState = state.completeState;
         final RecordMetadata metadata = completeState.getMetadata();
         final LongList errors = completeState.getColumnErrorCounts();
@@ -295,7 +295,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
             case RESPONSE_PREFIX:
                 long totalRows = completeState.getParsedLineCount();
                 long importedRows = completeState.getWrittenLineCount();
-                socket.putAscii('{')
+                response.putAscii('{')
                         .putAsciiQuoted("status").putAscii(':').putAsciiQuoted("OK").putAscii(',')
                         .putAsciiQuoted("location").putAscii(':').putQuoted(completeState.getTableName()).putAscii(',')
                         .putAsciiQuoted("rowsRejected").putAscii(':').put(totalRows - importedRows + completeState.getErrorLineCount()).putAscii(',')
@@ -305,59 +305,59 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
 
                 int tsIdx = metadata.getTimestampIndex();
                 if (tsIdx != -1) {
-                    socket.putAsciiQuoted("timestamp").putAscii(':').putQuoted(metadata.getColumnName(tsIdx)).putAscii(',');
+                    response.putAsciiQuoted("timestamp").putAscii(':').putQuoted(metadata.getColumnName(tsIdx)).putAscii(',');
                 }
                 if (completeState.getWarnings() != TextLoadWarning.NONE) {
                     final int warningFlags = completeState.getWarnings();
-                    socket.putAsciiQuoted("warnings").putAscii(':').putAscii('[');
+                    response.putAsciiQuoted("warnings").putAscii(':').putAscii('[');
                     boolean isFirst = true;
                     if ((warningFlags & TextLoadWarning.TIMESTAMP_MISMATCH) != TextLoadWarning.NONE) {
                         isFirst = false;
-                        socket.putAsciiQuoted("Existing table timestamp column is used");
+                        response.putAsciiQuoted("Existing table timestamp column is used");
                     }
                     if ((warningFlags & PARTITION_TYPE_MISMATCH) != TextLoadWarning.NONE) {
-                        if (!isFirst) socket.putAscii(',');
-                        socket.putAsciiQuoted("Existing table PartitionBy is used");
+                        if (!isFirst) response.putAscii(',');
+                        response.putAsciiQuoted("Existing table PartitionBy is used");
                     }
-                    socket.putAscii(']').putAscii(',');
+                    response.putAscii(']').putAscii(',');
                 }
-                socket.putAsciiQuoted("columns").putAscii(':').putAscii('[');
+                response.putAsciiQuoted("columns").putAscii(':').putAscii('[');
                 state.responseState = RESPONSE_COLUMN;
                 // fall through
             case RESPONSE_COLUMN:
                 if (metadata != null) {
                     final int columnCount = metadata.getColumnCount();
                     for (; state.columnIndex < columnCount; state.columnIndex++) {
-                        socket.bookmark();
+                        response.bookmark();
                         if (state.columnIndex > 0) {
-                            socket.putAscii(',');
+                            response.putAscii(',');
                         }
-                        socket.putAscii('{')
+                        response.putAscii('{')
                                 .putAsciiQuoted("name").putAscii(':').putQuoted(metadata.getColumnName(state.columnIndex)).putAscii(',')
                                 .putAsciiQuoted("type").putAscii(':').putAsciiQuoted(ColumnType.nameOf(metadata.getColumnType(state.columnIndex))).putAscii(',')
                                 .putAsciiQuoted("size").putAscii(':').put(ColumnType.sizeOf(metadata.getColumnType(state.columnIndex))).putAscii(',')
                                 .putAsciiQuoted("errors").putAscii(':').put(errors.getQuick(state.columnIndex));
-                        socket.putAscii('}');
+                        response.putAscii('}');
                     }
                 }
                 state.responseState = RESPONSE_SUFFIX;
                 // fall through
             case RESPONSE_SUFFIX:
-                socket.bookmark();
-                socket.putAscii(']').putAscii('}');
+                response.bookmark();
+                response.putAscii(']').putAscii('}');
                 state.responseState = RESPONSE_COMPLETE;
-                socket.sendChunk(true);
+                response.sendChunk(true);
                 break;
             case RESPONSE_DONE:
                 state.responseState = RESPONSE_COMPLETE;
-                socket.done();
+                response.done();
                 break;
             default:
                 break;
         }
     }
 
-    private static void resumeText(TextImportProcessorState state, HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    private static void resumeText(TextImportProcessorState state, HttpChunkedResponse socket) throws PeerDisconnectedException, PeerIsSlowToReadException {
         final TextLoaderCompletedState textLoaderCompletedState = state.completeState;
         final RecordMetadata metadata = textLoaderCompletedState.getMetadata();
         LongList errors = textLoaderCompletedState.getColumnErrorCounts();
@@ -461,7 +461,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
 
     private void doResumeSend(
             TextImportProcessorState state,
-            HttpChunkedResponseSocket socket
+            HttpChunkedResponse socket
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         try {
             if (state.errorMessage != null) {
@@ -491,7 +491,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         return Utf8s.equalsNcAscii("json", transientContext.getRequestHeader().getUrlParam(URL_PARAM_FMT));
     }
 
-    private void resumeError(TextImportProcessorState state, HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+    private void resumeError(TextImportProcessorState state, HttpChunkedResponse socket) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         if (state.responseState == RESPONSE_ERROR) {
             socket.bookmark();
             if (state.json) {
@@ -506,36 +506,36 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         throw ServerDisconnectException.INSTANCE;
     }
 
-    private void sendErr(HttpConnectionContext context, CharSequence message, HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+    private void sendErr(HttpConnectionContext context, CharSequence message, HttpChunkedResponse response) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         final TextImportProcessorState state = LV.get(context);
         state.responseState = RESPONSE_ERROR;
         state.errorMessage = message;
-        socket.status(200, state.json ? CONTENT_TYPE_JSON : CONTENT_TYPE_TEXT);
-        socket.sendHeader();
-        socket.sendChunk(false);
-        resumeError(state, socket);
+        response.status(200, state.json ? CONTENT_TYPE_JSON : CONTENT_TYPE_TEXT);
+        response.sendHeader();
+        response.sendChunk(false);
+        resumeError(state, response);
     }
 
     private void sendErrorAndThrowDisconnect(CharSequence message)
             throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         transientState.snapshotStateAndCloseWriter();
-        final HttpChunkedResponseSocket socket = transientContext.getChunkedResponseSocket();
-        sendErr(transientContext, message, socket);
+        final HttpChunkedResponse response = transientContext.getChunkedResponse();
+        sendErr(transientContext, message, response);
     }
 
     private void sendResponse(HttpConnectionContext context)
             throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         final TextImportProcessorState state = LV.get(context);
-        final HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
+        final HttpChunkedResponse response = context.getChunkedResponse();
 
         // Copy written state to state, text loader, parser can be closed before re-attempt to send the response
         state.snapshotStateAndCloseWriter();
         if (state.state == TextImportProcessorState.STATE_OK) {
-            socket.status(200, state.json ? CONTENT_TYPE_JSON : CONTENT_TYPE_TEXT);
-            socket.sendHeader();
-            doResumeSend(state, socket);
+            response.status(200, state.json ? CONTENT_TYPE_JSON : CONTENT_TYPE_TEXT);
+            response.sendHeader();
+            doResumeSend(state, response);
         } else {
-            sendErr(context, state.stateMessage, context.getChunkedResponseSocket());
+            sendErr(context, state.stateMessage, context.getChunkedResponse());
         }
     }
 

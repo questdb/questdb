@@ -25,13 +25,12 @@
 package io.questdb.test.cairo;
 
 import io.questdb.log.LogRecord;
-import io.questdb.std.str.AbstractCharSink;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public class LogRecordSinkAdapter extends AbstractCharSink {
+public class LogRecordSinkAdapter implements Utf16Sink {
 
     private LogRecord line;
 
@@ -41,78 +40,78 @@ public class LogRecordSinkAdapter extends AbstractCharSink {
     }
 
     @Override
-    public CharSink put(@Nullable CharSequence cs) {
+    public Utf16Sink put(@Nullable CharSequence cs) {
         line.$(cs);
         return this;
     }
 
     @Override
-    public CharSink put(char c) {
+    public Utf16Sink put(char c) {
         line.$(c);
         return this;
     }
 
     @Override
-    public CharSink put(int value) {
+    public Utf16Sink put(int value) {
         line.$(value);
         return this;
     }
 
     @Override
-    public CharSink put(long value) {
+    public Utf16Sink put(long value) {
         line.$(value);
         return this;
     }
 
     @Override
-    public CharSink put(float value, int scale) {
+    public Utf16Sink put(float value, int scale) {
         line.$(value);
         return this;
     }
 
     @Override
-    public CharSink put(double value) {
+    public Utf16Sink put(double value) {
         line.$(value);
         return this;
     }
 
     @Override
-    public CharSink put(double value, int scale) {
+    public Utf16Sink put(double value, int scale) {
         line.$(value);
         return this;
     }
 
     @Override
-    public CharSink put(boolean value) {
+    public Utf16Sink put(boolean value) {
         line.$(value);
         return this;
     }
 
     @Override
-    public CharSink put(@NotNull Sinkable sinkable) {
+    public Utf16Sink put(@Nullable Sinkable sinkable) {
         line.$(sinkable);
         return this;
     }
 
     @Override
-    public CharSink put(char @NotNull [] chars, int start, int len) {
+    public Utf16Sink put(char @NotNull [] chars, int start, int len) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public CharSink putISODate(long value) {
+    public Utf16Sink putISODate(long value) {
         line.$ts(value);
         return this;
     }
 
     @Override
-    public CharSink putISODateMillis(long value) {
+    public Utf16Sink putISODateMillis(long value) {
         line.$ts(value * 1000);
         return this;
     }
 
     @Override
-    public CharSink putQuoted(@NotNull CharSequence cs) {
+    public Utf16Sink putQuoted(@NotNull CharSequence cs) {
         line.$('\"').$(cs).I$();
         return this;
     }

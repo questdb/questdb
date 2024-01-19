@@ -103,7 +103,7 @@ public abstract class HttpClient implements QuietCloseable {
         return byteCount;
     }
 
-    private void ensureCapacity(long capacity) {
+    private void checkCapacity(long capacity) {
         final long requiredSize = ptr - bufLo + capacity;
         if (requiredSize > bufferSize) {
             throw BufferOverflowException.INSTANCE;
@@ -258,7 +258,7 @@ public abstract class HttpClient implements QuietCloseable {
         public Request put(@Nullable Utf8Sequence us) {
             if (us != null) {
                 int size = us.size();
-                ensureCapacity(size);
+                checkCapacity(size);
                 Utf8s.strCpy(us, size, ptr);
                 ptr += size;
             }
@@ -267,16 +267,16 @@ public abstract class HttpClient implements QuietCloseable {
 
         @Override
         public Request put(byte b) {
-            ensureCapacity(1);
+            checkCapacity(1);
             Unsafe.getUnsafe().putByte(ptr, b);
             ptr++;
             return this;
         }
 
         @Override
-        public Request put(long lo, long hi) {
+        public Request putUtf8(long lo, long hi) {
             final long size = hi - lo;
-            ensureCapacity(size);
+            checkCapacity(size);
             Vect.memcpy(ptr, lo, size);
             ptr += size;
             return this;
@@ -405,7 +405,7 @@ public abstract class HttpClient implements QuietCloseable {
 
             putAscii(HEADER_CONTENT_LENGTH);
             contentLengthHeaderReserved = ((int) Math.log10(bufferSize) + 1) + 4; // length + 2 x EOL
-            ensureCapacity(contentLengthHeaderReserved);
+            checkCapacity(contentLengthHeaderReserved);
             ptr += contentLengthHeaderReserved;
             contentStart = ptr;
             state = STATE_CONTENT;

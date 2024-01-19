@@ -31,7 +31,7 @@ import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SCSequence;
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 
@@ -195,7 +195,7 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         sink.type(getClass().getName());
     }
 
-    default void toSink(@NotNull CharSinkBase<?> sink) {
+    default void toSink(@NotNull CharSink<?> sink) {
         throw new UnsupportedOperationException("Unsupported for: " + getClass());
     }
 

@@ -33,7 +33,7 @@ import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 
 public class CastSymbolToStrFunctionFactory implements FunctionFactory {
     @Override
@@ -61,7 +61,7 @@ public class CastSymbolToStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getStr(Record rec, CharSink sink) {
+        public void getStr(Record rec, Utf16Sink sink) {
             sink.put(arg.getSymbol(rec));
         }
 

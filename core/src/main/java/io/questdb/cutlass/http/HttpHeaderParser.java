@@ -47,7 +47,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
     private DirectUtf8String contentDisposition;
     private DirectUtf8String contentDispositionFilename;
     private DirectUtf8String contentDispositionName;
-    private int contentLength;
+    private long contentLength;
     private DirectUtf8String contentType;
     private DirectUtf8String headerName;
     private long headerPtr;
@@ -140,7 +140,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
     }
 
     @Override
-    public int getContentLength() {
+    public long getContentLength() {
         return contentLength;
     }
 
@@ -358,7 +358,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
         }
 
         try {
-            contentLength = Numbers.parseInt(seq);
+            contentLength = Numbers.parseLong(seq);
         } catch (NumericException ignore) {
             throw HttpException.instance("Malformed ").put(HEADER_CONTENT_LENGTH).put(" header");
         }

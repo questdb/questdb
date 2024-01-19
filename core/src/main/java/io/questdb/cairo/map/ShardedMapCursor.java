@@ -30,7 +30,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.Utf16Sink;
 
 public class ShardedMapCursor implements MapRecordCursor {
     private final ShardedMapRecord recordA = new ShardedMapRecord(true);
@@ -224,7 +224,7 @@ public class ShardedMapCursor implements MapRecordCursor {
         }
 
         @Override
-        public void getLong256(int columnIndex, CharSinkBase<?> sink) {
+        public void getLong256(int columnIndex, CharSink<?> sink) {
             baseRecord.getLong256(columnIndex, sink);
         }
 
@@ -254,7 +254,7 @@ public class ShardedMapCursor implements MapRecordCursor {
         }
 
         @Override
-        public void getStr(int columnIndex, CharSink sink) {
+        public void getStr(int columnIndex, Utf16Sink sink) {
             baseRecord.getStr(columnIndex, sink);
         }
 

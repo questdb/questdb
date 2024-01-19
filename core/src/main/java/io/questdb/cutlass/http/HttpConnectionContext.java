@@ -192,8 +192,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return retryAttemptAttributes;
     }
 
-    public HttpChunkedResponseSocket getChunkedResponseSocket() {
-        return responseSink.getChunkedSocket();
+    public HttpChunkedResponse getChunkedResponse() {
+        return responseSink.getChunkedResponse();
     }
 
     public HttpCookieHandler getCookieHandler() {
@@ -501,7 +501,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     }
 
     private boolean consumeContent(
-            int contentLength,
+            long contentLength,
             Socket socket,
             HttpRequestProcessor processor,
             long headerEnd,
@@ -806,7 +806,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 throw HttpException.instance("missing URL");
             }
             HttpRequestProcessor processor = getHttpRequestProcessor(selector);
-            int contentLength = headerParser.getContentLength();
+            long contentLength = headerParser.getContentLength();
             final boolean chunked = Utf8s.equalsNcAscii("chunked", headerParser.getHeader(HEADER_TRANSFER_ENCODING));
             final boolean multipartRequest = Utf8s.equalsNcAscii("multipart/form-data", headerParser.getContentType())
                     || Utf8s.equalsNcAscii("multipart/mixed", headerParser.getContentType());

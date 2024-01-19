@@ -33,7 +33,7 @@ import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import org.jetbrains.annotations.NotNull;
@@ -71,7 +71,7 @@ public final class PartitionBy {
     private static final PartitionCeilMethod CEIL_YYYY = Timestamps::ceilYYYY;
     private final static DateFormat DEFAULT_FORMAT = new DateFormat() {
         @Override
-        public void format(long datetime, @NotNull DateLocale locale, @Nullable CharSequence timeZoneName, @NotNull CharSinkBase<?> sink) {
+        public void format(long datetime, @NotNull DateLocale locale, @Nullable CharSequence timeZoneName, @NotNull CharSink<?> sink) {
             sink.putAscii(DEFAULT_PARTITION_NAME);
         }
 
@@ -244,7 +244,7 @@ public final class PartitionBy {
         }
     }
 
-    public static void setSinkForPartition(CharSinkBase<?> path, int partitionBy, long timestamp) {
+    public static void setSinkForPartition(CharSink<?> path, int partitionBy, long timestamp) {
         if (partitionBy != PartitionBy.NONE) {
             getPartitionDirFormatMethod(partitionBy).format(timestamp, DateFormatUtils.EN_LOCALE, null, path);
             return;

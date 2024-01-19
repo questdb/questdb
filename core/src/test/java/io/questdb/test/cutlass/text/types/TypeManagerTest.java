@@ -37,7 +37,7 @@ import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.microtime.TimestampFormatFactory;
 import io.questdb.std.datetime.millitime.DateFormatFactory;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
-import io.questdb.std.str.DirectCharSink;
+import io.questdb.std.str.DirectUtf16Sink;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
@@ -47,12 +47,12 @@ import java.io.IOException;
 
 public class TypeManagerTest extends AbstractTest {
     private static JsonLexer jsonLexer;
-    private static DirectCharSink utf8Sink;
+    private static DirectUtf16Sink utf8Sink;
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
         AbstractTest.setUpStatic();
-        utf8Sink = new DirectCharSink(64);
+        utf8Sink = new DirectUtf16Sink(64);
         jsonLexer = new JsonLexer(1024, 2048);
     }
 
