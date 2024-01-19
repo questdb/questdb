@@ -30,7 +30,7 @@ public abstract class AbstractResponse implements Response {
     private final long bufHi;
     private final long bufLo;
     private final int defaultTimeout;
-    private int contentLength;
+    private long contentLength;
     private long dataHi;
     private long dataLo;
     private boolean receive = true;
@@ -41,7 +41,7 @@ public abstract class AbstractResponse implements Response {
         this.defaultTimeout = defaultTimeout;
     }
 
-    public void begin(long lo, long hi, int contentLength) {
+    public void begin(long lo, long hi, long contentLength) {
         this.dataLo = lo;
         this.dataHi = hi;
         this.contentLength = contentLength;

@@ -96,18 +96,18 @@ public abstract class HttpClient implements QuietCloseable {
         return request;
     }
 
-    private int die(int byteCount) {
-        if (byteCount < 1) {
-            throw new HttpClientException("peer disconnect [errno=").errno(nf.errno()).put(']');
-        }
-        return byteCount;
-    }
-
     private void checkCapacity(long capacity) {
         final long requiredSize = ptr - bufLo + capacity;
         if (requiredSize > bufferSize) {
             throw BufferOverflowException.INSTANCE;
         }
+    }
+
+    private int die(int byteCount) {
+        if (byteCount < 1) {
+            throw new HttpClientException("peer disconnect [errno=").errno(nf.errno()).put(']');
+        }
+        return byteCount;
     }
 
     private int recvOrDie(long addr, int timeout) {
@@ -274,15 +274,6 @@ public abstract class HttpClient implements QuietCloseable {
         }
 
         @Override
-        public Request putUtf8(long lo, long hi) {
-            final long size = hi - lo;
-            checkCapacity(size);
-            Vect.memcpy(ptr, lo, size);
-            ptr += size;
-            return this;
-        }
-
-        @Override
         public Request put(@Nullable CharSequence cs) {
             Utf8Sink.super.put(cs);
             return this;
@@ -319,6 +310,15 @@ public abstract class HttpClient implements QuietCloseable {
         @Override
         public Request putQuoted(@NotNull CharSequence cs) {
             putAsciiInternal('\"').put(cs).putAsciiInternal('\"');
+            return this;
+        }
+
+        @Override
+        public Request putUtf8(long lo, long hi) {
+            final long size = hi - lo;
+            checkCapacity(size);
+            Vect.memcpy(ptr, lo, size);
+            ptr += size;
             return this;
         }
 
@@ -642,7 +642,7 @@ public abstract class HttpClient implements QuietCloseable {
                     // dataLo & dataHi are boundaries of unprocessed data left in the buffer
                     long contentStart = parse(bufLo, bufLo + len, false, true);
                     if (!isIncomplete()) {
-                        int contentLength = getContentLength();
+                        long contentLength = getContentLength();
                         if (contentLength > bufferSize) {
                             throw new HttpClientException("insufficient http client buffer size: " + contentLength);
                         }
