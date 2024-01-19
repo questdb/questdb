@@ -37,7 +37,6 @@ import org.jetbrains.annotations.Nullable;
 public class SchemaV2 implements Mutable, Sinkable {
     public static final int FORMATS_ACTION_ADD = 1;
     public static final int FORMATS_ACTION_REPLACE = 2;
-    // todo: schema could pool columns
     private final ObjList<Column> columnList = new ObjList<>();
     private final ObjectPool<Column> columnPool;
     private final IntObjHashMap<Column> fileColumnIndexToColumnMap = new IntObjHashMap<>();
