@@ -47,6 +47,8 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
+import static io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory.prepareBindVarMemory;
+
 public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Plannable {
 
     private final ObjList<Function> bindVarFunctions;
@@ -218,7 +220,7 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Planna
 
         if (bindVarFunctions != null) {
             Function.init(bindVarFunctions, symbolTableSource, executionContext);
-            prepareBindVarMemory(symbolTableSource, executionContext);
+            prepareBindVarMemory(executionContext, symbolTableSource, bindVarFunctions, bindVarMemory);
         }
     }
 
@@ -255,17 +257,6 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Planna
         if (perWorkerGroupByFunctions != null) {
             for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
                 GroupByUtils.toTop(perWorkerGroupByFunctions.getQuick(i));
-            }
-        }
-    }
-
-    private void prepareBindVarMemory(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        // don't trigger memory allocation if there are no variables
-        if (bindVarFunctions.size() > 0) {
-            bindVarMemory.truncate();
-            for (int i = 0, n = bindVarFunctions.size(); i < n; i++) {
-                Function function = bindVarFunctions.getQuick(i);
-                AsyncJitFilteredRecordCursorFactory.writeBindVarFunction(bindVarMemory, function, symbolTableSource, executionContext);
             }
         }
     }

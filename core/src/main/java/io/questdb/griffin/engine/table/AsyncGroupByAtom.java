@@ -45,6 +45,8 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
+import static io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory.prepareBindVarMemory;
+
 public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Plannable {
     // We use the first 8 bits of a hash code to determine the shard, hence 128 as the max number of shards.
     private static final int MAX_SHARDS = 128;
@@ -297,7 +299,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
         if (bindVarFunctions != null) {
             Function.init(bindVarFunctions, symbolTableSource, executionContext);
-            prepareBindVarMemory(symbolTableSource, executionContext);
+            prepareBindVarMemory(executionContext, symbolTableSource, bindVarFunctions, bindVarMemory);
         }
     }
 
@@ -393,17 +395,6 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         if (particle.getMap().size() > shardingThreshold || sharded) {
             particle.shard();
             sharded = true;
-        }
-    }
-
-    private void prepareBindVarMemory(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        // don't trigger memory allocation if there are no variables
-        if (bindVarFunctions.size() > 0) {
-            bindVarMemory.truncate();
-            for (int i = 0, n = bindVarFunctions.size(); i < n; i++) {
-                Function function = bindVarFunctions.getQuick(i);
-                AsyncJitFilteredRecordCursorFactory.writeBindVarFunction(bindVarMemory, function, symbolTableSource, executionContext);
-            }
         }
     }
 
