@@ -165,6 +165,7 @@ public class SchemaV2 implements Mutable, Sinkable {
             }
         }
         formatsAction = FORMATS_ACTION_ADD;
+        columnPool.clear();
     }
 
     public @Nullable TypeAdapter findFirstFormat(CharSequence columnName) {
