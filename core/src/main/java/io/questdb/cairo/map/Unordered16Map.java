@@ -584,6 +584,11 @@ public class Unordered16Map implements Map, Reopenable {
         }
 
         @Override
+        public void putLong256(long l0, long l1, long l2, long l3) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public void putRecord(Record value) {
             // no-op
         }

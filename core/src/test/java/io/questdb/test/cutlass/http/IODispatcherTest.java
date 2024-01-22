@@ -36,10 +36,7 @@ import io.questdb.cutlass.http.processors.HealthCheckProcessor;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
 import io.questdb.cutlass.http.processors.StaticContentProcessor;
 import io.questdb.cutlass.http.processors.TextImportProcessor;
-import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
@@ -8350,13 +8347,7 @@ public class IODispatcherTest extends AbstractTest {
         String update2 = "update tab set b=sleep(120000)";
         String updateWithJoin1 = "update tab t1 set b=true from tab t2 where sleep(120000) and t1.b = t2.b";
         String updateWithJoin2 = "update tab t1 set b=sleep(120000) from tab t2 where t1.b = t2.b";
-
-        // add many symbols to slow down operation enough so that other thread can detect it in registry and cancel it
-        StringBuilder addColumnsTmp = new StringBuilder("alter table tab add column s1 symbol index");
-        for (int i = 2; i < 30; i++) {
-            addColumnsTmp.append(", s").append(i).append(" symbol index");
-        }
-        final String addColumns = addColumnsTmp.toString();
+        String addColumns = "alter table tab add column s1 symbol index";
 
         final ObjList<String> commands;
         if ("/query".equals(url)) {
@@ -8403,7 +8394,8 @@ public class IODispatcherTest extends AbstractTest {
                                 .withServerKeepAlive(true)
                 )
                 .run((engine) -> {
-                    //testHttpClient.setKeepConnection(true);
+                    DelayedListener registryListener = new DelayedListener();
+                    engine.getQueryRegistry().setListener(registryListener);
 
                     try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                         for (int i = 0, n = ddls.size(); i < n; i++) {
@@ -8461,6 +8453,9 @@ public class IODispatcherTest extends AbstractTest {
                                     stopped.setCount(isWal ? 2 : 1);
                                     queryError.set(null);
 
+                                    registryListener.queryText = command;
+                                    registryListener.queryFound.setCount(1);
+
                                     new Thread(() -> {
                                         String response;
                                         try (TestHttpClient testHttpClient = new TestHttpClient()) {
@@ -8507,34 +8502,36 @@ public class IODispatcherTest extends AbstractTest {
                                     long start = System.currentTimeMillis();
 
                                     //wait until query appears in registry and get query id
-                                    while (true) {
-                                        Os.sleep(1);
-                                        //noinspection Convert2Diamond
-                                        testHttpClient.assertGetRegexp(
-                                                "/query",
-                                                ".*dataset.*",
-                                                "select query_id from query_activity() where query = '" + command.replace("'", "''") + "'",
-                                                null, null, null,
-                                                new CharSequenceObjHashMap<String>() {{
-                                                    put("nm", "true");
-                                                }},
-                                                "200"
-                                        );
-                                        String response = testHttpClient.getSink().toString();
-                                        int startIdx = response.indexOf("\"dataset\":[[");
-                                        if (startIdx > -1) {
-                                            startIdx += "\"dataset\":[[".length();
-                                            int endIdx = response.indexOf("]]", startIdx);
-                                            queryId = Numbers.parseLong(response, startIdx, endIdx);
-                                            break;
+                                    try {
+                                        while (true) {
+                                            Os.sleep(1);
+                                            testHttpClient.assertGetRegexp(
+                                                    "/query",
+                                                    ".*dataset.*",
+                                                    "select query_id from query_activity() where query = '" + command.replace("'", "''") + "'",
+                                                    null, null, null,
+                                                    new CharSequenceObjHashMap<String>() {{
+                                                        put("nm", "true");
+                                                    }},
+                                                    "200"
+                                            );
+                                            String response = testHttpClient.getSink().toString();
+                                            int startIdx = response.indexOf("\"dataset\":[[");
+                                            if (startIdx > -1) {
+                                                startIdx += "\"dataset\":[[".length();
+                                                int endIdx = response.indexOf("]]", startIdx);
+                                                queryId = Numbers.parseLong(response, startIdx, endIdx);
+                                                break;
+                                            }
+                                            if (System.currentTimeMillis() - start > TIMEOUT) {
+                                                throw new RuntimeException("Timed out waiting for command to appear in registry: " + command);
+                                            }
+                                            if (queryError.get() != null) {
+                                                throw new RuntimeException("Query to cancel failed!", queryError.get());
+                                            }
                                         }
-
-                                        if (System.currentTimeMillis() - start > TIMEOUT) {
-                                            throw new RuntimeException("Timed out waiting for command to appear in registry: " + command);
-                                        }
-                                        if (queryError.get() != null) {
-                                            throw new RuntimeException("Query to cancel failed!", queryError.get());
-                                        }
+                                    } finally {
+                                        registryListener.queryFound.countDown();
                                     }
 
                                     testHttpClient.assertGetRegexp(
@@ -8583,6 +8580,8 @@ public class IODispatcherTest extends AbstractTest {
                                 }
                             }
                         }
+                    } finally {
+                        engine.getQueryRegistry().setListener(null);
                     }
                 });
     }
@@ -9050,6 +9049,23 @@ public class IODispatcherTest extends AbstractTest {
         @Override
         public int length() {
             return len;
+        }
+    }
+
+    private static class DelayedListener implements QueryRegistry.Listener {
+        private SOCountDownLatch queryFound = new SOCountDownLatch(1);
+        private volatile CharSequence queryText;
+
+        @Override
+        public void onRegister(CharSequence query, long queryId) {
+            if (queryText == null) {
+                return;
+            }
+
+            if (Chars.equalsNc(queryText, query)) {
+                queryFound.await();
+                queryText = null;
+            }
         }
     }
 
