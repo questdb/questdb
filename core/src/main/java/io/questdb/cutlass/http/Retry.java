@@ -24,6 +24,11 @@
 
 package io.questdb.cutlass.http;
 
+import io.questdb.network.PeerDisconnectedException;
+import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.network.PeerIsSlowToWriteException;
+import io.questdb.network.ServerDisconnectException;
+
 import java.io.Closeable;
 
 public interface Retry extends Closeable {
@@ -33,7 +38,7 @@ public interface Retry extends Closeable {
      * @param selector processor selector
      * @param e        exception information
      */
-    void fail(HttpRequestProcessorSelector selector, HttpException e);
+    void fail(HttpRequestProcessorSelector selector, HttpException e) throws PeerIsSlowToReadException, ServerDisconnectException, PeerDisconnectedException;
 
     /**
      * Provides retry information
@@ -49,5 +54,5 @@ public interface Retry extends Closeable {
      * @param rescheduleContext context to be retried
      * @return success indicator
      */
-    boolean tryRerun(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext);
+    boolean tryRerun(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) throws PeerIsSlowToReadException, PeerIsSlowToWriteException, ServerDisconnectException;
 }
