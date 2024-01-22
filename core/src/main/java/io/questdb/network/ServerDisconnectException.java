@@ -26,4 +26,7 @@ package io.questdb.network;
 
 public class ServerDisconnectException extends Exception {
     public static final ServerDisconnectException INSTANCE = new ServerDisconnectException();
+
+    private ServerDisconnectException() {
+    }
 }

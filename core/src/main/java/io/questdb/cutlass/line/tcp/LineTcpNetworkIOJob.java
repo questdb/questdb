@@ -26,9 +26,7 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.network.IODispatcher;
-import io.questdb.network.IOOperation;
-import io.questdb.network.IORequestProcessor;
+import io.questdb.network.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectUtf8Sequence;
@@ -76,7 +74,7 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
     @Override
     public void close() {
         if (busyContext != null) {
-            busyContext.getDispatcher().disconnect(busyContext, DISCONNECT_REASON_RETRY_FAILED);
+            dispatcher.disconnect(busyContext, DISCONNECT_REASON_RETRY_FAILED);
             busyContext = null;
         }
         Misc.free(unusedSymbolCaches);
@@ -107,7 +105,7 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
         assert this.workerId == workerId;
         boolean busy = false;
         if (busyContext != null) {
-            if (handleIO(busyContext)) {
+            if (handleIO(busyContext, dispatcher)) {
                 // queue is still full
                 return true;
             }
@@ -131,32 +129,32 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
         return busy;
     }
 
-    private boolean handleIO(LineTcpConnectionContext context) {
+    private boolean handleIO(LineTcpConnectionContext context, IODispatcher<LineTcpConnectionContext> dispatcher)  {
         if (!context.invalid()) {
             switch (context.handleIO(this)) {
                 case NEEDS_READ:
-                    context.getDispatcher().registerChannel(context, IOOperation.READ);
+                    dispatcher.registerChannel(context, IOOperation.READ);
                     return false;
                 case NEEDS_WRITE:
-                    context.getDispatcher().registerChannel(context, IOOperation.WRITE);
+                    dispatcher.registerChannel(context, IOOperation.WRITE);
                     return false;
                 case QUEUE_FULL:
                     return true;
                 case NEEDS_DISCONNECT:
-                    context.getDispatcher().disconnect(context, DISCONNECT_REASON_UNKNOWN_OPERATION);
+                    dispatcher.disconnect(context, DISCONNECT_REASON_UNKNOWN_OPERATION);
                     return false;
             }
         }
         return false;
     }
 
-    private boolean onRequest(int operation, LineTcpConnectionContext context) {
+    private boolean onRequest(int operation, LineTcpConnectionContext context, IODispatcher<LineTcpConnectionContext> dispatcher) {
         if (operation == IOOperation.HEARTBEAT) {
             context.doMaintenance(millisecondClock.getTicks());
-            context.getDispatcher().registerChannel(context, IOOperation.HEARTBEAT);
+            dispatcher.registerChannel(context, IOOperation.HEARTBEAT);
             return false;
         }
-        if (handleIO(context)) {
+        if (handleIO(context, dispatcher)) {
             busyContext = context;
             LOG.debug().$("context is waiting on a full queue [fd=").$(context.getFd()).$(']').$();
             return false;
