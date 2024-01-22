@@ -214,6 +214,33 @@ final class OrderedMapValue implements MapValue {
     }
 
     @Override
+    public void minInt(int index, int value) {
+        if (value != Numbers.INT_NaN) {
+            final long p = address0(index);
+            final int current = Unsafe.getUnsafe().getInt(p);
+            Unsafe.getUnsafe().putInt(p, Math.min(value, current));
+            if (current != Numbers.INT_NaN) {
+                Unsafe.getUnsafe().putInt(p, Math.min(value, current));
+            } else {
+                Unsafe.getUnsafe().putInt(p, value);
+            }
+        }
+    }
+
+    @Override
+    public void minLong(int index, long value) {
+        if (value != Numbers.LONG_NaN) {
+            final long p = address0(index);
+            final long current = Unsafe.getUnsafe().getLong(p);
+            if (current != Numbers.LONG_NaN) {
+                Unsafe.getUnsafe().putLong(p, Math.min(value, current));
+            } else {
+                Unsafe.getUnsafe().putLong(p, value);
+            }
+        }
+    }
+
+    @Override
     public void putBool(int index, boolean value) {
         putByte(index, (byte) (value ? 1 : 0));
     }

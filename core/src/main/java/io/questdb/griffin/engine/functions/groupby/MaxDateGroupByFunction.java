@@ -50,11 +50,7 @@ public class MaxDateGroupByFunction extends DateFunction implements GroupByFunct
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        long max = mapValue.getDate(valueIndex);
-        long next = arg.getDate(record);
-        if (next > max) {
-            mapValue.putDate(valueIndex, next);
-        }
+        mapValue.maxLong(valueIndex, arg.getDate(record));
     }
 
     @Override

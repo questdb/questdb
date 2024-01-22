@@ -81,6 +81,10 @@ public interface MapValue extends Record {
 
     void maxLong(int index, long value);
 
+    void minInt(int index, int value);
+
+    void minLong(int index, long value);
+
     void putBool(int index, boolean value);
 
     void putByte(int index, byte value);
