@@ -484,12 +484,12 @@ public abstract class HttpClient implements QuietCloseable {
             nf.configureKeepAlive(fd);
             long addrInfo = nf.getAddrInfo(host, port);
             if (addrInfo == -1) {
-                disconnect();
+                nf.close(fd);
                 throw new HttpClientException("could not resolve host ").put("[host=").put(host).put("]");
             }
             if (nf.connectAddrInfo(fd, addrInfo) != 0) {
                 int errno = nf.errno();
-                disconnect();
+                nf.close(fd);
                 nf.freeAddrInfo(addrInfo);
                 throw new HttpClientException("could not connect to host ").put("[host=").put(host).put(", port=").put(port).put(", errno=").put(errno).put(']');
             }
