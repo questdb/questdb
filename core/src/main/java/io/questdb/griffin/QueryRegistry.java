@@ -34,6 +34,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
@@ -48,6 +49,8 @@ public class QueryRegistry {
     private final AtomicLong idSeq = new AtomicLong();
     private final ConcurrentLongHashMap<Entry> registry = new ConcurrentLongHashMap<>();
     private final ThreadLocal<WeakMutableObjectPool<Entry>> tlQueryPool;
+
+    private volatile Listener listener;
 
     public QueryRegistry(CairoConfiguration configuration) {
         this.clock = configuration.getMicrosecondClock();
@@ -136,8 +139,18 @@ public class QueryRegistry {
         e.principal = executionContext.getSecurityContext().getPrincipal();
         registry.put(queryId, e);
 
+        Listener listener = this.listener;
+        if (listener != null) {
+            listener.onRegister(query, queryId);
+        }
+
         executionContext.setCancelledFlag(e.cancelled);
         return queryId;
+    }
+
+    @TestOnly
+    public void setListener(Listener listener) {
+        this.listener = listener;
     }
 
     /**
@@ -161,6 +174,10 @@ public class QueryRegistry {
         }
 
         executionContext.setCancelledFlag(null);
+    }
+
+    public interface Listener {
+        void onRegister(CharSequence query, long queryId);
     }
 
     public static class Entry implements Mutable {
