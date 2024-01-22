@@ -440,17 +440,21 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         }
 
         private void reopenShards() {
+            // Expect that data volume will grow at least 2x.
+            int targetKeyCapacity = Math.max((int) (map.size() / shardCount) * 2, configuration.getSqlSmallMapKeyCapacity());
+            int targetPageSize = Math.max((int) (map.getUsedHeapSize() / shardCount) * 2, configuration.getSqlSmallMapPageSize());
+
             int size = shards.size();
             if (size == 0) {
                 for (int i = 0; i < shardCount; i++) {
-                    shards.add(MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes));
+                    shards.add(MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes, targetKeyCapacity, targetPageSize));
                 }
             } else {
                 assert size == shardCount;
                 for (int i = 0, n = shards.size(); i < n; i++) {
                     Map m = shards.getQuick(i);
                     if (m != null) {
-                        m.reopen();
+                        m.reopen(targetKeyCapacity, targetPageSize);
                     }
                 }
             }
