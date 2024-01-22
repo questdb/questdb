@@ -39,22 +39,23 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
             HttpClient httpClient,
             String expectedHttpResponse
     ) {
-        final HttpClient.Request request = httpClient.newRequest();
+        final HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
         request.GET().url("/settings");
-        HttpClient.ResponseHeaders response = request.send("localhost", HTTP_PORT);
-        response.await();
+        try (HttpClient.ResponseHeaders response = request.send()) {
+            response.await();
 
-        TestUtils.assertEquals(String.valueOf(200), response.getStatusCode());
+            TestUtils.assertEquals(String.valueOf(200), response.getStatusCode());
 
-        final StringSink sink = new StringSink();
+            final StringSink sink = new StringSink();
 
-        Chunk chunk;
-        final ChunkedResponse chunkedResponse = response.getChunkedResponse();
-        while ((chunk = chunkedResponse.recv()) != null) {
-            Utf8s.utf8ToUtf16(chunk.lo(), chunk.hi(), sink);
+            Chunk chunk;
+            final ChunkedResponse chunkedResponse = response.getChunkedResponse();
+            while ((chunk = chunkedResponse.recv()) != null) {
+                Utf8s.utf8ToUtf16(chunk.lo(), chunk.hi(), sink);
+            }
+
+            TestUtils.assertEquals(expectedHttpResponse, sink);
+            sink.clear();
         }
-
-        TestUtils.assertEquals(expectedHttpResponse, sink);
-        sink.clear();
     }
 }
