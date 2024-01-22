@@ -207,9 +207,9 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
     }
 
     void checkCapacity() {
-        if (this.pos < limit) {
+        if (pos < limit) {
             return;
         }
-        setCapacityBytes(this.capacity << 2);
+        setCapacityBytes(capacity << 1);
     }
 }

@@ -78,7 +78,6 @@ public class OrderedMap implements Map, Reopenable {
     static final long VAR_KEY_HEADER_SIZE = 4;
     private static final long MAX_HEAP_SIZE = (Integer.toUnsignedLong(-1) - 1) << 3;
     private static final int MIN_KEY_CAPACITY = 16;
-    private static final int MIN_PAGE_SIZE = 4096;
     private final OrderedMapCursor cursor;
     private final int heapMemoryTag;
     private final Key key;
@@ -158,7 +157,6 @@ public class OrderedMap implements Map, Reopenable {
 
         this.heapMemoryTag = heapMemoryTag;
         this.listMemoryTag = listMemoryTag;
-        pageSize = Math.max((int) Files.ceilPageSize(pageSize), MIN_PAGE_SIZE);
         initialPageSize = pageSize;
         this.loadFactor = loadFactor;
         heapStart = kPos = Unsafe.malloc(heapSize = pageSize, heapMemoryTag);
@@ -297,7 +295,6 @@ public class OrderedMap implements Map, Reopenable {
         if (heapStart == 0) {
             keyCapacity = (int) (keyCapacity / loadFactor);
             initialKeyCapacity = Math.max(Numbers.ceilPow2(keyCapacity), MIN_KEY_CAPACITY);
-            pageSize = Math.max((int) Files.ceilPageSize(pageSize), MIN_PAGE_SIZE);
             initialPageSize = pageSize;
             restoreInitialCapacity();
         }
@@ -767,6 +764,8 @@ public class OrderedMap implements Map, Reopenable {
             sink.copy(record, this);
         }
 
+        public abstract void putLong256(long l0, long l1, long l2, long l3);
+
         @Override
         public void putRecord(Record value) {
             // no-op
@@ -817,8 +816,6 @@ public class OrderedMap implements Map, Reopenable {
         }
 
         abstract void copyFromRawKey(long srcPtr, long srcSize);
-
-        public abstract void putLong256(long l0, long l1, long l2, long l3);
 
         protected abstract boolean eq(long offset);
     }

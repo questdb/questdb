@@ -185,6 +185,6 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
         if (pos < limit) {
             return;
         }
-        setCapacityBytes(capacity << 2);
+        setCapacityBytes(capacity << 1);
     }
 }
