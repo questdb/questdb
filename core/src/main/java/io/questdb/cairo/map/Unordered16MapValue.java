@@ -218,12 +218,7 @@ final class Unordered16MapValue implements MapValue {
         if (value != Numbers.INT_NaN) {
             final long p = address0(index);
             final int current = Unsafe.getUnsafe().getInt(p);
-            Unsafe.getUnsafe().putInt(p, Math.min(value, current));
-            if (current != Numbers.INT_NaN) {
-                Unsafe.getUnsafe().putInt(p, Math.min(value, current));
-            } else {
-                Unsafe.getUnsafe().putInt(p, value);
-            }
+            Unsafe.getUnsafe().putInt(p, current != Numbers.INT_NaN ? Math.min(value, current) : value);
         }
     }
 
@@ -232,11 +227,7 @@ final class Unordered16MapValue implements MapValue {
         if (value != Numbers.LONG_NaN) {
             final long p = address0(index);
             final long current = Unsafe.getUnsafe().getLong(p);
-            if (current != Numbers.LONG_NaN) {
-                Unsafe.getUnsafe().putLong(p, Math.min(value, current));
-            } else {
-                Unsafe.getUnsafe().putLong(p, value);
-            }
+            Unsafe.getUnsafe().putLong(p, current != Numbers.LONG_NaN ? Math.min(value, current) : value);
         }
     }
 

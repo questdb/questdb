@@ -209,11 +209,7 @@ public class SimpleMapValue implements MapValue {
     public void minInt(int index, int value) {
         if (value != Numbers.INT_NaN) {
             final int current = (int) values[4 * index];
-            if (current != Numbers.INT_NaN) {
-                values[4 * index] = Math.min(value, current);
-            } else {
-                values[4 * index] = value;
-            }
+            values[4 * index] = (current != Numbers.INT_NaN) ? Math.min(value, current) : value;
         }
     }
 
@@ -221,11 +217,7 @@ public class SimpleMapValue implements MapValue {
     public void minLong(int index, long value) {
         if (value != Numbers.LONG_NaN) {
             final long current = values[4 * index];
-            if (current != Numbers.LONG_NaN) {
-                values[4 * index] = Math.min(value, current);
-            } else {
-                values[4 * index] = value;
-            }
+            values[4 * index] = (current != Numbers.LONG_NaN) ? Math.min(value, current) : value;
         }
     }
 
