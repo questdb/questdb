@@ -231,7 +231,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                     count++;
                     long ts = rec.getTimestamp(0);
                     if (ts != lastTs || taskRun == null) {
-                        if (taskRun != null) {
+                        if (taskRun != null && !taskRun.isEmpty()) {
                             columnPurgeOperator.purgeExclusive(taskRun);
                         } else {
                             taskRun = taskPool.pop();
@@ -269,7 +269,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                     long partitionNameTxn = rec.getLong(PARTITION_NAME_COLUMN);
                     taskRun.appendColumnInfo(columnVersion, partitionTs, partitionNameTxn, rec.getUpdateRowId());
                 }
-                if (taskRun != null) {
+                if (taskRun != null && !taskRun.isEmpty()) {
                     columnPurgeOperator.purgeExclusive(taskRun);
                     taskPool.push(taskRun);
                 }
