@@ -3121,12 +3121,12 @@ if __name__ == "__main__":
                                         throw new RuntimeException("Query to cancel failed!", queryError.get());
                                     }
                                 }
-                            } finally {
-                                registryListener.queryFound.countDown();
                             }
 
                             try (PreparedStatement stmt = connection.prepareStatement("cancel query " + queryId)) {
                                 stmt.executeUpdate();
+                            } finally {
+                                registryListener.queryFound.countDown();
                             }
 
                             start = System.currentTimeMillis();
