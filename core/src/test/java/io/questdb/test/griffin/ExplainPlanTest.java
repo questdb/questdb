@@ -174,7 +174,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "  functions: [name,age,address,ts,dateadd('m',-1,ts1),dateadd('m',1,ts1)]\n" +
                         "    SelectedRecord\n" +
                         "        Nested Loop Left Join\n" +
-                        "          filter: ((a.ts>=dateadd('m',-1,b.ts) and dateadd('m',1,b.ts)>=a.ts) and a.age=10)\n" +
+                        "          filter: (a.ts>=dateadd('m',-1,b.ts) and dateadd('m',1,b.ts)>=a.ts and a.age=10)\n" +
                         "            DataFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: table_1\n" +
@@ -194,7 +194,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts) and b.age = 10 ",
                 "SelectedRecord\n" +
                         "    Nested Loop Left Join\n" +
-                        "      filter: ((a.ts>=dateadd('m',-1,b.ts) and dateadd('m',1,b.ts)>=a.ts) and b.age=10)\n" +
+                        "      filter: (a.ts>=dateadd('m',-1,b.ts) and dateadd('m',1,b.ts)>=a.ts and b.age=10)\n" +
                         "        DataFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: table_1\n" +
@@ -3674,7 +3674,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a ( i int, s1 symbol index, s2 symbol index,  ts timestamp) timestamp(ts);",
                 "select s1, s2, i, ts from a where s1 in ('S1', 'S2') and s2 = 'S3' and i > 0 latest on ts partition by s1,s2",
                 "LatestByAllSymbolsFiltered\n" +
-                        "  filter: ((s1 in [S1,S2] and s2='S3') and 0<i)\n" +
+                        "  filter: (s1 in [S1,S2] and s2='S3' and 0<i)\n" +
                         "    Row backward scan\n" +
                         "      expectedSymbolsCount: 2\n" +
                         "    Frame backward scan on: a\n"
@@ -4540,7 +4540,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  and s3 like 'a%'  and s4 ilike 'a%' " +
                             "  and s5 like '%a%' and s6 ilike '%a%';",
                     "Async Filter workers: 1\n" +
-                            "  filter: (((((s1 like %a and s2 ilike %a) and s3 like a%) and s4 ilike a%) and s5 like %a%) and s6 ilike %a%)\n" +
+                            "  filter: ((s1 like %a and s2 ilike %a and s3 like a% and s4 ilike a%) and s5 like %a% and s6 ilike %a%)\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n"
@@ -6003,7 +6003,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Count\n" +
                             "    Async Group By workers: 1\n" +
                             "      keys: [s]\n" +
-                            "      filter: s is not null \n" +
+                            "      filter: s is not null\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: test\n");
@@ -6013,7 +6013,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Count\n" +
                             "    Async Group By workers: 1\n" +
                             "      keys: [s]\n" +
-                            "      filter: (s like %abc% and s is not null )\n" +
+                            "      filter: (s like %abc% and s is not null)\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: test\n");
@@ -6023,7 +6023,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Count\n" +
                             "    Async Group By workers: 1\n" +
                             "      keys: [substring]\n" +
-                            "      filter: substring(s,1,1) is not null \n" +
+                            "      filter: substring(s,1,1) is not null\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: test\n");
@@ -6033,7 +6033,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Count\n" +
                             "    Async Group By workers: 1\n" +
                             "      keys: [substring]\n" +
-                            "      filter: (s like %abc% and substring(s,1,1) is not null )\n" +
+                            "      filter: (s like %abc% and substring(s,1,1) is not null)\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: test\n");
@@ -6043,7 +6043,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Count\n" +
                             "    Async Group By workers: 1\n" +
                             "      keys: [substring]\n" +
-                            "      filter: ((s like %abc% and substring is not null ) and substring(s,1,1) is not null )\n" +
+                            "      filter: (s like %abc% and substring is not null and substring(s,1,1) is not null)\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: test\n");
@@ -8197,7 +8197,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l > 100 and l < 1000 and ts = '2022-01-01' ",
                 "Async Filter workers: 1\n" +
-                        "  filter: ((100<l and l<1000) and ts=1640995200000000)\n" +
+                        "  filter: (100<l and l<1000 and ts=1640995200000000)\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -8210,7 +8210,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l > 100 and l < 1000 and l = 20",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: ((100<l and l<1000) and l=20)\n" +
+                        "  filter: (100<l and l<1000 and l=20)\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"

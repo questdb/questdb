@@ -174,7 +174,7 @@ public class InLongFunctionFactory implements FunctionFactory {
             if (negated) {
                 sink.val(" not");
             }
-            sink.val(" in ").val(inVal);
+            sink.val(" in [").val(inVal).val(']');
         }
     }
 
@@ -206,7 +206,7 @@ public class InLongFunctionFactory implements FunctionFactory {
             if (negated) {
                 sink.val(" not");
             }
-            sink.val(" in ").val(inVal0).val(',').val(inVal1);
+            sink.val(" in [").val(inVal0).val(',').val(inVal1).val(']');
         }
     }
 
