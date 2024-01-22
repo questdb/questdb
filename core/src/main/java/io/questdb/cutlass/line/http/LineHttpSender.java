@@ -208,6 +208,9 @@ public final class LineHttpSender implements Sender {
     }
 
     private static void chunkedResponseToSink(HttpClient.ResponseHeaders response, StringSink sink) {
+        if (!response.isChunked()) {
+            return;
+        }
         ChunkedResponse chunkedRsp = response.getChunkedResponse();
         Chunk chunk;
         while ((chunk = chunkedRsp.recv()) != null) {
@@ -217,6 +220,11 @@ public final class LineHttpSender implements Sender {
 
     private static boolean isSuccessResponse(DirectUtf8Sequence statusCode) {
         return statusCode != null && statusCode.size() == 3 && statusCode.byteAt(0) == '2';
+    }
+
+    private static boolean keepAliveDisabled(HttpClient.ResponseHeaders response) {
+        DirectUtf8Sequence connectionHeader = response.getHeader(HttpConstants.HEADER_CONNECTION);
+        return connectionHeader != null && Chars.equals("close", connectionHeader.asAsciiCharSequence());
     }
 
     private static long unitToNanos(ChronoUnit unit) {
@@ -297,9 +305,8 @@ public final class LineHttpSender implements Sender {
                 DirectUtf8Sequence statusCode = response.getStatusCode();
                 if (isSuccessResponse(statusCode)) {
                     consumeChunkedResponse(response); // if any
-                    DirectUtf8Sequence connectionHeader = response.getHeader(HttpConstants.HEADER_CONNECTION);
-                    if (connectionHeader != null && Chars.equals("close", connectionHeader.asAsciiCharSequence())) {
-                        // keep-alive is not supported, we need to trigger reconnect
+                    if (keepAliveDisabled(response)) {
+                        // Server has HTTP keep-alive disabled and it's closing this TCP connection.
                         client.disconnect();
                     }
                     break;
@@ -403,7 +410,8 @@ public final class LineHttpSender implements Sender {
         HttpClient.Request r = client.newRequest()
                 .POST()
                 .url(PATH)
-                .header("User-Agent", "QuestDB/java/" + questdbVersion);
+                .header("User-Agent", "QuestDB/java/" + questdbVersion)
+                .header("Host", host);
         if (username != null) {
             r.authBasic(username, password);
         } else if (authToken != null) {
