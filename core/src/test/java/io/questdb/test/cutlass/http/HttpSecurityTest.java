@@ -26,6 +26,7 @@ package io.questdb.test.cutlass.http;
 
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.http.HttpAuthenticator;
 import io.questdb.cutlass.http.HttpAuthenticatorFactory;
 import io.questdb.cutlass.http.HttpRequestHeader;
@@ -507,20 +508,20 @@ public class HttpSecurityTest extends AbstractTest {
     }
 
     private void testAdditionalUnprotectedHttpEndpoint(HttpQueryTestBuilder.HttpClientCode code) throws Exception {
-        testHttpEndpoint(HttpSecurityTest.SINGLE_USER_BASIC_AUTH_FACTORY, false, false, code);
+        testHttpEndpoint(HttpSecurityTest.SINGLE_USER_BASIC_AUTH_FACTORY, SecurityContext.AUTH_TYPE_NONE, SecurityContext.AUTH_TYPE_NONE, code);
     }
 
     private void testHttpEndpoint(
             HttpAuthenticatorFactory factory,
             HttpQueryTestBuilder.HttpClientCode code
     ) throws Exception {
-        testHttpEndpoint(factory, true, true, code);
+        testHttpEndpoint(factory, SecurityContext.AUTH_TYPE_CREDENTIALS, SecurityContext.AUTH_TYPE_CREDENTIALS, code);
     }
 
     private void testHttpEndpoint(
             HttpAuthenticatorFactory factory,
-            boolean staticContentAuthRequired,
-            boolean healthCheckAuthRequired,
+            byte httpStaticContentAuthType,
+            byte httpHealthCheckAuthType,
             HttpQueryTestBuilder.HttpClientCode code
     ) throws Exception {
         final FactoryProvider factoryProvider = new DefaultFactoryProvider() {
@@ -533,8 +534,8 @@ public class HttpSecurityTest extends AbstractTest {
                 .withWorkerCount(1)
                 .withTempFolder(root)
                 .withFactoryProvider(factoryProvider)
-                .withStaticContentAuthRequired(staticContentAuthRequired)
-                .withHealthCheckAuthRequired(healthCheckAuthRequired)
+                .withStaticContentAuthRequired(httpStaticContentAuthType)
+                .withHealthCheckAuthRequired(httpHealthCheckAuthType)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .run(code);
     }

@@ -24,49 +24,48 @@
 
 package io.questdb.cutlass.http.processors;
 
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
-import io.questdb.cutlass.http.HttpMinServerConfiguration;
 import io.questdb.cutlass.http.HttpRequestProcessor;
-import io.questdb.metrics.HealthMetricsImpl;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.ObjList;
+import io.questdb.std.str.Utf8StringSink;
 
-public class HealthCheckProcessor implements HttpRequestProcessor {
+public class SettingsProcessor implements HttpRequestProcessor {
+    private final Utf8StringSink sink = new Utf8StringSink();
 
-    private final boolean pessimisticMode;
-    private final byte requiredAuthType;
+    public SettingsProcessor(CairoConfiguration cairoConfiguration) {
+        final CharSequenceObjHashMap<CharSequence> settings = new CharSequenceObjHashMap<>();
+        cairoConfiguration.populateSettings(settings);
 
-    public HealthCheckProcessor(HttpMinServerConfiguration configuration) {
-        this.pessimisticMode = configuration.isPessimisticHealthCheckEnabled();
-        this.requiredAuthType = configuration.getRequiredAuthType();
+        sink.putAscii('{');
+        final ObjList<CharSequence> keys = settings.keys();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            final CharSequence key = keys.getQuick(i);
+            final CharSequence value = settings.get(key);
+            sink.putQuoted(key).putAscii(':').putQuoted(value);
+            if (i != n - 1) {
+                sink.putAscii(',');
+            }
+        }
+        sink.putAscii('}');
     }
 
     @Override
     public byte getRequiredAuthType() {
-        return requiredAuthType;
+        return SecurityContext.AUTH_TYPE_NONE;
     }
 
     @Override
     public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        HttpChunkedResponse response = context.getChunkedResponse();
-
-        if (pessimisticMode) {
-            final HealthMetricsImpl metrics = context.getMetrics().health();
-            final long unhandledErrors = metrics.unhandledErrorsCount();
-            if (unhandledErrors > 0) {
-                response.status(500, "text/plain");
-                response.sendHeader();
-                response.putAscii("Status: Unhealthy\nUnhandled errors: ");
-                response.put(unhandledErrors);
-                response.sendChunk(true);
-                return;
-            }
-        }
-
-        response.status(200, "text/plain");
-        response.sendHeader();
-        response.putAscii("Status: Healthy");
-        response.sendChunk(true);
+        final HttpChunkedResponse r = context.getChunkedResponse();
+        r.status(200, "application/json");
+        r.sendHeader();
+        r.put(sink);
+        r.sendChunk(true);
     }
 }
