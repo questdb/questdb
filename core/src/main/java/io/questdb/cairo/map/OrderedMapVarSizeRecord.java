@@ -30,8 +30,8 @@ import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.*;
+import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.CharSinkBase;
 import io.questdb.std.str.DirectString;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -325,7 +325,7 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
     }
 
     @Override
-    public void getLong256(int columnIndex, CharSinkBase<?> sink) {
+    public void getLong256(int columnIndex, CharSink<?> sink) {
         long address = addressOfColumn(columnIndex);
         final long a = Unsafe.getUnsafe().getLong(address);
         final long b = Unsafe.getUnsafe().getLong(address + Long.BYTES);
@@ -362,7 +362,7 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
     }
 
     @Override
-    public void getStr(int columnIndex, CharSink sink) {
+    public void getStr(int columnIndex, Utf16Sink sink) {
         long address = addressOfColumn(columnIndex);
         int len = Unsafe.getUnsafe().getInt(address);
         address += Integer.BYTES;

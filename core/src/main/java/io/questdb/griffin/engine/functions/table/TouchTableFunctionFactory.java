@@ -40,7 +40,7 @@ import io.questdb.std.Files;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
 
@@ -99,7 +99,7 @@ public class TouchTableFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getStr(Record rec, CharSink sink) {
+        public void getStr(Record rec, Utf16Sink sink) {
             touchTable();
             sink.put("{\"data_pages\": ")
                     .put(dataPages)

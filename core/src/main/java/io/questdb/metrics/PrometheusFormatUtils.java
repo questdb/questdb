@@ -24,42 +24,42 @@
 
 package io.questdb.metrics;
 
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.CharSink;
 
 class PrometheusFormatUtils {
     static final char LF = '\n';
     static final CharSequence METRIC_NAME_PREFIX = "questdb_";
     static final CharSequence TYPE_PREFIX = "# TYPE questdb_";
 
-    static void appendCounterNamePrefix(CharSequence name, CharSinkBase<?> sink) {
+    static void appendCounterNamePrefix(CharSequence name, CharSink<?> sink) {
         sink.putAscii(METRIC_NAME_PREFIX);
         sink.put(name);
         sink.putAscii("_total");
     }
 
-    static void appendCounterType(CharSequence name, CharSinkBase<?> sink) {
+    static void appendCounterType(CharSequence name, CharSink<?> sink) {
         sink.putAscii(TYPE_PREFIX);
         sink.put(name);
         sink.putAscii("_total counter\n");
     }
 
-    static void appendLabel(CharSinkBase<?> sink, CharSequence labelName, CharSequence labelValue) {
+    static void appendLabel(CharSink<?> sink, CharSequence labelName, CharSequence labelValue) {
         sink.put(labelName);
         sink.putAscii('=');
         sink.putQuoted(labelValue);
     }
 
-    static void appendNewLine(CharSinkBase<?> sink) {
+    static void appendNewLine(CharSink<?> sink) {
         sink.putAscii(LF);
     }
 
-    static void appendSampleLineSuffix(CharSinkBase<?> sink, long value) {
+    static void appendSampleLineSuffix(CharSink<?> sink, long value) {
         sink.putAscii(' ');
         sink.put(value);
         sink.putAscii(LF);
     }
 
-    static void appendSampleLineSuffix(CharSinkBase<?> sink, double value) {
+    static void appendSampleLineSuffix(CharSink<?> sink, double value) {
         sink.putAscii(' ');
         sink.put(value);
         sink.putAscii(LF);

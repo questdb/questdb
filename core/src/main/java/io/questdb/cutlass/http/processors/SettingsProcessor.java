@@ -26,7 +26,7 @@ package io.questdb.cutlass.http.processors;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.SecurityContext;
-import io.questdb.cutlass.http.HttpChunkedResponseSocket;
+import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.network.PeerDisconnectedException;
@@ -62,7 +62,7 @@ public class SettingsProcessor implements HttpRequestProcessor {
 
     @Override
     public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        final HttpChunkedResponseSocket r = context.getChunkedResponseSocket();
+        final HttpChunkedResponse r = context.getChunkedResponse();
         r.status(200, "application/json");
         r.sendHeader();
         r.put(sink);

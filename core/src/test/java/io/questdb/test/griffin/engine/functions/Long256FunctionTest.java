@@ -29,7 +29,7 @@ import io.questdb.griffin.engine.functions.Long256Function;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.CharSink;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -38,7 +38,7 @@ public class Long256FunctionTest {
 
     private static final Long256Function function = new Long256Function() {
         @Override
-        public void getLong256(Record rec, CharSinkBase<?> sink) {
+        public void getLong256(Record rec, CharSink<?> sink) {
         }
 
         @Override

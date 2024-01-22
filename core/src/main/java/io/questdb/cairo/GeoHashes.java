@@ -30,7 +30,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.CharSink;
 
 public class GeoHashes {
 
@@ -86,7 +86,7 @@ public class GeoHashes {
         prefixes.add(mask);
     }
 
-    public static void append(long hash, int bits, CharSinkBase<?> sink) {
+    public static void append(long hash, int bits, CharSink<?> sink) {
         if (hash == GeoHashes.NULL) {
             sink.putAscii("null");
         } else {
@@ -101,13 +101,13 @@ public class GeoHashes {
     }
 
 
-    public static void appendBinary(long hash, int bits, CharSinkBase<?> sink) {
+    public static void appendBinary(long hash, int bits, CharSink<?> sink) {
         if (hash != NULL) {
             appendBinaryStringUnsafe(hash, bits, sink);
         }
     }
 
-    public static void appendBinaryStringUnsafe(long hash, int bits, CharSinkBase<?> sink) {
+    public static void appendBinaryStringUnsafe(long hash, int bits, CharSink<?> sink) {
         // Below assertion can happen if there is corrupt metadata
         // which should not happen in production code since reader and writer check table metadata
         assert bits > 0 && bits <= ColumnType.GEOLONG_MAX_BITS;
@@ -116,13 +116,13 @@ public class GeoHashes {
         }
     }
 
-    public static void appendChars(long hash, int chars, CharSinkBase<?> sink) {
+    public static void appendChars(long hash, int chars, CharSink<?> sink) {
         if (hash != NULL) {
             appendCharsUnsafe(hash, chars, sink);
         }
     }
 
-    public static void appendCharsUnsafe(long hash, int chars, CharSinkBase<?> sink) {
+    public static void appendCharsUnsafe(long hash, int chars, CharSink<?> sink) {
         // Below assertion can happen if there is corrupt metadata
         // which should not happen in production code since reader and writer check table metadata
         assert chars > 0 && chars <= MAX_STRING_LENGTH;

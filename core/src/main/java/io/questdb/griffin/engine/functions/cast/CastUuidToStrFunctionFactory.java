@@ -34,7 +34,7 @@ import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.*;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.StringSink;
 
 public final class CastUuidToStrFunctionFactory implements FunctionFactory {
@@ -72,7 +72,7 @@ public final class CastUuidToStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getStr(Record rec, CharSink sink) {
+        public void getStr(Record rec, Utf16Sink sink) {
             SqlUtil.implicitCastUuidAsStr(arg.getLong128Lo(rec), arg.getLong128Hi(rec), sink);
         }
 

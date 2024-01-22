@@ -31,7 +31,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.*;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
@@ -70,7 +70,7 @@ public class CastIPv4ToStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getStr(Record rec, CharSink sink) {
+        public void getStr(Record rec, Utf16Sink sink) {
             final int value = arg.getIPv4(rec);
             if (value != IPv4_NULL) {
                 Numbers.intToIPv4Sink(sink, value);

@@ -27,7 +27,7 @@ package io.questdb.griffin.engine.functions.groupby;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.std.str.DirectCharSink;
+import io.questdb.std.str.DirectUtf16Sink;
 import org.jetbrains.annotations.NotNull;
 
 public class LastStrGroupByFunction extends FirstStrGroupByFunction {
@@ -40,7 +40,7 @@ public class LastStrGroupByFunction extends FirstStrGroupByFunction {
     public void computeNext(MapValue mapValue, Record record) {
         final CharSequence str = arg.getStr(record);
         if (str != null) {
-            final DirectCharSink sink = sinks.getQuick(mapValue.getInt(valueIndex));
+            final DirectUtf16Sink sink = sinks.getQuick(mapValue.getInt(valueIndex));
             sink.clear();
             sink.put(str);
             mapValue.putBool(valueIndex + 1, false);
@@ -52,10 +52,5 @@ public class LastStrGroupByFunction extends FirstStrGroupByFunction {
     @Override
     public String getName() {
         return "last";
-    }
-
-    @Override
-    public boolean isParallelismSupported() {
-        return false;
     }
 }

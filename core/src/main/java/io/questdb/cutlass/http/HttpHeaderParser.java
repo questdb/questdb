@@ -49,7 +49,7 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
     private DirectUtf8String contentDisposition;
     private DirectUtf8String contentDispositionFilename;
     private DirectUtf8String contentDispositionName;
-    private int contentLength;
+    private long contentLength;
     private DirectUtf8String contentType;
     private DirectUtf8String headerName;
     private long headerPtr;
@@ -104,6 +104,7 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
         this.isStatusCode = true;
         this.isStatusText = true;
         this.needProtocol = true;
+        this.contentLength = -1;
         // do not clear the pool
         // this.pool.clear();
     }
@@ -142,7 +143,7 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
     }
 
     @Override
-    public int getContentLength() {
+    public long getContentLength() {
         return contentLength;
     }
 
@@ -360,7 +361,7 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
         }
 
         try {
-            contentLength = Numbers.parseInt(seq);
+            contentLength = Numbers.parseLong(seq);
         } catch (NumericException ignore) {
             throw HttpException.instance("Malformed ").put(HEADER_CONTENT_LENGTH).put(" header");
         }

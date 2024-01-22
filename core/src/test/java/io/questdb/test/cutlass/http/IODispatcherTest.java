@@ -191,10 +191,10 @@ public class IODispatcherTest extends AbstractTest {
                         while (serverRunning.get()) {
                             dispatcher.run(0);
                             dispatcher.processIOQueue(
-                                    (operation, context) -> {
+                                    (operation, context, dispatcher1) -> {
                                         if (operation == IOOperation.WRITE) {
                                             Assert.assertEquals(1024, Net.send(context.getFd(), context.buffer, 1024));
-                                            context.getDispatcher().disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
+                                            dispatcher1.disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
                                         }
                                         return true;
                                     }
@@ -411,7 +411,7 @@ public class IODispatcherTest extends AbstractTest {
                         while (serverRunning.get()) {
                             dispatcher.run(0);
                             dispatcher.processIOQueue(
-                                    (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
+                                    (operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, EmptyRescheduleContext, dispatcher1)
                             );
                         }
                     } finally {
@@ -1452,7 +1452,7 @@ public class IODispatcherTest extends AbstractTest {
     @Test
     public void testImportBadRequestGet() throws Exception {
         testImport(
-                "HTTP/1.1 404 Not Found\r\n" +
+                "HTTP/1.1 400 Bad request\r\n" +
                         "Server: questDB/1.0\r\n" +
                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                         "Transfer-Encoding: chunked\r\n" +
@@ -1484,26 +1484,16 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
-    public void testImportBadRequestNoBoundary() throws Exception {
+    public void testImportBadRequestNoBoundaryDisconnects() throws Exception {
         testImport(
-                "HTTP/1.1 404 Not Found\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: text/plain; charset=utf-8\r\n" +
-                        "\r\n" +
-                        "34\r\n" +
-                        "Bad request. Form data in multipart POST expected.\r\n" +
-                        "\r\n" +
-                        "00\r\n" +
-                        "\r\n",
+                "",
                 "POST /upload?overwrite=true HTTP/1.1\r\n" +
                         "Host: localhost:9000\r\n" +
                         "Accept: */*\r\n" +
                         "content-type: multipart/form-data\r\n" +
                         "\r\n",
                 NetworkFacadeImpl.INSTANCE,
-                false,
+                true,
                 1
         );
     }
@@ -5481,7 +5471,7 @@ public class IODispatcherTest extends AbstractTest {
                         do {
                             dispatcher.run(0);
                             dispatcher.processIOQueue(
-                                    (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
+                                    (operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, EmptyRescheduleContext, dispatcher1)
                             );
                         } while (serverRunning.get());
                     } finally {
@@ -5676,8 +5666,8 @@ public class IODispatcherTest extends AbstractTest {
                         "Transfer-Encoding: chunked\r\n" +
                         "Content-Type: text/plain; charset=utf-8\r\n" +
                         "\r\n" +
-                        "2a\r\n" +
-                        "Bad request. Non-multipart GET expected.\r\n" +
+                        "27\r\n" +
+                        "method (multipart POST) not supported\r\n" +
                         "\r\n" +
                         "00\r\n" +
                         "\r\n",
@@ -5891,8 +5881,6 @@ public class IODispatcherTest extends AbstractTest {
                 try (Path path = new Path().of(baseDir).concat("questdb-temp.txt").$()) {
                     try {
                         Rnd rnd = new Rnd();
-                        final int diskBufferLen = 1024 * 1024;
-
                         writeRandomFile(path, rnd, 122222212222L);
 
                         long sockAddr = Net.sockaddr("127.0.0.1", 9001);
@@ -5922,14 +5910,7 @@ public class IODispatcherTest extends AbstractTest {
                                         "\r\n";
 
                                 for (int j = 0; j < 10; j++) {
-                                    int fd = Net.socketTcp(true);
-                                    TestUtils.assertConnect(fd, sockAddr);
-                                    try {
-                                        sendRequest(request, fd, buffer);
-                                        assertDownloadResponse(fd, rnd, buffer, netBufferLen, diskBufferLen, expectedResponseHeader, 20971670);
-                                    } finally {
-                                        Net.close(fd);
-                                    }
+                                    sendAndReceive(request, expectedResponseHeader);
                                 }
 
                                 // send few requests to receive 304
@@ -5948,30 +5929,15 @@ public class IODispatcherTest extends AbstractTest {
                                 String expectedResponseHeader2 = "HTTP/1.1 304 Not Modified\r\n" +
                                         "Server: questDB/1.0\r\n" +
                                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                                        "Content-Type: text/html; charset=utf-8\r\n" +
                                         "\r\n";
 
                                 for (int i = 0; i < 3; i++) {
-                                    int fd = Net.socketTcp(true);
-                                    TestUtils.assertConnect(fd, sockAddr);
-                                    try {
-                                        sendRequest(request2, fd, buffer);
-                                        assertDownloadResponse(fd, rnd, buffer, netBufferLen, 0, expectedResponseHeader2, 126);
-                                    } finally {
-                                        Net.close(fd);
-                                    }
+                                    sendAndReceive(request2, expectedResponseHeader2);
                                 }
 
                                 // couple more full downloads after 304
                                 for (int j = 0; j < 2; j++) {
-                                    int fd = Net.socketTcp(true);
-                                    TestUtils.assertConnect(fd, sockAddr);
-                                    try {
-                                        sendRequest(request, fd, buffer);
-                                        assertDownloadResponse(fd, rnd, buffer, netBufferLen, diskBufferLen, expectedResponseHeader, 20971670);
-                                    } finally {
-                                        Net.close(fd);
-                                    }
+                                    sendAndReceive(request, expectedResponseHeader);
                                 }
 
                                 // get a 404 now
@@ -5998,10 +5964,9 @@ public class IODispatcherTest extends AbstractTest {
                                         "00\r\n" +
                                         "\r\n";
 
-
-                                sendAndReceive(NetworkFacadeImpl.INSTANCE, request3, expectedResponseHeader3, 4, 0, false);
+                                sendAndReceive(request3, expectedResponseHeader3);
                                 // and few more 304s
-                                sendAndReceive(NetworkFacadeImpl.INSTANCE, request2, expectedResponseHeader2, 4, 0, false);
+                                sendAndReceive(request2, expectedResponseHeader2);
                             } finally {
                                 Unsafe.free(buffer, netBufferLen, MemoryTag.NATIVE_DEFAULT);
                             }
@@ -6099,12 +6064,10 @@ public class IODispatcherTest extends AbstractTest {
                                     String expectedResponseHeader2 = "HTTP/1.1 304 Not Modified\r\n" +
                                             "Server: questDB/1.0\r\n" +
                                             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                                            "Content-Type: text/html; charset=utf-8\r\n" +
                                             "\r\n";
 
                                     for (int i = 0; i < 3; i++) {
-                                        sendRequest(request2, fd, buffer);
-                                        assertDownloadResponse(fd, rnd, buffer, netBufferLen, 0, expectedResponseHeader2, 126);
+                                        sendAndReceive(request2, expectedResponseHeader2);
                                     }
 
                                     // couple more full downloads after 304
@@ -6164,8 +6127,9 @@ public class IODispatcherTest extends AbstractTest {
     public void testSCPHttp10() throws Exception {
         assertMemoryLeak(() -> {
             final String baseDir = root;
+            NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(
-                    NetworkFacadeImpl.INSTANCE,
+                    nf,
                     baseDir,
                     16 * 1024,
                     false,
@@ -6226,24 +6190,7 @@ public class IODispatcherTest extends AbstractTest {
                                         "ETag: \"122222212222\"\r\n" + // this is last modified timestamp on the file, we set this value when we created file
                                         "\r\n";
 
-                                for (int j = 0; j < 1; j++) {
-                                    int fd = Net.socketTcp(true);
-                                    TestUtils.assertConnect(fd, sockAddr);
-                                    try {
-                                        sendRequest(request, fd, buffer);
-                                        assertDownloadResponse(
-                                                fd,
-                                                rnd,
-                                                buffer,
-                                                netBufferLen,
-                                                diskBufferLen,
-                                                expectedResponseHeader,
-                                                20971670
-                                        );
-                                    } finally {
-                                        Net.close(fd);
-                                    }
-                                }
+                                sendAndReceive(nf, request, expectedResponseHeader, 1, 0, false);
 
                                 // send few requests to receive 304
                                 final String request2 = "GET /questdb-temp.txt HTTP/1.1\r\n" +
@@ -6261,31 +6208,16 @@ public class IODispatcherTest extends AbstractTest {
                                 String expectedResponseHeader2 = "HTTP/1.0 304 Not Modified\r\n" +
                                         "Server: questDB/1.0\r\n" +
                                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                                        "Content-Type: text/html; charset=utf-8\r\n" +
                                         "Connection: close\r\n" +
                                         "\r\n";
 
                                 for (int i = 0; i < 3; i++) {
-                                    int fd = Net.socketTcp(true);
-                                    TestUtils.assertConnect(fd, sockAddr);
-                                    try {
-                                        sendRequest(request2, fd, buffer);
-                                        assertDownloadResponse(fd, rnd, buffer, netBufferLen, 0, expectedResponseHeader2, 126);
-                                    } finally {
-                                        Net.close(fd);
-                                    }
+                                    sendAndReceive(nf, request2, expectedResponseHeader2, 1, 0, false);
                                 }
 
                                 // couple more full downloads after 304
-                                for (int j = 0; j < 2; j++) {
-                                    int fd = Net.socketTcp(true);
-                                    TestUtils.assertConnect(fd, sockAddr);
-                                    try {
-                                        sendRequest(request, fd, buffer);
-                                        assertDownloadResponse(fd, rnd, buffer, netBufferLen, diskBufferLen, expectedResponseHeader, 20971670);
-                                    } finally {
-                                        Net.close(fd);
-                                    }
+                                for (int i = 0; i < 3; i++) {
+                                    sendAndReceive(nf, request, expectedResponseHeader, 1, 0, false);
                                 }
 
                                 // get a 404 now
@@ -6313,29 +6245,11 @@ public class IODispatcherTest extends AbstractTest {
                                         "00\r\n" +
                                         "\r\n";
 
-
-                                for (int i = 0; i < 4; i++) {
-                                    int fd = Net.socketTcp(true);
-                                    TestUtils.assertConnect(fd, sockAddr);
-                                    try {
-                                        sendRequest(request3, fd, buffer);
-                                        assertDownloadResponse(fd, rnd, buffer, netBufferLen, 0, expectedResponseHeader3, expectedResponseHeader3.length());
-                                    } finally {
-                                        Net.close(fd);
-                                    }
-                                }
+                                sendAndReceive(nf, request3, expectedResponseHeader3, 1, 0, false);
 
                                 // and few more 304s
-
                                 for (int i = 0; i < 3; i++) {
-                                    int fd = Net.socketTcp(true);
-                                    TestUtils.assertConnect(fd, sockAddr);
-                                    try {
-                                        sendRequest(request2, fd, buffer);
-                                        assertDownloadResponse(fd, rnd, buffer, netBufferLen, 0, expectedResponseHeader2, 126);
-                                    } finally {
-                                        Net.close(fd);
-                                    }
+                                    sendAndReceive(nf, request2, expectedResponseHeader2, 1, 0, false);
                                 }
 
                             } finally {
@@ -6451,7 +6365,7 @@ public class IODispatcherTest extends AbstractTest {
                         while (serverRunning.get()) {
                             dispatcher.run(0);
                             dispatcher.processIOQueue(
-                                    (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
+                                    (operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, EmptyRescheduleContext, dispatcher1)
                             );
                         }
                     } finally {
@@ -6603,7 +6517,7 @@ public class IODispatcherTest extends AbstractTest {
 
                             @Override
                             public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
-                                context.simpleResponse().sendStatusWithDefaultMessage(200);
+                                context.simpleResponse().sendStatusTextContent(200);
                             }
                         };
                     }
@@ -6622,7 +6536,7 @@ public class IODispatcherTest extends AbstractTest {
                         while (serverRunning.get()) {
                             dispatcher.run(0);
                             dispatcher.processIOQueue(
-                                    (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
+                                    (operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, EmptyRescheduleContext, dispatcher1)
                             );
                         }
                     } finally {
@@ -6777,7 +6691,7 @@ public class IODispatcherTest extends AbstractTest {
                         while (serverRunning.get()) {
                             dispatcher.run(0);
                             dispatcher.processIOQueue(
-                                    (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
+                                    (operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, EmptyRescheduleContext, dispatcher1)
                             );
                         }
                     } finally {
@@ -7734,7 +7648,7 @@ public class IODispatcherTest extends AbstractTest {
                                 while (serverRunning.get()) {
                                     dispatcher.run(0);
                                     dispatcher.processIOQueue(
-                                            (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
+                                            (operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, EmptyRescheduleContext, dispatcher1)
                                     );
                                 }
                             } finally {
@@ -7797,7 +7711,7 @@ public class IODispatcherTest extends AbstractTest {
                     serverHaltLatch.await();
                 }
             } catch (Throwable e) {
-                e.printStackTrace();
+                LOG.critical().$(e).$();
                 throw e;
             } finally {
                 finished.set(true);
@@ -7889,7 +7803,7 @@ public class IODispatcherTest extends AbstractTest {
                         event.close();
                         totalEvents.incrementAndGet();
                     } catch (Exception e) {
-                        e.printStackTrace();
+                        LOG.critical().$(e).$();
                     }
                 } else {
                     Os.pause();
@@ -7928,6 +7842,18 @@ public class IODispatcherTest extends AbstractTest {
             }
             writer.commit();
         }
+    }
+
+    private static void sendAndReceive(String request, CharSequence response) {
+        sendAndReceive(
+                NetworkFacadeImpl.INSTANCE,
+                request,
+                response,
+                1,
+                0,
+                false,
+                false
+        );
     }
 
     private static void sendAndReceive(
@@ -8114,6 +8040,27 @@ public class IODispatcherTest extends AbstractTest {
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false);
+    }
+
+    private boolean handleClientOperation(
+            HttpConnectionContext context,
+            int operation,
+            HttpRequestProcessorSelector selector,
+            RescheduleContext rescheduleContext,
+            IODispatcher<HttpConnectionContext> dispatcher
+    ) {
+        try {
+            return context.handleClientOperation(operation, selector, rescheduleContext);
+        } catch (HeartBeatException e) {
+            dispatcher.registerChannel(context, IOOperation.HEARTBEAT);
+        } catch (PeerIsSlowToReadException e) {
+            dispatcher.registerChannel(context, IOOperation.WRITE);
+        } catch (ServerDisconnectException e) {
+            dispatcher.disconnect(context, context.getDisconnectReason());
+        } catch (PeerIsSlowToWriteException e) {
+            dispatcher.registerChannel(context, IOOperation.READ);
+        }
+        return false;
     }
 
     private void importWithO3MaxLagAndMaxUncommittedRowsTableExists(
@@ -8381,7 +8328,7 @@ public class IODispatcherTest extends AbstractTest {
 
         String baseTable = "create table tab (b boolean, ts timestamp, sym symbol)";
         String walTable = baseTable + " timestamp(ts) partition by DAY WAL";
-        ObjList ddls = new ObjList(
+        ObjList<String> ddls = new ObjList<>(
                 baseTable,
                 baseTable + " timestamp(ts)",
                 baseTable + " timestamp(ts) partition by DAY BYPASS WAL",
@@ -8405,15 +8352,15 @@ public class IODispatcherTest extends AbstractTest {
         String updateWithJoin2 = "update tab t1 set b=sleep(120000) from tab t2 where t1.b = t2.b";
 
         // add many symbols to slow down operation enough so that other thread can detect it in registry and cancel it
-        String addColumnsTmp = "alter table tab add column s1 symbol index";
+        StringBuilder addColumnsTmp = new StringBuilder("alter table tab add column s1 symbol index");
         for (int i = 2; i < 30; i++) {
-            addColumnsTmp += ", s" + i + " symbol index";
+            addColumnsTmp.append(", s").append(i).append(" symbol index");
         }
-        final String addColumns = addColumnsTmp;
+        final String addColumns = addColumnsTmp.toString();
 
-        final ObjList commands;
+        final ObjList<String> commands;
         if ("/query".equals(url)) {
-            commands = new ObjList(
+            commands = new ObjList<>(
                     createAsSelect,
                     select1,
                     select2,
@@ -8432,7 +8379,7 @@ public class IODispatcherTest extends AbstractTest {
                     addColumns
             );
         } else {
-            commands = new ObjList(
+            commands = new ObjList<>(
                     select1,
                     select2,
                     selectWithJoin
@@ -8460,7 +8407,7 @@ public class IODispatcherTest extends AbstractTest {
 
                     try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                         for (int i = 0, n = ddls.size(); i < n; i++) {
-                            final String ddl = (String) ddls.getQuick(i);
+                            final String ddl = ddls.getQuick(i);
                             boolean isWal = ddl.equals(walTable);
 
                             engine.drop("drop table if exists tab", executionContext, null);
@@ -8471,7 +8418,7 @@ public class IODispatcherTest extends AbstractTest {
                             }
 
                             for (int j = 0, k = commands.size(); j < k; j++) {
-                                final String command = (String) commands.getQuick(j);
+                                final String command = commands.getQuick(j);
 
                                 if (isWal) {
                                     try (RecordCursorFactory factory = engine.select("select suspended, writerTxn, sequencerTxn from wal_tables() where name = 'tab'", executionContext)) {
@@ -8538,7 +8485,7 @@ public class IODispatcherTest extends AbstractTest {
                                         Thread walJob = new Thread(() -> {
                                             started.countDown();
 
-                                            try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1);) {
+                                            try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1)) {
                                                 while (queryError.get() == null) {
                                                     walApplyJob.drain(0);
                                                     new CheckWalTransactionsJob(engine).run(0);
@@ -8562,6 +8509,7 @@ public class IODispatcherTest extends AbstractTest {
                                     //wait until query appears in registry and get query id
                                     while (true) {
                                         Os.sleep(1);
+                                        //noinspection Convert2Diamond
                                         testHttpClient.assertGetRegexp(
                                                 "/query",
                                                 ".*dataset.*",
@@ -8930,7 +8878,7 @@ public class IODispatcherTest extends AbstractTest {
                     @Override
                     public void run() {
                         long smem = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
-                        IORequestProcessor<TestIOContext> requestProcessor = (operation, context) -> {
+                        IORequestProcessor<TestIOContext> requestProcessor = (operation, context, dispatcher) -> {
                             int fd = context.getFd();
                             int rc;
                             switch (operation) {
@@ -9111,9 +9059,8 @@ public class IODispatcherTest extends AbstractTest {
 
         public HelloContext(int fd, SOCountDownLatch closeLatch, IODispatcher<HelloContext> dispatcher) {
             super(PlainSocketFactory.INSTANCE, NetworkFacadeImpl.INSTANCE, LOG, NullLongGauge.INSTANCE);
-            socket.of(fd);
+            this.of(fd, dispatcher);
             this.closeLatch = closeLatch;
-            this.dispatcher = dispatcher;
         }
 
         @Override
@@ -9155,14 +9102,14 @@ public class IODispatcherTest extends AbstractTest {
                         try {
                             requester.execute(requests[index][0], requests[index][1]);
                         } catch (Throwable e) {
-                            e.printStackTrace();
+                            LOG.critical().$(e).$();
                             System.out.println("erm: " + index + ", ts=" + Timestamps.toString(Os.currentTimeMicros()));
                             throw e;
                         }
                     }
                 });
             } catch (Throwable e) {
-                e.printStackTrace();
+                LOG.critical().$(e).$();
                 errorCounter.incrementAndGet();
             } finally {
                 latch.countDown();

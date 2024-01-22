@@ -28,7 +28,7 @@ import io.questdb.std.Chars;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public class StringSink extends AbstractCharSink implements MutableCharSink, CharSequence, CloneableMutable {
+public class StringSink implements MutableUtf16Sink, CharSequence, CloneableMutable, Utf16Sink {
 
     private char[] buffer;
     private int pos;
@@ -106,10 +106,10 @@ public class StringSink extends AbstractCharSink implements MutableCharSink, Cha
     }
 
     @Override
-    public CharSink put(@Nullable CharSequence cs) {
+    public Utf16Sink put(@Nullable CharSequence cs) {
         if (cs != null) {
             int len = cs.length();
-            checkSize(len);
+            checkCapacity(len);
             for (int i = 0; i < len; i++) {
                 buffer[pos + i] = cs.charAt(i);
             }
@@ -119,9 +119,9 @@ public class StringSink extends AbstractCharSink implements MutableCharSink, Cha
     }
 
     @Override
-    public CharSink put(@NotNull CharSequence cs, int lo, int hi) {
+    public Utf16Sink put(@NotNull CharSequence cs, int lo, int hi) {
         int len = hi - lo;
-        checkSize(len);
+        checkCapacity(len);
         for (int i = lo; i < hi; i++) {
             buffer[pos + i - lo] = cs.charAt(i);
         }
@@ -130,22 +130,22 @@ public class StringSink extends AbstractCharSink implements MutableCharSink, Cha
     }
 
     @Override
-    public CharSink put(char c) {
-        checkSize(1);
+    public Utf16Sink put(char c) {
+        checkCapacity(1);
         buffer[pos++] = c;
         return this;
     }
 
     @Override
-    public CharSink put(char @NotNull [] chars, int start, int len) {
-        checkSize(len);
+    public Utf16Sink put(char @NotNull [] chars, int start, int len) {
+        checkCapacity(len);
         System.arraycopy(chars, start, buffer, pos, len);
         pos += len;
         return this;
     }
 
-    public CharSink put(char c, int n) {
-        checkSize(n);
+    public Utf16Sink put(char c, int n) {
+        checkCapacity(n);
         for (int i = 0; i < n; i++) {
             buffer[pos + i] = c;
         }
@@ -173,7 +173,7 @@ public class StringSink extends AbstractCharSink implements MutableCharSink, Cha
         clear(pos);
     }
 
-    private void checkSize(int extra) {
+    private void checkCapacity(int extra) {
         int len = pos + extra;
         if (buffer.length > len) {
             return;

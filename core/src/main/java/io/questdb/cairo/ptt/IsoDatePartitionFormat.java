@@ -30,7 +30,7 @@ import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -46,7 +46,7 @@ public class IsoDatePartitionFormat implements DateFormat {
     }
 
     @Override
-    public void format(long timestamp, @NotNull DateLocale locale, @Nullable CharSequence timeZoneName, @NotNull CharSinkBase<?> sink) {
+    public void format(long timestamp, @NotNull DateLocale locale, @Nullable CharSequence timeZoneName, @NotNull CharSink<?> sink) {
         long overspill = timestamp - floorMethod.floor(timestamp);
 
         if (overspill > 0) {

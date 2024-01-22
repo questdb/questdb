@@ -26,6 +26,7 @@ package io.questdb.cutlass.http;
 
 import io.questdb.cutlass.http.ex.RetryFailedOperationException;
 import io.questdb.mp.*;
+import io.questdb.network.*;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -43,15 +44,17 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
     private final Sequence inSubSequence;
     private final long maxWaitCapMs;
     private final PriorityQueue<Retry> nextRerun;
+    private final IODispatcher<HttpConnectionContext> dispatcher;
     private final Sequence outPubSequence;
     private final RingQueue<RetryHolder> outQueue;
     private final Sequence outSubSequence;
 
-    public WaitProcessor(WaitProcessorConfiguration configuration) {
+    public WaitProcessor(WaitProcessorConfiguration configuration, IODispatcher<HttpConnectionContext> dispatcher) {
         clock = configuration.getClock();
         maxWaitCapMs = configuration.getMaxWaitCapMs();
         exponentialWaitMultiplier = configuration.getExponentialWaitMultiplier();
         nextRerun = new PriorityQueue<>(configuration.getInitialWaitQueueSize(), WaitProcessor::compareRetriesInQueue);
+        this.dispatcher = dispatcher;
 
         int retryQueueLength = configuration.getMaxProcessingQueueSize();
         inQueue = new RingQueue<>(RetryHolder::new, retryQueueLength);
@@ -87,16 +90,34 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
             Retry retry = getNextRerun();
             if (retry != null) {
                 useful = true;
-                if (!retry.tryRerun(selector, this)) {
-                    try {
-                        reschedule(retry, retry.getAttemptDetails().attempt + 1, retry.getAttemptDetails().waitStartTimestamp);
-                    } catch (RetryFailedOperationException e) {
-                        retry.fail(selector, e);
-                    }
-                }
+                run(selector, retry);
             } else {
                 return useful;
             }
+        }
+    }
+
+    private void run(HttpRequestProcessorSelector selector, Retry retry) {
+        try {
+            if (!retry.tryRerun(selector, this)) {
+                try {
+                    reschedule(retry, retry.getAttemptDetails().attempt + 1, retry.getAttemptDetails().waitStartTimestamp);
+                } catch (RetryFailedOperationException e) {
+                    retry.fail(selector, e);
+                }
+            }
+        } catch (PeerDisconnectedException e) {
+            HttpConnectionContext context = (HttpConnectionContext) retry;
+            dispatcher.disconnect((HttpConnectionContext) retry, IODispatcher.DISCONNECT_REASON_KICKED_OUT_AT_RECV);
+        } catch (PeerIsSlowToReadException e) {
+            HttpConnectionContext context = (HttpConnectionContext) retry;
+            dispatcher.registerChannel(context, IOOperation.WRITE);
+        } catch (PeerIsSlowToWriteException e) {
+            HttpConnectionContext context = (HttpConnectionContext) retry;
+            dispatcher.registerChannel(context, IOOperation.READ);
+        } catch (ServerDisconnectException e) {
+            HttpConnectionContext context = (HttpConnectionContext) retry;
+            dispatcher.disconnect((HttpConnectionContext) retry, context.getDisconnectReason());
         }
     }
 

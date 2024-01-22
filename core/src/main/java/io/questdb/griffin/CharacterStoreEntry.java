@@ -24,9 +24,9 @@
 
 package io.questdb.griffin;
 
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 
-public interface CharacterStoreEntry extends CharSink {
+public interface CharacterStoreEntry extends Utf16Sink {
     int length();
 
     CharSequence toImmutable();

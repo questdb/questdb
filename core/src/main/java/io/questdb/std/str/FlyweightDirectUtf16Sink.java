@@ -29,12 +29,12 @@ import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public class FlyweightDirectCharSink extends AbstractCharSink implements MutableCharSink, CharSequence, DirectSequence {
+public class FlyweightDirectUtf16Sink implements MutableUtf16Sink, CharSequence, DirectSequence, Utf16Sink {
     private long hi;
     private long lo;
     private long ptr;
 
-    public FlyweightDirectCharSink() {
+    public FlyweightDirectUtf16Sink() {
         lo = hi = ptr = 0;
     }
 
@@ -42,7 +42,7 @@ public class FlyweightDirectCharSink extends AbstractCharSink implements Mutable
         return lo;
     }
 
-    public FlyweightDirectCharSink asCharSequence(long lo, long hi) {
+    public FlyweightDirectUtf16Sink asCharSequence(long lo, long hi) {
         this.ptr = lo;
         this.lo = hi;
         this.hi = hi;
@@ -82,7 +82,7 @@ public class FlyweightDirectCharSink extends AbstractCharSink implements Mutable
         return (int) (lo - ptr) / 2;
     }
 
-    public FlyweightDirectCharSink of(long lo, long hi) {
+    public FlyweightDirectUtf16Sink of(long lo, long hi) {
         this.ptr = lo;
         this.lo = lo;
         this.hi = hi;
@@ -95,7 +95,7 @@ public class FlyweightDirectCharSink extends AbstractCharSink implements Mutable
     }
 
     @Override
-    public CharSink put(@Nullable CharSequence cs) {
+    public Utf16Sink put(@Nullable CharSequence cs) {
         if (cs != null) {
             int l = cs.length();
             assert checkCapacity(l);
@@ -109,7 +109,7 @@ public class FlyweightDirectCharSink extends AbstractCharSink implements Mutable
     }
 
     @Override
-    public CharSink put(char @NotNull [] chars, int start, int len) {
+    public Utf16Sink put(char @NotNull [] chars, int start, int len) {
         assert checkCapacity(len);
         int l2 = len * 2;
         for (int i = 0; i < len; i++) {
@@ -121,7 +121,7 @@ public class FlyweightDirectCharSink extends AbstractCharSink implements Mutable
     }
 
     @Override
-    public CharSink put(char c) {
+    public Utf16Sink put(char c) {
         assert checkCapacity(1);
         Unsafe.getUnsafe().putChar(lo, c);
         lo += 2;

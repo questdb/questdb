@@ -36,7 +36,7 @@ import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 
@@ -120,7 +120,7 @@ public class ReplaceStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getStr(Record rec, CharSink sink) {
+        public void getStr(Record rec, Utf16Sink sink) {
             final CharSequence value = this.value.getStrB(rec);
             if (value != null) {
                 replace(value, oldSubStr.getStr(rec), newSubStr.getStr(rec), sink);
@@ -157,7 +157,7 @@ public class ReplaceStrFunctionFactory implements FunctionFactory {
         }
 
         //if result is null then return null; otherwise return sink
-        private CharSink replace(@NotNull CharSequence value, CharSequence term, CharSequence withWhat, CharSink sink) throws CairoException {
+        private Utf16Sink replace(@NotNull CharSequence value, CharSequence term, CharSequence withWhat, Utf16Sink sink) throws CairoException {
             int valueLen = value.length();
             if (valueLen < 1) {
                 return sink;

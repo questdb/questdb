@@ -27,7 +27,7 @@ package io.questdb.std.datetime.microtime;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.TimeZoneRules;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 
@@ -975,7 +975,7 @@ public final class Timestamps {
     }
 
     public static String toString(long micros) {
-        CharSink sink = Misc.getThreadLocalSink();
+        Utf16Sink sink = Misc.getThreadLocalSink();
         TimestampFormatUtils.appendDateTime(sink, micros);
         return sink.toString();
     }
@@ -1003,7 +1003,7 @@ public final class Timestamps {
     }
 
     public static String toUSecString(long micros) {
-        CharSink sink = Misc.getThreadLocalSink();
+        Utf16Sink sink = Misc.getThreadLocalSink();
         TimestampFormatUtils.appendDateTimeUSec(sink, micros);
         return sink.toString();
     }

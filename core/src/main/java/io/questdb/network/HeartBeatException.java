@@ -22,36 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb.std.str;
+package io.questdb.network;
 
-import org.jetbrains.annotations.NotNull;
-
-import static io.questdb.std.Numbers.hexDigits;
-
-public abstract class AbstractCharSink implements CharSink {
-
-    public void putAsPrintable(CharSequence nonPrintable) {
-        for (int i = 0, n = nonPrintable.length(); i < n; i++) {
-            char c = nonPrintable.charAt(i);
-            if (c > 0x1F && c != 0x7F) {
-                put(c);
-            } else {
-                put('\\');
-                put('u');
-
-                final int s = (int) c & 0xFF;
-                put('0');
-                put('0');
-                put(hexDigits[s / 0x10]);
-                put(hexDigits[s % 0x10]);
-            }
-        }
+public class HeartBeatException extends Exception {
+    private HeartBeatException() {
     }
 
-    public CharSink repeat(@NotNull CharSequence value, int n) {
-        for (int i = 0; i < n; i++) {
-            put(value);
-        }
-        return this;
-    }
+    public static final HeartBeatException INSTANCE = new HeartBeatException();
 }

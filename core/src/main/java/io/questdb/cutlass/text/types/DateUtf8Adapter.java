@@ -31,16 +31,16 @@ import io.questdb.std.Mutable;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
-import io.questdb.std.str.DirectCharSink;
+import io.questdb.std.str.DirectUtf16Sink;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8s;
 
 public class DateUtf8Adapter extends AbstractTypeAdapter implements Mutable {
-    private final DirectCharSink utf16Sink;
+    private final DirectUtf16Sink utf16Sink;
     private DateFormat format;
     private DateLocale locale;
 
-    public DateUtf8Adapter(DirectCharSink utf16Sink) {
+    public DateUtf8Adapter(DirectUtf16Sink utf16Sink) {
         this.utf16Sink = utf16Sink;
     }
 
@@ -72,7 +72,7 @@ public class DateUtf8Adapter extends AbstractTypeAdapter implements Mutable {
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value, DirectCharSink utf16Sink) throws Exception {
+    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value, DirectUtf16Sink utf16Sink) throws Exception {
         utf16Sink.clear();
         if (!Utf8s.utf8ToUtf16EscConsecutiveQuotes(value.lo(), value.hi(), utf16Sink)) {
             throw Utf8Exception.INSTANCE;

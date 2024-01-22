@@ -22,12 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http.processors;
+package io.questdb.std.str;
 
-import io.questdb.cairo.sql.Record;
-import io.questdb.cutlass.http.HttpChunkedResponseSocket;
-
-@FunctionalInterface
-interface ValueWriter {
-    void write(HttpChunkedResponseSocket socket, Record rec, int col);
+public final class CharSinkEncoding {
+    public static final int UTF16 = 16;
+    public static final int UTF8 = 8;
 }

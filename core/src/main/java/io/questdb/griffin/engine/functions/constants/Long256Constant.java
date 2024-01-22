@@ -29,7 +29,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.Long256Function;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.CharSink;
 
 public class Long256Constant extends Long256Function implements Long256, ConstantFunction {
     protected Long256Impl value;
@@ -63,7 +63,7 @@ public class Long256Constant extends Long256Function implements Long256, Constan
     }
 
     @Override
-    public void getLong256(Record rec, CharSinkBase<?> sink) {
+    public void getLong256(Record rec, CharSink<?> sink) {
         value.toSink(sink);
     }
 

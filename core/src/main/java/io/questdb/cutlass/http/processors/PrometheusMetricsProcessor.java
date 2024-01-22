@@ -62,10 +62,10 @@ public class PrometheusMetricsProcessor implements HttpRequestProcessor {
         // This is because we send back chunked responses and each chunk may not be large enough.
         metrics.scrapeIntoPrometheus(state.sink);
 
-        final HttpChunkedResponseSocket r = context.getChunkedResponseSocket();
-        r.status(200, CONTENT_TYPE_TEXT);
-        r.sendHeader();
-        sendResponse(r, state);
+        final HttpChunkedResponse response = context.getChunkedResponse();
+        response.status(200, CONTENT_TYPE_TEXT);
+        response.sendHeader();
+        sendResponse(response, state);
     }
 
     /**
@@ -80,18 +80,18 @@ public class PrometheusMetricsProcessor implements HttpRequestProcessor {
         // Send any remaining chunks, if any.
         final RequestState state = LV.get(context);
         assert state != null;
-        final HttpChunkedResponseSocket r = context.getChunkedResponseSocket();
-        sendResponse(r, state);
+        final HttpChunkedResponse response = context.getChunkedResponse();
+        sendResponse(response, state);
     }
 
-    private void sendNextChunk(HttpChunkedResponseSocket r, RequestState state) throws PeerIsSlowToReadException, PeerDisconnectedException {
+    private void sendNextChunk(HttpChunkedResponse r, RequestState state) throws PeerIsSlowToReadException, PeerDisconnectedException {
         final int pending = state.countPending();
         final int wrote = r.writeBytes(state.sink.ptr() + state.written, pending);
         state.written += wrote;
         r.sendChunk(wrote == pending); // Will raise `PeerIsSlowToReadException` if the tcp send buffer is full.
     }
 
-    private void sendResponse(HttpChunkedResponseSocket r, RequestState state) throws PeerIsSlowToReadException, PeerDisconnectedException {
+    private void sendResponse(HttpChunkedResponse r, RequestState state) throws PeerIsSlowToReadException, PeerDisconnectedException {
         while (state.countPending() > 0) {
             sendNextChunk(r, state);
         }
@@ -120,7 +120,7 @@ public class PrometheusMetricsProcessor implements HttpRequestProcessor {
         public final DirectUtf8Sink sink = new DirectUtf8Sink(Files.PAGE_SIZE);
         private final RequestStatePool pool;
         /**
-         * Total number of bytes written to one or more chunks (`HttpChunkedResponseSocket` objects).
+         * Total number of bytes written to one or more chunks (`HttpChunkedResponse` objects).
          */
         public int written = 0;
 

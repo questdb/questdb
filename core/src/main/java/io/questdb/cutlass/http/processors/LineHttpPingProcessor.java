@@ -24,6 +24,6 @@ public class LineHttpPingProcessor implements HttpRequestProcessor {
     public void onRequestComplete(
             HttpConnectionContext context
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
-        context.simpleResponse().sendStatusWithHeader(204, header);
+        context.simpleResponse().sendStatusNoContent(204, header);
     }
 }

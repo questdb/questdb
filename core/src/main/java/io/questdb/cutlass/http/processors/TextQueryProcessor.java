@@ -165,24 +165,24 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                         }
                     }
                     state.metadata = state.recordCursorFactory.getMetadata();
-                    header(context.getChunkedResponseSocket(), state, 200);
+                    header(context.getChunkedResponse(), state, 200);
                     doResumeSend(context);
                 } catch (CairoException e) {
                     state.setQueryCacheable(e.isCacheable());
-                    internalError(context.getChunkedResponseSocket(), context.getLastRequestBytesSent(), e, state);
+                    internalError(context.getChunkedResponse(), context.getLastRequestBytesSent(), e, state);
                 } catch (CairoError e) {
-                    internalError(context.getChunkedResponseSocket(), context.getLastRequestBytesSent(), e, state);
+                    internalError(context.getChunkedResponse(), context.getLastRequestBytesSent(), e, state);
                 }
             } else {
-                headerNoContentDisposition(context.getChunkedResponseSocket());
-                sendConfirmation(context.getChunkedResponseSocket());
+                headerNoContentDisposition(context.getChunkedResponse());
+                sendConfirmation(context.getChunkedResponse());
                 readyForNextRequest(context);
             }
         } catch (SqlException | ImplicitCastException e) {
-            syntaxError(context.getChunkedResponseSocket(), state, e);
+            syntaxError(context.getChunkedResponse(), state, e);
             readyForNextRequest(context);
         } catch (CairoException | CairoError e) {
-            internalError(context.getChunkedResponseSocket(), context.getLastRequestBytesSent(), e, state);
+            internalError(context.getChunkedResponse(), context.getLastRequestBytesSent(), e, state);
             readyForNextRequest(context);
         }
     }
@@ -203,8 +203,8 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         // new request clears random
         state.rnd = null;
 
-        HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
-        if (parseUrl(socket, context.getRequestHeader(), state)) {
+        HttpChunkedResponse response = context.getChunkedResponse();
+        if (parseUrl(response, context.getRequestHeader(), state)) {
             execute(context, state);
         } else {
             readyForNextRequest(context);
@@ -249,39 +249,39 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                 && (tok.byteAt(i) | 32) == 'p';
     }
 
-    private static void putGeoHashStringValue(HttpChunkedResponseSocket socket, long value, int type) {
+    private static void putGeoHashStringValue(HttpChunkedResponse response, long value, int type) {
         if (value == GeoHashes.NULL) {
-            socket.putAscii("null");
+            response.putAscii("null");
         } else {
             int bitFlags = GeoHashes.getBitFlags(type);
-            socket.putAscii('\"');
+            response.putAscii('\"');
             if (bitFlags < 0) {
-                GeoHashes.appendCharsUnsafe(value, -bitFlags, socket);
+                GeoHashes.appendCharsUnsafe(value, -bitFlags, response);
             } else {
-                GeoHashes.appendBinaryStringUnsafe(value, bitFlags, socket);
+                GeoHashes.appendBinaryStringUnsafe(value, bitFlags, response);
             }
-            socket.putAscii('\"');
+            response.putAscii('\"');
         }
     }
 
-    private static void putIPv4Value(HttpChunkedResponseSocket socket, Record rec, int col) {
+    private static void putIPv4Value(HttpChunkedResponse response, Record rec, int col) {
         final int ip = rec.getIPv4(col);
         if (ip != Numbers.IPv4_NULL) {
-            Numbers.intToIPv4Sink(socket, ip);
+            Numbers.intToIPv4Sink(response, ip);
         }
     }
 
-    private static void putStringOrNull(HttpChunkedResponseSocket r, CharSequence str) {
+    private static void putStringOrNull(HttpChunkedResponse r, CharSequence str) {
         if (str != null) {
             r.putQuoted(str);
         }
     }
 
-    private static void putUuidOrNull(HttpChunkedResponseSocket socket, long lo, long hi) {
+    private static void putUuidOrNull(HttpChunkedResponse response, long lo, long hi) {
         if (Uuid.isNull(lo, hi)) {
             return;
         }
-        Numbers.appendUuid(lo, hi, socket);
+        Numbers.appendUuid(lo, hi, response);
     }
 
     private static void readyForNextRequest(HttpConnectionContext context) {
@@ -313,7 +313,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             state.pausedQuery = false;
         }
 
-        final HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
+        final HttpChunkedResponse response = context.getChunkedResponse();
         final int columnCount = state.metadata.getColumnCount();
 
         OUT:
@@ -327,15 +327,15 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                         state.queryState = JsonQueryProcessorState.QUERY_METADATA;
                         while (state.columnIndex < columnCount) {
                             if (state.columnIndex > 0) {
-                                socket.putAscii(state.delimiter);
+                                response.putAscii(state.delimiter);
                             }
-                            socket.putQuoted(state.metadata.getColumnName(state.columnIndex));
+                            response.putQuoted(state.metadata.getColumnName(state.columnIndex));
                             state.columnIndex++;
-                            socket.bookmark();
+                            response.bookmark();
                         }
-                        socket.putEOL();
+                        response.putEOL();
                         state.queryState = JsonQueryProcessorState.QUERY_RECORD_START;
-                        socket.bookmark();
+                        response.bookmark();
                         // fall through
                     case JsonQueryProcessorState.QUERY_RECORD_START:
                         if (state.record == null) {
@@ -371,36 +371,36 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                     case JsonQueryProcessorState.QUERY_RECORD:
                         while (state.columnIndex < columnCount) {
                             if (state.columnIndex > 0) {
-                                socket.putAscii(state.delimiter);
+                                response.putAscii(state.delimiter);
                             }
-                            putValue(socket, state.metadata.getColumnType(state.columnIndex), state.record, state.columnIndex);
+                            putValue(response, state.metadata.getColumnType(state.columnIndex), state.record, state.columnIndex);
                             state.columnIndex++;
-                            socket.bookmark();
+                            response.bookmark();
                         }
 
                         state.queryState = JsonQueryProcessorState.QUERY_RECORD_SUFFIX;
                         // fall through
                     case JsonQueryProcessorState.QUERY_RECORD_SUFFIX:
-                        socket.putEOL();
+                        response.putEOL();
                         state.record = null;
                         state.queryState = JsonQueryProcessorState.QUERY_RECORD_START;
-                        socket.bookmark();
+                        response.bookmark();
                         break;
                     case JsonQueryProcessorState.QUERY_SUFFIX:
                         // close cursor before returning complete response
                         // this will guarantee that by the time client reads the response fully the table will be released
                         state.cursor = Misc.free(state.cursor);
-                        sendDone(socket, state);
+                        sendDone(response, state);
                         break OUT;
                     default:
                         break OUT;
                 }
             } catch (DataUnavailableException e) {
-                socket.resetToBookmark();
+                response.resetToBookmark();
                 throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
             } catch (NoSpaceLeftInResponseBufferException ignored) {
-                if (socket.resetToBookmark()) {
-                    socket.sendChunk(false);
+                if (response.resetToBookmark()) {
+                    response.sendChunk(false);
                 } else {
                     // what we have here is out unit of data, column value or query
                     // is larger that response content buffer
@@ -424,7 +424,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     private void internalError(
-            HttpChunkedResponseSocket socket,
+            HttpChunkedResponse response,
             long bytesSent,
             Throwable e,
             TextQueryProcessorState state
@@ -435,7 +435,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             // Give up and close the connection.
             throw ServerDisconnectException.INSTANCE;
         }
-        sendException(socket, 0, e.getMessage(), state);
+        sendException(response, 0, e.getMessage(), state);
     }
 
     private void logInternalError(Throwable e, TextQueryProcessorState state) {
@@ -470,7 +470,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     private boolean parseUrl(
-            HttpChunkedResponseSocket socket,
+            HttpChunkedResponse response,
             HttpRequestHeader request,
             TextQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -478,7 +478,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         final DirectUtf8Sequence query = request.getUrlParam(URL_PARAM_QUERY);
         if (query == null || query.size() == 0) {
             info(state).$("Empty query request received. Sending empty reply.").$();
-            sendException(socket, 0, "No query text", state);
+            sendException(response, 0, "No query text", state);
             return false;
         }
 
@@ -517,7 +517,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         state.query.clear();
         if (!Utf8s.utf8ToUtf16(query.lo(), query.hi(), state.query)) {
             info(state).$("Bad UTF8 encoding").$();
-            sendException(socket, 0, "Bad UTF8 encoding in query text", state);
+            sendException(response, 0, "Bad UTF8 encoding in query text", state);
             return false;
         }
         DirectUtf8Sequence fileName = request.getUrlParam(URL_PARAM_FILENAME);
@@ -541,58 +541,58 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         return true;
     }
 
-    private void putValue(HttpChunkedResponseSocket socket, int type, Record rec, int col) {
+    private void putValue(HttpChunkedResponse response, int type, Record rec, int col) {
         long l;
         switch (ColumnType.tagOf(type)) {
             case ColumnType.BOOLEAN:
-                socket.put(rec.getBool(col));
+                response.put(rec.getBool(col));
                 break;
             case ColumnType.BYTE:
-                socket.put((int) rec.getByte(col));
+                response.put((int) rec.getByte(col));
                 break;
             case ColumnType.DOUBLE:
                 double d = rec.getDouble(col);
                 if (d == d) {
-                    socket.put(d, doubleScale);
+                    response.put(d, doubleScale);
                 }
                 break;
             case ColumnType.FLOAT:
                 float f = rec.getFloat(col);
                 if (f == f) {
-                    socket.put(f, floatScale);
+                    response.put(f, floatScale);
                 }
                 break;
             case ColumnType.INT:
                 final int i = rec.getInt(col);
                 if (i > Integer.MIN_VALUE) {
-                    socket.put(i);
+                    response.put(i);
                 }
                 break;
             case ColumnType.LONG:
                 l = rec.getLong(col);
                 if (l > Long.MIN_VALUE) {
-                    socket.put(l);
+                    response.put(l);
                 }
                 break;
             case ColumnType.DATE:
                 l = rec.getDate(col);
                 if (l > Long.MIN_VALUE) {
-                    socket.putAscii('"').putISODateMillis(l).putAscii('"');
+                    response.putAscii('"').putISODateMillis(l).putAscii('"');
                 }
                 break;
             case ColumnType.TIMESTAMP:
                 l = rec.getTimestamp(col);
                 if (l > Long.MIN_VALUE) {
-                    socket.putAscii('"').putISODate(l).putAscii('"');
+                    response.putAscii('"').putISODate(l).putAscii('"');
                 }
                 break;
             case ColumnType.SHORT:
-                socket.put(rec.getShort(col));
+                response.put(rec.getShort(col));
                 break;
             case ColumnType.CHAR:
                 char c = rec.getChar(col);
                 if (c > 0) {
-                    socket.put(c);
+                    response.put(c);
                 }
                 break;
             case ColumnType.NULL:
@@ -600,101 +600,101 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             case ColumnType.RECORD:
                 break;
             case ColumnType.STRING:
-                putStringOrNull(socket, rec.getStr(col));
+                putStringOrNull(response, rec.getStr(col));
                 break;
             case ColumnType.SYMBOL:
-                putStringOrNull(socket, rec.getSym(col));
+                putStringOrNull(response, rec.getSym(col));
                 break;
             case ColumnType.LONG256:
-                rec.getLong256(col, socket);
+                rec.getLong256(col, response);
                 break;
             case ColumnType.GEOBYTE:
-                putGeoHashStringValue(socket, rec.getGeoByte(col), type);
+                putGeoHashStringValue(response, rec.getGeoByte(col), type);
                 break;
             case ColumnType.GEOSHORT:
-                putGeoHashStringValue(socket, rec.getGeoShort(col), type);
+                putGeoHashStringValue(response, rec.getGeoShort(col), type);
                 break;
             case ColumnType.GEOINT:
-                putGeoHashStringValue(socket, rec.getGeoInt(col), type);
+                putGeoHashStringValue(response, rec.getGeoInt(col), type);
                 break;
             case ColumnType.GEOLONG:
-                putGeoHashStringValue(socket, rec.getGeoLong(col), type);
+                putGeoHashStringValue(response, rec.getGeoLong(col), type);
                 break;
             case ColumnType.UUID:
-                putUuidOrNull(socket, rec.getLong128Lo(col), rec.getLong128Hi(col));
+                putUuidOrNull(response, rec.getLong128Lo(col), rec.getLong128Hi(col));
                 break;
             case ColumnType.LONG128:
                 throw new UnsupportedOperationException();
             case ColumnType.IPv4:
-                putIPv4Value(socket, rec, col);
+                putIPv4Value(response, rec, col);
                 break;
             default:
                 assert false;
         }
     }
 
-    private void sendConfirmation(HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        socket.putAscii("DDL Success\n");
-        socket.sendChunk(true);
+    private void sendConfirmation(HttpChunkedResponse response) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        response.putAscii("DDL Success\n");
+        response.sendChunk(true);
     }
 
     private void sendDone(
-            HttpChunkedResponseSocket socket,
+            HttpChunkedResponse response,
             TextQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         if (state.count > -1) {
             state.count = -1;
-            socket.sendChunk(true);
+            response.sendChunk(true);
             return;
         }
-        socket.done();
+        response.done();
     }
 
     private void sendException(
-            HttpChunkedResponseSocket socket,
+            HttpChunkedResponse response,
             int position,
             CharSequence message,
             TextQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        headerJsonError(socket);
-        JsonQueryProcessorState.prepareExceptionJson(socket, position, message, state.query);
+        headerJsonError(response);
+        JsonQueryProcessorState.prepareExceptionJson(response, position, message, state.query);
     }
 
     private void syntaxError(
-            HttpChunkedResponseSocket socket,
+            HttpChunkedResponse response,
             TextQueryProcessorState state,
             FlyweightMessageContainer container
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         info(state).$("syntax-error [q=`").utf8(state.query)
                 .$("`, at=").$(container.getPosition())
                 .$(", message=`").$(container.getFlyweightMessage()).$('`').I$();
-        sendException(socket, container.getPosition(), container.getFlyweightMessage(), state);
+        sendException(response, container.getPosition(), container.getFlyweightMessage(), state);
     }
 
     protected void header(
-            HttpChunkedResponseSocket socket,
+            HttpChunkedResponse response,
             TextQueryProcessorState state,
             int statusCode
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        socket.status(statusCode, CONTENT_TYPE_CSV);
+        response.status(statusCode, CONTENT_TYPE_CSV);
         if (state.fileName != null && !state.fileName.isEmpty()) {
-            socket.headers().putAscii("Content-Disposition: attachment; filename=\"").put(state.fileName).putAscii(".csv\"").putEOL();
+            response.headers().putAscii("Content-Disposition: attachment; filename=\"").put(state.fileName).putAscii(".csv\"").putEOL();
         } else {
-            socket.headers().putAscii("Content-Disposition: attachment; filename=\"questdb-query-").put(clock.getTicks()).putAscii(".csv\"").putEOL();
+            response.headers().putAscii("Content-Disposition: attachment; filename=\"questdb-query-").put(clock.getTicks()).putAscii(".csv\"").putEOL();
         }
-        socket.headers().setKeepAlive(configuration.getKeepAliveHeader());
-        socket.sendHeader();
+        response.headers().setKeepAlive(configuration.getKeepAliveHeader());
+        response.sendHeader();
     }
 
-    protected void headerJsonError(HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        socket.status(400, CONTENT_TYPE_JSON);
-        socket.headers().setKeepAlive(configuration.getKeepAliveHeader());
-        socket.sendHeader();
+    protected void headerJsonError(HttpChunkedResponse response) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        response.status(400, CONTENT_TYPE_JSON);
+        response.headers().setKeepAlive(configuration.getKeepAliveHeader());
+        response.sendHeader();
     }
 
-    protected void headerNoContentDisposition(HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        socket.status(200, CONTENT_TYPE_CSV);
-        socket.headers().setKeepAlive(configuration.getKeepAliveHeader());
-        socket.sendHeader();
+    protected void headerNoContentDisposition(HttpChunkedResponse response) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        response.status(200, CONTENT_TYPE_CSV);
+        response.headers().setKeepAlive(configuration.getKeepAliveHeader());
+        response.sendHeader();
     }
 }

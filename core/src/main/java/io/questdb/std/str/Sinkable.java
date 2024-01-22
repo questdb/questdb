@@ -27,5 +27,5 @@ package io.questdb.std.str;
 import org.jetbrains.annotations.NotNull;
 
 public interface Sinkable {
-    void toSink(@NotNull CharSinkBase<?> sink);
+    void toSink(@NotNull CharSink<?> sink);
 }
