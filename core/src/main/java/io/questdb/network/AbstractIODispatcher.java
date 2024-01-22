@@ -197,7 +197,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
             C connectionContext = event.context;
             final int operation = event.operation;
             ioEventSubSeq.done(cursor);
-            useful = processor.onRequest(operation, connectionContext);
+            useful = processor.onRequest(operation, connectionContext, this);
         }
 
         return useful;

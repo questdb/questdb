@@ -22,11 +22,15 @@
  *
  ******************************************************************************/
 
-package io.questdb.network;
+package io.questdb.cutlass.http.ex;
 
-public class PeerIsSlowToReadException extends Exception {
-    public static final PeerIsSlowToReadException INSTANCE = new PeerIsSlowToReadException();
+import io.questdb.cutlass.http.HttpException;
 
-    private PeerIsSlowToReadException() {
+public class BufferOverflowException extends HttpException {
+    public static final BufferOverflowException INSTANCE;
+
+    static {
+        INSTANCE = new BufferOverflowException();
+        INSTANCE.put("cannot parse import because of receive buffer is not big enough to parse table structure");
     }
 }

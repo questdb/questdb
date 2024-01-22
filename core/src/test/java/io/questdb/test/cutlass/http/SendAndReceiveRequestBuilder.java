@@ -60,7 +60,7 @@ public class SendAndReceiveRequestBuilder {
     private int compareLength = -1;
     private boolean expectReceiveDisconnect;
     private boolean expectSendDisconnect;
-    private int maxWaitTimeoutMs = 10_000;
+    private int maxWaitTimeoutMs = Runtime.getRuntime().availableProcessors() > 5 ? 5000 : 300_000;
     private NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
     private long pauseBetweenSendAndReceive;
     private int port = 9001;
