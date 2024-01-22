@@ -30,7 +30,8 @@ import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.OrderedMap;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
-import io.questdb.griffin.engine.groupby.GroupByLongHashSet;
+import io.questdb.griffin.engine.groupby.GroupByLong128HashSet;
+import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
@@ -43,14 +44,15 @@ import java.util.concurrent.TimeUnit;
 @State(Scope.Thread)
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
-public class GroupByLongHashSetBenchmark {
-
+public class GroupByLong128HashSetBenchmark {
     private static final double loadFactor = 0.7;
     private static final int orderedMapPageSize = 1024 * 1024;
     private static final long groupByAllocatorDefaultChunkSize = 128 * 1024;
+    private static final long groupByAllocatorMaxChunkSize = Numbers.SIZE_1GB * 4;
+
     private static final Rnd rnd = new Rnd();
 
-    @Param({"5000", "50000", "500000", "5000000"})
+    @Param({"2500", "25000", "250000", "2500000"})
     public int size;
 
     private static final GroupByAllocator allocator = new GroupByAllocator(new DefaultCairoConfiguration(null) {
@@ -58,15 +60,19 @@ public class GroupByLongHashSetBenchmark {
         public long getGroupByAllocatorDefaultChunkSize() {
             return groupByAllocatorDefaultChunkSize;
         }
-    });
 
-    private static final OrderedMap orderedMap = new OrderedMap(orderedMapPageSize, new SingleColumnType(ColumnType.LONG), null, 64, loadFactor, Integer.MAX_VALUE);
-    private static final GroupByLongHashSet groupByLongHashSet = new GroupByLongHashSet(64, loadFactor, 0);
+        @Override
+        public long getGroupByAllocatorMaxChunkSize() {
+            return groupByAllocatorMaxChunkSize;
+        }
+    });
+    private static final OrderedMap orderedMap = new OrderedMap(orderedMapPageSize, new SingleColumnType(ColumnType.UUID), null, 64, loadFactor, Integer.MAX_VALUE);
+    private static final GroupByLong128HashSet groupByLong128HashSet = new GroupByLong128HashSet(64, loadFactor, 0);
     private static long ptr = 0;
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
-                .include(GroupByLongHashSetBenchmark.class.getSimpleName())
+                .include(GroupByLong128HashSetBenchmark.class.getSimpleName())
                 .warmupIterations(3)
                 .measurementIterations(3)
                 .forks(1)
@@ -79,7 +85,7 @@ public class GroupByLongHashSetBenchmark {
     public void reset() {
         orderedMap.clear();
         allocator.close();
-        groupByLongHashSet.setAllocator(allocator);
+        groupByLong128HashSet.setAllocator(allocator);
         ptr = 0;
         rnd.reset();
     }
@@ -87,17 +93,18 @@ public class GroupByLongHashSetBenchmark {
     @Benchmark
     public void testOrderedMap() {
         MapKey key = orderedMap.withKey();
-        key.putLong(rnd.nextLong(size));
+        key.putLong128(rnd.nextLong(size), rnd.nextLong(size));
         key.createValue();
     }
 
     @Benchmark
-    public void testGroupByLongHashSet() {
-        long value = rnd.nextLong(size);
-        int index = groupByLongHashSet.of(ptr).keyIndex(value);
+    public void testGroupByLong128HashSet() {
+        long lo = rnd.nextLong(size);
+        long hi = rnd.nextLong(size);
+        int index = groupByLong128HashSet.of(ptr).keyIndex(lo, hi);
         if (index >= 0) {
-            groupByLongHashSet.addAt(index, value);
-            ptr = groupByLongHashSet.ptr();
+            groupByLong128HashSet.addAt(index, lo, hi);
+            ptr = groupByLong128HashSet.ptr();
         }
     }
 }

@@ -669,6 +669,15 @@ public class OrderedMap implements Map, Reopenable {
         }
 
         @Override
+        public void putLong256(long l0, long l1, long l2, long l3) {
+            Unsafe.getUnsafe().putLong(appendAddress, l0);
+            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, l1);
+            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 2, l2);
+            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 3, l3);
+            appendAddress += 32L;
+        }
+
+        @Override
         public void putShort(short value) {
             Unsafe.getUnsafe().putShort(appendAddress, value);
             appendAddress += 2L;
@@ -795,6 +804,8 @@ public class OrderedMap implements Map, Reopenable {
 
         abstract void copyFromRawKey(long srcPtr, long srcSize);
 
+        public abstract void putLong256(long l0, long l1, long l2, long l3);
+
         protected abstract boolean eq(long offset);
     }
 
@@ -913,6 +924,16 @@ public class OrderedMap implements Map, Reopenable {
             Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, value.getLong1());
             Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 2, value.getLong2());
             Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 3, value.getLong3());
+            appendAddress += 32L;
+        }
+
+        @Override
+        public void putLong256(long l0, long l1, long l2, long l3) {
+            checkCapacity(32L);
+            Unsafe.getUnsafe().putLong(appendAddress, l0);
+            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, l1);
+            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 2, l2);
+            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 3, l3);
             appendAddress += 32L;
         }
 

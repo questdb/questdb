@@ -51,6 +51,8 @@ public interface RecordSinkSPI {
 
     void putLong256(Long256 value);
 
+    void putLong256(long l0, long l1, long l2, long l3);
+
     void putRecord(Record value);
 
     void putShort(short value);

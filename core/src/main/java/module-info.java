@@ -283,6 +283,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.rnd.RndUuidFunctionFactory,
             io.questdb.griffin.engine.functions.date.TimestampSequenceFunctionFactory,
             io.questdb.griffin.engine.functions.long128.LongsToLong128FunctionFactory,
+            io.questdb.griffin.engine.functions.long256.LongsToLong256FunctionFactory,
             io.questdb.griffin.engine.functions.uuid.LongsToUuidFunctionFactory,
             io.questdb.griffin.engine.functions.date.TimestampShuffleFunctionFactory,
             io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory,
