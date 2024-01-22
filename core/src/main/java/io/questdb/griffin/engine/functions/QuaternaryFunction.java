@@ -66,21 +66,26 @@ public interface QuaternaryFunction extends Function {
 
     @Override
     default boolean isConstant() {
-        return
-                getFunc0().isConstant() &&
-                        getFunc1().isConstant() &&
-                        getFunc2().isConstant() &&
-                        getFunc3().isConstant();
+        return getFunc0().isConstant()
+                && getFunc1().isConstant()
+                && getFunc2().isConstant()
+                && getFunc3().isConstant();
     }
 
     @Override
     default boolean isParallelismSupported() {
-        return getFunc0().isParallelismSupported() && getFunc1().isParallelismSupported() && getFunc2().isParallelismSupported() && getFunc3().isParallelismSupported();
+        return getFunc0().isParallelismSupported()
+                && getFunc1().isParallelismSupported()
+                && getFunc2().isParallelismSupported()
+                && getFunc3().isParallelismSupported();
     }
 
     @Override
     default boolean isReadThreadSafe() {
-        return getFunc0().isReadThreadSafe() && getFunc1().isReadThreadSafe() && getFunc2().isReadThreadSafe() && getFunc3().isReadThreadSafe();
+        return getFunc0().isReadThreadSafe()
+                && getFunc1().isReadThreadSafe()
+                && getFunc2().isReadThreadSafe()
+                && getFunc3().isReadThreadSafe();
     }
 
     @Override
@@ -100,7 +105,12 @@ public interface QuaternaryFunction extends Function {
 
     @Override
     default void toPlan(PlanSink sink) {
-        sink.val(getName()).val('(').val(getFunc0()).val(',').val(getFunc1()).val(',').val(getFunc2()).val(',').val(getFunc3()).val(')');
+        sink.val(getName()).val('(')
+                .val(getFunc0()).val(',')
+                .val(getFunc1()).val(',')
+                .val(getFunc2()).val(',')
+                .val(getFunc3())
+                .val(')');
     }
 
     @Override
