@@ -31,6 +31,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriterMetadata;
+import io.questdb.cairo.wal.seq.TableTransactionLogFile;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.table.AllTablesFunctionFactory;
@@ -50,7 +51,6 @@ import java.util.concurrent.locks.ReentrantLock;
 
 import static io.questdb.cairo.TableUtils.openSmallFile;
 import static io.questdb.cairo.wal.WalUtils.*;
-import static io.questdb.cairo.wal.seq.TableTransactionLog.MAX_TXN_OFFSET;
 import static io.questdb.griffin.engine.functions.catalogue.ShowTablesFunctionFactory.ShowTablesCursorFactory;
 
 public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCloseable {
@@ -454,10 +454,10 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
                                     dstPath.trimTo(dstPathLen);
                                     openSmallFile(ff, dstPath, dstPathLen, memFile, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);
                                     // get oldMaxTxn from dbRoot/tableName/txn_seq/_txnlog
-                                    long oldMaxTxn = memFile.getLong(MAX_TXN_OFFSET);
+                                    long oldMaxTxn = memFile.getLong(TableTransactionLogFile.MAX_TXN_OFFSET);
                                     if (newMaxTxn < oldMaxTxn) {
                                         // update header of dbRoot/tableName/txn_seq/_txnlog with new values
-                                        memFile.putLong(MAX_TXN_OFFSET, newMaxTxn);
+                                        memFile.putLong(TableTransactionLogFile.MAX_TXN_OFFSET, newMaxTxn);
                                         LOG.info()
                                                 .$("updated ").$(TXNLOG_FILE_NAME).$(" file [path=").$(dstPath)
                                                 .$(", oldMaxTxn=").$(oldMaxTxn)

@@ -24,14 +24,20 @@
 
 package io.questdb.cairo.wal.seq;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.MemorySerializer;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.wal.WalUtils;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -39,12 +45,15 @@ import static io.questdb.cairo.TableUtils.openSmallFile;
 import static io.questdb.cairo.wal.WalUtils.TXNLOG_FILE_NAME;
 import static io.questdb.cairo.wal.WalUtils.WAL_FORMAT_VERSION_V1;
 
-public class TableTransactionLogV1 extends TableTransactionLog {
+public class TableTransactionLogV1 implements TableTransactionLogFile {
+    private static final Log LOG = LogFactory.getLog(TableTransactionLogV1.class);
+    private static final ThreadLocal<TransactionLogCursorImpl> tlTransactionLogCursor = new ThreadLocal<>();
+    private final FilesFacade ff;
     private final AtomicLong maxTxn = new AtomicLong();
     private final MemoryCMARW txnMem = Vm.getCMARWInstance();
 
     TableTransactionLogV1(FilesFacade ff) {
-        super(ff);
+        this.ff = ff;
     }
 
     public long addEntry(long structureVersion, int walId, int segmentId, int segmentTxn, long timestamp) {
@@ -62,26 +71,51 @@ public class TableTransactionLogV1 extends TableTransactionLog {
         return maxTxn;
     }
 
-    @Override
     public void beginMetadataChangeEntry(long newStructureVersion, MemorySerializer serializer, Object instance, long timestamp) {
         txnMem.putLong(newStructureVersion);
         txnMem.putInt(STRUCTURAL_CHANGE_WAL_ID);
         txnMem.putInt(-1);
         txnMem.putInt(-1);
         txnMem.putLong(timestamp);
-
-        super.beginMetadataChangeEntry(newStructureVersion, serializer, instance, timestamp);
     }
 
     @Override
     public void close() {
+        if (txnMem.isOpen()) {
+            long maxTxnInFile = txnMem.getLong(MAX_TXN_OFFSET);
+            if (maxTxnInFile != maxTxn.get()) {
+                LOG.error().$("Max txn in the file ").$(maxTxnInFile).$(" but in memory is ").$(maxTxn.get()).$();
+            }
+        }
         txnMem.close(false);
-        super.close();
     }
 
     public void create(Path path, long tableCreateTimestamp) {
         createTxnFile(path, tableCreateTimestamp);
-        creatMetaMem(path, tableCreateTimestamp);
+    }
+
+    @Override
+    public long endMetadataChangeEntry() {
+        // Transactions are 1 based here
+        long nextTxn = maxTxn.incrementAndGet();
+        txnMem.putLong(MAX_TXN_OFFSET, nextTxn);
+        return nextTxn;
+    }
+
+    @Override
+    public TransactionLogCursor getCursor(long txnLo, Path path) {
+        TransactionLogCursorImpl cursor = tlTransactionLogCursor.get();
+        if (cursor == null) {
+            cursor = new TransactionLogCursorImpl(ff, txnLo, path.$());
+            tlTransactionLogCursor.set(cursor);
+            return cursor;
+        }
+        try {
+            return cursor.of(ff, txnLo, path);
+        } catch (Throwable th) {
+            cursor.close();
+            throw th;
+        }
     }
 
     public boolean isDropped() {
@@ -97,35 +131,22 @@ public class TableTransactionLogV1 extends TableTransactionLog {
     }
 
     @Override
-    public void open(Path path) {
-        this.rootPath.clear();
-        path.toSink(this.rootPath);
-
+    public long open(Path path) {
         if (!txnMem.isOpen()) {
             txnMem.close(false);
             openSmallFile(ff, path, path.size(), txnMem, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);
-            openMetadataFiles(path);
         }
 
         long lastTxn = txnMem.getLong(MAX_TXN_OFFSET);
         maxTxn.set(lastTxn);
-
         txnMem.jumpTo(HEADER_SIZE);
-
         long maxStructureVersion = txnMem.getLong(HEADER_SIZE + (lastTxn - 1) * RECORD_SIZE + TX_LOG_STRUCTURE_VERSION_OFFSET);
         txnMem.jumpTo(HEADER_SIZE + lastTxn * RECORD_SIZE);
-        openMeta(lastTxn, maxStructureVersion);
-    }
-
-    public boolean reload(Path path) {
-        txnMem.close(false);
-        openSmallFile(ff, path, path.size(), txnMem, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);
-        return super.reloadMetadata(path);
+        return maxStructureVersion;
     }
 
     public void sync() {
         txnMem.sync(false);
-        syncMetadata();
     }
 
     private void createTxnFile(Path path, long tableCreateTimestamp) {
@@ -140,15 +161,157 @@ public class TableTransactionLogV1 extends TableTransactionLog {
         txnMem.sync(false);
     }
 
-    long endMetadataChangeEntry() {
-        syncMetadata();
+    private static class TransactionLogCursorImpl implements TransactionLogCursor {
+        private long address;
+        private int fd;
+        private FilesFacade ff;
+        private long txn;
+        private long txnCount = -1;
+        private long txnLo;
+        private long txnOffset;
 
-        Unsafe.getUnsafe().storeFence();
+        public TransactionLogCursorImpl(FilesFacade ff, long txnLo, final Path path) {
+            try {
+                of(ff, txnLo, path);
+            } catch (Throwable th) {
+                close();
+                throw th;
+            }
+        }
 
-        // Transactions are 1 based here
-        long nextTxn = maxTxn.incrementAndGet();
-        txnMem.putLong(MAX_TXN_OFFSET, nextTxn);
+        @Override
+        public void close() {
+            if (fd > 0) {
+                ff.close(fd);
+            }
+            if (txnCount > -1 && address > 0) {
+                ff.munmap(address, getMappedLen(), MemoryTag.MMAP_TX_LOG_CURSOR);
+                txnCount = 0;
+                address = 0;
+            }
+        }
 
-        return nextTxn;
+        @Override
+        public boolean extend() {
+            final long newTxnCount = ff.readNonNegativeLong(fd, MAX_TXN_OFFSET);
+            if (newTxnCount > txnCount) {
+                remap(newTxnCount);
+
+                this.txnLo = txn - 1;
+                this.txnOffset -= RECORD_SIZE;
+                return true;
+            }
+            return false;
+        }
+
+        @Override
+        public long getCommitTimestamp() {
+            return Unsafe.getUnsafe().getLong(address + txnOffset + TX_LOG_COMMIT_TIMESTAMP_OFFSET);
+        }
+
+        @Override
+        public long getMaxTxn() {
+            return txnCount - 1;
+        }
+
+        @Override
+        public int getSegmentId() {
+            return Unsafe.getUnsafe().getInt(address + txnOffset + TX_LOG_SEGMENT_OFFSET);
+        }
+
+        @Override
+        public int getSegmentTxn() {
+            return Unsafe.getUnsafe().getInt(address + txnOffset + TX_LOG_SEGMENT_TXN_OFFSET);
+        }
+
+        @Override
+        public long getStructureVersion() {
+            return Unsafe.getUnsafe().getLong(address + txnOffset + TX_LOG_STRUCTURE_VERSION_OFFSET);
+        }
+
+        @Override
+        public long getTxn() {
+            return txn;
+        }
+
+        @Override
+        public int getWalId() {
+            return Unsafe.getUnsafe().getInt(address + txnOffset + TX_LOG_WAL_ID_OFFSET);
+        }
+
+        @Override
+        public boolean hasNext() {
+            if (hasNext(getMappedLen())) {
+                return true;
+            }
+
+            final long newTxnCount = ff.readNonNegativeLong(fd, MAX_TXN_OFFSET);
+            if (newTxnCount > txnCount) {
+                remap(newTxnCount);
+                return hasNext(getMappedLen());
+            }
+            return false;
+        }
+
+        @Override
+        public void setPosition(long txn) {
+            this.txnOffset = HEADER_SIZE + (txn - 1) * RECORD_SIZE;
+            this.txn = txn;
+        }
+
+        @Override
+        public void toTop() {
+            if (txnCount > -1L) {
+                this.txnOffset = HEADER_SIZE + (txnLo - 1) * RECORD_SIZE;
+                this.txn = txnLo;
+            }
+        }
+
+        private static int openFileRO(final FilesFacade ff, final Path path, final String fileName) {
+            final int rootLen = path.size();
+            path.concat(fileName).$();
+            try {
+                return TableUtils.openRO(ff, path, LOG);
+            } finally {
+                path.trimTo(rootLen);
+            }
+        }
+
+        private long getMappedLen() {
+            return txnCount * RECORD_SIZE + HEADER_SIZE;
+        }
+
+        private boolean hasNext(long mappedLen) {
+            if (txnOffset + 2 * RECORD_SIZE <= mappedLen) {
+                txnOffset += RECORD_SIZE;
+                txn++;
+                return true;
+            }
+            return false;
+        }
+
+        @NotNull
+        private TransactionLogCursorImpl of(FilesFacade ff, long txnLo, Path path) {
+            this.ff = ff;
+            this.fd = openFileRO(ff, path, TXNLOG_FILE_NAME);
+            long newTxnCount = ff.readNonNegativeLong(fd, MAX_TXN_OFFSET);
+            if (newTxnCount > -1L) {
+                this.txnCount = newTxnCount;
+                this.address = ff.mmap(fd, getMappedLen(), 0, Files.MAP_RO, MemoryTag.MMAP_TX_LOG_CURSOR);
+                this.txnOffset = HEADER_SIZE + (txnLo - 1) * RECORD_SIZE;
+            } else {
+                throw CairoException.critical(ff.errno()).put("cannot read sequencer transactions [path=").put(path).put(']');
+            }
+            this.txnLo = txnLo;
+            txn = txnLo;
+            return this;
+        }
+
+        private void remap(long newTxnCount) {
+            final long oldSize = getMappedLen();
+            txnCount = newTxnCount;
+            final long newSize = getMappedLen();
+            address = ff.mremap(fd, address, oldSize, newSize, 0, Files.MAP_RO, MemoryTag.MMAP_TX_LOG_CURSOR);
+        }
     }
 }
