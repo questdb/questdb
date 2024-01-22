@@ -77,6 +77,8 @@ public interface MapValue extends Record {
 
     boolean isNew();
 
+    void maxInt(int index, int value);
+
     void maxLong(int index, long value);
 
     void putBool(int index, boolean value);

@@ -202,6 +202,12 @@ final class Unordered16MapValue implements MapValue {
     }
 
     @Override
+    public void maxInt(int index, int value) {
+        final long p = address0(index);
+        Unsafe.getUnsafe().putInt(p, Math.max(value, Unsafe.getUnsafe().getInt(p)));
+    }
+
+    @Override
     public void maxLong(int index, long value) {
         final long p = address0(index);
         Unsafe.getUnsafe().putLong(p, Math.max(value, Unsafe.getUnsafe().getLong(p)));

@@ -195,6 +195,11 @@ public class SimpleMapValue implements MapValue {
     }
 
     @Override
+    public void maxInt(int index, int value) {
+        values[4 * index] = Math.max(value, values[4 * index]);
+    }
+
+    @Override
     public void maxLong(int index, long value) {
         values[4 * index] = Math.max(value, values[4 * index]);
     }
