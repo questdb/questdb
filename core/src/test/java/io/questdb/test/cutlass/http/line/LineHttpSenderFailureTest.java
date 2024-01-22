@@ -1,10 +1,7 @@
 package io.questdb.test.cutlass.http.line;
 
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.client.Sender;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
@@ -21,55 +18,18 @@ import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicReference;
 
-import static io.questdb.test.tools.TestUtils.assertEventually;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.fail;
-
 public class LineHttpSenderFailureTest extends AbstractBootstrapTest {
 
-    public static void assertTableExists(CairoEngine engine, CharSequence tableName) {
-        try (Path path = new Path()) {
-            assertEquals(TableUtils.TABLE_EXISTS, engine.getTableStatus(path, engine.getTableTokenIfExists(tableName)));
-        }
-    }
-
-    public static void assertTableExistsEventually(CairoEngine engine, CharSequence tableName) {
-        assertEventually(() -> assertTableExists(engine, tableName));
-    }
-
-    public static void assertTableSizeEventually(CairoEngine engine, CharSequence tableName, long expectedSize) {
-        TestUtils.assertEventually(() -> {
-            assertTableExists(engine, tableName);
-
-            try (TableReader reader = engine.getReader(tableName)) {
-                long size = reader.getCursor().size();
-                assertEquals(expectedSize, size);
-            } catch (EntryLockedException e) {
-                // if table is busy we want to fail this round and have the assertEventually() to retry later
-                fail("table +" + tableName + " is locked");
-            }
-        });
-    }
-
-    @Before
-    public void setUp() {
-        super.setUp();
-        TestUtils.unchecked(() -> createDummyConfiguration());
-        dbPath.parent().$();
-    }
-
-    @Test
-    public void testRetryWithDeduplication() throws Exception {
+    public static void scenarioRetryWithDeduplication(ServerController controller) throws Exception {
         String tableName = UUID.randomUUID().toString();
         TestUtils.assertMemoryLeak(() -> {
-            try (ServerController controller = new ServerController()) {
+            try {
                 controller.startAndExecute("create table '" + tableName + "' (value long, ts timestamp) timestamp (ts) partition by DAY WAL DEDUP UPSERT KEYS(ts)");
                 CountDownLatch senderLatch = new CountDownLatch(2); // one for Sender and one for Restarter
 
                 AtomicReference<Exception> senderException = new AtomicReference<>();
                 new Thread(() -> {
-                    String url = "http://localhost:" + HTTP_PORT;
-                    try (Sender sender = Sender.builder().url(url).maxPendingRows(100).retryTimeoutMillis(1000).build()) {
+                    try (Sender sender = controller.newSender()) {
                         for (int i = 0; i < 1_000_000; i++) {
                             sender.table(tableName).longColumn("value", 42).at(i * 10, ChronoUnit.MICROS);
                         }
@@ -96,39 +56,58 @@ public class LineHttpSenderFailureTest extends AbstractBootstrapTest {
                     Assert.fail("Sender failed: " + senderException.get().getMessage());
                 }
                 controller.start();
-                assertTableSizeEventually(controller.getEngine(), tableName, 1_000_000);
+                controller.assertSqlEventually("select count() from '" + tableName + "'", "count\n1000000\n");
+            } finally {
+                Misc.free(controller);
             }
         });
     }
 
-    static class ServerController implements Closeable {
-        TestServerMain serverMain;
+    @Test
+    public void scenarioRetryWithDeduplication() throws Exception {
+        scenarioRetryWithDeduplication(new ServerController());
+    }
+
+    @Before
+    public void setUp() {
+        super.setUp();
+        TestUtils.unchecked(() -> createDummyConfiguration());
+        dbPath.parent().$();
+    }
+
+    public static class ServerController implements Closeable {
+        private TestServerMain serverMain;
+
+        public void assertSqlEventually(String sql, String expected) {
+            TestUtils.assertEventually(() -> serverMain.assertSql(sql, expected));
+        }
 
         @Override
         public void close() {
             serverMain = Misc.free(serverMain);
         }
 
-        CairoEngine getEngine() {
-            return serverMain.getEngine();
+        public Sender newSender() {
+            String url = "http://localhost:" + HTTP_PORT;
+            return Sender.builder().url(url).maxPendingRows(100).retryTimeoutMillis(1000).build();
         }
 
-        void restart() {
+        public void restart() {
             stop();
             start();
         }
 
-        void start() {
+        public void start() {
             serverMain = startWithEnvVariables();
             serverMain.start();
         }
 
-        void startAndExecute(String sqlText) {
+        public void startAndExecute(String sqlText) throws SqlException {
             start();
             serverMain.compile(sqlText);
         }
 
-        void stop() {
+        public void stop() {
             serverMain = Misc.free(serverMain);
             Path.clearThreadLocals();
         }
