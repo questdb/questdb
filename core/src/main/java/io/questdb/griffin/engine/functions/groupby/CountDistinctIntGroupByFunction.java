@@ -113,7 +113,7 @@ public class CountDistinctIntGroupByFunction extends LongFunction implements Una
 
     @Override
     public boolean isParallelismSupported() {
-        return true;
+        return UnaryFunction.super.isParallelismSupported();
     }
 
     @Override

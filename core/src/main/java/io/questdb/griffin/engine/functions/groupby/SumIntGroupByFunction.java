@@ -91,7 +91,7 @@ public class SumIntGroupByFunction extends LongFunction implements GroupByFuncti
 
     @Override
     public boolean isParallelismSupported() {
-        return true;
+        return UnaryFunction.super.isParallelismSupported();
     }
 
     @Override

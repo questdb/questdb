@@ -65,7 +65,7 @@ public abstract class AbstractCountGroupByFunction extends LongFunction implemen
 
     @Override
     public boolean isParallelismSupported() {
-        return true;
+        return UnaryFunction.super.isParallelismSupported();
     }
 
     @Override

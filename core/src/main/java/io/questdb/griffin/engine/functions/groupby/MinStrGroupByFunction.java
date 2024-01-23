@@ -113,7 +113,7 @@ public class MinStrGroupByFunction extends StrFunction implements GroupByFunctio
 
     @Override
     public boolean isParallelismSupported() {
-        return true;
+        return UnaryFunction.super.isParallelismSupported();
     }
 
     @Override
