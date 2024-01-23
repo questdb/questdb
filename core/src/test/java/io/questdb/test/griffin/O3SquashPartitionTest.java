@@ -777,6 +777,23 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                 assertSql("minTimestamp\tnumRows\tname\n" +
                         "2020-02-04T00:00:00.000000Z\t1640\t2020-02-04\n" +
                         "2020-02-05T00:00:00.000000Z\t1370\t2020-02-05\n", partitionsSql);
+
+                // Insert a few more rows and verify that they're all inserted.
+                sqlPrefix = "insert into x " +
+                        "select" +
+                        " cast(x as int) * 1000000 i," +
+                        " -x - 1000000L as j," +
+                        " rnd_str(5,16,2) as str,";
+                ddl(
+                        sqlPrefix +
+                                " timestamp_sequence('2023-02-04T20:01', 1000000L) ts" +
+                                " from long_sequence(200)",
+                        sqlExecutionContext
+                );
+                drainWalQueue();
+
+                assertSql("count\n" +
+                        (60 * (23 * 2) + 450) + "\n", "select count() from x;");
             }
         });
     }
