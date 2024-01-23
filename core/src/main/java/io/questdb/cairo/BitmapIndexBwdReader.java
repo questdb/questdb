@@ -147,7 +147,7 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
                 // should these values do not match.
                 long valueCount;
                 long valueBlockOffset;
-                final long deadline = clock.getTicks() + spinLockTimeoutUs;
+                final long deadline = clock.getTicks() + spinLockTimeoutMs;
                 while (true) {
                     valueCount = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);
 
@@ -162,7 +162,7 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
                     }
 
                     if (clock.getTicks() > deadline) {
-                        LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutUs).utf8("μs, key=").$(key).$(", offset=").$(offset).$(']').$();
+                        LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutMs).utf8("μs, key=").$(key).$(", offset=").$(offset).$(']').$();
                         throw CairoException.critical(0).put(INDEX_CORRUPT);
                     }
                 }
