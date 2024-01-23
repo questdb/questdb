@@ -206,18 +206,16 @@ public class SimpleMapValue implements MapValue {
 
     @Override
     public void minInt(int index, int value) {
-        final int current = (int) values[4 * index];
         // -Integer.MIN_VALUE doesn't change the value, so if we negate both values
         // and pick the largest one, we get negated non-null min.
-        values[4 * index] = -Math.max(-value, -current);
+        values[4 * index] = -Math.max(-value, -((int) values[4 * index]));
     }
 
     @Override
     public void minLong(int index, long value) {
-        final long current = values[4 * index];
         // -Long.MIN_VALUE doesn't change the value, so if we negate both values
         // and pick the largest one, we get negated non-null min.
-        values[4 * index] = -Math.max(-value, -current);
+        values[4 * index] = -Math.max(-value, -values[4 * index]);
     }
 
     @Override
