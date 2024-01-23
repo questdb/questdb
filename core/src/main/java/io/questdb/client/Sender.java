@@ -261,7 +261,7 @@ public interface Sender extends Closeable {
         private static final byte BUFFER_CAPACITY_DEFAULT = 0;
         private static final int DEFAULT_BUFFER_CAPACITY = 64 * 1024;
         private static final int DEFAULT_HTTP_PORT = 9000;
-        private static final int DEFAULT_HTTP_TIMEOUT = 60_000;
+        private static final int DEFAULT_HTTP_TIMEOUT = 30_000;
         private static final int DEFAULT_MAXIMUM_BUFFER_CAPACITY = 20 * 1024 * 1024; // 20MB -- todo: sync with Rust client
         private static final int DEFAULT_MAX_PENDING_ROWS = 10_000;
         private static final long DEFAULT_MAX_RETRY_NANOS = TimeUnit.SECONDS.toNanos(10); // keep sync with the contract of the configuration method
