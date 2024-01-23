@@ -760,6 +760,17 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         response.sendHeader();
     }
 
+    static void sendBadRequestResponse(
+            HttpChunkedResponse response,
+            HttpConnectionContext context,
+            CharSequence message,
+            DirectUtf8Sequence query,
+            CharSequence keepAliveHeader
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        header(response, context, keepAliveHeader, 400);
+        JsonQueryProcessorState.prepareBadRequestResponse(response, message, query);
+    }
+
     static void sendException(
             HttpChunkedResponse response,
             HttpConnectionContext context,
@@ -771,17 +782,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         header(response, context, keepAliveHeader, code);
         JsonQueryProcessorState.prepareExceptionJson(response, position, message, query);
-    }
-
-    static void sendBadRequestResponse(
-            HttpChunkedResponse response,
-            HttpConnectionContext context,
-            CharSequence message,
-            DirectUtf8Sequence query,
-            CharSequence keepAliveHeader
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        header(response, context, keepAliveHeader, 400);
-        JsonQueryProcessorState.prepareBadRequestResponse(response, message, query);
     }
 
     @FunctionalInterface
