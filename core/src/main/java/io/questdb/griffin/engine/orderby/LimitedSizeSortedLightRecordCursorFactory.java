@@ -207,6 +207,16 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
         sink.child(base);
     }
 
+    @Override
+    public boolean usesCompiledFilter() {
+        return base.usesCompiledFilter();
+    }
+
+    @Override
+    public boolean usesIndex() {
+        return base.usesIndex();
+    }
+
     // Check if lo, hi is set and lo >=0 while hi < 0 (meaning - return whole result set except some rows at start and some at the end)
     // because such case can't really be optimized by topN/bottomN
     private boolean canBeOptimized(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
