@@ -215,20 +215,20 @@ final class Unordered16MapValue implements MapValue {
 
     @Override
     public void minInt(int index, int value) {
-        if (value != Numbers.INT_NaN) {
-            final long p = address0(index);
-            final int current = Unsafe.getUnsafe().getInt(p);
-            Unsafe.getUnsafe().putInt(p, current != Numbers.INT_NaN ? Math.min(value, current) : value);
-        }
+        final long p = address0(index);
+        final int current = Unsafe.getUnsafe().getInt(p);
+        // -Integer.MIN_VALUE doesn't change the value, so if we negate both values
+        // and pick the largest one, we get negated non-null min.
+        Unsafe.getUnsafe().putInt(p, -Math.max(-value, -current));
     }
 
     @Override
     public void minLong(int index, long value) {
-        if (value != Numbers.LONG_NaN) {
-            final long p = address0(index);
-            final long current = Unsafe.getUnsafe().getLong(p);
-            Unsafe.getUnsafe().putLong(p, current != Numbers.LONG_NaN ? Math.min(value, current) : value);
-        }
+        final long p = address0(index);
+        final long current = Unsafe.getUnsafe().getLong(p);
+        // -Long.MIN_VALUE doesn't change the value, so if we negate both values
+        // and pick the largest one, we get negated non-null min.
+        Unsafe.getUnsafe().putLong(p, -Math.max(-value, -current));
     }
 
     @Override
