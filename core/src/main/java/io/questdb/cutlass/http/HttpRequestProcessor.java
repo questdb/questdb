@@ -31,7 +31,13 @@ import io.questdb.network.QueryPausedException;
 import io.questdb.network.ServerDisconnectException;
 
 public interface HttpRequestProcessor {
-    default void notifyRetryFailed(HttpConnectionContext context, HttpException exception) {
+    // after this callback is invoked the server will disconnect the client
+    // if processor desires to write a goodbye letter to the client
+    // it must also send TCP FIN by invoking socket.shutdownWrite()
+    default void failRequest(
+            HttpConnectionContext context,
+            HttpException exception
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
     }
 
     default void onConnectionClosed(HttpConnectionContext context) {

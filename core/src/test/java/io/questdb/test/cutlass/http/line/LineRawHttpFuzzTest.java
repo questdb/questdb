@@ -278,7 +278,7 @@ public class LineRawHttpFuzzTest extends AbstractBootstrapTest {
                                 request.putAscii(line);
                             }
                             request.putEOL().putAscii("0").putEOL().putEOL();
-                            HttpClient.ResponseHeaders resp = request.send("localhost", getHttpPort(serverMain), 5000);
+                            HttpClient.ResponseHeaders resp = request.send("localhost", getHttpPort(serverMain));
                             resp.await();
                         } else if (r % 3 == 1) {
                             // Good request
@@ -297,7 +297,7 @@ public class LineRawHttpFuzzTest extends AbstractBootstrapTest {
                             }
 
                             request.putEOL().putAscii("0").putEOL().putEOL();
-                            HttpClient.ResponseHeaders resp = request.send("localhost", getHttpPort(serverMain), 5000);
+                            HttpClient.ResponseHeaders resp = request.send("localhost", getHttpPort(serverMain));
                             resp.await();
                             totalCount += count;
                         } else {
@@ -313,7 +313,7 @@ public class LineRawHttpFuzzTest extends AbstractBootstrapTest {
                             }
 
                             request.putEOL().putAscii("0").putEOL().putEOL();
-                            HttpClient.ResponseHeaders resp = request.send("localhost", getHttpPort(serverMain), 5000);
+                            HttpClient.ResponseHeaders resp = request.send("localhost", getHttpPort(serverMain));
                             resp.await();
                         }
                     }

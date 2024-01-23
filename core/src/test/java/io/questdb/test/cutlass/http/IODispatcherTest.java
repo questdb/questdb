@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
-import io.questdb.cutlass.Services;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.http.processors.HealthCheckProcessor;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
@@ -1294,7 +1293,7 @@ public class IODispatcherTest extends AbstractTest {
     public void testImportBadJson() throws Exception {
         testImport(
                 engine -> testHttpClient.assertSendMultipart(
-                        "{\"status\":\"ERROR\",\"location\":\"\",\"rowsRejected\":0,\"rowsImported\":0,\"header\":false,\"partitionBy\":\"DAY\",\"errors\":[\"[22] Unexpected symbol\"],\"columns\":[],\"mapping\":[]}",
+                        "{\"status\":\"ERROR\",\"location\":null,\"rowsRejected\":0,\"rowsImported\":0,\"header\":false,\"partitionBy\":\"DAY\",\"errors\":[\"[22] Unexpected symbol\"],\"columns\":[],\"mapping\":[]}",
                         "[{\"name\":\"timestamp,\"type\":\"DATE\"},{\"name\":\"bid\",\"type\":\"INT\"}]",// timestamp is not quoted properly
                         "timestamp,bid\r\n" +
                                 "27/05/2018 00:00:01,100\r\n" +
@@ -1343,24 +1342,14 @@ public class IODispatcherTest extends AbstractTest {
     @Test
     public void testImportBadRequestNoBoundary() throws Exception {
         testImport(
-                "HTTP/1.1 404 Not Found\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: text/plain; charset=utf-8\r\n" +
-                        "\r\n" +
-                        "34\r\n" +
-                        "Bad request. Form data in multipart POST expected.\r\n" +
-                        "\r\n" +
-                        "00\r\n" +
-                        "\r\n",
+                "",
                 "POST /upload?overwrite=true HTTP/1.1\r\n" +
                         "Host: localhost:9000\r\n" +
                         "Accept: */*\r\n" +
                         "content-type: multipart/form-data\r\n" +
                         "\r\n",
                 NetworkFacadeImpl.INSTANCE,
-                false,
+                true,
                 false,
                 1
         );
@@ -1775,7 +1764,7 @@ public class IODispatcherTest extends AbstractTest {
     @Test
     public void testImportForceHeaderUnknownTimestamp() throws Exception {
         testImport(engine -> testHttpClient.assertSendMultipart(
-                "{\"status\":\"ERROR\",\"location\":\"\",\"rowsRejected\":0,\"rowsImported\":0,\"header\":false,\"partitionBy\":\"DAY\",\"errors\":[\"[0] TIMESTAMP format pattern is required\"],\"columns\":[],\"mapping\":[]}",
+                "{\"status\":\"ERROR\",\"location\":null,\"rowsRejected\":0,\"rowsImported\":0,\"header\":false,\"partitionBy\":\"DAY\",\"errors\":[\"[0] TIMESTAMP format pattern is required\"],\"columns\":[],\"mapping\":[]}",
                 "[{\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"},{\"name\":\"bid\",\"type\":\"INT\"}]\r\n",
                 "timestamp,bid\r\n" +
                         "27/05/2018 00:00:01,100\r\n" +
@@ -1812,7 +1801,7 @@ public class IODispatcherTest extends AbstractTest {
     @Test
     public void testImportForceUnknownDate() throws Exception {
         testImport(engine -> testHttpClient.assertSendMultipart(
-                "{\"status\":\"ERROR\",\"location\":\"\",\"rowsRejected\":0,\"rowsImported\":0,\"header\":false,\"partitionBy\":\"DAY\",\"errors\":[\"[35] DATE format pattern is required\"],\"columns\":[],\"mapping\":[]}",
+                "{\"status\":\"ERROR\",\"location\":null,\"rowsRejected\":0,\"rowsImported\":0,\"header\":false,\"partitionBy\":\"DAY\",\"errors\":[\"[35] DATE format pattern is required\"],\"columns\":[],\"mapping\":[]}",
                 "[{\"name\":\"timestamp\",\"type\":\"DATE\"},{\"name\":\"bid\",\"type\":\"INT\"}]",
                 "timestamp,bid\r\n" +
                         "27/05/2018 00:00:01,100\r\n" +
@@ -5839,7 +5828,7 @@ public class IODispatcherTest extends AbstractTest {
                             do {
                                 dispatcher.run(0);
                                 dispatcher.processIOQueue(
-                                        (operation, context, dispatcher1) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
+                                        (operation, context, dispatcher1) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext, dispatcher1)
                                 );
                             } while (serverRunning.get());
                         } finally {
@@ -6534,7 +6523,6 @@ public class IODispatcherTest extends AbstractTest {
                 try (Path path = new Path().of(baseDir).concat("questdb-temp.txt").$()) {
                     try {
                         Rnd rnd = new Rnd();
-                        final int diskBufferLen = 1024 * 1024;
 
                         writeRandomFile(path, rnd, 122222212222L);
 
@@ -8038,19 +8026,19 @@ public class IODispatcherTest extends AbstractTest {
                                     }
                                 };
 
-                            try {
-                                while (serverRunning.get()) {
-                                    dispatcher.run(0);
-                                    dispatcher.processIOQueue(
-                                            (operation, context, dispatcher1) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
-                                    );
+                                try {
+                                    while (serverRunning.get()) {
+                                        dispatcher.run(0);
+                                        dispatcher.processIOQueue(
+                                                (operation, context, dispatcher1) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext, dispatcher1)
+                                        );
+                                    }
+                                } finally {
+                                    Unsafe.free(responseBuf, 32, MemoryTag.NATIVE_DEFAULT);
+                                    serverHaltLatch.countDown();
                                 }
-                            } finally {
-                                Unsafe.free(responseBuf, 32, MemoryTag.NATIVE_DEFAULT);
-                                serverHaltLatch.countDown();
-                            }
-                        }).start();
-                    }
+                            }).start();
+                        }
 
                         AtomicInteger completedCount = new AtomicInteger();
                         for (int j = 0; j < senderCount; j++) {
@@ -8213,20 +8201,6 @@ public class IODispatcherTest extends AbstractTest {
         return delayThread;
     }
 
-    private static HttpServer createHttpServer(
-            HttpServerConfiguration configuration,
-            CairoEngine cairoEngine,
-            WorkerPool workerPool
-    ) {
-        return Services.INSTANCE.createHttpServer(
-                configuration,
-                cairoEngine,
-                workerPool,
-                workerPool.getWorkerCount(),
-                IODispatcherTest.metrics
-        );
-    }
-
     private static void createTestTable(CairoEngine engine) {
         try (TableModel model = new TableModel(engine.getConfiguration(), "y", PartitionBy.NONE)) {
             model.col("j", ColumnType.SYMBOL);
@@ -8245,7 +8219,6 @@ public class IODispatcherTest extends AbstractTest {
 
     private static void sendAndReceive(String request, CharSequence response) {
         sendAndReceive(
-                NetworkFacadeImpl.INSTANCE,
                 request,
                 response,
                 1,
@@ -8254,6 +8227,24 @@ public class IODispatcherTest extends AbstractTest {
                 false
         );
     }
+
+    private static void sendAndReceive(
+            String request,
+            CharSequence response,
+            int requestCount,
+            long pauseBetweenSendAndReceive,
+            boolean print,
+            boolean expectReceiveDisconnect
+    ) {
+        new SendAndReceiveRequestBuilder()
+                .withNetworkFacade(NetworkFacadeImpl.INSTANCE)
+                .withExpectReceiveDisconnect(expectReceiveDisconnect)
+                .withPrintOnly(print)
+                .withRequestCount(requestCount)
+                .withPauseBetweenSendAndReceive(pauseBetweenSendAndReceive)
+                .execute(request, response);
+    }
+
 
     private static void sendAndReceive(
             NetworkFacade nf,
@@ -8889,7 +8880,6 @@ public class IODispatcherTest extends AbstractTest {
                                     queryError.set(null);
 
                                     new Thread(() -> {
-                                        String response;
                                         try (TestHttpClient testHttpClient = new TestHttpClient()) {
                                             started.countDown();
                                             try {

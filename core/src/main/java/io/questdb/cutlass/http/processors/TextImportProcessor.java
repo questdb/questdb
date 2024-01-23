@@ -37,6 +37,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.network.ServerDisconnectException;
 import io.questdb.std.*;
 import io.questdb.std.str.*;
 
@@ -61,10 +62,10 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     private static final int MESSAGE_DATA = 2;
     private static final int MESSAGE_SCHEMA = 1;
     private static final String OVERRIDDEN_FROM_TABLE = "From Table";
-    private static final Utf8String PARTITION_BY_NONE = new Utf8String("NONE");
     private static final int RESPONSE_COLUMN = 2;
     private static final int RESPONSE_COMPLETE = 6;
     private static final int RESPONSE_DONE = 5;
+    private static final int RESPONSE_ERROR = 7;
     private static final int RESPONSE_MAPPING = 3;
     private static final int RESPONSE_SUFFIX = 4;
     private static final int TO_STRING_COL1_PAD = 15;
@@ -87,8 +88,8 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     }
 
     @Override
-    public void notifyRetryFailed(HttpConnectionContext context, HttpException e) {
-        transientState.snapshotStateAndCloseWriter();
+    public void failRequest(HttpConnectionContext context, HttpException e) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+        sendErrorAndThrowDisconnect(((FlyweightMessageContainer) e).getFlyweightMessage());
     }
 
     @Override
@@ -238,12 +239,6 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         }
     }
 
-    // This processor implements HttpMultipartContentListener, methods of which
-    // have neither context nor dispatcher. During "chunk" processing we may need
-    // to send something back to client, or disconnect them. To do that we need
-    // these transient references. resumeRecv() will set them and they will remain
-    // valid during multipart events.
-
     @Override
     public void onPartEnd() throws PeerDisconnectedException, PeerIsSlowToReadException {
         try {
@@ -268,6 +263,12 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         this.transientState = LV.get(context);
         onChunk(transientState.lo, transientState.hi);
     }
+
+    // This processor implements HttpMultipartContentListener, methods of which
+    // have neither context nor dispatcher. During "chunk" processing we may need
+    // to send something back to client, or disconnect them. To do that we need
+    // these transient references. resumeRecv() will set them and they will remain
+    // valid during multipart events.
 
     @Override
     public void resumeRecv(HttpConnectionContext context) {
@@ -319,16 +320,13 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         return b;
     }
 
-    private static Utf8Sink padRight(Utf8Sink b, int w, CharSequence value, int from, int to) {
+    private static void padRight(Utf8Sink b, CharSequence value, int from, int to) {
         to = Math.min(to, value.length());
         b.putAscii("  ");
-        int pad = value == null ? w : w - (to - from);
-        if (value != null) {
-            b.put(value, from, to);
-        }
+        int pad = TextImportProcessor.ERROR_LINE_PAD - (to - from);
+        b.put(value, from, to);
         replicate(b, ' ', pad);
         b.putAscii('|');
-        return b;
     }
 
     // add list of errors, e.g. unmapped schema or table columns
@@ -413,7 +411,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
 
         for (int i = 0, n = text.length(); i < n; i += ERROR_LINE_PAD) {
             socket.putAscii('|');
-            padRight(socket, ERROR_LINE_PAD, text, i, i + ERROR_LINE_PAD - 2);
+            padRight(socket, text, i, i + ERROR_LINE_PAD - 2);
             socket.putEOL();
         }
     }
@@ -487,7 +485,6 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                         response.bookmark();
                         response.putAscii(']').putAscii(',');
                         response.putAsciiQuoted("mapping").putAscii(':').putAscii('[');
-                        state.columnIndex++;
                     }
                 } else {
                     response.bookmark();
@@ -660,6 +657,38 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
 
     private boolean isJson(HttpConnectionContext transientContext) {
         return Utf8s.equalsNcAscii("json", transientContext.getRequestHeader().getUrlParam(URL_PARAM_FMT));
+    }
+
+    private void resumeError(TextImportProcessorState state, HttpChunkedResponse socket) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+        if (state.responseState == RESPONSE_ERROR) {
+            socket.bookmark();
+            if (state.json) {
+                socket.putAscii('{').putAsciiQuoted("status").putAscii(':').putQuoted(state.errorMessage).putAscii('}');
+            } else {
+                socket.put(state.errorMessage);
+            }
+            state.responseState = RESPONSE_DONE;
+            socket.sendChunk(true);
+        }
+        socket.shutdownWrite();
+        throw ServerDisconnectException.INSTANCE;
+    }
+
+    private void sendErr(HttpConnectionContext context, CharSequence message, HttpChunkedResponse response) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+        final TextImportProcessorState state = LV.get(context);
+        state.responseState = RESPONSE_ERROR;
+        state.errorMessage = message;
+        response.status(200, state.json ? CONTENT_TYPE_JSON : CONTENT_TYPE_TEXT);
+        response.sendHeader();
+        response.sendChunk(false);
+        resumeError(state, response);
+    }
+
+    private void sendErrorAndThrowDisconnect(CharSequence message)
+            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+        transientState.snapshotStateAndCloseWriter();
+        final HttpChunkedResponse response = transientContext.getChunkedResponse();
+        sendErr(transientContext, message, response);
     }
 
     private void sendResponse(HttpConnectionContext context)

@@ -260,7 +260,7 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
                 this.resumePtr = lo;
                 throw TooFewBytesReceivedException.INSTANCE;
             } else {
-                throw HttpException.instance(e.getFlyweightMessage());
+                throw e;
             }
         }
 

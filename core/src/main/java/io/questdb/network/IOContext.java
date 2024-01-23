@@ -104,11 +104,6 @@ public abstract class IOContext<T extends IOContext<T>> implements Mutable, Quie
         // no-op
     }
 
-    public void disconnectPending() {
-        assert !disconnectPending;
-        disconnectPending = true;
-    }
-
     public boolean invalid() {
         return socket.isClosed();
     }

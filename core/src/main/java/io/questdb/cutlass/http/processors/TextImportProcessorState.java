@@ -36,7 +36,7 @@ class TextImportProcessorState implements Mutable, Closeable {
     public int columnIndex = 0;
     public TextLoaderCompletedState completeState;
     boolean analysed = false;
-    String errorMessage;
+    CharSequence errorMessage;
     boolean forceHeader = false;
     long hi;
     boolean json = false;

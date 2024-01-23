@@ -427,8 +427,10 @@ public abstract class HttpClient implements QuietCloseable {
         }
 
         @Override
-        public Request putQuoted(@NotNull CharSequence cs) {
-            putAsciiInternal('\"').put(cs).putAsciiInternal('\"');
+        public Request putQuoted(@Nullable CharSequence cs) {
+            if (cs != null) {
+                putAsciiInternal('\"').put(cs).putAsciiInternal('\"');
+            }
             return this;
         }
 

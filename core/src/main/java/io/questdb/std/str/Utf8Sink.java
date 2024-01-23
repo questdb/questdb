@@ -109,8 +109,10 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
         return put((byte) c);
     }
 
-    default Utf8Sink putQuoted(@NotNull CharSequence cs) {
-        putAscii('\"').put(cs).putAscii('\"');
+    default Utf8Sink putQuoted(@Nullable CharSequence cs) {
+        if (cs != null) {
+            putAscii('\"').put(cs).putAscii('\"');
+        }
         return this;
     }
 }

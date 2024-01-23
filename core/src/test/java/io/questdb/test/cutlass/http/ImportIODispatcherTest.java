@@ -830,9 +830,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                 .withTempFolder(root).withWorkerCount(2)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
-                .run((engine) -> {
-                    new SendAndReceiveRequestBuilder().withExpectSendDisconnect(true).execute(ImportCreateParamRequestFalse, ImportCreateParamResponse);
-                });
+                .run((engine) -> new SendAndReceiveRequestBuilder().withExpectSendDisconnect(true).execute(ImportCreateParamRequestFalse, ImportCreateParamResponse));
     }
 
     @Test()
