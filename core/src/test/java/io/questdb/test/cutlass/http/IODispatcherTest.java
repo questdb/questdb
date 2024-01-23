@@ -418,7 +418,7 @@ public class IODispatcherTest extends AbstractTest {
                         while (serverRunning.get()) {
                             dispatcher.run(0);
                             dispatcher.processIOQueue(
-                                    (operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, EmptyRescheduleContext, dispatcher1)
+                                    (operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, dispatcher1)
                             );
                         }
                     } finally {
@@ -6388,17 +6388,6 @@ public class IODispatcherTest extends AbstractTest {
                                 try {
 
                                     // send request to server to download file we just created
-                                    final String request = "GET /questdb-temp.txt HTTP/1.1\r\n" +
-                                            "Host: localhost:9000\r\n" +
-                                            "Connection: keep-alive\r\n" +
-                                            "Cache-Control: max-age=0\r\n" +
-                                            "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8\r\n" +
-                                            "User-Agent: Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.48 Safari/537.36\r\n" +
-                                            "Accept-Encoding: gzip,deflate,sdch\r\n" +
-                                            "Accept-Language: en-US,en;q=0.8\r\n" +
-                                            "Cookie: textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
-                                            "\r\n";
-
                                     String expectedResponseHeader = "HTTP/1.1 200 OK\r\n" +
                                             "Server: questDB/1.0\r\n" +
                                             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
@@ -6408,7 +6397,7 @@ public class IODispatcherTest extends AbstractTest {
                                             "\r\n";
 
                                     for (int j = 0; j < 10; j++) {
-                                        sendRequest(request, fd, buffer);
+                                        sendRequest(fd, buffer);
                                         assertDownloadResponse(fd, rnd, buffer, netBufferLen, diskBufferLen, expectedResponseHeader, 20971667);
                                     }
 
@@ -6436,7 +6425,7 @@ public class IODispatcherTest extends AbstractTest {
 
                                     // couple more full downloads after 304
                                     for (int j = 0; j < 2; j++) {
-                                        sendRequest(request, fd, buffer);
+                                        sendRequest(fd, buffer);
                                         assertDownloadResponse(fd, rnd, buffer, netBufferLen, diskBufferLen, expectedResponseHeader, 20971667);
                                     }
 
@@ -6729,7 +6718,7 @@ public class IODispatcherTest extends AbstractTest {
                         while (serverRunning.get()) {
                             dispatcher.run(0);
                             dispatcher.processIOQueue(
-                                    (operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, EmptyRescheduleContext, dispatcher1)
+                                    (operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, dispatcher1)
                             );
                         }
                     } finally {
@@ -6901,7 +6890,7 @@ public class IODispatcherTest extends AbstractTest {
                         while (serverRunning.get()) {
                             dispatcher.run(0);
                             dispatcher.processIOQueue(
-                                    (operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, EmptyRescheduleContext, dispatcher1)
+                                    (operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, dispatcher1)
                             );
                         }
                     } finally {
@@ -7057,7 +7046,7 @@ public class IODispatcherTest extends AbstractTest {
                         while (serverRunning.get()) {
                             dispatcher.run(0);
                             dispatcher.processIOQueue(
-                                    (operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, EmptyRescheduleContext, dispatcher1)
+                                    (operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, dispatcher1)
                             );
                         }
                     } finally {
@@ -8286,7 +8275,8 @@ public class IODispatcherTest extends AbstractTest {
                 .execute(request, response);
     }
 
-    private static void sendRequest(String request, int fd, long buffer) {
+    private static void sendRequest(int fd, long buffer) {
+        final String request = "GET /questdb-temp.txt HTTP/1.1\r\nHost: localhost:9000\r\nConnection: keep-alive\r\nCache-Control: max-age=0\r\nAccept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8\r\nUser-Agent: Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.48 Safari/537.36\r\nAccept-Encoding: gzip,deflate,sdch\r\nAccept-Language: en-US,en;q=0.8\r\nCookie: textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n\r\n";
         final int requestLen = request.length();
         Utf8s.strCpyAscii(request, requestLen, buffer);
         Assert.assertEquals(requestLen, Net.send(fd, buffer, requestLen));
@@ -8454,11 +8444,10 @@ public class IODispatcherTest extends AbstractTest {
             HttpConnectionContext context,
             int operation,
             HttpRequestProcessorSelector selector,
-            RescheduleContext rescheduleContext,
             IODispatcher<HttpConnectionContext> dispatcher
     ) {
         try {
-            return context.handleClientOperation(operation, selector, rescheduleContext);
+            return context.handleClientOperation(operation, selector, IODispatcherTest.EmptyRescheduleContext);
         } catch (HeartBeatException e) {
             dispatcher.registerChannel(context, IOOperation.HEARTBEAT);
         } catch (PeerIsSlowToReadException e) {

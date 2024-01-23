@@ -35,8 +35,6 @@ public abstract class IOContext<T extends IOContext<T>> implements Mutable, Quie
     private final LongGauge connectionCountGauge;
     protected long heartbeatId = -1;
     private int disconnectReason;
-    // keep dispatcher private to avoid context scheduling itself multiple times
-    private IODispatcher<T> dispatcher;
 
     protected IOContext(SocketFactory socketFactory, NetworkFacade nf, Log log, LongGauge connectionCountGauge) {
         this.socket = socketFactory.newInstance(nf, log);
@@ -114,7 +112,6 @@ public abstract class IOContext<T extends IOContext<T>> implements Mutable, Quie
             connectionCountGauge.inc();
         }
         socket.of(fd);
-        this.dispatcher = dispatcher;
         return (T) this;
     }
 
@@ -128,7 +125,6 @@ public abstract class IOContext<T extends IOContext<T>> implements Mutable, Quie
         }
         heartbeatId = -1;
         socket.close();
-        dispatcher = null;
         disconnectReason = -1;
         clearSuspendEvent();
     }

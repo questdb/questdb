@@ -174,11 +174,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                 queryLogger.logExecQuery(LOG, true, context.getFd(), state.getQuery(), context.getSecurityContext());
                 try {
                     sqlExecutionContext.storeTelemetry(CompiledQuery.SELECT, TelemetryOrigin.HTTP_JSON);
-                    executeCachedSelect(
-                            state,
-                            factory,
-                            configuration.getKeepAliveHeader()
-                    );
+                    executeCachedSelect(state, factory);
                 } catch (TableReferenceOutOfDateException e) {
                     LOG.info().$(e.getFlyweightMessage()).$();
                     Misc.free(factory);
@@ -486,12 +482,11 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
 
     private void executeCachedSelect(
             JsonQueryProcessorState state,
-            RecordCursorFactory factory,
-            CharSequence keepAliveHeader
+            RecordCursorFactory factory
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
         state.setCompilerNanos(0);
         state.logExecuteCached();
-        executeSelect(state, factory, keepAliveHeader);
+        executeSelect(state, factory);
     }
 
     //same as for select new but disallows caching of explain plans
@@ -534,11 +529,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
         state.logExecuteNew();
         final RecordCursorFactory factory = cq.getRecordCursorFactory();
-        executeSelect(
-                state,
-                factory,
-                keepAliveHeader
-        );
+        executeSelect(state, factory);
     }
 
     private void executePseudoSelect(
@@ -562,11 +553,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         }
     }
 
-    private void executeSelect(
-            JsonQueryProcessorState state,
-            RecordCursorFactory factory,
-            CharSequence keepAliveHeader
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
+    private void executeSelect(JsonQueryProcessorState state, RecordCursorFactory factory) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
         final HttpConnectionContext context = state.getHttpConnectionContext();
         try {
             if (state.of(factory, sqlExecutionContext)) {
@@ -753,6 +740,17 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         response.sendHeader();
     }
 
+    static void sendBadRequestResponse(
+            HttpChunkedResponse response,
+            HttpConnectionContext context,
+            CharSequence message,
+            DirectUtf8Sequence query,
+            CharSequence keepAliveHeader
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        header(response, context, keepAliveHeader, 400);
+        JsonQueryProcessorState.prepareBadRequestResponse(response, message, query);
+    }
+
     static void sendException(
             HttpChunkedResponse response,
             HttpConnectionContext context,
@@ -764,17 +762,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         header(response, context, keepAliveHeader, code);
         JsonQueryProcessorState.prepareExceptionJson(response, position, message, query);
-    }
-
-    static void sendBadRequestResponse(
-            HttpChunkedResponse response,
-            HttpConnectionContext context,
-            CharSequence message,
-            DirectUtf8Sequence query,
-            CharSequence keepAliveHeader
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        header(response, context, keepAliveHeader, 400);
-        JsonQueryProcessorState.prepareBadRequestResponse(response, message, query);
     }
 
     @FunctionalInterface
