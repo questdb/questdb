@@ -2249,7 +2249,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         for (int i = 0; i < txWriter.getPartitionCount(); i++) {
             squashPartitionForce(i);
         }
-        openLastPartition();
+        // Reopen last partition if we've closed it.
+        if (isLastPartitionClosed() && (txWriter.getPartitionCount() > 0 || txWriter.getLagRowCount() > 0)) {
+            openLastPartition();
+        }
     }
 
     @Override
