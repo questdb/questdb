@@ -216,17 +216,19 @@ final class Unordered8MapValue implements MapValue {
     @Override
     public void minInt(int index, int value) {
         final long p = address0(index);
+        final int current = Unsafe.getUnsafe().getInt(p);
         // -Integer.MIN_VALUE doesn't change the value, so if we negate both values
         // and pick the largest one, we get negated non-null min.
-        Unsafe.getUnsafe().putInt(p, -Math.max(-value, -Unsafe.getUnsafe().getInt(p)));
+        Unsafe.getUnsafe().putInt(p, -Math.max(-value, -current));
     }
 
     @Override
     public void minLong(int index, long value) {
         final long p = address0(index);
+        final long current = Unsafe.getUnsafe().getLong(p);
         // -Long.MIN_VALUE doesn't change the value, so if we negate both values
         // and pick the largest one, we get negated non-null min.
-        Unsafe.getUnsafe().putLong(p, -Math.max(-value, -Unsafe.getUnsafe().getLong(p)));
+        Unsafe.getUnsafe().putLong(p, -Math.max(-value, -current));
     }
 
     @Override
