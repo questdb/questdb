@@ -70,7 +70,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
             return NullMemoryMR.INSTANCE.getBin(0);
         }
         final long indexPageAddress = pageAddressCache.getIndexPageAddress(frameIndex, columnIndex);
-        final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + rowIndex * Long.BYTES);
+        final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + (rowIndex << 3));
         final long pageLimit = pageAddressCache.getPageSize(frameIndex, columnIndex);
         return getBin(dataPageAddress, offset, pageLimit, bsview);
     }
@@ -82,7 +82,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
             return NullMemoryMR.INSTANCE.getBinLen(0);
         }
         final long indexPageAddress = pageAddressCache.getIndexPageAddress(frameIndex, columnIndex);
-        final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + rowIndex * Long.BYTES);
+        final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + (rowIndex << 3));
         return Unsafe.getUnsafe().getLong(dataPageAddress + offset);
     }
 
@@ -92,7 +92,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
         if (address == 0) {
             return NullMemoryMR.INSTANCE.getBool(0);
         }
-        return Unsafe.getUnsafe().getByte(address + rowIndex * Byte.BYTES) == 1;
+        return Unsafe.getUnsafe().getByte(address + rowIndex) == 1;
     }
 
     @Override
@@ -101,7 +101,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
         if (address == 0) {
             return NullMemoryMR.INSTANCE.getByte(0);
         }
-        return Unsafe.getUnsafe().getByte(address + rowIndex * Byte.BYTES);
+        return Unsafe.getUnsafe().getByte(address + rowIndex);
     }
 
     @Override
@@ -110,7 +110,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
         if (address == 0) {
             return NullMemoryMR.INSTANCE.getChar(0);
         }
-        return Unsafe.getUnsafe().getChar(address + rowIndex * Character.BYTES);
+        return Unsafe.getUnsafe().getChar(address + (rowIndex << 1));
     }
 
     @Override
@@ -119,7 +119,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
         if (address == 0) {
             return NullMemoryMR.INSTANCE.getDouble(0);
         }
-        return Unsafe.getUnsafe().getDouble(address + rowIndex * Double.BYTES);
+        return Unsafe.getUnsafe().getDouble(address + (rowIndex << 3));
     }
 
     @Override
@@ -128,7 +128,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
         if (address == 0) {
             return NullMemoryMR.INSTANCE.getFloat(0);
         }
-        return Unsafe.getUnsafe().getFloat(address + rowIndex * Float.BYTES);
+        return Unsafe.getUnsafe().getFloat(address + (rowIndex << 2));
     }
 
     @Override
@@ -137,7 +137,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
         if (address == 0) {
             return NullMemoryMR.INSTANCE.getByte(0);
         }
-        return Unsafe.getUnsafe().getByte(address + rowIndex * Byte.BYTES);
+        return Unsafe.getUnsafe().getByte(address + rowIndex);
     }
 
     @Override
@@ -146,7 +146,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
         if (address == 0) {
             return NullMemoryMR.INSTANCE.getInt(0);
         }
-        return Unsafe.getUnsafe().getInt(address + rowIndex * Integer.BYTES);
+        return Unsafe.getUnsafe().getInt(address + (rowIndex << 2));
     }
 
     @Override
@@ -155,7 +155,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
         if (address == 0) {
             return NullMemoryMR.INSTANCE.getLong(0);
         }
-        return Unsafe.getUnsafe().getLong(address + rowIndex * Long.BYTES);
+        return Unsafe.getUnsafe().getLong(address + (rowIndex << 3));
     }
 
     @Override
@@ -164,7 +164,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
         if (address == 0) {
             return NullMemoryMR.INSTANCE.getShort(0);
         }
-        return Unsafe.getUnsafe().getShort(address + rowIndex * Short.BYTES);
+        return Unsafe.getUnsafe().getShort(address + (rowIndex << 1));
     }
 
     @Override
@@ -173,7 +173,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
         if (address == 0) {
             return NullMemoryMR.INSTANCE.getIPv4(0);
         }
-        return Unsafe.getUnsafe().getInt(address + rowIndex * Integer.BYTES);
+        return Unsafe.getUnsafe().getInt(address + (rowIndex << 2));
     }
 
     @Override
@@ -182,7 +182,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
         if (address == 0) {
             return NullMemoryMR.INSTANCE.getInt(0);
         }
-        return Unsafe.getUnsafe().getInt(address + rowIndex * Integer.BYTES);
+        return Unsafe.getUnsafe().getInt(address + (rowIndex << 2));
     }
 
     @Override
@@ -191,7 +191,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
         if (address == 0) {
             return NullMemoryMR.INSTANCE.getLong(0);
         }
-        return Unsafe.getUnsafe().getLong(address + rowIndex * Long.BYTES);
+        return Unsafe.getUnsafe().getLong(address + (rowIndex << 3));
     }
 
     @Override
@@ -200,7 +200,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
         if (address == 0) {
             return NullMemoryMR.INSTANCE.getLong128Hi();
         }
-        return Unsafe.getUnsafe().getLong(address + rowIndex * Long128.BYTES + Long.BYTES);
+        return Unsafe.getUnsafe().getLong(address + (rowIndex << 4) + Long.BYTES);
     }
 
     @Override
@@ -209,7 +209,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
         if (address == 0) {
             return NullMemoryMR.INSTANCE.getLong128Lo();
         }
-        return Unsafe.getUnsafe().getLong(address + rowIndex * Long128.BYTES);
+        return Unsafe.getUnsafe().getLong(address + (rowIndex << 4));
     }
 
     @Override
@@ -245,7 +245,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
         if (address == 0) {
             return NullMemoryMR.INSTANCE.getShort(0);
         }
-        return Unsafe.getUnsafe().getShort(address + rowIndex * Short.BYTES);
+        return Unsafe.getUnsafe().getShort(address + (rowIndex << 1));
     }
 
     @Override
@@ -255,7 +255,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
             return NullMemoryMR.INSTANCE.getStr(0);
         }
         final long indexPageAddress = pageAddressCache.getIndexPageAddress(frameIndex, columnIndex);
-        final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + rowIndex * Long.BYTES);
+        final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + (rowIndex << 3));
         final long size = pageAddressCache.getPageSize(frameIndex, columnIndex);
         return getStr(dataPageAddress, offset, size, csview);
     }
@@ -267,7 +267,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
             return NullMemoryMR.INSTANCE.getStr2(0);
         }
         final long indexPageAddress = pageAddressCache.getIndexPageAddress(frameIndex, columnIndex);
-        final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + rowIndex * Long.BYTES);
+        final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + (rowIndex << 3));
         final long size = pageAddressCache.getPageSize(frameIndex, columnIndex);
         return getStr(dataPageAddress, offset, size, csview2);
     }
@@ -279,7 +279,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
             return NullMemoryMR.INSTANCE.getStrLen(0);
         }
         final long indexPageAddress = pageAddressCache.getIndexPageAddress(frameIndex, columnIndex);
-        final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + rowIndex * Long.BYTES);
+        final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + (rowIndex << 3));
         return Unsafe.getUnsafe().getInt(dataPageAddress + offset);
     }
 
@@ -288,7 +288,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
         final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
         int key = NullMemoryMR.INSTANCE.getInt(0);
         if (address != 0) {
-            key = Unsafe.getUnsafe().getInt(address + rowIndex * Integer.BYTES);
+            key = Unsafe.getUnsafe().getInt(address + (rowIndex << 2));
         }
         return getSymbolTable(columnIndex).valueOf(key);
     }
@@ -296,7 +296,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
     @Override
     public CharSequence getSymB(int columnIndex) {
         final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
-        final int key = Unsafe.getUnsafe().getInt(address + rowIndex * Integer.BYTES);
+        final int key = Unsafe.getUnsafe().getInt(address + (rowIndex << 2));
         return getSymbolTable(columnIndex).valueBOf(key);
     }
 
@@ -385,7 +385,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
             NullMemoryMR.INSTANCE.getLong256(0, sink);
             return;
         }
-        final long addr = columnAddress + rowIndex * Long256.BYTES + Long.BYTES * 4;
+        final long addr = columnAddress + (rowIndex << 5) + (Long.BYTES << 2);
         sink.setAll(
                 Unsafe.getUnsafe().getLong(addr - Long.BYTES * 4),
                 Unsafe.getUnsafe().getLong(addr - Long.BYTES * 3),

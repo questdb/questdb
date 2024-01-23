@@ -32,6 +32,9 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.groupby.GroupByAllocator;
+import io.questdb.griffin.engine.groupby.GroupByLong128HashSet;
+import io.questdb.griffin.engine.groupby.GroupByLongHashSet;
 import io.questdb.std.LongLongHashSet;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -39,57 +42,59 @@ import io.questdb.std.Uuid;
 
 public final class CountDistinctUuidGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
     private final Function arg;
-    private final int setInitialCapacity;
-    private final double setLoadFactor;
-    private final ObjList<LongLongHashSet> sets = new ObjList<>();
-    private int setIndex;
+    private final GroupByLong128HashSet setA;
+    private final GroupByLong128HashSet setB;
     private int valueIndex;
 
     public CountDistinctUuidGroupByFunction(Function arg, int setInitialCapacity, double setLoadFactor) {
         this.arg = arg;
-        this.setInitialCapacity = setInitialCapacity;
-        this.setLoadFactor = setLoadFactor;
+        // We use zero as the default value to speed up zeroing on rehash.
+        setA = new GroupByLong128HashSet(setInitialCapacity, setLoadFactor, 0);
+        setB = new GroupByLong128HashSet(setInitialCapacity, setLoadFactor, 0);
     }
 
     @Override
     public void clear() {
-        sets.clear();
-        setIndex = 0;
+        setA.resetPtr();
+        setB.resetPtr();
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        LongLongHashSet set;
-        if (sets.size() <= setIndex) {
-            sets.extendAndSet(setIndex, set = new LongLongHashSet(setInitialCapacity, setLoadFactor, Numbers.LONG_NaN, LongLongHashSet.UUID_STRATEGY));
-        } else {
-            set = sets.getQuick(setIndex);
-            set.clear();
-        }
-
         long lo = arg.getLong128Lo(record);
         long hi = arg.getLong128Hi(record);
         if (!Uuid.isNull(lo, hi)) {
-            set.add(lo, hi);
             mapValue.putLong(valueIndex, 1L);
+            // Remap zero since it's used as the no entry key.
+            if (lo == 0 && hi == 0) {
+                lo = Numbers.LONG_NaN;
+                hi = Numbers.LONG_NaN;
+            }
+            setA.of(0).add(lo, hi);
+            mapValue.putLong(valueIndex + 1, setA.ptr());
         } else {
-            mapValue.putLong(valueIndex, 0L);
+            mapValue.putLong(valueIndex, 0);
+            mapValue.putLong(valueIndex + 1, 0);;
         }
-        mapValue.putInt(valueIndex + 1, setIndex++);
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        LongLongHashSet set = sets.getQuick(mapValue.getInt(valueIndex + 1));
         long lo = arg.getLong128Lo(record);
         long hi = arg.getLong128Hi(record);
         if (!Uuid.isNull(lo, hi)) {
-            final int index = set.keySlot(lo, hi);
-            if (index < 0) {
-                return;
+            long ptr = mapValue.getLong(valueIndex + 1);
+            // Remap zero since it's used as the no entry key.
+            if (lo == 0 && hi == 0) {
+                lo = Numbers.LONG_NaN;
+                hi = Numbers.LONG_NaN;
             }
-            set.addAt(index, lo, hi);
-            mapValue.addLong(valueIndex, 1);
+            final int index = setA.of(ptr).keyIndex(lo, hi);
+            if (index >= 0) {
+                setA.addAt(index, lo, hi);
+                mapValue.addLong(valueIndex, 1);
+                mapValue.putLong(valueIndex + 1, setA.ptr());
+            }
         }
     }
 
@@ -120,7 +125,7 @@ public final class CountDistinctUuidGroupByFunction extends LongFunction impleme
 
     @Override
     public boolean isParallelismSupported() {
-        return false;
+        return UnaryFunction.super.isParallelismSupported();
     }
 
     @Override
@@ -129,15 +134,65 @@ public final class CountDistinctUuidGroupByFunction extends LongFunction impleme
     }
 
     @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        long srcCount = srcValue.getLong(valueIndex);
+        if (srcCount == 0 || srcCount == Numbers.LONG_NaN) {
+            return;
+        }
+        long srcPtr = srcValue.getLong(valueIndex + 1);
+
+        long destCount = destValue.getLong(valueIndex);
+        if (destCount == 0 || destCount == Numbers.LONG_NaN) {
+            destValue.putLong(valueIndex, srcCount);
+            destValue.putLong(valueIndex + 1, srcPtr);
+            return;
+        }
+        long destPtr = destValue.getLong(valueIndex + 1);
+
+        setA.of(destPtr);
+        setB.of(srcPtr);
+
+        if (setA.size() > (setB.size() >> 1)) {
+            setA.merge(setB);
+            destValue.putLong(valueIndex, setA.size());
+            destValue.putLong(valueIndex + 1, setA.ptr());
+        } else {
+            // Set A is significantly smaller than set B, so we merge it into set B.
+            setB.merge(setA);
+            destValue.putLong(valueIndex, setB.size());
+            destValue.putLong(valueIndex + 1, setB.ptr());
+        }
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.LONG);
-        columnTypes.add(ColumnType.INT);
+        columnTypes.add(ColumnType.LONG);
+    }
+
+    @Override
+    public void setAllocator(GroupByAllocator allocator) {
+        setA.setAllocator(allocator);
+        setB.setAllocator(allocator);
+    }
+
+    @Override
+    public void setEmpty(MapValue mapValue) {
+        mapValue.putLong(valueIndex, 0L);
+        mapValue.putLong(valueIndex + 1, 0);
+    }
+
+    @Override
+    public void setLong(MapValue mapValue, long value) {
+        mapValue.putLong(valueIndex, value);
+        mapValue.putLong(valueIndex + 1, 0);
     }
 
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NaN);
+        mapValue.putLong(valueIndex + 1, 0);
     }
 
     @Override
@@ -148,6 +203,5 @@ public final class CountDistinctUuidGroupByFunction extends LongFunction impleme
     @Override
     public void toTop() {
         UnaryFunction.super.toTop();
-        setIndex = 0;
     }
 }

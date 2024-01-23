@@ -52,6 +52,10 @@ public class Long256Impl implements Long256, Sinkable {
         return Long256Impl.NULL_LONG256.equals(value);
     }
 
+    public static boolean isNull(long l0, long l1, long l2, long l3) {
+        return l0 == Numbers.LONG_NaN && l1 == Numbers.LONG_NaN && l2 == Numbers.LONG_NaN && l3 == Numbers.LONG_NaN;
+    }
+
     public static void putNull(long appendPointer) {
         Unsafe.getUnsafe().putLong(appendPointer, NULL_LONG256.getLong0());
         Unsafe.getUnsafe().putLong(appendPointer + Long.BYTES, NULL_LONG256.getLong1());
@@ -79,6 +83,15 @@ public class Long256Impl implements Long256, Sinkable {
                 rnd.nextLong(),
                 rnd.nextLong(),
                 rnd.nextLong()
+        );
+    }
+
+    public void fromRnd(Rnd rnd, long N) {
+        setAll(
+                rnd.nextLong(N),
+                rnd.nextLong(N),
+                rnd.nextLong(N),
+                rnd.nextLong(N)
         );
     }
 

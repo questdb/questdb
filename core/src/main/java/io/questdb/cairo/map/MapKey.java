@@ -62,4 +62,5 @@ public interface MapKey extends RecordSinkSPI {
     }
 
     void put(Record record, RecordSink sink);
+
 }

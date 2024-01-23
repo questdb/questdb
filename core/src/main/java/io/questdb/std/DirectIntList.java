@@ -24,12 +24,15 @@
 
 package io.questdb.std;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.Reopenable;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.str.Utf16Sink;
 
 import java.io.Closeable;
+
+import static io.questdb.std.Numbers.MAX_SAFE_INT_POW_2;
 
 public class DirectIntList implements Mutable, Closeable, Reopenable {
 
@@ -98,7 +101,7 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
 
     // capacity in INTs
     public long getCapacity() {
-        return capacity / Integer.BYTES;
+        return capacity >>> 2;
     }
 
     @Override
@@ -120,12 +123,12 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
     // desired capacity in INTs (not count of bytes)
     public void setCapacity(long capacity) {
         assert capacity > 0;
-        setCapacityBytes(capacity * Integer.BYTES);
+        setCapacityBytes(capacity << 2);
     }
 
     public void setPos(long p) {
         assert p * Integer.BYTES <= capacity;
-        pos = address + p * Integer.BYTES;
+        pos = address + (p << 2);
     }
 
     public void shrink(long newCapacity) {
@@ -136,7 +139,7 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
     }
 
     public long size() {
-        return (int) ((pos - address) / Integer.BYTES);
+        return (int) ((pos - address) >>> 2);
     }
 
     @Override
@@ -164,6 +167,9 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
     // desired capacity in bytes (not count of INT values)
     private void setCapacityBytes(long capacity) {
         if (this.capacity != capacity) {
+            if ((capacity >>> 2) > MAX_SAFE_INT_POW_2) {
+                throw CairoException.nonCritical().put("int list capacity overflow");
+            }
             final long oldCapacity = this.capacity;
             final long oldSize = this.pos - this.address;
             this.capacity = capacity;
@@ -179,6 +185,6 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
         if (pos < limit) {
             return;
         }
-        setCapacityBytes(capacity * 2);
+        setCapacityBytes(capacity << 1);
     }
 }
