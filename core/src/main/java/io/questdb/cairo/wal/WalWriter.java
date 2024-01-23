@@ -94,6 +94,7 @@ public class WalWriter implements TableWriterAPI {
     private ColumnVersionReader columnVersionReader;
     private long currentTxnStartRowNum = -1;
     private boolean distressed;
+    private boolean isCommittingData;
     private int lastSegmentTxn = -1;
     private long lastSeqTxn = NO_TXN;
     private boolean open;
@@ -204,10 +205,6 @@ public class WalWriter implements TableWriterAPI {
 
     @Override
     public long apply(AlterOperation alterOp, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
-        if (inTransaction()) {
-            throw CairoException.critical(0).put("cannot alter table with uncommitted inserts [table=")
-                    .put(tableToken.getTableName()).put(']');
-        }
         if (alterOp.isStructural()) {
             return applyStructural(alterOp);
         } else {
@@ -262,6 +259,7 @@ public class WalWriter implements TableWriterAPI {
         checkDistressed();
         try {
             if (inTransaction()) {
+                isCommittingData = true;
                 final long rowsToCommit = getUncommittedRowCount();
                 lastSegmentTxn = events.appendData(currentTxnStartRowNum, segmentRowCount, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
                 // flush disk before getting next txn
@@ -270,7 +268,9 @@ public class WalWriter implements TableWriterAPI {
                     sync(commitMode);
                 }
                 final long seqTxn = getSequencerTxn();
-                LOG.info().$("committed data block [wal=").$(path).$(Files.SEPARATOR).$(segmentId).$(", seqTxn=").$(seqTxn)
+                LOG.info().$("committed data block [wal=").$(path).$(Files.SEPARATOR).$(segmentId)
+                        .$(", segmentTxn=").$(lastSegmentTxn)
+                        .$(", seqTxn=").$(seqTxn)
                         .$(", rowLo=").$(currentTxnStartRowNum).$(", roHi=").$(segmentRowCount)
                         .$(", minTimestamp=").$ts(txnMinTimestamp).$(", maxTimestamp=").$ts(txnMaxTimestamp).I$();
                 resetDataTxnProperties();
@@ -287,6 +287,8 @@ public class WalWriter implements TableWriterAPI {
                 rollback();
             }
             throw th;
+        } finally {
+            isCommittingData = false;
         }
         return NO_TXN;
     }
@@ -491,10 +493,13 @@ public class WalWriter implements TableWriterAPI {
 
                 try {
                     final int timestampIndex = metadata.getTimestampIndex();
+
                     LOG.info().$("rolling uncommitted rows to new segment [wal=")
                             .$(path).$(Files.SEPARATOR).$(oldSegmentId)
-                            .$(", newSegment=").$(newSegmentId)
-                            .$(", rowCount=").$(uncommittedRows).I$();
+                            .$(", lastSegmentTxn=").$(lastSegmentTxn)
+                            .$(", newSegmentId=").$(newSegmentId)
+                            .$(", uncommittedRows=").$(uncommittedRows)
+                            .I$();
 
                     final int commitMode = configuration.getCommitMode();
                     for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
@@ -790,9 +795,9 @@ public class WalWriter implements TableWriterAPI {
         try {
             alterOp.apply(metaWriterSvc, true);
         } catch (Throwable th) {
-            // Transaction successful, but writing using this WAL writer should not be possible.
-            LOG.error().$("Exception during alter [ex=").$(th).I$();
+            LOG.critical().$("Exception during alter [ex=").$(th).I$();
             distressed = true;
+            throw th;
         }
         return lastSeqTxn = txn;
     }
@@ -1377,10 +1382,20 @@ public class WalWriter implements TableWriterAPI {
     }
 
     private void rollLastWalEventRecord(int newSegmentId, long uncommittedRows) {
-        events.rollback();
+        if (isCommittingData) {
+            // Sometimes we only want to add a column without committing the data in the current wal segments in ILP.
+            // When this happens the data stays in the WAL column files but is not committed
+            // and the events file don't have a record about the column add transaction.
+            // In this case we DO NOT roll back the last record in the events file.
+            events.rollback();
+        }
         path.trimTo(rootLen).slash().put(newSegmentId);
         events.openEventFile(path, path.size(), isTruncateFilesOnClose());
-        lastSegmentTxn = events.appendData(0, uncommittedRows, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
+        if (isCommittingData) {
+            // When current transaction is not a data transaction but a column add transaction
+            // there is no need to add a record about it to the new segment event file.
+            lastSegmentTxn = events.appendData(0, uncommittedRows, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
+        }
         events.sync();
     }
 
@@ -1698,6 +1713,7 @@ public class WalWriter implements TableWriterAPI {
                         // this will close old _meta file and create the new one
                         metadata.switchTo(path, path.size(), isTruncateFilesOnClose());
                         openColumnFiles(columnName, columnIndex, path.size());
+                        path.trimTo(rootLen);
                     }
                     // if we did not have to roll uncommitted rows to a new segment
                     // it will add the column file and switch metadata file on next row write

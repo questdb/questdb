@@ -649,6 +649,67 @@ public class MapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReopenWithKeyCapacityAndPageSize() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            int N = 10;
+            try (Map map = createMap(new SingleColumnType(ColumnType.INT), new SingleColumnType(ColumnType.INT), N / 2, 0.5f, 100)) {
+                final int initialKeyCapacity = map.getKeyCapacity();
+                final long initialHeapSize = map.getHeapSize();
+
+                for (int i = 0; i < N; i++) {
+                    MapKey key = map.withKey();
+                    key.putInt(i);
+
+                    MapValue value = key.createValue();
+                    Assert.assertTrue(value.isNew());
+                    value.putInt(0, i);
+                }
+
+                for (int i = 0; i < N; i++) {
+                    MapKey key = map.withKey();
+                    key.putInt(i);
+
+                    MapValue value = key.createValue();
+                    Assert.assertFalse(value.isNew());
+                    Assert.assertEquals(i, value.getInt(0));
+                }
+
+                Assert.assertEquals(N, map.size());
+
+                map.close();
+                map.reopen(N, N * 128);
+
+                Assert.assertEquals(0, map.size());
+                Assert.assertNotEquals(initialKeyCapacity, map.getKeyCapacity());
+                if (initialHeapSize != -1) {
+                    Assert.assertNotEquals(initialHeapSize, map.getHeapSize());
+                }
+
+                // Fill the map once again and verify contents.
+                for (int i = 0; i < N; i++) {
+                    MapKey key = map.withKey();
+                    key.putInt(N + i);
+
+                    MapValue value = key.createValue();
+                    Assert.assertTrue(value.isNew());
+                    value.putInt(0, N + i);
+                }
+
+                for (int i = 0; i < N; i++) {
+                    MapKey key = map.withKey();
+                    key.putInt(N + i);
+
+                    MapValue value = key.createValue();
+                    Assert.assertFalse(value.isNew());
+                    Assert.assertEquals(N + i, value.getInt(0));
+                }
+
+                Assert.assertEquals(N, map.size());
+            }
+        });
+    }
+
+    @Test
     public void testRestoreInitialCapacity() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int N = 10;

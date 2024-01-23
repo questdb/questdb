@@ -38,7 +38,6 @@ public class MinCharGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAllNull() throws SqlException {
-
         ddl("create table tab (f char)");
 
         try (TableWriter w = getWriter("tab")) {

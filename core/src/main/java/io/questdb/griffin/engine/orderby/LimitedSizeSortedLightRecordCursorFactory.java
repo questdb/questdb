@@ -77,10 +77,10 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        boolean preTouchEnabled = executionContext.isColumnPreTouchEnabled();
-        // Forcefully disable column pre-touch for LIMIT K,N queries for all downstream
+        boolean oldPreTouchEnabled = executionContext.isColumnPreTouchEnabled();
+        // Forcefully disable column pre-touch for all ORDER BY + LIMIT queries for all downstream
         // async filtered factories to avoid redundant disk reads.
-        executionContext.setColumnPreTouchEnabled(preTouchEnabled && hiFunction == null);
+        executionContext.setColumnPreTouchEnabled(false);
         RecordCursor baseCursor = null;
         try {
             baseCursor = base.getCursor(executionContext);
@@ -92,7 +92,7 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
             Misc.free(cursor);
             throw ex;
         } finally {
-            executionContext.setColumnPreTouchEnabled(preTouchEnabled);
+            executionContext.setColumnPreTouchEnabled(oldPreTouchEnabled);
         }
     }
 
@@ -205,6 +205,16 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
         }
         SortedLightRecordCursorFactory.addSortKeys(sink, sortColumnFilter);
         sink.child(base);
+    }
+
+    @Override
+    public boolean usesCompiledFilter() {
+        return base.usesCompiledFilter();
+    }
+
+    @Override
+    public boolean usesIndex() {
+        return base.usesIndex();
     }
 
     // Check if lo, hi is set and lo >=0 while hi < 0 (meaning - return whole result set except some rows at start and some at the end)

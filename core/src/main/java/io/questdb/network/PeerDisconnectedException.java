@@ -26,4 +26,7 @@ package io.questdb.network;
 
 public class PeerDisconnectedException extends Exception {
     public static final PeerDisconnectedException INSTANCE = new PeerDisconnectedException();
+
+    private PeerDisconnectedException() {
+    }
 }

@@ -84,6 +84,22 @@ public class MapFactory {
     ) {
         final int keyCapacity = configuration.getSqlSmallMapKeyCapacity();
         final int pageSize = configuration.getSqlSmallMapPageSize();
+        return createUnorderedMap(configuration, keyTypes, valueTypes, keyCapacity, pageSize);
+    }
+
+    /**
+     * Creates an unordered Map pre-allocated to a small capacity to be used in GROUP BY queries, but not only.
+     * <p>
+     * The returned map may actually preserve insertion order, i.e. it may be ordered, depending on the types
+     * of key and value columns.
+     */
+    public static Map createUnorderedMap(
+            CairoConfiguration configuration,
+            @Transient @NotNull ColumnTypes keyTypes,
+            @Transient @Nullable ColumnTypes valueTypes,
+            int keyCapacity,
+            int pageSize
+    ) {
         final int maxEntrySize = configuration.getSqlUnorderedMapMaxEntrySize();
 
         final int keySize = totalSize(keyTypes);

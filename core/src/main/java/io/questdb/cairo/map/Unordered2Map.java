@@ -214,6 +214,11 @@ public class Unordered2Map implements Map, Reopenable {
         }
     }
 
+    @Override
+    public void reopen(int keyCapacity, int pageSize) {
+        reopen();
+    }
+
     public void reopen() {
         if (memStart == 0) {
             restoreInitialCapacity();
@@ -395,6 +400,11 @@ public class Unordered2Map implements Map, Reopenable {
 
         @Override
         public void putLong256(Long256 value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putLong256(long l0, long l1, long l2, long l3) {
             throw new UnsupportedOperationException();
         }
 

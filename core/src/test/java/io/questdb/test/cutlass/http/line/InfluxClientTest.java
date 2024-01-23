@@ -46,7 +46,7 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
-import static io.questdb.test.cutlass.http.line.IlpHttpUtils.*;
+import static io.questdb.test.cutlass.http.line.IlpHttpUtils.assertRequestErrorContains;
 
 public class InfluxClientTest extends AbstractBootstrapTest {
     @Before
@@ -94,6 +94,37 @@ public class InfluxClientTest extends AbstractBootstrapTest {
                             "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
                             "error in line 1: table: ex_tbl, column: str; cast error from protocol type: FLOAT to column type: STRING\",\"line\":1,\"errorId\":");
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testColumnsCanBeAddedWithoutCommit() throws Exception {
+        int count = 10000;
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048",
+                    PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS.getEnvVarName(), String.valueOf(count)
+            )) {
+                serverMain.start();
+                serverMain.compile("create table wal_low_max_uncomitted(sym symbol, ts timestamp) " +
+                        "timestamp(ts) partition by DAY WAL WITH maxUncommittedRows=100");
+                List<String> lines = new ArrayList<>();
+                String goodLine = "wal_low_max_uncomitted,sym=aaa\n";
+                for (int i = 0; i < count; i++) {
+                    lines.add(goodLine);
+                }
+
+                // New column added
+                lines.add("wal_low_max_uncomitted i=123i\n");
+                try (final InfluxDB influxDB = IlpHttpUtils.getConnection(serverMain)) {
+                    // Bad line which should roll back the transaction
+                    assertRequestErrorContains(influxDB, lines, "ailed to parse line protocol:errors encountered on line(s):" +
+                            "\\nerror in line 10002: Could not parse entire line. Symbol value is missing: bla");
+                }
+
+                serverMain.waitWalTxnApplied("wal_low_max_uncomitted");
+                serverMain.assertSql("SELECT count() FROM wal_low_max_uncomitted", "count\n0\n");
             }
         });
     }
@@ -481,6 +512,72 @@ public class InfluxClientTest extends AbstractBootstrapTest {
                     Assert.assertTrue(pong.isGood());
                     Assert.assertEquals(pong.getVersion(), "v2.2.2");
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testRequestAtomicNoNewColumns() throws Exception {
+        int count = 10000;
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048",
+                    PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS.getEnvVarName(), String.valueOf(count)
+            )) {
+                serverMain.start();
+                serverMain.compile("create table wal_low_max_uncomitted(sym symbol, i long, ts timestamp) " +
+                        "timestamp(ts) partition by DAY WAL WITH maxUncommittedRows=" + count);
+                List<String> lines = new ArrayList<>();
+                String goodLine = "wal_low_max_uncomitted,sym=aaa\n";
+                for (int i = 0; i < count; i++) {
+                    lines.add(goodLine);
+                }
+
+                try (final InfluxDB influxDB = IlpHttpUtils.getConnection(serverMain)) {
+                    // Bad line which should roll back the transaction
+                    int totalCount = count + 1;
+                    assertRequestErrorContains(influxDB, lines, "wal_low_max_uncomitted,bla i=aaa\n",
+                            "{\"code\":\"invalid\",\"message\":\"failed to parse line protocol:errors encountered on line(s):" +
+                                    "\\nerror in line " + totalCount + ": Could not parse entire line. Symbol value is missing: bla\"," +
+                                    "\"line\":" + totalCount + ",\"errorId\":");
+                }
+
+                serverMain.waitWalTxnApplied("wal_low_max_uncomitted");
+                serverMain.assertSql("SELECT count() FROM wal_low_max_uncomitted", "count\n0\n");
+            }
+        });
+    }
+
+    @Test
+    public void testRequestNewColumnAddedInMiddleOfRequest() throws Exception {
+        int count = 10000;
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048",
+                    PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS.getEnvVarName(), String.valueOf(count)
+            )) {
+                serverMain.start();
+                serverMain.compile("create table wal_tbl(sym symbol, ts timestamp) " +
+                        "timestamp(ts) partition by DAY WAL WITH maxUncommittedRows=100");
+                List<String> lines = new ArrayList<>();
+                String goodLine = "wal_tbl,sym=aaa\n";
+                for (int i = 0; i < count; i++) {
+                    lines.add(goodLine);
+                }
+
+                // New column added
+                String addColumnLine = "wal_tbl i=123i\n";
+                for (int i = 0; i < count; i++) {
+                    lines.add(addColumnLine);
+                }
+
+                try (final InfluxDB influxDB = IlpHttpUtils.getConnection(serverMain)) {
+                    // Column is added
+                    influxDB.write(lines);
+                }
+
+                serverMain.waitWalTxnApplied("wal_tbl");
+                serverMain.assertSql("SELECT count() FROM wal_tbl", "count\n" + 2 * count + "\n");
             }
         });
     }
