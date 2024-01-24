@@ -13,8 +13,13 @@ import org.junit.rules.TemporaryFolder;
 
 import java.io.File;
 import java.io.IOException;
+import java.time.Duration;
+import java.time.LocalDate;
+import java.time.LocalTime;
 import java.util.Map;
 import java.util.Properties;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class ReloadingPropServerConfigurationTest {
     @ClassRule
@@ -45,6 +50,41 @@ public class ReloadingPropServerConfigurationTest {
         Assert.assertEquals("99", properties.getProperty(String.valueOf(PropertyKey.HTTP_CONNECTION_POOL_INITIAL_CAPACITY)));
         configuration.reload(properties, null);
         Assert.assertEquals(99, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getConnectionPoolInitialCapacity());
+    }
+
+    @Test
+    public void testConcurrentReload() throws Exception {
+        Properties properties = new Properties();
+        ReloadingPropServerConfiguration configuration = newReloadingPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+
+        int concurrencyLevel = 128;
+        String newValueStr = "99";
+        int newValue = Integer.parseInt(newValueStr);
+        Duration timeout = Duration.ofSeconds(5);
+        AtomicInteger threadsFinished = new AtomicInteger();
+
+        Assert.assertNotEquals(newValue, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getConnectionPoolInitialCapacity());
+
+        for (int i = 0; i < concurrencyLevel; i++) {
+            LocalTime start = LocalTime.now();
+            new Thread(() -> {
+                while (LocalTime.now().isBefore(start.plus(timeout))) {
+                    if (configuration.getHttpServerConfiguration().getHttpContextConfiguration().getConnectionPoolInitialCapacity() == newValue) {
+                        threadsFinished.incrementAndGet();
+                        return;
+                    }
+                }
+                Assert.fail("timeout reached");
+            }).start();
+        }
+
+        properties.setProperty(String.valueOf(PropertyKey.HTTP_CONNECTION_POOL_INITIAL_CAPACITY), "99");
+        configuration.reload(properties, null);
+
+        while (threadsFinished.get() < concurrencyLevel) {
+            Thread.sleep(50);
+        }
+
     }
 
     @NotNull
