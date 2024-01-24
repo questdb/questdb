@@ -77,7 +77,13 @@ public class InLongFunctionFactory implements FunctionFactory {
         }
 
         if (allConst) {
-            return new InLongConstFunction(args.getQuick(0), parseToLong(args, argPositions));
+            LongList inVals = parseToLong(args, argPositions);
+            if (inVals.size() == 0) {
+                return new InLongSingleConstFunction(args.getQuick(0), inVals.getQuick(0));
+            } else if (inVals.size() == 2) {
+                return new InLongTwoConstFunction(args.getQuick(0), inVals.getQuick(0), inVals.getQuick(1));
+            }
+            return new InLongConstFunction(args.getQuick(0), inVals);
         }
 
         // have to copy, args is mutable
@@ -128,8 +134,8 @@ public class InLongFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            long ts = tsFunc.getLong(rec);
-            return negated != inList.binarySearch(ts, BinarySearch.SCAN_UP) >= 0;
+            long val = tsFunc.getLong(rec);
+            return negated != inList.binarySearch(val, BinarySearch.SCAN_UP) >= 0;
         }
 
         @Override
@@ -139,6 +145,68 @@ public class InLongFunctionFactory implements FunctionFactory {
                 sink.val(" not");
             }
             sink.val(" in ").val(inList);
+        }
+    }
+
+    private static class InLongSingleConstFunction extends NegatableBooleanFunction implements UnaryFunction {
+        private final long inVal;
+        private final Function longFunc;
+
+        public InLongSingleConstFunction(Function longFunc, long inVal) {
+            this.longFunc = longFunc;
+            this.inVal = inVal;
+        }
+
+        @Override
+        public Function getArg() {
+            return longFunc;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            long val = longFunc.getLong(rec);
+            return negated != (val == inVal);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(longFunc);
+            if (negated) {
+                sink.val(" not");
+            }
+            sink.val(" in [").val(inVal).val(']');
+        }
+    }
+
+    private static class InLongTwoConstFunction extends NegatableBooleanFunction implements UnaryFunction {
+        private final long inVal0;
+        private final long inVal1;
+        private final Function longFunc;
+
+        public InLongTwoConstFunction(Function longFunc, long inVal0, long inVal1) {
+            this.longFunc = longFunc;
+            this.inVal0 = inVal0;
+            this.inVal1 = inVal1;
+        }
+
+        @Override
+        public Function getArg() {
+            return longFunc;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            long val = longFunc.getLong(rec);
+            return negated != (val == inVal0 || val == inVal1);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(longFunc);
+            if (negated) {
+                sink.val(" not");
+            }
+            sink.val(" in [").val(inVal0).val(',').val(inVal1).val(']');
         }
     }
 
@@ -156,26 +224,26 @@ public class InLongFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            long ts = args.getQuick(0).getLong(rec);
+            long val = args.getQuick(0).getLong(rec);
 
             for (int i = 1, n = args.size(); i < n; i++) {
                 Function func = args.getQuick(i);
-                long val = Numbers.LONG_NaN;
+                long inVal = Numbers.LONG_NaN;
                 switch (ColumnType.tagOf(func.getType())) {
                     case ColumnType.BYTE:
                     case ColumnType.SHORT:
                     case ColumnType.INT:
                     case ColumnType.LONG:
                     case ColumnType.TIMESTAMP:
-                        val = func.getLong(rec);
+                        inVal = func.getLong(rec);
                         break;
                     case ColumnType.STRING:
                     case ColumnType.SYMBOL:
                         CharSequence str = func.getStr(rec);
-                        val = Numbers.parseLongQuiet(str);
+                        inVal = Numbers.parseLongQuiet(str);
                         break;
                 }
-                if (val == ts) {
+                if (inVal == val) {
                     return !negated;
                 }
             }

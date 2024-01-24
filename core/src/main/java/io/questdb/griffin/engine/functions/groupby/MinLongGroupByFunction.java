@@ -50,11 +50,7 @@ public class MinLongGroupByFunction extends LongFunction implements GroupByFunct
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        long min = mapValue.getLong(valueIndex);
-        long next = arg.getLong(record);
-        if (next != Numbers.LONG_NaN && (next < min || min == Numbers.LONG_NaN)) {
-            mapValue.putLong(valueIndex, next);
-        }
+        mapValue.minLong(valueIndex, arg.getLong(record));
     }
 
     @Override
@@ -84,7 +80,7 @@ public class MinLongGroupByFunction extends LongFunction implements GroupByFunct
 
     @Override
     public boolean isParallelismSupported() {
-        return true;
+        return UnaryFunction.super.isParallelismSupported();
     }
 
     @Override

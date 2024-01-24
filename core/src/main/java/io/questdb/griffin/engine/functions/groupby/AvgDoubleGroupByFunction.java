@@ -91,7 +91,7 @@ public class AvgDoubleGroupByFunction extends DoubleFunction implements GroupByF
 
     @Override
     public boolean isParallelismSupported() {
-        return true;
+        return UnaryFunction.super.isParallelismSupported();
     }
 
     @Override

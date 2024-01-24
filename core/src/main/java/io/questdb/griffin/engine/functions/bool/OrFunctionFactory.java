@@ -38,6 +38,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 public class OrFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "or(TT)";
@@ -84,8 +85,7 @@ public class OrFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            // The right branch is usually more specific, so we start from it.
-            return right.getBool(rec) || left.getBool(rec);
+            return left.getBool(rec) || right.getBool(rec);
         }
 
         @Override

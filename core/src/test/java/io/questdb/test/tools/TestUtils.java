@@ -37,6 +37,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogRecord;
@@ -1016,6 +1017,10 @@ public final class TestUtils {
         return new SqlExecutionContextImpl(engine, workerCount).with(engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(), null);
     }
 
+    public static SqlExecutionContextImpl createSqlExecutionCtx(CairoEngine engine, BindVariableService bindVariableService, int workerCount) {
+        return new SqlExecutionContextImpl(engine, workerCount).with(engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(), bindVariableService);
+    }
+
     public static void createTestPath(CharSequence root) {
         try (Path path = new Path().of(root).$()) {
             if (Files.exists(path)) {
@@ -1093,10 +1098,11 @@ public final class TestUtils {
             Log log
     ) throws Exception {
         final int workerCount = pool != null ? pool.getWorkerCount() : 1;
+        final BindVariableServiceImpl bindVariableService = new BindVariableServiceImpl(configuration);
         try (
                 final CairoEngine engine = new CairoEngine(configuration, metrics);
                 final SqlCompiler compiler = engine.getSqlCompiler();
-                final SqlExecutionContext sqlExecutionContext = createSqlExecutionCtx(engine, workerCount)
+                final SqlExecutionContext sqlExecutionContext = createSqlExecutionCtx(engine, bindVariableService, workerCount)
         ) {
             try {
                 if (pool != null) {
