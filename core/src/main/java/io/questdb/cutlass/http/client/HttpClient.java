@@ -96,7 +96,7 @@ public abstract class HttpClient implements QuietCloseable {
                 throw new HttpClientException("same host expected for connection reuse [host=").put(this.host).put(']');
             }
             if (this.port != port) {
-                throw new HttpClientException("same host expected for connection reuse [port=").put(this.port).put(']');
+                throw new HttpClientException("same port expected for connection reuse [port=").put(this.port).put(']');
             }
         }
         ptr = bufLo;
