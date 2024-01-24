@@ -708,9 +708,12 @@ public interface Sender extends Closeable {
             } else if (Chars.startsWith(url, "tcp://") || Chars.startsWith(url, "TCP://")) {
                 hostStart = 6;
                 protocol = PROTOCOL_TCP;
+            } else if (Chars.startsWith(url, "tcps://") || Chars.startsWith(url, "TCPS://")) {
+                hostStart = 7;
+                protocol = PROTOCOL_TCP;
+                enableTls();
             } else {
-                throw new LineSenderException("invalid url protocol ")
-                        .put("[url=").put(url).put("]");
+                throw new LineSenderException("invalid url protocol ").put("[url=").put(url).put("]");
             }
             int hostEnd = Chars.indexOf(url, hostStart, ':');
             if (hostEnd == -1) {

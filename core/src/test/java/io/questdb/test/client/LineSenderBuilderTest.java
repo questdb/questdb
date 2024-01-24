@@ -615,6 +615,21 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testTcpsSchemaUrlBuilder() throws Exception {
+        runInContext(r -> {
+            String url = "tcps://" + LOCALHOST + ":" + TLS_PROXY.getListeningPort();
+            Sender.LineSenderBuilder builder = Sender.builder()
+                    .url(url)
+                    .advancedTls().disableCertificateValidation();
+            try (Sender sender = builder.build()) {
+                sender.table("mytable").symbol("symbol", "symbol").atNow();
+                sender.flush();
+                assertTableExistsEventually(engine, "mytable");
+            }
+        });
+    }
+
+    @Test
     public void testTlsDoubleSet() throws Exception {
         assertMemoryLeak(() -> {
             Sender.LineSenderBuilder builder = Sender.builder().enableTls();
