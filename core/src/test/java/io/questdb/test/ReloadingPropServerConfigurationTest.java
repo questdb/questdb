@@ -78,7 +78,7 @@ public class ReloadingPropServerConfigurationTest {
             }).start();
         }
 
-        properties.setProperty(String.valueOf(PropertyKey.HTTP_CONNECTION_POOL_INITIAL_CAPACITY), "99");
+        properties.setProperty(String.valueOf(PropertyKey.HTTP_CONNECTION_POOL_INITIAL_CAPACITY), newValueStr);
         configuration.reload(properties, null);
 
         while (threadsFinished.get() < concurrencyLevel) {
