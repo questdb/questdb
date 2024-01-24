@@ -4,6 +4,7 @@ import io.questdb.*;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
 
 import org.jetbrains.annotations.NotNull;
@@ -19,6 +20,7 @@ import java.time.LocalTime;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class ReloadingPropServerConfigurationTest {
@@ -60,21 +62,26 @@ public class ReloadingPropServerConfigurationTest {
         int concurrencyLevel = 128;
         String newValueStr = "99";
         int newValue = Integer.parseInt(newValueStr);
-        Duration timeout = Duration.ofSeconds(5);
+        Duration timeout =  Duration.ofSeconds(5);
+        LocalTime start = LocalTime.now();
         AtomicInteger threadsFinished = new AtomicInteger();
 
         Assert.assertNotEquals(newValue, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getConnectionPoolInitialCapacity());
 
         for (int i = 0; i < concurrencyLevel; i++) {
-            LocalTime start = LocalTime.now();
+
             new Thread(() -> {
-                while (LocalTime.now().isBefore(start.plus(timeout))) {
+                while (true) {
                     if (configuration.getHttpServerConfiguration().getHttpContextConfiguration().getConnectionPoolInitialCapacity() == newValue) {
                         threadsFinished.incrementAndGet();
                         return;
                     }
+                    try {
+                        Thread.sleep(ThreadLocalRandom.current().nextInt(0, 500));
+                    } catch (InterruptedException e) {
+                        throw new RuntimeException(e);
+                    }
                 }
-                Assert.fail("timeout reached");
             }).start();
         }
 
@@ -83,6 +90,7 @@ public class ReloadingPropServerConfigurationTest {
 
         while (threadsFinished.get() < concurrencyLevel) {
             Thread.sleep(50);
+            Assert.assertTrue(LocalTime.now().isBefore(start.plus(timeout)));
         }
 
     }
