@@ -80,7 +80,7 @@ public class MaxLongGroupByFunction extends LongFunction implements GroupByFunct
 
     @Override
     public boolean isParallelismSupported() {
-        return true;
+        return UnaryFunction.super.isParallelismSupported();
     }
 
     @Override
