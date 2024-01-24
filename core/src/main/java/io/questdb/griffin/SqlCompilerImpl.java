@@ -2358,12 +2358,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         insertCount = copyUnordered(cursor, writer, copier, circuitBreaker);
                     } else {
                         if (model.getBatchSize() != -1) {
+                            RecordMetadata factoryMetadata = factory.getMetadata();
                             insertCount = copyOrderedBatched(
                                     writer,
-                                    factory.getMetadata(),
+                                    factoryMetadata,
                                     cursor,
                                     copier,
-                                    writerTimestampIndex,
+                                    factoryMetadata.getTimestampIndex(),
                                     model.getBatchSize(),
                                     model.getO3MaxLag(),
                                     circuitBreaker
