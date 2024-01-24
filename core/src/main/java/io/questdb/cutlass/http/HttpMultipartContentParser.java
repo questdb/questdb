@@ -29,7 +29,6 @@ import io.questdb.cutlass.http.ex.RetryOperationException;
 import io.questdb.cutlass.http.ex.TooFewBytesReceivedException;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.network.ServerDisconnectException;
 import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sequence;
@@ -98,11 +97,8 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
         this.boundaryByte = boundary.byteAt(0);
     }
 
-    public boolean parse(
-            long lo,
-            long hi,
-            HttpMultipartContentListener listener
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+    public boolean parse(long lo, long hi, HttpMultipartContentListener listener)
+            throws PeerDisconnectedException, PeerIsSlowToReadException {
         long _lo = lo;
         long ptr = lo;
         while (ptr < hi) {
@@ -252,7 +248,7 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
             int state,
             long resumePtr,
             boolean handleIncomplete
-    ) throws PeerIsSlowToReadException, PeerDisconnectedException, ServerDisconnectException {
+    ) throws PeerIsSlowToReadException, PeerDisconnectedException {
         RetryOperationException needsRetry = null;
         try {
             listener.onChunk(lo, hi);

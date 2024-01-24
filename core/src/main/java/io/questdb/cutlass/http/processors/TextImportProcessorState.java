@@ -44,7 +44,6 @@ class TextImportProcessorState implements Mutable, Closeable {
     int messagePart = TextImportProcessor.MESSAGE_UNKNOWN;
     int responseState = TextImportProcessor.RESPONSE_PREFIX;
     int state;
-    String stateMessage;
     TextLoader textLoader;
 
     TextImportProcessorState(CairoEngine engine) {

@@ -49,6 +49,8 @@ public interface TextConfiguration {
 
     int getRollBufferSize();
 
+    int getSchemaColumnPoolCapacity();
+
     int getTextAnalysisMaxLines();
 
     int getTextLexerStringPoolCapacity();

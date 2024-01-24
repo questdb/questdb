@@ -22,15 +22,34 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http;
+package io.questdb.cutlass.text.types;
 
-import io.questdb.network.PeerDisconnectedException;
-import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.cairo.TableWriter;
+import io.questdb.std.str.DirectUtf8Sequence;
 
-public interface HttpMultipartContentListener {
-    void onChunk(long lo, long hi) throws PeerDisconnectedException, PeerIsSlowToReadException;
+/*
+   Type adapter that does exactly nothing. It's used to ignore csv columns during csv import.
+*/
+public class NoopTypeAdapter implements TypeAdapter {
 
-    void onPartBegin(HttpRequestHeader partHeader) throws PeerDisconnectedException, PeerIsSlowToReadException;
+    public static final io.questdb.cutlass.text.types.NoopTypeAdapter INSTANCE = new io.questdb.cutlass.text.types.NoopTypeAdapter();
 
-    void onPartEnd() throws PeerDisconnectedException, PeerIsSlowToReadException;
+    private NoopTypeAdapter() {
+    }
+
+
+    @Override
+    public int getType() {
+        return -1;
+    }
+
+    @Override
+    public boolean probe(DirectUtf8Sequence text) {
+        return false;
+    }
+
+    @Override
+    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) throws Exception {
+        // do nothing
+    }
 }

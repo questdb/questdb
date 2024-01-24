@@ -137,6 +137,8 @@ public interface ConfigurationOverrides {
 
     MicrosecondClock getTestMicrosClock();
 
+    int getTextAnalysisMaxLines();
+
     int getWalApplyLookAheadTransactionCount();
 
     long getWalApplyTableTimeQuota();
@@ -296,6 +298,8 @@ public interface ConfigurationOverrides {
     void setSqlWindowStorePageSize(int windowStorePageSize);
 
     void setTestMicrosClock(MicrosecondClock testMicrosClock);
+
+    void setTextAnalysisMaxLines(int lines);
 
     void setWalApplyTableTimeQuota(long walApplyTableTimeQuota);
 

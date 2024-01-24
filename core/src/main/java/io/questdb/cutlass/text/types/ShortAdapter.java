@@ -28,6 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.str.DirectUtf8Sequence;
 
 public final class ShortAdapter extends AbstractTypeAdapter {
@@ -44,7 +45,12 @@ public final class ShortAdapter extends AbstractTypeAdapter {
 
     @Override
     public boolean probe(DirectUtf8Sequence text) {
-        throw new UnsupportedOperationException();
+        try {
+            int val = Numbers.parseInt(text);
+            return val >= Short.MIN_VALUE && val <= Short.MAX_VALUE;
+        } catch (NumericException e) {
+            return false;
+        }
     }
 
     @Override

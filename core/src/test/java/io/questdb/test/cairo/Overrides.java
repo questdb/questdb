@@ -96,6 +96,7 @@ public class Overrides implements ConfigurationOverrides {
     private int sqlWindowStoreMaxPages;
     private int sqlWindowStorePageSize;
     private int tableRegistryCompactionThreshold;
+    private int textAnalysisMaxLines = -1;
     private long walApplyTableTimeQuota = -1;
     private int walLookAheadTransactionCount = -1;
     private long walMaxLagSize = -1;
@@ -363,6 +364,10 @@ public class Overrides implements ConfigurationOverrides {
         return testMicrosClock;
     }
 
+    public int getTextAnalysisMaxLines() {
+        return textAnalysisMaxLines;
+    }
+
     @Override
     public int getWalApplyLookAheadTransactionCount() {
         return walLookAheadTransactionCount;
@@ -522,6 +527,7 @@ public class Overrides implements ConfigurationOverrides {
         env = null;
         walMaxLagSize = -1;
         groupByAllocatorDefaultChunkSize = -1;
+        textAnalysisMaxLines = -1;
     }
 
     @Override
@@ -814,9 +820,15 @@ public class Overrides implements ConfigurationOverrides {
     }
 
     @Override
+    public void setTextAnalysisMaxLines(int textAnalysisMaxLines) {
+        this.textAnalysisMaxLines = textAnalysisMaxLines;
+    }
+
+    @Override
     public void setWalApplyTableTimeQuota(long walApplyTableTimeQuota) {
         this.walApplyTableTimeQuota = walApplyTableTimeQuota;
     }
+
 
     @Override
     public void setWalLookAheadTransactionCount(int walLookAheadTransactionCount) {

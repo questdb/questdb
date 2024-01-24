@@ -162,6 +162,10 @@ public class IntList implements Mutable, Sinkable {
         data[index] = data[index] + delta;
     }
 
+    public int indexOf(int v) {
+        return indexOf(v, 0, pos);
+    }
+
     public int indexOf(int v, int low, int high) {
         assert high <= pos;
 

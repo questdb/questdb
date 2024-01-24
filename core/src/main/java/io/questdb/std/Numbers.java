@@ -33,11 +33,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
-//#if jdk.version==8
-//$import sun.misc.FDBigInteger;
-//#else
 import jdk.internal.math.FDBigInteger;
-//#endif
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
@@ -1166,6 +1162,48 @@ public final class Numbers {
         return parseLong0(sequence.asAsciiCharSequence(), p, lim);
     }
 
+    public static long parseLong0(CharSequence sequence, final int p, int lim) throws NumericException {
+        if (lim == p) {
+            throw NumericException.INSTANCE;
+        }
+
+        boolean negative = sequence.charAt(p) == '-';
+
+        int i = p;
+        if (negative) {
+            i++;
+        }
+
+        if (i >= lim) {
+            throw NumericException.INSTANCE;
+        }
+
+        long val = 0;
+        for (; i < lim; i++) {
+            int c = sequence.charAt(i);
+            if (c == 'L' || c == 'l') {
+                if (i == 0 || i + 1 < lim) {
+                    throw NumericException.INSTANCE;
+                }
+                break;
+            }
+            if (c < '0' || c > '9') {
+                throw NumericException.INSTANCE;
+            }
+            // val * 10 + (c - '0')
+            long r = (val << 3) + (val << 1) - (c - '0');
+            if (r > val) {
+                throw NumericException.INSTANCE;
+            }
+            val = r;
+        }
+
+        if (val == Long.MIN_VALUE && !negative) {
+            throw NumericException.INSTANCE;
+        }
+        return negative ? val : -val;
+    }
+
     public static long parseLong000000Greedy(CharSequence sequence, final int p, int lim) throws NumericException {
         if (lim == p) {
             throw NumericException.INSTANCE;
@@ -1409,7 +1447,7 @@ public final class Numbers {
     }
 
     // test whether the subnet matches the netmaskLength (according to postgres rules)
-    // throws NumericException if sequence is not a valid subnet OR the subnet doesn't match the netmaskLength 
+    // throws NumericException if sequence is not a valid subnet OR the subnet doesn't match the netmaskLength
     public static int parseSubnet0(CharSequence sequence, final int p, int lim, int netmaskLength) throws NumericException {
         int hi;
         int lo = p;
@@ -2553,48 +2591,6 @@ public final class Numbers {
         }
 
         if (val == Integer.MIN_VALUE && !negative) {
-            throw NumericException.INSTANCE;
-        }
-        return negative ? val : -val;
-    }
-
-    private static long parseLong0(CharSequence sequence, final int p, int lim) throws NumericException {
-        if (lim == p) {
-            throw NumericException.INSTANCE;
-        }
-
-        boolean negative = sequence.charAt(p) == '-';
-
-        int i = p;
-        if (negative) {
-            i++;
-        }
-
-        if (i >= lim) {
-            throw NumericException.INSTANCE;
-        }
-
-        long val = 0;
-        for (; i < lim; i++) {
-            int c = sequence.charAt(i);
-            if (c == 'L' || c == 'l') {
-                if (i == 0 || i + 1 < lim) {
-                    throw NumericException.INSTANCE;
-                }
-                break;
-            }
-            if (c < '0' || c > '9') {
-                throw NumericException.INSTANCE;
-            }
-            // val * 10 + (c - '0')
-            long r = (val << 3) + (val << 1) - (c - '0');
-            if (r > val) {
-                throw NumericException.INSTANCE;
-            }
-            val = r;
-        }
-
-        if (val == Long.MIN_VALUE && !negative) {
             throw NumericException.INSTANCE;
         }
         return negative ? val : -val;

@@ -683,6 +683,15 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
 
         @Override
+        public Utf8Sink putQuoted(@Nullable CharSequence cs) {
+            if (cs != null) {
+                return Utf8Sink.super.putQuoted(cs);
+            }
+            putAsciiInternal("null");
+            return this;
+        }
+
+        @Override
         public Utf8Sink put(char c) {
             if (c < 32) {
                 escapeSpace(c);

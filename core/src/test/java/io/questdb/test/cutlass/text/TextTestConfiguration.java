@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -22,15 +22,21 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http;
+package io.questdb.test.cutlass.text;
 
-import io.questdb.network.PeerDisconnectedException;
-import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.cutlass.text.DefaultTextConfiguration;
+import io.questdb.test.cairo.ConfigurationOverrides;
 
-public interface HttpMultipartContentListener {
-    void onChunk(long lo, long hi) throws PeerDisconnectedException, PeerIsSlowToReadException;
+public class TextTestConfiguration extends DefaultTextConfiguration {
 
-    void onPartBegin(HttpRequestHeader partHeader) throws PeerDisconnectedException, PeerIsSlowToReadException;
+    private final ConfigurationOverrides overrides;
 
-    void onPartEnd() throws PeerDisconnectedException, PeerIsSlowToReadException;
+    public TextTestConfiguration(ConfigurationOverrides overrides) {
+        this.overrides = overrides;
+    }
+
+    @Override
+    public int getTextAnalysisMaxLines() {
+        return overrides.getTextAnalysisMaxLines() > -1 ? overrides.getTextAnalysisMaxLines() : super.getTextAnalysisMaxLines();
+    }
 }

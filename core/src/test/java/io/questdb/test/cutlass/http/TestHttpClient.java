@@ -28,10 +28,13 @@ import io.questdb.cutlass.http.client.Chunk;
 import io.questdb.cutlass.http.client.ChunkedResponse;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
+import io.questdb.cutlass.http.processors.TextImportProcessor;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
@@ -86,7 +89,7 @@ public class TestHttpClient implements QuietCloseable {
         try {
             HttpClient.Request req = httpClient.newRequest();
             req
-                    .GET()
+                    .GET("localhost", 9001)//TODO: empty call?
                     .url(url);
 
             if (queryParams != null) {
@@ -164,6 +167,107 @@ public class TestHttpClient implements QuietCloseable {
             CharSequence expectedStatus
     ) {
         assertGetRegexp(url, expectedResponseRegexp, sql, username, password, expectedStatus, null, null);
+    }
+
+    public void assertSendMultipart(
+            CharSequence expectedResponse,
+            @Nullable CharSequence json,
+            CharSequence jsonVersion,
+            CharSequence csv,
+            CharSequence fileName,
+            @Nullable CharSequence tableName,
+            @Nullable CharSequence responseFormat,
+            @Nullable CharSequence timestampColumnName,
+            @Nullable CharSequence partitionBy,
+            @Nullable CharSequence forceHeader,
+            @Nullable CharSequence overwrite
+    ) {
+        sink.clear();
+        try {
+            toSinkImport0(
+                    tableName,
+                    json,
+                    jsonVersion,
+                    csv,
+                    fileName,
+                    responseFormat,
+                    timestampColumnName,
+                    partitionBy,
+                    forceHeader,
+                    overwrite,
+                    null,
+                    null,
+                    sink
+            );
+            TestUtils.assertEquals(expectedResponse, sink);
+        } finally {
+            httpClient.disconnect();
+        }
+    }
+
+    public void assertSendMultipart(
+            CharSequence expectedResponse,
+            @Nullable CharSequence json,
+            CharSequence jsonVersion,
+            CharSequence csv,
+            CharSequence fileName,
+            @Nullable CharSequence tableName,
+            @Nullable CharSequence responseFormat,
+            @Nullable CharSequence timestampColumnName,
+            @Nullable CharSequence partitionBy,
+            @Nullable CharSequence forceHeader,
+            @Nullable CharSequence overwrite,
+            @Nullable CharSequence skipLines,
+            @Nullable CharSequence delimiter
+    ) {
+        sink.clear();
+        try {
+            toSinkImport0(
+                    tableName,
+                    json,
+                    jsonVersion,
+                    csv,
+                    fileName,
+                    responseFormat,
+                    timestampColumnName,
+                    partitionBy,
+                    forceHeader,
+                    overwrite,
+                    skipLines,
+                    delimiter,
+                    sink
+            );
+            TestUtils.assertEquals(expectedResponse, sink);
+        } finally {
+            httpClient.disconnect();
+        }
+    }
+
+    public void assertSendMultipart(
+            CharSequence expectedResponse,
+            @Nullable CharSequence json,
+            CharSequence csv,
+            CharSequence fileName,
+            @Nullable CharSequence tableName,
+            @Nullable CharSequence responseFormat,
+            @Nullable CharSequence timestampColumnName,
+            @Nullable CharSequence partitionBy,
+            @Nullable CharSequence forceHeader,
+            @Nullable CharSequence overwrite
+    ) {
+        assertSendMultipart(
+                expectedResponse,
+                json,
+                TextImportProcessor.SCHEMA_V1,
+                csv,
+                fileName,
+                tableName,
+                responseFormat,
+                timestampColumnName,
+                partitionBy,
+                forceHeader,
+                overwrite
+        );
     }
 
     @Override
@@ -249,4 +353,59 @@ public class TestHttpClient implements QuietCloseable {
 
         reqToSink(req, sink, username, password, token, queryParams, expectedStatus);
     }
+
+    private void toSinkImport0(
+            CharSequence tableName,
+            CharSequence json,
+            CharSequence jsonVersion,
+            CharSequence csv,
+            CharSequence fileName,
+            CharSequence responseFormat,
+            CharSequence timestampColumnName,
+            CharSequence partitionBy,
+            CharSequence forceHeader,
+            CharSequence overwrite,
+            CharSequence skipLines,
+            CharSequence delimiter,
+            CharSink<?> sink
+    ) {
+        HttpClient.Request req = httpClient.newRequest();
+        req
+                .POST("localhost", 9001)
+                .url("/upload")
+                .query("name", tableName)
+                .query("fmt", responseFormat)
+                .query("timestamp", timestampColumnName)
+                .query("partitionBy", partitionBy)
+                .query("overwrite", overwrite)
+                .query("forceHeader", forceHeader)
+                .query("skipLines", skipLines)
+//                .query("skipLev", "false")
+                .query("delimiter", delimiter)
+//                .query("atomicitiy", "skipCol")
+        ;
+
+        HttpClient.MultipartRequest multipart = req.multipart();
+        HttpClient.FormData data;
+
+        // csv schema part has to be consumed before the csv itself
+        // this part is optional
+        if (json != null) {
+            data = multipart.formData(jsonVersion);
+            data.put(json);
+        }
+
+        data = multipart.formData("data", fileName);
+        data.put(csv);
+
+        HttpClient.Response rsp = multipart.send();
+        rsp.await();
+        ChunkedResponse chunkedResponse = rsp.getChunkedResponse();
+        Chunk chunk;
+
+        while ((chunk = chunkedResponse.recv()) != null) {
+            Utf8s.utf8ToUtf16(chunk.lo(), chunk.hi(), (Utf16Sink) sink);
+        }
+    }
+
 }

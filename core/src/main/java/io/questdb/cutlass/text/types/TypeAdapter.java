@@ -25,10 +25,12 @@
 package io.questdb.cutlass.text.types;
 
 import io.questdb.cairo.TableWriter;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectUtf16Sink;
 import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.Sinkable;
 
-public interface TypeAdapter {
+public interface TypeAdapter extends Sinkable {
 
     int getType();
 
@@ -38,9 +40,17 @@ public interface TypeAdapter {
 
     boolean probe(DirectUtf8Sequence text);
 
-    void write(TableWriter.Row row, int column, DirectUtf8Sequence value) throws Exception;
+    @Override
+    default void toSink(CharSink<?> sink) {
+        sink.putAscii("{}");
+    }
 
     default void write(TableWriter.Row row, int column, DirectUtf8Sequence value, DirectUtf16Sink utf16Sink) throws Exception {
         write(row, column, value);
     }
+
+    void write(TableWriter.Row row, int column, DirectUtf8Sequence value) throws Exception;
+
 }
+
+

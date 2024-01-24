@@ -28,6 +28,7 @@ import io.questdb.FactoryProvider;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
+import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.NanosecondClock;
 import io.questdb.std.RostiAllocFacade;
@@ -41,12 +42,14 @@ import java.util.Map;
 public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     private final ConfigurationOverrides overrides;
     private final TelemetryConfiguration telemetryConfiguration;
+    private final TextConfiguration textConfiguration;
     private final VolumeDefinitions volumeDefinitions = new VolumeDefinitions();
 
-    public CairoTestConfiguration(CharSequence root, TelemetryConfiguration telemetryConfiguration, ConfigurationOverrides overrides) {
+    public CairoTestConfiguration(CharSequence root, TelemetryConfiguration telemetryConfiguration, ConfigurationOverrides overrides, TextConfiguration textOverrides) {
         super(root);
         this.telemetryConfiguration = telemetryConfiguration;
         this.overrides = overrides;
+        this.textConfiguration = textOverrides;
     }
 
     @Override
@@ -314,6 +317,11 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     @Override
     public @NotNull TelemetryConfiguration getTelemetryConfiguration() {
         return telemetryConfiguration;
+    }
+
+    @Override
+    public @NotNull TextConfiguration getTextConfiguration() {
+        return textConfiguration;
     }
 
     @Override

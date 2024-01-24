@@ -109,6 +109,7 @@ open module io.questdb {
     exports io.questdb.cairo.frm.file;
     exports io.questdb.std.histogram.org.HdrHistogram;
     exports io.questdb.client;
+    exports io.questdb.cutlass.text.schema2;
     exports io.questdb.std.bytes;
     exports io.questdb.std.histogram.org.HdrHistogram.packedarray;
 

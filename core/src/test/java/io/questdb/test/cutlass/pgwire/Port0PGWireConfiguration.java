@@ -51,11 +51,11 @@ public class Port0PGWireConfiguration extends DefaultPGWireConfiguration {
             }
 
             @Override
-            public int getLimit() {
+            public int getConcurrentConnectionLimit() {
                 if (connectionLimit > -1) {
                     return connectionLimit;
                 }
-                return super.getLimit();
+                return super.getConcurrentConnectionLimit();
             }
         };
     }

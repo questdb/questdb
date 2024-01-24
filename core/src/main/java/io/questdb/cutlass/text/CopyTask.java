@@ -1328,7 +1328,8 @@ public class CopyTask {
             if (w == null) {
                 return;
             }
-            for (int i = 0; i < valuesLength; i++) {
+            int length = Math.min(types.size(), valuesLength);
+            for (int i = 0; i < length; i++) {
                 dus = values.getQuick(i);
                 if (i == timestampIndex || dus.size() == 0) {
                     continue;

@@ -25,9 +25,11 @@
 package io.questdb.cutlass.text.types;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.std.IntObjHashMap;
+import io.questdb.std.NumericException;
 import io.questdb.std.str.DirectUtf8Sequence;
 
 public final class GeoHashAdapter extends AbstractTypeAdapter {
@@ -55,7 +57,38 @@ public final class GeoHashAdapter extends AbstractTypeAdapter {
 
     @Override
     public boolean probe(DirectUtf8Sequence text) {
-        throw new UnsupportedOperationException();
+        int size = text.size();
+        if (text == null || size == 0 || SqlKeywords.isNullKeyword(text)) {
+            return true;//mappped to null
+        }
+
+        CharSequence ascii = text.asAsciiCharSequence();
+        if (size <= GeoHashes.MAX_STRING_LENGTH) {
+            int toBits = ColumnType.getGeoHashBits(type);
+
+            int fromBits = 5 * size;
+            if (fromBits < toBits) {
+                return false;
+            }
+
+            try {
+                GeoHashes.fromString(ascii, 0, size);
+                return true;
+            } catch (NumericException e) {
+                return false;
+            }
+        }
+        /* bit string is only accepted in SQL, not ILP or CSV import
+        if (size <= ColumnType.GEOLONG_MAX_BITS) {
+            try {
+                GeoHashes.fromBitString(ascii, 0);
+                return true;
+            } catch (NumericException e) {
+                return false;
+            }
+        }*/
+
+        return false;
     }
 
     @Override

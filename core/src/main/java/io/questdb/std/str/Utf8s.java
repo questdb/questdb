@@ -214,6 +214,10 @@ public final class Utf8s {
         return true;
     }
 
+    public static boolean equalsIgnoreCaseNcAscii(@NotNull CharSequence asciiSeq, @Nullable Utf8Sequence seq) {
+        return seq != null && equalsIgnoreCaseAscii(asciiSeq, seq);
+    }
+
     public static boolean equalsNcAscii(@NotNull CharSequence asciiSeq, @Nullable Utf8Sequence seq) {
         return seq != null && equalsAscii(asciiSeq, seq);
     }
@@ -382,6 +386,21 @@ public final class Utf8s {
         }
 
         return -1;
+    }
+
+    public static boolean isBlank(Utf8Sequence s) {
+        if (s == null) {
+            return true;
+        }
+
+        int len = s.size();
+        for (int i = 0; i < len; i++) {
+            int c = s.byteAt(i);
+            if (!Character.isWhitespace(c)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     public static int lastIndexOfAscii(@NotNull Utf8Sequence seq, char asciiTerm) {

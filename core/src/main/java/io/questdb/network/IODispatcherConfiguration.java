@@ -45,7 +45,7 @@ public interface IODispatcherConfiguration {
     EpollFacade getEpollFacade();
 
     default int getEventCapacity() {
-        return Numbers.ceilPow2(getLimit());
+        return Numbers.ceilPow2(getConcurrentConnectionLimit());
     }
 
     long getHeartbeatInterval();
@@ -55,7 +55,7 @@ public interface IODispatcherConfiguration {
     }
 
     default int getIOQueueCapacity() {
-        return Numbers.ceilPow2(getLimit());
+        return Numbers.ceilPow2(getConcurrentConnectionLimit());
     }
 
     default int getInitialBias() {
@@ -63,12 +63,12 @@ public interface IODispatcherConfiguration {
     }
 
     default int getInterestQueueCapacity() {
-        return Numbers.ceilPow2(getLimit());
+        return Numbers.ceilPow2(getConcurrentConnectionLimit());
     }
 
     KqueueFacade getKqueueFacade();
 
-    int getLimit();
+    int getConcurrentConnectionLimit();
 
     default int getListenBacklog() {
         if (Os.isWindows() && getHint()) {
@@ -76,9 +76,9 @@ public interface IODispatcherConfiguration {
             // this limit we set backlog value to a hint as described here:
             /// https://docs.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-listen
             // the hint is -backlog
-            return -getLimit();
+            return -getConcurrentConnectionLimit();
         }
-        return getLimit();
+        return getConcurrentConnectionLimit();
     }
 
     NetworkFacade getNetworkFacade();
@@ -87,6 +87,16 @@ public interface IODispatcherConfiguration {
         return false;
     }
 
+    /**
+     * Interval in millis to allow TCP connection to be queued (e.g. not picked up by
+     * any processor) after concurrent connection limit has been reached and
+     * before listening socket it closed. Closing listening socket
+     * avoid connection build up and any additional CPU usages by our process.
+     *
+     * Listening socket is reopened as soon as concurrent connection count drops below the limit.
+     *
+     * @return positive integer as interval in millis
+     */
     long getQueueTimeout();
 
     int getRcvBufSize();
@@ -97,5 +107,5 @@ public interface IODispatcherConfiguration {
 
     int getTestConnectionBufferSize();
 
-    long getTimeout();
+    long getIdleConnectionTimeout();
 }

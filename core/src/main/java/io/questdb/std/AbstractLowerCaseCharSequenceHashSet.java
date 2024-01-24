@@ -96,13 +96,13 @@ abstract class AbstractLowerCaseCharSequenceHashSet implements Mutable {
         return probe(key, lo, hi, index);
     }
 
-    public int remove(CharSequence key) {
+    public boolean remove(CharSequence key) {
         int index = keyIndex(key);
         if (index < 0) {
             removeAt(index);
-            return -index - 1;
+            return true;
         }
-        return -1;
+        return false;
     }
 
     public void removeAt(int index) {

@@ -47,8 +47,13 @@ import static io.questdb.cutlass.http.HttpConstants.*;
 import static io.questdb.cutlass.text.TextLoadWarning.*;
 
 public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartContentListener, Closeable {
+
+    public static final CharSequence CONTENT_TYPE_TEXT = "text/plain; charset=utf-8";
+    public static final String SCHEMA_V1 = "schema";
+    public static final String SCHEMA_V2 = "schemaV2";
     static final int MESSAGE_UNKNOWN = 3;
     static final int RESPONSE_PREFIX = 1;
+    private static final CharSequence CONTENT_TYPE_JSON = "application/json; charset=utf-8";
     private final static Log LOG = LogFactory.getLog(TextImportProcessor.class);
     // Local value has to be static because each thread will have its own instance of
     // processor. For different threads to lookup the same value from local value map the key,
@@ -57,17 +62,18 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     private static final int MESSAGE_DATA = 2;
     private static final int MESSAGE_SCHEMA = 1;
     private static final String OVERRIDDEN_FROM_TABLE = "From Table";
-    private static final Utf8String PARTITION_BY_NONE = new Utf8String("NONE");
     private static final int RESPONSE_COLUMN = 2;
     private static final int RESPONSE_COMPLETE = 6;
     private static final int RESPONSE_DONE = 5;
-    private static final int RESPONSE_ERROR = 4;
-    private static final int RESPONSE_SUFFIX = 3;
+    private static final int RESPONSE_ERROR = 7;
+    private static final int RESPONSE_MAPPING = 3;
+    private static final int RESPONSE_SUFFIX = 4;
     private static final int TO_STRING_COL1_PAD = 15;
     private static final int TO_STRING_COL2_PAD = 50;
     private static final int TO_STRING_COL3_PAD = 15;
     private static final int TO_STRING_COL4_PAD = 7;
     private static final int TO_STRING_COL5_PAD = 12;
+    private static final int ERROR_LINE_PAD = TO_STRING_COL1_PAD + TO_STRING_COL2_PAD + TO_STRING_COL3_PAD + TO_STRING_COL4_PAD + TO_STRING_COL5_PAD + 12;
     private static final Utf8SequenceIntHashMap atomicityParamMap = new Utf8SequenceIntHashMap();
     private final CairoEngine engine;
     private HttpConnectionContext transientContext;
@@ -87,12 +93,12 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     }
 
     @Override
-    public void onChunk(long lo, long hi)
-            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+    public void onChunk(long lo, long hi) throws PeerIsSlowToReadException, PeerDisconnectedException {
         if (hi > lo) {
             try {
                 transientState.lo = lo;
                 transientState.hi = hi;
+
                 transientState.textLoader.parse(lo, hi, transientContext.getSecurityContext());
                 if (transientState.messagePart == MESSAGE_DATA && !transientState.analysed) {
                     transientState.analysed = true;
@@ -101,49 +107,74 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
             } catch (EntryUnavailableException e) {
                 throw RetryOperationException.INSTANCE;
             } catch (TextException | CairoException | CairoError e) {
-                sendErrorAndThrowDisconnect(e.getFlyweightMessage());
+                LOG.error().$(e.getFlyweightMessage()).$();
+                transientState.textLoader.setIgnoreEverything(true);
+                transientState.errorMessage = e.getFlyweightMessage().toString();
+                sendResponse(transientContext);
             }
         }
     }
 
     @Override
-    public void onPartBegin(HttpRequestHeader partHeader) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+    public void onPartBegin(HttpRequestHeader partHeader) {
         final DirectUtf8Sequence contentDisposition = partHeader.getContentDispositionName();
         LOG.debug().$("part begin [name=").$(contentDisposition).$(']').$();
         if (Utf8s.equalsNcAscii("data", contentDisposition)) {
             final HttpRequestHeader rh = transientContext.getRequestHeader();
-            DirectUtf8Sequence name = rh.getUrlParam(URL_PARAM_NAME);
-            if (name == null) {
-                name = partHeader.getContentDispositionFilename();
+            DirectUtf8Sequence tableName = rh.getUrlParam(URL_PARAM_TABLE_NAME);
+            if (Utf8s.isBlank(tableName)) {
+                // "name" query parameter name is handled for backward compatibility
+                tableName = rh.getUrlParam(URL_PARAM_NAME);
+                if (Utf8s.isBlank(tableName)) {
+                    tableName = partHeader.getContentDispositionFilename();
+
+                    if (Utf8s.isBlank(tableName)) {
+                        throwHttpException("no file name given");
+                    }
+                }
             }
 
-            if (name == null) {
-                sendErrorAndThrowDisconnect("no file name given");
+
+            Utf8Sequence partitionByColumnName = rh.getUrlParam(URL_PARAM_PARTITION_BY);
+            final int partitionBy;
+            if (Utf8s.isBlank(partitionByColumnName)) {
+                partitionBy = PartitionBy.NONE;
+            } else {
+                partitionBy = PartitionBy.fromUtf8String(partitionByColumnName);
+                if (partitionBy == -1) {
+                    throwHttpException("invalid partitionBy");
+                }
             }
 
-            Utf8Sequence partitionedBy = rh.getUrlParam(URL_PARAM_PARTITION_BY);
-            if (partitionedBy == null) {
-                partitionedBy = PARTITION_BY_NONE;
-            }
-            int partitionBy = PartitionBy.fromUtf8String(partitionedBy);
-            if (partitionBy == -1) {
-                sendErrorAndThrowDisconnect("invalid partitionBy");
-            }
-
-            DirectUtf8Sequence timestampColumn = rh.getUrlParam(URL_PARAM_TIMESTAMP);
-            if (PartitionBy.isPartitioned(partitionBy) && timestampColumn == null) {
-                sendErrorAndThrowDisconnect("when specifying partitionBy you must also specify timestamp");
+            DirectUtf8Sequence timestampColumnName = rh.getUrlParam(URL_PARAM_TIMESTAMP);
+            final boolean isTimestampColumnNameBlank = Utf8s.isBlank(timestampColumnName);
+            if (PartitionBy.isPartitioned(partitionBy) && isTimestampColumnNameBlank) {
+                throwHttpException("when specifying partitionBy you must also specify timestamp");
             }
 
             transientState.analysed = false;
             transientState.textLoader.configureDestination(
-                    name,
-                    Utf8s.equalsNcAscii("true", rh.getUrlParam(URL_PARAM_OVERWRITE)),
+                    tableName,
+                    !Utf8s.equalsIgnoreCaseNcAscii("false", rh.getUrlParam(URL_PARAM_WAL)),
+                    Utf8s.equalsIgnoreCaseNcAscii("true", rh.getUrlParam(URL_PARAM_OVERWRITE)),
                     getAtomicity(rh.getUrlParam(URL_PARAM_ATOMICITY)),
                     partitionBy,
-                    timestampColumn,
-                    null
+                    isTimestampColumnNameBlank ? null : timestampColumnName,
+                    null,
+                    Utf8s.equalsIgnoreCaseNcAscii("true", rh.getUrlParam(URL_PARAM_TRUNCATE))
             );
+
+            DirectUtf8Sequence skipLinesParam = rh.getUrlParam(URL_PARAM_SKIP_LINES);
+            if (!Utf8s.isBlank(skipLinesParam)) {
+                try {
+                    long skipLines = Numbers.parseLong(skipLinesParam);
+                    if (skipLines > 0) {
+                        transientState.textLoader.setSkipLines(skipLines);
+                    }
+                } catch (NumericException e) {
+                    throwHttpException("invalid skipLines value, must be a positive long");
+                }
+            }
 
             DirectUtf8Sequence o3MaxLagChars = rh.getUrlParam(URL_PARAM_O3_MAX_LAG);
             if (o3MaxLagChars != null) {
@@ -153,7 +184,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                         transientState.textLoader.setO3MaxLag(o3MaxLag);
                     }
                 } catch (NumericException e) {
-                    sendErrorAndThrowDisconnect("invalid o3MaxLag value, must be a long");
+                    throwHttpException("invalid o3MaxLag value, must be a long");
                 }
             }
 
@@ -165,16 +196,20 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                         transientState.textLoader.setMaxUncommittedRows(maxUncommittedRows);
                     }
                 } catch (NumericException e) {
-                    sendErrorAndThrowDisconnect("invalid maxUncommittedRows, must be an int");
+                    throwHttpException("invalid maxUncommittedRows, must be an int");
                 }
             }
 
             boolean create = !Utf8s.equalsNcAscii("false", rh.getUrlParam(URL_PARAM_CREATE));
-            transientState.textLoader.setCreate(create);
+            transientState.textLoader.setCreateTable(create);
 
-            boolean forceHeader = Utf8s.equalsNcAscii("true", rh.getUrlParam(URL_PARAM_FORCE_HEADER));
+            boolean forceHeader = Utf8s.equalsIgnoreCaseNcAscii("true", rh.getUrlParam(URL_PARAM_FORCE_HEADER));
             transientState.textLoader.setForceHeaders(forceHeader);
-            transientState.textLoader.setSkipLinesWithExtraValues(Utf8s.equalsNcAscii("true", rh.getUrlParam(URL_PARAM_SKIP_LEV)));
+            DirectUtf8Sequence skipLev = rh.getUrlParam(URL_PARAM_SKIP_LEV);
+            if (skipLev == null) {
+                skipLev = rh.getUrlParam(URL_PARAM_SKIP_LINE_EXTRA_VALUES);
+            }
+            transientState.textLoader.setSkipLinesWithExtraValues(Utf8s.equalsIgnoreCaseNcAscii("true", skipLev));
             DirectUtf8Sequence delimiter = rh.getUrlParam(URL_PARAM_DELIMITER);
             if (delimiter != null && delimiter.size() == 1) {
                 transientState.textLoader.configureColumnDelimiter(delimiter.byteAt(0));
@@ -183,20 +218,29 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
 
             transientState.forceHeader = forceHeader;
             transientState.messagePart = MESSAGE_DATA;
-        } else if (Utf8s.equalsNcAscii("schema", contentDisposition)) {
-            transientState.textLoader.setState(TextLoader.LOAD_JSON_METADATA);
-            transientState.messagePart = MESSAGE_SCHEMA;
         } else {
-            if (partHeader.getContentDisposition() == null) {
-                sendErrorAndThrowDisconnect("'Content-Disposition' multipart header missing'");
+            if (Utf8s.equalsIgnoreCaseNcAscii(SCHEMA_V1, contentDisposition)) {
+                transientState.textLoader.clearSchemas();
+                transientState.textLoader.setState(TextLoader.LOAD_JSON_METADATA);
+                transientState.messagePart = MESSAGE_SCHEMA;
+                transientState.textLoader.setSchemaVersion(1);
+            } else if (Utf8s.equalsIgnoreCaseNcAscii(SCHEMA_V2, contentDisposition)) {
+                transientState.textLoader.clearSchemas();
+                transientState.textLoader.setState(TextLoader.LOAD_JSON_METADATA);
+                transientState.messagePart = MESSAGE_SCHEMA;
+                transientState.textLoader.setSchemaVersion(2);
             } else {
-                sendErrorAndThrowDisconnect("invalid value in 'Content-Disposition' multipart header");
+                if (partHeader.getContentDisposition() == null) {
+                    throwHttpException("'Content-Disposition' multipart header missing'");
+                } else {
+                    throwHttpException("invalid value in 'Content-Disposition' multipart header");
+                }
             }
         }
     }
 
     @Override
-    public void onPartEnd() throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+    public void onPartEnd() throws PeerDisconnectedException, PeerIsSlowToReadException {
         try {
             LOG.debug().$("part end").$();
             transientState.textLoader.wrapUp();
@@ -204,15 +248,9 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                 sendResponse(transientContext);
             }
         } catch (TextException | CairoException | CairoError e) {
-            sendErrorAndThrowDisconnect(e.getFlyweightMessage());
+            throwHttpException(e.getFlyweightMessage());
         }
     }
-
-    // This processor implements HttpMultipartContentListener, methods of which
-    // have neither context nor dispatcher. During "chunk" processing we may need
-    // to send something back to client, or disconnect them. To do that we need
-    // these transient references. resumeRecv() will set them and they will remain
-    // valid during multipart events.
 
     @Override
     public void onRequestComplete(HttpConnectionContext context) {
@@ -220,13 +258,17 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     }
 
     @Override
-    public void onRequestRetry(
-            HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+    public void onRequestRetry(HttpConnectionContext context) throws PeerIsSlowToReadException, PeerDisconnectedException {
         this.transientContext = context;
         this.transientState = LV.get(context);
         onChunk(transientState.lo, transientState.hi);
     }
+
+    // This processor implements HttpMultipartContentListener, methods of which
+    // have neither context nor dispatcher. During "chunk" processing we may need
+    // to send something back to client, or disconnect them. To do that we need
+    // these transient references. resumeRecv() will set them and they will remain
+    // valid during multipart events.
 
     @Override
     public void resumeRecv(HttpConnectionContext context) {
@@ -240,9 +282,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     }
 
     @Override
-    public void resumeSend(
-            HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+    public void resumeSend(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
         context.resumeResponseSend();
         doResumeSend(LV.get(context), context.getChunkedResponse());
     }
@@ -280,6 +320,102 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         return b;
     }
 
+    private static void padRight(Utf8Sink b, CharSequence value, int from, int to) {
+        to = Math.min(to, value.length());
+        b.putAscii("  ");
+        int pad = TextImportProcessor.ERROR_LINE_PAD - (to - from);
+        b.put(value, from, to);
+        replicate(b, ' ', pad);
+        b.putAscii('|');
+    }
+
+    // add list of errors, e.g. unmapped schema or table columns
+    private static void putErrors(TextImportProcessorState state, HttpChunkedResponse socket) {
+        if (state.errorMessage == null) {
+            return;
+        }
+
+        sep(socket);
+        socket.putAscii('|');
+        socket.putAscii("  Errors");
+        replicate(socket, ' ', 105);
+        socket.putAscii('|');
+        socket.putEOL();
+        sep(socket);
+
+        putMultiline(socket, state.errorMessage);
+    }
+
+    // add mapping for all matching columns in format
+    private static void putMapping(TextImportProcessorState state, HttpChunkedResponse socket) {
+        ObjList<TextLoader.CsvColumnMapping> mappingColumns = state.textLoader.getMappingColumns();
+        StringSink sink = Misc.getThreadLocalSink();
+
+        final int CSV_COL_IDX_PAD = 5;
+        final int CSV_COL_NAME_PAD = 20;
+        final int CSV_COL_TYPE_PAD = 13;
+        final int TABLE_COL_NAME_PAD = 20;
+        final int TABLE_COL_TYPE_PAD = 13;
+        final int INFO_COL_PAD = 25;
+
+        if (mappingColumns.size() > 0) {
+            socket.putAscii('|');
+            pad(socket, CSV_COL_IDX_PAD, "Idx");
+            pad(socket, CSV_COL_NAME_PAD, "Csv name");
+            pad(socket, CSV_COL_TYPE_PAD, "Csv type");
+            pad(socket, TABLE_COL_NAME_PAD, "Table column");
+            pad(socket, TABLE_COL_TYPE_PAD, "Table type");
+            pad(socket, INFO_COL_PAD, "Status");
+            socket.putEOL();
+            sep(socket);
+
+            for (int i = 0, n = mappingColumns.size(); i < n; i++) {
+                socket.putAscii('|');
+
+                sink.clear();
+                TextLoader.CsvColumnMapping column = mappingColumns.getQuick(i);
+                if (column.getCsvColumnIndex() != -1) {
+                    sink.put(column.getCsvColumnIndex());
+                }
+                pad(socket, CSV_COL_IDX_PAD, sink);
+
+                sink.clear();
+                sink.put(column.getCsvColumnName() != null ? column.getCsvColumnName() : (column.getCsvColumnIndex() != -1 ? "" : "UNKNOWN"));
+                pad(socket, CSV_COL_NAME_PAD, sink);
+
+                sink.clear();
+                sink.put(column.getCsvColumnAdapter() != null ? ColumnType.nameOf(column.getCsvColumnAdapter().getType()) : "UNKNOWN");
+                pad(socket, CSV_COL_TYPE_PAD, sink);
+
+                sink.clear();
+                sink.put(column.getTableColumnName() != null ? column.getTableColumnName() : "UNKNOWN");
+                pad(socket, TABLE_COL_NAME_PAD, sink);
+
+                sink.clear();
+                sink.put(column.getTableColumnType() > -1 ? ColumnType.nameOf(column.getTableColumnType()) : "UNKNOWN");
+                pad(socket, TABLE_COL_TYPE_PAD, sink);
+
+                sink.clear();
+                column.statusToSink(sink);
+                pad(socket, INFO_COL_PAD, sink);
+
+                socket.putEOL();
+            }
+        }
+    }
+
+    private static void putMultiline(HttpChunkedResponse socket, CharSequence text) {
+        if (text == null) {
+            return;
+        }
+
+        for (int i = 0, n = text.length(); i < n; i += ERROR_LINE_PAD) {
+            socket.putAscii('|');
+            padRight(socket, text, i, i + ERROR_LINE_PAD - 2);
+            socket.putEOL();
+        }
+    }
+
     private static void replicate(Utf8Sink b, char c, int times) {
         for (int i = 0; i < times; i++) {
             b.put(c);
@@ -296,14 +432,14 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                 long totalRows = completeState.getParsedLineCount();
                 long importedRows = completeState.getWrittenLineCount();
                 response.putAscii('{')
-                        .putAsciiQuoted("status").putAscii(':').putAsciiQuoted("OK").putAscii(',')
+                        .putAsciiQuoted("status").putAscii(':').putAsciiQuoted(state.errorMessage == null ? "OK" : "ERROR").putAscii(',')
                         .putAsciiQuoted("location").putAscii(':').putQuoted(completeState.getTableName()).putAscii(',')
                         .putAsciiQuoted("rowsRejected").putAscii(':').put(totalRows - importedRows + completeState.getErrorLineCount()).putAscii(',')
                         .putAsciiQuoted("rowsImported").putAscii(':').put(importedRows).putAscii(',')
                         .putAsciiQuoted("header").putAscii(':').put(completeState.isHeaderDetected()).putAscii(',')
                         .putAsciiQuoted("partitionBy").putAscii(':').putAsciiQuoted(PartitionBy.toString(completeState.getPartitionBy())).putAscii(',');
 
-                int tsIdx = metadata.getTimestampIndex();
+                final int tsIdx = metadata != null ? metadata.getTimestampIndex() : -1;
                 if (tsIdx != -1) {
                     response.putAsciiQuoted("timestamp").putAscii(':').putQuoted(metadata.getColumnName(tsIdx)).putAscii(',');
                 }
@@ -321,6 +457,12 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                     }
                     response.putAscii(']').putAscii(',');
                 }
+                if (state.errorMessage != null) {
+                    response.putAsciiQuoted("errors").putAscii(':').putAscii('[');
+                    response.putAsciiQuoted(state.errorMessage);
+                    response.putAscii(']').putAscii(',');
+                }
+
                 response.putAsciiQuoted("columns").putAscii(':').putAscii('[');
                 state.responseState = RESPONSE_COLUMN;
                 // fall through
@@ -339,9 +481,32 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                                 .putAsciiQuoted("errors").putAscii(':').put(errors.getQuick(state.columnIndex));
                         response.putAscii('}');
                     }
+                    if (state.columnIndex == columnCount) {
+                        response.bookmark();
+                        response.putAscii(']').putAscii(',');
+                        response.putAsciiQuoted("mapping").putAscii(':').putAscii('[');
+                    }
+                } else {
+                    response.bookmark();
+                    response.putAscii(']').putAscii(',');
+                    response.putAsciiQuoted("mapping").putAscii(':').putAscii('[');
                 }
-                state.responseState = RESPONSE_SUFFIX;
+
+                state.responseState = RESPONSE_MAPPING;
+                state.columnIndex = 0;
                 // fall through
+            case RESPONSE_MAPPING:
+                ObjList<TextLoader.CsvColumnMapping> mappingColumns = state.textLoader.getMappingColumns();
+                final int columnCount = mappingColumns.size();
+                for (; state.columnIndex < columnCount; state.columnIndex++) {
+                    response.bookmark();
+                    if (state.columnIndex > 0) {
+                        response.putAscii(',');
+                    }
+                    mappingColumns.getQuick(state.columnIndex).toJson(response);
+                }
+                // fall through
+                state.responseState = RESPONSE_SUFFIX;
             case RESPONSE_SUFFIX:
                 response.bookmark();
                 response.putAscii(']').putAscii('}');
@@ -389,6 +554,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                 pad(socket, TO_STRING_COL2_PAD, textLoaderCompletedState.getTimestampCol() == null ? "NONE" : textLoaderCompletedState.getTimestampCol());
                 pad(socket, TO_STRING_COL3_PAD, "");
                 pad(socket, TO_STRING_COL4_PAD, "");
+
                 if (hasFlag(textLoaderCompletedState.getWarnings(), TIMESTAMP_MISMATCH)) {
                     pad(socket, TO_STRING_COL5_PAD, OVERRIDDEN_FROM_TABLE);
                 } else {
@@ -440,6 +606,20 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                 // fall through
             case RESPONSE_SUFFIX:
                 socket.bookmark();
+                if (metadata != null) {
+                    sep(socket);
+                }
+                putMapping(state, socket);
+
+                if (state.errorMessage != null) {
+                    if (metadata != null) {
+                        sep(socket);
+                    }
+
+                    //putMapping(state, socket);
+                    putErrors(state, socket);
+                }
+
                 sep(socket);
                 state.responseState = RESPONSE_COMPLETE;
                 socket.sendChunk(true);
@@ -462,28 +642,16 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     private void doResumeSend(
             TextImportProcessorState state,
             HttpChunkedResponse socket
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         try {
-            if (state.errorMessage != null) {
-                resumeError(state, socket);
-            } else if (state.json) {
+            if (state.json) {
                 resumeJson(state, socket);
             } else {
                 resumeText(state, socket);
             }
         } catch (NoSpaceLeftInResponseBufferException ignored) {
-            if (socket.resetToBookmark()) {
-                socket.sendChunk(false);
-            } else {
-                // what we have here is out unit of data, column value or query
-                // is larger that response content buffer
-                // all we can do in this scenario is to log appropriately
-                // and disconnect socket
-                socket.shutdownWrite();
-                throw ServerDisconnectException.INSTANCE;
-            }
+            socket.sendChunk(true);
         }
-
         state.clear();
     }
 
@@ -524,19 +692,24 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     }
 
     private void sendResponse(HttpConnectionContext context)
-            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+            throws PeerDisconnectedException, PeerIsSlowToReadException {
         final TextImportProcessorState state = LV.get(context);
         final HttpChunkedResponse response = context.getChunkedResponse();
 
         // Copy written state to state, text loader, parser can be closed before re-attempt to send the response
         state.snapshotStateAndCloseWriter();
-        if (state.state == TextImportProcessorState.STATE_OK) {
-            response.status(200, state.json ? CONTENT_TYPE_JSON : CONTENT_TYPE_TEXT);
-            response.sendHeader();
-            doResumeSend(state, response);
+        if (state.json) {
+            response.status(200, CONTENT_TYPE_JSON);
         } else {
-            sendErr(context, state.stateMessage, context.getChunkedResponse());
+            response.status(200, CONTENT_TYPE_TEXT);
         }
+        response.sendHeader();
+        doResumeSend(state, response);
+    }
+
+    private void throwHttpException(CharSequence message) {
+        transientState.snapshotStateAndCloseWriter();
+        throw HttpException.instance(message);
     }
 
     static {

@@ -247,6 +247,11 @@ public class HttpServerConfigurationBuilder {
             }
 
             @Override
+            public int getWorkerCount() {
+                return workerCount == 0 ? super.getWorkerCount() : workerCount;
+            }
+
+            @Override
             public boolean isHealthCheckAuthenticationRequired() {
                 return healthCheckAuthRequired != null ? healthCheckAuthRequired : super.isHealthCheckAuthenticationRequired();
             }
@@ -254,11 +259,6 @@ public class HttpServerConfigurationBuilder {
             @Override
             public boolean isPessimisticHealthCheckEnabled() {
                 return pessimisticHealthCheck;
-            }
-
-            @Override
-            public int getWorkerCount() {
-                return workerCount == 0 ? super.getWorkerCount() : workerCount;
             }
         };
     }

@@ -31,6 +31,7 @@ import io.questdb.std.Mutable;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectUtf16Sink;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8s;
@@ -39,6 +40,7 @@ public class DateUtf8Adapter extends AbstractTypeAdapter implements Mutable {
     private final DirectUtf16Sink utf16Sink;
     private DateFormat format;
     private DateLocale locale;
+    private String pattern;
 
     public DateUtf8Adapter(DirectUtf16Sink utf16Sink) {
         this.utf16Sink = utf16Sink;
@@ -55,7 +57,8 @@ public class DateUtf8Adapter extends AbstractTypeAdapter implements Mutable {
         return ColumnType.DATE;
     }
 
-    public DateUtf8Adapter of(DateFormat format, DateLocale locale) {
+    public DateUtf8Adapter of(String pattern, DateFormat format, DateLocale locale) {
+        this.pattern = pattern;
         this.format = format;
         this.locale = locale;
         return this;
@@ -72,16 +75,25 @@ public class DateUtf8Adapter extends AbstractTypeAdapter implements Mutable {
     }
 
     @Override
+    public void toSink(CharSink<?> sink) {
+        sink.put('{');
+        sink.putQuoted("pattern").put(':').putQuoted(pattern).put(',');
+        sink.putQuoted("locale").put(':').putQuoted(locale.getLocaleName()).put(',');
+        sink.putQuoted("utf8").put(':').put("true");
+        sink.put('}');
+    }
+
+    @Override
+    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) throws Exception {
+        write(row, column, value, utf16Sink);
+    }
+
+    @Override
     public void write(TableWriter.Row row, int column, DirectUtf8Sequence value, DirectUtf16Sink utf16Sink) throws Exception {
         utf16Sink.clear();
         if (!Utf8s.utf8ToUtf16EscConsecutiveQuotes(value.lo(), value.hi(), utf16Sink)) {
             throw Utf8Exception.INSTANCE;
         }
         row.putDate(column, format.parse(utf16Sink, locale));
-    }
-
-    @Override
-    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) throws Exception {
-        write(row, column, value, utf16Sink);
     }
 }

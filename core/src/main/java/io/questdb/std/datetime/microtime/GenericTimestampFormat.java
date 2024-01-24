@@ -382,6 +382,25 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     sink.put(timeZoneName);
                     break;
 
+                case TimestampFormatCompiler.OP_EPOCH_MILLIS:
+                    if (compiledOps.size() != 1) {
+                        return;//maybe throw exception
+                    }
+                    sink.put(micros / 1000);
+                    break;
+                case TimestampFormatCompiler.OP_EPOCH_MICROS:
+                    if (compiledOps.size() != 1) {
+                        return;//maybe throw exception
+                    }
+                    sink.put(micros);
+                    break;
+                case TimestampFormatCompiler.OP_EPOCH_NANOS:
+                    if (compiledOps.size() != 1) {
+                        return;//maybe throw exception
+                    }
+                    sink.put(micros * 1000);
+                    break;
+
                 // SEPARATORS
                 default:
                     sink.put(delimiters.getQuick(-op - 1));
@@ -714,6 +733,23 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     }
                     pos += Numbers.decodeHighInt(l);
                     break;
+
+                // EPOCH - these formats can't be combined with anything else
+                case TimestampFormatCompiler.OP_EPOCH_MILLIS:
+                    if (compiledOps.size() != 1) {
+                        throw NumericException.INSTANCE;//TODO: would null be better ?
+                    }
+                    return Numbers.parseLong(in, lo, hi) * 1000;
+                case TimestampFormatCompiler.OP_EPOCH_MICROS:
+                    if (compiledOps.size() != 1) {
+                        throw NumericException.INSTANCE;//TODO: would null be better ?
+                    }
+                    return Numbers.parseLong(in, lo, hi);
+                case TimestampFormatCompiler.OP_EPOCH_NANOS:
+                    if (compiledOps.size() != 1) {
+                        throw NumericException.INSTANCE;//TODO: would null be better ?
+                    }
+                    return Numbers.parseLong(in, lo, hi) / 1000;
 
                 // SEPARATORS
                 default:

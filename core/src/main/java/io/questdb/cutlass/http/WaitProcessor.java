@@ -102,7 +102,7 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
             if (!retry.tryRerun(selector, this)) {
                 try {
                     reschedule(retry, retry.getAttemptDetails().attempt + 1, retry.getAttemptDetails().waitStartTimestamp);
-                } catch (RetryFailedOperationException e) {
+                } catch (HttpException e) {
                     retry.fail(selector, e);
                 }
             }

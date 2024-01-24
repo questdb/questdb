@@ -626,6 +626,8 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
 
         private void of0(Utf8Sequence value) {
             int len = value.size();
+            //TODO: do we need it ?
+            assert _wptr + len < lo + lim;
             Utf8s.strCpy(value, len, _wptr);
             _wptr += len;
         }

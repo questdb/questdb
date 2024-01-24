@@ -95,7 +95,8 @@ public final class ColumnType {
     public static final short PARAMETER = ARRAY_STRING + 1;     // = 29;
     public static final short NULL = PARAMETER + 1;             // = 30; ALWAYS the last
 
-    private static final short[] TYPE_SIZE = new short[NULL + 1];
+    public static final short TYPES_SIZE = NULL + 1;
+    private static final short[] TYPE_SIZE = new short[TYPES_SIZE];
     private static final short[] TYPE_SIZE_POW2 = new short[TYPE_SIZE.length];
     // slightly bigger than needed to make it a power of 2
     private static final short OVERLOAD_PRIORITY_N = (short) Math.pow(2.0, Numbers.msb(NULL) + 1.0);

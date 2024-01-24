@@ -115,10 +115,10 @@ public class PropServerConfigurationTest {
 
         Assert.assertEquals("Keep-Alive: timeout=5, max=10000" + Misc.EOL, configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getKeepAliveHeader());
 
-        Assert.assertEquals(64, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getLimit());
+        Assert.assertEquals(64, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getConcurrentConnectionLimit());
         Assert.assertEquals(64, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getEventCapacity());
         Assert.assertEquals(64, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getIOQueueCapacity());
-        Assert.assertEquals(300000, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getTimeout());
+        Assert.assertEquals(300000, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getIdleConnectionTimeout());
         Assert.assertEquals(5000, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getQueueTimeout());
         Assert.assertEquals(64, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getInterestQueueCapacity());
         Assert.assertEquals(IOOperation.READ, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getInitialBias());
@@ -293,12 +293,12 @@ public class PropServerConfigurationTest {
 
         // influxdb line TCP protocol
         Assert.assertTrue(configuration.getLineTcpReceiverConfiguration().isEnabled());
-        Assert.assertEquals(256, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getLimit());
+        Assert.assertEquals(256, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getConcurrentConnectionLimit());
         Assert.assertEquals(0, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getBindIPv4Address());
         Assert.assertEquals(9009, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getBindPort());
         Assert.assertEquals(256, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getEventCapacity());
         Assert.assertEquals(256, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getIOQueueCapacity());
-        Assert.assertEquals(0, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getTimeout());
+        Assert.assertEquals(0, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getIdleConnectionTimeout());
         Assert.assertEquals(5000, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getQueueTimeout());
         Assert.assertEquals(256, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getInterestQueueCapacity());
         Assert.assertEquals(256, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getListenBacklog());
@@ -353,8 +353,8 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(60000000, configuration.getCairoConfiguration().getColumnPurgeRetryDelayLimit());
         Assert.assertEquals(10000, configuration.getCairoConfiguration().getColumnPurgeRetryDelay());
 
-        // PG wire
-        Assert.assertEquals(64, configuration.getPGWireConfiguration().getDispatcherConfiguration().getLimit());
+        // Pg wire
+        Assert.assertEquals(64, configuration.getPGWireConfiguration().getDispatcherConfiguration().getConcurrentConnectionLimit());
         Assert.assertEquals(64, configuration.getPGWireConfiguration().getDispatcherConfiguration().getTestConnectionBufferSize());
         Assert.assertEquals(2, configuration.getPGWireConfiguration().getBinParamCountCapacity());
         Assert.assertTrue(configuration.getPGWireConfiguration().isSelectCacheEnabled());
@@ -957,10 +957,10 @@ public class PropServerConfigurationTest {
             Assert.assertEquals("Keep-Alive: timeout=10, max=50000" + Misc.EOL, configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getKeepAliveHeader());
             Assert.assertTrue(configuration.getHttpServerConfiguration().getHttpContextConfiguration().allowDeflateBeforeSend());
 
-            Assert.assertEquals(63, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getLimit());
+            Assert.assertEquals(63, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getConcurrentConnectionLimit());
             Assert.assertEquals(64, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getEventCapacity());
             Assert.assertEquals(64, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getIOQueueCapacity());
-            Assert.assertEquals(7000000, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getTimeout());
+            Assert.assertEquals(7000000, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getIdleConnectionTimeout());
             Assert.assertEquals(1001, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getQueueTimeout());
             Assert.assertEquals(64, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getInterestQueueCapacity());
             Assert.assertEquals(IOOperation.READ, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getInitialBias());
@@ -1113,12 +1113,12 @@ public class PropServerConfigurationTest {
 
             // influxdb line TCP protocol
             Assert.assertTrue(configuration.getLineTcpReceiverConfiguration().isEnabled());
-            Assert.assertEquals(11, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getLimit());
+            Assert.assertEquals(11, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getConcurrentConnectionLimit());
             Assert.assertEquals(167903521, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getBindIPv4Address());
             Assert.assertEquals(9916, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getBindPort());
             Assert.assertEquals(16, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getEventCapacity());
             Assert.assertEquals(16, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getIOQueueCapacity());
-            Assert.assertEquals(400_000, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getTimeout());
+            Assert.assertEquals(400_000, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getIdleConnectionTimeout());
             Assert.assertEquals(1_002, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getQueueTimeout());
             Assert.assertEquals(16, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getInterestQueueCapacity());
             Assert.assertEquals(11, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getListenBacklog());
@@ -1251,16 +1251,16 @@ public class PropServerConfigurationTest {
             PropServerConfiguration configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
 
             Assert.assertEquals(9020, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getBindPort());
-            Assert.assertEquals(63, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getLimit());
-            Assert.assertEquals(7000000, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getTimeout());
+            Assert.assertEquals(63, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getConcurrentConnectionLimit());
+            Assert.assertEquals(7000000, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getIdleConnectionTimeout());
             Assert.assertEquals(1001, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getQueueTimeout());
             Assert.assertEquals(4194304, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getSndBufSize());
             Assert.assertEquals(8388608, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getRcvBufSize());
             Assert.assertTrue(configuration.getHttpServerConfiguration().getDispatcherConfiguration().getHint());
 
             Assert.assertEquals(9120, configuration.getHttpMinServerConfiguration().getDispatcherConfiguration().getBindPort());
-            Assert.assertEquals(8, configuration.getHttpMinServerConfiguration().getDispatcherConfiguration().getLimit());
-            Assert.assertEquals(7000000, configuration.getHttpMinServerConfiguration().getDispatcherConfiguration().getTimeout());
+            Assert.assertEquals(8, configuration.getHttpMinServerConfiguration().getDispatcherConfiguration().getConcurrentConnectionLimit());
+            Assert.assertEquals(7000000, configuration.getHttpMinServerConfiguration().getDispatcherConfiguration().getIdleConnectionTimeout());
             Assert.assertEquals(1001, configuration.getHttpMinServerConfiguration().getDispatcherConfiguration().getQueueTimeout());
             Assert.assertEquals(33554432, configuration.getHttpMinServerConfiguration().getDispatcherConfiguration().getSndBufSize());
             Assert.assertEquals(16777216, configuration.getHttpMinServerConfiguration().getDispatcherConfiguration().getRcvBufSize());
@@ -1268,15 +1268,15 @@ public class PropServerConfigurationTest {
             Assert.assertTrue(configuration.getHttpMinServerConfiguration().getDispatcherConfiguration().getHint());
 
             // influxdb line TCP protocol
-            Assert.assertEquals(11, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getLimit());
-            Assert.assertEquals(400_000, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getTimeout());
+            Assert.assertEquals(11, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getConcurrentConnectionLimit());
+            Assert.assertEquals(400_000, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getIdleConnectionTimeout());
             Assert.assertEquals(1_002, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getQueueTimeout());
             Assert.assertEquals(32768, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getRcvBufSize());
             Assert.assertTrue(configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getHint());
 
             // Pg wire
-            Assert.assertEquals(11, configuration.getPGWireConfiguration().getDispatcherConfiguration().getLimit());
-            Assert.assertEquals(400000, configuration.getPGWireConfiguration().getDispatcherConfiguration().getTimeout());
+            Assert.assertEquals(11, configuration.getPGWireConfiguration().getDispatcherConfiguration().getConcurrentConnectionLimit());
+            Assert.assertEquals(400000, configuration.getPGWireConfiguration().getDispatcherConfiguration().getIdleConnectionTimeout());
             Assert.assertEquals(1002, configuration.getPGWireConfiguration().getDispatcherConfiguration().getQueueTimeout());
             Assert.assertEquals(32768, configuration.getPGWireConfiguration().getDispatcherConfiguration().getRcvBufSize());
             Assert.assertEquals(32800, configuration.getPGWireConfiguration().getDispatcherConfiguration().getSndBufSize());

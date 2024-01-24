@@ -32,8 +32,11 @@ import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public class TimestampFormatCompiler {
+
     static final int OP_AM_PM = 14;
     static final int OP_DAY_GREEDY = 139;
     static final int OP_DAY_NAME_LONG = 12;
@@ -42,6 +45,9 @@ public class TimestampFormatCompiler {
     static final int OP_DAY_OF_YEAR = 36;
     static final int OP_DAY_ONE_DIGIT = 9;
     static final int OP_DAY_TWO_DIGITS = 10;
+    static final int OP_EPOCH_MICROS = 151;
+    static final int OP_EPOCH_MILLIS = 150;
+    static final int OP_EPOCH_NANOS = 152;
     static final int OP_ERA = 1;
     static final int OP_HOUR_12_GREEDY = 142;
     static final int OP_HOUR_12_GREEDY_ONE_BASED = 143;
@@ -190,8 +196,8 @@ public class TimestampFormatCompiler {
             switch (op) {
                 case -1:
                     makeLastOpGreedy(ops);
-                    // Don't use Chars.toString here to avoid simultaneous Misc.getThreadLocalSink() mutations.
-                    delimiters.add(toString(cs));
+                    // use custom tlSink to avoid simultaneous Misc.getThreadLocalSink() mutations.
+                    delimiters.add(Chars.compactQuotes(cs, tlSink.get()));
                     ops.add(-(delimiters.size()));
                     break;
                 case OP_AM_PM:
@@ -212,13 +218,6 @@ public class TimestampFormatCompiler {
     private static void addOp(String op, int opDayTwoDigits) {
         opMap.put(op, opDayTwoDigits);
         opList.add(op);
-    }
-
-    private static String toString(CharSequence cs) {
-        final StringSink sink = tlSink.get();
-        sink.clear();
-        sink.put(cs);
-        return sink.toString();
     }
 
     private void addTempToPos(int decodeLenIndex) {
@@ -569,6 +568,11 @@ public class TimestampFormatCompiler {
                     asm.invokeInterface(sinkPutStrIndex, 1);
                     break;
                 // SEPARATORS
+                case OP_EPOCH_MILLIS:
+                case OP_EPOCH_MICROS:
+                case OP_EPOCH_NANOS:
+                    // ignore
+                    break;
                 default:
                     if (op < 0) {
                         String delimiter = delimiters.getQuick(-op - 1);
@@ -722,6 +726,7 @@ public class TimestampFormatCompiler {
             IntList delimIndices,
             int charAtIndex
     ) {
+        boolean isEpochFormatUsed = false;
 
         int stackState = computeParseMethodStack(ops);
 
@@ -1208,6 +1213,21 @@ public class TimestampFormatCompiler {
                     addTempToPos(decodeLenIndex);
 
                     break;
+                case OP_EPOCH_MILLIS:
+                case OP_EPOCH_MICROS:
+                case OP_EPOCH_NANOS:
+                    /*
+                    invokeParseLong0(parseLong0Index);
+                    if (op == OP_EPOCH_MILLIS) {
+                        asm.ldc2_w(long1000Index);
+                        asm.lmul();
+                    } else if (op == OP_EPOCH_NANOS) {
+                        asm.ldc(long1000Index);
+                        asm.ldiv();
+                    }*/
+
+                    //ignore
+                    break;
                 default:
                     String delimiter = delimiters.getQuick(-op - 1);
                     int len = delimiter.length();
@@ -1231,25 +1251,27 @@ public class TimestampFormatCompiler {
             }
         }
 
-        // check that there is no tail
-        asm.iload(LOCAL_POS);
-        asm.iload(P_HI);
-        asm.invokeStatic(assertNoTailIndex);
-        asm.aload(P_LOCALE);
-        asm.iload(LOCAL_ERA);
-        asm.iload(LOCAL_YEAR);
-        asm.iload(LOCAL_MONTH);
-        asm.iload(LOCAL_WEEK);
-        asm.iload(LOCAL_DAY);
-        asm.iload(LOCAL_HOUR);
-        asm.iload(LOCAL_MINUTE);
-        asm.iload(LOCAL_SECOND);
-        asm.iload(LOCAL_MILLIS);
-        asm.iload(LOCAL_MICROS);
-        asm.iload(LOCAL_TIMEZONE);
-        asm.lload(LOCAL_OFFSET);
-        asm.iload(LOCAL_HOUR_TYPE);
-        asm.invokeStatic(computeIndex);
+        if (!isEpochFormatUsed) {
+            // check that there is no tail
+            asm.iload(LOCAL_POS);
+            asm.iload(P_HI);
+            asm.invokeStatic(assertNoTailIndex);
+            asm.aload(P_LOCALE);
+            asm.iload(LOCAL_ERA);
+            asm.iload(LOCAL_YEAR);
+            asm.iload(LOCAL_MONTH);
+            asm.iload(LOCAL_WEEK);
+            asm.iload(LOCAL_DAY);
+            asm.iload(LOCAL_HOUR);
+            asm.iload(LOCAL_MINUTE);
+            asm.iload(LOCAL_SECOND);
+            asm.iload(LOCAL_MILLIS);
+            asm.iload(LOCAL_MICROS);
+            asm.iload(LOCAL_TIMEZONE);
+            asm.lload(LOCAL_OFFSET);
+            asm.iload(LOCAL_HOUR_TYPE);
+            asm.invokeStatic(computeIndex);
+        }
         asm.lreturn();
         asm.endMethodCode();
 
@@ -1384,8 +1406,21 @@ public class TimestampFormatCompiler {
      * and does not include code that wouldn't be relevant for the given pattern. Main performance benefit however comes
      * from removing redundant local variable initialization code. For example year has to be defaulted to 1970 when
      * it isn't present in the pattern and does not have to be defaulted at all when it is.
+     * <p>
+     * Note: epoch ops are exclusive and can't be mixed with any other ops.
      */
     private DateFormat compile(IntList ops, ObjList<String> delimiters) {
+        if (ops.size() == 1) {
+            switch (ops.getQuick(0)) {
+                case OP_EPOCH_MILLIS:
+                    return MillisTimestampFormat.INSTANCE;
+                case OP_EPOCH_MICROS:
+                    return MicrosTimestampFormat.INSTANCE;
+                case OP_EPOCH_NANOS:
+                    return NanosTimestampFormat.INSTANCE;
+            }
+        }
+
         asm.init(DateFormat.class);
         asm.setupPool();
         int thisClassIndex = asm.poolClass(asm.poolUtf8("io/questdb/std/datetime/TimestampFormatAsm"));
@@ -1824,6 +1859,13 @@ public class TimestampFormatCompiler {
         addTempToPos(decodeLenIndex);
     }
 
+    private void invokeParseLong0(int parseLong0Index) {
+        asm.aload(P_INPUT_STR);
+        asm.iload(LOCAL_POS);
+        asm.iload(P_HI);
+        asm.invokeStatic(parseLong0Index);
+    }
+
     private int makeGreedy(int oldOp) {
         switch (oldOp) {
             case OP_YEAR_ONE_DIGIT:
@@ -1923,6 +1965,75 @@ public class TimestampFormatCompiler {
         asm.setJmp(branch, p);
     }
 
+    public static class MicrosTimestampFormat implements DateFormat {
+
+        public static final MicrosTimestampFormat INSTANCE = new MicrosTimestampFormat();
+
+        private MicrosTimestampFormat() {
+        }
+
+        @Override
+        public void format(long datetime, @NotNull DateLocale locale, @Nullable CharSequence timeZoneName, @NotNull CharSink<?> sink) {
+            sink.put(datetime);
+        }
+
+        @Override
+        public long parse(@NotNull CharSequence in, @NotNull DateLocale locale) throws NumericException {
+            return Numbers.parseLong(in, 0, in.length());
+        }
+
+        @Override
+        public long parse(@NotNull CharSequence in, int lo, int hi, @NotNull DateLocale locale) throws NumericException {
+            return Numbers.parseLong(in, lo, hi);
+        }
+    }
+
+    public static class MillisTimestampFormat implements DateFormat {
+
+        public static final MillisTimestampFormat INSTANCE = new MillisTimestampFormat();
+
+        private MillisTimestampFormat() {
+        }
+
+        @Override
+        public void format(long datetime, @NotNull DateLocale locale, @Nullable CharSequence timeZoneName, @NotNull CharSink<?> sink) {
+            sink.put(datetime / 1000);
+        }
+
+        @Override
+        public long parse(@NotNull CharSequence in, @NotNull DateLocale locale) throws NumericException {
+            return Numbers.parseLong(in, 0, in.length()) * 1000;
+        }
+
+        @Override
+        public long parse(@NotNull CharSequence in, int lo, int hi, @NotNull DateLocale locale) throws NumericException {
+            return Numbers.parseLong(in, lo, hi) * 1000;
+        }
+    }
+
+    public static class NanosTimestampFormat implements DateFormat {
+
+        public static final NanosTimestampFormat INSTANCE = new NanosTimestampFormat();
+
+        private NanosTimestampFormat() {
+        }
+
+        @Override
+        public void format(long datetime, @NotNull DateLocale locale, @Nullable CharSequence timeZoneName, @NotNull CharSink<?> sink) {
+            sink.put(datetime * 1000);
+        }
+
+        @Override
+        public long parse(@NotNull CharSequence in, @NotNull DateLocale locale) throws NumericException {
+            return Numbers.parseLong(in, 0, in.length()) / 1000;
+        }
+
+        @Override
+        public long parse(@NotNull CharSequence in, int lo, int hi, @NotNull DateLocale locale) throws NumericException {
+            return Numbers.parseLong(in, lo, hi) / 1000;
+        }
+    }
+
     static {
         opMap = new CharSequenceIntHashMap();
         opList = new ObjList<>();
@@ -1973,5 +2084,8 @@ public class TimestampFormatCompiler {
         addOp("UUU", OP_MICROS_THREE_DIGITS);
         addOp("U+", OP_MICROS_GREEDY6);
         addOp("N+", OP_NANOS_GREEDY9);
+        addOp("EPM+", OP_EPOCH_MILLIS);
+        addOp("EPU+", OP_EPOCH_MICROS);
+        addOp("EPN+", OP_EPOCH_NANOS);
     }
 }

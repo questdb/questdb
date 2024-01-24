@@ -388,7 +388,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long httpMinNetConnectionQueueTimeout;
     private int httpMinNetConnectionRcvBuf;
     private int httpMinNetConnectionSndBuf;
-    private long httpMinNetConnectionTimeout;
+    private long httpMinNetIdleConnectionTimeout;
     private int[] httpMinWorkerAffinity;
     private int httpMinWorkerCount;
     private boolean httpMinWorkerHaltOnError;
@@ -427,7 +427,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int lineTcpNetConnectionLimit;
     private long lineTcpNetConnectionQueueTimeout;
     private int lineTcpNetConnectionRcvBuf;
-    private long lineTcpNetConnectionTimeout;
+    private long lineTcpNetIdleConnectionTimeout;
     private LineTcpTimestampAdapter lineTcpTimestampAdapter;
     private int lineTcpWriterQueueCapacity;
     private int[] lineTcpWriterWorkerAffinity;
@@ -481,6 +481,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int pgWorkerCount;
     private long pgWorkerSleepThreshold;
     private long pgWorkerYieldThreshold;
+    private int schemaColumnPoolCapacity;
     private boolean stringAsTagSupported;
     private boolean stringToCharCastAllowed;
     private boolean symbolAsFieldSupported;
@@ -642,8 +643,8 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.httpMinNetConnectionLimit = getInt(properties, env, PropertyKey.HTTP_MIN_NET_CONNECTION_LIMIT, 4);
 
                 // deprecated
-                this.httpMinNetConnectionTimeout = getLong(properties, env, PropertyKey.HTTP_MIN_NET_IDLE_CONNECTION_TIMEOUT, 5 * 60 * 1000L);
-                this.httpMinNetConnectionTimeout = getLong(properties, env, PropertyKey.HTTP_MIN_NET_CONNECTION_TIMEOUT, this.httpMinNetConnectionTimeout);
+                this.httpMinNetIdleConnectionTimeout = getLong(properties, env, PropertyKey.HTTP_MIN_NET_IDLE_CONNECTION_TIMEOUT, 5 * 60 * 1000L);
+                this.httpMinNetIdleConnectionTimeout = getLong(properties, env, PropertyKey.HTTP_MIN_NET_CONNECTION_TIMEOUT, this.httpMinNetIdleConnectionTimeout);
 
                 // deprecated
                 this.httpMinNetConnectionQueueTimeout = getLong(properties, env, PropertyKey.HTTP_MIN_NET_QUEUED_CONNECTION_TIMEOUT, 5 * 1000L);
@@ -733,6 +734,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.maxRequiredDelimiterStdDev = getDouble(properties, env, PropertyKey.HTTP_TEXT_MAX_REQUIRED_DELIMITER_STDDEV, "0.1222");
             this.maxRequiredLineLengthStdDev = getDouble(properties, env, PropertyKey.HTTP_TEXT_MAX_REQUIRED_LINE_LENGTH_STDDEV, "0.8");
             this.metadataStringPoolCapacity = getInt(properties, env, PropertyKey.HTTP_TEXT_METADATA_STRING_POOL_CAPACITY, 128);
+            this.schemaColumnPoolCapacity = getInt(properties, env, PropertyKey.HTTP_TEXT_SCHEMA_COLUMN_POOL_CAPACITY, 8);
 
             this.rollBufferLimit = getIntSize(properties, env, PropertyKey.HTTP_TEXT_ROLL_BUFFER_LIMIT, 1024 * 4096);
             this.rollBufferSize = getIntSize(properties, env, PropertyKey.HTTP_TEXT_ROLL_BUFFER_SIZE, 1024);
@@ -1091,8 +1093,8 @@ public class PropServerConfiguration implements ServerConfiguration {
                 });
 
                 // deprecated
-                this.lineTcpNetConnectionTimeout = getLong(properties, env, PropertyKey.LINE_TCP_NET_IDLE_TIMEOUT, 0);
-                this.lineTcpNetConnectionTimeout = getLong(properties, env, PropertyKey.LINE_TCP_NET_CONNECTION_TIMEOUT, this.lineTcpNetConnectionTimeout);
+                this.lineTcpNetIdleConnectionTimeout = getLong(properties, env, PropertyKey.LINE_TCP_NET_IDLE_TIMEOUT, 0);
+                this.lineTcpNetIdleConnectionTimeout = getLong(properties, env, PropertyKey.LINE_TCP_NET_CONNECTION_TIMEOUT, this.lineTcpNetIdleConnectionTimeout);
 
                 // deprecated
                 this.lineTcpNetConnectionQueueTimeout = getLong(properties, env, PropertyKey.LINE_TCP_NET_QUEUED_TIMEOUT, 5_000);
@@ -2946,6 +2948,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getConcurrentConnectionLimit() {
+            return httpNetConnectionLimit;
+        }
+
+        @Override
         public String getDispatcherLogName() {
             return "http-server";
         }
@@ -2966,13 +2973,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public KqueueFacade getKqueueFacade() {
-            return KqueueFacadeImpl.INSTANCE;
+        public long getIdleConnectionTimeout() {
+            return httpNetConnectionTimeout;
         }
 
         @Override
-        public int getLimit() {
-            return httpNetConnectionLimit;
+        public KqueueFacade getKqueueFacade() {
+            return KqueueFacadeImpl.INSTANCE;
         }
 
         @Override
@@ -3004,11 +3011,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         public int getTestConnectionBufferSize() {
             return netTestConnectionBufferSize;
         }
-
-        @Override
-        public long getTimeout() {
-            return httpNetConnectionTimeout;
-        }
     }
 
     private class PropHttpMinIODispatcherConfiguration implements IODispatcherConfiguration {
@@ -3025,6 +3027,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public MillisecondClock getClock() {
             return MillisecondClockImpl.INSTANCE;
+        }
+
+        @Override
+        public int getConcurrentConnectionLimit() {
+            return httpMinNetConnectionLimit;
         }
 
         @Override
@@ -3048,13 +3055,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public KqueueFacade getKqueueFacade() {
-            return KqueueFacadeImpl.INSTANCE;
+        public long getIdleConnectionTimeout() {
+            return httpMinNetIdleConnectionTimeout;
         }
 
         @Override
-        public int getLimit() {
-            return httpMinNetConnectionLimit;
+        public KqueueFacade getKqueueFacade() {
+            return KqueueFacadeImpl.INSTANCE;
         }
 
         @Override
@@ -3085,11 +3092,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getTestConnectionBufferSize() {
             return netTestConnectionBufferSize;
-        }
-
-        @Override
-        public long getTimeout() {
-            return httpMinNetConnectionTimeout;
         }
     }
 
@@ -3589,6 +3591,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getConcurrentConnectionLimit() {
+            return lineTcpNetConnectionLimit;
+        }
+
+        @Override
         public String getDispatcherLogName() {
             return "tcp-line-server";
         }
@@ -3609,13 +3616,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public KqueueFacade getKqueueFacade() {
-            return KqueueFacadeImpl.INSTANCE;
+        public long getIdleConnectionTimeout() {
+            return lineTcpNetIdleConnectionTimeout;
         }
 
         @Override
-        public int getLimit() {
-            return lineTcpNetConnectionLimit;
+        public KqueueFacade getKqueueFacade() {
+            return KqueueFacadeImpl.INSTANCE;
         }
 
         public NetworkFacade getNetworkFacade() {
@@ -3645,11 +3652,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getTestConnectionBufferSize() {
             return netTestConnectionBufferSize;
-        }
-
-        @Override
-        public long getTimeout() {
-            return lineTcpNetConnectionTimeout;
         }
     }
 
@@ -4022,6 +4024,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getConcurrentConnectionLimit() {
+            return pgNetConnectionLimit;
+        }
+
+        @Override
         public String getDispatcherLogName() {
             return "pg-server";
         }
@@ -4042,13 +4049,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public KqueueFacade getKqueueFacade() {
-            return KqueueFacadeImpl.INSTANCE;
+        public long getIdleConnectionTimeout() {
+            return pgNetIdleConnectionTimeout;
         }
 
         @Override
-        public int getLimit() {
-            return pgNetConnectionLimit;
+        public KqueueFacade getKqueueFacade() {
+            return KqueueFacadeImpl.INSTANCE;
         }
 
         @Override
@@ -4079,11 +4086,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getTestConnectionBufferSize() {
             return netTestConnectionBufferSize;
-        }
-
-        @Override
-        public long getTimeout() {
-            return pgNetIdleConnectionTimeout;
         }
     }
 
@@ -4238,6 +4240,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getRollBufferSize() {
             return rollBufferSize;
+        }
+
+        @Override
+        public int getSchemaColumnPoolCapacity() {
+            return schemaColumnPoolCapacity;
         }
 
         @Override

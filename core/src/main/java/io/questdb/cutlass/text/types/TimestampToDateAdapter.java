@@ -27,60 +27,34 @@ package io.questdb.cutlass.text.types;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.std.Mutable;
-import io.questdb.std.NumericException;
-import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.datetime.DateLocale;
-import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectUtf8Sequence;
 
-public class TimestampAdapter extends AbstractTypeAdapter implements Mutable {
-    protected DateFormat format;
-    protected DateLocale locale;
-    protected String pattern;
+public class TimestampToDateAdapter extends AbstractTypeAdapter implements Mutable {
+    private TimestampAdapter timestampAdapter;
 
     @Override
     public void clear() {
-        this.format = null;
-        this.locale = null;
-    }
-
-    public long getTimestamp(DirectUtf8Sequence value) throws Exception {
-        return format.parse(value.asAsciiCharSequence(), locale);
+        this.timestampAdapter = null;
     }
 
     @Override
     public int getType() {
-        return ColumnType.TIMESTAMP;
+        return ColumnType.DATE;
     }
 
-    public TimestampAdapter of(String pattern, DateFormat format, DateLocale locale) {
-        this.pattern = pattern;
-        this.format = format;
-        this.locale = locale;
+    public TimestampToDateAdapter of(TimestampAdapter compatibleAdapter) {
+        this.timestampAdapter = compatibleAdapter;
         return this;
     }
 
     @Override
     public boolean probe(DirectUtf8Sequence text) {
-        try {
-            format.parse(text.asAsciiCharSequence(), locale);
-            return true;
-        } catch (NumericException e) {
-            return false;
-        }
-    }
-
-    @Override
-    public void toSink(CharSink<?> sink) {
-        sink.putAscii('{');
-        sink.putAsciiQuoted("pattern").putAscii(':').putQuoted(pattern).put(',');
-        sink.putAsciiQuoted("locale").putAscii(':').putQuoted(locale.getLocaleName()).put(',');
-        sink.putAsciiQuoted("utf8").putAscii(':').putAscii("false");
-        sink.putAscii('}');
+        return timestampAdapter.probe(text);
     }
 
     @Override
     public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) throws Exception {
-        row.putDate(column, format.parse(value.asAsciiCharSequence(), locale));
+        row.putDate(column, timestampAdapter.getTimestamp(value) / 1000);
     }
 }
+

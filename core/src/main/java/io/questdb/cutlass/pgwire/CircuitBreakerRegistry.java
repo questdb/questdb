@@ -48,7 +48,7 @@ public class CircuitBreakerRegistry implements Closeable {
 
     public CircuitBreakerRegistry(PGWireConfiguration configuration, CairoConfiguration cairoConfig) {
         lock = new SimpleSpinLock();
-        int limit = configuration.getDispatcherConfiguration().getLimit();
+        int limit = configuration.getDispatcherConfiguration().getConcurrentConnectionLimit();
         circuitBreakers = new ObjList<>(limit);
         freeIdx = new IntList(limit);
         if (configuration.getRandom() != null) {

@@ -1247,6 +1247,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
         node1.getConfigurationOverrides().setSqlWindowStorePageSize(windowStorePageSize);
     }
 
+    protected static void configOverrideTextAnalysisMaxLines(int lines) {
+        node1.getConfigurationOverrides().setTextAnalysisMaxLines(lines);
+    }
+
     protected static void configOverrideWalApplyTableTimeQuota(long walApplyTableTimeQuota) {
         node1.getConfigurationOverrides().setWalApplyTableTimeQuota(walApplyTableTimeQuota);
     }

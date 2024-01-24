@@ -42,8 +42,8 @@ import io.questdb.std.str.AbstractCharSequence;
 
 import java.io.Closeable;
 
-public class TextMetadataParser implements JsonParser, Mutable, Closeable {
-    private static final Log LOG = LogFactory.getLog(TextMetadataParser.class);
+public class SchemaV1Parser implements JsonParser, Mutable, Closeable {
+    private static final Log LOG = LogFactory.getLog(SchemaV1Parser.class);
     private static final int P_INDEX = 6;
     private static final int P_LOCALE = 4;
     private static final int P_NAME = 1;
@@ -54,8 +54,8 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
     private static final int S_NEED_OBJECT = 2;
     private static final int S_NEED_PROPERTY = 3;
     private static final CharSequenceIntHashMap propertyNameMap = new CharSequenceIntHashMap();
-    private final ObjList<CharSequence> columnNames;
-    private final ObjList<TypeAdapter> columnTypes;
+    private final ObjList<CharSequence> columnNames = new ObjList<>();
+    private final ObjList<TypeAdapter> columnTypes = new ObjList<>();
     private final ObjectPool<FloatingCharSequence> csPool;
     private final DateFormatFactory dateFormatFactory;
     private final DateLocale dateLocale;
@@ -69,16 +69,14 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
     private CharSequence locale;
     private int localePosition;
     private CharSequence name;
-    private CharSequence pattern;
+    private String pattern;
     private int propertyIndex;
     private int state = S_NEED_ARRAY;
     private CharSequence tableName;
     private int type = -1;
     private boolean utf8 = false;
 
-    public TextMetadataParser(TextConfiguration textConfiguration, TypeManager typeManager) {
-        this.columnNames = new ObjList<>();
-        this.columnTypes = new ObjList<>();
+    public SchemaV1Parser(TextConfiguration textConfiguration, TypeManager typeManager) {
         this.csPool = new ObjectPool<>(FloatingCharSequence::new, textConfiguration.getMetadataStringPoolCapacity());
         this.dateLocaleFactory = typeManager.getInputFormatConfiguration().getDateLocaleFactory();
         this.dateFormatFactory = typeManager.getInputFormatConfiguration().getDateFormatFactory();
@@ -147,7 +145,7 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
                         }
                         break;
                     case P_PATTERN:
-                        pattern = copy(tag);
+                        pattern = Chars.toString(tag);
                         break;
                     case P_LOCALE:
                         locale = copy(tag);
@@ -235,9 +233,9 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
 
                 // date pattern is required
                 if (pattern == null) {
-                    throw JsonException.$(0, "DATE format pattern is required");
+                    throw JsonException.$(position, "DATE format pattern is required");
                 }
-                columnTypes.add(typeManager.nextDateAdapter().of(dateFormatFactory.get(pattern), dateLocale));
+                columnTypes.add(typeManager.nextDateAdapter().of(pattern, dateFormatFactory.get(pattern), dateLocale));
                 break;
             case ColumnType.TIMESTAMP:
                 DateLocale timestampLocale =
@@ -252,7 +250,7 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
                 if (pattern == null) {
                     throw JsonException.$(0, "TIMESTAMP format pattern is required");
                 }
-                columnTypes.add(typeManager.nextTimestampAdapter(utf8, timestampFormatFactory.get(pattern), timestampLocale));
+                columnTypes.add(typeManager.nextTimestampAdapter(pattern, utf8, timestampFormatFactory.get(pattern), timestampLocale));
                 break;
             case ColumnType.SYMBOL:
                 columnTypes.add(typeManager.nextSymbolAdapter(index));

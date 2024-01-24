@@ -173,7 +173,7 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
                                 .putAscii("500\r\n")
                                 .putAscii(line)
                                 .putAscii(line)
-                                .sendPartialContent("localhost", getHttpPort(serverMain), 1000, 5000);
+                                .sendPartialContent("localhost", getHttpPort(serverMain), 1000);//5000
                         Os.sleep(5);
                         httpClient.disconnect();
                     }
@@ -249,7 +249,7 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
                     // This is not allowed
                     request.putEOL();
 
-                    HttpClient.ResponseHeaders resp = request.send("localhost", getHttpPort(serverMain), 5000);
+                    HttpClient.ResponseHeaders resp = request.send("localhost", getHttpPort(serverMain));//, 5000
 
                     try {
                         resp.await();
@@ -379,7 +379,7 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
                                 .withContent()
                                 .putAscii("first_table,ok=true allgood=true\n")
                                 .putAscii("second_table,ok=true allgood=true\n")
-                                .sendPartialContent("localhost", getHttpPort(serverMain), 5000, 10000);
+                                .sendPartialContent("localhost", getHttpPort(serverMain), 5000);//, 10000
                         ping.countDown();
                         pong.await();
                     }
@@ -412,7 +412,7 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
                                 .withContent()
                                 .putAscii(line)
                                 .putAscii(line)
-                                .sendPartialContent("localhost", getHttpPort(serverMain), line.length() + 20, 1000);
+                                .sendPartialContent("localhost", getHttpPort(serverMain), line.length() + 20);//1000
                         Os.sleep(5);
                         httpClient.disconnect();
                     }

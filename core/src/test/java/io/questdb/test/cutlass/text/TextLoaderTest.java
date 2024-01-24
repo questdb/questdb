@@ -31,6 +31,7 @@ import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.cutlass.text.*;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
@@ -50,6 +51,7 @@ import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class TextLoaderTest extends AbstractCairoTest {
 
@@ -99,11 +101,21 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "1\t0\t0\t2022-01-04T09:58:58.225032Z";
 
             configureLoaderDefaults(textLoader);
+            String json = "[\n" +
+                    "  { \"name\": \"timing\", \"type\": \"TIMESTAMP\", \"pattern\": \"yyyy-MM-ddTHH:mm:ss.SSSUUUZ\" }, " +
+                    "  { \"name\": \"a\", \"type\": \"INT\" }, " +
+                    "  { \"name\": \"b\", \"type\": \"INT\" }, " +
+                    "  { \"name\": \"c\", \"type\": \"INT\" } " +
+                    "]";
+            playJson(textLoader, json);
+            textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
             playText0(textLoader, csv1, 1024, ENTITY_MANIPULATOR);
             assertTable(expected1);
             textLoader.clear();
 
             configureLoaderDefaults(textLoader);
+            playJson(textLoader, json);
+            textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
             playText0(textLoader, csv2, 1024, ENTITY_MANIPULATOR);
             assertTable(expected2);
             textLoader.clear();
@@ -272,10 +284,20 @@ public class TextLoaderTest extends AbstractCairoTest {
                                 return b;
                         }
                     },
-                    "{\"columnCount\":9,\"columns\":[{\"index\":0,\"name\":\"№ПП\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"ОбъектыКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":2,\"name\":\"ВидКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":3,\"name\":\"ТемаКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":4,\"name\":\"ПроверяемыйПериод\",\"type\":\"STRING\"},{\"index\":5,\"name\":\"НачалоПроверки\",\"type\":\"STRING\"},{\"index\":6,\"name\":\"ОкончаниеПроверки\",\"type\":\"STRING\"},{\"index\":7,\"name\":\"ВыявленныеНарушенияНедостатки\",\"type\":\"STRING\"},{\"index\":8,\"name\":\"РезультатыПроверки\",\"type\":\"STRING\"}],\"timestampIndex\":-1}",
+                    "{\"columnCount\":9,\"columns\":[" +
+                            "{\"index\":0,\"name\":\"№ПП\",\"type\":\"STRING\"}," +
+                            "{\"index\":1,\"name\":\"ОбъектыКонтрольногоМероприятия\",\"type\":\"STRING\"}," +
+                            "{\"index\":2,\"name\":\"ВидКонтрольногоМероприятия\",\"type\":\"STRING\"}," +
+                            "{\"index\":3,\"name\":\"ТемаКонтрольногоМероприятия\",\"type\":\"STRING\"}," +
+                            "{\"index\":4,\"name\":\"ПроверяемыйПериод\",\"type\":\"STRING\"}," +
+                            "{\"index\":5,\"name\":\"НачалоПроверки\",\"type\":\"STRING\"}," +
+                            "{\"index\":6,\"name\":\"ОкончаниеПроверки\",\"type\":\"STRING\"}," +
+                            "{\"index\":7,\"name\":\"ВыявленныеНарушенияНедостатки\",\"type\":\"STRING\"}," +
+                            "{\"index\":8,\"name\":\"РезультатыПроверки\",\"type\":\"STRING\"}],\"timestampIndex\":-1}",
                     36,
                     36,
-                    true
+                    true,
+                    false
             );
         });
     }
@@ -379,7 +401,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "{\"columnCount\":9,\"columns\":[{\"index\":0,\"name\":\"№ПП\",\"type\":\"INT\"},{\"index\":1,\"name\":\"ОбъектыКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":2,\"name\":\"ВидКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":3,\"name\":\"ТемаКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":4,\"name\":\"ПроверяемыйПериод\",\"type\":\"STRING\"},{\"index\":5,\"name\":\"f5\",\"type\":\"STRING\"},{\"index\":6,\"name\":\"ОкончаниеПроверки\",\"type\":\"STRING\"},{\"index\":7,\"name\":\"ВыявленныеНарушенияНедостатки\",\"type\":\"STRING\"},{\"index\":8,\"name\":\"РезультатыПроверки\",\"type\":\"STRING\"}],\"timestampIndex\":-1}",
                     36L,
                     36L,
-                    true
+                    true,
+                    false
             );
         });
     }
@@ -480,7 +503,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "{\"columnCount\":9,\"columns\":[{\"index\":0,\"name\":\"№ПП\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"ОбъектыКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":2,\"name\":\"ВидКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":3,\"name\":\"ТемаКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":4,\"name\":\"ПроверяемыйПериод\",\"type\":\"STRING\"},{\"index\":5,\"name\":\"НачалоПроверки\",\"type\":\"STRING\"},{\"index\":6,\"name\":\"ОкончаниеПроверки\",\"type\":\"STRING\"},{\"index\":7,\"name\":\"ВыявленныеНарушенияНедостатки\",\"type\":\"STRING\"},{\"index\":8,\"name\":\"РезультатыПроверки\",\"type\":\"STRING\"}],\"timestampIndex\":-1}",
                     36,
                     35,
-                    true
+                    true,
+                    false
             );
         });
     }
@@ -567,6 +591,279 @@ public class TextLoaderTest extends AbstractCairoTest {
         );
     }
 
+    @Test(expected = CairoException.class)
+    public void testCheckParamFalseAndNoTableShouldThrowError() throws Exception {
+        assertNoLeak(
+                textLoader -> {
+                    configureLoaderDefaults(
+                            textLoader
+                    );
+                    textLoader.setForceHeaders(true);
+                    textLoader.setCreateTable(false);
+                    textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
+                    playText0(
+                            textLoader,
+                            "ts,int\n" +
+                                    "2021-01-02T00:00:30.000000Z,1\n",
+                            512,
+                            ENTITY_MANIPULATOR
+                    );
+                }
+        );
+    }
+
+    @Test
+    public void testCheckParamTrueAndNoTableShouldSucceed() throws Exception {
+        assertNoLeak(
+                textLoader -> {
+                    configureLoaderDefaults(
+                            textLoader
+                    );
+                    textLoader.setForceHeaders(true);
+                    textLoader.setCreateTable(true);
+                    textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
+                    playText0(
+                            textLoader,
+                            "ts,int\n" +
+                                    "2021-01-02T00:00:30.000000Z,1\n",
+                            512,
+                            ENTITY_MANIPULATOR
+                    );
+
+                    assertTable("ts\tint\n" +
+                            "2021-01-02T00:00:30.000000Z\t1\n");
+
+                    Assert.assertEquals("test", textLoader.getTableName());
+                    Assert.assertEquals(TextLoadWarning.NONE, textLoader.getWarnings());
+                    Assert.assertEquals(true, textLoader.getCreateTable());
+                }
+        );
+    }
+
+    @Test
+    public void testCreateWalTable() throws Exception {
+        // when there is enough information provided,
+        // more specifically:
+        // 1. designated timestamp column
+        // 2. partition method
+        assertNoLeak(textLoader -> {
+            final String csv = "hostname,region,datacenter,rack,os,arch,team,service,service_version,service_environment,usage_user,usage_system,usage_idle,usage_nice,usage_iowait,usage_irq,usage_softirq,usage_steal,usage_guest,usage_guest_nice,timestamp\n" +
+                    "host_0,eu-central-1,eu-central-1a,6,Ubuntu15.10,x86,SF,19,1,test,58,2,24,61,22,63,6,44,80,38,2016-01-01T00:00:00.000000Z\n" +
+                    "host_1,us-west-1,us-west-1a,41,Ubuntu15.10,x64,NYC,9,1,staging,84,11,53,87,29,20,54,77,53,74,2016-01-01T00:00:00.000000Z\n" +
+                    "host_2,sa-east-1,sa-east-1a,89,Ubuntu16.04LTS,x86,LON,13,0,staging,29,48,5,63,17,52,60,49,93,1,2016-01-01T00:00:00.000000Z\n" +
+                    "host_3,us-west-2,us-west-2b,12,Ubuntu15.10,x64,CHI,18,1,production,8,21,89,78,30,81,33,24,24,82,2016-01-01T00:00:00.000000Z\n" +
+                    "host_4,sa-east-1,sa-east-1c,74,Ubuntu16.10,x86,SF,7,0,staging,2,26,64,6,38,20,71,19,40,54,2016-01-01T00:00:00.000000Z\n" +
+                    "host_5,us-west-1,us-west-1b,18,Ubuntu16.10,x64,CHI,14,0,staging,76,40,63,7,81,20,29,55,20,15,2016-01-01T00:00:00.000000Z\n" +
+                    "host_6,ap-southeast-1,ap-southeast-1b,49,Ubuntu16.10,x86,CHI,7,0,staging,44,70,20,67,65,11,7,92,0,31,2016-01-01T00:00:00.000000Z\n" +
+                    "host_7,eu-west-1,eu-west-1c,44,Ubuntu16.10,x64,LON,7,1,test,92,35,99,9,31,1,2,24,96,69,2016-01-01T00:00:00.000000Z\n" +
+                    "host_8,eu-west-1,eu-west-1a,17,Ubuntu16.04LTS,x64,LON,2,0,test,21,77,90,83,41,84,26,60,43,36,2016-01-01T00:00:00.000000Z\n" +
+                    "host_9,ap-southeast-2,ap-southeast-2a,0,Ubuntu16.04LTS,x86,CHI,18,0,production,90,0,81,28,25,44,8,89,11,76,2016-01-01T00:00:00.000000Z\n" +
+                    "host_10,sa-east-1,sa-east-1a,95,Ubuntu16.10,x64,LON,8,0,staging,76,85,24,0,44,88,90,40,72,63,2016-01-01T00:00:00.000000Z\n" +
+                    "host_11,us-west-2,us-west-2b,66,Ubuntu15.10,x64,NYC,6,1,production,80,11,50,72,52,18,68,88,54,50,2016-01-01T00:00:00.000000Z\n" +
+                    "host_12,eu-central-1,eu-central-1a,79,Ubuntu16.10,x86,CHI,6,1,production,64,81,55,54,89,81,69,33,53,25,2016-01-01T00:00:00.000000Z\n" +
+                    "host_13,eu-west-1,eu-west-1a,79,Ubuntu16.10,x64,CHI,19,1,staging,48,0,64,91,13,88,79,41,48,4,2016-01-01T00:00:00.000000Z\n" +
+                    "host_14,us-west-1,us-west-1b,8,Ubuntu15.10,x64,LON,3,0,production,81,47,98,33,59,71,81,5,97,47,2016-01-01T00:00:00.000000Z\n" +
+                    "host_15,ap-southeast-2,ap-southeast-2a,67,Ubuntu16.10,x86,LON,11,1,production,9,5,99,97,25,32,35,38,53,16,2016-01-01T00:00:00.000000Z\n" +
+                    "host_16,ap-southeast-2,ap-southeast-2a,51,Ubuntu16.10,x64,NYC,6,1,staging,70,66,56,90,86,23,42,94,37,2,2016-01-01T00:00:00.000000Z\n" +
+                    "host_17,ap-southeast-1,ap-southeast-1b,79,Ubuntu16.10,x86,NYC,6,0,production,87,24,70,46,85,76,96,95,57,2,2016-01-01T00:00:00.000000Z\n" +
+                    "host_18,ap-southeast-1,ap-southeast-1b,0,Ubuntu15.10,x86,LON,19,1,test,61,51,58,27,59,54,16,44,14,99,2016-01-01T00:00:00.000000Z\n" +
+                    "host_19,ap-northeast-1,ap-northeast-1a,70,Ubuntu16.04LTS,x64,CHI,19,0,staging,55,61,53,44,49,49,20,28,65,64,2016-01-01T00:00:00.000000Z\n" +
+                    "host_20,ap-southeast-1,ap-southeast-1b,47,Ubuntu16.04LTS,x86,CHI,18,1,test,1,26,82,31,71,78,10,24,21,56,2016-01-01T00:00:00.000000Z\n" +
+                    "host_21,ap-northeast-1,ap-northeast-1c,10,Ubuntu16.04LTS,x86,CHI,14,0,staging,53,50,95,43,24,49,87,9,50,98,2016-01-01T00:00:00.000000Z\n" +
+                    "host_22,eu-central-1,eu-central-1b,86,Ubuntu16.04LTS,x86,LON,10,1,production,4,46,15,50,3,61,27,87,54,1,2016-01-01T00:00:00.000000Z\n" +
+                    "host_23,ap-southeast-1,ap-southeast-1b,31,Ubuntu16.10,x86,LON,1,0,production,91,44,15,87,39,59,41,87,88,57,2016-01-01T00:00:00.000000Z\n" +
+                    "host_24,sa-east-1,sa-east-1a,29,Ubuntu16.10,x86,LON,9,1,staging,28,88,90,6,5,83,8,93,94,44,2016-01-01T00:00:00.000000Z\n" +
+                    "host_25,us-west-1,us-west-1a,79,Ubuntu16.04LTS,x86,SF,16,0,staging,15,64,13,38,80,64,18,62,26,35,2016-01-01T00:00:00.000000Z\n" +
+                    "host_26,sa-east-1,sa-east-1c,8,Ubuntu15.10,x64,CHI,3,1,test,96,80,60,57,46,39,92,8,45,22,2016-01-01T00:00:00.000000Z\n" +
+                    "host_27,us-west-1,us-west-1b,38,Ubuntu16.10,x86,SF,4,1,production,5,89,70,15,19,18,15,74,84,72,2016-01-01T00:00:00.000000Z\n" +
+                    "host_28,us-west-1,us-west-1a,90,Ubuntu15.10,x64,CHI,10,1,test,5,16,56,55,5,86,61,6,94,16,2016-01-01T00:00:00.000000Z\n" +
+                    "host_29,sa-east-1,sa-east-1a,6,Ubuntu16.10,x86,NYC,14,0,test,8,88,67,81,38,11,13,68,49,86,2016-01-01T00:00:00.000000Z\n" +
+                    "host_30,ap-northeast-1,ap-northeast-1c,49,Ubuntu16.10,x86,SF,2,0,test,78,9,64,27,16,22,91,1,97,11,2016-01-01T00:00:00.000000Z\n" +
+                    "host_31,us-east-1,us-east-1a,69,Ubuntu16.04LTS,x64,NYC,13,1,production,61,28,45,46,87,41,22,77,15,56,2016-01-01T00:00:00.000000Z\n" +
+                    "host_32,us-west-2,us-west-2c,50,Ubuntu15.10,x64,CHI,11,0,staging,79,67,56,45,13,33,4,42,89,9,2016-01-01T00:00:00.000000Z\n" +
+                    "host_33,ap-southeast-1,ap-southeast-1b,88,Ubuntu15.10,x86,SF,14,0,staging,90,42,88,81,33,62,96,9,35,85,2016-01-01T00:00:00.000000Z\n" +
+                    "host_34,ap-southeast-1,ap-southeast-1b,94,Ubuntu15.10,x64,LON,13,1,production,30,62,66,64,13,82,71,94,28,28,2016-01-01T00:00:00.000000Z\n" +
+                    "host_35,eu-west-1,eu-west-1c,5,Ubuntu16.04LTS,x64,CHI,18,0,test,64,89,36,5,29,78,47,77,32,60,2016-01-01T00:00:00.000000Z\n" +
+                    "host_36,eu-central-1,eu-central-1a,18,Ubuntu16.10,x64,NYC,14,1,staging,20,20,35,38,34,70,73,45,0,84,2016-01-01T00:00:00.000000Z\n" +
+                    "host_37,ap-northeast-1,ap-northeast-1c,53,Ubuntu15.10,x86,LON,13,0,test,54,66,5,40,92,47,21,12,60,77,2016-01-01T00:00:00.000000Z\n" +
+                    "host_38,ap-southeast-2,ap-southeast-2a,87,Ubuntu16.10,x64,NYC,18,1,production,38,35,25,80,72,81,7,29,20,41,2016-01-01T00:00:00.000000Z\n" +
+                    "host_39,eu-west-1,eu-west-1c,56,Ubuntu15.10,x86,SF,5,1,production,77,40,2,12,11,48,41,12,33,8,2016-01-01T00:00:00.000000Z\n" +
+                    "host_40,eu-west-1,eu-west-1a,4,Ubuntu15.10,x64,LON,15,1,production,41,74,76,33,0,31,65,40,17,81,2016-01-01T00:00:00.000000Z\n" +
+                    "host_41,eu-central-1,eu-central-1a,19,Ubuntu15.10,x64,NYC,4,1,staging,9,14,94,42,24,16,39,17,66,81,2016-01-01T00:00:00.000000Z\n" +
+                    "host_42,eu-central-1,eu-central-1b,57,Ubuntu15.10,x86,LON,3,0,test,70,67,99,91,72,36,59,78,80,76,2016-01-01T00:00:00.000000Z\n" +
+                    "host_43,us-west-2,us-west-2c,85,Ubuntu15.10,x64,NYC,5,1,staging,30,19,33,65,89,25,45,62,39,63,2016-01-01T00:00:00.000000Z\n" +
+                    "host_44,ap-northeast-1,ap-northeast-1c,15,Ubuntu15.10,x86,NYC,19,1,production,86,67,75,79,96,49,76,31,35,64,2016-01-01T00:00:00.000000Z\n" +
+                    "host_45,us-west-2,us-west-2b,74,Ubuntu15.10,x64,SF,12,1,production,35,4,33,64,86,8,29,10,33,37,2016-01-01T00:00:00.000000Z\n" +
+                    "host_46,sa-east-1,sa-east-1c,37,Ubuntu15.10,x86,SF,3,1,test,44,74,82,19,23,68,22,77,15,11,2016-01-01T00:00:00.000000Z\n" +
+                    "host_47,us-west-1,us-west-1b,54,Ubuntu16.04LTS,x86,SF,11,1,production,53,43,61,66,47,57,25,43,58,17,2016-01-01T00:00:00.000000Z\n" +
+                    "host_48,sa-east-1,sa-east-1a,90,Ubuntu15.10,x64,SF,1,0,staging,6,7,66,45,3,40,46,68,65,25,2016-01-01T00:00:00.000000Z\n" +
+                    "host_49,us-west-2,us-west-2b,75,Ubuntu16.04LTS,x86,SF,12,0,test,44,52,69,43,82,20,50,22,92,79,2016-01-01T00:00:00.000000Z\n" +
+                    "host_50,sa-east-1,sa-east-1b,66,Ubuntu16.10,x64,NYC,17,1,test,17,16,54,72,33,88,38,34,20,71,2016-01-01T00:00:00.000000Z\n" +
+                    "host_51,us-east-1,us-east-1c,98,Ubuntu15.10,x86,SF,11,0,staging,97,40,69,43,4,18,46,20,30,79,2016-01-01T00:00:00.000000Z\n" +
+                    "host_52,us-west-2,us-west-2c,92,Ubuntu16.10,x86,CHI,10,0,production,6,30,35,25,10,83,95,60,92,41,2016-01-01T00:00:00.000000Z\n" +
+                    "host_53,sa-east-1,sa-east-1a,61,Ubuntu16.04LTS,x86,CHI,16,1,staging,12,61,4,9,73,29,69,27,39,53,2016-01-01T00:00:00.000000Z\n" +
+                    "host_54,ap-southeast-2,ap-southeast-2b,79,Ubuntu16.10,x64,SF,19,1,staging,61,0,45,35,2,67,60,95,76,41,2016-01-01T00:00:00.000000Z\n" +
+                    "host_55,us-west-1,us-west-1a,31,Ubuntu15.10,x86,CHI,3,1,staging,29,1,33,76,74,52,61,98,72,8,2016-01-01T00:00:00.000000Z\n" +
+                    "host_56,ap-southeast-1,ap-southeast-1a,48,Ubuntu16.04LTS,x64,NYC,17,0,staging,89,60,20,67,39,83,58,64,11,34,2016-01-01T00:00:00.000000Z\n" +
+                    "host_57,eu-central-1,eu-central-1a,59,Ubuntu16.10,x86,SF,14,0,production,1,98,44,77,5,68,9,56,54,54,2016-01-01T00:00:00.000000Z\n" +
+                    "host_58,ap-northeast-1,ap-northeast-1a,57,Ubuntu16.04LTS,x86,CHI,12,0,production,60,48,93,98,41,39,26,32,89,16,2016-01-01T00:00:00.000000Z\n" +
+                    "host_59,us-east-1,us-east-1c,21,Ubuntu16.10,x86,CHI,11,1,production,58,20,91,34,75,42,23,20,77,64,2016-01-01T00:00:00.000000Z\n" +
+                    "host_60,us-west-2,us-west-2b,71,Ubuntu15.10,x64,SF,1,0,production,36,75,57,10,41,5,92,39,91,82,2016-01-01T00:00:00.000000Z\n" +
+                    "host_61,us-east-1,us-east-1b,98,Ubuntu16.04LTS,x64,NYC,13,1,staging,29,38,25,24,6,22,39,2,30,53,2016-01-01T00:00:00.000000Z\n" +
+                    "host_62,ap-southeast-2,ap-southeast-2a,36,Ubuntu15.10,x64,NYC,15,0,production,87,11,41,78,1,62,53,4,18,15,2016-01-01T00:00:00.000000Z\n" +
+                    "host_63,eu-west-1,eu-west-1a,28,Ubuntu16.10,x64,LON,12,1,staging,21,76,65,52,35,40,15,60,9,7,2016-01-01T00:00:00.000000Z\n" +
+                    "host_64,us-west-1,us-west-1a,59,Ubuntu16.10,x86,CHI,15,0,test,88,99,46,96,20,0,68,6,26,32,2016-01-01T00:00:00.000000Z\n" +
+                    "host_65,eu-central-1,eu-central-1a,43,Ubuntu16.10,x86,NYC,11,0,test,2,63,78,48,55,48,67,33,25,69,2016-01-01T00:00:00.000000Z\n" +
+                    "host_66,eu-west-1,eu-west-1a,57,Ubuntu15.10,x86,CHI,10,1,test,67,89,22,35,82,10,54,34,58,98,2016-01-01T00:00:00.000000Z\n" +
+                    "host_67,eu-central-1,eu-central-1b,96,Ubuntu16.10,x86,NYC,18,0,test,71,2,9,97,63,13,43,45,21,41,2016-01-01T00:00:00.000000Z\n" +
+                    "host_68,eu-central-1,eu-central-1a,68,Ubuntu16.04LTS,x64,SF,12,1,test,25,6,50,82,78,41,15,62,85,77,2016-01-01T00:00:00.000000Z\n" +
+                    "host_69,us-west-1,us-west-1a,11,Ubuntu16.10,x64,LON,7,0,test,1,68,39,82,47,56,56,89,78,51,2016-01-01T00:00:00.000000Z\n" +
+                    "host_70,ap-northeast-1,ap-northeast-1c,5,Ubuntu16.04LTS,x86,LON,3,0,production,66,23,12,0,37,38,44,9,1,63,2016-01-01T00:00:00.000000Z\n" +
+                    "host_71,eu-west-1,eu-west-1a,72,Ubuntu15.10,x64,SF,6,0,test,16,55,72,1,70,22,25,35,7,57,2016-01-01T00:00:00.000000Z\n" +
+                    "host_72,us-west-1,us-west-1a,60,Ubuntu15.10,x64,NYC,15,0,test,84,15,88,57,0,4,69,78,29,63,2016-01-01T00:00:00.000000Z\n" +
+                    "host_73,us-west-1,us-west-1b,64,Ubuntu15.10,x86,CHI,0,0,staging,97,36,90,38,89,32,73,24,1,7,2016-01-01T00:00:00.000000Z\n" +
+                    "host_74,sa-east-1,sa-east-1a,95,Ubuntu16.10,x86,NYC,5,0,staging,17,29,49,90,18,83,48,17,51,22,2016-01-01T00:00:00.000000Z\n" +
+                    "host_75,eu-central-1,eu-central-1a,11,Ubuntu15.10,x64,LON,17,1,test,56,16,54,74,93,10,42,68,1,59,2016-01-01T00:00:00.000000Z\n" +
+                    "host_76,eu-west-1,eu-west-1c,89,Ubuntu15.10,x86,SF,4,0,production,36,22,14,69,48,65,86,22,76,83,2016-01-01T00:00:00.000000Z\n" +
+                    "host_77,ap-southeast-2,ap-southeast-2b,19,Ubuntu16.04LTS,x64,NYC,8,1,staging,85,21,83,48,61,16,35,55,13,70,2016-01-01T00:00:00.000000Z\n" +
+                    "host_78,ap-southeast-2,ap-southeast-2a,1,Ubuntu15.10,x64,NYC,19,0,production,70,82,1,68,35,2,63,3,11,54,2016-01-01T00:00:00.000000Z\n" +
+                    "host_79,ap-northeast-1,ap-northeast-1c,76,Ubuntu16.04LTS,x86,SF,16,1,test,76,64,43,84,50,53,48,60,81,23,2016-01-01T00:00:00.000000Z\n" +
+                    "host_80,ap-southeast-1,ap-southeast-1a,86,Ubuntu16.10,x86,NYC,2,0,production,76,89,25,15,18,60,74,32,14,21,2016-01-01T00:00:00.000000Z\n" +
+                    "host_81,ap-northeast-1,ap-northeast-1c,29,Ubuntu15.10,x86,CHI,19,1,staging,18,88,61,80,86,31,2,63,82,73,2016-01-01T00:00:00.000000Z\n" +
+                    "host_82,ap-southeast-1,ap-southeast-1a,89,Ubuntu16.10,x86,SF,14,0,production,3,50,12,52,14,36,60,46,77,91,2016-01-01T00:00:00.000000Z\n" +
+                    "host_83,ap-northeast-1,ap-northeast-1c,68,Ubuntu16.04LTS,x64,LON,10,0,test,94,53,33,35,57,37,90,32,47,2,2016-01-01T00:00:00.000000Z\n" +
+                    "host_84,eu-west-1,eu-west-1c,35,Ubuntu16.10,x86,NYC,4,0,test,29,0,78,14,65,34,91,58,64,39,2016-01-01T00:00:00.000000Z\n" +
+                    "host_85,us-west-2,us-west-2b,37,Ubuntu15.10,x64,CHI,18,0,test,10,23,60,9,6,91,19,56,9,76,2016-01-01T00:00:00.000000Z\n" +
+                    "host_86,eu-west-1,eu-west-1b,66,Ubuntu15.10,x86,LON,4,1,production,55,49,23,97,60,49,90,60,56,63,2016-01-01T00:00:00.000000Z\n" +
+                    "host_87,eu-central-1,eu-central-1b,21,Ubuntu16.10,x86,CHI,1,1,production,26,7,45,79,79,98,13,69,45,58,2016-01-01T00:00:00.000000Z\n" +
+                    "host_88,us-west-1,us-west-1b,34,Ubuntu15.10,x86,NYC,11,0,test,72,58,49,73,21,77,6,29,64,9,2016-01-01T00:00:00.000000Z\n" +
+                    "host_89,eu-central-1,eu-central-1b,23,Ubuntu16.10,x64,LON,19,1,staging,89,41,14,37,0,41,29,11,70,70,2016-01-01T00:00:00.000000Z\n" +
+                    "host_90,ap-southeast-1,ap-southeast-1b,93,Ubuntu16.04LTS,x64,CHI,0,0,test,58,68,53,73,39,65,73,26,39,77,2016-01-01T00:00:00.000000Z\n" +
+                    "host_91,us-west-1,us-west-1b,68,Ubuntu16.04LTS,x86,LON,12,1,staging,33,21,52,50,84,16,92,63,85,37,2016-01-01T00:00:00.000000Z\n" +
+                    "host_92,sa-east-1,sa-east-1b,62,Ubuntu15.10,x64,CHI,15,0,staging,34,73,76,6,56,26,64,61,64,87,2016-01-01T00:00:00.000000Z\n" +
+                    "host_93,us-east-1,us-east-1c,84,Ubuntu16.10,x86,LON,2,0,production,9,37,16,27,62,42,37,6,18,64,2016-01-01T00:00:00.000000Z\n" +
+                    "host_94,sa-east-1,sa-east-1b,42,Ubuntu15.10,x64,LON,14,1,test,6,22,74,7,3,31,54,95,4,69,2016-01-01T00:00:00.000000Z\n" +
+                    "host_95,eu-west-1,eu-west-1c,8,Ubuntu15.10,x64,LON,2,0,staging,18,39,51,89,57,28,36,28,95,9,2016-01-01T00:00:00.000000Z\n" +
+                    "host_96,us-west-2,us-west-2a,97,Ubuntu16.04LTS,x86,SF,3,0,production,55,90,24,30,39,67,63,29,82,45,2016-01-01T00:00:00.000000Z\n" +
+                    "host_97,eu-west-1,eu-west-1c,55,Ubuntu15.10,x86,CHI,16,1,test,80,91,26,33,77,61,69,19,23,58,2016-01-01T00:00:00.000000Z\n" +
+                    "host_98,us-east-1,us-east-1c,2,Ubuntu16.10,x86,LON,6,1,staging,70,37,46,60,1,49,95,88,99,53,2016-01-01T00:00:00.000000Z\n" +
+                    "host_99,us-east-1,us-east-1a,31,Ubuntu16.10,x86,SF,19,1,staging,7,58,75,50,42,88,59,32,64,33,2016-01-01T00:00:00.000000Z\n";
+
+            textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
+            textLoader.configureDestination(TEST_TABLE_NAME, true, false, 0, PartitionBy.DAY, new Utf8String("timestamp"), null, false);
+            textLoader.configureColumnDelimiter((byte) ',');
+            playText0(textLoader, csv, 1024, ENTITY_MANIPULATOR);
+            drainWalQueue();
+            assertTable("hostname\tregion\tdatacenter\track\tos\tarch\tteam\tservice\tservice_version\tservice_environment\tusage_user\tusage_system\tusage_idle\tusage_nice\tusage_iowait\tusage_irq\tusage_softirq\tusage_steal\tusage_guest\tusage_guest_nice\ttimestamp\n" +
+                    "host_0\teu-central-1\teu-central-1a\t6\tUbuntu15.10\tx86\tSF\t19\t1\ttest\t58\t2\t24\t61\t22\t63\t6\t44\t80\t38\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_1\tus-west-1\tus-west-1a\t41\tUbuntu15.10\tx64\tNYC\t9\t1\tstaging\t84\t11\t53\t87\t29\t20\t54\t77\t53\t74\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_2\tsa-east-1\tsa-east-1a\t89\tUbuntu16.04LTS\tx86\tLON\t13\t0\tstaging\t29\t48\t5\t63\t17\t52\t60\t49\t93\t1\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_3\tus-west-2\tus-west-2b\t12\tUbuntu15.10\tx64\tCHI\t18\t1\tproduction\t8\t21\t89\t78\t30\t81\t33\t24\t24\t82\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_4\tsa-east-1\tsa-east-1c\t74\tUbuntu16.10\tx86\tSF\t7\t0\tstaging\t2\t26\t64\t6\t38\t20\t71\t19\t40\t54\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_5\tus-west-1\tus-west-1b\t18\tUbuntu16.10\tx64\tCHI\t14\t0\tstaging\t76\t40\t63\t7\t81\t20\t29\t55\t20\t15\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_6\tap-southeast-1\tap-southeast-1b\t49\tUbuntu16.10\tx86\tCHI\t7\t0\tstaging\t44\t70\t20\t67\t65\t11\t7\t92\t0\t31\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_7\teu-west-1\teu-west-1c\t44\tUbuntu16.10\tx64\tLON\t7\t1\ttest\t92\t35\t99\t9\t31\t1\t2\t24\t96\t69\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_8\teu-west-1\teu-west-1a\t17\tUbuntu16.04LTS\tx64\tLON\t2\t0\ttest\t21\t77\t90\t83\t41\t84\t26\t60\t43\t36\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_9\tap-southeast-2\tap-southeast-2a\t0\tUbuntu16.04LTS\tx86\tCHI\t18\t0\tproduction\t90\t0\t81\t28\t25\t44\t8\t89\t11\t76\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_10\tsa-east-1\tsa-east-1a\t95\tUbuntu16.10\tx64\tLON\t8\t0\tstaging\t76\t85\t24\t0\t44\t88\t90\t40\t72\t63\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_11\tus-west-2\tus-west-2b\t66\tUbuntu15.10\tx64\tNYC\t6\t1\tproduction\t80\t11\t50\t72\t52\t18\t68\t88\t54\t50\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_12\teu-central-1\teu-central-1a\t79\tUbuntu16.10\tx86\tCHI\t6\t1\tproduction\t64\t81\t55\t54\t89\t81\t69\t33\t53\t25\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_13\teu-west-1\teu-west-1a\t79\tUbuntu16.10\tx64\tCHI\t19\t1\tstaging\t48\t0\t64\t91\t13\t88\t79\t41\t48\t4\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_14\tus-west-1\tus-west-1b\t8\tUbuntu15.10\tx64\tLON\t3\t0\tproduction\t81\t47\t98\t33\t59\t71\t81\t5\t97\t47\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_15\tap-southeast-2\tap-southeast-2a\t67\tUbuntu16.10\tx86\tLON\t11\t1\tproduction\t9\t5\t99\t97\t25\t32\t35\t38\t53\t16\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_16\tap-southeast-2\tap-southeast-2a\t51\tUbuntu16.10\tx64\tNYC\t6\t1\tstaging\t70\t66\t56\t90\t86\t23\t42\t94\t37\t2\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_17\tap-southeast-1\tap-southeast-1b\t79\tUbuntu16.10\tx86\tNYC\t6\t0\tproduction\t87\t24\t70\t46\t85\t76\t96\t95\t57\t2\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_18\tap-southeast-1\tap-southeast-1b\t0\tUbuntu15.10\tx86\tLON\t19\t1\ttest\t61\t51\t58\t27\t59\t54\t16\t44\t14\t99\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_19\tap-northeast-1\tap-northeast-1a\t70\tUbuntu16.04LTS\tx64\tCHI\t19\t0\tstaging\t55\t61\t53\t44\t49\t49\t20\t28\t65\t64\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_20\tap-southeast-1\tap-southeast-1b\t47\tUbuntu16.04LTS\tx86\tCHI\t18\t1\ttest\t1\t26\t82\t31\t71\t78\t10\t24\t21\t56\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_21\tap-northeast-1\tap-northeast-1c\t10\tUbuntu16.04LTS\tx86\tCHI\t14\t0\tstaging\t53\t50\t95\t43\t24\t49\t87\t9\t50\t98\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_22\teu-central-1\teu-central-1b\t86\tUbuntu16.04LTS\tx86\tLON\t10\t1\tproduction\t4\t46\t15\t50\t3\t61\t27\t87\t54\t1\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_23\tap-southeast-1\tap-southeast-1b\t31\tUbuntu16.10\tx86\tLON\t1\t0\tproduction\t91\t44\t15\t87\t39\t59\t41\t87\t88\t57\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_24\tsa-east-1\tsa-east-1a\t29\tUbuntu16.10\tx86\tLON\t9\t1\tstaging\t28\t88\t90\t6\t5\t83\t8\t93\t94\t44\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_25\tus-west-1\tus-west-1a\t79\tUbuntu16.04LTS\tx86\tSF\t16\t0\tstaging\t15\t64\t13\t38\t80\t64\t18\t62\t26\t35\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_26\tsa-east-1\tsa-east-1c\t8\tUbuntu15.10\tx64\tCHI\t3\t1\ttest\t96\t80\t60\t57\t46\t39\t92\t8\t45\t22\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_27\tus-west-1\tus-west-1b\t38\tUbuntu16.10\tx86\tSF\t4\t1\tproduction\t5\t89\t70\t15\t19\t18\t15\t74\t84\t72\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_28\tus-west-1\tus-west-1a\t90\tUbuntu15.10\tx64\tCHI\t10\t1\ttest\t5\t16\t56\t55\t5\t86\t61\t6\t94\t16\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_29\tsa-east-1\tsa-east-1a\t6\tUbuntu16.10\tx86\tNYC\t14\t0\ttest\t8\t88\t67\t81\t38\t11\t13\t68\t49\t86\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_30\tap-northeast-1\tap-northeast-1c\t49\tUbuntu16.10\tx86\tSF\t2\t0\ttest\t78\t9\t64\t27\t16\t22\t91\t1\t97\t11\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_31\tus-east-1\tus-east-1a\t69\tUbuntu16.04LTS\tx64\tNYC\t13\t1\tproduction\t61\t28\t45\t46\t87\t41\t22\t77\t15\t56\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_32\tus-west-2\tus-west-2c\t50\tUbuntu15.10\tx64\tCHI\t11\t0\tstaging\t79\t67\t56\t45\t13\t33\t4\t42\t89\t9\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_33\tap-southeast-1\tap-southeast-1b\t88\tUbuntu15.10\tx86\tSF\t14\t0\tstaging\t90\t42\t88\t81\t33\t62\t96\t9\t35\t85\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_34\tap-southeast-1\tap-southeast-1b\t94\tUbuntu15.10\tx64\tLON\t13\t1\tproduction\t30\t62\t66\t64\t13\t82\t71\t94\t28\t28\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_35\teu-west-1\teu-west-1c\t5\tUbuntu16.04LTS\tx64\tCHI\t18\t0\ttest\t64\t89\t36\t5\t29\t78\t47\t77\t32\t60\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_36\teu-central-1\teu-central-1a\t18\tUbuntu16.10\tx64\tNYC\t14\t1\tstaging\t20\t20\t35\t38\t34\t70\t73\t45\t0\t84\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_37\tap-northeast-1\tap-northeast-1c\t53\tUbuntu15.10\tx86\tLON\t13\t0\ttest\t54\t66\t5\t40\t92\t47\t21\t12\t60\t77\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_38\tap-southeast-2\tap-southeast-2a\t87\tUbuntu16.10\tx64\tNYC\t18\t1\tproduction\t38\t35\t25\t80\t72\t81\t7\t29\t20\t41\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_39\teu-west-1\teu-west-1c\t56\tUbuntu15.10\tx86\tSF\t5\t1\tproduction\t77\t40\t2\t12\t11\t48\t41\t12\t33\t8\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_40\teu-west-1\teu-west-1a\t4\tUbuntu15.10\tx64\tLON\t15\t1\tproduction\t41\t74\t76\t33\t0\t31\t65\t40\t17\t81\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_41\teu-central-1\teu-central-1a\t19\tUbuntu15.10\tx64\tNYC\t4\t1\tstaging\t9\t14\t94\t42\t24\t16\t39\t17\t66\t81\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_42\teu-central-1\teu-central-1b\t57\tUbuntu15.10\tx86\tLON\t3\t0\ttest\t70\t67\t99\t91\t72\t36\t59\t78\t80\t76\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_43\tus-west-2\tus-west-2c\t85\tUbuntu15.10\tx64\tNYC\t5\t1\tstaging\t30\t19\t33\t65\t89\t25\t45\t62\t39\t63\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_44\tap-northeast-1\tap-northeast-1c\t15\tUbuntu15.10\tx86\tNYC\t19\t1\tproduction\t86\t67\t75\t79\t96\t49\t76\t31\t35\t64\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_45\tus-west-2\tus-west-2b\t74\tUbuntu15.10\tx64\tSF\t12\t1\tproduction\t35\t4\t33\t64\t86\t8\t29\t10\t33\t37\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_46\tsa-east-1\tsa-east-1c\t37\tUbuntu15.10\tx86\tSF\t3\t1\ttest\t44\t74\t82\t19\t23\t68\t22\t77\t15\t11\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_47\tus-west-1\tus-west-1b\t54\tUbuntu16.04LTS\tx86\tSF\t11\t1\tproduction\t53\t43\t61\t66\t47\t57\t25\t43\t58\t17\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_48\tsa-east-1\tsa-east-1a\t90\tUbuntu15.10\tx64\tSF\t1\t0\tstaging\t6\t7\t66\t45\t3\t40\t46\t68\t65\t25\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_49\tus-west-2\tus-west-2b\t75\tUbuntu16.04LTS\tx86\tSF\t12\t0\ttest\t44\t52\t69\t43\t82\t20\t50\t22\t92\t79\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_50\tsa-east-1\tsa-east-1b\t66\tUbuntu16.10\tx64\tNYC\t17\t1\ttest\t17\t16\t54\t72\t33\t88\t38\t34\t20\t71\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_51\tus-east-1\tus-east-1c\t98\tUbuntu15.10\tx86\tSF\t11\t0\tstaging\t97\t40\t69\t43\t4\t18\t46\t20\t30\t79\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_52\tus-west-2\tus-west-2c\t92\tUbuntu16.10\tx86\tCHI\t10\t0\tproduction\t6\t30\t35\t25\t10\t83\t95\t60\t92\t41\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_53\tsa-east-1\tsa-east-1a\t61\tUbuntu16.04LTS\tx86\tCHI\t16\t1\tstaging\t12\t61\t4\t9\t73\t29\t69\t27\t39\t53\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_54\tap-southeast-2\tap-southeast-2b\t79\tUbuntu16.10\tx64\tSF\t19\t1\tstaging\t61\t0\t45\t35\t2\t67\t60\t95\t76\t41\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_55\tus-west-1\tus-west-1a\t31\tUbuntu15.10\tx86\tCHI\t3\t1\tstaging\t29\t1\t33\t76\t74\t52\t61\t98\t72\t8\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_56\tap-southeast-1\tap-southeast-1a\t48\tUbuntu16.04LTS\tx64\tNYC\t17\t0\tstaging\t89\t60\t20\t67\t39\t83\t58\t64\t11\t34\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_57\teu-central-1\teu-central-1a\t59\tUbuntu16.10\tx86\tSF\t14\t0\tproduction\t1\t98\t44\t77\t5\t68\t9\t56\t54\t54\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_58\tap-northeast-1\tap-northeast-1a\t57\tUbuntu16.04LTS\tx86\tCHI\t12\t0\tproduction\t60\t48\t93\t98\t41\t39\t26\t32\t89\t16\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_59\tus-east-1\tus-east-1c\t21\tUbuntu16.10\tx86\tCHI\t11\t1\tproduction\t58\t20\t91\t34\t75\t42\t23\t20\t77\t64\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_60\tus-west-2\tus-west-2b\t71\tUbuntu15.10\tx64\tSF\t1\t0\tproduction\t36\t75\t57\t10\t41\t5\t92\t39\t91\t82\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_61\tus-east-1\tus-east-1b\t98\tUbuntu16.04LTS\tx64\tNYC\t13\t1\tstaging\t29\t38\t25\t24\t6\t22\t39\t2\t30\t53\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_62\tap-southeast-2\tap-southeast-2a\t36\tUbuntu15.10\tx64\tNYC\t15\t0\tproduction\t87\t11\t41\t78\t1\t62\t53\t4\t18\t15\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_63\teu-west-1\teu-west-1a\t28\tUbuntu16.10\tx64\tLON\t12\t1\tstaging\t21\t76\t65\t52\t35\t40\t15\t60\t9\t7\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_64\tus-west-1\tus-west-1a\t59\tUbuntu16.10\tx86\tCHI\t15\t0\ttest\t88\t99\t46\t96\t20\t0\t68\t6\t26\t32\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_65\teu-central-1\teu-central-1a\t43\tUbuntu16.10\tx86\tNYC\t11\t0\ttest\t2\t63\t78\t48\t55\t48\t67\t33\t25\t69\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_66\teu-west-1\teu-west-1a\t57\tUbuntu15.10\tx86\tCHI\t10\t1\ttest\t67\t89\t22\t35\t82\t10\t54\t34\t58\t98\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_67\teu-central-1\teu-central-1b\t96\tUbuntu16.10\tx86\tNYC\t18\t0\ttest\t71\t2\t9\t97\t63\t13\t43\t45\t21\t41\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_68\teu-central-1\teu-central-1a\t68\tUbuntu16.04LTS\tx64\tSF\t12\t1\ttest\t25\t6\t50\t82\t78\t41\t15\t62\t85\t77\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_69\tus-west-1\tus-west-1a\t11\tUbuntu16.10\tx64\tLON\t7\t0\ttest\t1\t68\t39\t82\t47\t56\t56\t89\t78\t51\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_70\tap-northeast-1\tap-northeast-1c\t5\tUbuntu16.04LTS\tx86\tLON\t3\t0\tproduction\t66\t23\t12\t0\t37\t38\t44\t9\t1\t63\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_71\teu-west-1\teu-west-1a\t72\tUbuntu15.10\tx64\tSF\t6\t0\ttest\t16\t55\t72\t1\t70\t22\t25\t35\t7\t57\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_72\tus-west-1\tus-west-1a\t60\tUbuntu15.10\tx64\tNYC\t15\t0\ttest\t84\t15\t88\t57\t0\t4\t69\t78\t29\t63\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_73\tus-west-1\tus-west-1b\t64\tUbuntu15.10\tx86\tCHI\t0\t0\tstaging\t97\t36\t90\t38\t89\t32\t73\t24\t1\t7\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_74\tsa-east-1\tsa-east-1a\t95\tUbuntu16.10\tx86\tNYC\t5\t0\tstaging\t17\t29\t49\t90\t18\t83\t48\t17\t51\t22\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_75\teu-central-1\teu-central-1a\t11\tUbuntu15.10\tx64\tLON\t17\t1\ttest\t56\t16\t54\t74\t93\t10\t42\t68\t1\t59\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_76\teu-west-1\teu-west-1c\t89\tUbuntu15.10\tx86\tSF\t4\t0\tproduction\t36\t22\t14\t69\t48\t65\t86\t22\t76\t83\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_77\tap-southeast-2\tap-southeast-2b\t19\tUbuntu16.04LTS\tx64\tNYC\t8\t1\tstaging\t85\t21\t83\t48\t61\t16\t35\t55\t13\t70\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_78\tap-southeast-2\tap-southeast-2a\t1\tUbuntu15.10\tx64\tNYC\t19\t0\tproduction\t70\t82\t1\t68\t35\t2\t63\t3\t11\t54\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_79\tap-northeast-1\tap-northeast-1c\t76\tUbuntu16.04LTS\tx86\tSF\t16\t1\ttest\t76\t64\t43\t84\t50\t53\t48\t60\t81\t23\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_80\tap-southeast-1\tap-southeast-1a\t86\tUbuntu16.10\tx86\tNYC\t2\t0\tproduction\t76\t89\t25\t15\t18\t60\t74\t32\t14\t21\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_81\tap-northeast-1\tap-northeast-1c\t29\tUbuntu15.10\tx86\tCHI\t19\t1\tstaging\t18\t88\t61\t80\t86\t31\t2\t63\t82\t73\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_82\tap-southeast-1\tap-southeast-1a\t89\tUbuntu16.10\tx86\tSF\t14\t0\tproduction\t3\t50\t12\t52\t14\t36\t60\t46\t77\t91\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_83\tap-northeast-1\tap-northeast-1c\t68\tUbuntu16.04LTS\tx64\tLON\t10\t0\ttest\t94\t53\t33\t35\t57\t37\t90\t32\t47\t2\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_84\teu-west-1\teu-west-1c\t35\tUbuntu16.10\tx86\tNYC\t4\t0\ttest\t29\t0\t78\t14\t65\t34\t91\t58\t64\t39\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_85\tus-west-2\tus-west-2b\t37\tUbuntu15.10\tx64\tCHI\t18\t0\ttest\t10\t23\t60\t9\t6\t91\t19\t56\t9\t76\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_86\teu-west-1\teu-west-1b\t66\tUbuntu15.10\tx86\tLON\t4\t1\tproduction\t55\t49\t23\t97\t60\t49\t90\t60\t56\t63\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_87\teu-central-1\teu-central-1b\t21\tUbuntu16.10\tx86\tCHI\t1\t1\tproduction\t26\t7\t45\t79\t79\t98\t13\t69\t45\t58\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_88\tus-west-1\tus-west-1b\t34\tUbuntu15.10\tx86\tNYC\t11\t0\ttest\t72\t58\t49\t73\t21\t77\t6\t29\t64\t9\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_89\teu-central-1\teu-central-1b\t23\tUbuntu16.10\tx64\tLON\t19\t1\tstaging\t89\t41\t14\t37\t0\t41\t29\t11\t70\t70\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_90\tap-southeast-1\tap-southeast-1b\t93\tUbuntu16.04LTS\tx64\tCHI\t0\t0\ttest\t58\t68\t53\t73\t39\t65\t73\t26\t39\t77\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_91\tus-west-1\tus-west-1b\t68\tUbuntu16.04LTS\tx86\tLON\t12\t1\tstaging\t33\t21\t52\t50\t84\t16\t92\t63\t85\t37\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_92\tsa-east-1\tsa-east-1b\t62\tUbuntu15.10\tx64\tCHI\t15\t0\tstaging\t34\t73\t76\t6\t56\t26\t64\t61\t64\t87\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_93\tus-east-1\tus-east-1c\t84\tUbuntu16.10\tx86\tLON\t2\t0\tproduction\t9\t37\t16\t27\t62\t42\t37\t6\t18\t64\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_94\tsa-east-1\tsa-east-1b\t42\tUbuntu15.10\tx64\tLON\t14\t1\ttest\t6\t22\t74\t7\t3\t31\t54\t95\t4\t69\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_95\teu-west-1\teu-west-1c\t8\tUbuntu15.10\tx64\tLON\t2\t0\tstaging\t18\t39\t51\t89\t57\t28\t36\t28\t95\t9\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_96\tus-west-2\tus-west-2a\t97\tUbuntu16.04LTS\tx86\tSF\t3\t0\tproduction\t55\t90\t24\t30\t39\t67\t63\t29\t82\t45\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_97\teu-west-1\teu-west-1c\t55\tUbuntu15.10\tx86\tCHI\t16\t1\ttest\t80\t91\t26\t33\t77\t61\t69\t19\t23\t58\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_98\tus-east-1\tus-east-1c\t2\tUbuntu16.10\tx86\tLON\t6\t1\tstaging\t70\t37\t46\t60\t1\t49\t95\t88\t99\t53\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_99\tus-east-1\tus-east-1a\t31\tUbuntu16.10\tx86\tSF\t19\t1\tstaging\t7\t58\t75\t50\t42\t88\t59\t32\t64\t33\t2016-01-01T00:00:00.000000Z\n");
+
+            assertSql(
+                    "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\n" +
+                            "1\ttest\ttimestamp\tDAY\t1000\t300000000\ttrue\ttest~1\tfalse\n",
+                    "tables"
+            );
+        });
+    }
+
     @Test
     public void testCsvWithByteOrderMark() throws Exception {
         assertNoLeak(textLoader -> {
@@ -603,14 +900,14 @@ public class TextLoaderTest extends AbstractCairoTest {
     public void testDOSLineEnds() throws Exception {
         assertNoLeak(textLoader -> {
             final String expected = "f0\tf1\tf2\tf3\tf4\tf5\tf6\n" +
-                    "123\tabc\t2015-01-20T21:00:00.000Z\t3.1415\ttrue\tLorem ipsum dolor sit amet.\t122\n" +
-                    "124\tabc\t2015-01-20T21:00:00.000Z\t7.342\tfalse\tLorem ipsum \n" +
+                    "123\tabc\t2015-01-20T21:00:00.000000Z\t3.1415\ttrue\tLorem ipsum dolor sit amet.\t122\n" +
+                    "124\tabc\t2015-01-20T21:00:00.000000Z\t7.342\tfalse\tLorem ipsum \n" +
                     "\n" +
                     "dolor \"sit\" amet.\t546756\n" +
-                    "125\tabc\t2015-01-20T21:00:00.000Z\t9.334\tfalse\tLorem ipsum \"dolor\" sit amet.\t23\n" +
-                    "126\tabc\t2015-01-20T21:00:00.000Z\t1.345\ttrue\tLorem, ipsum, dolor sit amet.\t434\n" +
-                    "127\tabc\t2015-01-20T21:00:00.000Z\t1.53321\ttrue\tLorem ipsum dolor sit amet.\t112\n" +
-                    "128\tabc\t2015-01-20T21:00:00.000Z\t2.456\ttrue\tLorem ipsum dolor sit amet.\t122\n";
+                    "125\tabc\t2015-01-20T21:00:00.000000Z\t9.334\tfalse\tLorem ipsum \"dolor\" sit amet.\t23\n" +
+                    "126\tabc\t2015-01-20T21:00:00.000000Z\t1.345\ttrue\tLorem, ipsum, dolor sit amet.\t434\n" +
+                    "127\tabc\t2015-01-20T21:00:00.000000Z\t1.53321\ttrue\tLorem ipsum dolor sit amet.\t112\n" +
+                    "128\tabc\t2015-01-20T21:00:00.000000Z\t2.456\ttrue\tLorem ipsum dolor sit amet.\t122\n";
 
             String csv = "123,abc,2015-01-20T21:00:00.000Z,3.1415,TRUE,Lorem ipsum dolor sit amet.,122\r\n" +
                     "124,abc,2015-01-20T21:00:00.000Z,7.342,FALSE,\"Lorem ipsum \n" +
@@ -629,9 +926,10 @@ public class TextLoaderTest extends AbstractCairoTest {
                     csv,
                     200,
                     expected,
-                    "{\"columnCount\":7,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"INT\"},{\"index\":1,\"name\":\"f1\",\"type\":\"STRING\"},{\"index\":2,\"name\":\"f2\",\"type\":\"DATE\"},{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"f4\",\"type\":\"BOOLEAN\"},{\"index\":5,\"name\":\"f5\",\"type\":\"STRING\"},{\"index\":6,\"name\":\"f6\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
+                    "{\"columnCount\":7,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"INT\"},{\"index\":1,\"name\":\"f1\",\"type\":\"STRING\"},{\"index\":2,\"name\":\"f2\",\"type\":\"TIMESTAMP\"},{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"f4\",\"type\":\"BOOLEAN\"},{\"index\":5,\"name\":\"f5\",\"type\":\"STRING\"},{\"index\":6,\"name\":\"f6\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
                     6,
-                    6
+                    6,
+                    false
             );
         });
     }
@@ -640,13 +938,13 @@ public class TextLoaderTest extends AbstractCairoTest {
     public void testDanglingQuote() throws Exception {
         assertNoLeak(textLoader -> {
             final String expected = "f0\tf1\tf2\tf3\tf4\tf5\tf6\n" +
-                    "123\tabc\t2015-01-20T21:00:00.000Z\t3.1415\ttrue\tLorem ipsum dolor sit amet.\t122\n" +
-                    "124\tabc\t2015-01-20T21:00:00.000Z\t7.342\tfalse\tLorem ipsum \n" +
+                    "123\tabc\t2015-01-20T21:00:00.000000Z\t3.1415\ttrue\tLorem ipsum dolor sit amet.\t122\n" +
+                    "124\tabc\t2015-01-20T21:00:00.000000Z\t7.342\tfalse\tLorem ipsum \n" +
                     "\n" +
                     "dolor \"sit\" amet.\t546756\n" +
-                    "125\tabc\t2015-01-20T21:00:00.000Z\t9.334\tfalse\tLorem ipsum \"dolor\" sit amet.\t23\n" +
-                    "126\tabc\t2015-01-20T21:00:00.000Z\t1.345\ttrue\tLorem, ipsum, dolor sit amet.\t434\n" +
-                    "127\tabc\t2015-01-20T21:00:00.000Z\t1.53321\ttrue\tLorem ipsum dolor sit amet.\t112\n";
+                    "125\tabc\t2015-01-20T21:00:00.000000Z\t9.334\tfalse\tLorem ipsum \"dolor\" sit amet.\t23\n" +
+                    "126\tabc\t2015-01-20T21:00:00.000000Z\t1.345\ttrue\tLorem, ipsum, dolor sit amet.\t434\n" +
+                    "127\tabc\t2015-01-20T21:00:00.000000Z\t1.53321\ttrue\tLorem ipsum dolor sit amet.\t112\n";
 
             String csv = "123\tabc\t2015-01-20T21:00:00.000Z\t3.1415\tTRUE\tLorem ipsum dolor sit amet.\t122\n" +
                     "124\tabc\t2015-01-20T21:00:00.000Z\t7.342\tFALSE\t\"Lorem ipsum \n" +
@@ -665,9 +963,10 @@ public class TextLoaderTest extends AbstractCairoTest {
                     csv,
                     85,
                     expected,
-                    "{\"columnCount\":7,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"INT\"},{\"index\":1,\"name\":\"f1\",\"type\":\"STRING\"},{\"index\":2,\"name\":\"f2\",\"type\":\"DATE\"},{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"f4\",\"type\":\"BOOLEAN\"},{\"index\":5,\"name\":\"f5\",\"type\":\"STRING\"},{\"index\":6,\"name\":\"f6\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
+                    "{\"columnCount\":7,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"INT\"},{\"index\":1,\"name\":\"f1\",\"type\":\"STRING\"},{\"index\":2,\"name\":\"f2\",\"type\":\"TIMESTAMP\"},{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"f4\",\"type\":\"BOOLEAN\"},{\"index\":5,\"name\":\"f5\",\"type\":\"STRING\"},{\"index\":6,\"name\":\"f6\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
                     5,
-                    5
+                    5,
+                    false
             );
         });
     }
@@ -761,7 +1060,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                     expected,
                     "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"f1\",\"type\":\"STRING\"},{\"index\":2,\"name\":\"f2\",\"type\":\"STRING\"}],\"timestampIndex\":-1}",
                     2,
-                    2
+                    2,
+                    false
             );
         });
     }
@@ -785,7 +1085,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                     expected,
                     "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"f1\",\"type\":\"STRING\"},{\"index\":2,\"name\":\"f2\",\"type\":\"STRING\"}],\"timestampIndex\":-1}",
                     2,
-                    2
+                    2,
+                    false
             );
         });
     }
@@ -809,7 +1110,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                     expected,
                     "{\"columnCount\":4,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"f1\",\"type\":\"STRING\"},{\"index\":2,\"name\":\"f2\",\"type\":\"STRING\"},{\"index\":3,\"name\":\"f3\",\"type\":\"STRING\"}],\"timestampIndex\":-1}",
                     2,
-                    2
+                    2,
+                    false
             );
         });
     }
@@ -857,12 +1159,28 @@ public class TextLoaderTest extends AbstractCairoTest {
             // which makes 14.4 not to parse
             playText(
                     textLoader,
+                    "{ \"columns\" : [ " +
+                            "{ \"file_column_name\": \"type\", \"column_type\": \"STRING\"  }, " +
+                            "{ \"file_column_name\": \"value\", \"column_type\": \"INT\"  }, " +
+                            "{ \"file_column_name\": \"active\", \"column_type\": \"BOOLEAN\"  }, " +
+                            "{ \"file_column_name\": \"desc\", \"column_type\": \"STRING\"  }, " +
+                            "{ \"file_column_name\": \"grp\", \"column_type\": \"STRING\"  }, " +
+                            "] }",
+                    2,
+                    false,
                     csv,
                     85,
                     expected,
-                    "{\"columnCount\":5,\"columns\":[{\"index\":0,\"name\":\"type\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"value\",\"type\":\"INT\"},{\"index\":2,\"name\":\"active\",\"type\":\"BOOLEAN\"},{\"index\":3,\"name\":\"desc\",\"type\":\"STRING\"},{\"index\":4,\"name\":\"grp\",\"type\":\"STRING\"}],\"timestampIndex\":-1}",
+                    "{\"columnCount\":5," +
+                            "\"columns\":[" +
+                            "{\"index\":0,\"name\":\"type\",\"type\":\"STRING\"}," +
+                            "{\"index\":1,\"name\":\"value\",\"type\":\"INT\"}," +
+                            "{\"index\":2,\"name\":\"active\",\"type\":\"BOOLEAN\"}," +
+                            "{\"index\":3,\"name\":\"desc\",\"type\":\"STRING\"}," +
+                            "{\"index\":4,\"name\":\"grp\",\"type\":\"STRING\"}],\"timestampIndex\":-1}",
                     5,
-                    4
+                    4,
+                    true
             );
         });
     }
@@ -890,12 +1208,28 @@ public class TextLoaderTest extends AbstractCairoTest {
             // at buffer size 250 "value" is type is determined as DOUBLE
             playText(
                     textLoader,
+                    "{ \"columns\" : [ " +
+                            "{ \"file_column_name\": \"type\", \"column_type\": \"STRING\"  }, " +
+                            "{ \"file_column_name\": \"value\", \"column_type\": \"DOUBLE\"  }, " +
+                            "{ \"file_column_name\": \"active\", \"column_type\": \"BOOLEAN\"  }, " +
+                            "{ \"file_column_name\": \"desc\", \"column_type\": \"STRING\"  }, " +
+                            "{ \"file_column_name\": \"grp\", \"column_type\": \"STRING\"  }, " +
+                            "] }",
+                    2,
+                    false,
                     csv,
                     250,
                     expected,
-                    "{\"columnCount\":5,\"columns\":[{\"index\":0,\"name\":\"type\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"value\",\"type\":\"DOUBLE\"},{\"index\":2,\"name\":\"active\",\"type\":\"BOOLEAN\"},{\"index\":3,\"name\":\"desc\",\"type\":\"STRING\"},{\"index\":4,\"name\":\"grp\",\"type\":\"STRING\"}],\"timestampIndex\":-1}",
+                    "{\"columnCount\":5," +
+                            "\"columns\":[" +
+                            "{\"index\":0,\"name\":\"type\",\"type\":\"STRING\"}," +
+                            "{\"index\":1,\"name\":\"value\",\"type\":\"DOUBLE\"}," +
+                            "{\"index\":2,\"name\":\"active\",\"type\":\"BOOLEAN\"}," +
+                            "{\"index\":3,\"name\":\"desc\",\"type\":\"STRING\"}," +
+                            "{\"index\":4,\"name\":\"grp\",\"type\":\"STRING\"}],\"timestampIndex\":-1}",
                     5,
-                    5
+                    5,
+                    true
             );
         });
     }
@@ -917,14 +1251,30 @@ public class TextLoaderTest extends AbstractCairoTest {
             textLoader.setForceHeaders(true);
             textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
             // at buffer size 250 "value" is type is determined as DOUBLE
+
             playText(
                     textLoader,
+                    " { \"columns\": [" +
+                            "{ \"file_column_name\": \"type\", \"column_type\":\"STRING\" }, " +
+                            "{ \"file_column_name\": \"value\", \"column_type\":\"STRING\" }, " +
+                            "{ \"file_column_name\": \"active\", \"column_type\":\"STRING\" }, " +
+                            "{ \"file_column_name\": \"desc\", \"column_type\":\"STRING\" }, " +
+                            "{ \"file_column_name\": \"_1\", \"column_type\":\"INT\", \"formats\" : [ { \"pattern\": \"bogus\" } ] } " +
+                            "] }",
+                    2,
+                    false,
                     csv,
                     90,
                     expected,
-                    "{\"columnCount\":5,\"columns\":[{\"index\":0,\"name\":\"type\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"value\",\"type\":\"STRING\"},{\"index\":2,\"name\":\"active\",\"type\":\"STRING\"},{\"index\":3,\"name\":\"desc\",\"type\":\"STRING\"},{\"index\":4,\"name\":\"_1\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
+                    "{\"columnCount\":5,\"columns\":[" +
+                            "{\"index\":0,\"name\":\"type\",\"type\":\"STRING\"}," +
+                            "{\"index\":1,\"name\":\"value\",\"type\":\"STRING\"}," +
+                            "{\"index\":2,\"name\":\"active\",\"type\":\"STRING\"}," +
+                            "{\"index\":3,\"name\":\"desc\",\"type\":\"STRING\"}," +
+                            "{\"index\":4,\"name\":\"_1\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
                     2,
-                    2
+                    2,
+                    true
             );
         });
     }
@@ -933,17 +1283,17 @@ public class TextLoaderTest extends AbstractCairoTest {
     public void testIgnoreLongLine() throws Exception {
         assertNoLeak(textLoader -> {
             String expected = "f0\tf1\tf2\tf3\tf4\tf5\tf6\tf7\tf8\tf9\n" +
-                    "CMP2\t8\t8000\t2.27636352181435\t2015-01-29T19:15:09.000Z\t2015-01-29T19:15:09.000Z\t2015-01-29T00:00:00.000Z\t323\ttrue\t14925407\n" +
-                    "CMP1\t2\t1581\t9.01423481060192\t2015-01-30T19:15:09.000Z\t2015-01-30T19:15:09.000Z\t2015-01-30T00:00:00.000Z\t9138\tfalse\t68225213\n" +
-                    "CMP2\t8\t7067\t9.6284336107783\t2015-01-31T19:15:09.000Z\t2015-01-31T19:15:09.000Z\t2015-01-31T00:00:00.000Z\t8197\ttrue\t58403960\n" +
-                    "CMP1\t8\t5313\t8.87764661805704\t2015-02-01T19:15:09.000Z\t2015-02-01T19:15:09.000Z\t2015-02-01T00:00:00.000Z\t2733\tfalse\t69698373\n" +
-                    "\t4\t3883\t7.96873019309714\t2015-02-02T19:15:09.000Z\t2015-02-02T19:15:09.000Z\t2015-02-02T00:00:00.000Z\t6912\ttrue\t91147394\n" +
-                    "CMP1\t7\t4256\t2.46553522534668\t2015-02-03T19:15:09.000Z\t2015-02-03T19:15:09.000Z\t2015-02-03T00:00:00.000Z\t9453\tfalse\t50278940\n" +
-                    "CMP1\t7\t4486\tNaN\t2015-02-05T19:15:09.000Z\t2015-02-05T19:15:09.000Z\t2015-02-05T00:00:00.000Z\t8670\tfalse\t751877\n" +
-                    "CMP2\t2\t6641\t0.0381825352087617\t2015-02-06T19:15:09.000Z\t2015-02-06T19:15:09.000Z\t2015-02-06T00:00:00.000Z\t8331\ttrue\t409092527\n" +
-                    "CMP1\t1\t3579\t0.849663221742958\t2015-02-07T19:15:09.000Z\t2015-02-07T19:15:09.000Z\t2015-02-07T00:00:00.000Z\t9592\tfalse\t11490662\n" +
-                    "CMP2\t2\t4770\t2.85092033445835\t2015-02-08T19:15:09.000Z\t2015-02-08T19:15:09.000Z\t2015-02-08T00:00:00.000Z\t253\ttrue\t33766814\n" +
-                    "CMP1\t5\t4938\t4.42754498450086\t2015-02-09T19:15:09.000Z\t2015-02-09T19:15:09.000Z\t2015-02-09T00:00:00.000Z\t7817\tfalse\t61983099\n";
+                    "CMP2\t8\t8000\t2.27636352181435\t2015-01-29T19:15:09.000000Z\t2015-01-29T19:15:09.000000Z\t2015-01-29T00:00:00.000000Z\t323\ttrue\t14925407\n" +
+                    "CMP1\t2\t1581\t9.01423481060192\t2015-01-30T19:15:09.000000Z\t2015-01-30T19:15:09.000000Z\t2015-01-30T00:00:00.000000Z\t9138\tfalse\t68225213\n" +
+                    "CMP2\t8\t7067\t9.6284336107783\t2015-01-31T19:15:09.000000Z\t2015-01-31T19:15:09.000000Z\t2015-01-31T00:00:00.000000Z\t8197\ttrue\t58403960\n" +
+                    "CMP1\t8\t5313\t8.87764661805704\t2015-02-01T19:15:09.000000Z\t2015-02-01T19:15:09.000000Z\t2015-02-01T00:00:00.000000Z\t2733\tfalse\t69698373\n" +
+                    "\t4\t3883\t7.96873019309714\t2015-02-02T19:15:09.000000Z\t2015-02-02T19:15:09.000000Z\t2015-02-02T00:00:00.000000Z\t6912\ttrue\t91147394\n" +
+                    "CMP1\t7\t4256\t2.46553522534668\t2015-02-03T19:15:09.000000Z\t2015-02-03T19:15:09.000000Z\t2015-02-03T00:00:00.000000Z\t9453\tfalse\t50278940\n" +
+                    "CMP1\t7\t4486\tNaN\t2015-02-05T19:15:09.000000Z\t2015-02-05T19:15:09.000000Z\t2015-02-05T00:00:00.000000Z\t8670\tfalse\t751877\n" +
+                    "CMP2\t2\t6641\t0.0381825352087617\t2015-02-06T19:15:09.000000Z\t2015-02-06T19:15:09.000000Z\t2015-02-06T00:00:00.000000Z\t8331\ttrue\t409092527\n" +
+                    "CMP1\t1\t3579\t0.849663221742958\t2015-02-07T19:15:09.000000Z\t2015-02-07T19:15:09.000000Z\t2015-02-07T00:00:00.000000Z\t9592\tfalse\t11490662\n" +
+                    "CMP2\t2\t4770\t2.85092033445835\t2015-02-08T19:15:09.000000Z\t2015-02-08T19:15:09.000000Z\t2015-02-08T00:00:00.000000Z\t253\ttrue\t33766814\n" +
+                    "CMP1\t5\t4938\t4.42754498450086\t2015-02-09T19:15:09.000000Z\t2015-02-09T19:15:09.000000Z\t2015-02-09T00:00:00.000000Z\t7817\tfalse\t61983099\n";
 
             String csv = "CMP2,8,8000,2.27636352181435,2015-01-29T19:15:09.000Z,2015-01-29 19:15:09,01/29/2015,323,TRUE,14925407\n" +
                     "CMP1,2,1581,9.01423481060192,2015-01-30T19:15:09.000Z,2015-01-30 19:15:09,01/30/2015,9138,FALSE,68225213\n" +
@@ -988,10 +1338,11 @@ public class TextLoaderTest extends AbstractCairoTest {
                         csv,
                         240,
                         expected,
-                        "{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"f1\",\"type\":\"INT\"},{\"index\":2,\"name\":\"f2\",\"type\":\"INT\"},{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"f4\",\"type\":\"DATE\"},{\"index\":5,\"name\":\"f5\",\"type\":\"DATE\"},{\"index\":6,\"name\":\"f6\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"f7\",\"type\":\"INT\"},{\"index\":8,\"name\":\"f8\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"f9\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
+                        "{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"f1\",\"type\":\"INT\"},{\"index\":2,\"name\":\"f2\",\"type\":\"INT\"},{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"f4\",\"type\":\"TIMESTAMP\"},{\"index\":5,\"name\":\"f5\",\"type\":\"TIMESTAMP\"},{\"index\":6,\"name\":\"f6\",\"type\":\"TIMESTAMP\"},{\"index\":7,\"name\":\"f7\",\"type\":\"INT\"},{\"index\":8,\"name\":\"f8\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"f9\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
                         12,
                         11,
-                        true
+                        true,
+                        false
                 );
             }
         });
@@ -1090,13 +1441,14 @@ public class TextLoaderTest extends AbstractCairoTest {
                     expected,
                     "{\"columnCount\":9,\"columns\":[{\"index\":0,\"name\":\"_1\",\"type\":\"INT\"},{\"index\":1,\"name\":\"f1\",\"type\":\"STRING\"},{\"index\":2,\"name\":\"ВидКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":3,\"name\":\"ТемаКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":4,\"name\":\"ПроверяемыйПериод\",\"type\":\"STRING\"},{\"index\":5,\"name\":\"_123\",\"type\":\"STRING\"},{\"index\":6,\"name\":\"ОкончаниеПроверки\",\"type\":\"STRING\"},{\"index\":7,\"name\":\"ВыявленныеНарушенияНедостатки\",\"type\":\"STRING\"},{\"index\":8,\"name\":\"РезультатыПроверки\",\"type\":\"STRING\"}],\"timestampIndex\":-1}",
                     36,
-                    36
+                    36,
+                    false
             );
         });
     }
 
     @Test
-    public void testImportNullForAllTypesWithDesignatedColumnWhenTableExists() throws Exception {
+    public void testImportNullForAllTypesWithDesignatedTsColumnWhenTableExists() throws Exception {
         assertNoLeak(
                 engine,
                 textLoader -> {
@@ -1154,12 +1506,32 @@ public class TextLoaderTest extends AbstractCairoTest {
                     playText(
                             engine,
                             textLoader,
+                            "{ \"columns\": [ " +
+                                    // if other columns contain only bad data, they can be marked with 'file_column_ignore'
+                                    "{ \"file_column_name\": \"byte\",  \"column_type\": \"byte\", \"formats\": [{ \"pattern\": \"bogus\"}] }, " +
+                                    "{ \"file_column_name\": \"short\", \"column_type\": \"short\", \"formats\": [{ \"pattern\": \"bogus\"}] }, " +
+                                    "{ \"file_column_name\": \"char\",  \"column_type\": \"char\", \"formats\": [{ \"pattern\": \"bogus\"}] }, " +
+                                    "{ \"file_column_name\": \"int\",   \"column_type\": \"int\", \"formats\": [{ \"pattern\": \"bogus\"}] }, " +
+                                    "{ \"file_column_name\": \"long\",  \"column_type\": \"long\", \"formats\": [{ \"pattern\": \"bogus\"}] }, " +
+                                    "{ \"file_column_name\": \"boolean\", \"column_type\": \"boolean\", \"formats\": [{ \"pattern\": \"bogus\"}] }, " +
+                                    "{ \"file_column_name\": \"float\",   \"column_type\": \"float\", \"formats\": [{ \"pattern\": \"bogus\"}] }, " +
+                                    "{ \"file_column_name\": \"double\",  \"column_type\": \"double\", \"formats\": [{ \"pattern\": \"bogus\"}] }, " +
+                                    "{ \"file_column_name\": \"string\",  \"column_type\": \"string\", \"formats\": [{ \"pattern\": \"bogus\"}] }, " +
+                                    "{ \"file_column_name\": \"symbol\",  \"column_type\": \"symbol\", \"formats\": [{ \"pattern\": \"bogus\"}] }, " +
+                                    "{ \"file_column_name\": \"long256\", \"column_type\": \"long256\", \"formats\": [{ \"pattern\": \"bogus\"}] }, " +
+                                    "{ \"file_column_name\": \"timestamp\", \"column_type\": \"timestamp\", \"formats\": [{ \"pattern\": \"bogus\"}] }, " +
+                                    "{ \"file_column_name\": \"date\",     \"column_type\": \"date\", \"formats\": [{ \"pattern\": \"bogus\"}] } " +
+                                    "] }",
+                            2,
+                            true,
                             csv,
                             1024,
                             expected,
+                            ENTITY_MANIPULATOR,
                             expectedMetadata,
                             3,
                             3,
+                            true,
                             true
                     );
                 }
@@ -1193,11 +1565,13 @@ public class TextLoaderTest extends AbstractCairoTest {
                                 null,
                                 -1,
                                 -1,
+                                true,
                                 true
+
                         );
                         Assert.fail("cannot insert null timestamp in designated column");
-                    } catch (TextException expected) {
-                        Assert.assertEquals("not a timestamp 'ts'", expected.getMessage());
+                    } catch (CairoException expected) {
+                        TestUtils.assertContains(expected.getMessage(), "column type mismatch");
                     }
                 }
         );
@@ -1224,17 +1598,22 @@ public class TextLoaderTest extends AbstractCairoTest {
                         playText(
                                 engine,
                                 textLoader,
+                                "{ \"columns\": [{ \"file_column_name\": \"ts\", \"column_type\": \"TIMESTAMP\" }] }",
+                                2,
+                                true,
                                 csv,
                                 1024,
                                 "ts\n",
+                                ENTITY_MANIPULATOR,
                                 "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"ts\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":0}",
                                 1,
                                 0,
+                                true,
                                 true
                         );
                         Assert.fail("cannot insert null timestamp in designated column");
-                    } catch (TextException expected) {
-                        Assert.assertEquals("not a timestamp 'ts'", expected.getMessage());
+                    } catch (CairoException expected) {
+                        TestUtils.assertContains(expected.getMessage(), "column type mismatch");
                     }
                 }
         );
@@ -1284,7 +1663,6 @@ public class TextLoaderTest extends AbstractCairoTest {
                                 "0.711850374\n" +
                                 "0.241364223\n";
 
-
                         String csv = "s\n" +
                                 "0.503555892\n" +
                                 "0.537083585\n" +
@@ -1315,12 +1693,17 @@ public class TextLoaderTest extends AbstractCairoTest {
                         playText(
                                 engine,
                                 textLoader,
+                                "{ \"columns\": [{ \"file_column_name\": \"s\", \"column_type\": \"DOUBLE\" }] }",
+                                2,
+                                false,
                                 csv,
                                 1024,
                                 expected,
+                                ENTITY_MANIPULATOR,
                                 "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"s\",\"type\":\"DOUBLE\"}],\"timestampIndex\":-1}",
                                 23,
                                 23,
+                                true,
                                 true
                         );
                     }
@@ -1344,6 +1727,33 @@ public class TextLoaderTest extends AbstractCairoTest {
                 2,
                 setOf("2021-01-01", "2021-01-01.1", "2021-01-01.2", "2021-01-01.4", "2021-01-01.6", "2021-01-02.0", "2021-01-02.1", "2021-01-02.5")
         );
+    }
+
+    @Test
+    public void testImportSkippingFirstThreeLines() throws Exception {
+        assertNoLeak(textLoader -> {
+            ddl("create table test (" +
+                    "ts timestamp, " +
+                    "x long ) ");
+            drainWalQueue();
+
+            String csv = "mangled,, header, should, be , ignored, 1 \n" +
+                    "yada, yada, yada \n" +
+                    "blah, blah, blah\n" +
+                    "ts,x\n" +
+                    "2021-01-02T03:04:05.000000Z,1\n" +
+                    "2021-02-03T04:05:06.000000Z,2\n";
+            textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
+            textLoader.configureDestination(TEST_TABLE_NAME, false, false, 0, PartitionBy.NONE, null, null, false);
+            textLoader.setSkipLines(3);
+            textLoader.configureColumnDelimiter((byte) ',');
+            playText0(textLoader, csv, 1024, ENTITY_MANIPULATOR);
+            drainWalQueue();
+            assertTable("ts\tx\n" +
+                    "2021-01-02T03:04:05.000000Z\t1\n" +
+                    "2021-02-03T04:05:06.000000Z\t2\n");
+            textLoader.clear();
+        });
     }
 
     @Test
@@ -1391,6 +1801,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                                 "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"StrSym\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"ts\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":-1}",
                                 5,
                                 5,
+                                true,
                                 true
                         );
                     }
@@ -1405,7 +1816,10 @@ public class TextLoaderTest extends AbstractCairoTest {
 
     @Test
     public void testImportTimestampFromEpochNominatedTimestamp() throws Exception {
-        assertTimestampAsLong("timestamp(ts) partition by DAY", "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"StrSym\",\"type\":\"SYMBOL\"},{\"index\":1,\"name\":\"ts\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":1}");
+        assertTimestampAsLong("timestamp(ts) partition by DAY",
+                "{\"columnCount\":2,\"columns\":[" +
+                        "{\"index\":0,\"name\":\"StrSym\",\"type\":\"SYMBOL\"}," +
+                        "{\"index\":1,\"name\":\"ts\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":1}");
     }
 
     @Test
@@ -1447,12 +1861,22 @@ public class TextLoaderTest extends AbstractCairoTest {
                         playText(
                                 engine,
                                 textLoader,
+                                "{ \"columns\": [ " +
+                                        "{ \"file_column_name\": \"StrSym\", \"column_type\": \"STRING\" }," +
+                                        "{ \"file_column_name\": \"ts\", \"column_type\": \"TIMESTAMP\" }" +
+                                        " ] }",
+                                2,
+                                false,
                                 csv,
                                 1024,
                                 expected,
-                                "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"StrSym\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"ts\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":1}",
+                                ENTITY_MANIPULATOR,
+                                "{\"columnCount\":2,\"columns\":[" +
+                                        "{\"index\":0,\"name\":\"StrSym\",\"type\":\"STRING\"}," +
+                                        "{\"index\":1,\"name\":\"ts\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":1}",
                                 5,
                                 5,
+                                true,
                                 true
                         );
 
@@ -1465,21 +1889,105 @@ public class TextLoaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testImportToExistingTableWithTruncateOption() throws Exception {
+        String[] ddlOptions = new String[]{
+                "",
+                "timestamp(ts)",
+                "timestamp(ts) partition by day bypass wal",
+                "timestamp(ts) partition by day wal"};
+        int[] partitionByOptions = new int[]{PartitionBy.NONE, PartitionBy.NONE, PartitionBy.DAY, PartitionBy.DAY};
+
+        for (int i = 0; i < ddlOptions.length; i++) {
+            final String ddlOption = ddlOptions[i];
+            final Utf8String timestamp = ddlOption.length() > 0 ? new Utf8String("ts") : null;
+            final int partitionBy = partitionByOptions[i];
+
+            assertNoLeak(textLoader -> {
+                ddl("create table test(" +
+                        "ts timestamp, " +
+                        "x long ) " + ddlOption);
+                insert("insert into test select x::timestamp, x from long_sequence(1000)");
+                drainWalQueue();
+                assertSql("count\n1000\n", "select count(*) from test");
+
+                String csv = "ts,x\n" +
+                        "2021-01-02T03:04:05.000000Z,1\n" +
+                        "2021-02-03T04:05:06.000000Z,2\n";
+                textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
+                textLoader.configureDestination(TEST_TABLE_NAME, true, false, 0, partitionBy, timestamp, null, true);
+                textLoader.configureColumnDelimiter((byte) ',');
+                playText0(textLoader, csv, 1024, ENTITY_MANIPULATOR);
+                drainWalQueue();
+                assertTable("ts\tx\n" +
+                        "2021-01-02T03:04:05.000000Z\t1\n" +
+                        "2021-02-03T04:05:06.000000Z\t2\n");
+                textLoader.clear();
+            });
+
+            drop("drop table test");
+        }
+    }
+
+    @Test
+    public void testImportToExistingTableWithTruncateOptionFailsOnTableLock() throws Exception {
+        assertNoLeak(textLoader -> {
+            ddl("create table test(" +
+                    "ts timestamp, " +
+                    "x long ) timestamp(ts)");
+            insert("insert into test select x::timestamp, x from long_sequence(1000)");
+            drainWalQueue();
+            assertSql("count\n1000\n", "select count(*) from test");
+
+            TableToken tableToken = engine.getTableTokenIfExists("test");
+            if (engine.lockReaders(tableToken)) {
+                try {
+                    final SOCountDownLatch latch = new SOCountDownLatch(1);
+                    AtomicReference<Throwable> error = new AtomicReference<>();
+
+                    new Thread(() -> {
+                        try {
+                            String csv = "ts,x\n" +
+                                    "2021-01-02T03:04:05.000000Z,1\n" +
+                                    "2021-02-03T04:05:06.000000Z,2\n";
+                            textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
+                            textLoader.configureDestination(TEST_TABLE_NAME, true, false, 0, PartitionBy.NONE, new Utf8String("ts"), null, true);
+                            textLoader.configureColumnDelimiter((byte) ',');
+                            playText0(textLoader, csv, 1024, ENTITY_MANIPULATOR);
+                        } catch (Throwable t) {
+                            error.set(t);
+                        } finally {
+                            latch.countDown();
+                        }
+                    }).start();
+                    latch.await();
+
+                    Assert.assertNotNull(error.get());
+                    TestUtils.assertContains(error.get().getMessage(), "can't lock readers to perform table truncate on 'test'");
+                } finally {
+                    engine.unlockReaders(tableToken);
+                }
+            }
+
+            textLoader.clear();
+        });
+    }
+
+    @Test
     public void testLineRoll() throws Exception {
         assertNoLeak(textLoader -> {
             String expected = "f0\tf1\tf2\tf3\tf4\tf5\tf6\tf7\tf8\tf9\n" +
-                    "\"CMP2\t8\t8000\t2.27636352181435\t2015-01-29T19:15:09.000Z\t2015-01-29T19:15:09.000Z\t2015-01-29T00:00:00.000Z\t323\ttrue\t14925407\n" +
-                    "CMP1\t2\t1581\t9.01423481060192\t2015-01-30T19:15:09.000Z\t2015-01-30T19:15:09.000Z\t2015-01-30T00:00:00.000Z\t9138\tfalse\t68225213\n" +
-                    "CMP2\t8\t7067\t9.6284336107783\t2015-01-31T19:15:09.000Z\t2015-01-31T19:15:09.000Z\t2015-01-31T00:00:00.000Z\t8197\ttrue\t58403960\n" +
-                    "CMP1\t8\t5313\t8.87764661805704\t2015-02-01T19:15:09.000Z\t2015-02-01T19:15:09.000Z\t2015-02-01T00:00:00.000Z\t2733\tfalse\t69698373\n" +
-                    "\t4\t3883\t7.96873019309714\t2015-02-02T19:15:09.000Z\t2015-02-02T19:15:09.000Z\t2015-02-02T00:00:00.000Z\t6912\ttrue\t91147394\n" +
-                    "CMP1\t7\t4256\t2.46553522534668\t2015-02-03T19:15:09.000Z\t2015-02-03T19:15:09.000Z\t2015-02-03T00:00:00.000Z\t9453\tfalse\t50278940\n" +
-                    "CMP2\t4\t155\t5.08547495584935\t2015-02-04T19:15:09.000Z\t2015-02-04T19:15:09.000Z\t2015-02-04T00:00:00.000Z\t8919\ttrue\t8671995\n" +
-                    "CMP1\t7\t4486\tNaN\t2015-02-05T19:15:09.000Z\t2015-02-05T19:15:09.000Z\t2015-02-05T00:00:00.000Z\t8670\tfalse\t751877\n" +
-                    "CMP2\t2\t6641\t0.0381825352087617\t2015-02-06T19:15:09.000Z\t2015-02-06T19:15:09.000Z\t2015-02-06T00:00:00.000Z\t8331\ttrue\t40909232527\n" +
-                    "CMP1\t1\t3579\t0.849663221742958\t2015-02-07T19:15:09.000Z\t2015-02-07T19:15:09.000Z\t2015-02-07T00:00:00.000Z\t9592\tfalse\t11490662\n" +
-                    "CMP2\t2\t4770\t2.85092033445835\t2015-02-08T19:15:09.000Z\t2015-02-08T19:15:09.000Z\t2015-02-08T00:00:00.000Z\t253\ttrue\t33766814\n" +
-                    "CMP1\t5\t4938\t4.42754498450086\t2015-02-09T19:15:09.000Z\t2015-02-09T19:15:09.000Z\t2015-02-09T00:00:00.000Z\t7817\tfalse\t61983099\n";
+                    "\"CMP2\t8\t8000\t2.27636352181435\t2015-01-29T19:15:09.000000Z\t2015-01-29T19:15:09.000000Z\t2015-01-29T00:00:00.000000Z\t323\ttrue\t14925407\n" +
+                    "CMP1\t2\t1581\t9.01423481060192\t2015-01-30T19:15:09.000000Z\t2015-01-30T19:15:09.000000Z\t2015-01-30T00:00:00.000000Z\t9138\tfalse\t68225213\n" +
+                    "CMP2\t8\t7067\t9.6284336107783\t2015-01-31T19:15:09.000000Z\t2015-01-31T19:15:09.000000Z\t2015-01-31T00:00:00.000000Z\t8197\ttrue\t58403960\n" +
+                    "CMP1\t8\t5313\t8.87764661805704\t2015-02-01T19:15:09.000000Z\t2015-02-01T19:15:09.000000Z\t2015-02-01T00:00:00.000000Z\t2733\tfalse\t69698373\n" +
+                    "\t4\t3883\t7.96873019309714\t2015-02-02T19:15:09.000000Z\t2015-02-02T19:15:09.000000Z\t2015-02-02T00:00:00.000000Z\t6912\ttrue\t91147394\n" +
+                    "CMP1\t7\t4256\t2.46553522534668\t2015-02-03T19:15:09.000000Z\t2015-02-03T19:15:09.000000Z\t2015-02-03T00:00:00.000000Z\t9453\tfalse\t50278940\n" +
+                    "CMP2\t4\t155\t5.08547495584935\t2015-02-04T19:15:09.000000Z\t2015-02-04T19:15:09.000000Z\t2015-02-04T00:00:00.000000Z\t8919\ttrue\t8671995\n" +
+                    "CMP1\t7\t4486\tNaN\t2015-02-05T19:15:09.000000Z\t2015-02-05T19:15:09.000000Z\t2015-02-05T00:00:00.000000Z\t8670\tfalse\t751877\n" +
+                    "CMP2\t2\t6641\t0.0381825352087617\t2015-02-06T19:15:09.000000Z\t2015-02-06T19:15:09.000000Z\t2015-02-06T00:00:00.000000Z\t8331\ttrue\t40909232527\n" +
+                    "CMP1\t1\t3579\t0.849663221742958\t2015-02-07T19:15:09.000000Z\t2015-02-07T19:15:09.000000Z\t2015-02-07T00:00:00.000000Z\t9592\tfalse\t11490662\n" +
+                    "CMP2\t2\t4770\t2.85092033445835\t2015-02-08T19:15:09.000000Z\t2015-02-08T19:15:09.000000Z\t2015-02-08T00:00:00.000000Z\t253\ttrue\t33766814\n" +
+                    "CMP1\t5\t4938\t4.42754498450086\t2015-02-09T19:15:09.000000Z\t2015-02-09T19:15:09.000000Z\t2015-02-09T00:00:00.000000Z\t7817\tfalse\t61983099\n";
 
             String csv = "\"\"\"CMP2\",8,8000,2.27636352181435,2015-01-29T19:15:09.000Z,2015-01-29 19:15:09,01/29/2015,323,TRUE,14925407\n" +
                     "CMP1,2,1581,9.01423481060192,2015-01-30T19:15:09.000Z,2015-01-30 19:15:09,01/30/2015,9138,FALSE,68225213\n" +
@@ -1522,10 +2030,11 @@ public class TextLoaderTest extends AbstractCairoTest {
                             csv,
                             1024,
                             expected,
-                            "{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"f1\",\"type\":\"INT\"},{\"index\":2,\"name\":\"f2\",\"type\":\"INT\"},{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"f4\",\"type\":\"DATE\"},{\"index\":5,\"name\":\"f5\",\"type\":\"DATE\"},{\"index\":6,\"name\":\"f6\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"f7\",\"type\":\"INT\"},{\"index\":8,\"name\":\"f8\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"f9\",\"type\":\"LONG\"}],\"timestampIndex\":-1}",
+                            "{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"f1\",\"type\":\"INT\"},{\"index\":2,\"name\":\"f2\",\"type\":\"INT\"},{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"f4\",\"type\":\"TIMESTAMP\"},{\"index\":5,\"name\":\"f5\",\"type\":\"TIMESTAMP\"},{\"index\":6,\"name\":\"f6\",\"type\":\"TIMESTAMP\"},{\"index\":7,\"name\":\"f7\",\"type\":\"INT\"},{\"index\":8,\"name\":\"f8\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"f9\",\"type\":\"LONG\"}],\"timestampIndex\":-1}",
                             12,
                             12,
-                            true
+                            true,
+                            false
                     );
                 }
             }
@@ -1536,20 +2045,20 @@ public class TextLoaderTest extends AbstractCairoTest {
     public void testLoadRowsWithExtraColumns() throws Exception {
         assertNoLeak(textLoader -> {
             final String expected = "VendorID\tlpep_pickup_datetime\tLpep_dropoff_datetime\tStore_and_fwd_flag\tRateCodeID\tPickup_longitude\tPickup_latitude\tDropoff_longitude\tDropoff_latitude\tPassenger_count\tTrip_distance\tFare_amount\tExtra\tMTA_tax\tTip_amount\tTolls_amount\tEhail_fee\tTotal_amount\tPayment_type\tTrip_type\n" +
-                    "2\t2014-03-01T00:00:00.000Z\t2014-03-01T19:18:34.000Z\tN\t1\t0\t0\t-73.87202453613281\t40.678714752197266\t6\t7.02\t28.5\t0.0\t0.5\t0.0\t0\t\t29.0\t2\t1\n" +
-                    "2\t2014-03-01T00:00:00.000Z\t2014-03-01T13:10:37.000Z\tN\t1\t0\t0\t-73.91783905029297\t40.75776672363281\t1\t5.43\t23.5\t0.0\t0.5\t5.88\t0\t\t29.88\t1\t1\n" +
-                    "2\t2014-03-01T00:00:00.000Z\t2014-03-01T14:36:16.000Z\tN\t1\t0\t0\t-73.88289642333984\t40.87045669555664\t1\t0.84\t5.0\t0.0\t0.5\t0.0\t0\t\t5.5\t1\t1\n" +
-                    "2\t2014-03-01T00:00:00.000Z\t2014-03-01T02:51:03.000Z\tN\t1\t0\t0\t0.0\t0.0\t1\t8.98\t26.5\t0.5\t0.5\t5.4\t0\t\t32.9\t1\t1\n" +
-                    "2\t2014-03-01T00:00:00.000Z\t2014-03-01T03:13:09.000Z\tN\t1\t0\t0\t0.0\t0.0\t1\t0.91\t5.5\t0.5\t0.5\t0.0\t0\t\t6.5\t2\t1\n" +
-                    "2\t2014-03-01T00:00:00.000Z\t2014-03-01T14:12:18.000Z\tN\t1\t0\t0\t0.0\t0.0\t1\t2.88\t13.0\t0.0\t0.5\t2.6\t0\t\t16.1\t1\t1\n" +
-                    "2\t2014-03-01T00:00:00.000Z\t2014-03-01T19:37:31.000Z\tN\t1\t0\t0\t0.0\t0.0\t1\t2.04\t9.0\t0.0\t0.5\t0.0\t0\t\t9.5\t2\t1\n" +
-                    "2\t2014-03-01T00:00:00.000Z\t2014-03-01T08:05:26.000Z\tN\t1\t0\t0\t-73.86398315429688\t40.895206451416016\t1\t7.61\t22.5\t0.0\t0.5\t0.0\t0\t\t23.0\t2\t1\n" +
-                    "2\t2014-03-01T00:00:00.000Z\t2014-03-01T17:02:26.000Z\tN\t1\t0\t0\t0.0\t0.0\t1\t3.37\t14.0\t0.0\t0.5\t7.5\t0\t\t22.0\t1\t1\n" +
-                    "2\t2014-03-01T00:00:00.000Z\t2014-03-01T10:45:08.000Z\tN\t1\t0\t0\t-73.98382568359375\t40.67216491699219\t5\t2.98\t11.0\t0.0\t0.5\t0.0\t0\t\t11.5\t2\t1\n" +
-                    "2\t2014-03-01T00:00:00.000Z\t2014-03-01T19:23:12.000Z\tN\t1\t0\t0\t-73.89750671386719\t40.856563568115234\t1\t6.1\t21.0\t0.0\t0.5\t4.2\t0\t\t25.7\t1\t1\n" +
-                    "2\t2014-03-01T00:00:00.000Z\t2014-03-01T20:30:34.000Z\tN\t1\t0\t0\t-73.83473205566406\t40.769981384277344\t1\t4.03\t13.5\t0.5\t0.5\t0.0\t0\t\t14.5\t2\t1\n" +
-                    "2\t2014-03-01T00:00:00.000Z\t2014-03-01T02:11:02.000Z\tN\t1\t0\t0\t-73.96269226074219\t40.80527877807617\t1\t11.02\t36.5\t0.5\t0.5\t9.25\t0\t\t46.75\t1\t1\n" +
-                    "2\t2014-03-01T00:00:00.000Z\t2014-03-01T01:12:02.000Z\tN\t1\t0\t0\t-73.81257629394531\t40.72515869140625\t1\t2.98\t11.0\t0.5\t0.5\t2.3\t0\t\t14.3\t1\t1\n";
+                    "2\t2014-03-01T00:00:00.000000Z\t2014-03-01T19:18:34.000000Z\tN\t1\t0\t0\t-73.87202453613281\t40.678714752197266\t6\t7.02\t28.5\t0.0\t0.5\t0.0\t0\t\t29.0\t2\t1\n" +
+                    "2\t2014-03-01T00:00:00.000000Z\t2014-03-01T13:10:37.000000Z\tN\t1\t0\t0\t-73.91783905029297\t40.75776672363281\t1\t5.43\t23.5\t0.0\t0.5\t5.88\t0\t\t29.88\t1\t1\n" +
+                    "2\t2014-03-01T00:00:00.000000Z\t2014-03-01T14:36:16.000000Z\tN\t1\t0\t0\t-73.88289642333984\t40.87045669555664\t1\t0.84\t5.0\t0.0\t0.5\t0.0\t0\t\t5.5\t1\t1\n" +
+                    "2\t2014-03-01T00:00:00.000000Z\t2014-03-01T02:51:03.000000Z\tN\t1\t0\t0\t0.0\t0.0\t1\t8.98\t26.5\t0.5\t0.5\t5.4\t0\t\t32.9\t1\t1\n" +
+                    "2\t2014-03-01T00:00:00.000000Z\t2014-03-01T03:13:09.000000Z\tN\t1\t0\t0\t0.0\t0.0\t1\t0.91\t5.5\t0.5\t0.5\t0.0\t0\t\t6.5\t2\t1\n" +
+                    "2\t2014-03-01T00:00:00.000000Z\t2014-03-01T14:12:18.000000Z\tN\t1\t0\t0\t0.0\t0.0\t1\t2.88\t13.0\t0.0\t0.5\t2.6\t0\t\t16.1\t1\t1\n" +
+                    "2\t2014-03-01T00:00:00.000000Z\t2014-03-01T19:37:31.000000Z\tN\t1\t0\t0\t0.0\t0.0\t1\t2.04\t9.0\t0.0\t0.5\t0.0\t0\t\t9.5\t2\t1\n" +
+                    "2\t2014-03-01T00:00:00.000000Z\t2014-03-01T08:05:26.000000Z\tN\t1\t0\t0\t-73.86398315429688\t40.895206451416016\t1\t7.61\t22.5\t0.0\t0.5\t0.0\t0\t\t23.0\t2\t1\n" +
+                    "2\t2014-03-01T00:00:00.000000Z\t2014-03-01T17:02:26.000000Z\tN\t1\t0\t0\t0.0\t0.0\t1\t3.37\t14.0\t0.0\t0.5\t7.5\t0\t\t22.0\t1\t1\n" +
+                    "2\t2014-03-01T00:00:00.000000Z\t2014-03-01T10:45:08.000000Z\tN\t1\t0\t0\t-73.98382568359375\t40.67216491699219\t5\t2.98\t11.0\t0.0\t0.5\t0.0\t0\t\t11.5\t2\t1\n" +
+                    "2\t2014-03-01T00:00:00.000000Z\t2014-03-01T19:23:12.000000Z\tN\t1\t0\t0\t-73.89750671386719\t40.856563568115234\t1\t6.1\t21.0\t0.0\t0.5\t4.2\t0\t\t25.7\t1\t1\n" +
+                    "2\t2014-03-01T00:00:00.000000Z\t2014-03-01T20:30:34.000000Z\tN\t1\t0\t0\t-73.83473205566406\t40.769981384277344\t1\t4.03\t13.5\t0.5\t0.5\t0.0\t0\t\t14.5\t2\t1\n" +
+                    "2\t2014-03-01T00:00:00.000000Z\t2014-03-01T02:11:02.000000Z\tN\t1\t0\t0\t-73.96269226074219\t40.80527877807617\t1\t11.02\t36.5\t0.5\t0.5\t9.25\t0\t\t46.75\t1\t1\n" +
+                    "2\t2014-03-01T00:00:00.000000Z\t2014-03-01T01:12:02.000000Z\tN\t1\t0\t0\t-73.81257629394531\t40.72515869140625\t1\t2.98\t11.0\t0.5\t0.5\t2.3\t0\t\t14.3\t1\t1\n";
 
             String csv = "VendorID,lpep_pickup_datetime,Lpep_dropoff_datetime,Store_and_fwd_flag,RateCodeID,Pickup_longitude,Pickup_latitude,Dropoff_longitude,Dropoff_latitude,Passenger_count,Trip_distance,Fare_amount,Extra,MTA_tax,Tip_amount,Tolls_amount,Ehail_fee,Total_amount,Payment_type,Trip_type\n" +
                     "\n" +
@@ -1576,9 +2085,10 @@ public class TextLoaderTest extends AbstractCairoTest {
                     csv,
                     1024 * 1024,
                     expected,
-                    "{\"columnCount\":20,\"columns\":[{\"index\":0,\"name\":\"VendorID\",\"type\":\"INT\"},{\"index\":1,\"name\":\"lpep_pickup_datetime\",\"type\":\"DATE\"},{\"index\":2,\"name\":\"Lpep_dropoff_datetime\",\"type\":\"DATE\"},{\"index\":3,\"name\":\"Store_and_fwd_flag\",\"type\":\"CHAR\"},{\"index\":4,\"name\":\"RateCodeID\",\"type\":\"INT\"},{\"index\":5,\"name\":\"Pickup_longitude\",\"type\":\"INT\"},{\"index\":6,\"name\":\"Pickup_latitude\",\"type\":\"INT\"},{\"index\":7,\"name\":\"Dropoff_longitude\",\"type\":\"DOUBLE\"},{\"index\":8,\"name\":\"Dropoff_latitude\",\"type\":\"DOUBLE\"},{\"index\":9,\"name\":\"Passenger_count\",\"type\":\"INT\"},{\"index\":10,\"name\":\"Trip_distance\",\"type\":\"DOUBLE\"},{\"index\":11,\"name\":\"Fare_amount\",\"type\":\"DOUBLE\"},{\"index\":12,\"name\":\"Extra\",\"type\":\"DOUBLE\"},{\"index\":13,\"name\":\"MTA_tax\",\"type\":\"DOUBLE\"},{\"index\":14,\"name\":\"Tip_amount\",\"type\":\"DOUBLE\"},{\"index\":15,\"name\":\"Tolls_amount\",\"type\":\"INT\"},{\"index\":16,\"name\":\"Ehail_fee\",\"type\":\"STRING\"},{\"index\":17,\"name\":\"Total_amount\",\"type\":\"DOUBLE\"},{\"index\":18,\"name\":\"Payment_type\",\"type\":\"INT\"},{\"index\":19,\"name\":\"Trip_type\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
+                    "{\"columnCount\":20,\"columns\":[{\"index\":0,\"name\":\"VendorID\",\"type\":\"INT\"},{\"index\":1,\"name\":\"lpep_pickup_datetime\",\"type\":\"TIMESTAMP\"},{\"index\":2,\"name\":\"Lpep_dropoff_datetime\",\"type\":\"TIMESTAMP\"},{\"index\":3,\"name\":\"Store_and_fwd_flag\",\"type\":\"CHAR\"},{\"index\":4,\"name\":\"RateCodeID\",\"type\":\"INT\"},{\"index\":5,\"name\":\"Pickup_longitude\",\"type\":\"INT\"},{\"index\":6,\"name\":\"Pickup_latitude\",\"type\":\"INT\"},{\"index\":7,\"name\":\"Dropoff_longitude\",\"type\":\"DOUBLE\"},{\"index\":8,\"name\":\"Dropoff_latitude\",\"type\":\"DOUBLE\"},{\"index\":9,\"name\":\"Passenger_count\",\"type\":\"INT\"},{\"index\":10,\"name\":\"Trip_distance\",\"type\":\"DOUBLE\"},{\"index\":11,\"name\":\"Fare_amount\",\"type\":\"DOUBLE\"},{\"index\":12,\"name\":\"Extra\",\"type\":\"DOUBLE\"},{\"index\":13,\"name\":\"MTA_tax\",\"type\":\"DOUBLE\"},{\"index\":14,\"name\":\"Tip_amount\",\"type\":\"DOUBLE\"},{\"index\":15,\"name\":\"Tolls_amount\",\"type\":\"INT\"},{\"index\":16,\"name\":\"Ehail_fee\",\"type\":\"STRING\"},{\"index\":17,\"name\":\"Total_amount\",\"type\":\"DOUBLE\"},{\"index\":18,\"name\":\"Payment_type\",\"type\":\"INT\"},{\"index\":19,\"name\":\"Trip_type\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
                     14,
                     14,
+                    false,
                     false
             );
         });
@@ -1678,7 +2188,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                     expected,
                     "{\"columnCount\":9,\"columns\":[{\"index\":0,\"name\":\"№ПП\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"f1\",\"type\":\"STRING\"},{\"index\":2,\"name\":\"ВидКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":3,\"name\":\"ТемаКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":4,\"name\":\"ПроверяемыйПериод\",\"type\":\"STRING\"},{\"index\":5,\"name\":\"НачалоПроверки\",\"type\":\"STRING\"},{\"index\":6,\"name\":\"ОкончаниеПроверки\",\"type\":\"STRING\"},{\"index\":7,\"name\":\"ВыявленныеНарушенияНедостатки\",\"type\":\"STRING\"},{\"index\":8,\"name\":\"РезультатыПроверки\",\"type\":\"STRING\"}],\"timestampIndex\":-1}",
                     36,
-                    36
+                    36,
+                    false
             );
         });
     }
@@ -1687,11 +2198,10 @@ public class TextLoaderTest extends AbstractCairoTest {
     public void testMissingFirstColumn() throws Exception {
         assertNoLeak(textLoader -> {
             String expected = "StrSym\tIntSym\tInt_Col\tDoubleCol\tIsoDate\tFmt1Date\tFmt2Date\tPhone\tboolean\tlong\n" +
-                    "CMP1\t7\t8284\t3.2045788760297\t2015-01-13T19:15:09.000Z\t2015-01-13T19:15:09.000Z\t2015-01-13T00:00:00.000Z\t8284\ttrue\t10239799\n" +
-                    "CMP2\t3\t1066\t7.5186683377251\t2015-01-14T19:15:09.000Z\t2015-01-14T19:15:09.000Z\t2015-01-14T00:00:00.000Z\t1066\tfalse\t23331405\n" +
-                    "\t6\t4527\t2.48986426275223\t2015-01-16T19:15:09.000Z\t2015-01-16T19:15:09.000Z\t2015-01-16T00:00:00.000Z\t2719\tfalse\t67489936\n" +
-                    "CMP1\t7\t6460\t6.39910243218765\t2015-01-17T19:15:09.000Z\t2015-01-17T19:15:09.000Z\t2015-01-17T00:00:00.000Z\t5142\ttrue\t69744070\n";
-
+                    "CMP1\t7\t8284\t3.2045788760297\t2015-01-13T19:15:09.000000Z\t2015-01-13T19:15:09.000000Z\t2015-01-13T00:00:00.000000Z\t8284\ttrue\t10239799\n" +
+                    "CMP2\t3\t1066\t7.5186683377251\t2015-01-14T19:15:09.000000Z\t2015-01-14T19:15:09.000000Z\t2015-01-14T00:00:00.000000Z\t1066\tfalse\t23331405\n" +
+                    "\t6\t4527\t2.48986426275223\t2015-01-16T19:15:09.000000Z\t2015-01-16T19:15:09.000000Z\t2015-01-16T00:00:00.000000Z\t2719\tfalse\t67489936\n" +
+                    "CMP1\t7\t6460\t6.39910243218765\t2015-01-17T19:15:09.000000Z\t2015-01-17T19:15:09.000000Z\t2015-01-17T00:00:00.000000Z\t5142\ttrue\t69744070\n";
 
             String csv = "StrSym,Int Sym,Int_Col,DoubleCol,IsoDate,Fmt1Date,Fmt2Date,Phone,boolean,long\n" +
                     "CMP1,7,8284,3.2045788760297,2015-01-13T19:15:09.000Z,2015-01-13 19:15:09,01/13/2015,8284,TRUE,10239799\n" +
@@ -1707,9 +2217,21 @@ public class TextLoaderTest extends AbstractCairoTest {
                     csv,
                     260,
                     expected,
-                    "{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"StrSym\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"IntSym\",\"type\":\"INT\"},{\"index\":2,\"name\":\"Int_Col\",\"type\":\"INT\"},{\"index\":3,\"name\":\"DoubleCol\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"IsoDate\",\"type\":\"DATE\"},{\"index\":5,\"name\":\"Fmt1Date\",\"type\":\"DATE\"},{\"index\":6,\"name\":\"Fmt2Date\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"Phone\",\"type\":\"INT\"},{\"index\":8,\"name\":\"boolean\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"long\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
+                    "{\"columnCount\":10," +
+                            "\"columns\":[" +
+                            "{\"index\":0,\"name\":\"StrSym\",\"type\":\"STRING\"}," +
+                            "{\"index\":1,\"name\":\"IntSym\",\"type\":\"INT\"}," +
+                            "{\"index\":2,\"name\":\"Int_Col\",\"type\":\"INT\"}," +
+                            "{\"index\":3,\"name\":\"DoubleCol\",\"type\":\"DOUBLE\"}," +
+                            "{\"index\":4,\"name\":\"IsoDate\",\"type\":\"TIMESTAMP\"}," +
+                            "{\"index\":5,\"name\":\"Fmt1Date\",\"type\":\"TIMESTAMP\"}," +
+                            "{\"index\":6,\"name\":\"Fmt2Date\",\"type\":\"TIMESTAMP\"}," +
+                            "{\"index\":7,\"name\":\"Phone\",\"type\":\"INT\"}," +
+                            "{\"index\":8,\"name\":\"boolean\",\"type\":\"BOOLEAN\"}," +
+                            "{\"index\":9,\"name\":\"long\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
                     5,
-                    4
+                    4,
+                    true
             );
         });
     }
@@ -1728,7 +2250,7 @@ public class TextLoaderTest extends AbstractCairoTest {
             try {
                 playText0(textLoader, text, 512, ENTITY_MANIPULATOR);
             } catch (TextException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "min deviation is too high");
+                TestUtils.assertContains(e.getFlyweightMessage(), "Text delimiter can't be detected automatically. Please set it manually.");
             }
         });
     }
@@ -1771,18 +2293,18 @@ public class TextLoaderTest extends AbstractCairoTest {
     public void testOverrideDoubleWithFloat() throws Exception {
         assertNoLeak(textLoader -> {
             String expected = "f0\tf1\tf2\tf3\tf4\tf5\tf6\tf7\tf8\tf9\n" +
-                    "\"CMP2\t8\t8000\t2.2764\t2015-01-29T19:15:09.000Z\t2015-01-29T19:15:09.000Z\t2015-01-29T00:00:00.000Z\t323\ttrue\t14925407\n" +
-                    "CMP1\t2\t1581\t9.0142\t2015-01-30T19:15:09.000Z\t2015-01-30T19:15:09.000Z\t2015-01-30T00:00:00.000Z\t9138\tfalse\t68225213\n" +
-                    "CMP2\t8\t7067\t9.6284\t2015-01-31T19:15:09.000Z\t2015-01-31T19:15:09.000Z\t2015-01-31T00:00:00.000Z\t8197\ttrue\t58403960\n" +
-                    "CMP1\t8\t5313\t8.8776\t2015-02-01T19:15:09.000Z\t2015-02-01T19:15:09.000Z\t2015-02-01T00:00:00.000Z\t2733\tfalse\t69698373\n" +
-                    "\t4\t3883\t7.9687\t2015-02-02T19:15:09.000Z\t2015-02-02T19:15:09.000Z\t2015-02-02T00:00:00.000Z\t6912\ttrue\t91147394\n" +
-                    "CMP1\t7\t4256\t2.4655\t2015-02-03T19:15:09.000Z\t2015-02-03T19:15:09.000Z\t2015-02-03T00:00:00.000Z\t9453\tfalse\t50278940\n" +
-                    "CMP2\t4\t155\t5.0855\t2015-02-04T19:15:09.000Z\t2015-02-04T19:15:09.000Z\t2015-02-04T00:00:00.000Z\t8919\ttrue\t8671995\n" +
-                    "CMP1\t7\t4486\tNaN\t2015-02-05T19:15:09.000Z\t2015-02-05T19:15:09.000Z\t2015-02-05T00:00:00.000Z\t8670\tfalse\t751877\n" +
-                    "CMP2\t2\t6641\t0.0382\t2015-02-06T19:15:09.000Z\t2015-02-06T19:15:09.000Z\t2015-02-06T00:00:00.000Z\t8331\ttrue\t40909232527\n" +
-                    "CMP1\t1\t3579\t0.8497\t2015-02-07T19:15:09.000Z\t2015-02-07T19:15:09.000Z\t2015-02-07T00:00:00.000Z\t9592\tfalse\t11490662\n" +
-                    "CMP2\t2\t4770\t2.8509\t2015-02-08T19:15:09.000Z\t2015-02-08T19:15:09.000Z\t2015-02-08T00:00:00.000Z\t253\ttrue\t33766814\n" +
-                    "CMP1\t5\t4938\t4.4275\t2015-02-09T19:15:09.000Z\t2015-02-09T19:15:09.000Z\t2015-02-09T00:00:00.000Z\t7817\tfalse\t61983099\n";
+                    "\"CMP2\t8\t8000\t2.2764\t2015-01-29T19:15:09.000000Z\t2015-01-29T19:15:09.000000Z\t2015-01-29T00:00:00.000000Z\t323\ttrue\t14925407\n" +
+                    "CMP1\t2\t1581\t9.0142\t2015-01-30T19:15:09.000000Z\t2015-01-30T19:15:09.000000Z\t2015-01-30T00:00:00.000000Z\t9138\tfalse\t68225213\n" +
+                    "CMP2\t8\t7067\t9.6284\t2015-01-31T19:15:09.000000Z\t2015-01-31T19:15:09.000000Z\t2015-01-31T00:00:00.000000Z\t8197\ttrue\t58403960\n" +
+                    "CMP1\t8\t5313\t8.8776\t2015-02-01T19:15:09.000000Z\t2015-02-01T19:15:09.000000Z\t2015-02-01T00:00:00.000000Z\t2733\tfalse\t69698373\n" +
+                    "\t4\t3883\t7.9687\t2015-02-02T19:15:09.000000Z\t2015-02-02T19:15:09.000000Z\t2015-02-02T00:00:00.000000Z\t6912\ttrue\t91147394\n" +
+                    "CMP1\t7\t4256\t2.4655\t2015-02-03T19:15:09.000000Z\t2015-02-03T19:15:09.000000Z\t2015-02-03T00:00:00.000000Z\t9453\tfalse\t50278940\n" +
+                    "CMP2\t4\t155\t5.0855\t2015-02-04T19:15:09.000000Z\t2015-02-04T19:15:09.000000Z\t2015-02-04T00:00:00.000000Z\t8919\ttrue\t8671995\n" +
+                    "CMP1\t7\t4486\tNaN\t2015-02-05T19:15:09.000000Z\t2015-02-05T19:15:09.000000Z\t2015-02-05T00:00:00.000000Z\t8670\tfalse\t751877\n" +
+                    "CMP2\t2\t6641\t0.0382\t2015-02-06T19:15:09.000000Z\t2015-02-06T19:15:09.000000Z\t2015-02-06T00:00:00.000000Z\t8331\ttrue\t40909232527\n" +
+                    "CMP1\t1\t3579\t0.8497\t2015-02-07T19:15:09.000000Z\t2015-02-07T19:15:09.000000Z\t2015-02-07T00:00:00.000000Z\t9592\tfalse\t11490662\n" +
+                    "CMP2\t2\t4770\t2.8509\t2015-02-08T19:15:09.000000Z\t2015-02-08T19:15:09.000000Z\t2015-02-08T00:00:00.000000Z\t253\ttrue\t33766814\n" +
+                    "CMP1\t5\t4938\t4.4275\t2015-02-09T19:15:09.000000Z\t2015-02-09T19:15:09.000000Z\t2015-02-09T00:00:00.000000Z\t7817\tfalse\t61983099\n";
 
             String csv = "\"\"\"CMP2\",8,8000,2.27636352181435,2015-01-29T19:15:09.000Z,2015-01-29 19:15:09,01/29/2015,323,TRUE,14925407\n" +
                     "CMP1,2,1581,9.01423481060192,2015-01-30T19:15:09.000Z,2015-01-30 19:15:09,01/30/2015,9138,FALSE,68225213\n" +
@@ -1798,22 +2320,23 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "CMP1,5,4938,4.42754498450086,2015-02-09T19:15:09.000Z,2015-02-09 19:15:09,02/09/2015,7817,FALSE,61983099\n";
 
             configureLoaderDefaults(textLoader);
-
-            playJson(textLoader, ("[\n" +
-                    "  {\n" +
-                    "    \"name\": \"f3\",\n" +
-                    "    \"type\": \"FLOAT\"\n" +
-                    "  }\n" +
-                    "]"));
+            textLoader.setSchemaVersion(2);
+            playJson(textLoader, ("{" +
+                    "  \"columns\": [" +
+                    "    {  \"file_column_index\": 3, \"column_type\": \"FLOAT\" } " +
+                    "  ]," +
+                    "  \"formats_action\": \"ADD\"\n" +
+                    "}"));
             textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
             playText(
                     textLoader,
                     csv,
                     1024,
                     expected,
-                    "{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"f1\",\"type\":\"INT\"},{\"index\":2,\"name\":\"f2\",\"type\":\"INT\"},{\"index\":3,\"name\":\"f3\",\"type\":\"FLOAT\"},{\"index\":4,\"name\":\"f4\",\"type\":\"DATE\"},{\"index\":5,\"name\":\"f5\",\"type\":\"DATE\"},{\"index\":6,\"name\":\"f6\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"f7\",\"type\":\"INT\"},{\"index\":8,\"name\":\"f8\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"f9\",\"type\":\"LONG\"}],\"timestampIndex\":-1}",
+                    "{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"f1\",\"type\":\"INT\"},{\"index\":2,\"name\":\"f2\",\"type\":\"INT\"},{\"index\":3,\"name\":\"f3\",\"type\":\"FLOAT\"},{\"index\":4,\"name\":\"f4\",\"type\":\"TIMESTAMP\"},{\"index\":5,\"name\":\"f5\",\"type\":\"TIMESTAMP\"},{\"index\":6,\"name\":\"f6\",\"type\":\"TIMESTAMP\"},{\"index\":7,\"name\":\"f7\",\"type\":\"INT\"},{\"index\":8,\"name\":\"f8\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"f9\",\"type\":\"LONG\"}],\"timestampIndex\":-1}",
                     12,
-                    12
+                    12,
+                    false
             );
         });
     }
@@ -1822,18 +2345,18 @@ public class TextLoaderTest extends AbstractCairoTest {
     public void testOverrideIntWithByte() throws Exception {
         assertNoLeak(textLoader -> {
             String expected = "f0\tf1\tf2\tf3\tf4\tf5\tf6\tf7\tf8\tf9\n" +
-                    "\"CMP2\t8\t8000\t2.27636352181435\t2015-01-29T19:15:09.000Z\t2015-01-29T19:15:09.000Z\t2015-01-29T00:00:00.000Z\t323\ttrue\t14925407\n" +
-                    "CMP1\t2\t1581\t9.01423481060192\t2015-01-30T19:15:09.000Z\t2015-01-30T19:15:09.000Z\t2015-01-30T00:00:00.000Z\t9138\tfalse\t68225213\n" +
-                    "CMP2\t8\t7067\t9.6284336107783\t2015-01-31T19:15:09.000Z\t2015-01-31T19:15:09.000Z\t2015-01-31T00:00:00.000Z\t8197\ttrue\t58403960\n" +
-                    "CMP1\t8\t5313\t8.87764661805704\t2015-02-01T19:15:09.000Z\t2015-02-01T19:15:09.000Z\t2015-02-01T00:00:00.000Z\t2733\tfalse\t69698373\n" +
-                    "\t4\t3883\t7.96873019309714\t2015-02-02T19:15:09.000Z\t2015-02-02T19:15:09.000Z\t2015-02-02T00:00:00.000Z\t6912\ttrue\t91147394\n" +
-                    "CMP1\t7\t4256\t2.46553522534668\t2015-02-03T19:15:09.000Z\t2015-02-03T19:15:09.000Z\t2015-02-03T00:00:00.000Z\t9453\tfalse\t50278940\n" +
-                    "CMP2\t4\t155\t5.08547495584935\t2015-02-04T19:15:09.000Z\t2015-02-04T19:15:09.000Z\t2015-02-04T00:00:00.000Z\t8919\ttrue\t8671995\n" +
-                    "CMP1\t7\t4486\tNaN\t2015-02-05T19:15:09.000Z\t2015-02-05T19:15:09.000Z\t2015-02-05T00:00:00.000Z\t8670\tfalse\t751877\n" +
-                    "CMP2\t2\t6641\t0.0381825352087617\t2015-02-06T19:15:09.000Z\t2015-02-06T19:15:09.000Z\t2015-02-06T00:00:00.000Z\t8331\ttrue\t40909232527\n" +
-                    "CMP1\t1\t3579\t0.849663221742958\t2015-02-07T19:15:09.000Z\t2015-02-07T19:15:09.000Z\t2015-02-07T00:00:00.000Z\t9592\tfalse\t11490662\n" +
-                    "CMP2\t2\t4770\t2.85092033445835\t2015-02-08T19:15:09.000Z\t2015-02-08T19:15:09.000Z\t2015-02-08T00:00:00.000Z\t253\ttrue\t33766814\n" +
-                    "CMP1\t5\t4938\t4.42754498450086\t2015-02-09T19:15:09.000Z\t2015-02-09T19:15:09.000Z\t2015-02-09T00:00:00.000Z\t7817\tfalse\t61983099\n";
+                    "\"CMP2\t8\t8000\t2.27636352181435\t2015-01-29T19:15:09.000000Z\t2015-01-29T19:15:09.000000Z\t2015-01-29T00:00:00.000000Z\t323\ttrue\t14925407\n" +
+                    "CMP1\t2\t1581\t9.01423481060192\t2015-01-30T19:15:09.000000Z\t2015-01-30T19:15:09.000000Z\t2015-01-30T00:00:00.000000Z\t9138\tfalse\t68225213\n" +
+                    "CMP2\t8\t7067\t9.6284336107783\t2015-01-31T19:15:09.000000Z\t2015-01-31T19:15:09.000000Z\t2015-01-31T00:00:00.000000Z\t8197\ttrue\t58403960\n" +
+                    "CMP1\t8\t5313\t8.87764661805704\t2015-02-01T19:15:09.000000Z\t2015-02-01T19:15:09.000000Z\t2015-02-01T00:00:00.000000Z\t2733\tfalse\t69698373\n" +
+                    "\t4\t3883\t7.96873019309714\t2015-02-02T19:15:09.000000Z\t2015-02-02T19:15:09.000000Z\t2015-02-02T00:00:00.000000Z\t6912\ttrue\t91147394\n" +
+                    "CMP1\t7\t4256\t2.46553522534668\t2015-02-03T19:15:09.000000Z\t2015-02-03T19:15:09.000000Z\t2015-02-03T00:00:00.000000Z\t9453\tfalse\t50278940\n" +
+                    "CMP2\t4\t155\t5.08547495584935\t2015-02-04T19:15:09.000000Z\t2015-02-04T19:15:09.000000Z\t2015-02-04T00:00:00.000000Z\t8919\ttrue\t8671995\n" +
+                    "CMP1\t7\t4486\tNaN\t2015-02-05T19:15:09.000000Z\t2015-02-05T19:15:09.000000Z\t2015-02-05T00:00:00.000000Z\t8670\tfalse\t751877\n" +
+                    "CMP2\t2\t6641\t0.0381825352087617\t2015-02-06T19:15:09.000000Z\t2015-02-06T19:15:09.000000Z\t2015-02-06T00:00:00.000000Z\t8331\ttrue\t40909232527\n" +
+                    "CMP1\t1\t3579\t0.849663221742958\t2015-02-07T19:15:09.000000Z\t2015-02-07T19:15:09.000000Z\t2015-02-07T00:00:00.000000Z\t9592\tfalse\t11490662\n" +
+                    "CMP2\t2\t4770\t2.85092033445835\t2015-02-08T19:15:09.000000Z\t2015-02-08T19:15:09.000000Z\t2015-02-08T00:00:00.000000Z\t253\ttrue\t33766814\n" +
+                    "CMP1\t5\t4938\t4.42754498450086\t2015-02-09T19:15:09.000000Z\t2015-02-09T19:15:09.000000Z\t2015-02-09T00:00:00.000000Z\t7817\tfalse\t61983099\n";
 
             String csv = "\"\"\"CMP2\",8,8000,2.27636352181435,2015-01-29T19:15:09.000Z,2015-01-29 19:15:09,01/29/2015,323,TRUE,14925407\n" +
                     "CMP1,2,1581,9.01423481060192,2015-01-30T19:15:09.000Z,2015-01-30 19:15:09,01/30/2015,9138,FALSE,68225213\n" +
@@ -1849,22 +2372,23 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "CMP1,5,4938,4.42754498450086,2015-02-09T19:15:09.000Z,2015-02-09 19:15:09,02/09/2015,7817,FALSE,61983099\n";
 
             configureLoaderDefaults(textLoader, (byte) ',');
-
-            playJson(textLoader, ("[\n" +
-                    "  {\n" +
-                    "    \"name\": \"f1\",\n" +
-                    "    \"type\": \"BYTE\"\n" +
-                    "  }\n" +
-                    "]"));
+            textLoader.setSchemaVersion(2);
+            playJson(textLoader, ("{" +
+                    "  \"columns\": [" +
+                    "    {  \"file_column_index\": 1, \"column_type\": \"BYTE\" }, " +
+                    "  ]," +
+                    "  \"formats_action\": \"ADD\"\n" +
+                    "}"));
             textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
             playText(
                     textLoader,
                     csv,
                     1024,
                     expected,
-                    "{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"f1\",\"type\":\"BYTE\"},{\"index\":2,\"name\":\"f2\",\"type\":\"INT\"},{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"f4\",\"type\":\"DATE\"},{\"index\":5,\"name\":\"f5\",\"type\":\"DATE\"},{\"index\":6,\"name\":\"f6\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"f7\",\"type\":\"INT\"},{\"index\":8,\"name\":\"f8\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"f9\",\"type\":\"LONG\"}],\"timestampIndex\":-1}",
+                    "{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"f1\",\"type\":\"BYTE\"},{\"index\":2,\"name\":\"f2\",\"type\":\"INT\"},{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"f4\",\"type\":\"TIMESTAMP\"},{\"index\":5,\"name\":\"f5\",\"type\":\"TIMESTAMP\"},{\"index\":6,\"name\":\"f6\",\"type\":\"TIMESTAMP\"},{\"index\":7,\"name\":\"f7\",\"type\":\"INT\"},{\"index\":8,\"name\":\"f8\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"f9\",\"type\":\"LONG\"}],\"timestampIndex\":-1}",
                     12,
-                    12
+                    12,
+                    false
             );
         });
     }
@@ -1873,18 +2397,18 @@ public class TextLoaderTest extends AbstractCairoTest {
     public void testOverrideIntWithShort() throws Exception {
         assertNoLeak((textLoader) -> {
             String expected = "f0\tf1\tf2\tf3\tf4\tf5\tf6\tf7\tf8\tf9\n" +
-                    "\"CMP2\t8\t8000\t2.27636352181435\t2015-01-29T19:15:09.000Z\t2015-01-29T19:15:09.000Z\t2015-01-29T00:00:00.000Z\t323\ttrue\t14925407\n" +
-                    "CMP1\t2\t1581\t9.01423481060192\t2015-01-30T19:15:09.000Z\t2015-01-30T19:15:09.000Z\t2015-01-30T00:00:00.000Z\t9138\tfalse\t68225213\n" +
-                    "CMP2\t8\t7067\t9.6284336107783\t2015-01-31T19:15:09.000Z\t2015-01-31T19:15:09.000Z\t2015-01-31T00:00:00.000Z\t8197\ttrue\t58403960\n" +
-                    "CMP1\t8\t5313\t8.87764661805704\t2015-02-01T19:15:09.000Z\t2015-02-01T19:15:09.000Z\t2015-02-01T00:00:00.000Z\t2733\tfalse\t69698373\n" +
-                    "\t4\t3883\t7.96873019309714\t2015-02-02T19:15:09.000Z\t2015-02-02T19:15:09.000Z\t2015-02-02T00:00:00.000Z\t6912\ttrue\t91147394\n" +
-                    "CMP1\t7\t4256\t2.46553522534668\t2015-02-03T19:15:09.000Z\t2015-02-03T19:15:09.000Z\t2015-02-03T00:00:00.000Z\t9453\tfalse\t50278940\n" +
-                    "CMP2\t4\t155\t5.08547495584935\t2015-02-04T19:15:09.000Z\t2015-02-04T19:15:09.000Z\t2015-02-04T00:00:00.000Z\t8919\ttrue\t8671995\n" +
-                    "CMP1\t7\t4486\tNaN\t2015-02-05T19:15:09.000Z\t2015-02-05T19:15:09.000Z\t2015-02-05T00:00:00.000Z\t8670\tfalse\t751877\n" +
-                    "CMP2\t2\t6641\t0.0381825352087617\t2015-02-06T19:15:09.000Z\t2015-02-06T19:15:09.000Z\t2015-02-06T00:00:00.000Z\t8331\ttrue\t40909232527\n" +
-                    "CMP1\t1\t3579\t0.849663221742958\t2015-02-07T19:15:09.000Z\t2015-02-07T19:15:09.000Z\t2015-02-07T00:00:00.000Z\t9592\tfalse\t11490662\n" +
-                    "CMP2\t2\t4770\t2.85092033445835\t2015-02-08T19:15:09.000Z\t2015-02-08T19:15:09.000Z\t2015-02-08T00:00:00.000Z\t253\ttrue\t33766814\n" +
-                    "CMP1\t5\t4938\t4.42754498450086\t2015-02-09T19:15:09.000Z\t2015-02-09T19:15:09.000Z\t2015-02-09T00:00:00.000Z\t7817\tfalse\t61983099\n";
+                    "\"CMP2\t8\t8000\t2.27636352181435\t2015-01-29T19:15:09.000000Z\t2015-01-29T19:15:09.000000Z\t2015-01-29T00:00:00.000000Z\t323\ttrue\t14925407\n" +
+                    "CMP1\t2\t1581\t9.01423481060192\t2015-01-30T19:15:09.000000Z\t2015-01-30T19:15:09.000000Z\t2015-01-30T00:00:00.000000Z\t9138\tfalse\t68225213\n" +
+                    "CMP2\t8\t7067\t9.6284336107783\t2015-01-31T19:15:09.000000Z\t2015-01-31T19:15:09.000000Z\t2015-01-31T00:00:00.000000Z\t8197\ttrue\t58403960\n" +
+                    "CMP1\t8\t5313\t8.87764661805704\t2015-02-01T19:15:09.000000Z\t2015-02-01T19:15:09.000000Z\t2015-02-01T00:00:00.000000Z\t2733\tfalse\t69698373\n" +
+                    "\t4\t3883\t7.96873019309714\t2015-02-02T19:15:09.000000Z\t2015-02-02T19:15:09.000000Z\t2015-02-02T00:00:00.000000Z\t6912\ttrue\t91147394\n" +
+                    "CMP1\t7\t4256\t2.46553522534668\t2015-02-03T19:15:09.000000Z\t2015-02-03T19:15:09.000000Z\t2015-02-03T00:00:00.000000Z\t9453\tfalse\t50278940\n" +
+                    "CMP2\t4\t155\t5.08547495584935\t2015-02-04T19:15:09.000000Z\t2015-02-04T19:15:09.000000Z\t2015-02-04T00:00:00.000000Z\t8919\ttrue\t8671995\n" +
+                    "CMP1\t7\t4486\tNaN\t2015-02-05T19:15:09.000000Z\t2015-02-05T19:15:09.000000Z\t2015-02-05T00:00:00.000000Z\t8670\tfalse\t751877\n" +
+                    "CMP2\t2\t6641\t0.0381825352087617\t2015-02-06T19:15:09.000000Z\t2015-02-06T19:15:09.000000Z\t2015-02-06T00:00:00.000000Z\t8331\ttrue\t40909232527\n" +
+                    "CMP1\t1\t3579\t0.849663221742958\t2015-02-07T19:15:09.000000Z\t2015-02-07T19:15:09.000000Z\t2015-02-07T00:00:00.000000Z\t9592\tfalse\t11490662\n" +
+                    "CMP2\t2\t4770\t2.85092033445835\t2015-02-08T19:15:09.000000Z\t2015-02-08T19:15:09.000000Z\t2015-02-08T00:00:00.000000Z\t253\ttrue\t33766814\n" +
+                    "CMP1\t5\t4938\t4.42754498450086\t2015-02-09T19:15:09.000000Z\t2015-02-09T19:15:09.000000Z\t2015-02-09T00:00:00.000000Z\t7817\tfalse\t61983099\n";
 
             String csv = "\"\"\"CMP2\",8,8000,2.27636352181435,2015-01-29T19:15:09.000Z,2015-01-29 19:15:09,01/29/2015,323,TRUE,14925407\n" +
                     "CMP1,2,1581,9.01423481060192,2015-01-30T19:15:09.000Z,2015-01-30 19:15:09,01/30/2015,9138,FALSE,68225213\n" +
@@ -1900,36 +2424,47 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "CMP1,5,4938,4.42754498450086,2015-02-09T19:15:09.000Z,2015-02-09 19:15:09,02/09/2015,7817,FALSE,61983099\n";
 
             configureLoaderDefaults(textLoader);
-
-            playJson(textLoader, ("[\n" +
-                    "  {\n" +
-                    "    \"name\": \"f1\",\n" +
-                    "    \"type\": \"short\"\n" +
-                    "  },\n" +
-                    "  {\n" +
-                    "    \"name\": \"f2\",\n" +
-                    "    \"type\": \"short\"\n" +
-                    "  }\n" +
-                    "]"));
+            textLoader.setSchemaVersion(2);
+            playJson(textLoader, ("{" +
+                    "  \"columns\": [" +
+                    "    {  \"file_column_index\": 1, \"column_type\": \"SHORT\", \"table_column_name\": \"f1\" }, " +
+                    "    {  \"file_column_index\": 2, \"column_type\": \"SHORT\", \"table_column_name\": \"f2\" } " +
+                    "  ]," +
+                    "  \"formats_action\": \"ADD\"\n" +
+                    "}"));
             textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
             playText(
                     textLoader,
                     csv,
                     1024,
                     expected,
-                    "{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"f1\",\"type\":\"SHORT\"},{\"index\":2,\"name\":\"f2\",\"type\":\"SHORT\"},{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"f4\",\"type\":\"DATE\"},{\"index\":5,\"name\":\"f5\",\"type\":\"DATE\"},{\"index\":6,\"name\":\"f6\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"f7\",\"type\":\"INT\"},{\"index\":8,\"name\":\"f8\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"f9\",\"type\":\"LONG\"}],\"timestampIndex\":-1}",
+                    "{\"columnCount\":10,\"columns\":[" +
+                            "{\"index\":0,\"name\":\"f0\",\"type\":\"STRING\"}," +
+                            "{\"index\":1,\"name\":\"f1\",\"type\":\"SHORT\"}," +
+                            "{\"index\":2,\"name\":\"f2\",\"type\":\"SHORT\"}," +
+                            "{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"}," +
+                            "{\"index\":4,\"name\":\"f4\",\"type\":\"TIMESTAMP\"}," +
+                            "{\"index\":5,\"name\":\"f5\",\"type\":\"TIMESTAMP\"}," +
+                            "{\"index\":6,\"name\":\"f6\",\"type\":\"TIMESTAMP\"}," +
+                            "{\"index\":7,\"name\":\"f7\",\"type\":\"INT\"}," +
+                            "{\"index\":8,\"name\":\"f8\",\"type\":\"BOOLEAN\"}," +
+                            "{\"index\":9,\"name\":\"f9\",\"type\":\"LONG\"}],\"timestampIndex\":-1}",
                     12,
-                    12
+                    12,
+                    false
             );
         });
     }
 
     @Test
-    public void testOverrideStringWithShort() throws Exception {
+    public void testOverrideStringWithShortResultsInTypeMismatchError() throws Exception {
+        /* Overriding column type with one that is not compatible (according to text analyser) is not possible anymore
+         *  If column contains garbage it's better to mark it with file_column_ignore=true and insert_null=true instead. */
+
         assertNoLeak(loader -> {
 
             String expected = "f0\tf1\tf2\tf3\tf4\tf5\tf6\tf7\tf8\tf9\n" +
-                    "0\t4\t3883\t7.96873019309714\t2015-02-02T19:15:09.000Z\t2015-02-02T19:15:09.000Z\t2015-02-02T00:00:00.000Z\t6912\ttrue\t91147394\n";
+                    "0\t4\t3883\t7.96873019309714\t2015-02-02T19:15:09.000000Z\t2015-02-02T19:15:09.000000Z\t2015-02-02T00:00:00.000000Z\t6912\ttrue\t91147394\n";
 
             String csv = "\"\"\"CMP2\",8,8000,2.27636352181435,2015-01-29T19:15:09.000Z,2015-01-29 19:15:09,01/29/2015,323,TRUE,14925407\n" +
                     "CMP1,2,1581,9.01423481060192,2015-01-30T19:15:09.000Z,2015-01-30 19:15:09,01/30/2015,9138,FALSE,68225213\n" +
@@ -1945,28 +2480,27 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "CMP1,5,4938,4.42754498450086,2015-02-09T19:15:09.000Z,2015-02-09 19:15:09,02/09/2015,7817,FALSE,61983099\n";
 
             configureLoaderDefaults(loader, (byte) ',');
-
-            playJson(loader, ("[\n" +
-                    "  {\n" +
-                    "    \"name\": \"f0\",\n" +
-                    "    \"type\": \"short\",\n" +
-                    "    \"meta\": \"hello\"\n" +
-                    "  },\n" +
-                    "  {\n" +
-                    "    \"name\": \"f2\",\n" +
-                    "    \"type\": \"short\"\n" +
-                    "  }\n" +
-                    "]"));
-            loader.setState(TextLoader.ANALYZE_STRUCTURE);
-            playText(
-                    loader,
-                    csv,
-                    1024,
-                    expected,
-                    "{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"SHORT\"},{\"index\":1,\"name\":\"f1\",\"type\":\"INT\"},{\"index\":2,\"name\":\"f2\",\"type\":\"SHORT\"},{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"f4\",\"type\":\"DATE\"},{\"index\":5,\"name\":\"f5\",\"type\":\"DATE\"},{\"index\":6,\"name\":\"f6\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"f7\",\"type\":\"INT\"},{\"index\":8,\"name\":\"f8\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"f9\",\"type\":\"LONG\"}],\"timestampIndex\":-1}",
-                    12,
-                    1
-            );
+            try {
+                playText(
+                        loader,
+                        "{ \"columns\": [ " +
+                                "  { \"file_column_index\": \"0\", \"column_type\": \"SHORT\" }," +
+                                "  { \"file_column_index\": \"2\", \"column_type\": \"SHORT\" } " +
+                                "] }",
+                        2,
+                        true,
+                        csv,
+                        1024,
+                        expected,
+                        "{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"SHORT\"},{\"index\":1,\"name\":\"f1\",\"type\":\"INT\"},{\"index\":2,\"name\":\"f2\",\"type\":\"SHORT\"},{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"f4\",\"type\":\"TIMESTAMP\"},{\"index\":5,\"name\":\"f5\",\"type\":\"TIMESTAMP\"},{\"index\":6,\"name\":\"f6\",\"type\":\"TIMESTAMP\"},{\"index\":7,\"name\":\"f7\",\"type\":\"INT\"},{\"index\":8,\"name\":\"f8\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"f9\",\"type\":\"LONG\"}],\"timestampIndex\":-1}",
+                        12,
+                        1,
+                        false
+                );
+                Assert.fail("!");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "column type mismatch");
+            }
         });
     }
 
@@ -1974,18 +2508,18 @@ public class TextLoaderTest extends AbstractCairoTest {
     public void testOverrideStringWithSymbol() throws Exception {
         assertNoLeak(textLoader -> {
             String expected = "f0\tf1\tf2\tf3\tf4\tf5\tf6\tf7\tf8\tf9\n" +
-                    "\"CMP2\t8\t8000\t2.27636352181435\t2015-01-29T19:15:09.000Z\t2015-01-29T19:15:09.000Z\t2015-01-29T00:00:00.000Z\t323\ttrue\t14925407\n" +
-                    "CMP1\t2\t1581\t9.01423481060192\t2015-01-30T19:15:09.000Z\t2015-01-30T19:15:09.000Z\t2015-01-30T00:00:00.000Z\t9138\tfalse\t68225213\n" +
-                    "CMP2\t8\t7067\t9.6284336107783\t2015-01-31T19:15:09.000Z\t2015-01-31T19:15:09.000Z\t2015-01-31T00:00:00.000Z\t8197\ttrue\t58403960\n" +
-                    "CMP1\t8\t5313\t8.87764661805704\t2015-02-01T19:15:09.000Z\t2015-02-01T19:15:09.000Z\t2015-02-01T00:00:00.000Z\t2733\tfalse\t69698373\n" +
-                    "\t4\t3883\t7.96873019309714\t2015-02-02T19:15:09.000Z\t2015-02-02T19:15:09.000Z\t2015-02-02T00:00:00.000Z\t6912\ttrue\t91147394\n" +
-                    "CMP1\t7\t4256\t2.46553522534668\t2015-02-03T19:15:09.000Z\t2015-02-03T19:15:09.000Z\t2015-02-03T00:00:00.000Z\t9453\tfalse\t50278940\n" +
-                    "CMP2\t4\t155\t5.08547495584935\t2015-02-04T19:15:09.000Z\t2015-02-04T19:15:09.000Z\t2015-02-04T00:00:00.000Z\t8919\ttrue\t8671995\n" +
-                    "CMP1\t7\t4486\tNaN\t2015-02-05T19:15:09.000Z\t2015-02-05T19:15:09.000Z\t2015-02-05T00:00:00.000Z\t8670\tfalse\t751877\n" +
-                    "CMP2\t2\t6641\t0.0381825352087617\t2015-02-06T19:15:09.000Z\t2015-02-06T19:15:09.000Z\t2015-02-06T00:00:00.000Z\t8331\ttrue\t40909232527\n" +
-                    "CMP1\t1\t3579\t0.849663221742958\t2015-02-07T19:15:09.000Z\t2015-02-07T19:15:09.000Z\t2015-02-07T00:00:00.000Z\t9592\tfalse\t11490662\n" +
-                    "CMP2\t2\t4770\t2.85092033445835\t2015-02-08T19:15:09.000Z\t2015-02-08T19:15:09.000Z\t2015-02-08T00:00:00.000Z\t253\ttrue\t33766814\n" +
-                    "CMP1\t5\t4938\t4.42754498450086\t2015-02-09T19:15:09.000Z\t2015-02-09T19:15:09.000Z\t2015-02-09T00:00:00.000Z\t7817\tfalse\t61983099\n";
+                    "\"CMP2\t8\t8000\t2.27636352181435\t2015-01-29T19:15:09.000000Z\t2015-01-29T19:15:09.000000Z\t2015-01-29T00:00:00.000000Z\t323\ttrue\t14925407\n" +
+                    "CMP1\t2\t1581\t9.01423481060192\t2015-01-30T19:15:09.000000Z\t2015-01-30T19:15:09.000000Z\t2015-01-30T00:00:00.000000Z\t9138\tfalse\t68225213\n" +
+                    "CMP2\t8\t7067\t9.6284336107783\t2015-01-31T19:15:09.000000Z\t2015-01-31T19:15:09.000000Z\t2015-01-31T00:00:00.000000Z\t8197\ttrue\t58403960\n" +
+                    "CMP1\t8\t5313\t8.87764661805704\t2015-02-01T19:15:09.000000Z\t2015-02-01T19:15:09.000000Z\t2015-02-01T00:00:00.000000Z\t2733\tfalse\t69698373\n" +
+                    "\t4\t3883\t7.96873019309714\t2015-02-02T19:15:09.000000Z\t2015-02-02T19:15:09.000000Z\t2015-02-02T00:00:00.000000Z\t6912\ttrue\t91147394\n" +
+                    "CMP1\t7\t4256\t2.46553522534668\t2015-02-03T19:15:09.000000Z\t2015-02-03T19:15:09.000000Z\t2015-02-03T00:00:00.000000Z\t9453\tfalse\t50278940\n" +
+                    "CMP2\t4\t155\t5.08547495584935\t2015-02-04T19:15:09.000000Z\t2015-02-04T19:15:09.000000Z\t2015-02-04T00:00:00.000000Z\t8919\ttrue\t8671995\n" +
+                    "CMP1\t7\t4486\tNaN\t2015-02-05T19:15:09.000000Z\t2015-02-05T19:15:09.000000Z\t2015-02-05T00:00:00.000000Z\t8670\tfalse\t751877\n" +
+                    "CMP2\t2\t6641\t0.0381825352087617\t2015-02-06T19:15:09.000000Z\t2015-02-06T19:15:09.000000Z\t2015-02-06T00:00:00.000000Z\t8331\ttrue\t40909232527\n" +
+                    "CMP1\t1\t3579\t0.849663221742958\t2015-02-07T19:15:09.000000Z\t2015-02-07T19:15:09.000000Z\t2015-02-07T00:00:00.000000Z\t9592\tfalse\t11490662\n" +
+                    "CMP2\t2\t4770\t2.85092033445835\t2015-02-08T19:15:09.000000Z\t2015-02-08T19:15:09.000000Z\t2015-02-08T00:00:00.000000Z\t253\ttrue\t33766814\n" +
+                    "CMP1\t5\t4938\t4.42754498450086\t2015-02-09T19:15:09.000000Z\t2015-02-09T19:15:09.000000Z\t2015-02-09T00:00:00.000000Z\t7817\tfalse\t61983099\n";
 
             String csv = "\"\"\"CMP2\",8,8000,2.27636352181435,2015-01-29T19:15:09.000Z,2015-01-29 19:15:09,01/29/2015,323,TRUE,14925407\n" +
                     "CMP1,2,1581,9.01423481060192,2015-01-30T19:15:09.000Z,2015-01-30 19:15:09,01/30/2015,9138,FALSE,68225213\n" +
@@ -2001,22 +2535,31 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "CMP1,5,4938,4.42754498450086,2015-02-09T19:15:09.000Z,2015-02-09 19:15:09,02/09/2015,7817,FALSE,61983099\n";
 
             configureLoaderDefaults(textLoader);
-
-            playJson(textLoader, ("[\n" +
-                    "  {\n" +
-                    "    \"name\": \"f0\",\n" +
-                    "    \"type\": \"SYMBOL\"\n" +
-                    "  }\n" +
-                    "]"));
+            textLoader.setSchemaVersion(2);
+            playJson(textLoader, ("{ \"columns\": [ " +
+                    "  { \"file_column_index\": \"0\", \"column_type\": \"SYMBOL\" }\n" +
+                    "] }"));
             textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
             playText(
                     textLoader,
                     csv,
                     1024,
                     expected,
-                    "{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"SYMBOL\"},{\"index\":1,\"name\":\"f1\",\"type\":\"INT\"},{\"index\":2,\"name\":\"f2\",\"type\":\"INT\"},{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"f4\",\"type\":\"DATE\"},{\"index\":5,\"name\":\"f5\",\"type\":\"DATE\"},{\"index\":6,\"name\":\"f6\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"f7\",\"type\":\"INT\"},{\"index\":8,\"name\":\"f8\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"f9\",\"type\":\"LONG\"}],\"timestampIndex\":-1}",
+                    "{\"columnCount\":10," +
+                            "\"columns\":[" +
+                            "{\"index\":0,\"name\":\"f0\",\"type\":\"SYMBOL\"}," +
+                            "{\"index\":1,\"name\":\"f1\",\"type\":\"INT\"}," +
+                            "{\"index\":2,\"name\":\"f2\",\"type\":\"INT\"}," +
+                            "{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"}," +
+                            "{\"index\":4,\"name\":\"f4\",\"type\":\"TIMESTAMP\"}," +
+                            "{\"index\":5,\"name\":\"f5\",\"type\":\"TIMESTAMP\"}," +
+                            "{\"index\":6,\"name\":\"f6\",\"type\":\"TIMESTAMP\"}," +
+                            "{\"index\":7,\"name\":\"f7\",\"type\":\"INT\"}," +
+                            "{\"index\":8,\"name\":\"f8\",\"type\":\"BOOLEAN\"}," +
+                            "{\"index\":9,\"name\":\"f9\",\"type\":\"LONG\"}],\"timestampIndex\":-1}",
                     12,
-                    12
+                    12,
+                    false
             );
         });
     }
@@ -2025,18 +2568,18 @@ public class TextLoaderTest extends AbstractCairoTest {
     public void testOverwriteTable() throws Exception {
         assertNoLeak(textLoader -> {
             String expected = "f0\tf1\tf2\tf3\tf4\tf5\tf6\tf7\tf8\tf9\n" +
-                    "\"CMP2\t8\t8000\t2.27636352181435\t2015-01-29T19:15:09.000Z\t2015-01-29T19:15:09.000Z\t2015-01-29T00:00:00.000Z\t323\ttrue\t14925407\n" +
-                    "CMP1\t2\t1581\t9.01423481060192\t2015-01-30T19:15:09.000Z\t2015-01-30T19:15:09.000Z\t2015-01-30T00:00:00.000Z\t9138\tfalse\t68225213\n" +
-                    "CMP2\t8\t7067\t9.6284336107783\t2015-01-31T19:15:09.000Z\t2015-01-31T19:15:09.000Z\t2015-01-31T00:00:00.000Z\t8197\ttrue\t58403960\n" +
-                    "CMP1\t8\t5313\t8.87764661805704\t2015-02-01T19:15:09.000Z\t2015-02-01T19:15:09.000Z\t2015-02-01T00:00:00.000Z\t2733\tfalse\t69698373\n" +
-                    "\t4\t3883\t7.96873019309714\t2015-02-02T19:15:09.000Z\t2015-02-02T19:15:09.000Z\t2015-02-02T00:00:00.000Z\t6912\ttrue\t91147394\n" +
-                    "CMP1\t7\t4256\t2.46553522534668\t2015-02-03T19:15:09.000Z\t2015-02-03T19:15:09.000Z\t2015-02-03T00:00:00.000Z\t9453\tfalse\t50278940\n" +
-                    "CMP2\t4\t155\t5.08547495584935\t2015-02-04T19:15:09.000Z\t2015-02-04T19:15:09.000Z\t2015-02-04T00:00:00.000Z\t8919\ttrue\t8671995\n" +
-                    "CMP1\t7\t4486\tNaN\t2015-02-05T19:15:09.000Z\t2015-02-05T19:15:09.000Z\t2015-02-05T00:00:00.000Z\t8670\tfalse\t751877\n" +
-                    "CMP2\t2\t6641\t0.0381825352087617\t2015-02-06T19:15:09.000Z\t2015-02-06T19:15:09.000Z\t2015-02-06T00:00:00.000Z\t8331\ttrue\t40909232527\n" +
-                    "CMP1\t1\t3579\t0.849663221742958\t2015-02-07T19:15:09.000Z\t2015-02-07T19:15:09.000Z\t2015-02-07T00:00:00.000Z\t9592\tfalse\t11490662\n" +
-                    "CMP2\t2\t4770\t2.85092033445835\t2015-02-08T19:15:09.000Z\t2015-02-08T19:15:09.000Z\t2015-02-08T00:00:00.000Z\t253\ttrue\t33766814\n" +
-                    "CMP1\t5\t4938\t4.42754498450086\t2015-02-09T19:15:09.000Z\t2015-02-09T19:15:09.000Z\t2015-02-09T00:00:00.000Z\t7817\tfalse\t61983099\n";
+                    "\"CMP2\t8\t8000\t2.27636352181435\t2015-01-29T19:15:09.000000Z\t2015-01-29T19:15:09.000000Z\t2015-01-29T00:00:00.000000Z\t323\ttrue\t14925407\n" +
+                    "CMP1\t2\t1581\t9.01423481060192\t2015-01-30T19:15:09.000000Z\t2015-01-30T19:15:09.000000Z\t2015-01-30T00:00:00.000000Z\t9138\tfalse\t68225213\n" +
+                    "CMP2\t8\t7067\t9.6284336107783\t2015-01-31T19:15:09.000000Z\t2015-01-31T19:15:09.000000Z\t2015-01-31T00:00:00.000000Z\t8197\ttrue\t58403960\n" +
+                    "CMP1\t8\t5313\t8.87764661805704\t2015-02-01T19:15:09.000000Z\t2015-02-01T19:15:09.000000Z\t2015-02-01T00:00:00.000000Z\t2733\tfalse\t69698373\n" +
+                    "\t4\t3883\t7.96873019309714\t2015-02-02T19:15:09.000000Z\t2015-02-02T19:15:09.000000Z\t2015-02-02T00:00:00.000000Z\t6912\ttrue\t91147394\n" +
+                    "CMP1\t7\t4256\t2.46553522534668\t2015-02-03T19:15:09.000000Z\t2015-02-03T19:15:09.000000Z\t2015-02-03T00:00:00.000000Z\t9453\tfalse\t50278940\n" +
+                    "CMP2\t4\t155\t5.08547495584935\t2015-02-04T19:15:09.000000Z\t2015-02-04T19:15:09.000000Z\t2015-02-04T00:00:00.000000Z\t8919\ttrue\t8671995\n" +
+                    "CMP1\t7\t4486\tNaN\t2015-02-05T19:15:09.000000Z\t2015-02-05T19:15:09.000000Z\t2015-02-05T00:00:00.000000Z\t8670\tfalse\t751877\n" +
+                    "CMP2\t2\t6641\t0.0381825352087617\t2015-02-06T19:15:09.000000Z\t2015-02-06T19:15:09.000000Z\t2015-02-06T00:00:00.000000Z\t8331\ttrue\t40909232527\n" +
+                    "CMP1\t1\t3579\t0.849663221742958\t2015-02-07T19:15:09.000000Z\t2015-02-07T19:15:09.000000Z\t2015-02-07T00:00:00.000000Z\t9592\tfalse\t11490662\n" +
+                    "CMP2\t2\t4770\t2.85092033445835\t2015-02-08T19:15:09.000000Z\t2015-02-08T19:15:09.000000Z\t2015-02-08T00:00:00.000000Z\t253\ttrue\t33766814\n" +
+                    "CMP1\t5\t4938\t4.42754498450086\t2015-02-09T19:15:09.000000Z\t2015-02-09T19:15:09.000000Z\t2015-02-09T00:00:00.000000Z\t7817\tfalse\t61983099\n";
 
             String csv = "\"\"\"CMP2\",8,8000,2.27636352181435,2015-01-29T19:15:09.000Z,2015-01-29 19:15:09,01/29/2015,323,TRUE,14925407\n" +
                     "CMP1,2,1581,9.01423481060192,2015-01-30T19:15:09.000Z,2015-01-30 19:15:09,01/30/2015,9138,FALSE,68225213\n" +
@@ -2077,15 +2620,16 @@ public class TextLoaderTest extends AbstractCairoTest {
                             "{\"index\":1,\"name\":\"f1\",\"type\":\"INT\"}," +
                             "{\"index\":2,\"name\":\"f2\",\"type\":\"INT\"}," +
                             "{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"}," +
-                            "{\"index\":4,\"name\":\"f4\",\"type\":\"DATE\"}," +
-                            "{\"index\":5,\"name\":\"f5\",\"type\":\"DATE\"}," +
-                            "{\"index\":6,\"name\":\"f6\",\"type\":\"DATE\"}," +
+                            "{\"index\":4,\"name\":\"f4\",\"type\":\"TIMESTAMP\"}," +
+                            "{\"index\":5,\"name\":\"f5\",\"type\":\"TIMESTAMP\"}," +
+                            "{\"index\":6,\"name\":\"f6\",\"type\":\"TIMESTAMP\"}," +
                             "{\"index\":7,\"name\":\"f7\",\"type\":\"INT\"}," +
                             "{\"index\":8,\"name\":\"f8\",\"type\":\"BOOLEAN\"}," +
                             "{\"index\":9,\"name\":\"f9\",\"type\":\"LONG\"}" +
                             "],\"timestampIndex\":-1}",
                     12,
-                    12
+                    12,
+                    false
             );
         });
     }
@@ -2111,10 +2655,10 @@ public class TextLoaderTest extends AbstractCairoTest {
                     engine,
                     textLoader -> {
                         String expected = "StrSym\tIntSym\tInt_Col\tDoubleCol\tIsoDate\tFmt1Date\tFmt2Date\tPhone\tboolean\tlong\n" +
-                                "CMP1\t7\t8284\t3.2045788760297\t2015-01-13T19:15:09.000Z\t2015-01-13T19:15:09.000Z\t2015-01-13T00:00:00.000Z\t8284\ttrue\t10239799\n" +
-                                "CMP2\t3\t1066\t7.5186683377251\t2015-01-14T19:15:09.000Z\t2015-01-14T19:15:09.000Z\t2015-01-14T00:00:00.000Z\t1066\tfalse\t23331405\n" +
-                                "CMP1\t4\t6938\t5.11407712241635\t2015-01-15T19:15:09.000Z\t2015-01-15T19:15:09.000Z\t2015-01-15T00:00:00.000Z\t(099)889-776\ttrue\t55296137\n" +
-                                "CMP1\t7\t6460\t6.39910243218765\t2015-01-17T19:15:09.000Z\t2015-01-17T19:15:09.000Z\t2015-01-17T00:00:00.000Z\t5142\ttrue\t69744070\n";
+                                "CMP1\t7\t8284\t3.2045788760297\t2015-01-13T19:15:09.000000Z\t2015-01-13T19:15:09.000000Z\t2015-01-13T00:00:00.000000Z\t8284\ttrue\t10239799\n" +
+                                "CMP2\t3\t1066\t7.5186683377251\t2015-01-14T19:15:09.000000Z\t2015-01-14T19:15:09.000000Z\t2015-01-14T00:00:00.000000Z\t1066\tfalse\t23331405\n" +
+                                "CMP1\t4\t6938\t5.11407712241635\t2015-01-15T19:15:09.000000Z\t2015-01-15T19:15:09.000000Z\t2015-01-15T00:00:00.000000Z\t(099)889-776\ttrue\t55296137\n" +
+                                "CMP1\t7\t6460\t6.39910243218765\t2015-01-17T19:15:09.000000Z\t2015-01-17T19:15:09.000000Z\t2015-01-17T00:00:00.000000Z\t5142\ttrue\t69744070\n";
 
 
                         String csv = "StrSym,Int Sym,Int_Col,DoubleCol,IsoDate,Fmt1Date,Fmt2Date,Phone,boolean,long\n" +
@@ -2132,9 +2676,10 @@ public class TextLoaderTest extends AbstractCairoTest {
                                 csv,
                                 1024,
                                 expected,
-                                "{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"StrSym\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"IntSym\",\"type\":\"INT\"},{\"index\":2,\"name\":\"Int_Col\",\"type\":\"INT\"},{\"index\":3,\"name\":\"DoubleCol\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"IsoDate\",\"type\":\"DATE\"},{\"index\":5,\"name\":\"Fmt1Date\",\"type\":\"DATE\"},{\"index\":6,\"name\":\"Fmt2Date\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"Phone\",\"type\":\"STRING\"},{\"index\":8,\"name\":\"boolean\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"long\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
+                                "{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"StrSym\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"IntSym\",\"type\":\"INT\"},{\"index\":2,\"name\":\"Int_Col\",\"type\":\"INT\"},{\"index\":3,\"name\":\"DoubleCol\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"IsoDate\",\"type\":\"TIMESTAMP\"},{\"index\":5,\"name\":\"Fmt1Date\",\"type\":\"TIMESTAMP\"},{\"index\":6,\"name\":\"Fmt2Date\",\"type\":\"TIMESTAMP\"},{\"index\":7,\"name\":\"Phone\",\"type\":\"STRING\"},{\"index\":8,\"name\":\"boolean\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"long\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
                                 5,
                                 4,
+                                true,
                                 true
                         );
                     }
@@ -2178,14 +2723,14 @@ public class TextLoaderTest extends AbstractCairoTest {
     public void testSimple() throws Exception {
         assertNoLeak(textLoader -> {
             final String expected = "f0\tf1\tf2\tf3\tf4\tf5\tf6\n" +
-                    "123\tabc\t2015-01-20T21:00:00.000Z\t3.1415\ttrue\tLorem ipsum dolor sit amet.\t122\n" +
-                    "124\tabc\t2015-01-20T21:00:00.000Z\t7.342\tfalse\tLorem ipsum \n" +
+                    "123\tabc\t2015-01-20T21:00:00.000000Z\t3.1415\ttrue\tLorem ipsum dolor sit amet.\t122\n" +
+                    "124\tabc\t2015-01-20T21:00:00.000000Z\t7.342\tfalse\tLorem ipsum \n" +
                     "\n" +
                     "dolor \"sit\" amet.\t546756\n" +
-                    "125\tabc\t2015-01-20T21:00:00.000Z\t9.334\tfalse\tLorem ipsum \"dolor\" sit amet.\t23\n" +
-                    "126\tabc\t2015-01-20T21:00:00.000Z\t1.345\ttrue\tLorem, ipsum, dolor sit amet.\t434\n" +
-                    "127\tabc\t2015-01-20T21:00:00.000Z\t1.53321\ttrue\tLorem ipsum dolor sit amet.\t112\n" +
-                    "128\tabc\t2015-01-20T21:00:00.000Z\t2.456\ttrue\tLorem ipsum dolor sit amet.\t122\n";
+                    "125\tabc\t2015-01-20T21:00:00.000000Z\t9.334\tfalse\tLorem ipsum \"dolor\" sit amet.\t23\n" +
+                    "126\tabc\t2015-01-20T21:00:00.000000Z\t1.345\ttrue\tLorem, ipsum, dolor sit amet.\t434\n" +
+                    "127\tabc\t2015-01-20T21:00:00.000000Z\t1.53321\ttrue\tLorem ipsum dolor sit amet.\t112\n" +
+                    "128\tabc\t2015-01-20T21:00:00.000000Z\t2.456\ttrue\tLorem ipsum dolor sit amet.\t122\n";
 
             String csv = "123\tabc\t2015-01-20T21:00:00.000Z\t3.1415\tTRUE\tLorem ipsum dolor sit amet.\t122\n" +
                     "124\tabc\t2015-01-20T21:00:00.000Z\t7.342\tFALSE\t\"Lorem ipsum \n" +
@@ -2204,9 +2749,10 @@ public class TextLoaderTest extends AbstractCairoTest {
                     csv,
                     200,
                     expected,
-                    "{\"columnCount\":7,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"INT\"},{\"index\":1,\"name\":\"f1\",\"type\":\"STRING\"},{\"index\":2,\"name\":\"f2\",\"type\":\"DATE\"},{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"f4\",\"type\":\"BOOLEAN\"},{\"index\":5,\"name\":\"f5\",\"type\":\"STRING\"},{\"index\":6,\"name\":\"f6\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
+                    "{\"columnCount\":7,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"INT\"},{\"index\":1,\"name\":\"f1\",\"type\":\"STRING\"},{\"index\":2,\"name\":\"f2\",\"type\":\"TIMESTAMP\"},{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"f4\",\"type\":\"BOOLEAN\"},{\"index\":5,\"name\":\"f5\",\"type\":\"STRING\"},{\"index\":6,\"name\":\"f6\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
                     6,
-                    6
+                    6,
+                    false
             );
         });
     }
@@ -2215,14 +2761,14 @@ public class TextLoaderTest extends AbstractCairoTest {
     public void testSimplePipe() throws Exception {
         assertNoLeak(textLoader -> {
             final String expected = "f0\tf1\tf2\tf3\tf4\tf5\tf6\n" +
-                    "123\tabc\t2015-01-20T21:00:00.000Z\t3.1415\ttrue\tLorem ipsum dolor sit amet.\t122\n" +
-                    "124\tabc\t2015-01-20T21:00:00.000Z\t7.342\tfalse\tLorem ipsum \n" +
+                    "123\tabc\t2015-01-20T21:00:00.000000Z\t3.1415\ttrue\tLorem ipsum dolor sit amet.\t122\n" +
+                    "124\tabc\t2015-01-20T21:00:00.000000Z\t7.342\tfalse\tLorem ipsum \n" +
                     "\n" +
                     "dolor \"sit\" amet.\t546756\n" +
-                    "125\tabc\t2015-01-20T21:00:00.000Z\t9.334\tfalse\tLorem ipsum \"dolor\" sit amet.\t23\n" +
-                    "126\tabc\t2015-01-20T21:00:00.000Z\t1.345\ttrue\tLorem, ipsum, dolor sit amet.\t434\n" +
-                    "127\tabc\t2015-01-20T21:00:00.000Z\t1.53321\ttrue\tLorem ipsum dolor sit amet.\t112\n" +
-                    "128\tabc\t2015-01-20T21:00:00.000Z\t2.456\ttrue\tLorem ipsum dolor sit amet.\t122\n";
+                    "125\tabc\t2015-01-20T21:00:00.000000Z\t9.334\tfalse\tLorem ipsum \"dolor\" sit amet.\t23\n" +
+                    "126\tabc\t2015-01-20T21:00:00.000000Z\t1.345\ttrue\tLorem, ipsum, dolor sit amet.\t434\n" +
+                    "127\tabc\t2015-01-20T21:00:00.000000Z\t1.53321\ttrue\tLorem ipsum dolor sit amet.\t112\n" +
+                    "128\tabc\t2015-01-20T21:00:00.000000Z\t2.456\ttrue\tLorem ipsum dolor sit amet.\t122\n";
 
             String csv = "123|abc|2015-01-20T21:00:00.000Z|3.1415|TRUE|Lorem ipsum dolor sit amet.|122\n" +
                     "124|abc|2015-01-20T21:00:00.000Z|7.342|FALSE|\"Lorem ipsum \n" +
@@ -2241,9 +2787,10 @@ public class TextLoaderTest extends AbstractCairoTest {
                     csv,
                     200,
                     expected,
-                    "{\"columnCount\":7,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"INT\"},{\"index\":1,\"name\":\"f1\",\"type\":\"STRING\"},{\"index\":2,\"name\":\"f2\",\"type\":\"DATE\"},{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"f4\",\"type\":\"BOOLEAN\"},{\"index\":5,\"name\":\"f5\",\"type\":\"STRING\"},{\"index\":6,\"name\":\"f6\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
+                    "{\"columnCount\":7,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"INT\"},{\"index\":1,\"name\":\"f1\",\"type\":\"STRING\"},{\"index\":2,\"name\":\"f2\",\"type\":\"TIMESTAMP\"},{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"f4\",\"type\":\"BOOLEAN\"},{\"index\":5,\"name\":\"f5\",\"type\":\"STRING\"},{\"index\":6,\"name\":\"f6\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
                     6,
-                    6
+                    6,
+                    false
             );
         });
     }
@@ -2261,14 +2808,23 @@ public class TextLoaderTest extends AbstractCairoTest {
 
             configureLoaderDefaults(textLoader);
             textLoader.setForceHeaders(false);
+
             playText(
                     textLoader,
+                    "{" +
+                            "  \"columns\": [" +
+                            "    {  \"file_column_name\": \"ts\", \"column_type\": \"TIMESTAMP\", \"formats\": [ { \"pattern\": \"yyyy-MM-ddTHH:mm:ss.SSSUUU\" } ] }, " +
+                            "    {  \"file_column_name\": \"a\", \"column_type\": \"CHAR\" } " +
+                            "  ] }",
+                    2,
+                    false,
                     csv,
                     200,
                     expected,
                     "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"ts\",\"type\":\"TIMESTAMP\"},{\"index\":1,\"name\":\"a\",\"type\":\"CHAR\"}],\"timestampIndex\":-1}",
                     2,
-                    2
+                    2,
+                    true
             );
         });
     }
@@ -2293,7 +2849,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                     expected,
                     "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"t\",\"type\":\"TIMESTAMP\"},{\"index\":1,\"name\":\"a\",\"type\":\"CHAR\"},{\"index\":2,\"name\":\"s\",\"type\":\"STRING\"}],\"timestampIndex\":-1}",
                     2,
-                    2
+                    2,
+                    true
             );
         });
     }
@@ -2335,7 +2892,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                     expected,
                     "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
                     11,
-                    11
+                    11,
+                    false
             );
         });
     }
@@ -2377,7 +2935,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                     expected,
                     "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"STRING\"}],\"timestampIndex\":-1}",
                     11,
-                    11
+                    11,
+                    false
             );
         });
     }
@@ -2620,7 +3179,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                     expected,
                     "{\"columnCount\":9,\"columns\":[{\"index\":0,\"name\":\"№ПП\",\"type\":\"INT\"},{\"index\":1,\"name\":\"ОбъектыКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":2,\"name\":\"ВидКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":3,\"name\":\"ТемаКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":4,\"name\":\"ПроверяемыйПериод\",\"type\":\"STRING\"},{\"index\":5,\"name\":\"НачалоПроверки\",\"type\":\"STRING\"},{\"index\":6,\"name\":\"ОкончаниеПроверки\",\"type\":\"STRING\"},{\"index\":7,\"name\":\"ВыявленныеНарушенияНедостатки\",\"type\":\"STRING\"},{\"index\":8,\"name\":\"РезультатыПроверки\",\"type\":\"STRING\"}],\"timestampIndex\":-1}",
                     36,
-                    36
+                    36,
+                    false
             );
         });
     }
@@ -2718,7 +3278,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                     expected,
                     "{\"columnCount\":9,\"columns\":[{\"index\":0,\"name\":\"№ПП\",\"type\":\"INT\"},{\"index\":1,\"name\":\"ОбъектыКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":2,\"name\":\"ВидКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":3,\"name\":\"ТемаКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":4,\"name\":\"ПроверяемыйПериод\",\"type\":\"STRING\"},{\"index\":5,\"name\":\"НачалоПроверки\",\"type\":\"STRING\"},{\"index\":6,\"name\":\"ОкончаниеПроверки\",\"type\":\"STRING\"},{\"index\":7,\"name\":\"ВыявленныеНарушенияНедостатки\",\"type\":\"STRING\"},{\"index\":8,\"name\":\"РезультатыПроверки\",\"type\":\"STRING\"}],\"timestampIndex\":-1}",
                     36,
-                    36
+                    36,
+                    false
             );
         });
     }
@@ -2745,7 +3306,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                     expected,
                     "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"col_b\",\"type\":\"LONG\"},{\"index\":1,\"name\":\"col_a\",\"type\":\"LONG\"}],\"timestampIndex\":-1}",
                     2,
-                    2
+                    2,
+                    false
             );
         });
     }
@@ -2766,12 +3328,20 @@ public class TextLoaderTest extends AbstractCairoTest {
             configureLoaderDefaults(textLoader);
             playText(
                     textLoader,
+                    "{ \"columns\": [ " +
+                            "{ \"file_column_index\": 0, \"table_column_name\": \"col_b\" }, " +
+                            "{ \"file_column_index\": 1, \"table_column_name\": \"col_a\" }" +
+                            "] }",
+                    2,
+                    true,
                     csv,
                     1024,
                     expected,
-                    "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"col_b\",\"type\":\"LONG\"},{\"index\":1,\"name\":\"col_a\",\"type\":\"LONG\"}],\"timestampIndex\":-1}",
+                    "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"col_b\",\"type\":\"LONG\"}," +
+                            "{\"index\":1,\"name\":\"col_a\",\"type\":\"LONG\"}],\"timestampIndex\":-1}",
                     2,
-                    2
+                    2,
+                    false
             );
         });
     }
@@ -2780,16 +3350,16 @@ public class TextLoaderTest extends AbstractCairoTest {
     public void testWriteErrors() throws Exception {
         assertNoLeak(textLoader -> {
             String expected = "f0\tf1\tf2\tf3\tf4\tf5\tf6\tf7\tf8\tf9\n" +
-                    "\"CMP2\t8\t8000\t2.27636352181435\t2015-01-29T19:15:09.000Z\t2015-01-29T19:15:09.000Z\t2015-01-29T00:00:00.000Z\t323\ttrue\t14925407\n" +
-                    "CMP1\t2\t1581\t9.01423481060192\t2015-01-30T19:15:09.000Z\t2015-01-30T19:15:09.000Z\t2015-01-30T00:00:00.000Z\t9138\tfalse\t68225213\n" +
-                    "CMP2\t8\t7067\t9.6284336107783\t2015-01-31T19:15:09.000Z\t2015-01-31T19:15:09.000Z\t2015-01-31T00:00:00.000Z\t8197\ttrue\t58403960\n" +
-                    "CMP1\t8\t5313\t8.87764661805704\t2015-02-01T19:15:09.000Z\t2015-02-01T19:15:09.000Z\t2015-02-01T00:00:00.000Z\t2733\tfalse\t69698373\n" +
-                    "\t4\t3883\t7.96873019309714\t2015-02-02T19:15:09.000Z\t2015-02-02T19:15:09.000Z\t2015-02-02T00:00:00.000Z\t6912\ttrue\t91147394\n" +
-                    "CMP1\t7\t4256\t2.46553522534668\t2015-02-03T19:15:09.000Z\t2015-02-03T19:15:09.000Z\t2015-02-03T00:00:00.000Z\t9453\tfalse\t50278940\n" +
-                    "CMP2\t4\t155\t5.08547495584935\t2015-02-04T19:15:09.000Z\t2015-02-04T19:15:09.000Z\t2015-02-04T00:00:00.000Z\t8919\ttrue\t8671995\n" +
-                    "CMP1\t7\t4486\tNaN\t2015-02-05T19:15:09.000Z\t2015-02-05T19:15:09.000Z\t2015-02-05T00:00:00.000Z\t8670\tfalse\t751877\n" +
-                    "CMP2\t2\t4770\t2.85092033445835\t2015-02-08T19:15:09.000Z\t2015-02-08T19:15:09.000Z\t2015-02-08T00:00:00.000Z\t253\ttrue\t33766814\n" +
-                    "CMP1\t5\t4938\t4.42754498450086\t2015-02-09T19:15:09.000Z\t2015-02-09T19:15:09.000Z\t2015-02-09T00:00:00.000Z\t7817\tfalse\t61983099\n";
+                    "\"CMP2\t8\t8000\t2.27636352181435\t2015-01-29T19:15:09.000000Z\t2015-01-29T19:15:09.000000Z\t2015-01-29T00:00:00.000000Z\t323\ttrue\t14925407\n" +
+                    "CMP1\t2\t1581\t9.01423481060192\t2015-01-30T19:15:09.000000Z\t2015-01-30T19:15:09.000000Z\t2015-01-30T00:00:00.000000Z\t9138\tfalse\t68225213\n" +
+                    "CMP2\t8\t7067\t9.6284336107783\t2015-01-31T19:15:09.000000Z\t2015-01-31T19:15:09.000000Z\t2015-01-31T00:00:00.000000Z\t8197\ttrue\t58403960\n" +
+                    "CMP1\t8\t5313\t8.87764661805704\t2015-02-01T19:15:09.000000Z\t2015-02-01T19:15:09.000000Z\t2015-02-01T00:00:00.000000Z\t2733\tfalse\t69698373\n" +
+                    "\t4\t3883\t7.96873019309714\t2015-02-02T19:15:09.000000Z\t2015-02-02T19:15:09.000000Z\t2015-02-02T00:00:00.000000Z\t6912\ttrue\t91147394\n" +
+                    "CMP1\t7\t4256\t2.46553522534668\t2015-02-03T19:15:09.000000Z\t2015-02-03T19:15:09.000000Z\t2015-02-03T00:00:00.000000Z\t9453\tfalse\t50278940\n" +
+                    "CMP2\t4\t155\t5.08547495584935\t2015-02-04T19:15:09.000000Z\t2015-02-04T19:15:09.000000Z\t2015-02-04T00:00:00.000000Z\t8919\ttrue\t8671995\n" +
+                    "CMP1\t7\t4486\tNaN\t2015-02-05T19:15:09.000000Z\t2015-02-05T19:15:09.000000Z\t2015-02-05T00:00:00.000000Z\t8670\tfalse\t751877\n" +
+                    "CMP2\t2\t4770\t2.85092033445835\t2015-02-08T19:15:09.000000Z\t2015-02-08T19:15:09.000000Z\t2015-02-08T00:00:00.000000Z\t253\ttrue\t33766814\n" +
+                    "CMP1\t5\t4938\t4.42754498450086\t2015-02-09T19:15:09.000000Z\t2015-02-09T19:15:09.000000Z\t2015-02-09T00:00:00.000000Z\t7817\tfalse\t61983099\n";
 
             String csv = "\"\"\"CMP2\",8,8000,2.27636352181435,2015-01-29T19:15:09.000Z,2015-01-29 19:15:09,01/29/2015,323,TRUE,14925407\n" +
                     "CMP1,2,1581,9.01423481060192,2015-01-30T19:15:09.000Z,2015-01-30 19:15:09,01/30/2015,9138,FALSE,68225213\n" +
@@ -2808,7 +3378,7 @@ public class TextLoaderTest extends AbstractCairoTest {
             playText0(textLoader, csv, 350, ENTITY_MANIPULATOR);
             sink.clear();
             textLoader.getMetadata().toJson(sink);
-            TestUtils.assertEquals("{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"f1\",\"type\":\"INT\"},{\"index\":2,\"name\":\"f2\",\"type\":\"INT\"},{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"f4\",\"type\":\"DATE\"},{\"index\":5,\"name\":\"f5\",\"type\":\"DATE\"},{\"index\":6,\"name\":\"f6\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"f7\",\"type\":\"INT\"},{\"index\":8,\"name\":\"f8\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"f9\",\"type\":\"INT\"}],\"timestampIndex\":-1}", sink);
+            TestUtils.assertEquals("{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"f1\",\"type\":\"INT\"},{\"index\":2,\"name\":\"f2\",\"type\":\"INT\"},{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"f4\",\"type\":\"TIMESTAMP\"},{\"index\":5,\"name\":\"f5\",\"type\":\"TIMESTAMP\"},{\"index\":6,\"name\":\"f6\",\"type\":\"TIMESTAMP\"},{\"index\":7,\"name\":\"f7\",\"type\":\"INT\"},{\"index\":8,\"name\":\"f8\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"f9\",\"type\":\"INT\"}],\"timestampIndex\":-1}", sink);
             Assert.assertEquals(12L, textLoader.getParsedLineCount());
             Assert.assertEquals(10L, textLoader.getWrittenLineCount());
             Assert.assertEquals("[0,0,1,0,0,0,0,0,0,1]", textLoader.getColumnErrorCounts().toString());
@@ -2830,13 +3400,25 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "werop\t90\t\n";
 
             ddl("create table test(a string, d binary)");
+            textLoader.setSchemaVersion(2);
+            playJson(textLoader, "{" +
+                    "  \"columns\": [" +
+                    "    {  \"file_column_index\": 0, \"column_type\": \"STRING\", \"table_column_name\": \"a\" }, " +
+                    "    {  \"file_column_index\": 1, \"column_type\": \"BINARY\", \"table_column_name\": \"d\" } " +
+                    "  ]," +
+                    "  \"formats_action\": \"ADD\"\n" +
+                    "}");
             configureLoaderDefaults(textLoader);
             try {
-                playText(textLoader, csv, 1024,
+                playText(
+                        textLoader,
+                        csv,
+                        1024,
                         expected,
                         "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"b\",\"type\":\"INT\"},{\"index\":2,\"name\":\"d\",\"type\":\"BINARY\"}],\"timestampIndex\":-1}",
                         3,
-                        3
+                        3,
+                        false
                 );
                 Assert.fail();
             } catch (CairoException e) {
@@ -2859,18 +3441,28 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "werop\t1970-01-01T00:00:00.000090Z\n";
 
             ddl("create table test(a string, b timestamp)");
+            textLoader.setSchemaVersion(2);
+            playJson(textLoader, "{" +
+                    "  \"columns\": [" +
+                    "    {  \"file_column_index\": 0, \"column_type\": \"STRING\", \"table_column_name\": \"a\" }, " +
+                    "    {  \"file_column_index\": 1, \"column_type\": \"TIMESTAMP\", \"table_column_name\": \"b\", \"formats\": [ {  \"pattern\": \"EPU+\", \"utf8\": false } ]  } " +
+                    "  ]," +
+                    "  \"formats_action\": \"ADD\"\n" +
+                    "}");
             configureLoaderDefaults(textLoader);
-            playText(textLoader, csv, 1024,
+            playText(
+                    textLoader, csv, 1024,
                     expected,
                     "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"b\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":-1}",
                     3,
-                    3
+                    3,
+                    false
             );
         });
     }
 
     @Test
-    public void testWriteToExistingCannotConvertDate() throws Exception {
+    public void testWriteToExistingDateColumnInterpretsNumbersAsEpochMillis() throws Exception {
         assertNoLeak(textLoader -> {
             String csv = "abcd,10\n" +
                     "efg,45\n" +
@@ -2878,23 +3470,36 @@ public class TextLoaderTest extends AbstractCairoTest {
 
             // we would mis-detect type and have no date parser to try loading data with
             String expected = "a\tb\n" +
-                    "abcd\t\n" +
-                    "efg\t\n" +
-                    "werop\t\n";
+                    "abcd\t1970-01-01T00:00:00.010Z\n" +
+                    "efg\t1970-01-01T00:00:00.045Z\n" +
+                    "werop\t1970-01-01T00:00:00.090Z\n";
 
             ddl("create table test(a string, b date)");
             configureLoaderDefaults(textLoader);
-            playText(textLoader, csv, 1024,
+            playText(
+                    textLoader,
+                    "{ \"columns\": [ " +
+                            "{ \"file_column_index\": 0, \"table_column_name\": \"a\" }, " +
+                            "{ \"file_column_index\": 1, \"table_column_name\": \"b\" }" +
+                            "] }",
+                    2,
+                    true,
+                    csv,
+                    1024,
                     expected,
-                    "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"b\",\"type\":\"DATE\"}],\"timestampIndex\":-1}",
+                    "{\"columnCount\":2,\"columns\":[" +
+                            "{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"}," +
+                            "{\"index\":1,\"name\":\"b\",\"type\":\"DATE\"}],\"timestampIndex\":-1}",
                     3,
-                    3
+                    3,
+                    false
+
             );
         });
     }
 
     @Test
-    public void testWriteToExistingTableBadDateColumn() throws Exception {
+    public void testWriteToExistingTableBadDateColumnViaMappingWithBogusPatternAndSkipColumnOnError() throws Exception {
         assertNoLeak(textLoader -> {
             String expected = "t\ts\tv\n" +
                     "\tGOOG\t10.0\n" +
@@ -2906,27 +3511,69 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "bad_data,GOOG,15\n" +
                     "bad_data,GOOG,20\n";
 
-            ddl(
-                    "create table test" +
-                            "(t date" +
-                            ", s symbol" +
-                            ", v double)"
-            );
-            configureLoaderDefaults(textLoader);
+            ddl("create table test" +
+                    "(t date" +
+                    ", s symbol" +
+                    ", v double)");
+            configureLoaderDefaults(textLoader, (byte) -1, Atomicity.SKIP_COL);
+
             playText(
                     textLoader,
+                    "{ \"columns\": [ " +
+                            "{ \"file_column_name\": \"t\", \"column_type\": \"DATE\", \"formats\": [ { \"pattern\": \"bad_data\" } ] } " + // format forces the type, even if it doesn't match file data
+                            "] }",
+                    2,
+                    true,
                     csv,
                     1024,
                     expected,
                     "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"t\",\"type\":\"DATE\"},{\"index\":1,\"name\":\"s\",\"type\":\"SYMBOL\"},{\"index\":2,\"name\":\"v\",\"type\":\"DOUBLE\"}],\"timestampIndex\":-1}",
                     3,
-                    3
+                    3,
+                    false
             );
         });
     }
 
     @Test
-    public void testWriteToExistingTableBadTimestampColumn() throws Exception {
+    public void testWriteToExistingTableBadDateColumnViaMappingWithFileColumnIgnore() throws Exception {
+        assertNoLeak(textLoader -> {
+            String expected = "t\ts\tv\n" +
+                    "\tGOOG\t10.0\n" +
+                    "\tGOOG\t15.0\n" +
+                    "\tGOOG\t20.0\n";
+
+            String csv = "t,s,v\n" +
+                    "bad_data,GOOG,10\n" +
+                    "bad_data,GOOG,15\n" +
+                    "bad_data,GOOG,20\n";
+
+            ddl("create table test" +
+                    "(t date" +
+                    ", s symbol" +
+                    ", v double)");
+            configureLoaderDefaults(textLoader);
+
+            playText(
+                    textLoader,
+                    "{ \"columns\": [ " +
+                            "{ \"file_column_name\": \"t\", \"file_column_ignore\": true } " +
+                            "] }",
+                    2,
+                    true,
+                    csv,
+                    1024,
+                    expected,
+                    "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"t\",\"type\":\"DATE\"},{\"index\":1,\"name\":\"s\",\"type\":\"SYMBOL\"},{\"index\":2,\"name\":\"v\",\"type\":\"DOUBLE\"}],\"timestampIndex\":-1}",
+                    3,
+                    3,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testWriteToExistingTableBadTimestampColumnViaMappingWithFileColumnIgnore() throws Exception {
         assertNoLeak(textLoader -> {
             String expected = "t\ts\tv\n" +
                     "\tGOOG\t10.0\n" +
@@ -2942,12 +3589,18 @@ public class TextLoaderTest extends AbstractCairoTest {
             configureLoaderDefaults(textLoader);
             playText(
                     textLoader,
+                    "{ \"columns\": [ " +
+                            "{ \"file_column_name\": \"t\", \"file_column_ignore\": true } " +
+                            "] }",
+                    2,
+                    true,
                     csv,
                     1024,
                     expected,
                     "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"t\",\"type\":\"TIMESTAMP\"},{\"index\":1,\"name\":\"s\",\"type\":\"SYMBOL\"},{\"index\":2,\"name\":\"v\",\"type\":\"DOUBLE\"}],\"timestampIndex\":-1}",
                     3,
-                    3
+                    3,
+                    false
             );
         });
     }
@@ -2965,51 +3618,34 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "2019-11-12T00:00:00.000Z,GOOG,2019-11-12T00:00:00.000Z,2019-11-12T00:00:00.000Z,15\n" +
                     "2019-11-13T00:00:00.000Z,GOOG,2019-11-13T00:00:00.000Z,2019-11-13T00:00:00.000Z,20\n";
 
-            ddl(
-                    "create table test" +
-                            "(t1 timestamp" +
-                            ", s symbol" +
-                            ", t2 timestamp" +
-                            ", t3 timestamp" +
-                            ", v double)"
+            ddl("create table test" +
+                    "(t1 timestamp" +
+                    ", s symbol" +
+                    ", t2 timestamp" +
+                    ", t3 timestamp" +
+                    ", v double)"
             );
             configureLoaderDefaults(textLoader);
             playText(
                     textLoader,
+                    "{ \"columns\": [ " +
+                            "{ \"file_column_name\": \"t\", \"table_column_name\": \"t1\" } " +
+                            "] }",
+                    2,
+                    true,
                     csv,
                     1024,
                     expected,
-                    "{\"columnCount\":5,\"columns\":[{\"index\":0,\"name\":\"t1\",\"type\":\"TIMESTAMP\"},{\"index\":1,\"name\":\"s\",\"type\":\"SYMBOL\"},{\"index\":2,\"name\":\"t2\",\"type\":\"TIMESTAMP\"},{\"index\":3,\"name\":\"t3\",\"type\":\"TIMESTAMP\"},{\"index\":4,\"name\":\"v\",\"type\":\"DOUBLE\"}],\"timestampIndex\":-1}",
+                    "{\"columnCount\":5,\"columns\":[" +
+                            "{\"index\":0,\"name\":\"t1\",\"type\":\"TIMESTAMP\"}," +
+                            "{\"index\":1,\"name\":\"s\",\"type\":\"SYMBOL\"}," +
+                            "{\"index\":2,\"name\":\"t2\",\"type\":\"TIMESTAMP\"}," +
+                            "{\"index\":3,\"name\":\"t3\",\"type\":\"TIMESTAMP\"}," +
+                            "{\"index\":4,\"name\":\"v\",\"type\":\"DOUBLE\"}],\"timestampIndex\":-1}",
                     3,
-                    3
+                    3,
+                    false
             );
-        });
-    }
-
-    @Test
-    public void testWriteToExistingTableTooFewColumns() throws Exception {
-        assertNoLeak(textLoader -> {
-            String csv = "\"\"\"CMP2\",8,8000,2.27636352181435,2015-01-29T19:15:09.000Z,2015-01-29 19:15:09,01/29/2015,323,TRUE,14925407\n" +
-                    "CMP1,2,1581,9.01423481060192,2015-01-30T19:15:09.000Z,2015-01-30 19:15:09,01/30/2015,9138,FALSE,68225213\n" +
-                    "CMP2,8,7067,9.6284336107783,2015-01-31T19:15:09.000Z,2015-01-31 19:15:09,01/31/2015,8197,TRUE,58403960\n" +
-                    "CMP1,8,5313,8.87764661805704,2015-02-01T19:15:09.000Z,2015-02-01 19:15:09,02/01/2015,2733,FALSE,69698373\n" +
-                    ",4,3883,7.96873019309714,2015-02-02T19:15:09.000Z,2015-02-02 19:15:09,02/02/2015,6912,TRUE,91147394\n" +
-                    "CMP1,7,4256,2.46553522534668,2015-02-03T19:15:09.000Z,2015-02-03 19:15:09,02/03/2015,9453,FALSE,50278940\n" +
-                    "CMP2,4,155,5.08547495584935,2015-02-04T19:15:09.000Z,2015-02-04 19:15:09,02/04/2015,8919,TRUE,8671995\n" +
-                    "\"CMP1\",7,4486,,2015-02-05T19:15:09.000Z,2015-02-05 19:15:09,02/05/2015,8670,FALSE,751877\n" +
-                    "CMP2,2,6641,0.0381825352087617,2015-02-06T19:15:09.000Z,2015-02-06 19:15:09,02/06/2015,8331,TRUE,40909232527\n" +
-                    "CMP1,1,3579,0.849663221742958,2015-02-07T19:15:09.000Z,2015-02-07 19:15:09,02/07/2015,9592,FALSE,11490662\n" +
-                    "CMP2,2,4770,2.85092033445835,2015-02-08T19:15:09.000Z,2015-02-08 19:15:09,02/08/2015,253,TRUE,33766814\n" +
-                    "CMP1,5,4938,4.42754498450086,2015-02-09T19:15:09.000Z,2015-02-09 19:15:09,02/09/2015,7817,FALSE,61983099\n";
-
-            ddl("create table test(a int, b int)");
-            configureLoaderDefaults(textLoader);
-            try {
-                playText0(textLoader, csv, 1024, ENTITY_MANIPULATOR);
-                Assert.fail();
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "column count mismatch [textColumnCount=10, tableColumnCount=2, table=test]");
-            }
         });
     }
 
@@ -3043,30 +3679,70 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "CMP2,2,4770,2.85092033445835,2015-02-08T19:15:09.000Z,2015-02-08 19:15:09,02/08/2015,253,TRUE,33766814\n" +
                     "CMP1,5,4938,4.42754498450086,2015-02-09T19:15:09.000Z,2015-02-09 19:15:09,02/09/2015,7817,FALSE,61983099\n";
 
-            ddl(
-                    "create table test" +
-                            "(a symbol" +
-                            ", b int" +
-                            ", c long" +
-                            ", d float" +
-                            ", e date" +
-                            ", f date" +
-                            ", g date" +
-                            ", h long" +
-                            ", i boolean" +
-                            ", k long" +
-                            ", t timestamp)"
-            );
+            ddl("create table test" +
+                    "(a symbol" +
+                    ", b int" +
+                    ", c long" +
+                    ", d float" +
+                    ", e date" +
+                    ", f date" +
+                    ", g date" +
+                    ", h long" +
+                    ", i boolean" +
+                    ", k long" +
+                    ", t timestamp)");
             configureLoaderDefaults(textLoader);
             playText(
                     textLoader,
+                    "{ \"columns\": [ " +
+                            "{ \"file_column_index\": 0, \"table_column_name\": \"a\" }, " +
+                            "{ \"file_column_index\": 1, \"table_column_name\": \"b\" }, " +
+                            "{ \"file_column_index\": 2, \"table_column_name\": \"c\" }, " +
+                            "{ \"file_column_index\": 3, \"table_column_name\": \"d\" }, " +
+                            "{ \"file_column_index\": 4, \"table_column_name\": \"e\" }, " +
+                            "{ \"file_column_index\": 5, \"table_column_name\": \"f\" }, " +
+                            "{ \"file_column_index\": 6, \"table_column_name\": \"g\" }, " +
+                            "{ \"file_column_index\": 7, \"table_column_name\": \"h\" }, " +
+                            "{ \"file_column_index\": 8, \"table_column_name\": \"i\" }, " +
+                            "{ \"file_column_index\": 9, \"table_column_name\": \"k\" } " +
+                            "] }",
+                    2,
+                    true,
                     csv,
                     1024,
                     expected,
                     "{\"columnCount\":11,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"SYMBOL\"},{\"index\":1,\"name\":\"b\",\"type\":\"INT\"},{\"index\":2,\"name\":\"c\",\"type\":\"LONG\"},{\"index\":3,\"name\":\"d\",\"type\":\"FLOAT\"},{\"index\":4,\"name\":\"e\",\"type\":\"DATE\"},{\"index\":5,\"name\":\"f\",\"type\":\"DATE\"},{\"index\":6,\"name\":\"g\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"h\",\"type\":\"LONG\"},{\"index\":8,\"name\":\"i\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"k\",\"type\":\"LONG\"},{\"index\":10,\"name\":\"t\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":-1}",
                     12,
-                    12
+                    12,
+                    false
             );
+        });
+    }
+
+    @Test
+    public void testWriteToExistingTableWithNoHeaderAndTooFewColumns() throws Exception {
+        assertNoLeak(textLoader -> {
+            String csv = "\"\"\"CMP2\",8,8000,2.27636352181435,2015-01-29T19:15:09.000Z,2015-01-29 19:15:09,01/29/2015,323,TRUE,14925407\n" +
+                    "CMP1,2,1581,9.01423481060192,2015-01-30T19:15:09.000Z,2015-01-30 19:15:09,01/30/2015,9138,FALSE,68225213\n" +
+                    "CMP2,8,7067,9.6284336107783,2015-01-31T19:15:09.000Z,2015-01-31 19:15:09,01/31/2015,8197,TRUE,58403960\n" +
+                    "CMP1,8,5313,8.87764661805704,2015-02-01T19:15:09.000Z,2015-02-01 19:15:09,02/01/2015,2733,FALSE,69698373\n" +
+                    ",4,3883,7.96873019309714,2015-02-02T19:15:09.000Z,2015-02-02 19:15:09,02/02/2015,6912,TRUE,91147394\n" +
+                    "CMP1,7,4256,2.46553522534668,2015-02-03T19:15:09.000Z,2015-02-03 19:15:09,02/03/2015,9453,FALSE,50278940\n" +
+                    "CMP2,4,155,5.08547495584935,2015-02-04T19:15:09.000Z,2015-02-04 19:15:09,02/04/2015,8919,TRUE,8671995\n" +
+                    "\"CMP1\",7,4486,,2015-02-05T19:15:09.000Z,2015-02-05 19:15:09,02/05/2015,8670,FALSE,751877\n" +
+                    "CMP2,2,6641,0.0381825352087617,2015-02-06T19:15:09.000Z,2015-02-06 19:15:09,02/06/2015,8331,TRUE,40909232527\n" +
+                    "CMP1,1,3579,0.849663221742958,2015-02-07T19:15:09.000Z,2015-02-07 19:15:09,02/07/2015,9592,FALSE,11490662\n" +
+                    "CMP2,2,4770,2.85092033445835,2015-02-08T19:15:09.000Z,2015-02-08 19:15:09,02/08/2015,253,TRUE,33766814\n" +
+                    "CMP1,5,4938,4.42754498450086,2015-02-09T19:15:09.000Z,2015-02-09 19:15:09,02/09/2015,7817,FALSE,61983099\n";
+
+            ddl("create table test(a int, b int)");
+            configureLoaderDefaults(textLoader);
+            try {
+                playText0(textLoader, csv, 1024, ENTITY_MANIPULATOR);
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "column mapping is invalid");
+            }
         });
     }
 
@@ -3084,11 +3760,25 @@ public class TextLoaderTest extends AbstractCairoTest {
 
             ddl("create table test(a string, b int, d binary)");
             configureLoaderDefaults(textLoader);
-            playText(textLoader, csv, 1024,
+            playText(
+                    textLoader,
+                    "{" +
+                            "  \"columns\": [" +
+                            "    {  \"file_column_index\": \"0\", \"table_column_name\": \"a\", \"column_type\": \"STRING\" }, " +
+                            "    {  \"file_column_index\": \"1\", \"table_column_name\": \"b\", \"column_type\": \"INT\" }" +
+                            "  ] }",
+                    2,
+                    true,
+                    csv,
+                    1024,
                     expected,
-                    "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"b\",\"type\":\"INT\"},{\"index\":2,\"name\":\"d\",\"type\":\"BINARY\"}],\"timestampIndex\":-1}",
+                    "{\"columnCount\":3,\"columns\":[" +
+                            "{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"}," +
+                            "{\"index\":1,\"name\":\"b\",\"type\":\"INT\"}," +
+                            "{\"index\":2,\"name\":\"d\",\"type\":\"BINARY\"}],\"timestampIndex\":-1}",
                     3,
-                    3
+                    3,
+                    false
             );
         });
     }
@@ -3110,6 +3800,7 @@ public class TextLoaderTest extends AbstractCairoTest {
             }
 
             if (firstBufSize < len) {
+                // analyze structure call
                 textLoader.parse(buf, buf + firstBufSize, AllowAllSecurityContext.INSTANCE);
                 textLoader.setState(TextLoader.LOAD_DATA);
 
@@ -3149,7 +3840,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                         "",
                         "",
                         -1,
-                        -1
+                        -1,
+                        true
                 );
                 Assert.fail("TextException should be thrown!");
             } catch (TextException e) {
@@ -3175,7 +3867,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                         "",
                         "",
                         -1,
-                        -1
+                        -1,
+                        false
                 );
                 Assert.fail("TextException should be thrown!");
             } catch (TextException e) {
@@ -3239,16 +3932,26 @@ public class TextLoaderTest extends AbstractCairoTest {
 
                         configureLoaderDefaults(textLoader, (byte) ',');
                         textLoader.setForceHeaders(false);
+
+                        // mapping number to timestamp requires explicit mapping because we can't guess the time unit
                         playText(
                                 engine,
                                 textLoader,
+                                "{ \"columns\": [ " +
+                                        "{ \"file_column_name\": \"StrSym\", \"column_type\": \"TIMESTAMP\" }, " +
+                                        "{ \"file_column_name\": \"ts\", \"column_type\": \"TIMESTAMP\", \"formats\": [ { \"pattern\": \"EPU+\"  } ]  }" +
+                                        " ] }",
+                                2,
+                                true,
                                 csv,
                                 1024,
                                 expected,
+                                ENTITY_MANIPULATOR,
                                 expectedMeta,
                                 5,
                                 5,
-                                true
+                                true,
+                                false
                         );
                     }
             );
@@ -3269,7 +3972,7 @@ public class TextLoaderTest extends AbstractCairoTest {
 
     private void configureLoaderDefaults(TextLoader textLoader, byte columnSeparator, int atomicity, boolean overwrite) {
         textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-        textLoader.configureDestination(TEST_TABLE_NAME, overwrite, atomicity, PartitionBy.NONE, null, null);
+        textLoader.configureDestination(TEST_TABLE_NAME, false, overwrite, atomicity, PartitionBy.NONE, null, null, false);
         if (columnSeparator > 0) {
             textLoader.configureColumnDelimiter(columnSeparator);
         }
@@ -3277,13 +3980,13 @@ public class TextLoaderTest extends AbstractCairoTest {
 
     private void configureLoaderDefaults(TextLoader textLoader, int atomicity, boolean overwrite, int partitionBy) {
         textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-        textLoader.configureDestination(TEST_TABLE_NAME, overwrite, atomicity, partitionBy, TEST_TS_COL_NAME, null);
+        textLoader.configureDestination(TEST_TABLE_NAME, false, overwrite, atomicity, partitionBy, TEST_TS_COL_NAME, null, false);
         textLoader.configureColumnDelimiter((byte) 44);
     }
 
     private void configureLoaderDefaults2(TextLoader textLoader) {
         textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-        textLoader.configureDestination(TEST_TABLE_NAME, false, Atomicity.SKIP_COL, PartitionBy.DAY, TEST_TS_COL_NAME, null);
+        textLoader.configureDestination(TEST_TABLE_NAME, false, false, Atomicity.SKIP_COL, PartitionBy.DAY, TEST_TS_COL_NAME, null, false);
         textLoader.configureColumnDelimiter((byte) 44);
     }
 
@@ -3323,7 +4026,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                                     "\"timestampIndex\":0}",
                             1,
                             1,
-                            true
+                            true,
+                            false
                     );
                     Assert.assertEquals("test", textLoader.getTableName());
                     Assert.assertEquals(TextLoadWarning.NONE, textLoader.getWarnings());
@@ -3404,7 +4108,18 @@ public class TextLoaderTest extends AbstractCairoTest {
                         playText(
                                 engine,
                                 textLoader,
-                                "ts,int\n2021-01-01T00:04:00.000000Z,3\n2021-01-01T00:05:00.000000Z,4\n2021-01-02T00:05:31.000000Z,6\n2021-01-01T00:01:00.000000Z,1\n2021-01-01T00:01:30.000000Z,2\n2021-01-02T00:00:30.000000Z,5\n",
+                                "{ \"columns\": [ " +
+                                        "{ \"file_column_name\": \"ts\", \"column_type\": \"TIMESTAMP\" }, " +
+                                        "{ \"file_column_name\": \"int\", \"column_type\": \"INT\" } " +
+                                        "] }",
+                                2,
+                                false,
+                                "ts,int\n2021-01-01T00:04:00.000000Z,3\n" +
+                                        "2021-01-01T00:05:00.000000Z,4\n" +
+                                        "2021-01-02T00:05:31.000000Z,6\n" +
+                                        "2021-01-01T00:01:00.000000Z,1\n" +
+                                        "2021-01-01T00:01:30.000000Z,2\n" +
+                                        "2021-01-02T00:00:30.000000Z,5\n",
                                 1024,
                                 "ts\tint\n" +
                                         "2021-01-01T00:01:00.000000Z\t1\n" +
@@ -3413,12 +4128,14 @@ public class TextLoaderTest extends AbstractCairoTest {
                                         "2021-01-01T00:05:00.000000Z\t4\n" +
                                         "2021-01-02T00:00:30.000000Z\t5\n" +
                                         "2021-01-02T00:05:31.000000Z\t6\n",
+                                ENTITY_MANIPULATOR,
                                 "{\"columnCount\":2,\"columns\":[" +
                                         "{\"index\":0,\"name\":\"ts\",\"type\":\"TIMESTAMP\"}," +
                                         "{\"index\":1,\"name\":\"int\",\"type\":\"INT\"}]," +
                                         "\"timestampIndex\":0}",
                                 6,
                                 6,
+                                true,
                                 true
                         );
                         Assert.assertEquals("test", textLoader.getTableName());
@@ -3468,13 +4185,54 @@ public class TextLoaderTest extends AbstractCairoTest {
             CharSequence expectedMetadata,
             long expectedParsedLineCount,
             long expectedWrittenLineCount,
-            boolean skipLinesWithExtraValues
+            boolean skipLinesWithExtraValues,
+            boolean testLoadingIntoExistingTable // only possible when CSV has headers and they map exactly to the target table
+    ) throws Exception {
+        playText(engine,
+                textLoader,
+                null,
+                1,
+                false,
+                text,
+                firstBufSize,
+                expected,
+                manipulator,
+                expectedMetadata,
+                expectedParsedLineCount,
+                expectedWrittenLineCount,
+                skipLinesWithExtraValues,
+                testLoadingIntoExistingTable);
+    }
+
+    private void playText(
+            CairoEngine engine,
+            TextLoader textLoader,
+            String jsonText,
+            int jsonSchemaVersion,
+            boolean analyzeJsonOnFirstRun,
+            String text,
+            final int firstBufSize,
+            String expected,
+            ByteManipulator manipulator,
+            CharSequence expectedMetadata,
+            long expectedParsedLineCount,
+            long expectedWrittenLineCount,
+            boolean skipLinesWithExtraValues,
+            boolean testLoadingIntoExistingTable // only possible when CSV has headers and they map exactly to the target table
     ) throws Exception {
         textLoader.setSkipLinesWithExtraValues(skipLinesWithExtraValues);
         boolean forceHeader = textLoader.isForceHeaders();
         byte delimiter = textLoader.getColumnDelimiter();
         int maxUncommittedRows = textLoader.getMaxUncommittedRows();
         long o3MaxLag = textLoader.getO3MaxLag();
+
+        if (jsonText != null && analyzeJsonOnFirstRun) {
+            textLoader.setState(TextLoader.LOAD_JSON_METADATA);
+            textLoader.setSchemaVersion(jsonSchemaVersion);
+            playJson(textLoader, jsonText);
+        }
+
+        textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
         playText0(textLoader, text, firstBufSize, manipulator);
         sink.clear();
         textLoader.getMetadata().toJson(sink);
@@ -3484,21 +4242,29 @@ public class TextLoaderTest extends AbstractCairoTest {
         assertTable(expected);
         textLoader.clear();
 
-        try (TableWriter writer = getWriter(engine, "test")) {
-            writer.truncate();
-        }
+        if (testLoadingIntoExistingTable) {
+            try (TableWriter writer = getWriter(engine, "test")) {
+                writer.truncate();
+            }
 
-        textLoader.setSkipLinesWithExtraValues(skipLinesWithExtraValues);
-        textLoader.setForceHeaders(forceHeader);
-        textLoader.setMaxUncommittedRows(maxUncommittedRows);
-        textLoader.setO3MaxLag(o3MaxLag);
-        if (delimiter > 0) {
-            textLoader.configureColumnDelimiter(delimiter);
+            textLoader.setSkipLinesWithExtraValues(skipLinesWithExtraValues);
+            textLoader.setForceHeaders(forceHeader);
+            textLoader.setMaxUncommittedRows(maxUncommittedRows);
+            textLoader.setO3MaxLag(o3MaxLag);
+            if (delimiter > 0) {
+                textLoader.configureColumnDelimiter(delimiter);
+            }
+            if (jsonText != null) {
+                textLoader.setState(TextLoader.LOAD_JSON_METADATA);
+                textLoader.setSchemaVersion(jsonSchemaVersion);
+                playJson(textLoader, jsonText);
+                textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
+            }
+            textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
+            playText0(textLoader, text, firstBufSize, manipulator);
+            assertTable(expected);
+            textLoader.clear();
         }
-        textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-        playText0(textLoader, text, firstBufSize, manipulator);
-        assertTable(expected);
-        textLoader.clear();
     }
 
     private void playText(
@@ -3509,7 +4275,8 @@ public class TextLoaderTest extends AbstractCairoTest {
             CharSequence expectedMetadata,
             long expectedParsedLineCount,
             long expectedWrittenLineCount,
-            boolean skipLinesWithExtraValues
+            boolean skipLinesWithExtraValues,
+            boolean testLoadingIntoExistingTable
     ) throws Exception {
         playText(
                 engine,
@@ -3520,7 +4287,39 @@ public class TextLoaderTest extends AbstractCairoTest {
                 expectedMetadata,
                 expectedParsedLineCount,
                 expectedWrittenLineCount,
-                skipLinesWithExtraValues
+                skipLinesWithExtraValues,
+                testLoadingIntoExistingTable
+        );
+    }
+
+    private void playText(
+            TextLoader textLoader,
+            String jsonText,
+            int jsonSchemaVersion,
+            boolean analyzeJsonOnFirstImport,
+            String text,
+            final int firstBufSize,
+            String expected,
+            CharSequence expectedMetadata,
+            long expectedParsedLineCount,
+            long expectedWrittenLineCount,
+            boolean testLoadingIntoExistingTable
+    ) throws Exception {
+        playText(
+                engine,
+                textLoader,
+                jsonText,
+                jsonSchemaVersion,
+                analyzeJsonOnFirstImport,
+                text,
+                firstBufSize,
+                expected,
+                ENTITY_MANIPULATOR,
+                expectedMetadata,
+                expectedParsedLineCount,
+                expectedWrittenLineCount,
+                true,
+                testLoadingIntoExistingTable
         );
     }
 
@@ -3531,7 +4330,8 @@ public class TextLoaderTest extends AbstractCairoTest {
             String expected,
             CharSequence expectedMetadata,
             long expectedParsedLineCount,
-            long expectedWrittenLineCount
+            long expectedWrittenLineCount,
+            boolean testLoadingIntoExistingTable
     ) throws Exception {
         playText(
                 engine,
@@ -3542,7 +4342,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                 expectedMetadata,
                 expectedParsedLineCount,
                 expectedWrittenLineCount,
-                true
+                true,
+                testLoadingIntoExistingTable
         );
     }
 
@@ -3555,7 +4356,8 @@ public class TextLoaderTest extends AbstractCairoTest {
             CharSequence expectedMetadata,
             long expectedParsedLineCount,
             long expectedWrittenLineCount,
-            boolean skipLinesWithExtraValues
+            boolean skipLinesWithExtraValues,
+            boolean testLoadingIntoExistingTable
     ) throws Exception {
         playText(
                 engine,
@@ -3567,7 +4369,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                 expectedMetadata,
                 expectedParsedLineCount,
                 expectedWrittenLineCount,
-                skipLinesWithExtraValues
+                skipLinesWithExtraValues,
+                testLoadingIntoExistingTable
         );
     }
 
@@ -3579,8 +4382,7 @@ public class TextLoaderTest extends AbstractCairoTest {
     ) throws Exception {
         assertNoLeak(
                 textLoader -> {
-                    String createStmt = "create table test(ts timestamp, int int) timestamp(ts) " + createStmtExtra;
-                    ddl(createStmt);
+                    ddl("create table test(ts timestamp, int int) timestamp(ts) " + createStmtExtra);
                     configureLoaderDefaults(
                             textLoader,
                             Atomicity.SKIP_ROW,
@@ -3588,6 +4390,10 @@ public class TextLoaderTest extends AbstractCairoTest {
                             partitionBy
                     );
                     textLoader.setForceHeaders(true);
+                    textLoader.setState(TextLoader.LOAD_JSON_METADATA);
+                    textLoader.setSchemaVersion(1);
+                    playJson(textLoader, "[ { \"name\": \"ts\", \"type\": \"TIMESTAMP\", \"pattern\": \"yyyy-MM-ddTHH:mm:ss.SSSUUUZ\" }, " +
+                            "{ \"name\": \"int\", \"type\": \"INT\"} ]");
                     textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
                     playText0(
                             textLoader,
@@ -3604,55 +4410,6 @@ public class TextLoaderTest extends AbstractCairoTest {
                     Assert.assertEquals(TextLoadWarning.NONE, textLoader.getWarnings());
                     Assert.assertEquals(expectedMaxUncommittedRows, textLoader.getMaxUncommittedRows());
                     Assert.assertEquals(expectedO3MaxLag, textLoader.getO3MaxLag());
-                }
-        );
-    }
-
-    @Test(expected = CairoException.class)
-    public void testCheckParamFalseAndNoTableShouldThrowError() throws Exception {
-        assertNoLeak(
-                textLoader -> {
-                    configureLoaderDefaults(
-                            textLoader
-                    );
-                    textLoader.setForceHeaders(true);
-                    textLoader.setCreate(false);
-                    textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-                    playText0(
-                            textLoader,
-                            "ts,int\n" +
-                                    "2021-01-02T00:00:30.000000Z,1\n",
-                            512,
-                            ENTITY_MANIPULATOR
-                    );
-                }
-        );
-    }
-
-    @Test
-    public void testCheckParamTrueAndNoTableShouldSucceed() throws Exception {
-        assertNoLeak(
-                textLoader -> {
-                    configureLoaderDefaults(
-                            textLoader
-                    );
-                    textLoader.setForceHeaders(true);
-                    textLoader.setCreate(true);
-                    textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-                    playText0(
-                            textLoader,
-                            "ts,int\n" +
-                                    "2021-01-02T00:00:30.000000Z,1\n",
-                            512,
-                            ENTITY_MANIPULATOR
-                    );
-
-                    assertTable("ts\tint\n" +
-                            "2021-01-02T00:00:30.000000Z\t1\n");
-
-                    Assert.assertEquals("test", textLoader.getTableName());
-                    Assert.assertEquals(TextLoadWarning.NONE, textLoader.getWarnings());
-                    Assert.assertEquals(true, textLoader.getCreate());
                 }
         );
     }

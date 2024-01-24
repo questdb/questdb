@@ -405,6 +405,11 @@ public class LineTcpMeasurementScheduler implements Closeable {
                             throw CairoException.nonCritical().put("unknown column type [columnName=").put(tsa.getColumnName(i)).put(']');
                         }
                     }
+                    /* TODO: resolve!
+                    securityContext.authorizeTableCreate();
+                    tableToken = engine.createTableAsSu(securityContext, ddlMem, path, true, tsa, false, false);
+                    LOG.info().$("created table [tableName=").$(tableNameUtf16).I$();
+                     */
                     engine.createTable(securityContext, ddlMem, path, true, tsa, false);
                 }
 

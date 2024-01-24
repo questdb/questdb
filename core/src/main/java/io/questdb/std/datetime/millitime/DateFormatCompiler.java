@@ -33,6 +33,8 @@ import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public class DateFormatCompiler {
     static final int OP_AM_PM = 14;
@@ -43,6 +45,7 @@ public class DateFormatCompiler {
     static final int OP_DAY_OF_YEAR = 36;
     static final int OP_DAY_ONE_DIGIT = 9;
     static final int OP_DAY_TWO_DIGITS = 10;
+    static final int OP_EPOCH_MILLLIS = 147;
     static final int OP_ERA = 1;
     static final int OP_HOUR_12_GREEDY = 142;
     static final int OP_HOUR_12_GREEDY_ONE_BASED = 143;
@@ -1256,6 +1259,10 @@ public class DateFormatCompiler {
      * it isn't present in the pattern and does not have to be defaulted at all when it is.
      */
     private DateFormat compile(IntList ops, ObjList<String> delimiters) {
+        if (ops.size() == 1 && ops.getQuick(0) == OP_EPOCH_MILLLIS) {
+            return MillisDateFormat.INSTANCE;
+        }
+
         asm.init(DateFormat.class);
         asm.setupPool();
         int thisClassIndex = asm.poolClass(asm.poolUtf8("io/questdb/std/datetime/DateFormatAsm"));
@@ -1734,6 +1741,29 @@ public class DateFormatCompiler {
         asm.setJmp(branch, p);
     }
 
+    public static class MillisDateFormat implements DateFormat {
+        public static final MillisDateFormat INSTANCE = new MillisDateFormat();
+
+        private MillisDateFormat() {
+        }
+
+        @Override
+        public void format(long datetime, @NotNull DateLocale locale, @Nullable CharSequence timeZoneName, @NotNull CharSink<?> sink) {
+            sink.put(datetime);
+        }
+
+        @Override
+        public long parse(@NotNull CharSequence in, @NotNull DateLocale locale) throws NumericException {
+            return Numbers.parseLong(in, 0, in.length());
+        }
+
+        @Override
+        public long parse(@NotNull CharSequence in, int lo, int hi, @NotNull DateLocale locale) throws NumericException {
+            return Numbers.parseLong(in, lo, hi);
+        }
+
+    }
+
     static {
         opMap = new CharSequenceIntHashMap();
         opList = new ObjList<>();
@@ -1777,5 +1807,6 @@ public class DateFormatCompiler {
         addOp("x", OP_TIME_ZONE_ISO_8601_1);
         addOp("xx", OP_TIME_ZONE_ISO_8601_2);
         addOp("xxx", OP_TIME_ZONE_ISO_8601_3);
+        addOp("EPM+", OP_EPOCH_MILLLIS);
     }
 }

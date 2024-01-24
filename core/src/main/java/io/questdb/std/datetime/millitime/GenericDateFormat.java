@@ -345,7 +345,12 @@ public class GenericDateFormat extends AbstractDateFormat {
                     sink.put(timeZoneName);
                     break;
 
-                // SEPARATORS
+                case DateFormatCompiler.OP_EPOCH_MILLLIS:
+                    if (compiledOps.size() != 1) {
+                        return;//maybe throw exception
+                    }
+                    sink.put(datetime);
+                    // SEPARATORS
                 default:
                     sink.put(delimiters.getQuick(-op - 1));
                     break;
@@ -626,6 +631,12 @@ public class GenericDateFormat extends AbstractDateFormat {
                     }
                     pos += Numbers.decodeHighInt(l);
                     break;
+
+                case DateFormatCompiler.OP_EPOCH_MILLLIS:
+                    if (compiledOps.size() != 1) {
+                        throw NumericException.INSTANCE;//TODO: would null be better ?
+                    }
+                    return Numbers.parseLong(in, lo, hi);
 
                 // SEPARATORS
                 default:

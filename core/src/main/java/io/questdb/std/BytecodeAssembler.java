@@ -420,6 +420,10 @@ public class BytecodeAssembler {
         putShort(index);
     }
 
+    public void ldiv() {
+        putByte(0x6d);
+    }
+
     public void lload(int value) {
         optimisedIO(lload_0, lload_1, lload_2, lload_3, lload, value);
     }

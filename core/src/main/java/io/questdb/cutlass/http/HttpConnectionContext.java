@@ -247,9 +247,28 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return totalBytesSent;
     }
 
+    public boolean handleClientOperation(
+            int operation,
+            HttpRequestProcessorSelector selector,
+            RescheduleContext rescheduleContext,
+            IODispatcher<HttpConnectionContext> dispatcher
+    ) {
+        try {
+            return handleClientOperation(operation, selector, rescheduleContext);
+        } catch (HeartBeatException e) {
+            dispatcher.registerChannel(this, IOOperation.HEARTBEAT);
+        } catch (PeerIsSlowToReadException e) {
+            dispatcher.registerChannel(this, IOOperation.WRITE);
+        } catch (ServerDisconnectException e) {
+            dispatcher.disconnect(this, getDisconnectReason());
+        } catch (PeerIsSlowToWriteException e) {
+            dispatcher.registerChannel(this, IOOperation.READ);
+        }
+        return false;
+    }
+
     public boolean handleClientOperation(int operation, HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext)
-            throws HeartBeatException, PeerIsSlowToReadException, ServerDisconnectException, PeerIsSlowToWriteException
-    {
+            throws HeartBeatException, PeerIsSlowToReadException, ServerDisconnectException, PeerIsSlowToWriteException {
         boolean keepGoing;
         switch (operation) {
             case IOOperation.READ:
@@ -905,13 +924,9 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             throw registerDispatcherDisconnect(DISCONNECT_REASON_PROTOCOL_VIOLATION);
         } catch (Throwable e) {
             LOG.error().$("internal error [fd=").$(getFd()).$(", e=`").$(e).$("`]").$();
-            throw registerDispatcherDisconnect( DISCONNECT_REASON_SERVER_ERROR);
+            throw registerDispatcherDisconnect(DISCONNECT_REASON_SERVER_ERROR);
         }
         return busyRecv;
-    }
-
-    private boolean isRequestBeingRejected() {
-        return rejectProcessor.rejectCode != 0;
     }
 
     private boolean handleClientSend() throws PeerIsSlowToReadException, ServerDisconnectException {
@@ -930,15 +945,19 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 LOG.debug().$("partition is in cold storage").$();
                 throw registerDispatcherWrite();
             } catch (PeerDisconnectedException ignore) {
-                throw registerDispatcherDisconnect( DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND);
+                throw registerDispatcherDisconnect(DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND);
             } catch (ServerDisconnectException ignore) {
                 LOG.info().$("kicked out [fd=").$(getFd()).I$();
-                throw registerDispatcherDisconnect( DISCONNECT_REASON_KICKED_OUT_AT_SEND);
+                throw registerDispatcherDisconnect(DISCONNECT_REASON_KICKED_OUT_AT_SEND);
             }
         } else {
             LOG.error().$("spurious write request [fd=").$(getFd()).I$();
         }
         return false;
+    }
+
+    private boolean isRequestBeingRejected() {
+        return rejectProcessor.rejectCode != 0;
     }
 
     private boolean parseMultipartResult(

@@ -46,14 +46,12 @@ public interface HttpRequestProcessor {
     default void onHeadersReady(HttpConnectionContext context) {
     }
 
-    default void onRequestComplete(
-            HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
+    default void onRequestComplete(HttpConnectionContext context)
+            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
     }
 
-    default void onRequestRetry(
-            HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
+    default void onRequestRetry(HttpConnectionContext context)
+            throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, ServerDisconnectException {
     }
 
     default void parkRequest(HttpConnectionContext context, boolean pausedQuery) {
@@ -70,8 +68,7 @@ public interface HttpRequestProcessor {
     default void resumeRecv(HttpConnectionContext context) {
     }
 
-    default void resumeSend(
-            HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
+    default void resumeSend(HttpConnectionContext context)
+            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
     }
 }

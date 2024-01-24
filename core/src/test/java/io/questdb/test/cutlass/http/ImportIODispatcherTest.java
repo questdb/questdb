@@ -196,7 +196,7 @@ public class ImportIODispatcherTest extends AbstractTest {
             "Transfer-Encoding: chunked\r\n" +
             "Content-Type: text/plain; charset=utf-8\r\n" +
             "\r\n" +
-            "057c\r\n" +
+            "083a\r\n" +
             "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
             "|      Location:  |                                             trips  |        Pattern  | Locale  |      Errors  |\r\n" +
             "|   Partition by  |                                              NONE  |                 |         |              |\r\n" +
@@ -209,6 +209,12 @@ public class ImportIODispatcherTest extends AbstractTest {
             "|              1  |                                   Pickup_DateTime  |                TIMESTAMP  |           0  |\r\n" +
             "|              2  |                                  DropOff_datetime  |                   STRING  |           0  |\r\n" +
             "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+            "|  Idx  |            Csv name  |     Csv type  |        Table column  |   Table type  |                   Status  |\r\n" +
+            "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+            "|    0  |                Col1  |       STRING  |                Col1  |       STRING  |                       OK  |\r\n" +
+            "|    1  |     Pickup_DateTime  |    TIMESTAMP  |     Pickup_DateTime  |    TIMESTAMP  |                       OK  |\r\n" +
+            "|    2  |    DropOff_datetime  |       STRING  |    DropOff_datetime  |       STRING  |                       OK  |\r\n" +
+            "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
             "\r\n" +
             "00\r\n" +
             "\r\n";
@@ -218,7 +224,7 @@ public class ImportIODispatcherTest extends AbstractTest {
             "Transfer-Encoding: chunked\r\n" +
             "Content-Type: application/json; charset=utf-8\r\n" +
             "\r\n" +
-            "0147\r\n" +
+            "0368\r\n" +
             "{\"status\":\"OK\"," +
             "\"location\":\"trips\"," +
             "\"rowsRejected\":0," +
@@ -230,7 +236,12 @@ public class ImportIODispatcherTest extends AbstractTest {
             "{\"name\":\"Col1\",\"type\":\"STRING\",\"size\":0,\"errors\":0}," +
             "{\"name\":\"Pickup_DateTime\",\"type\":\"TIMESTAMP\",\"size\":8,\"errors\":0}," +
             "{\"name\":\"DropOff_datetime\",\"type\":\"STRING\",\"size\":0,\"errors\":0}" +
-            "]}\r\n" +
+            "]," +
+            "\"mapping\":[" +
+            "{\"file_column_name\":\"Col1\",\"file_column_index\":0,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Col1\",\"formats\":[{}]}," +
+            "{\"file_column_name\":\"Pickup_DateTime\",\"file_column_index\":1,\"file_column_ignore\":false,\"column_type\":\"TIMESTAMP\",\"table_column_name\":\"Pickup_DateTime\",\"formats\":[{\"pattern\":\"yyyy-MM-dd HH:mm:ss\",\"locale\":\"en\",\"utf8\":false}]}," +
+            "{\"file_column_name\":\"DropOff_datetime\",\"file_column_index\":2,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"DropOff_datetime\",\"formats\":[{}]}]" +
+            "}\r\n" +
             "00\r\n" +
             "\r\n";
     private final String ValidImportResponse2 = "HTTP/1.1 200 OK\r\n" +
@@ -239,7 +250,7 @@ public class ImportIODispatcherTest extends AbstractTest {
             "Transfer-Encoding: chunked\r\n" +
             "Content-Type: text/plain; charset=utf-8\r\n" +
             "\r\n" +
-            "0666\r\n" +
+            "0a0e\r\n" +
             "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
             "|      Location:  |                                             trips  |        Pattern  | Locale  |      Errors  |\r\n" +
             "|   Partition by  |                                              NONE  |                 |         |              |\r\n" +
@@ -254,6 +265,14 @@ public class ImportIODispatcherTest extends AbstractTest {
             "|              3  |                                              Col4  |                   STRING  |           0  |\r\n" +
             "|              4  |                                   Pickup_DateTime  |                TIMESTAMP  |           0  |\r\n" +
             "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+            "|  Idx  |            Csv name  |     Csv type  |        Table column  |   Table type  |                   Status  |\r\n" +
+            "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+            "|    0  |                Col1  |       STRING  |                Col1  |       STRING  |                       OK  |\r\n" +
+            "|    1  |                Col2  |       STRING  |                Col2  |       STRING  |                       OK  |\r\n" +
+            "|    2  |                Col3  |       STRING  |                Col3  |       STRING  |                       OK  |\r\n" +
+            "|    3  |                Col4  |       STRING  |                Col4  |       STRING  |                       OK  |\r\n" +
+            "|    4  |     Pickup_DateTime  |    TIMESTAMP  |     Pickup_DateTime  |    TIMESTAMP  |                       OK  |\r\n" +
+            "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
             "\r\n" +
             "00\r\n" +
             "\r\n";
@@ -263,7 +282,7 @@ public class ImportIODispatcherTest extends AbstractTest {
             "Transfer-Encoding: chunked\r\n" +
             "Content-Type: application/json; charset=utf-8\r\n" +
             "\r\n" +
-            "012a\r\n" +
+            "034b\r\n" +
             "{\"status\":\"OK\"," +
             "\"location\":\"trips\"," +
             "\"rowsRejected\":0," +
@@ -274,7 +293,12 @@ public class ImportIODispatcherTest extends AbstractTest {
             "{\"name\":\"Col1\",\"type\":\"STRING\",\"size\":0,\"errors\":0}," +
             "{\"name\":\"Pickup_DateTime\",\"type\":\"TIMESTAMP\",\"size\":8,\"errors\":0}," +
             "{\"name\":\"DropOff_datetime\",\"type\":\"STRING\",\"size\":0,\"errors\":0}" +
-            "]}\r\n" +
+            "]," +
+            "\"mapping\":[" +
+            "{\"file_column_name\":\"Col1\",\"file_column_index\":0,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Col1\",\"formats\":[{}]}," +
+            "{\"file_column_name\":\"Pickup_DateTime\",\"file_column_index\":1,\"file_column_ignore\":false,\"column_type\":\"TIMESTAMP\",\"table_column_name\":\"Pickup_DateTime\",\"formats\":[{\"pattern\":\"yyyy-MM-dd HH:mm:ss\",\"locale\":\"en\",\"utf8\":false}]}," +
+            "{\"file_column_name\":\"DropOff_datetime\",\"file_column_index\":2,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"DropOff_datetime\",\"formats\":[{}]}]" +
+            "}\r\n" +
             "00\r\n" +
             "\r\n";
     private final String WarningValidImportResponse1 = "HTTP/1.1 200 OK\r\n" +
@@ -283,7 +307,7 @@ public class ImportIODispatcherTest extends AbstractTest {
             "Transfer-Encoding: chunked\r\n" +
             "Content-Type: text/plain; charset=utf-8\r\n" +
             "\r\n" +
-            "057c\r\n" +
+            "083a\r\n" +
             "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
             "|      Location:  |                                             trips  |        Pattern  | Locale  |      Errors  |\r\n" +
             "|   Partition by  |                                              NONE  |                 |         |  From Table  |\r\n" +
@@ -296,6 +320,12 @@ public class ImportIODispatcherTest extends AbstractTest {
             "|              1  |                                   Pickup_DateTime  |                TIMESTAMP  |           0  |\r\n" +
             "|              2  |                                  DropOff_datetime  |                   STRING  |           0  |\r\n" +
             "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+            "|  Idx  |            Csv name  |     Csv type  |        Table column  |   Table type  |                   Status  |\r\n" +
+            "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+            "|    0  |                Col1  |       STRING  |                Col1  |       STRING  |                       OK  |\r\n" +
+            "|    1  |     Pickup_DateTime  |    TIMESTAMP  |     Pickup_DateTime  |    TIMESTAMP  |                       OK  |\r\n" +
+            "|    2  |    DropOff_datetime  |       STRING  |    DropOff_datetime  |       STRING  |                       OK  |\r\n" +
+            "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
             "\r\n" +
             "00\r\n" +
             "\r\n";
@@ -305,7 +335,7 @@ public class ImportIODispatcherTest extends AbstractTest {
             "Transfer-Encoding: chunked\r\n" +
             "Content-Type: application/json; charset=utf-8\r\n" +
             "\r\n" +
-            "0186\r\n" +
+            "03a7\r\n" +
             "{\"status\":\"OK\"," +
             "\"location\":\"trips\"," +
             "\"rowsRejected\":0," +
@@ -319,7 +349,12 @@ public class ImportIODispatcherTest extends AbstractTest {
             "{\"name\":\"Col1\",\"type\":\"STRING\",\"size\":0,\"errors\":0}," +
             "{\"name\":\"Pickup_DateTime\",\"type\":\"TIMESTAMP\",\"size\":8,\"errors\":0}," +
             "{\"name\":\"DropOff_datetime\",\"type\":\"STRING\",\"size\":0,\"errors\":0}" +
-            "]}\r\n" +
+            "]," +
+            "\"mapping\":[" +
+            "{\"file_column_name\":\"Col1\",\"file_column_index\":0,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"Col1\",\"formats\":[{}]}," +
+            "{\"file_column_name\":\"Pickup_DateTime\",\"file_column_index\":1,\"file_column_ignore\":false,\"column_type\":\"TIMESTAMP\",\"table_column_name\":\"Pickup_DateTime\",\"formats\":[{\"pattern\":\"yyyy-MM-dd HH:mm:ss\",\"locale\":\"en\",\"utf8\":false}]}," +
+            "{\"file_column_name\":\"DropOff_datetime\",\"file_column_index\":2,\"file_column_ignore\":false,\"column_type\":\"STRING\",\"table_column_name\":\"DropOff_datetime\",\"formats\":[{}]}]" +
+            "}\r\n" +
             "00\r\n" +
             "\r\n";
     private final String ImportCreateParamRequestTrue =  ValidImportRequest1
@@ -415,7 +450,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                                     "Transfer-Encoding: chunked\r\n" +
                                     "Content-Type: text/plain; charset=utf-8\r\n" +
                                     "\r\n" +
-                                    "0666\r\n" +
+                                    "0a0e\r\n" +
                                     "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
                                     "|      Location:  |                                              syms  |        Pattern  | Locale  |      Errors  |\r\n" +
                                     "|   Partition by  |                                              NONE  |                 |         |              |\r\n" +
@@ -429,6 +464,14 @@ public class ImportIODispatcherTest extends AbstractTest {
                                     "|              2  |                                               ts1  |                TIMESTAMP  |           1  |\r\n" +
                                     "|              3  |                                               ts2  |                TIMESTAMP  |           0  |\r\n" +
                                     "|              4  |                                               ts3  |                TIMESTAMP  |           0  |\r\n" +
+                                    "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                    "|  Idx  |            Csv name  |     Csv type  |        Table column  |   Table type  |                   Status  |\r\n" +
+                                    "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                    "|    0  |                col1  |       SYMBOL  |                col1  |       SYMBOL  |                       OK  |\r\n" +
+                                    "|    1  |                col2  |       SYMBOL  |                col2  |       SYMBOL  |                       OK  |\r\n" +
+                                    "|    2  |                 ts1  |    TIMESTAMP  |                 ts1  |    TIMESTAMP  |                       OK  |\r\n" +
+                                    "|    3  |                 ts2  |    TIMESTAMP  |                 ts2  |    TIMESTAMP  |                       OK  |\r\n" +
+                                    "|    4  |                 ts3  |    TIMESTAMP  |                 ts3  |    TIMESTAMP  |                       OK  |\r\n" +
                                     "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
                                     "\r\n" +
                                     "00\r\n" +
@@ -497,7 +540,9 @@ public class ImportIODispatcherTest extends AbstractTest {
                     executor.executeWithStandardHeaders(
                             "GET /query?query=select+*+from+trips HTTP/1.1\r\n",
                             "063e\r\n" +
-                                    "{\"query\":\"select * from trips\",\"columns\":[{\"name\":\"Col1\",\"type\":\"STRING\"},{\"name\":\"Col2\",\"type\":\"STRING\"},{\"name\":\"Col3\",\"type\":\"STRING\"},{\"name\":\"Col4\",\"type\":\"STRING\"},{\"name\":\"Pickup_DateTime\",\"type\":\"TIMESTAMP\"}],\"timestamp\":4,\"dataset\":[[\"B00008\",null,null,null,\"2017-02-01T00:30:00.000000Z\"],[\"B00008\",null,null,null,\"2017-02-01T00:40:00.000000Z\"],[\"B00009\",null,null,null,\"2017-02-01T00:50:00.000000Z\"],[\"B00013\",null,null,null,\"2017-02-01T00:51:00.000000Z\"],[\"B00013\",null,null,null,\"2017-02-01T01:41:00.000000Z\"],[\"B00013\",null,null,null,\"2017-02-01T02:00:00.000000Z\"],[\"B00013\",null,null,null,\"2017-02-01T03:53:00.000000Z\"],[\"B00013\",null,null,null,\"2017-02-01T04:44:00.000000Z\"],[\"B00013\",null,null,null,\"2017-02-01T05:05:00.000000Z\"],[\"B00013\",null,null,null,\"2017-02-01T06:54:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T07:45:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T08:45:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T09:46:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T10:54:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T11:45:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T11:45:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T11:45:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T12:26:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T12:55:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T13:47:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T14:05:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T14:58:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T15:33:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T15:45:00.000000Z\"]],\"count\":24}\r\n" +
+                                    "{\"query\":\"select * from trips\"," +
+                                    "\"columns\":[{\"name\":\"Col1\",\"type\":\"STRING\"},{\"name\":\"Col2\",\"type\":\"STRING\"},{\"name\":\"Col3\",\"type\":\"STRING\"},{\"name\":\"Col4\",\"type\":\"STRING\"},{\"name\":\"Pickup_DateTime\",\"type\":\"TIMESTAMP\"}],\"timestamp\":4," +
+                                    "\"dataset\":[[\"B00008\",null,null,null,\"2017-02-01T00:30:00.000000Z\"],[\"B00008\",null,null,null,\"2017-02-01T00:40:00.000000Z\"],[\"B00009\",null,null,null,\"2017-02-01T00:50:00.000000Z\"],[\"B00013\",null,null,null,\"2017-02-01T00:51:00.000000Z\"],[\"B00013\",null,null,null,\"2017-02-01T01:41:00.000000Z\"],[\"B00013\",null,null,null,\"2017-02-01T02:00:00.000000Z\"],[\"B00013\",null,null,null,\"2017-02-01T03:53:00.000000Z\"],[\"B00013\",null,null,null,\"2017-02-01T04:44:00.000000Z\"],[\"B00013\",null,null,null,\"2017-02-01T05:05:00.000000Z\"],[\"B00013\",null,null,null,\"2017-02-01T06:54:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T07:45:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T08:45:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T09:46:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T10:54:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T11:45:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T11:45:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T11:45:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T12:26:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T12:55:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T13:47:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T14:05:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T14:58:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T15:33:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T15:45:00.000000Z\"]],\"count\":24}\r\n" +
                                     "00\r\n" +
                                     "\r\n"
                     );
@@ -718,7 +763,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                                     "Transfer-Encoding: chunked\r\n" +
                                     "Content-Type: text/plain; charset=utf-8\r\n" +
                                     "\r\n" +
-                                    "0666\r\n" +
+                                    "0a0e\r\n" +
                                     "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
                                     "|      Location:  |                                              syms  |        Pattern  | Locale  |      Errors  |\r\n" +
                                     "|   Partition by  |                                              NONE  |                 |         |              |\r\n" +
@@ -732,6 +777,14 @@ public class ImportIODispatcherTest extends AbstractTest {
                                     "|              2  |                                              col3  |                   SYMBOL  |           0  |\r\n" +
                                     "|              3  |                                              col4  |                   STRING  |           0  |\r\n" +
                                     "|              4  |                                                ts  |                TIMESTAMP  |           0  |\r\n" +
+                                    "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                    "|  Idx  |            Csv name  |     Csv type  |        Table column  |   Table type  |                   Status  |\r\n" +
+                                    "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                    "|    0  |                col1  |       SYMBOL  |                col1  |       SYMBOL  |                       OK  |\r\n" +
+                                    "|    1  |                col2  |       SYMBOL  |                col2  |       SYMBOL  |                       OK  |\r\n" +
+                                    "|    2  |                col3  |       SYMBOL  |                col3  |       SYMBOL  |                       OK  |\r\n" +
+                                    "|    3  |                col4  |       STRING  |                col4  |       STRING  |                       OK  |\r\n" +
+                                    "|    4  |                  ts  |    TIMESTAMP  |                  ts  |    TIMESTAMP  |                       OK  |\r\n" +
                                     "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
                                     "\r\n" +
                                     "00\r\n" +
@@ -777,9 +830,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                 .withTempFolder(root).withWorkerCount(2)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
-                .run((engine) -> {
-                    new SendAndReceiveRequestBuilder().withExpectSendDisconnect(true).execute(ImportCreateParamRequestFalse, ImportCreateParamResponse);
-                });
+                .run((engine) -> new SendAndReceiveRequestBuilder().withExpectSendDisconnect(true).execute(ImportCreateParamRequestFalse, ImportCreateParamResponse));
     }
 
     @Test()
@@ -900,21 +951,15 @@ public class ImportIODispatcherTest extends AbstractTest {
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
                 .run((engine) -> {
-                    String[] requests = new String[]{ValidImportRequest1, ValidImportRequest2};
-                    String[] ddl = new String[]{DdlCols1, DdlCols2};
-
-                    final String requestTemplate = requests[0];
-                    final String ddlCols = ddl[0];
-
                     new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
-                            "GET /query?query=CREATE+TABLE+trips" + ddlCols + "; HTTP/1.1\r\n",
+                            "GET /query?query=CREATE+TABLE+trips" + DdlCols1 + "; HTTP/1.1\r\n",
                             "0c\r\n" +
                                     "{\"ddl\":\"OK\"}\r\n" +
                                     "00\r\n" +
                                     "\r\n"
                     );
 
-                    String request = requestTemplate
+                    String request = ValidImportRequest1
                             .replace("POST /upload?name=trips HTTP", "POST /upload?name=trips&partitionBy=DAY&timestamp=Pickup_DateTime HTTP");
 
                     new SendAndReceiveRequestBuilder().execute(request, WarningValidImportResponse1);

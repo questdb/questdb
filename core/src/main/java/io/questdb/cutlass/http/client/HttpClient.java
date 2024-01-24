@@ -26,7 +26,6 @@ package io.questdb.cutlass.http.client;
 
 import io.questdb.HttpClientConfiguration;
 import io.questdb.cutlass.http.HttpHeaderParser;
-import io.questdb.cutlass.http.ex.BufferOverflowException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.IOOperation;
@@ -34,6 +33,7 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.network.Socket;
 import io.questdb.network.SocketFactory;
 import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -53,6 +53,8 @@ public abstract class HttpClient implements QuietCloseable {
     private final ObjectPool<DirectUtf8String> csPool = new ObjectPool<>(DirectUtf8String.FACTORY, 64);
     private final int defaultTimeout;
     private final Request request = new Request();
+    private final Rnd rnd;
+    private long bufHi;
     private long bufLo;
     private long contentStart = -1;
     private long ptr = bufLo;
@@ -65,7 +67,10 @@ public abstract class HttpClient implements QuietCloseable {
         this.cookieHandler = configuration.getCookieHandlerFactory().getInstance();
         this.bufferSize = configuration.getBufferSize();
         this.bufLo = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
+        this.bufHi = bufLo + bufferSize;
         this.responseHeaders = new ResponseHeaders(bufLo, bufferSize, defaultTimeout, 4096, csPool);
+        // random is used to generate multipart boundary
+        this.rnd = new Rnd(NanosecondClockImpl.INSTANCE.getTicks(), MicrosecondClockImpl.INSTANCE.getTicks());
     }
 
     @Override
@@ -74,6 +79,7 @@ public abstract class HttpClient implements QuietCloseable {
         if (bufLo != 0) {
             Unsafe.free(bufLo, bufferSize, MemoryTag.NATIVE_DEFAULT);
             bufLo = 0;
+            bufHi = 0;
         }
         responseHeaders = Misc.free(responseHeaders);
     }
@@ -86,7 +92,9 @@ public abstract class HttpClient implements QuietCloseable {
         ptr = bufLo;
         contentStart = -1;
         request.contentLengthHeaderReserved = 0;
+        // todo: init() ?
         request.state = Request.STATE_REQUEST;
+        request.boundary = 0;
         return request;
     }
 
@@ -95,13 +103,6 @@ public abstract class HttpClient implements QuietCloseable {
             throw new HttpClientException("peer disconnect [errno=").errno(nf.errno()).put(']');
         }
         return byteCount;
-    }
-
-    private void checkCapacity(long capacity) {
-        final long requiredSize = ptr - bufLo + capacity;
-        if (requiredSize > bufferSize) {
-            throw BufferOverflowException.INSTANCE;
-        }
     }
 
     private int recvOrDie(long addr, int timeout) {
@@ -133,6 +134,33 @@ public abstract class HttpClient implements QuietCloseable {
     protected abstract void ioWait(int timeout, int op);
 
     protected abstract void setupIoWait();
+
+    public interface FormData extends CharSink<Utf8Sink> {
+    }
+
+    public interface MultipartRequest {
+        FormData formData(CharSequence name, @Nullable CharSequence fileName, @Nullable CharSequence contentType);
+
+        default FormData formData(CharSequence fieldName, @Nullable CharSequence fileName) {
+            return formData(fieldName, fileName, null);
+        }
+
+        default FormData formData(CharSequence fieldName) {
+            return formData(fieldName, null);
+        }
+
+        Response send();
+    }
+
+    public interface Response {
+        void await();
+
+        void await(int timeout);
+
+        ChunkedResponse getChunkedResponse();
+
+        boolean isChunked();
+    }
 
     private static class BinarySequenceAdapter implements BinarySequence, Mutable {
         private final Utf8StringSink baseSink = new Utf8StringSink();
@@ -174,22 +202,118 @@ public abstract class HttpClient implements QuietCloseable {
         }
     }
 
+    private class FormDataImpl implements CharSink<Utf8Sink>, FormData {
+        @Override
+        public int getEncoding() {
+            return request.getEncoding();
+        }
+
+        @Override
+        public Utf8Sink put(CharSequence cs) {
+            return request.put(cs);
+        }
+
+        @Override
+        public Utf8Sink put(@Nullable Utf8Sequence us) {
+            return request.put(us);
+        }
+
+        @Override
+        public Utf8Sink put(char c) {
+            return request.put(c);
+        }
+
+        @Override
+        public Utf8Sink putAscii(@Nullable CharSequence cs) {
+            return request.putAscii(cs);
+        }
+
+        @Override
+        public Utf8Sink putAscii(char c) {
+            return request.putAscii(c);
+        }
+
+        @Override
+        public Utf8Sink putUtf8(long lo, long hi) {
+            return request.putUtf8(lo, hi);
+        }
+    }
+
+    private class MultipartRequestImpl implements MultipartRequest {
+        private final FormData formData = new FormDataImpl();
+
+        @Override
+        public FormData formData(CharSequence fieldName, @Nullable CharSequence fileName, @Nullable CharSequence contentType) {
+            request.putEOL();
+            request.putAscii("--").putAscii(Request.BOUNDARY_PREFIX).put(request.boundary);
+            request.putEOL();
+            request.putAscii("Content-Disposition: form-data; name=\"").put(fieldName).putAscii('\"');
+            if (fileName != null) {
+                request.putAscii("; filename=\"").put(fileName).putAscii('\"');
+            }
+            request.putEOL();
+            if (contentType != null) {
+                request.putAscii("Content-Type: ").put(contentType);
+                request.putEOL();
+            }
+
+            request.putEOL();
+            return formData;
+        }
+
+        @Override
+        public Response send() {
+            request.eol();
+            request.put("--").put(Request.BOUNDARY_PREFIX).put(request.boundary).put("--");
+            request.eol();
+            return request.send();
+        }
+    }
+
     public class Request implements Utf8Sink {
+        private static final String BOUNDARY_PREFIX = "---------------------------";
         private static final int STATE_CONTENT = 5;
         private static final int STATE_HEADER = 4;
         private static final int STATE_QUERY = 3;
         private static final int STATE_REQUEST = 0;
         private static final int STATE_URL = 1;
         private static final int STATE_URL_DONE = 2;
+        private final MultipartRequestImpl multipartRequest = new MultipartRequestImpl();
         private BinarySequenceAdapter binarySequenceAdapter;
+        private long boundary = 0;
         private int contentLengthHeaderReserved = 0;
+        private int requestTimeout;
         private int state;
         private boolean urlEncode = false;
+
+        public Request GET(CharSequence host, int port) {
+            return GET(host, port, defaultTimeout);
+        }
+
+        public Request GET(CharSequence host, int port, int requestTimeout) {
+            assert state == STATE_REQUEST;
+            state = STATE_URL;
+            connect(host, port);
+            this.requestTimeout = requestTimeout;
+            return put("GET ");
+        }
 
         public Request GET() {
             assert state == STATE_REQUEST;
             state = STATE_URL;
             return put("GET ");
+        }
+
+        public Request POST(CharSequence host, int port) {
+            return POST(host, port, defaultTimeout);
+        }
+
+        public Request POST(CharSequence host, int port, int requestTimeout) {
+            assert state == STATE_REQUEST;
+            state = STATE_URL;
+            connect(host, port);
+            this.requestTimeout = requestTimeout;
+            return put("POST ");
         }
 
         public Request POST() {
@@ -237,11 +361,21 @@ public abstract class HttpClient implements QuietCloseable {
             return eol();
         }
 
+        public MultipartRequest multipart() {
+            beforeHeader();
+            this.boundary = rnd.nextPositiveLong();
+            put("Content-Type").put(": ").put("multipart/form-data; boundary=").put(BOUNDARY_PREFIX).put(boundary);
+            eol();
+            return multipartRequest;
+        }
+
         @Override
         public Request put(@Nullable Utf8Sequence us) {
             if (us != null) {
                 int size = us.size();
-                checkCapacity(size);
+                if (ptr + size >= bufHi) {
+                    doSend(bufLo, ptr);
+                }
                 Utf8s.strCpy(us, size, ptr);
                 ptr += size;
             }
@@ -250,18 +384,11 @@ public abstract class HttpClient implements QuietCloseable {
 
         @Override
         public Request put(byte b) {
-            checkCapacity(1);
+            if (ptr + 1 >= bufHi) {
+                doSend(bufLo, ptr);
+            }
             Unsafe.getUnsafe().putByte(ptr, b);
             ptr++;
-            return this;
-        }
-
-        @Override
-        public Request putUtf8(long lo, long hi) {
-            final long size = hi - lo;
-            checkCapacity(size);
-            Vect.memcpy(ptr, lo, size);
-            ptr += size;
             return this;
         }
 
@@ -300,8 +427,21 @@ public abstract class HttpClient implements QuietCloseable {
         }
 
         @Override
-        public Request putQuoted(@NotNull CharSequence cs) {
-            putAsciiInternal('\"').put(cs).putAsciiInternal('\"');
+        public Request putQuoted(@Nullable CharSequence cs) {
+            if (cs != null) {
+                putAsciiInternal('\"').put(cs).putAsciiInternal('\"');
+            }
+            return this;
+        }
+
+        @Override
+        public Request putUtf8(long lo, long hi) {
+            final long size = hi - lo;
+            if (ptr + size >= bufHi) {
+                doSend(bufLo, ptr);
+            }
+            Vect.memcpy(ptr, lo, size);
+            ptr += size;
             return this;
         }
 
@@ -322,12 +462,23 @@ public abstract class HttpClient implements QuietCloseable {
             return this;
         }
 
-        public ResponseHeaders send(CharSequence host, int port) {
-            return send(host, port, defaultTimeout);
+        public Response send() {
+            assert state == STATE_URL_DONE || state == STATE_QUERY || state == STATE_HEADER;
+
+            if (state == STATE_URL_DONE || state == STATE_QUERY) {
+                putAscii(" HTTP/1.1").putEOL();
+            }
+
+            putEOL();
+            doSend(bufLo, ptr);
+            responseHeaders.clear();
+            return responseHeaders;
         }
 
-        public ResponseHeaders send(CharSequence host, int port, int timeout) {
+
+        public ResponseHeaders send(CharSequence host, int port) {
             assert state == STATE_URL_DONE || state == STATE_QUERY || state == STATE_HEADER || state == STATE_CONTENT;
+
             if (socket.isClosed()) {
                 connect(host, port);
             }
@@ -338,16 +489,16 @@ public abstract class HttpClient implements QuietCloseable {
 
             if (contentStart > -1) {
                 assert state == STATE_CONTENT;
-                sendHeaderAndContent(Integer.MAX_VALUE, timeout);
+                sendHeaderAndContent(Integer.MAX_VALUE);
             } else {
                 eol();
-                doSend(bufLo, ptr, timeout);
+                doSend(bufLo, ptr);
             }
             responseHeaders.clear();
             return responseHeaders;
         }
 
-        public void sendPartialContent(CharSequence host, int port, int maxContentLen, int timeout) {
+        public void sendPartialContent(CharSequence host, int port, int maxContentLen) {
             if (state != STATE_CONTENT || contentStart == -1) {
                 throw new IllegalStateException("No content to send");
             }
@@ -355,7 +506,7 @@ public abstract class HttpClient implements QuietCloseable {
                 connect(host, port);
             }
 
-            sendHeaderAndContent(maxContentLen, timeout);
+            sendHeaderAndContent(maxContentLen);
         }
 
         public void setCookie(CharSequence name, CharSequence value) {
@@ -387,7 +538,9 @@ public abstract class HttpClient implements QuietCloseable {
 
             putAscii(HEADER_CONTENT_LENGTH);
             contentLengthHeaderReserved = ((int) Math.log10(bufferSize) + 1) + 4; // length + 2 x EOL
-            checkCapacity(contentLengthHeaderReserved);
+            if (ptr + contentLengthHeaderReserved >= bufHi) {
+                doSend(bufLo, ptr);
+            }
             ptr += contentLengthHeaderReserved;
             contentStart = ptr;
             state = STATE_CONTENT;
@@ -412,38 +565,41 @@ public abstract class HttpClient implements QuietCloseable {
         }
 
         private void connect(CharSequence host, int port) {
-            int fd = nf.socketTcp(true);
-            if (fd < 0) {
-                throw new HttpClientException("could not allocate a file descriptor").errno(nf.errno());
-            }
-            nf.configureKeepAlive(fd);
-            long addrInfo = nf.getAddrInfo(host, port);
-            if (addrInfo == -1) {
-                disconnect();
-                throw new HttpClientException("could not resolve host ").put("[host=").put(host).put("]");
-            }
-            if (nf.connectAddrInfo(fd, addrInfo) != 0) {
-                int errno = nf.errno();
-                disconnect();
+            if (socket.isClosed()) {
+                int fd = nf.socketTcp(true);
+                if (fd < 0) {
+                    throw new HttpClientException("could not allocate a file descriptor").errno(nf.errno());
+                }
+                nf.configureKeepAlive(fd);
+                long addrInfo = nf.getAddrInfo(host, port);
+                if (addrInfo == -1) {
+                    disconnect();
+                    throw new HttpClientException("could not resolve host ").put("[host=").put(host).put("]");
+                }
+                if (nf.connectAddrInfo(fd, addrInfo) != 0) {
+                    int errno = nf.errno();
+                    disconnect();
+                    nf.freeAddrInfo(addrInfo);
+                    throw new HttpClientException("could not connect to host ").put("[host=").put(host).put(", port=").put(port).put(", errno=").put(errno).put(']');
+                }
                 nf.freeAddrInfo(addrInfo);
-                throw new HttpClientException("could not connect to host ").put("[host=").put(host).put(", port=").put(port).put(", errno=").put(errno).put(']');
+                socket.of(fd);
+                setupIoWait();
             }
-            nf.freeAddrInfo(addrInfo);
-            socket.of(fd);
-            setupIoWait();
         }
 
-        private void doSend(long lo, long hi, int timeout) {
+        private void doSend(long lo, long hi) {
             int len = (int) (hi - lo);
             if (len > 0) {
                 long p = lo;
                 do {
-                    final int sent = sendOrDie(p, len, timeout);
+                    final int sent = sendOrDie(p, len, requestTimeout);
                     if (sent > 0) {
                         p += sent;
                         len -= sent;
                     }
                 } while (len > 0);
+                ptr = bufLo;//TODO: check ?
             }
         }
 
@@ -573,7 +729,7 @@ public abstract class HttpClient implements QuietCloseable {
             }
         }
 
-        private void sendHeaderAndContent(int maxContentLen, int timeout) {
+        private void sendHeaderAndContent(int maxContentLen) {
             final int contentLength = (int) (ptr - contentStart);
 
             // Add content bytes into the header.
@@ -592,14 +748,14 @@ public abstract class HttpClient implements QuietCloseable {
             }
 
             // Send header.
-            doSend(bufLo, headerHi, timeout);
+            doSend(bufLo, headerHi);
 
             // Send content.
-            doSend(contentStart, contentStart + Math.min(hi - contentStart, maxContentLen), timeout);
+            doSend(contentStart, contentStart + Math.min(hi - contentStart, maxContentLen));
         }
     }
 
-    public class ResponseHeaders extends HttpHeaderParser {
+    public class ResponseHeaders extends HttpHeaderParser implements Response {
         private final long bufLo;
         private final ChunkedResponseImpl chunkedResponse;
         private final int defaultTimeout;
@@ -611,10 +767,12 @@ public abstract class HttpClient implements QuietCloseable {
             this.chunkedResponse = new ChunkedResponseImpl(respParserBufLo, respParserBufLo + respParserBufSize, defaultTimeout);
         }
 
+        @Override
         public void await() {
             await(defaultTimeout);
         }
 
+        @Override
         public void await(int timeout) {
             while (isIncomplete()) {
                 final int len = recvOrDie(bufLo, timeout);
@@ -639,10 +797,12 @@ public abstract class HttpClient implements QuietCloseable {
             super.clear();
         }
 
+        @Override
         public ChunkedResponse getChunkedResponse() {
             return chunkedResponse;
         }
 
+        @Override
         public boolean isChunked() {
             if (isIncomplete()) {
                 throw new HttpClientException("http response headers not yet received");
