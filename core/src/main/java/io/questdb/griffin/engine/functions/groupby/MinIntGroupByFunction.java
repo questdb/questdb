@@ -50,11 +50,7 @@ public class MinIntGroupByFunction extends IntFunction implements GroupByFunctio
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        int min = mapValue.getInt(valueIndex);
-        int next = arg.getInt(record);
-        if (next != Numbers.INT_NaN && (next < min || min == Numbers.INT_NaN)) {
-            mapValue.putInt(valueIndex, next);
-        }
+        mapValue.minInt(valueIndex, arg.getInt(record));
     }
 
     @Override
@@ -84,7 +80,7 @@ public class MinIntGroupByFunction extends IntFunction implements GroupByFunctio
 
     @Override
     public boolean isParallelismSupported() {
-        return true;
+        return UnaryFunction.super.isParallelismSupported();
     }
 
     @Override
