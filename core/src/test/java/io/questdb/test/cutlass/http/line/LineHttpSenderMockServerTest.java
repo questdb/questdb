@@ -42,10 +42,12 @@ import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.function.Consumer;
+import java.util.function.Function;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 public class LineHttpSenderMockServerTest extends AbstractTest {
+    public static final Function<Integer, Sender.LineSenderBuilder> DEFAULT_FACTORY = port -> Sender.builder().url("http://localhost:" + port);
 
     private static final CharSequence QUESTDB_VERSION = new BuildInformationHolder().getSwVersion();
     private static final Metrics metrics = Metrics.enabled();
@@ -69,13 +71,42 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 .withExpectedHeader("User-Agent", "QuestDB/java/" + QUESTDB_VERSION)
                 .withExpectedHeader("Authorization", "Basic QWxhZGRpbjpPcGVuU2VzYW1l")
                 .replyWithStatus(204);
-
         testWithMock(mockHttpProcessor, sender -> {
             sender.table("test")
                     .symbol("sym", "bol")
                     .doubleColumn("x", 1.0)
                     .atNow();
-        }, senderBuilder -> senderBuilder.httpAuth("Aladdin", "OpenSesame"));
+        }, DEFAULT_FACTORY.andThen(b -> b.httpUsernamePassword("Aladdin", "OpenSesame")));
+    }
+
+    @Test
+    public void testBasicAuth_usernameInUrl() throws Exception {
+        MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
+                .withExpectedContent("test,sym=bol x=1.0\n")
+                .withExpectedHeader("User-Agent", "QuestDB/java/" + QUESTDB_VERSION)
+                .withExpectedHeader("Authorization", "Basic QWxhZGRpbjpPcGVuU2VzYW1l")
+                .replyWithStatus(204);
+        testWithMock(mockHttpProcessor, sender -> {
+            sender.table("test")
+                    .symbol("sym", "bol")
+                    .doubleColumn("x", 1.0)
+                    .atNow();
+        }, port -> Sender.builder().url("http://Aladdin@localhost:" + port).httpPassword("OpenSesame"));
+    }
+
+    @Test
+    public void testBasicAuth_usernamePasswordInUrl() throws Exception {
+        MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
+                .withExpectedContent("test,sym=bol x=1.0\n")
+                .withExpectedHeader("User-Agent", "QuestDB/java/" + QUESTDB_VERSION)
+                .withExpectedHeader("Authorization", "Basic QWxhZGRpbjpPcGVuU2VzYW1l")
+                .replyWithStatus(204);
+        testWithMock(mockHttpProcessor, sender -> {
+            sender.table("test")
+                    .symbol("sym", "bol")
+                    .doubleColumn("x", 1.0)
+                    .atNow();
+        }, port -> Sender.builder().url("http://Aladdin:OpenSesame@localhost:" + port));
     }
 
     @Test
@@ -121,7 +152,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
 
             // the last row is flushed on close()
             sender.table("test").doubleColumn("x", 6.0).atNow();
-        }, senderBuilder -> senderBuilder.maxPendingRows(2));
+        }, DEFAULT_FACTORY.andThen(b -> b.maxPendingRows(2)));
     }
 
     @Test
@@ -245,7 +276,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
             } catch (LineSenderException e) {
                 TestUtils.assertContains(e.getMessage(), "Could not flush buffer: Internal Server Error [http-status=500]");
             }
-        }, c -> c.retryTimeoutMillis(1000));
+        }, DEFAULT_FACTORY.andThen(b -> b.retryTimeoutMillis(1000)));
     }
 
     @Test
@@ -255,7 +286,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 .replyWithContent(500, "do not dare to retry", "plain/text");
 
         testWithMock(mockHttpProcessor, errorVerifier("Could not flush buffer: do not dare to retry [http-status=500]"),
-                senderBuilder -> senderBuilder.retryTimeoutMillis(0)
+                DEFAULT_FACTORY.andThen(b -> b.retryTimeoutMillis(0))
         );
     }
 
@@ -290,9 +321,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                     } finally {
                         delayLatch.countDown();
                     }
-                }, senderBuilder -> senderBuilder
-                        .httpTimeoutMillis(100)
-                        .retryTimeoutMillis(0)
+                }, DEFAULT_FACTORY.andThen(b -> b.httpTimeoutMillis(100).retryTimeoutMillis(0))
         );
     }
 
@@ -309,7 +338,23 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                     .symbol("sym", "bol")
                     .doubleColumn("x", 1.0)
                     .atNow();
-        }, senderBuilder -> senderBuilder.httpTokenAuth("0123456789"));
+        }, DEFAULT_FACTORY.andThen(b -> b.httpToken("0123456789")));
+    }
+
+    @Test
+    public void testTokenAuth_tokenInUrl() throws Exception {
+        MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
+                .withExpectedContent("test,sym=bol x=1.0\n")
+                .withExpectedHeader("User-Agent", "QuestDB/java/" + QUESTDB_VERSION)
+                .withExpectedHeader("Authorization", "Bearer 0123456789")
+                .replyWithStatus(204);
+
+        testWithMock(mockHttpProcessor, sender -> {
+            sender.table("test")
+                    .symbol("sym", "bol")
+                    .doubleColumn("x", 1.0)
+                    .atNow();
+        }, port -> Sender.builder().url("http://:0123456789@localhost:" + port));
     }
 
     @Test
@@ -383,10 +428,10 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     }
 
     private void testWithMock(MockHttpProcessor mockHttpProcessor, Consumer<Sender> senderConsumer) throws Exception {
-        testWithMock(mockHttpProcessor, senderConsumer, null);
+        testWithMock(mockHttpProcessor, senderConsumer, port -> Sender.builder().url("http://localhost:" + port));
     }
 
-    private void testWithMock(MockHttpProcessor mockHttpProcessor, Consumer<Sender> senderConsumer, Consumer<Sender.LineSenderBuilder> senderCustomizer) throws Exception {
+    private void testWithMock(MockHttpProcessor mockHttpProcessor, Consumer<Sender> senderConsumer, Function<Integer, Sender.LineSenderBuilder> senderBuilderFactory) throws Exception {
         assertMemoryLeak(() -> {
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration();
 
@@ -406,12 +451,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 workerPool.start(LOG);
                 try {
                     int port = httpConfiguration.getDispatcherConfiguration().getBindPort();
-                    Sender.LineSenderBuilder senderBuilder = Sender.builder()
-                            .url("http://localhost:" + port);
-                    if (senderCustomizer != null) {
-                        senderCustomizer.accept(senderBuilder);
-                    }
-                    try (Sender sender = senderBuilder.build()) {
+                    try (Sender sender = senderBuilderFactory.apply(port).build()) {
                         senderConsumer.accept(sender);
                     }
                     mockHttpProcessor.verify();

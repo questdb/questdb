@@ -474,8 +474,8 @@ public interface Sender extends Closeable {
          *
          * @param keyId keyId the client will send to a server.
          * @return an instance of {@link AuthBuilder}. As to finish authentication configuration.
-         * @see #httpTokenAuth(String)
-         * @see #httpAuth(String, String)
+         * @see #httpToken(String)
+         * @see #httpUsernamePassword(String, String)
          */
         public LineSenderBuilder.AuthBuilder enableAuth(String keyId) {
             if (this.keyId != null) {
@@ -500,32 +500,32 @@ public interface Sender extends Closeable {
         }
 
         /**
-         * Use username and password for authentication when communicating over HTTP protocol.
+         * Use a password for authentication when communicating over HTTP protocol.
+         * <br>
+         * Use this when you set username via {@link #url(CharSequence)}, but you don't want to include password in the URL.
          * <br>
          * This is only used when communicating over HTTP transport, and it's illegal to call this method when
          * communicating over TCP transport.
          *
-         * @param username username
          * @param password password
          * @return this instance for method chaining
-         * @see #httpTokenAuth(String)
+         * @see #httpUsernamePassword(String, String)
+         * @see #httpToken(String)
          */
-        public LineSenderBuilder httpAuth(String username, String password) {
-            if (this.username != null) {
-                throw new LineSenderException("authentication username was already configured ")
-                        .put("[configured-username=").put(this.username).put("]");
-            }
-            if (username == null || username.isEmpty()) {
-                throw new LineSenderException("username cannot be empty nor null");
-            }
-            if (password == null || password.isEmpty()) {
-                throw new LineSenderException("password cannot be empty nor null");
+        public LineSenderBuilder httpPassword(String password) {
+            if (this.password != null) {
+                throw new LineSenderException("authentication password was already configured");
             }
             if (httpToken != null) {
                 throw new LineSenderException("token authentication is already configured ")
                         .put("[configured-token=").put(this.httpToken).put("]");
             }
-            this.username = username;
+            if (this.username == null) {
+                throw new LineSenderException("HTTP authentication username was not configured in URL");
+            }
+            if (Chars.isBlank(password)) {
+                throw new LineSenderException("password cannot be empty nor null");
+            }
             this.password = password;
             return this;
         }
@@ -563,7 +563,7 @@ public interface Sender extends Closeable {
          * @param token HTTP authentication token
          * @return this instance for method chaining
          */
-        public LineSenderBuilder httpTokenAuth(String token) {
+        public LineSenderBuilder httpToken(String token) {
             if (this.username != null) {
                 throw new LineSenderException("authentication username was already configured ")
                         .put("[configured-username=").put(this.username).put("]");
@@ -572,6 +572,37 @@ public interface Sender extends Closeable {
                 throw new LineSenderException("token cannot be empty nor null");
             }
             this.httpToken = token;
+            return this;
+        }
+
+        /**
+         * Use username and password for authentication when communicating over HTTP protocol.
+         * <br>
+         * This is only used when communicating over HTTP transport, and it's illegal to call this method when
+         * communicating over TCP transport.
+         *
+         * @param username username
+         * @param password password
+         * @return this instance for method chaining
+         * @see #httpToken(String)
+         */
+        public LineSenderBuilder httpUsernamePassword(String username, String password) {
+            if (this.username != null) {
+                throw new LineSenderException("authentication username was already configured ")
+                        .put("[configured-username=").put(this.username).put("]");
+            }
+            if (username == null || username.isEmpty()) {
+                throw new LineSenderException("username cannot be empty nor null");
+            }
+            if (password == null || password.isEmpty()) {
+                throw new LineSenderException("password cannot be empty nor null");
+            }
+            if (httpToken != null) {
+                throw new LineSenderException("token authentication is already configured ")
+                        .put("[configured-token=").put(this.httpToken).put("]");
+            }
+            this.username = username;
+            this.password = password;
             return this;
         }
 
@@ -697,28 +728,77 @@ public interface Sender extends Closeable {
                 throw new LineSenderException("post is already configured ")
                         .put("[configured-port=").put(port).put("]");
             }
-            int hostStart;
+            int parsedUntil;
             if (Chars.startsWith(url, "http://") || Chars.startsWith(url, "HTTP://")) {
-                hostStart = 7;
+                parsedUntil = 7;
                 protocol = PROTOCOL_HTTP;
             } else if (Chars.startsWith(url, "https://") || Chars.startsWith(url, "HTTPS://")) {
                 enableTls();
-                hostStart = 8;
+                parsedUntil = 8;
                 protocol = PROTOCOL_HTTP;
             } else if (Chars.startsWith(url, "tcp://") || Chars.startsWith(url, "TCP://")) {
-                hostStart = 6;
+                parsedUntil = 6;
                 protocol = PROTOCOL_TCP;
             } else if (Chars.startsWith(url, "tcps://") || Chars.startsWith(url, "TCPS://")) {
-                hostStart = 7;
+                parsedUntil = 7;
                 protocol = PROTOCOL_TCP;
                 enableTls();
             } else {
                 throw new LineSenderException("invalid url protocol ").put("[url=").put(url).put("]");
             }
-            int hostEnd = Chars.indexOf(url, hostStart, ':');
+            int atPos = Chars.indexOf(url, parsedUntil, '@');
+            if (atPos != -1) {
+                int usrPwdSeparator = Chars.indexOf(url, parsedUntil, atPos, ':');
+                if (usrPwdSeparator != -1) {
+                    if (usrPwdSeparator == parsedUntil) {
+                        if (protocol != PROTOCOL_HTTP) {
+                            throw new LineSenderException("HTTP token authentication is only supported for HTTP protocol");
+                        }
+                        if (httpToken != null) {
+                            throw new LineSenderException("HTTP token authentication was already configured");
+                        }
+                        if (parsedUntil + 1 == atPos) {
+                            throw new LineSenderException("HTTP authentication token cannot be empty");
+                        }
+                        httpToken = url.subSequence(parsedUntil + 1, atPos).toString();
+                    } else {
+                        switch (protocol) {
+                            case PROTOCOL_HTTP: {
+                                if (username != null) {
+                                    throw new LineSenderException("authentication username was already configured ")
+                                            .put("[configured-username=").put(this.username).put("]");
+                                }
+                                if (password != null) {
+                                    throw new LineSenderException("authentication password was already configured");
+                                }
+                                username = url.subSequence(parsedUntil, usrPwdSeparator).toString();
+                                password = url.subSequence(usrPwdSeparator + 1, atPos).toString();
+                                break;
+                            }
+                            case PROTOCOL_TCP: {
+                                String keyId = url.subSequence(parsedUntil, usrPwdSeparator).toString();
+                                String encodedKey = url.subSequence(usrPwdSeparator + 1, atPos).toString();
+                                enableAuth(keyId).authToken(encodedKey);
+                                break;
+                            }
+                            default:
+                                throw new LineSenderException("unsupported protocol ")
+                                        .put("[protocol=").put(protocol).put("]");
+                        }
+                    }
+                } else {
+                    if (protocol == PROTOCOL_TCP) {
+                        throw new LineSenderException("keyId in URL is not supported for TCP protocol ");
+                    }
+                    username = url.subSequence(parsedUntil, atPos).toString();
+                }
+                parsedUntil = atPos + 1;
+            }
+
+            int hostEnd = Chars.indexOf(url, parsedUntil, ':');
             if (hostEnd == -1) {
                 port = (protocol == PROTOCOL_HTTP) ? DEFAULT_HTTP_PORT : DEFAULT_TCP_PORT;
-                hostEnd = Chars.indexOf(url, hostStart, '/');
+                hostEnd = Chars.indexOf(url, parsedUntil, '/');
                 if (hostEnd == -1) {
                     hostEnd = url.length();
                 }
@@ -738,7 +818,7 @@ public interface Sender extends Closeable {
                             .put("[url=").put(url).put("]");
                 }
             }
-            CharSequence hostSeq = url.subSequence(hostStart, hostEnd);
+            CharSequence hostSeq = url.subSequence(parsedUntil, hostEnd);
             if (Chars.isBlank(hostSeq)) {
                 throw new LineSenderException("host cannot be empty")
                         .put("[url=").put(url).put("]");

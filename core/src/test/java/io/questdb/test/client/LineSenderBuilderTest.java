@@ -31,6 +31,7 @@ import io.questdb.std.Files;
 import io.questdb.test.cutlass.line.tcp.AbstractLineTcpReceiverTest;
 import io.questdb.test.tools.TestUtils;
 import io.questdb.test.tools.TlsProxyRule;
+import org.junit.Assert;
 import org.junit.ClassRule;
 import org.junit.Test;
 
@@ -419,10 +420,30 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testHttpTokenInUrlCannotBeEmpty() {
+        try {
+            Sender.withDefaultsFromUrl("http://:@localhost:9000");
+            Assert.fail();
+        } catch (LineSenderException e) {
+            TestUtils.assertContains(e.getMessage(), "HTTP authentication token cannot be empty");
+        }
+    }
+
+    @Test
+    public void testHttpTokenInUrlUnsupportedForTcp() {
+        try {
+            Sender.withDefaultsFromUrl("tcp://:token@localhost:9000");
+            Assert.fail();
+        } catch (LineSenderException e) {
+            TestUtils.assertContains(e.getMessage(), "HTTP token authentication is only supported for HTTP protocol");
+        }
+    }
+
+    @Test
     public void testHttpTokenNotSupportedForTcp() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                Sender.builder().address(LOCALHOST).httpTokenAuth("foo").build();
+                Sender.builder().address(LOCALHOST).httpToken("foo").build();
                 fail("HTTP token should not be supported for TCP");
             } catch (LineSenderException e) {
                 TestUtils.assertContains(e.getMessage(), "HTTP token authentication is not supported for TCP protocol");
@@ -459,6 +480,32 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
                 fail("should fail with bad http time");
             } catch (LineSenderException e) {
                 TestUtils.assertContains(e.getMessage(), "HTTP timeout is not supported for TCP protocol");
+            }
+        });
+    }
+
+    @Test
+    public void testKeyIdAndTokenInUrl() throws Exception {
+        authKeyId = AUTH_KEY_ID1;
+        runInContext(r -> {
+            try (Sender sender = Sender.builder()
+                    .url("tcp://" + AUTH_KEY_ID1 + ":" + AUTH_TOKEN_KEY1 + "@" + LOCALHOST + ":" + bindPort)
+                    .build()) {
+                sender.table("mytable").symbol("symbol", "symbol").atNow();
+                sender.flush();
+                assertTableExistsEventually(engine, "mytable");
+            }
+        });
+    }
+
+    @Test
+    public void testKeyIdWithoutTokenInUrlNotSupported() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                Sender.withDefaultsFromUrl("tcp://key@localhost:9000");
+                fail();
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "keyId in URL is not supported for TCP protocol");
             }
         });
     }
@@ -688,7 +735,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     public void testUsernamePasswordAuthNotSupportedForTcp() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                Sender.builder().address(LOCALHOST).httpAuth("foo", "bar").build();
+                Sender.builder().address(LOCALHOST).httpUsernamePassword("foo", "bar").build();
                 fail("HTTP token should not be supported for TCP");
             } catch (LineSenderException e) {
                 TestUtils.assertContains(e.getMessage(), "username/password authentication is not supported for TCP protocol");
