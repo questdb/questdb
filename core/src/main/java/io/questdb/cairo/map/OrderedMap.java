@@ -159,15 +159,14 @@ public class OrderedMap implements Map, Reopenable {
         this.listMemoryTag = listMemoryTag;
         initialPageSize = pageSize;
         this.loadFactor = loadFactor;
-        heapStart = kPos = Unsafe.malloc(heapSize = pageSize, heapMemoryTag);
+        heapStart = kPos = Unsafe.malloc(heapSize = pageSize, heapMemoryTag, true);
         heapLimit = heapStart + pageSize;
         this.keyCapacity = (int) (keyCapacity / loadFactor);
         this.keyCapacity = this.initialKeyCapacity = Math.max(Numbers.ceilPow2(this.keyCapacity), MIN_KEY_CAPACITY);
         mask = this.keyCapacity - 1;
         free = (int) (this.keyCapacity * loadFactor);
-        offsets = new DirectIntList((long) this.keyCapacity << 1, listMemoryTag);
+        offsets = new DirectIntList((long) this.keyCapacity << 1, listMemoryTag, true, true);
         offsets.setPos((long) this.keyCapacity << 1);
-        offsets.zero(0);
         nResizes = 0;
         this.maxResizes = maxResizes;
 
@@ -310,7 +309,7 @@ public class OrderedMap implements Map, Reopenable {
     @Override
     public void restoreInitialCapacity() {
         if (heapSize != initialPageSize || keyCapacity != initialKeyCapacity) {
-            heapStart = kPos = Unsafe.realloc(heapStart, heapLimit - heapStart, heapSize = initialPageSize, heapMemoryTag);
+            heapStart = kPos = Unsafe.realloc(heapStart, heapLimit - heapStart, heapSize = initialPageSize, heapMemoryTag, true);
             heapLimit = heapStart + initialPageSize;
             keyCapacity = initialKeyCapacity;
             keyCapacity = keyCapacity < MIN_KEY_CAPACITY ? MIN_KEY_CAPACITY : Numbers.ceilPow2(keyCapacity);
@@ -510,9 +509,8 @@ public class OrderedMap implements Map, Reopenable {
         }
 
         mask = (int) newKeyCapacity - 1;
-        DirectIntList newOffsets = new DirectIntList(newKeyCapacity << 1, listMemoryTag);
+        DirectIntList newOffsets = new DirectIntList(newKeyCapacity << 1, listMemoryTag, true, true);
         newOffsets.setPos(newKeyCapacity << 1);
-        newOffsets.zero(0);
 
         for (int i = 0, k = (int) (offsets.size() >>> 1); i < k; i++) {
             long offset = getOffset(offsets, i);
@@ -546,7 +544,7 @@ public class OrderedMap implements Map, Reopenable {
             if (kCapacity > MAX_HEAP_SIZE) {
                 throw LimitOverflowException.instance().put("limit of ").put(MAX_HEAP_SIZE).put(" memory exceeded in FastMap");
             }
-            long kAddress = Unsafe.realloc(heapStart, heapSize, kCapacity, heapMemoryTag);
+            long kAddress = Unsafe.realloc(heapStart, heapSize, kCapacity, heapMemoryTag, true);
 
             this.heapSize = kCapacity;
             long delta = kAddress - heapStart;

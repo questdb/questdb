@@ -67,11 +67,18 @@ public final class Unsafe {
     }
 
     public static long malloc(long size, int memoryTag) {
+        return malloc(size, memoryTag, false);
+    }
+
+    public static long malloc(long size, int memoryTag, boolean prefault) {
         try {
             checkAllocLimit(size, memoryTag);
             long ptr = getUnsafe().allocateMemory(size);
             recordMemAlloc(size, memoryTag);
             MALLOC_COUNT.incrementAndGet();
+            if (prefault) {
+                prefault(ptr, size);
+            }
             return ptr;
         } catch (OutOfMemoryError oom) {
             System.err.printf(
@@ -136,8 +143,15 @@ public final class Unsafe {
     }
 
     public static long calloc(long size, int memoryTag) {
+        return calloc(size, memoryTag, false);
+    }
+
+    public static long calloc(long size, int memoryTag, boolean prefault) {
         long ptr = malloc(size, memoryTag);
         Vect.memset(ptr, size, 0);
+        if (prefault) {
+            prefault(ptr, size);
+        }
         return ptr;
     }
 
@@ -241,11 +255,18 @@ public final class Unsafe {
     //#endif
 
     public static long realloc(long address, long oldSize, long newSize, int memoryTag) {
+        return realloc(address, oldSize, newSize, memoryTag, false);
+    }
+
+    public static long realloc(long address, long oldSize, long newSize, int memoryTag, boolean prefault) {
         try {
             checkAllocLimit(-oldSize + newSize, memoryTag);
             long ptr = getUnsafe().reallocateMemory(address, newSize);
             recordMemAlloc(-oldSize + newSize, memoryTag);
             REALLOC_COUNT.incrementAndGet();
+            if (prefault) {
+                prefault(ptr, newSize);
+            }
             return ptr;
         } catch (OutOfMemoryError oom) {
             System.err.printf(
@@ -269,6 +290,15 @@ public final class Unsafe {
                         .put(", allocation=").put(size)
                         .put(']');
             }
+        }
+    }
+
+    private static void prefault(long ptr, long size) {
+        long alignedPtr = Files.ceilPageSize(ptr);
+        long alignedSize = size - (alignedPtr - ptr);
+        if (alignedSize > Files.PAGE_SIZE) {
+            alignedSize = Files.floorPageSize(alignedSize);
+            Files.madvise(alignedPtr, alignedSize, Files.LINUX_MADV_POPULATE_WRITE);
         }
     }
 

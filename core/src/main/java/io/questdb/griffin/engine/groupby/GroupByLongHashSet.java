@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.std.Hash;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
 
 /**
  * Specialized flyweight hash set used in {@link io.questdb.griffin.engine.functions.GroupByFunction}s.
@@ -138,8 +137,12 @@ public class GroupByLongHashSet {
 
     public GroupByLongHashSet of(long ptr) {
         if (ptr == 0) {
-            this.ptr = allocator.malloc(HEADER_SIZE + 8L * initialCapacity);
-            zero(this.ptr, initialCapacity);
+            if (noKeyValue == 0) {
+                this.ptr = allocator.calloc(HEADER_SIZE + 8L * initialCapacity);
+            } else {
+                this.ptr = allocator.malloc(HEADER_SIZE + 8L * initialCapacity);
+                zero(this.ptr, initialCapacity);
+            }
             Unsafe.getUnsafe().putInt(this.ptr, initialCapacity);
             Unsafe.getUnsafe().putInt(this.ptr + SIZE_OFFSET, 0);
             Unsafe.getUnsafe().putInt(this.ptr + SIZE_LIMIT_OFFSET, (int) (initialCapacity * loadFactor));
@@ -193,8 +196,12 @@ public class GroupByLongHashSet {
         final int oldCapacity = capacity();
 
         long oldPtr = ptr;
-        ptr = allocator.malloc(8L * newCapacity + HEADER_SIZE);
-        zero(ptr, newCapacity);
+        if (noKeyValue == 0) {
+            ptr = allocator.calloc(HEADER_SIZE + 8L * newCapacity);
+        } else {
+            ptr = allocator.malloc(HEADER_SIZE + 8L * newCapacity);
+            zero(ptr, newCapacity);
+        }
         Unsafe.getUnsafe().putInt(ptr, newCapacity);
         Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, oldSize);
         Unsafe.getUnsafe().putInt(ptr + SIZE_LIMIT_OFFSET, newSizeLimit);
@@ -216,13 +223,8 @@ public class GroupByLongHashSet {
     }
 
     private void zero(long ptr, int cap) {
-        if (noKeyValue == 0) {
-            // Vectorized fast path for zero default value.
-            Vect.memset(ptr + HEADER_SIZE, 8L * cap, 0);
-        } else {
-            for (long p = ptr + HEADER_SIZE, lim = ptr + HEADER_SIZE + 8L * cap; p < lim; p += 8L) {
-                Unsafe.getUnsafe().putLong(p, noKeyValue);
-            }
+        for (long p = ptr + HEADER_SIZE, lim = ptr + HEADER_SIZE + 8L * cap; p < lim; p += 8L) {
+            Unsafe.getUnsafe().putLong(p, noKeyValue);
         }
     }
 }

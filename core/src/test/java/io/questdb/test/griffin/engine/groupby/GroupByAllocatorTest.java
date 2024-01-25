@@ -43,6 +43,27 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class GroupByAllocatorTest extends AbstractCairoTest {
 
     @Test
+    public void testCalloc() throws Exception {
+        final int N = 10_000;
+        final CairoConfiguration config = new DefaultCairoConfiguration(root) {
+            @Override
+            public long getGroupByAllocatorDefaultChunkSize() {
+                return 64;
+            }
+        };
+        assertMemoryLeak(() -> {
+            try (GroupByAllocator allocator = new GroupByAllocator(config)) {
+                for (int i = 0; i < N; i++) {
+                    long ptr = allocator.calloc(i + 1);
+                    for (int j = 0; j < i + 1; j++) {
+                        Assert.assertEquals(0, Unsafe.getUnsafe().getByte(ptr + j));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCanBeUsedAfterClose() throws Exception {
         final int N = 100;
         final CairoConfiguration config = new DefaultCairoConfiguration(root) {

@@ -46,6 +46,7 @@ public final class Files {
     public static final int FILES_RENAME_ERR_EXDEV = 1;
     public static final int FILES_RENAME_ERR_OTHER = 2;
     public static final int FILES_RENAME_OK = 0;
+    public static final int LINUX_MADV_POPULATE_WRITE;
     public static final int MAP_RO = 1;
     public static final int MAP_RW = 2;
     public static final long PAGE_SIZE;
@@ -310,7 +311,7 @@ public final class Files {
     public static native int lock(int fd);
 
     public static void madvise(long address, long len, int advise) {
-        if (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64) {
+        if (advise > -1 && (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64)) {
             madvise0(address, len, advise);
         }
     }
@@ -614,6 +615,8 @@ public final class Files {
 
     private native static long getLastModified(long lpszName);
 
+    private native static int getLinuxMadvPopulateWrite();
+
     private native static long getPageSize();
 
     private native static int getPosixFadvRandom();
@@ -664,11 +667,13 @@ public final class Files {
             POSIX_FADV_SEQUENTIAL = getPosixFadvSequential();
             POSIX_MADV_RANDOM = getPosixMadvRandom();
             POSIX_MADV_SEQUENTIAL = getPosixMadvSequential();
+            LINUX_MADV_POPULATE_WRITE = getLinuxMadvPopulateWrite();
         } else {
             POSIX_FADV_SEQUENTIAL = -1;
             POSIX_FADV_RANDOM = -1;
             POSIX_MADV_SEQUENTIAL = -1;
             POSIX_MADV_RANDOM = -1;
+            LINUX_MADV_POPULATE_WRITE = -1;
         }
     }
 }

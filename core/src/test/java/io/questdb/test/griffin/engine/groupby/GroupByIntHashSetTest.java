@@ -28,6 +28,8 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByIntHashSet;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
@@ -36,6 +38,17 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class GroupByIntHashSetTest extends AbstractCairoTest {
+    private static final Log LOG = LogFactory.getLog(GroupByIntHashSetTest.class);
+
+    @Test
+    public void testFuzzWithIntNullAsNoKeyValue() throws Exception {
+        testFuzz(Numbers.INT_NaN);
+    }
+
+    @Test
+    public void testFuzzWithZeroAsNoKeyValue() throws Exception {
+        testFuzz(0);
+    }
 
     @Test
     public void testMerge() throws Exception {
@@ -77,17 +90,10 @@ public class GroupByIntHashSetTest extends AbstractCairoTest {
         });
     }
 
-    @Test
-    public void testSmokeWithIntNullAsNoKeyValue() throws Exception {
-        testSmoke(Numbers.INT_NaN);
-    }
-
-    @Test
-    public void testSmokeWithZeroAsNoKeyValue() throws Exception {
-        testSmoke(0);
-    }
-
-    private void testSmoke(int noKeyValue) throws Exception {
+    private void testFuzz(int noKeyValue) throws Exception {
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        final long s0 = rnd.getSeed0();
+        final long s1 = rnd.getSeed1();
         final CairoConfiguration config = new DefaultCairoConfiguration(root) {
             @Override
             public long getGroupByAllocatorDefaultChunkSize() {
@@ -95,7 +101,6 @@ public class GroupByIntHashSetTest extends AbstractCairoTest {
             }
         };
         TestUtils.assertMemoryLeak(() -> {
-            Rnd rnd = new Rnd();
             try (GroupByAllocator allocator = new GroupByAllocator(config)) {
                 GroupByIntHashSet set = new GroupByIntHashSet(16, 0.7, noKeyValue);
                 set.setAllocator(allocator);
@@ -104,23 +109,23 @@ public class GroupByIntHashSetTest extends AbstractCairoTest {
                 final int N = 1000;
 
                 for (int i = 0; i < N; i++) {
-                    set.add(rnd.nextPositiveInt());
+                    set.add(rnd.nextPositiveInt() + 1);
                 }
 
                 Assert.assertEquals(N, set.size());
                 Assert.assertTrue(set.capacity() >= N);
 
-                rnd.reset();
+                rnd.reset(s0, s1);
 
                 for (int i = 0; i < N; i++) {
-                    Assert.assertTrue(set.keyIndex(rnd.nextPositiveInt()) < 0);
+                    Assert.assertTrue(set.keyIndex(rnd.nextPositiveInt() + 1) < 0);
                 }
 
                 set.of(0);
-                rnd.reset();
+                rnd.reset(s0, s1);
 
                 for (int i = 0; i < N; i++) {
-                    int val = rnd.nextPositiveInt();
+                    int val = rnd.nextPositiveInt() + 1;
                     int index = set.keyIndex(val);
                     Assert.assertTrue(index >= 0);
                     set.addAt(index, val);

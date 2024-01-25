@@ -150,6 +150,10 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_getPosixMadvSequential(JNIEnv *
     return POSIX_MADV_SEQUENTIAL;
 }
 
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_getLinuxMadvPopulateWrite(JNIEnv *e, jclass cls) {
+    return MADV_POPULATE_WRITE;
+}
+
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileSystemStatus
         (JNIEnv *e, jclass cl, jlong lpszName) {
     struct statfs sb;

@@ -159,8 +159,7 @@ public class Unordered8Map implements Map, Reopenable {
         this.entrySize = Bytes.align8b(KEY_SIZE + valueSize);
 
         final long sizeBytes = entrySize * this.keyCapacity;
-        memStart = Unsafe.malloc(sizeBytes, memoryTag);
-        Vect.memset(memStart, sizeBytes, 0);
+        memStart = Unsafe.calloc(sizeBytes, memoryTag, true);
         memLimit = memStart + sizeBytes;
         keyMemStart = Unsafe.malloc(KEY_SIZE, memoryTag);
         Unsafe.getUnsafe().putLong(keyMemStart, 0);
@@ -289,9 +288,9 @@ public class Unordered8Map implements Map, Reopenable {
             mask = keyCapacity - 1;
             final long sizeBytes = entrySize * keyCapacity;
             if (memStart == 0) {
-                memStart = Unsafe.malloc(sizeBytes, memoryTag);
+                memStart = Unsafe.calloc(sizeBytes, memoryTag, true);
             } else {
-                memStart = Unsafe.realloc(memStart, memLimit - memStart, sizeBytes, memoryTag);
+                memStart = Unsafe.realloc(memStart, memLimit - memStart, sizeBytes, memoryTag, true);
             }
             memLimit = memStart + sizeBytes;
         }
@@ -407,9 +406,8 @@ public class Unordered8Map implements Map, Reopenable {
         }
 
         final long newSizeBytes = entrySize * newKeyCapacity;
-        final long newMemStart = Unsafe.malloc(newSizeBytes, memoryTag);
+        final long newMemStart = Unsafe.calloc(newSizeBytes, memoryTag, true);
         final long newMemLimit = newMemStart + newSizeBytes;
-        Vect.memset(newMemStart, newSizeBytes, 0);
         final int newMask = (int) newKeyCapacity - 1;
 
         for (long addr = memStart; addr < memLimit; addr += entrySize) {

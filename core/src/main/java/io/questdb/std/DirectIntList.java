@@ -45,9 +45,17 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
     private long pos;
 
     public DirectIntList(long capacity, int memoryTag) {
+        this(capacity, memoryTag, false, false);
+    }
+
+    public DirectIntList(long capacity, int memoryTag, boolean zero, boolean prefault) {
         this.memoryTag = memoryTag;
         this.capacity = (capacity * Integer.BYTES);
-        this.address = Unsafe.malloc(this.capacity, memoryTag);
+        if (zero) {
+            this.address = Unsafe.calloc(this.capacity, memoryTag, prefault);
+        } else {
+            this.address = Unsafe.malloc(this.capacity, memoryTag, prefault);
+        }
         this.pos = address;
         this.limit = pos + this.capacity;
         this.initialCapacity = this.capacity;

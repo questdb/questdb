@@ -24,19 +24,34 @@
 
 package io.questdb.test.griffin.engine.groupby;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByLong128HashSet;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.std.Uuid;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
-import java.util.HashSet;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.HashSet;
+
 public class GroupByLong128HashSetTest extends AbstractCairoTest {
+    private static final Log LOG = LogFactory.getLog(GroupByLong128HashSetTest.class);
+
+    @Test
+    public void testFuzzWithLongNullAsNoKeyValue() throws Exception {
+        testFuzz(Numbers.LONG_NaN);
+    }
+
+    @Test
+    public void testFuzzWithZeroAsNoKeyValue() throws Exception {
+        testFuzz(0);
+    }
 
     @Test
     public void testMerge() throws Exception {
@@ -78,17 +93,10 @@ public class GroupByLong128HashSetTest extends AbstractCairoTest {
         });
     }
 
-    @Test
-    public void testFuzzWithLongNullAsNoKeyValue() throws Exception {
-        testFuzz(Numbers.LONG_NaN);
-    }
-
-    @Test
-    public void testFuzzWithZeroAsNoKeyValue() throws Exception {
-        testFuzz(0);
-    }
-
     private void testFuzz(long noKeyValue) throws Exception {
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        final long s0 = rnd.getSeed0();
+        final long s1 = rnd.getSeed1();
         final CairoConfiguration config = new DefaultCairoConfiguration(root) {
             @Override
             public long getGroupByAllocatorDefaultChunkSize() {
@@ -96,8 +104,6 @@ public class GroupByLong128HashSetTest extends AbstractCairoTest {
             }
         };
         TestUtils.assertMemoryLeak(() -> {
-            Rnd rnd = new Rnd();
-
             HashSet<Uuid> oracle = new HashSet<>();
             try (GroupByAllocator allocator = new GroupByAllocator(config)) {
                 GroupByLong128HashSet set = new GroupByLong128HashSet(64, 0.7, noKeyValue);
@@ -124,14 +130,14 @@ public class GroupByLong128HashSetTest extends AbstractCairoTest {
                     Assert.assertTrue(set.keyIndex(u.getLo(), u.getHi()) < 0);
                 }
 
-                rnd.reset();
+                rnd.reset(s0, s1);
 
                 for (int i = 0; i < N; i++) {
                     Assert.assertTrue(set.keyIndex(rnd.nextPositiveLong() + 1, rnd.nextPositiveLong() + 1) < 0);
                 }
 
                 set.of(0);
-                rnd.reset();
+                rnd.reset(s0, s1);
 
                 for (int i = 0; i < N; i++) {
                     long lo = rnd.nextPositiveLong() + 1;
