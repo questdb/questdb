@@ -151,7 +151,11 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_getPosixMadvSequential(JNIEnv *
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_getLinuxMadvPopulateWrite(JNIEnv *e, jclass cls) {
+#if defined(MADV_POPULATE_WRITE)
     return MADV_POPULATE_WRITE;
+#else
+    return -1;
+#endif
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileSystemStatus

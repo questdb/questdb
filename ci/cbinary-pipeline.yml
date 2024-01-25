@@ -62,7 +62,7 @@ stages:
               cmakeArgs:
                 -G "$(generator)" -DCMAKE_BUILD_TYPE=Release -B
                 cmake-build-release -S.
-            displayName: "Genearting Makefiles for: $(generator)"
+            displayName: "Generating Makefiles for: $(generator)"
 
           - task: CMake@1
             inputs:
