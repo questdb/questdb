@@ -68,6 +68,8 @@ import java.util.concurrent.TimeUnit;
  *     <li>Optionally: You can use {@link #flush()} to send locally buffered data into a server</li>
  * </ol>
  * <br>
+ * Sender supports both HTTP and TCP transports. It defaults to TCP transport. To use HTTP transport you must call
+ * {@link LineSenderBuilder#http()} method.
  * <p>
  * Sender implements the <code>java.io.Closeable</code> interface. Thus, you must call the {@link #close()} method
  * when you no longer need it.
@@ -238,14 +240,39 @@ public interface Sender extends Closeable {
     /**
      * Builder class to construct a new instance of a Sender.
      * <br>
-     * Example usage:
+     * Example usage for HTTP transport:
      * <pre>{@code
      * try (Sender sender = Sender.builder()
-     *  .address("http://localhost:9000")
+     *  .address("localhost:9000")
      *  .http()
      *  .build()) {
      *      sender.table(tableName).column("value", 42).atNow();
+     *      sender.flush();
      *  }
+     * }</pre>
+     * <br>
+     * Example usage for HTTP transport and TLS:
+     * <pre>{@code
+     * try (Sender sender = Sender.builder()
+     *  .address("localhost:9000")
+     *  .http()
+     *  .enableTls()
+     *  .build()) {
+     *    sender.table(tableName).column("value", 42).atNow();
+     *    sender.flush();
+     *   }
+     * }</pre>
+     * <br>
+     * Example usage for TCP transport and TLS:
+     * <pre>{@code
+     * try (Sender sender = Sender.builder()
+     *  .address("localhost:9000")
+     *  .http()
+     *  .enableTls()
+     *  .build()) {
+     *    sender.table(tableName).column("value", 42).atNow();
+     *    sender.flush();
+     *   }
      * }</pre>
      */
     final class LineSenderBuilder {
