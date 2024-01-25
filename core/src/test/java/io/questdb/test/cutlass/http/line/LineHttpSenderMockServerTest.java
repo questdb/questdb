@@ -169,7 +169,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
         try (Sender sender = Sender.builder().url("http://localhost:1").maxBufferCapacity(65535).build()) {
             Assert.fail();
         } catch (LineSenderException e) {
-            TestUtils.assertContains(e.getMessage(), "maximum buffer capacity cannot be less than default buffer capacity [maximum-buffer-capacity=65535, default-buffer-capacity=65536]");
+            TestUtils.assertContains(e.getMessage(), "maximum buffer capacity cannot be less than initial buffer capacity [maximum-buffer-capacity=65535, default-buffer-capacity=65536]");
         }
     }
 

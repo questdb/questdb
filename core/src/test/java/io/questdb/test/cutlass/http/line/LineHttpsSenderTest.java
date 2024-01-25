@@ -137,7 +137,7 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
             builder.retryTimeoutMillis(200);
             Assert.fail();
         } catch (LineSenderException e) {
-            TestUtils.assertContains(e.getMessage(), "max retries was already configured [retry-timeout-millis=100]");
+            TestUtils.assertContains(e.getMessage(), "retry timeout was already configured [retry-timeout-millis=100]");
         }
     }
 
