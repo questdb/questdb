@@ -44,6 +44,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 public class LineHttpSenderFailureTest extends AbstractBootstrapTest {
 
+    // intentionally public - used from EE tests
     public static void scenarioRetryWithDeduplication(ServerController controller) throws Exception {
         String tableName = UUID.randomUUID().toString();
         TestUtils.assertMemoryLeak(() -> {
@@ -99,6 +100,7 @@ public class LineHttpSenderFailureTest extends AbstractBootstrapTest {
         scenarioRetryWithDeduplication(new ServerController());
     }
 
+    // intentionally public - used from EE tests
     public static class ServerController implements Closeable {
         private TestServerMain serverMain;
 
