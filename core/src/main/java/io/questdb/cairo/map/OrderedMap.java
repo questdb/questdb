@@ -165,7 +165,7 @@ public class OrderedMap implements Map, Reopenable {
         this.keyCapacity = this.initialKeyCapacity = Math.max(Numbers.ceilPow2(this.keyCapacity), MIN_KEY_CAPACITY);
         mask = this.keyCapacity - 1;
         free = (int) (this.keyCapacity * loadFactor);
-        offsets = new DirectIntList((long) this.keyCapacity << 1, listMemoryTag, true, true);
+        offsets = new DirectIntList((long) this.keyCapacity << 1, listMemoryTag, true);
         offsets.setPos((long) this.keyCapacity << 1);
         nResizes = 0;
         this.maxResizes = maxResizes;
@@ -232,7 +232,7 @@ public class OrderedMap implements Map, Reopenable {
         kPos = heapStart;
         free = (int) (keyCapacity * loadFactor);
         size = 0;
-        offsets.zero(0);
+        offsets.zero();
         nResizes = 0;
     }
 
@@ -314,7 +314,6 @@ public class OrderedMap implements Map, Reopenable {
             keyCapacity = initialKeyCapacity;
             keyCapacity = keyCapacity < MIN_KEY_CAPACITY ? MIN_KEY_CAPACITY : Numbers.ceilPow2(keyCapacity);
             mask = keyCapacity - 1;
-            offsets.resetCapacity();
             offsets.setCapacity((long) keyCapacity << 1);
             offsets.setPos((long) keyCapacity << 1);
 
@@ -509,7 +508,7 @@ public class OrderedMap implements Map, Reopenable {
         }
 
         mask = (int) newKeyCapacity - 1;
-        DirectIntList newOffsets = new DirectIntList(newKeyCapacity << 1, listMemoryTag, true, true);
+        DirectIntList newOffsets = new DirectIntList(newKeyCapacity << 1, listMemoryTag, true);
         newOffsets.setPos(newKeyCapacity << 1);
 
         for (int i = 0, k = (int) (offsets.size() >>> 1); i < k; i++) {

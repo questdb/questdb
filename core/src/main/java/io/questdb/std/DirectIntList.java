@@ -45,16 +45,16 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
     private long pos;
 
     public DirectIntList(long capacity, int memoryTag) {
-        this(capacity, memoryTag, false, false);
+        this(capacity, memoryTag, false);
     }
 
-    public DirectIntList(long capacity, int memoryTag, boolean zero, boolean prefault) {
+    public DirectIntList(long capacity, int memoryTag, boolean zero) {
         this.memoryTag = memoryTag;
-        this.capacity = (capacity * Integer.BYTES);
+        this.capacity = capacity << 2;
         if (zero) {
-            this.address = Unsafe.calloc(this.capacity, memoryTag, prefault);
+            this.address = Unsafe.calloc(this.capacity, memoryTag, true);
         } else {
-            this.address = Unsafe.malloc(this.capacity, memoryTag, prefault);
+            this.address = Unsafe.malloc(this.capacity, memoryTag);
         }
         this.pos = address;
         this.limit = pos + this.capacity;
@@ -79,11 +79,6 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
 
     // clear without "zeroing" memory
     public void clear() {
-        pos = address;
-    }
-
-    public void clear(int b) {
-        zero(b);
         pos = address;
     }
 
@@ -168,8 +163,8 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
         return sb.toString();
     }
 
-    public void zero(int v) {
-        Vect.memset(address, pos - address, v);
+    public void zero() {
+        Vect.memset(address, pos - address, 0);
     }
 
     // desired capacity in bytes (not count of INT values)
