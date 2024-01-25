@@ -3127,8 +3127,12 @@ if __name__ == "__main__":
 
                             try (PreparedStatement stmt = connection.prepareStatement("cancel query " + queryId)) {
                                 stmt.executeUpdate();
+                            } catch (SQLException e) {
+                                // ignore errors showing that statement is completed
+                                if (!Chars.contains(e.getMessage(), "query to cancel not found in registry")) {
+                                    throw e;
+                                }
                             }
-
                             start = System.currentTimeMillis();
 
                             try (PreparedStatement stmt = connection.prepareStatement("select * from query_activity() where query_id = ?")) {

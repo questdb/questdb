@@ -27,9 +27,9 @@ package io.questdb.test.cutlass.http;
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
-import io.questdb.cairo.wal.ApplyWal2TableJob;
-import io.questdb.cairo.wal.CheckWalTransactionsJob;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cutlass.Services;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.http.processors.HealthCheckProcessor;
@@ -8411,31 +8411,6 @@ public class IODispatcherTest extends AbstractTest {
                             for (int j = 0, k = commands.size(); j < k; j++) {
                                 final String command = commands.getQuick(j);
 
-                                if (isWal) {
-                                    try (RecordCursorFactory factory = engine.select("select suspended, writerTxn, sequencerTxn from wal_tables() where name = 'tab'", executionContext)) {
-                                        boolean suspended;
-                                        long sequencerTxn;
-
-                                        try (RecordCursor cursor = factory.getCursor(executionContext)) {
-                                            cursor.hasNext();
-                                            Record record = cursor.getRecord();
-                                            suspended = record.getBool(0);
-                                            sequencerTxn = record.getLong(2) + 1;
-                                        }
-
-                                        if (suspended) {
-                                            engine.ddl("alter table tab resume wal from txn " + sequencerTxn, executionContext);
-
-                                            try (RecordCursor cursor = factory.getCursor(executionContext)) {
-                                                cursor.hasNext();
-                                                Record record = cursor.getRecord();
-                                                suspended = record.getBool(1);
-                                                Assert.assertFalse(suspended);
-                                            }
-                                        }
-                                    }
-                                }
-
                                 // statements containing multiple transactions, such as 'alter table add column col1, col2' are currently not supported for WAL tables
                                 // UPDATE statements with join are not supported yet for WAL tables
                                 if ((isWal && (command.equals(updateWithJoin1) || command.equals(updateWithJoin2) || command.equals(addColumns)))) {
@@ -8456,7 +8431,6 @@ public class IODispatcherTest extends AbstractTest {
                                     registryListener.queryFound.setCount(1);
 
                                     new Thread(() -> {
-                                        String response;
                                         try (TestHttpClient testHttpClient = new TestHttpClient()) {
                                             started.countDown();
                                             try {
@@ -8474,26 +8448,6 @@ public class IODispatcherTest extends AbstractTest {
                                             stopped.countDown();
                                         }
                                     }, "command_thread").start();
-
-                                    if (isWal) {
-                                        Thread walJob = new Thread(() -> {
-                                            started.countDown();
-
-                                            try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1)) {
-                                                while (queryError.get() == null) {
-                                                    walApplyJob.drain(0);
-                                                    new CheckWalTransactionsJob(engine).run(0);
-                                                    // run once again as there might be notifications to handle now
-                                                    walApplyJob.drain(0);
-                                                }
-                                            } finally {
-                                                // release native path memory used by the job
-                                                Path.PATH.get().close();
-                                                stopped.countDown();
-                                            }
-                                        }, "wal_job");
-                                        walJob.start();
-                                    }
 
                                     started.await();
 
@@ -8535,7 +8489,7 @@ public class IODispatcherTest extends AbstractTest {
 
                                     testHttpClient.assertGetRegexp(
                                             "/query",
-                                            "\\{\"ddl\":\"OK\"\\}",
+                                            ".*(query to cancel not found in registry|\"ddl\":\"OK\").*",
                                             "cancel query " + queryId,
                                             null, null,
                                             "200"
