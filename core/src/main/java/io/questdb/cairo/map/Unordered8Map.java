@@ -177,13 +177,8 @@ public class Unordered8Map implements Map, Reopenable {
 
     @Override
     public void clear() {
-        free = (int) (keyCapacity * loadFactor);
-        size = 0;
-        nResizes = 0;
-        hasZero = false;
-        Vect.memset(memStart, memLimit - memStart, 0);
-        Unsafe.getUnsafe().putLong(keyMemStart, 0);
-        Vect.memset(zeroMemStart, entrySize, 0);
+        clearState();
+        clearMemory();
     }
 
     @Override
@@ -290,20 +285,25 @@ public class Unordered8Map implements Map, Reopenable {
             if (memStart == 0) {
                 memStart = Unsafe.calloc(sizeBytes, memoryTag, true);
             } else {
-                memStart = Unsafe.realloc(memStart, memLimit - memStart, sizeBytes, memoryTag, true);
+                memStart = Unsafe.realloc(memStart, memLimit - memStart, sizeBytes, memoryTag);
+                Vect.memset(memStart, sizeBytes, 0);
             }
             memLimit = memStart + sizeBytes;
+        } else {
+            Vect.memset(memStart, memLimit - memStart, 0);
         }
 
         if (keyMemStart == 0) {
             keyMemStart = Unsafe.malloc(KEY_SIZE, memoryTag);
         }
+        Unsafe.getUnsafe().putLong(keyMemStart, 0);
 
         if (zeroMemStart == 0) {
             zeroMemStart = Unsafe.malloc(entrySize, memoryTag);
         }
+        Vect.memset(zeroMemStart, entrySize, 0);
 
-        clear();
+        clearState();
     }
 
     @Override
@@ -346,6 +346,19 @@ public class Unordered8Map implements Map, Reopenable {
         }
         size++;
         return valueOf(startAddress, true, value);
+    }
+
+    private void clearMemory() {
+        Vect.memset(memStart, memLimit - memStart, 0);
+        Unsafe.getUnsafe().putLong(keyMemStart, 0);
+        Vect.memset(zeroMemStart, entrySize, 0);
+    }
+
+    private void clearState() {
+        free = (int) (keyCapacity * loadFactor);
+        size = 0;
+        nResizes = 0;
+        hasZero = false;
     }
 
     // Advance through the map data structure sequentially,

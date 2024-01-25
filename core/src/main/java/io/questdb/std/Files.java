@@ -668,7 +668,11 @@ public final class Files {
             POSIX_FADV_SEQUENTIAL = getPosixFadvSequential();
             POSIX_MADV_RANDOM = getPosixMadvRandom();
             POSIX_MADV_SEQUENTIAL = getPosixMadvSequential();
-            LINUX_MADV_POPULATE_WRITE = getLinuxMadvPopulateWrite();
+            // We don't read MADV_POPULATE_WRITE flag value from the native code
+            // since this flag is not available on older libc versions.
+            // Also, if we call madvise with this flag on pre-5.14 kernel versions,
+            // nothing bad happens - we'll simply get EINVAL as the result.
+            LINUX_MADV_POPULATE_WRITE = 23;
         } else {
             POSIX_FADV_SEQUENTIAL = -1;
             POSIX_FADV_RANDOM = -1;

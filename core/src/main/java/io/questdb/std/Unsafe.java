@@ -52,7 +52,7 @@ public final class Unsafe {
     private static final LongAdder[] COUNTERS = new LongAdder[MemoryTag.SIZE];
     private static final AtomicLong FREE_COUNT = new AtomicLong(0);
     private static final AtomicLong MALLOC_COUNT = new AtomicLong(0);
-    private static final long PREFAULT_THRESHOLD = 16 * 1024 * 1024;
+    private static final long PREFAULT_THRESHOLD = 16 * Numbers.SIZE_1MB;
     //#if jdk.version!=8
     private static final long OVERRIDE;
       //#endif
@@ -68,18 +68,11 @@ public final class Unsafe {
     }
 
     public static long malloc(long size, int memoryTag) {
-        return malloc(size, memoryTag, false);
-    }
-
-    public static long malloc(long size, int memoryTag, boolean prefault) {
         try {
             checkAllocLimit(size, memoryTag);
             long ptr = getUnsafe().allocateMemory(size);
             recordMemAlloc(size, memoryTag);
             MALLOC_COUNT.incrementAndGet();
-            if (prefault) {
-                prefault(ptr, size);
-            }
             return ptr;
         } catch (OutOfMemoryError oom) {
             System.err.printf(
@@ -256,18 +249,11 @@ public final class Unsafe {
     //#endif
 
     public static long realloc(long address, long oldSize, long newSize, int memoryTag) {
-        return realloc(address, oldSize, newSize, memoryTag, false);
-    }
-
-    public static long realloc(long address, long oldSize, long newSize, int memoryTag, boolean prefault) {
         try {
             checkAllocLimit(-oldSize + newSize, memoryTag);
             long ptr = getUnsafe().reallocateMemory(address, newSize);
             recordMemAlloc(-oldSize + newSize, memoryTag);
             REALLOC_COUNT.incrementAndGet();
-            if (prefault) {
-                prefault(ptr, newSize);
-            }
             return ptr;
         } catch (OutOfMemoryError oom) {
             System.err.printf(
@@ -300,7 +286,7 @@ public final class Unsafe {
         }
         long alignedPtr = Files.ceilPageSize(ptr);
         long alignedSize = size - (alignedPtr - ptr);
-        if (alignedSize > Files.PAGE_SIZE) {
+        if (alignedSize > 0) {
             Files.madvise(alignedPtr, alignedSize, Files.LINUX_MADV_POPULATE_WRITE);
         }
     }
