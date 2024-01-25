@@ -253,7 +253,7 @@ public interface Sender extends Closeable {
         private static final int DEFAULT_BUFFER_CAPACITY = 64 * 1024;
         private static final int DEFAULT_HTTP_PORT = 9000;
         private static final int DEFAULT_HTTP_TIMEOUT = 30_000;
-        private static final int DEFAULT_MAXIMUM_BUFFER_CAPACITY = Integer.MAX_VALUE; // 20MB -- todo: sync with Rust client
+        private static final int DEFAULT_MAXIMUM_BUFFER_CAPACITY = Integer.MAX_VALUE;
         private static final int DEFAULT_MAX_PENDING_ROWS = 10_000;
         private static final long DEFAULT_MAX_RETRY_NANOS = TimeUnit.SECONDS.toNanos(10); // keep sync with the contract of the configuration method
         private static final int DEFAULT_TCP_PORT = 9009;
@@ -320,7 +320,7 @@ public interface Sender extends Closeable {
         public LineSenderBuilder address(CharSequence address) {
             if (this.host != null) {
                 throw new LineSenderException("server address is already configured ")
-                        .put("[configured-address=").put(this.host).put("]");
+                        .put("[address=").put(this.host).put("]");
             }
             if (Chars.isBlank(address)) {
                 throw new LineSenderException("address cannot be empty nor null");
@@ -334,7 +334,7 @@ public interface Sender extends Closeable {
                 if (port != 0) {
                     throw new LineSenderException("address contains a port, but a port was already configured ")
                             .put("[address=").put(address)
-                            .put(", configured-port=").put(port)
+                            .put(", port=").put(port)
                             .put("]");
                 }
                 this.host = address.subSequence(0, portIndex).toString();
@@ -358,7 +358,7 @@ public interface Sender extends Closeable {
         public AdvancedTlsSettings advancedTls() {
             if (LineSenderBuilder.this.trustStorePath != null) {
                 throw new LineSenderException("custom trust store was already configured ")
-                        .put("[configured-path=").put(LineSenderBuilder.this.trustStorePath).put("]");
+                        .put("[path=").put(LineSenderBuilder.this.trustStorePath).put("]");
             }
             if (tlsValidationMode == TlsValidationMode.INSECURE) {
                 throw new LineSenderException("TLS validation was already disabled");
@@ -383,7 +383,7 @@ public interface Sender extends Closeable {
         public LineSenderBuilder bufferCapacity(int bufferCapacity) {
             if (this.bufferCapacity != BUFFER_CAPACITY_NOT_SET) {
                 throw new LineSenderException("buffer capacity was already configured ")
-                        .put("[configured-capacity=").put(this.bufferCapacity).put("]");
+                        .put("[capacity=").put(this.bufferCapacity).put("]");
             }
             this.bufferCapacity = bufferCapacity;
             return this;
@@ -464,7 +464,7 @@ public interface Sender extends Closeable {
         public LineSenderBuilder.AuthBuilder enableAuth(String keyId) {
             if (this.keyId != null) {
                 throw new LineSenderException("authentication keyId was already configured ")
-                        .put("[configured-keyId=").put(this.keyId).put("]");
+                        .put("[keyId=").put(this.keyId).put("]");
             }
             this.keyId = keyId;
             return new LineSenderBuilder.AuthBuilder();
@@ -493,7 +493,7 @@ public interface Sender extends Closeable {
         public LineSenderBuilder http() {
             if (protocol != PROTOCOL_NOT_SET) {
                 throw new LineSenderException("protocol was already configured ")
-                        .put("[configured-protocol=").put(protocol).put("]");
+                        .put("[protocol=").put(protocol).put("]");
             }
             protocol = PROTOCOL_HTTP;
             return this;
@@ -511,8 +511,7 @@ public interface Sender extends Closeable {
         public LineSenderBuilder httpTimeoutMillis(int httpTimeoutMillis) {
             if (this.httpTimeout != HTTP_TIMEOUT_NOT_SET) {
                 throw new LineSenderException("HTTP timeout was already configured ")
-                        .put("[configured-timeout=").put(this.httpTimeout)
-                        .put(", timeout=").put(httpTimeoutMillis).put("]");
+                        .put("[timeout=").put(this.httpTimeout).put("]");
             }
             if (httpTimeoutMillis < 1) {
                 throw new LineSenderException("HTTP timeout must be positive ")
@@ -535,7 +534,7 @@ public interface Sender extends Closeable {
         public LineSenderBuilder httpToken(String token) {
             if (this.username != null) {
                 throw new LineSenderException("authentication username was already configured ")
-                        .put("[configured-username=").put(this.username).put("]");
+                        .put("[username=").put(this.username).put("]");
             }
             if (Chars.isBlank(token)) {
                 throw new LineSenderException("token cannot be empty nor null");
@@ -558,7 +557,7 @@ public interface Sender extends Closeable {
         public LineSenderBuilder httpUsernamePassword(String username, String password) {
             if (this.username != null) {
                 throw new LineSenderException("authentication username was already configured ")
-                        .put("[configured-username=").put(this.username).put("]");
+                        .put("[username=").put(this.username).put("]");
             }
             if (Chars.isBlank(username)) {
                 throw new LineSenderException("username cannot be empty nor null");
@@ -567,8 +566,7 @@ public interface Sender extends Closeable {
                 throw new LineSenderException("password cannot be empty nor null");
             }
             if (httpToken != null) {
-                throw new LineSenderException("token authentication is already configured ")
-                        .put("[configured-token=").put(this.httpToken).put("]");
+                throw new LineSenderException("token authentication is already configured");
             }
             this.username = username;
             this.password = password;
@@ -591,8 +589,8 @@ public interface Sender extends Closeable {
         public LineSenderBuilder maxBufferCapacity(int maximumBufferCapacity) {
             if (maximumBufferCapacity < DEFAULT_BUFFER_CAPACITY) {
                 throw new LineSenderException("maximum buffer capacity cannot be less than initial buffer capacity ")
-                        .put("[maximum-buffer-capacity=").put(maximumBufferCapacity)
-                        .put(", default-buffer-capacity=").put(DEFAULT_BUFFER_CAPACITY)
+                        .put("[maximumBufferCapacity=").put(maximumBufferCapacity)
+                        .put(", initialBufferCapacity=").put(DEFAULT_BUFFER_CAPACITY)
                         .put("]");
             }
             this.maximumBufferCapacity = maximumBufferCapacity;
@@ -616,7 +614,7 @@ public interface Sender extends Closeable {
         public LineSenderBuilder maxPendingRows(int maxPendingRows) {
             if (this.maxPendingRows != -1) {
                 throw new LineSenderException("max pending rows was already configured ")
-                        .put("[max-pending-rows=").put(this.maxPendingRows).put("]");
+                        .put("[maxPendingRows=").put(this.maxPendingRows).put("]");
             }
             this.maxPendingRows = maxPendingRows;
             return this;
@@ -631,7 +629,7 @@ public interface Sender extends Closeable {
         public LineSenderBuilder port(int port) {
             if (this.port != 0) {
                 throw new LineSenderException("post is already configured ")
-                        .put("[configured-port=").put(port).put("]");
+                        .put("[port=").put(port).put("]");
             }
             this.port = port;
             return this;
@@ -663,11 +661,11 @@ public interface Sender extends Closeable {
         public LineSenderBuilder retryTimeoutMillis(int retryTimeoutMillis) {
             if (this.retryTimeoutMillis != MAX_RETRY_MILLIS_NOT_SET) {
                 throw new LineSenderException("retry timeout was already configured ")
-                        .put("[retry-timeout-millis=").put(this.retryTimeoutMillis).put("]");
+                        .put("[retryTimeoutMillis=").put(this.retryTimeoutMillis).put("]");
             }
             if (retryTimeoutMillis < 0) {
                 throw new LineSenderException("retry timeout cannot be negative ")
-                        .put("[retry-timeout-millis=").put(retryTimeoutMillis).put("]");
+                        .put("[retryTimeoutMillis=").put(retryTimeoutMillis).put("]");
             }
             this.retryTimeoutMillis = retryTimeoutMillis;
             return this;
@@ -683,7 +681,7 @@ public interface Sender extends Closeable {
         public LineSenderBuilder tcp() {
             if (protocol != PROTOCOL_NOT_SET) {
                 throw new LineSenderException("protocol was already configured ")
-                        .put("[configured-protocol=").put(protocol).put("]");
+                        .put("[protocol=").put(protocol).put("]");
             }
             protocol = PROTOCOL_TCP;
             return this;
@@ -714,22 +712,22 @@ public interface Sender extends Closeable {
             }
             if (!tlsEnabled && trustStorePath != null) {
                 throw new LineSenderException("custom trust store configured, but TLS was not enabled ")
-                        .put("[configured-path=").put(LineSenderBuilder.this.trustStorePath).put("]");
+                        .put("[path=").put(LineSenderBuilder.this.trustStorePath).put("]");
             }
             if (!tlsEnabled && tlsValidationMode != TlsValidationMode.DEFAULT) {
                 throw new LineSenderException("TSL validation disabled, but TLS was not enabled");
             }
             if (keyId != null && bufferCapacity < MIN_BUFFER_SIZE_FOR_AUTH) {
                 throw new LineSenderException("Requested buffer too small ")
-                        .put("[minimal-capacity=").put(MIN_BUFFER_SIZE_FOR_AUTH)
-                        .put(", requested-capacity=").put(bufferCapacity)
+                        .put("[minimalCapacity=").put(MIN_BUFFER_SIZE_FOR_AUTH)
+                        .put(", requestedCapacity=").put(bufferCapacity)
                         .put("]");
             }
             if (protocol == PROTOCOL_HTTP) {
                 if (httpClientConfiguration.getMaximumRequestBufferSize() < httpClientConfiguration.getInitialRequestBufferSize()) {
                     throw new LineSenderException("maximum buffer capacity cannot be less than initial buffer capacity ")
-                            .put("[maximum-buffer-capacity=").put(httpClientConfiguration.getMaximumRequestBufferSize())
-                            .put(", initial-buffer-capacity=").put(httpClientConfiguration.getInitialRequestBufferSize())
+                            .put("[maximumBufferCapacity=").put(httpClientConfiguration.getMaximumRequestBufferSize())
+                            .put(", initialBufferCapacity=").put(httpClientConfiguration.getInitialRequestBufferSize())
                             .put("]");
                 }
                 if (privateKey != null) {

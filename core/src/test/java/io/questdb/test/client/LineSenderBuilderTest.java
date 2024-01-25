@@ -118,7 +118,8 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
                 builder.build();
                 fail("tiny buffer should be be allowed as it wont fit auth challenge");
             } catch (LineSenderException e) {
-                TestUtils.assertContains(e.getMessage(), "capacity");
+                TestUtils.assertContains(e.getMessage(), "minimalCapacity");
+                TestUtils.assertContains(e.getMessage(), "requestedCapacity");
             }
         });
     }
@@ -440,7 +441,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
                 Sender.builder().address("someurl").http().httpTimeoutMillis(100).httpTimeoutMillis(200);
                 fail("should fail with bad http time");
             } catch (LineSenderException e) {
-                TestUtils.assertContains(e.getMessage(), "HTTP timeout was already configured [configured-timeout=100, timeout=200]");
+                TestUtils.assertContains(e.getMessage(), "HTTP timeout was already configured [timeout=100]");
             }
 
             try {
@@ -458,7 +459,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
             Sender.builder().retryTimeoutMillis(-1);
             Assert.fail();
         } catch (LineSenderException e) {
-            TestUtils.assertContains(e.getMessage(), "retry timeout cannot be negative [retry-timeout-millis=-1]");
+            TestUtils.assertContains(e.getMessage(), "retry timeout cannot be negative [retryTimeoutMillis=-1]");
         }
 
         Sender.LineSenderBuilder builder = Sender.builder().retryTimeoutMillis(100);
@@ -466,7 +467,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
             builder.retryTimeoutMillis(200);
             Assert.fail();
         } catch (LineSenderException e) {
-            TestUtils.assertContains(e.getMessage(), "retry timeout was already configured [retry-timeout-millis=100]");
+            TestUtils.assertContains(e.getMessage(), "retry timeout was already configured [retryTimeoutMillis=100]");
         }
     }
 
@@ -501,7 +502,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
             try {
                 Sender.builder().maxPendingRows(1).maxPendingRows(1);
             } catch (LineSenderException e) {
-                TestUtils.assertContains(e.getMessage(), "max pending rows was already configured [max-pending-rows=1]");
+                TestUtils.assertContains(e.getMessage(), "max pending rows was already configured [maxPendingRows=1]");
             }
         });
     }
@@ -517,7 +518,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
             ) {
                 Assert.fail();
             } catch (LineSenderException e) {
-                TestUtils.assertContains(e.getMessage(), "maximum buffer capacity cannot be less than initial buffer capacity [maximum-buffer-capacity=65535, default-buffer-capacity=65536]");
+                TestUtils.assertContains(e.getMessage(), "maximum buffer capacity cannot be less than initial buffer capacity [maximumBufferCapacity=65535, initialBufferCapacity=65536]");
             }
         });
     }
@@ -534,7 +535,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
             ) {
                 Assert.fail();
             } catch (LineSenderException e) {
-                TestUtils.assertContains(e.getMessage(), "maximum buffer capacity cannot be less than initial buffer capacity [maximum-buffer-capacity=100000, initial-buffer-capacity=200000]");
+                TestUtils.assertContains(e.getMessage(), "maximum buffer capacity cannot be less than initial buffer capacity [maximumBufferCapacity=100000, initialBufferCapacity=200000]");
             }
         });
     }
