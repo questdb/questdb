@@ -129,6 +129,7 @@ public class GroupByAllocator implements QuietCloseable {
             if (ptr + size <= lim) {
                 long allocatedPtr = ptr;
                 ptr = Bytes.align8b(allocatedPtr + size);
+                Vect.memset(allocatedPtr, size, 0);
                 return allocatedPtr;
             }
 
