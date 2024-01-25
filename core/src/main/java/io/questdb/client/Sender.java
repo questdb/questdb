@@ -415,7 +415,6 @@ public interface Sender extends Closeable {
             LineChannel channel = new PlainTcpLineChannel(nf, host, port, bufferCapacity * 2);
             LineTcpSender sender;
             if (tlsEnabled) {
-                assert (trustStorePath == null) == (trustStorePassword == null); //either both null or both non-null
                 DelegatingTlsChannel tlsChannel;
                 try {
                     tlsChannel = new DelegatingTlsChannel(channel, trustStorePath, trustStorePassword, tlsValidationMode, host);
@@ -768,6 +767,17 @@ public interface Sender extends Closeable {
              * @return an instance of LineSenderBuilder for further configuration
              */
             public LineSenderBuilder customTrustStore(String trustStorePath, char[] trustStorePassword) {
+                if (LineSenderBuilder.this.trustStorePath != null) {
+                    throw new LineSenderException("custom trust store was already configured ")
+                            .put("[path=").put(LineSenderBuilder.this.trustStorePath).put("]");
+                }
+                if (Chars.isBlank(trustStorePath)) {
+                    throw new LineSenderException("trust store path cannot be empty nor null");
+                }
+                if (trustStorePassword == null) {
+                    throw new LineSenderException("trust store password cannot be null");
+                }
+
                 LineSenderBuilder.this.trustStorePath = trustStorePath;
                 LineSenderBuilder.this.trustStorePassword = trustStorePassword;
                 return LineSenderBuilder.this;

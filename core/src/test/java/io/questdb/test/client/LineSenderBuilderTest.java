@@ -342,6 +342,33 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testCustomTrustorePasswordCannotBeNull() {
+        try {
+            Sender.builder().advancedTls().customTrustStore(TRUSTSTORE_PATH, null);
+            fail("should not allow null trust store password");
+        } catch (LineSenderException e) {
+            TestUtils.assertContains(e.getMessage(), "trust store password cannot be null");
+        }
+    }
+
+    @Test
+    public void testCustomTrustorePathCannotBeBlank() {
+        try {
+            Sender.builder().advancedTls().customTrustStore("", TRUSTSTORE_PASSWORD);
+            fail("should not allow blank trust store path");
+        } catch (LineSenderException e) {
+            TestUtils.assertContains(e.getMessage(), "trust store path cannot be empty nor null");
+        }
+
+        try {
+            Sender.builder().advancedTls().customTrustStore(null, TRUSTSTORE_PASSWORD);
+            fail("should not allow null trust store path");
+        } catch (LineSenderException e) {
+            TestUtils.assertContains(e.getMessage(), "trust store path cannot be empty nor null");
+        }
+    }
+
+    @Test
     public void testCustomTruststoreButTlsNotEnabled() throws Exception {
         assertMemoryLeak(() -> {
             Sender.LineSenderBuilder builder = Sender.builder()
@@ -379,6 +406,17 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
                 TestUtils.assertContains(e.getMessage(), "could not resolve");
             }
         });
+    }
+
+    @Test
+    public void testFailFastWhenSetCustomTrustoreTwice() {
+        Sender.LineSenderBuilder builder = Sender.builder().advancedTls().customTrustStore(TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD);
+        try {
+            builder.advancedTls().customTrustStore(TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD);
+            fail("should not allow double custom trust store set");
+        } catch (LineSenderException e) {
+            TestUtils.assertContains(e.getMessage(), "already configured");
+        }
     }
 
     @Test
