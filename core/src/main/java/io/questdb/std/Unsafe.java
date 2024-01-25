@@ -52,9 +52,10 @@ public final class Unsafe {
     private static final LongAdder[] COUNTERS = new LongAdder[MemoryTag.SIZE];
     private static final AtomicLong FREE_COUNT = new AtomicLong(0);
     private static final AtomicLong MALLOC_COUNT = new AtomicLong(0);
+    private static final long PREFAULT_THRESHOLD = 16 * 1024 * 1024;
     //#if jdk.version!=8
     private static final long OVERRIDE;
-    //#endif
+      //#endif
     private static final AtomicLong REALLOC_COUNT = new AtomicLong(0);
     private static final sun.misc.Unsafe UNSAFE;
     private static final AnonymousClassDefiner anonymousClassDefiner;
@@ -294,10 +295,12 @@ public final class Unsafe {
     }
 
     private static void prefault(long ptr, long size) {
+        if (size < PREFAULT_THRESHOLD) {
+            return;
+        }
         long alignedPtr = Files.ceilPageSize(ptr);
         long alignedSize = size - (alignedPtr - ptr);
         if (alignedSize > Files.PAGE_SIZE) {
-            alignedSize = Files.floorPageSize(alignedSize);
             Files.madvise(alignedPtr, alignedSize, Files.LINUX_MADV_POPULATE_WRITE);
         }
     }

@@ -132,8 +132,16 @@ public class GroupByAllocator implements QuietCloseable {
                 return allocatedPtr;
             }
 
-            long chunkSize = Math.max(size, defaultChunkSize);
-            long allocatedPtr = Unsafe.calloc(chunkSize, MemoryTag.NATIVE_GROUP_BY_FUNCTION, true);
+            long allocatedPtr;
+            long chunkSize;
+            if (size < defaultChunkSize) {
+                chunkSize = defaultChunkSize;
+                allocatedPtr = Unsafe.malloc(chunkSize, MemoryTag.NATIVE_GROUP_BY_FUNCTION, true);
+                Vect.memset(allocatedPtr, chunkSize, 0);
+            } else {
+                chunkSize = size;
+                allocatedPtr = Unsafe.calloc(chunkSize, MemoryTag.NATIVE_GROUP_BY_FUNCTION, true);
+            }
             chunks.put(allocatedPtr, chunkSize);
             allocated += chunkSize;
             ptr = Bytes.align8b(allocatedPtr + size);
