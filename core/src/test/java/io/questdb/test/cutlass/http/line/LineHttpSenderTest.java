@@ -189,8 +189,6 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     public void testLineHttpDisabled() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         TestUtils.assertMemoryLeak(() -> {
-            int fragmentation = 1 + rnd.nextInt(5);
-            LOG.info().$("=== fragmentation=").$(fragmentation).$();
             try (final TestServerMain serverMain = startWithEnvVariables(
                     LINE_HTTP_ENABLED.getEnvVarName(), "false"
             )) {

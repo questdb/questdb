@@ -166,7 +166,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
 
     @Test
     public void testMaxRequestBufferSizeCannotBeLessThanDefault() {
-        try (Sender sender = Sender.builder().url("http://localhost:1").maximumBufferCapacity(65535).build()) {
+        try (Sender sender = Sender.builder().url("http://localhost:1").maxBufferCapacity(65535).build()) {
             Assert.fail();
         } catch (LineSenderException e) {
             TestUtils.assertContains(e.getMessage(), "maximum buffer capacity cannot be less than default buffer capacity [maximum-buffer-capacity=65535, default-buffer-capacity=65536]");
@@ -175,7 +175,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
 
     @Test
     public void testMaxRequestBufferSizeCannotBeLessThanInitialBufferSize() {
-        try (Sender sender = Sender.builder().url("http://localhost:1").maximumBufferCapacity(100_000).bufferCapacity(200_000).build()) {
+        try (Sender sender = Sender.builder().url("http://localhost:1").maxBufferCapacity(100_000).bufferCapacity(200_000).build()) {
             Assert.fail();
         } catch (LineSenderException e) {
             TestUtils.assertContains(e.getMessage(), "maximum buffer capacity cannot be less than initial buffer capacity [maximum-buffer-capacity=100000, initial-buffer-capacity=200000]");
@@ -185,7 +185,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     @Test
     public void testMaxRequestBufferSizeExceeded() {
         try (Sender sender = Sender.builder().url("http://localhost:1")
-                .maximumBufferCapacity(65536)
+                .maxBufferCapacity(65536)
                 .build()
         ) {
             for (int i = 0; i < 100000; i++) {

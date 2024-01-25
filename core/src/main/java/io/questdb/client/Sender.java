@@ -51,7 +51,7 @@ import java.util.concurrent.TimeUnit;
  * Influx Line Protocol client to feed data to a remote QuestDB instance.
  * <p>
  * This client supports both HTTP and TCP protocols. In most cases you should prefer HTTP protocol as it provides
- * stronger guarantees and better feedback in case of errors.
+ * stronger transactional guarantees and better feedback in case of errors.
  * <p>
  * Use {@link #builder()} method to create a new instance.
  * <br>
@@ -165,7 +165,7 @@ public interface Sender extends Closeable {
      * automatic flush.
      *
      * @see LineSenderBuilder#bufferCapacity(int)
-     * @see LineSenderBuilder#maximumBufferCapacity(int)
+     * @see LineSenderBuilder#maxBufferCapacity(int)
      * @see LineSenderBuilder#maxPendingRows(int)
      */
     void flush();
@@ -258,50 +258,50 @@ public interface Sender extends Closeable {
      * }</pre>
      */
     final class LineSenderBuilder {
-        private static final byte BUFFER_CAPACITY_DEFAULT = 0;
+        private static final byte BUFFER_CAPACITY_NOT_SET = 0;
         private static final int DEFAULT_BUFFER_CAPACITY = 64 * 1024;
         private static final int DEFAULT_HTTP_PORT = 9000;
         private static final int DEFAULT_HTTP_TIMEOUT = 30_000;
-        private static final int DEFAULT_MAXIMUM_BUFFER_CAPACITY = 20 * 1024 * 1024; // 20MB -- todo: sync with Rust client
+        private static final int DEFAULT_MAXIMUM_BUFFER_CAPACITY = Integer.MAX_VALUE; // 20MB -- todo: sync with Rust client
         private static final int DEFAULT_MAX_PENDING_ROWS = 10_000;
         private static final long DEFAULT_MAX_RETRY_NANOS = TimeUnit.SECONDS.toNanos(10); // keep sync with the contract of the configuration method
         private static final int DEFAULT_TCP_PORT = 9009;
-        private static final int HTTP_TIMEOUT_DEFAULT = -1;
-        private static final int MAX_PENDING_ROWS_DEFAULT = -1;
-        private static final int MAX_RETRY_MILLIS_DEFAULT = -1;
+        private static final int HTTP_TIMEOUT_NOT_SET = -1;
+        private static final int MAX_PENDING_ROWS_NOT_SET = -1;
+        private static final int MAX_RETRY_MILLIS_NOT_SET = -1;
         private static final int MIN_BUFFER_SIZE_FOR_AUTH = 512 + 1; // challenge size + 1;
-        private static final byte PORT_DEFAULT = 0;
+        private static final byte PORT_NOT_SET = 0;
         private static final int PROTOCOL_HTTP = 1;
         private static final int PROTOCOL_TCP = 0;
-        private static final int PROTOCOL_DEFAULT = PROTOCOL_TCP;
-        private int bufferCapacity = BUFFER_CAPACITY_DEFAULT;
+        private static final int PROTOCOL_NOT_SET = PROTOCOL_TCP;
+        private int bufferCapacity = BUFFER_CAPACITY_NOT_SET;
         private String host;
-        private int httpTimeout = HTTP_TIMEOUT_DEFAULT;
+        private int httpTimeout = HTTP_TIMEOUT_NOT_SET;
         private String httpToken;
         private String keyId;
-        private int maxPendingRows = MAX_PENDING_ROWS_DEFAULT;
+        private int maxPendingRows = MAX_PENDING_ROWS_NOT_SET;
         private int maximumBufferCapacity = DEFAULT_MAXIMUM_BUFFER_CAPACITY;
         private final HttpClientConfiguration httpClientConfiguration = new DefaultHttpClientConfiguration() {
             @Override
             public int getInitialRequestBufferSize() {
-                return bufferCapacity == BUFFER_CAPACITY_DEFAULT ? DEFAULT_BUFFER_CAPACITY : bufferCapacity;
+                return bufferCapacity == BUFFER_CAPACITY_NOT_SET ? DEFAULT_BUFFER_CAPACITY : bufferCapacity;
             }
 
             @Override
             public int getMaximumRequestBufferSize() {
-                return maximumBufferCapacity == BUFFER_CAPACITY_DEFAULT ? DEFAULT_MAXIMUM_BUFFER_CAPACITY : maximumBufferCapacity;
+                return maximumBufferCapacity == BUFFER_CAPACITY_NOT_SET ? DEFAULT_MAXIMUM_BUFFER_CAPACITY : maximumBufferCapacity;
             }
 
             @Override
             public int getTimeout() {
-                return httpTimeout == HTTP_TIMEOUT_DEFAULT ? DEFAULT_HTTP_TIMEOUT : httpTimeout;
+                return httpTimeout == HTTP_TIMEOUT_NOT_SET ? DEFAULT_HTTP_TIMEOUT : httpTimeout;
             }
         };
         private String password;
-        private int port = PORT_DEFAULT;
+        private int port = PORT_NOT_SET;
         private PrivateKey privateKey;
-        private int protocol = PROTOCOL_DEFAULT;
-        private int retryTimeoutMillis = MAX_RETRY_MILLIS_DEFAULT;
+        private int protocol = PROTOCOL_NOT_SET;
+        private int retryTimeoutMillis = MAX_RETRY_MILLIS_NOT_SET;
         private boolean shouldDestroyPrivKey;
         private boolean tlsEnabled;
         private TlsValidationMode tlsValidationMode = TlsValidationMode.DEFAULT;
@@ -332,7 +332,7 @@ public interface Sender extends Closeable {
                 throw new LineSenderException("server address is already configured ")
                         .put("[configured-address=").put(this.host).put("]");
             }
-            if (address == null || address.length() == 0) {
+            if (Chars.isBlank(address)) {
                 throw new LineSenderException("address cannot be empty nor null");
             }
             int portIndex = Chars.indexOf(address, ':');
@@ -380,7 +380,7 @@ public interface Sender extends Closeable {
          * Configure capacity of an internal buffer.
          * <p>
          * When communicating over HTTP protocol this buffer size is treated as the initial buffer capacity. Buffer can
-         * grow up to {@link #maximumBufferCapacity(int)}. You should call {@link #flush()} to send buffered data to
+         * grow up to {@link #maxBufferCapacity(int)}. You should call {@link #flush()} to send buffered data to
          * a server. Otherwise, data will be sent automatically when number of buffered rows reaches {@link #maxPendingRows(int)}.
          * <br>
          * When communicating over TCP protocol this buffer size is treated as the maximum buffer capacity. The Sender
@@ -391,7 +391,7 @@ public interface Sender extends Closeable {
          * @see Sender#flush()
          */
         public LineSenderBuilder bufferCapacity(int bufferCapacity) {
-            if (this.bufferCapacity != BUFFER_CAPACITY_DEFAULT) {
+            if (this.bufferCapacity != BUFFER_CAPACITY_NOT_SET) {
                 throw new LineSenderException("buffer capacity was already configured ")
                         .put("[configured-capacity=").put(this.bufferCapacity).put("]");
             }
@@ -418,8 +418,8 @@ public interface Sender extends Closeable {
                             .put(", initial-buffer-capacity=").put(httpClientConfiguration.getInitialRequestBufferSize())
                             .put("]");
                 }
-                int actualMaxPendingRows = maxPendingRows == MAX_PENDING_ROWS_DEFAULT ? DEFAULT_MAX_PENDING_ROWS : maxPendingRows;
-                long actualMaxRetriesNanos = retryTimeoutMillis == MAX_RETRY_MILLIS_DEFAULT ? DEFAULT_MAX_RETRY_NANOS : retryTimeoutMillis * 1_000_000L;
+                int actualMaxPendingRows = maxPendingRows == MAX_PENDING_ROWS_NOT_SET ? DEFAULT_MAX_PENDING_ROWS : maxPendingRows;
+                long actualMaxRetriesNanos = retryTimeoutMillis == MAX_RETRY_MILLIS_NOT_SET ? DEFAULT_MAX_RETRY_NANOS : retryTimeoutMillis * 1_000_000L;
                 ClientTlsConfiguration tlsConfig = null;
                 if (tlsEnabled) {
                     assert (trustStorePath == null) == (trustStorePassword == null); //either both null or both non-null
@@ -540,7 +540,7 @@ public interface Sender extends Closeable {
          * @return this instance for method chaining
          */
         public LineSenderBuilder httpTimeoutMillis(int httpTimeoutMillis) {
-            if (this.httpTimeout != HTTP_TIMEOUT_DEFAULT) {
+            if (this.httpTimeout != HTTP_TIMEOUT_NOT_SET) {
                 throw new LineSenderException("HTTP timeout was already configured ")
                         .put("[configured-timeout=").put(this.httpTimeout)
                         .put(", timeout=").put(httpTimeoutMillis).put("]");
@@ -568,7 +568,7 @@ public interface Sender extends Closeable {
                 throw new LineSenderException("authentication username was already configured ")
                         .put("[configured-username=").put(this.username).put("]");
             }
-            if (token == null || token.isEmpty()) {
+            if (Chars.isBlank(token)) {
                 throw new LineSenderException("token cannot be empty nor null");
             }
             this.httpToken = token;
@@ -591,10 +591,10 @@ public interface Sender extends Closeable {
                 throw new LineSenderException("authentication username was already configured ")
                         .put("[configured-username=").put(this.username).put("]");
             }
-            if (username == null || username.isEmpty()) {
+            if (Chars.isBlank(username)) {
                 throw new LineSenderException("username cannot be empty nor null");
             }
-            if (password == null || password.isEmpty()) {
+            if (Chars.isBlank(password)) {
                 throw new LineSenderException("password cannot be empty nor null");
             }
             if (httpToken != null) {
@@ -603,6 +603,30 @@ public interface Sender extends Closeable {
             }
             this.username = username;
             this.password = password;
+            return this;
+        }
+
+        /**
+         * Set the maximum buffer capacity in bytes. This is only used when communicating over HTTP transport.
+         * <br>
+         * This is a hard limit on the maximum buffer capacity. The buffer cannot grow beyond this limit and Sender
+         * will throw an exception if you try to accommodate more data in the buffer. To prevent this from happening
+         * you should call {@link #flush()} periodically or set {@link #maxPendingRows(int)} to make sure that
+         * Sender will flush the buffer automatically before it reaches the maximum capacity.
+         * <br>
+         * Default value: 2 GB
+         *
+         * @param maximumBufferCapacity maximum buffer capacity in bytes.
+         * @return this instance for method chaining
+         */
+        public LineSenderBuilder maxBufferCapacity(int maximumBufferCapacity) {
+            if (maximumBufferCapacity < DEFAULT_BUFFER_CAPACITY) {
+                throw new LineSenderException("maximum buffer capacity cannot be less than initial buffer capacity ")
+                        .put("[maximum-buffer-capacity=").put(maximumBufferCapacity)
+                        .put(", default-buffer-capacity=").put(DEFAULT_BUFFER_CAPACITY)
+                        .put("]");
+            }
+            this.maximumBufferCapacity = maximumBufferCapacity;
             return this;
         }
 
@@ -626,30 +650,6 @@ public interface Sender extends Closeable {
                         .put("[max-pending-rows=").put(this.maxPendingRows).put("]");
             }
             this.maxPendingRows = maxPendingRows;
-            return this;
-        }
-
-        /**
-         * Set the maximum buffer capacity in bytes. This is only used when communicating over HTTP transport.
-         * <br>
-         * This is a hard limit on the maximum buffer capacity. The buffer cannot grow beyond this limit and Sender
-         * will throw an exception if you try to accommodate more data in the buffer. To prevent this from happening
-         * you should call {@link #flush()} periodically or set {@link #maxPendingRows(int)} to make sure that
-         * Sender will flush the buffer automatically before it reaches the maximum capacity.
-         * <br>
-         * Default value: 20 MB.
-         *
-         * @param maximumBufferCapacity maximum buffer capacity in bytes.
-         * @return this instance for method chaining
-         */
-        public LineSenderBuilder maximumBufferCapacity(int maximumBufferCapacity) {
-            if (maximumBufferCapacity < DEFAULT_BUFFER_CAPACITY) {
-                throw new LineSenderException("maximum buffer capacity cannot be less than default buffer capacity ")
-                        .put("[maximum-buffer-capacity=").put(maximumBufferCapacity)
-                        .put(", default-buffer-capacity=").put(DEFAULT_BUFFER_CAPACITY)
-                        .put("]");
-            }
-            this.maximumBufferCapacity = maximumBufferCapacity;
             return this;
         }
 
@@ -693,8 +693,8 @@ public interface Sender extends Closeable {
          * @return this instance, enabling method chaining.
          */
         public LineSenderBuilder retryTimeoutMillis(int retryTimeoutMillis) {
-            if (this.retryTimeoutMillis != MAX_RETRY_MILLIS_DEFAULT) {
-                throw new LineSenderException("max retries was already configured ")
+            if (this.retryTimeoutMillis != MAX_RETRY_MILLIS_NOT_SET) {
+                throw new LineSenderException("retry timeout was already configured ")
                         .put("[retry-timeout-millis=").put(this.retryTimeoutMillis).put("]");
             }
             if (retryTimeoutMillis < 0) {
@@ -717,14 +717,14 @@ public interface Sender extends Closeable {
          * @return this instance for method chaining
          */
         public LineSenderBuilder url(CharSequence url) {
-            if (url == null || url.length() == 0) {
+            if (Chars.isBlank(url)) {
                 throw new LineSenderException("url cannot be empty nor null");
             }
             if (host != null) {
                 throw new LineSenderException("server address is already configured ")
                         .put("[configured-address=").put(this.host).put("]");
             }
-            if (port != PORT_DEFAULT) {
+            if (port != PORT_NOT_SET) {
                 throw new LineSenderException("post is already configured ")
                         .put("[configured-port=").put(port).put("]");
             }
@@ -846,10 +846,10 @@ public interface Sender extends Closeable {
         }
 
         private void configureDefaults() {
-            if (bufferCapacity == BUFFER_CAPACITY_DEFAULT) {
+            if (bufferCapacity == BUFFER_CAPACITY_NOT_SET) {
                 bufferCapacity = DEFAULT_BUFFER_CAPACITY;
             }
-            if (port == PORT_DEFAULT) {
+            if (port == PORT_NOT_SET) {
                 port = DEFAULT_TCP_PORT;
             }
         }
@@ -885,16 +885,16 @@ public interface Sender extends Closeable {
                 if (username != null || password != null) {
                     throw new LineSenderException("username/password authentication is not supported for TCP protocol");
                 }
-                if (maxPendingRows != MAX_PENDING_ROWS_DEFAULT) {
+                if (maxPendingRows != MAX_PENDING_ROWS_NOT_SET) {
                     throw new LineSenderException("max pending rows is not supported for TCP protocol");
                 }
                 if (httpToken != null) {
                     throw new LineSenderException("HTTP token authentication is not supported for TCP protocol");
                 }
-                if (retryTimeoutMillis != MAX_RETRY_MILLIS_DEFAULT) {
+                if (retryTimeoutMillis != MAX_RETRY_MILLIS_NOT_SET) {
                     throw new LineSenderException("retrying is not supported for TCP protocol");
                 }
-                if (httpTimeout != HTTP_TIMEOUT_DEFAULT) {
+                if (httpTimeout != HTTP_TIMEOUT_NOT_SET) {
                     throw new LineSenderException("HTTP timeout is not supported for TCP protocol");
                 }
             } else {

@@ -87,16 +87,16 @@ public class LineHttpSenderFailureTest extends AbstractBootstrapTest {
         });
     }
 
-    @Test
-    public void scenarioRetryWithDeduplication() throws Exception {
-        scenarioRetryWithDeduplication(new ServerController());
-    }
-
     @Before
     public void setUp() {
         super.setUp();
         TestUtils.unchecked(() -> createDummyConfiguration());
         dbPath.parent().$();
+    }
+
+    @Test
+    public void testRetryWithDeduplication() throws Exception {
+        scenarioRetryWithDeduplication(new ServerController());
     }
 
     public static class ServerController implements Closeable {

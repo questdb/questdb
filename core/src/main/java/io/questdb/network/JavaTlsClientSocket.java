@@ -202,7 +202,7 @@ public final class JavaTlsClientSocket implements Socket {
                     case BUFFER_OVERFLOW:
                         if (unwrapOutputBuffer.position() == 0) {
                             // not even a single byte was written to the output buffer even the buffer is empty
-                            throw new AssertionError("Output buffer to small to fit a single TLS record. This should not happen, please report as a bug.");
+                            throw new AssertionError("Output buffer too small to fit a single TLS record. This should not happen, please report as a bug.");
                         }
                         // we have some data to return, let's return it
                         return plainBytesReceived;

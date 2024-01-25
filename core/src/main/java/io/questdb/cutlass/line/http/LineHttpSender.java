@@ -35,17 +35,16 @@ import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.cutlass.json.JsonParser;
 import io.questdb.cutlass.line.LineSenderException;
-import io.questdb.std.Chars;
-import io.questdb.std.Misc;
-import io.questdb.std.Os;
+import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 
 import java.io.Closeable;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
-import java.util.concurrent.ThreadLocalRandom;
 
 public final class LineHttpSender implements Sender {
     private static final String PATH = "/write?precision=n";
@@ -60,6 +59,8 @@ public final class LineHttpSender implements Sender {
     private final String password;
     private final int port;
     private final CharSequence questdbVersion;
+    private final Rnd rnd = new Rnd(NanosecondClockImpl.INSTANCE.getTicks(), MicrosecondClockImpl.INSTANCE.getTicks());
+    private final StringSink sink = new StringSink();
     private final String url;
     private final String username;
     private HttpClient client;
@@ -224,13 +225,6 @@ public final class LineHttpSender implements Sender {
         return this;
     }
 
-    private static int backoff(int retryBackoff) {
-        int jitter = ThreadLocalRandom.current().nextInt(RETRY_MAX_JITTER_MS);
-        int backoff = retryBackoff + jitter;
-        Os.sleep(backoff);
-        return Math.min(RETRY_MAX_BACKOFF_MS, backoff * RETRY_BACKOFF_MULTIPLIER);
-    }
-
     private static void chunkedResponseToSink(HttpClient.ResponseHeaders response, StringSink sink) {
         if (!response.isChunked()) {
             return;
@@ -248,7 +242,7 @@ public final class LineHttpSender implements Sender {
 
     private static boolean keepAliveDisabled(HttpClient.ResponseHeaders response) {
         DirectUtf8Sequence connectionHeader = response.getHeader(HttpConstants.HEADER_CONNECTION);
-        return connectionHeader != null && Chars.equals("close", connectionHeader.asAsciiCharSequence());
+        return connectionHeader != null && Utf8s.equalsAscii("close", connectionHeader);
     }
 
     private static long unitToNanos(ChronoUnit unit) {
@@ -264,6 +258,13 @@ public final class LineHttpSender implements Sender {
             default:
                 return unit.getDuration().toNanos();
         }
+    }
+
+    private int backoff(int retryBackoff) {
+        int jitter = rnd.nextInt(RETRY_MAX_JITTER_MS);
+        int backoff = retryBackoff + jitter;
+        Os.sleep(backoff);
+        return Math.min(RETRY_MAX_BACKOFF_MS, backoff * RETRY_BACKOFF_MULTIPLIER);
     }
 
     private void consumeChunkedResponse(HttpClient.ResponseHeaders response) {
@@ -339,13 +340,13 @@ public final class LineHttpSender implements Sender {
                     long nowNanos = System.nanoTime();
                     retryingDeadlineNanos = (retryingDeadlineNanos == Long.MIN_VALUE && !closing) ? nowNanos + maxRetriesNanos : retryingDeadlineNanos;
                     if (nowNanos >= retryingDeadlineNanos) {
-                        handleHttpErrorResponse(statusCode, response);
+                        throwOnHttpErrorResponse(statusCode, response);
                     }
                     client.disconnect(); // forces reconnect, just in case
                     retryBackoff = backoff(retryBackoff);
                     continue;
                 }
-                handleHttpErrorResponse(statusCode, response);
+                throwOnHttpErrorResponse(statusCode, response);
             } catch (HttpClientException e) {
                 // this is a network error, we can retry
                 client.disconnect(); // forces reconnect
@@ -364,70 +365,31 @@ public final class LineHttpSender implements Sender {
         request = newRequest();
     }
 
-    private void handleHttpErrorResponse(DirectUtf8Sequence statusCode, HttpClient.ResponseHeaders response) {
-        // be ready for next request
-        pendingRows = 0;
-        request = newRequest();
-
-        CharSequence statusAscii = statusCode.asAsciiCharSequence();
-        if (Chars.equals("404", statusAscii)) {
-            consumeChunkedResponse(response);
-            client.disconnect();
-            throw new LineSenderException("Could not flush buffer: HTTP endpoint does not support ILP. [http-status=404]");
-        }
-        if (Chars.equals("401", statusAscii) || Chars.equals("403", statusAscii)) {
-            StringSink sink = Misc.getThreadLocalSink();
-            chunkedResponseToSink(response, sink);
-            LineSenderException ex = new LineSenderException("Could not flush buffer: HTTP endpoint authentication error");
-            if (sink.length() > 0) {
-                ex = ex.put(": ").put(sink);
-            }
-            ex.put(" [http-status=").put(statusAscii).put(']');
-            client.disconnect();
-            throw ex;
-        }
-        DirectUtf8Sequence contentType = response.getContentType();
-        if (contentType != null && Chars.equals("application/json", contentType.asAsciiCharSequence())) {
-            if (jsonErrorParser == null) {
-                jsonErrorParser = new JsonErrorParser();
-            }
-            jsonErrorParser.reset();
-            LineSenderException ex = jsonErrorParser.toException(response.getChunkedResponse(), statusCode);
-            client.disconnect();
-            throw ex;
-        }
-        // ok, no JSON, let's do something more generic
-        StringSink sink = Misc.getThreadLocalSink();
-        sink.put("Could not flush buffer: ");
-        chunkedResponseToSink(response, sink);
-        sink.put(" [http-status=").put(statusCode).put(']');
-        client.disconnect();
-        throw new LineSenderException(sink);
-    }
-
     private boolean isRetryableHttpStatus(DirectUtf8Sequence statusCode) {
         if (statusCode == null || statusCode.size() != 3 || statusCode.byteAt(0) != '5') {
             return false;
         }
-        // we know the status bytes are 5xx, but is the HTTP status retryable?
-        // copied from QuestDB Rust client:
-//        Status(500, _) |  // Internal Server Error
-//        Status(503, _) |  // Service Unavailable
-//        Status(504, _) |  // Gateway Timeout
-//
-//        // Unofficial extensions
-//        Status(507, _) | // Insufficient Storage
-//        Status(509, _) | // Bandwidth Limit Exceeded
-//        Status(523, _) | // Origin is Unreachable
-//        Status(524, _) | // A Timeout Occurred
-//        Status(529, _) | // Site is overloaded
-//        Status(599, _) => { // Network Connect Timeout Error
+
+        /*
+         we are retrying on the following response codes (copied from the Rust client):
+        500:  Internal Server Error
+        503:  Service Unavailable
+        504:  Gateway Timeout
+
+        // Unofficial extensions
+        507:  Insufficient Storage
+        509:  Bandwidth Limit Exceeded
+        523:  Origin is Unreachable
+        524:  A Timeout Occurred
+        529:  Site is overloaded
+        599:  Network Connect Timeout Error
+        */
 
         byte middle = statusCode.byteAt(1);
         byte last = statusCode.byteAt(2);
-        return middle == '0' && (last == '0' || last == '3' || last == '4' || last == '7' || last == '9')
-                || middle == '2' && (last == '3' || last == '4' || last == '9')
-                || middle == '9' && last == '9';
+        return (middle == '0' && (last == '0' || last == '3' || last == '4' || last == '7' || last == '9'))
+                || (middle == '2' && (last == '3' || last == '4' || last == '9'))
+                || (middle == '9' && last == '9');
     }
 
     private HttpClient.Request newRequest() {
@@ -443,6 +405,47 @@ public final class LineHttpSender implements Sender {
         }
         r.withContent();
         return r;
+    }
+
+    private void throwOnHttpErrorResponse(DirectUtf8Sequence statusCode, HttpClient.ResponseHeaders response) {
+        // be ready for next request
+        pendingRows = 0;
+        request = newRequest();
+
+        CharSequence statusAscii = statusCode.asAsciiCharSequence();
+        if (Chars.equals("404", statusAscii)) {
+            consumeChunkedResponse(response);
+            client.disconnect();
+            throw new LineSenderException("Could not flush buffer: HTTP endpoint does not support ILP. [http-status=404]");
+        }
+        if (Chars.equals("401", statusAscii) || Chars.equals("403", statusAscii)) {
+            sink.clear();
+            chunkedResponseToSink(response, sink);
+            LineSenderException ex = new LineSenderException("Could not flush buffer: HTTP endpoint authentication error");
+            if (sink.length() > 0) {
+                ex = ex.put(": ").put(sink);
+            }
+            ex.put(" [http-status=").put(statusAscii).put(']');
+            client.disconnect();
+            throw ex;
+        }
+        DirectUtf8Sequence contentType = response.getContentType();
+        if (contentType != null && Utf8s.equalsAscii("application/json", contentType)) {
+            if (jsonErrorParser == null) {
+                jsonErrorParser = new JsonErrorParser();
+            }
+            jsonErrorParser.reset();
+            LineSenderException ex = jsonErrorParser.toException(response.getChunkedResponse(), statusCode);
+            client.disconnect();
+            throw ex;
+        }
+        // ok, no JSON, let's do something more generic
+        sink.clear();
+        sink.put("Could not flush buffer: ");
+        chunkedResponseToSink(response, sink);
+        sink.put(" [http-status=").put(statusCode).put(']');
+        client.disconnect();
+        throw new LineSenderException(sink);
     }
 
     private void validateColumnName(CharSequence name) {
