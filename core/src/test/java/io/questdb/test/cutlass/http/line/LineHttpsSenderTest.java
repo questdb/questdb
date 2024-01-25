@@ -61,7 +61,7 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
 
     @Test
     public void simpleTest() throws Exception {
-        String tableName = UUID.randomUUID().toString();
+        String tableName = "simpleTest";
 
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
@@ -70,6 +70,7 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
                 serverMain.start();
                 int port = tlsProxy.getListeningPort();
                 String address = "localhost:" + port;
+                long count = 100_000;
                 try (Sender sender = Sender.builder()
                         .address(address)
                         .http()
@@ -77,11 +78,19 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
                         .advancedTls()
                         .disableCertificateValidation()
                         .build()) {
-                    for (int i = 0; i < 100_000; i++) {
-                        sender.table(tableName).longColumn("value", 42).atNow();
+                    for (long i = 1; i <= count; i++) {
+                        sender.table(tableName).longColumn("value", i).atNow();
                     }
                 }
-                assertTableSizeEventually(serverMain.getEngine(), tableName, 100_000);
+                long expectedSum = (count / 2) * (count + 1);
+                double expectedAvg = expectedSum / (double) count;
+                TestUtils.assertEventually(() -> {
+                    serverMain.assertSql(
+                            "select sum(value), max(value), min(value), avg(value) from " + tableName,
+                            "sum\tmax\tmin\tavg\n"
+                                    + expectedSum + "\t" + count + "\t1\t" + expectedAvg + "\n"
+                    );
+                });
             }
         });
     }
