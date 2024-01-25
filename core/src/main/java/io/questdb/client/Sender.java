@@ -412,12 +412,6 @@ public interface Sender extends Closeable {
 
             NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             if (protocol == PROTOCOL_HTTP) {
-                if (httpClientConfiguration.getMaximumRequestBufferSize() < httpClientConfiguration.getInitialRequestBufferSize()) {
-                    throw new LineSenderException("maximum buffer capacity cannot be less than initial buffer capacity ")
-                            .put("[maximum-buffer-capacity=").put(httpClientConfiguration.getMaximumRequestBufferSize())
-                            .put(", initial-buffer-capacity=").put(httpClientConfiguration.getInitialRequestBufferSize())
-                            .put("]");
-                }
                 int actualMaxPendingRows = maxPendingRows == MAX_PENDING_ROWS_NOT_SET ? DEFAULT_MAX_PENDING_ROWS : maxPendingRows;
                 long actualMaxRetriesNanos = retryTimeoutMillis == MAX_RETRY_MILLIS_NOT_SET ? DEFAULT_MAX_RETRY_NANOS : retryTimeoutMillis * 1_000_000L;
                 ClientTlsConfiguration tlsConfig = null;
