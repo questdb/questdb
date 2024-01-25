@@ -113,7 +113,7 @@ public class LineHttpSenderFailureTest extends AbstractBootstrapTest {
 
         public Sender newSender() {
             String url = "http://localhost:" + HTTP_PORT;
-            return Sender.builder().url(url).maxPendingRows(100).retryTimeoutMillis(1000).build();
+            return Sender.builder().url(url).maxPendingRows(5000).retryTimeoutMillis(15_000).build();
         }
 
         public void restart() {

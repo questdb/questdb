@@ -336,6 +336,7 @@ public final class LineHttpSender implements Sender {
                     }
                     break;
                 }
+                assert response.isChunked();
                 if (isRetryableHttpStatus(statusCode)) {
                     long nowNanos = System.nanoTime();
                     retryingDeadlineNanos = (retryingDeadlineNanos == Long.MIN_VALUE && !closing) ? nowNanos + maxRetriesNanos : retryingDeadlineNanos;
