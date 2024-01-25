@@ -485,6 +485,24 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testInvalidRetryTimeout() {
+        try {
+            Sender.builder().retryTimeoutMillis(-1);
+            Assert.fail();
+        } catch (LineSenderException e) {
+            TestUtils.assertContains(e.getMessage(), "retry timeout cannot be negative [retry-timeout-millis=-1]");
+        }
+
+        Sender.LineSenderBuilder builder = Sender.builder().retryTimeoutMillis(100);
+        try {
+            builder.retryTimeoutMillis(200);
+            Assert.fail();
+        } catch (LineSenderException e) {
+            TestUtils.assertContains(e.getMessage(), "retry timeout was already configured [retry-timeout-millis=100]");
+        }
+    }
+
+    @Test
     public void testKeyIdAndTokenInUrl() throws Exception {
         authKeyId = AUTH_KEY_ID1;
         runInContext(r -> {
@@ -531,6 +549,39 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
                 fail("max pending rows should not be supported for TCP");
             } catch (LineSenderException e) {
                 TestUtils.assertContains(e.getMessage(), "max pending rows is not supported for TCP protocol");
+            }
+        });
+    }
+
+    @Test
+    public void testMaxPendingRows_doubleConfiguration() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                Sender.builder().maxPendingRows(1).maxPendingRows(1);
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "max pending rows was already configured [max-pending-rows=1]");
+            }
+        });
+    }
+
+    @Test
+    public void testMaxRequestBufferSizeCannotBeLessThanDefault() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Sender sender = Sender.builder().url("http://localhost:1").maxBufferCapacity(65535).build()) {
+                Assert.fail();
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "maximum buffer capacity cannot be less than initial buffer capacity [maximum-buffer-capacity=65535, default-buffer-capacity=65536]");
+            }
+        });
+    }
+
+    @Test
+    public void testMaxRequestBufferSizeCannotBeLessThanInitialBufferSize() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Sender sender = Sender.builder().url("http://localhost:1").maxBufferCapacity(100_000).bufferCapacity(200_000).build()) {
+                Assert.fail();
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "maximum buffer capacity cannot be less than initial buffer capacity [maximum-buffer-capacity=100000, initial-buffer-capacity=200000]");
             }
         });
     }

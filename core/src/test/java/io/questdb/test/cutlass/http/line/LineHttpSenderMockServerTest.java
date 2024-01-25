@@ -156,33 +156,6 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     }
 
     @Test
-    public void testMaxPendingRows_doubleConfiguration() {
-        try {
-            Sender.builder().maxPendingRows(1).maxPendingRows(1);
-        } catch (LineSenderException e) {
-            TestUtils.assertContains(e.getMessage(), "max pending rows was already configured [max-pending-rows=1]");
-        }
-    }
-
-    @Test
-    public void testMaxRequestBufferSizeCannotBeLessThanDefault() {
-        try (Sender sender = Sender.builder().url("http://localhost:1").maxBufferCapacity(65535).build()) {
-            Assert.fail();
-        } catch (LineSenderException e) {
-            TestUtils.assertContains(e.getMessage(), "maximum buffer capacity cannot be less than initial buffer capacity [maximum-buffer-capacity=65535, default-buffer-capacity=65536]");
-        }
-    }
-
-    @Test
-    public void testMaxRequestBufferSizeCannotBeLessThanInitialBufferSize() {
-        try (Sender sender = Sender.builder().url("http://localhost:1").maxBufferCapacity(100_000).bufferCapacity(200_000).build()) {
-            Assert.fail();
-        } catch (LineSenderException e) {
-            TestUtils.assertContains(e.getMessage(), "maximum buffer capacity cannot be less than initial buffer capacity [maximum-buffer-capacity=100000, initial-buffer-capacity=200000]");
-        }
-    }
-
-    @Test
     public void testMaxRequestBufferSizeExceeded() {
         try (Sender sender = Sender.builder().url("http://localhost:1")
                 .maxBufferCapacity(65536)
