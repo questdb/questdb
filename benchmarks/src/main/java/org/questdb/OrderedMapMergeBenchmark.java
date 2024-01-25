@@ -130,6 +130,15 @@ public class OrderedMapMergeBenchmark {
 
     @Benchmark
     public long testMerge() {
+        for (int i = 0; i < nMaps; i++) {
+            destMap.merge(srcMaps.getQuick(i), mergeFunction);
+            srcMaps.getQuick(i).close();
+        }
+        return destMap.size();
+    }
+
+    @Benchmark
+    public long testPresizeAndMerge() {
         long sizeEstimate = 0;
         for (int i = 0; i < nMaps; i++) {
             final Map srcMap = srcMaps.getQuick(i);
