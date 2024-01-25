@@ -106,7 +106,7 @@ public class GroupByIntHashSetTest extends AbstractCairoTest {
                 set.setAllocator(allocator);
                 set.of(0);
 
-                final int N = 1000;
+                final int N = 10000;
 
                 for (int i = 0; i < N; i++) {
                     set.add(rnd.nextPositiveInt() + 1);

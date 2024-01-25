@@ -310,13 +310,14 @@ public final class Files {
 
     public static native int lock(int fd);
 
-    public static void madvise(long address, long len, int advise) {
+    public static int madvise(long address, long len, int advise) {
         if (advise > -1 && (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64)) {
             madvise0(address, len, advise);
         }
+        return 0;
     }
 
-    public static native void madvise0(long address, long len, int advise);
+    public static native int madvise0(long address, long len, int advise);
 
     public static int mkdir(Path path, int mode) {
         return mkdir(path.ptr(), mode);
