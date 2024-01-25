@@ -502,8 +502,7 @@ public abstract class HttpClient implements QuietCloseable {
             }
             socket.of(fd);
             if (socket.supportsTls()) {
-                String serverName = Chars.toString(host);
-                if (socket.startTlsSession(serverName) < 0) {
+                if (socket.startTlsSession(host) < 0) {
                     int errno = nf.errno();
                     disconnect();
                     throw new HttpClientException("could not start TLS session [fd=").put(fd).put(", errno=").put(errno).put(']');
