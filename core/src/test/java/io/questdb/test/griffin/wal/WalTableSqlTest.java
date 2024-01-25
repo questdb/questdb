@@ -747,60 +747,6 @@ public class WalTableSqlTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testInsertIntoWalTableAsSelect() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl("CREATE TABLE \"nhs\" (\n" +
-                    "  nuuid SYMBOL capacity 256 CACHE index capacity 256,\n" +
-                    "  lns LONG,\n" +
-                    "  hst STRING,\n" +
-                    "  slt LONG,\n" +
-                    "  ise BOOLEAN,\n" +
-                    "  vvv STRING,\n" +
-                    "  cut DOUBLE,\n" +
-                    "  mup DOUBLE,\n" +
-                    "  mub DOUBLE,\n" +
-                    "  nrb DOUBLE,\n" +
-                    "  ntb DOUBLE,\n" +
-                    "  dup DOUBLE,\n" +
-                    "  timestamp TIMESTAMP\n" +
-                    ") timestamp (timestamp) PARTITION BY DAY WAL DEDUP UPSERT KEYS(timestamp, nuuid);");
-
-            ddl("CREATE TABLE 'nhs2' (\n" +
-                    "  nuuid SYMBOL capacity 256 CACHE,\n" +
-                    "  lns LONG,\n" +
-                    "  hst STRING,\n" +
-                    "  slt LONG,\n" +
-                    "  vvv STRING,\n" +
-                    "  timestamp TIMESTAMP,\n" +
-                    "  ise BOOLEAN\n" +
-                    ") timestamp (timestamp) PARTITION BY DAY BYPASS WAL;");
-
-            insert("insert batch 100000 into nhs(nuuid, lns, hst, slt, ise, vvv,  \n" +
-                    "timestamp)\n" +
-                    "select nuuid, lns, hst, slt, ise, vvv, \n" +
-                    "timestamp\n" +
-                    "from nhs2");
-
-            drainWalQueue();
-
-            insert("insert into nhs2(nuuid, lns, hst, slt, ise, vvv, timestamp)\n" +
-                    "values('asdf', 123, 'asdff', 222, true, '1.2.3', 12321312321L)");
-
-            insert("insert batch 100000 into nhs(nuuid, lns, hst, slt, ise, vvv,  \n" +
-                    "timestamp)\n" +
-                    "select nuuid, lns, hst, slt, ise, vvv, \n" +
-                    "timestamp\n" +
-                    "from nhs2");
-
-            drainWalQueue();
-
-            assertSql("nuuid\tlns\thst\tslt\tise\tvvv\tcut\tmup\tmub\tnrb\tntb\tdup\ttimestamp\n" +
-                    "asdf\t123\tasdff\t222\ttrue\t1.2.3\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-01T03:25:21.312321Z\n", "nhs");
-
-        });
-    }
-
-    @Test
     public void testDropFailedWhileDataFileLocked() throws Exception {
         testDropFailedWhileDataFileLocked("x.d");
     }
@@ -1247,6 +1193,16 @@ public class WalTableSqlTest extends AbstractCairoTest {
             assertSql("name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\n" +
                     "testEmptyTruncate\tfalse\t1\t0\t1\n", "wal_tables()");
         });
+    }
+
+    @Test
+    public void testInsertIntNoTimestampTableAsSelect() throws Exception {
+        testInsertAsSelectBatched("");
+    }
+
+    @Test
+    public void testInsertIntoWalTableAsSelect() throws Exception {
+        testInsertAsSelectBatched("timestamp (timestamp) PARTITION BY DAY WAL DEDUP UPSERT KEYS(timestamp, nuuid)");
     }
 
     @Test
@@ -1920,6 +1876,59 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
                 assertException(tableName, 0, "does not exist");
             }
+        });
+    }
+
+    private void testInsertAsSelectBatched(String destTableCreateAttr) throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE \"nhs\" (\n" +
+                    "  nuuid SYMBOL capacity 256 CACHE index capacity 256,\n" +
+                    "  lns LONG,\n" +
+                    "  hst STRING,\n" +
+                    "  slt LONG,\n" +
+                    "  ise BOOLEAN,\n" +
+                    "  vvv STRING,\n" +
+                    "  cut DOUBLE,\n" +
+                    "  mup DOUBLE,\n" +
+                    "  mub DOUBLE,\n" +
+                    "  nrb DOUBLE,\n" +
+                    "  ntb DOUBLE,\n" +
+                    "  dup DOUBLE,\n" +
+                    "  timestamp TIMESTAMP\n" +
+                    ") " + destTableCreateAttr + ";");
+
+            ddl("CREATE TABLE 'nhs2' (\n" +
+                    "  nuuid SYMBOL capacity 256 CACHE,\n" +
+                    "  lns LONG,\n" +
+                    "  hst STRING,\n" +
+                    "  slt LONG,\n" +
+                    "  vvv STRING,\n" +
+                    "  timestamp TIMESTAMP,\n" +
+                    "  ise BOOLEAN\n" +
+                    ") timestamp (timestamp) PARTITION BY DAY BYPASS WAL;");
+
+            insert("insert batch 100000 into nhs(nuuid, lns, hst, slt, ise, vvv,  \n" +
+                    "timestamp)\n" +
+                    "select nuuid, lns, hst, slt, ise, vvv, \n" +
+                    "timestamp\n" +
+                    "from nhs2");
+
+            drainWalQueue();
+
+            insert("insert into nhs2(nuuid, lns, hst, slt, ise, vvv, timestamp)\n" +
+                    "values('asdf', 123, 'asdff', 222, true, '1.2.3', 12321312321L)");
+
+            insert("insert batch 100000 into nhs(nuuid, lns, hst, slt, ise, vvv,  \n" +
+                    "timestamp)\n" +
+                    "select nuuid, lns, hst, slt, ise, vvv, \n" +
+                    "timestamp\n" +
+                    "from nhs2");
+
+            drainWalQueue();
+
+            assertSql("nuuid\tlns\thst\tslt\tise\tvvv\tcut\tmup\tmub\tnrb\tntb\tdup\ttimestamp\n" +
+                    "asdf\t123\tasdff\t222\ttrue\t1.2.3\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-01T03:25:21.312321Z\n", "nhs");
+
         });
     }
 }
