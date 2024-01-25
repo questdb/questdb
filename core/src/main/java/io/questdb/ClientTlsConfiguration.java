@@ -24,45 +24,30 @@
 
 package io.questdb;
 
-import io.questdb.cutlass.http.client.HttpClientCookieHandlerFactory;
-import io.questdb.network.*;
+public class ClientTlsConfiguration {
+    public static final int TLS_VALIDATION_MODE_FULL = 0;
+    public static final ClientTlsConfiguration DEFAULT = new ClientTlsConfiguration(null, null, TLS_VALIDATION_MODE_FULL);
+    public static final int TLS_VALIDATION_MODE_NONE = 1;
+    public static final ClientTlsConfiguration INSECURE_NO_VALIDATION = new ClientTlsConfiguration(null, null, TLS_VALIDATION_MODE_NONE);
+    private final int tlsValidationMode;
+    private final char[] trustStorePassword;
+    private final String trustStorePath;
 
-public interface HttpClientConfiguration {
-    HttpClientCookieHandlerFactory getCookieHandlerFactory();
-
-    default EpollFacade getEpollFacade() {
-        return EpollFacadeImpl.INSTANCE;
+    public ClientTlsConfiguration(String trustStorePath, char[] trustStorePassword, int tlsValidationMode) {
+        this.trustStorePath = trustStorePath;
+        this.trustStorePassword = trustStorePassword;
+        this.tlsValidationMode = tlsValidationMode;
     }
 
-    default int getInitialRequestBufferSize() {
-        return Math.min(64 * 1024, getMaximumRequestBufferSize());
+    public int tlsValidationMode() {
+        return tlsValidationMode;
     }
 
-    default KqueueFacade getKQueueFacade() {
-        return KqueueFacadeImpl.INSTANCE;
+    public char[] trustStorePassword() {
+        return trustStorePassword;
     }
 
-    default int getMaximumRequestBufferSize() {
-        return Integer.MAX_VALUE;
-    }
-
-    default NetworkFacade getNetworkFacade() {
-        return NetworkFacadeImpl.INSTANCE;
-    }
-
-    default int getResponseBufferSize() {
-        return 64 * 1024;
-    }
-
-    default SelectFacade getSelectFacade() {
-        return SelectFacadeImpl.INSTANCE;
-    }
-
-    default int getTimeout() {
-        return 60_000;
-    }
-
-    default int getWaitQueueCapacity() {
-        return 4;
+    public String trustStorePath() {
+        return trustStorePath;
     }
 }

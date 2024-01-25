@@ -63,6 +63,11 @@ public class HttpClientException extends RuntimeException {
         return this;
     }
 
+    public HttpClientException put(long value) {
+        message.put(value);
+        return this;
+    }
+
     public HttpClientException put(@Nullable CharSequence cs) {
         message.put(cs);
         return this;
