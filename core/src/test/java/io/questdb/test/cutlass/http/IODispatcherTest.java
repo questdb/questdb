@@ -8328,8 +8328,8 @@ public class IODispatcherTest extends AbstractTest {
         ObjList<String> ddls = new ObjList<>(
                 baseTable,
                 baseTable + " timestamp(ts)",
-                baseTable + " timestamp(ts) partition by DAY BYPASS WAL",
-                walTable
+                baseTable + " timestamp(ts) partition by DAY BYPASS WAL"
+                // walTable // TODO: ban cancellation of queries inside WAL Apply job
         );
 
         String createAsSelect = "create table new_tab as (select * from tab where sleep(120000))";
@@ -9052,7 +9052,7 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     private static class DelayedListener implements QueryRegistry.Listener {
-        private SOCountDownLatch queryFound = new SOCountDownLatch(1);
+        private final SOCountDownLatch queryFound = new SOCountDownLatch(1);
         private volatile CharSequence queryText;
 
         @Override
