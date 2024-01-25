@@ -698,11 +698,11 @@ public interface Sender extends Closeable {
             if (bufferCapacity == BUFFER_CAPACITY_NOT_SET) {
                 bufferCapacity = DEFAULT_BUFFER_CAPACITY;
             }
-            if (port == PORT_NOT_SET) {
-                port = DEFAULT_TCP_PORT;
-            }
             if (protocol == PROTOCOL_NOT_SET) {
                 protocol = PROTOCOL_TCP;
+            }
+            if (port == PORT_NOT_SET) {
+                port = protocol == PROTOCOL_HTTP ? DEFAULT_HTTP_PORT : DEFAULT_TCP_PORT;
             }
         }
 
