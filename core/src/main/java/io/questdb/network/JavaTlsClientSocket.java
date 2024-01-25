@@ -537,7 +537,7 @@ public final class JavaTlsClientSocket implements Socket {
 
         int bytesRemaining = bytesToSend - n;
         // compact the buffer
-        Vect.memcpy(wrapOutputBufferPtr, wrapOutputBufferPtr + n, bytesRemaining);
+        Vect.memmove(wrapOutputBufferPtr, wrapOutputBufferPtr + n, bytesRemaining);
         wrapOutputBuffer.position(bytesRemaining);
         return n;
     }
