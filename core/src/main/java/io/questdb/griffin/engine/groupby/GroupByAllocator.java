@@ -197,7 +197,7 @@ public class GroupByAllocator implements QuietCloseable {
             }
 
             long chunkSize = Math.max(size, defaultChunkSize);
-            long allocatedPtr = Unsafe.malloc(chunkSize, MemoryTag.NATIVE_GROUP_BY_FUNCTION, true);
+            long allocatedPtr = Unsafe.malloc(chunkSize, MemoryTag.NATIVE_GROUP_BY_FUNCTION);
             chunks.put(allocatedPtr, chunkSize);
             allocated += chunkSize;
             ptr = Bytes.align8b(allocatedPtr + size);
@@ -229,7 +229,7 @@ public class GroupByAllocator implements QuietCloseable {
                     long chunkSize = chunks.valueAt(index);
                     if (chunkSize == oldSize) {
                         // Nice, we can reallocate the whole chunk.
-                        long chunkPtr = Unsafe.realloc(ptr, chunkSize, newSize, MemoryTag.NATIVE_GROUP_BY_FUNCTION, true);
+                        long chunkPtr = Unsafe.realloc(ptr, chunkSize, newSize, MemoryTag.NATIVE_GROUP_BY_FUNCTION);
                         allocated += newSize - chunkSize;
                         chunks.removeAt(index);
                         chunks.put(chunkPtr, newSize);

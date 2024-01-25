@@ -159,7 +159,7 @@ public class OrderedMap implements Map, Reopenable {
         this.listMemoryTag = listMemoryTag;
         initialPageSize = pageSize;
         this.loadFactor = loadFactor;
-        heapStart = kPos = Unsafe.malloc(heapSize = pageSize, heapMemoryTag, true);
+        heapStart = kPos = Unsafe.malloc(heapSize = pageSize, heapMemoryTag);
         heapLimit = heapStart + pageSize;
         this.keyCapacity = (int) (keyCapacity / loadFactor);
         this.keyCapacity = this.initialKeyCapacity = Math.max(Numbers.ceilPow2(this.keyCapacity), MIN_KEY_CAPACITY);
@@ -309,7 +309,7 @@ public class OrderedMap implements Map, Reopenable {
     @Override
     public void restoreInitialCapacity() {
         if (heapSize != initialPageSize || keyCapacity != initialKeyCapacity) {
-            heapStart = kPos = Unsafe.realloc(heapStart, heapLimit - heapStart, heapSize = initialPageSize, heapMemoryTag, true);
+            heapStart = kPos = Unsafe.realloc(heapStart, heapLimit - heapStart, heapSize = initialPageSize, heapMemoryTag);
             heapLimit = heapStart + initialPageSize;
             keyCapacity = initialKeyCapacity;
             keyCapacity = keyCapacity < MIN_KEY_CAPACITY ? MIN_KEY_CAPACITY : Numbers.ceilPow2(keyCapacity);
@@ -544,7 +544,7 @@ public class OrderedMap implements Map, Reopenable {
             if (kCapacity > MAX_HEAP_SIZE) {
                 throw LimitOverflowException.instance().put("limit of ").put(MAX_HEAP_SIZE).put(" memory exceeded in FastMap");
             }
-            long kAddress = Unsafe.realloc(heapStart, heapSize, kCapacity, heapMemoryTag, true);
+            long kAddress = Unsafe.realloc(heapStart, heapSize, kCapacity, heapMemoryTag);
 
             this.heapSize = kCapacity;
             long delta = kAddress - heapStart;
