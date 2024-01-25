@@ -89,16 +89,6 @@ public interface Sender extends Closeable {
     }
 
     /**
-     * Construct a new Sender instance with default settings.
-     *
-     * @param url full URL to a QuestDB server.
-     * @return a new Sender instance with default settings.
-     */
-    static Sender withDefaultsFromUrl(CharSequence url) {
-        return builder().url(url).build();
-    }
-
-    /**
      * Finalize the current row and assign an explicit timestamp.
      * After calling this method you can start a new row by calling {@link #table(CharSequence)} again.
      *
@@ -251,7 +241,8 @@ public interface Sender extends Closeable {
      * Example usage:
      * <pre>{@code
      * try (Sender sender = Sender.builder()
-     *  .url("http://localhost:9000")
+     *  .address("http://localhost:9000")
+     *  .http()
      *  .build()) {
      *      sender.table(tableName).column("value", 42).atNow();
      *  }
@@ -272,8 +263,8 @@ public interface Sender extends Closeable {
         private static final int MIN_BUFFER_SIZE_FOR_AUTH = 512 + 1; // challenge size + 1;
         private static final byte PORT_NOT_SET = 0;
         private static final int PROTOCOL_HTTP = 1;
+        private static final int PROTOCOL_NOT_SET = -1;
         private static final int PROTOCOL_TCP = 0;
-        private static final int PROTOCOL_NOT_SET = PROTOCOL_TCP;
         private int bufferCapacity = BUFFER_CAPACITY_NOT_SET;
         private String host;
         private int httpTimeout = HTTP_TIMEOUT_NOT_SET;
@@ -325,7 +316,6 @@ public interface Sender extends Closeable {
          *
          * @param address address of a QuestDB server
          * @return this instance for method chaining.
-         * @deprecated use {@link #url(CharSequence)} instead
          */
         public LineSenderBuilder address(CharSequence address) {
             if (this.host != null) {
@@ -494,33 +484,18 @@ public interface Sender extends Closeable {
         }
 
         /**
-         * Use a password for authentication when communicating over HTTP protocol.
+         * Use HTTP protocol as transport.
          * <br>
-         * Use this when you set username via {@link #url(CharSequence)}, but you don't want to include password in the URL.
-         * <br>
-         * This is only used when communicating over HTTP transport, and it's illegal to call this method when
-         * communicating over TCP transport.
+         * Configures the Sender to use the HTTP protocol.
          *
-         * @param password password
-         * @return this instance for method chaining
-         * @see #httpUsernamePassword(String, String)
-         * @see #httpToken(String)
+         * @return an instance of {@link LineSenderBuilder} for further configuration
          */
-        public LineSenderBuilder httpPassword(String password) {
-            if (this.password != null) {
-                throw new LineSenderException("authentication password was already configured");
+        public LineSenderBuilder http() {
+            if (protocol != PROTOCOL_NOT_SET) {
+                throw new LineSenderException("protocol was already configured ")
+                        .put("[configured-protocol=").put(protocol).put("]");
             }
-            if (httpToken != null) {
-                throw new LineSenderException("token authentication is already configured ")
-                        .put("[configured-token=").put(this.httpToken).put("]");
-            }
-            if (this.username == null) {
-                throw new LineSenderException("HTTP authentication username was not configured in URL");
-            }
-            if (Chars.isBlank(password)) {
-                throw new LineSenderException("password cannot be empty nor null");
-            }
-            this.password = password;
+            protocol = PROTOCOL_HTTP;
             return this;
         }
 
@@ -652,7 +627,6 @@ public interface Sender extends Closeable {
          *
          * @param port port where a QuestDB server is listening on.
          * @return this instance for method chaining
-         * @deprecated use {@link #url(CharSequence)} instead
          */
         public LineSenderBuilder port(int port) {
             if (this.port != 0) {
@@ -700,135 +674,18 @@ public interface Sender extends Closeable {
         }
 
         /**
-         * Configures a QuestDB server address. The address must be a full URL, including a protocol, host and port.
-         * This is the preferred way of configuring a Sender.
-         * <p>
-         * Example 1: http://localhost:9000 - this will configure a Sender to communicate over HTTP transport
+         * Use TCP protocol as transport.
          * <br>
-         * Example 2: tcp://localhost:9009 - this will configure a Sender to communicate over TCP transport
+         * Configures the Sender to use the TCP protocol. This is the default transport.
          *
-         * @param url a full URL to a QuestDB server.
-         * @return this instance for method chaining
+         * @return an instance of {@link LineSenderBuilder} for further configuration
          */
-        public LineSenderBuilder url(CharSequence url) {
-            if (Chars.isBlank(url)) {
-                throw new LineSenderException("url cannot be empty nor null");
+        public LineSenderBuilder tcp() {
+            if (protocol != PROTOCOL_NOT_SET) {
+                throw new LineSenderException("protocol was already configured ")
+                        .put("[configured-protocol=").put(protocol).put("]");
             }
-            if (host != null) {
-                throw new LineSenderException("server address is already configured ")
-                        .put("[configured-address=").put(this.host).put("]");
-            }
-            if (port != PORT_NOT_SET) {
-                throw new LineSenderException("post is already configured ")
-                        .put("[configured-port=").put(port).put("]");
-            }
-            int parsedUntil;
-            if (Chars.startsWith(url, "http://") || Chars.startsWith(url, "HTTP://")) {
-                parsedUntil = 7;
-                protocol = PROTOCOL_HTTP;
-            } else if (Chars.startsWith(url, "https://") || Chars.startsWith(url, "HTTPS://")) {
-                enableTls();
-                parsedUntil = 8;
-                protocol = PROTOCOL_HTTP;
-            } else if (Chars.startsWith(url, "tcp://") || Chars.startsWith(url, "TCP://")) {
-                parsedUntil = 6;
-                protocol = PROTOCOL_TCP;
-            } else if (Chars.startsWith(url, "tcps://") || Chars.startsWith(url, "TCPS://")) {
-                parsedUntil = 7;
-                protocol = PROTOCOL_TCP;
-                enableTls();
-            } else {
-                throw new LineSenderException("invalid url protocol ").put("[url=").put(url).put("]");
-            }
-            int atPos = Chars.indexOf(url, parsedUntil, '@');
-            if (atPos != -1) {
-                int usrPwdSeparator = Chars.indexOf(url, parsedUntil, atPos, ':');
-                if (usrPwdSeparator != -1) {
-                    if (usrPwdSeparator == parsedUntil) {
-                        if (protocol != PROTOCOL_HTTP) {
-                            throw new LineSenderException("HTTP token authentication is only supported for HTTP protocol");
-                        }
-                        if (httpToken != null) {
-                            throw new LineSenderException("HTTP token authentication was already configured");
-                        }
-                        if (parsedUntil + 1 == atPos) {
-                            throw new LineSenderException("HTTP authentication token cannot be empty");
-                        }
-                        httpToken = url.subSequence(parsedUntil + 1, atPos).toString();
-                    } else {
-                        switch (protocol) {
-                            case PROTOCOL_HTTP: {
-                                if (username != null) {
-                                    throw new LineSenderException("authentication username was already configured ")
-                                            .put("[configured-username=").put(this.username).put("]");
-                                }
-                                if (password != null) {
-                                    throw new LineSenderException("authentication password was already configured");
-                                }
-                                username = url.subSequence(parsedUntil, usrPwdSeparator).toString();
-                                password = url.subSequence(usrPwdSeparator + 1, atPos).toString();
-                                break;
-                            }
-                            case PROTOCOL_TCP: {
-                                String keyId = url.subSequence(parsedUntil, usrPwdSeparator).toString();
-                                String encodedKey = url.subSequence(usrPwdSeparator + 1, atPos).toString();
-                                enableAuth(keyId).authToken(encodedKey);
-                                break;
-                            }
-                            default:
-                                throw new LineSenderException("unsupported protocol ")
-                                        .put("[protocol=").put(protocol).put("]");
-                        }
-                    }
-                } else {
-                    if (protocol == PROTOCOL_TCP) {
-                        throw new LineSenderException("keyId in URL is not supported for TCP protocol ");
-                    }
-                    username = url.subSequence(parsedUntil, atPos).toString();
-                }
-                parsedUntil = atPos + 1;
-            }
-
-            int hostEnd = Chars.indexOf(url, parsedUntil, ':');
-            if (hostEnd == -1) {
-                port = (protocol == PROTOCOL_HTTP) ? DEFAULT_HTTP_PORT : DEFAULT_TCP_PORT;
-                hostEnd = Chars.indexOf(url, parsedUntil, '/');
-                if (hostEnd == -1) {
-                    hostEnd = url.length();
-                }
-            } else {
-                int portEnd = Chars.indexOf(url, hostEnd + 1, '/');
-                if (portEnd == -1) {
-                    portEnd = url.length();
-                }
-                try {
-                    port = Numbers.parseInt(url, hostEnd + 1, portEnd);
-                    if (port < 1 || port > 65535) {
-                        throw new LineSenderException("invalid port in url ")
-                                .put("[url=").put(url).put("]");
-                    }
-                } catch (NumericException e) {
-                    throw new LineSenderException("invalid port in url ")
-                            .put("[url=").put(url).put("]");
-                }
-            }
-            CharSequence hostSeq = url.subSequence(parsedUntil, hostEnd);
-            if (Chars.isBlank(hostSeq)) {
-                throw new LineSenderException("host cannot be empty")
-                        .put("[url=").put(url).put("]");
-            }
-            for (int i = 0, n = hostSeq.length(); i < n; i++) {
-                char c = hostSeq.charAt(i);
-                if (Character.isWhitespace(c)) {
-                    throw new LineSenderException("host cannot contain a whitespace ")
-                            .put("[url=").put(url).put("]");
-                }
-                if (c == '/') {
-                    throw new LineSenderException("host cannot contain a slash ")
-                            .put("[url=").put(url).put("]");
-                }
-            }
-            host = Chars.toString(hostSeq);
+            protocol = PROTOCOL_TCP;
             return this;
         }
 
@@ -845,6 +702,9 @@ public interface Sender extends Closeable {
             }
             if (port == PORT_NOT_SET) {
                 port = DEFAULT_TCP_PORT;
+            }
+            if (protocol == PROTOCOL_NOT_SET) {
+                protocol = PROTOCOL_TCP;
             }
         }
 

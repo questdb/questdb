@@ -137,18 +137,6 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
-    public void testBadUrl() throws Exception {
-        assertUrlFails("tcp://:9000", "host cannot be empty");
-        assertUrlFails("tcp://", "host cannot be empty");
-        assertUrlFails("badbadschema://", "invalid url protocol [url=badbadschema://]");
-        assertUrlFails("whatisthis", "invalid url protocol");
-        assertUrlFails("tcp://localhost:notprot", "invalid port in url [url=tcp://localhost:notprot]");
-        assertUrlFails("tcp://127.0.0.1:-123", "invalid port in url [url=tcp://127.0.0.1:-123]");
-        assertUrlFails("tcp://white space:9000", "host cannot contain a whitespace [url=tcp://white space:9000]");
-        assertUrlFails("tcp://with/slash:9000", "host cannot contain a slash [url=tcp://with/slash:9000]");
-    }
-
-    @Test
     public void testBufferSizeDoubleSet() throws Exception {
         assertMemoryLeak(() -> {
             Sender.LineSenderBuilder builder = Sender.builder().bufferCapacity(1024);
@@ -420,26 +408,6 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
-    public void testHttpTokenInUrlCannotBeEmpty() {
-        try {
-            Sender.withDefaultsFromUrl("http://:@localhost:9000");
-            Assert.fail();
-        } catch (LineSenderException e) {
-            TestUtils.assertContains(e.getMessage(), "HTTP authentication token cannot be empty");
-        }
-    }
-
-    @Test
-    public void testHttpTokenInUrlUnsupportedForTcp() {
-        try {
-            Sender.withDefaultsFromUrl("tcp://:token@localhost:9000");
-            Assert.fail();
-        } catch (LineSenderException e) {
-            TestUtils.assertContains(e.getMessage(), "HTTP token authentication is only supported for HTTP protocol");
-        }
-    }
-
-    @Test
     public void testHttpTokenNotSupportedForTcp() throws Exception {
         assertMemoryLeak(() -> {
             try {
@@ -455,21 +423,21 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     public void testInvalidHttpTimeout() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                Sender.builder().url("http://someurl").httpTimeoutMillis(0);
+                Sender.builder().address("someurl").http().httpTimeoutMillis(0);
                 fail("should fail with bad http time");
             } catch (LineSenderException e) {
                 TestUtils.assertContains(e.getMessage(), "HTTP timeout must be positive [timeout=0]");
             }
 
             try {
-                Sender.builder().url("http://someurl").httpTimeoutMillis(-1);
+                Sender.builder().address("someurl").http().httpTimeoutMillis(-1);
                 fail("should fail with bad http time");
             } catch (LineSenderException e) {
                 TestUtils.assertContains(e.getMessage(), "HTTP timeout must be positive [timeout=-1]");
             }
 
             try {
-                Sender.builder().url("http://someurl").httpTimeoutMillis(100).httpTimeoutMillis(200);
+                Sender.builder().address("someurl").http().httpTimeoutMillis(100).httpTimeoutMillis(200);
                 fail("should fail with bad http time");
             } catch (LineSenderException e) {
                 TestUtils.assertContains(e.getMessage(), "HTTP timeout was already configured [configured-timeout=100, timeout=200]");
@@ -500,32 +468,6 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
         } catch (LineSenderException e) {
             TestUtils.assertContains(e.getMessage(), "retry timeout was already configured [retry-timeout-millis=100]");
         }
-    }
-
-    @Test
-    public void testKeyIdAndTokenInUrl() throws Exception {
-        authKeyId = AUTH_KEY_ID1;
-        runInContext(r -> {
-            try (Sender sender = Sender.builder()
-                    .url("tcp://" + AUTH_KEY_ID1 + ":" + AUTH_TOKEN_KEY1 + "@" + LOCALHOST + ":" + bindPort)
-                    .build()) {
-                sender.table("mytable").symbol("symbol", "symbol").atNow();
-                sender.flush();
-                assertTableExistsEventually(engine, "mytable");
-            }
-        });
-    }
-
-    @Test
-    public void testKeyIdWithoutTokenInUrlNotSupported() throws Exception {
-        assertMemoryLeak(() -> {
-            try {
-                Sender.withDefaultsFromUrl("tcp://key@localhost:9000");
-                fail();
-            } catch (LineSenderException e) {
-                TestUtils.assertContains(e.getMessage(), "keyId in URL is not supported for TCP protocol");
-            }
-        });
     }
 
     @Test
@@ -567,7 +509,12 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testMaxRequestBufferSizeCannotBeLessThanDefault() throws Exception {
         assertMemoryLeak(() -> {
-            try (Sender sender = Sender.builder().url("http://localhost:1").maxBufferCapacity(65535).build()) {
+            try (Sender sender = Sender.builder()
+                    .address("localhost:1")
+                    .http()
+                    .maxBufferCapacity(65535)
+                    .build()
+            ) {
                 Assert.fail();
             } catch (LineSenderException e) {
                 TestUtils.assertContains(e.getMessage(), "maximum buffer capacity cannot be less than initial buffer capacity [maximum-buffer-capacity=65535, default-buffer-capacity=65536]");
@@ -578,7 +525,13 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testMaxRequestBufferSizeCannotBeLessThanInitialBufferSize() throws Exception {
         assertMemoryLeak(() -> {
-            try (Sender sender = Sender.builder().url("http://localhost:1").maxBufferCapacity(100_000).bufferCapacity(200_000).build()) {
+            try (Sender sender = Sender.builder()
+                    .address("localhost:1")
+                    .http()
+                    .maxBufferCapacity(100_000)
+                    .bufferCapacity(200_000)
+                    .build()
+            ) {
                 Assert.fail();
             } catch (LineSenderException e) {
                 TestUtils.assertContains(e.getMessage(), "maximum buffer capacity cannot be less than initial buffer capacity [maximum-buffer-capacity=100000, initial-buffer-capacity=200000]");
@@ -616,7 +569,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     public void testPlainOldTokenNotSupportedForHttpProtocol() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                Sender.builder().url("http://localhost:9000").enableAuth("key").authToken(AUTH_TOKEN_KEY1).build();
+                Sender.builder().address("localhost:9000").http().enableAuth("key").authToken(AUTH_TOKEN_KEY1).build();
                 fail("HTTP token should not be supported for TCP");
             } catch (LineSenderException e) {
                 TestUtils.assertContains(e.getMessage(), "old token authentication is not supported for HTTP protocol");
@@ -672,57 +625,6 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
                 fail("should not allow double port set");
             } catch (LineSenderException e) {
                 TestUtils.assertContains(e.getMessage(), "already configured");
-            }
-        });
-    }
-
-    @Test
-    public void testTcpSchemaUrlBuilder() throws Exception {
-        runInContext(r -> {
-            String url = "tcp://" + LOCALHOST + ":" + bindPort;
-            try (Sender sender = Sender.builder().url(url).build()) {
-                sender.table("mytable").symbol("symbol", "symbol").atNow();
-                sender.flush();
-                assertTableExistsEventually(engine, "mytable");
-            }
-        });
-    }
-
-    @Test
-    public void testTcpSchemaUrlBuilderUpperCase() throws Exception {
-        runInContext(r -> {
-            String url = "TCP://" + LOCALHOST + ":" + bindPort;
-            try (Sender sender = Sender.builder().url(url).build()) {
-                sender.table("mytable").symbol("symbol", "symbol").atNow();
-                sender.flush();
-                assertTableExistsEventually(engine, "mytable");
-            }
-        });
-    }
-
-    @Test
-    public void testTcpSchemaWithDefaults() throws Exception {
-        runInContext(r -> {
-            String url = "tcp://" + LOCALHOST + ":" + bindPort;
-            try (Sender sender = Sender.withDefaultsFromUrl(url)) {
-                sender.table("mytable").symbol("symbol", "symbol").atNow();
-                sender.flush();
-                assertTableExistsEventually(engine, "mytable");
-            }
-        });
-    }
-
-    @Test
-    public void testTcpsSchemaUrlBuilder() throws Exception {
-        runInContext(r -> {
-            String url = "tcps://" + LOCALHOST + ":" + TLS_PROXY.getListeningPort();
-            Sender.LineSenderBuilder builder = Sender.builder()
-                    .url(url)
-                    .advancedTls().disableCertificateValidation();
-            try (Sender sender = builder.build()) {
-                sender.table("mytable").symbol("symbol", "symbol").atNow();
-                sender.flush();
-                assertTableExistsEventually(engine, "mytable");
             }
         });
     }
@@ -790,17 +692,6 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
                 fail("HTTP token should not be supported for TCP");
             } catch (LineSenderException e) {
                 TestUtils.assertContains(e.getMessage(), "username/password authentication is not supported for TCP protocol");
-            }
-        });
-    }
-
-    private static void assertUrlFails(String url, String expectedError) throws Exception {
-        assertMemoryLeak(() -> {
-            try {
-                Sender.builder().url(url);
-                fail("should fail with blank host");
-            } catch (LineSenderException e) {
-                TestUtils.assertContains(e.getMessage(), expectedError);
             }
         });
     }

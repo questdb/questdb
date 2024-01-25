@@ -66,7 +66,11 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         "i int, l long, ip ipv4, g geohash(4c), ts timestamp) timestamp(ts) partition by DAY WAL");
 
                 int port = IlpHttpUtils.getHttpPort(serverMain);
-                try (Sender sender = Sender.withDefaultsFromUrl("http://localhost:" + port)) {
+                try (Sender sender = Sender.builder()
+                        .address("localhost:" + port)
+                        .http()
+                        .build()
+                ) {
                     sender.table("ex_tbl")
                             .doubleColumn("b", 1234)
                             .at(1233456, ChronoUnit.NANOS);
@@ -226,7 +230,8 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
                 int port = IlpHttpUtils.getHttpPort(serverMain);
                 try (Sender sender = Sender.builder()
-                        .url("http://localhost:" + port)
+                        .address("localhost:" + port)
+                        .http()
                         .build()
                 ) {
                     sender.table("ex_tbl")
@@ -267,7 +272,8 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
                 int port = IlpHttpUtils.getHttpPort(serverMain);
                 try (Sender sender = Sender.builder()
-                        .url("http://localhost:" + port)
+                        .address("localhost:" + port)
+                        .http()
                         .build()
                 ) {
                     sender.table("ex_tbl")
@@ -351,7 +357,8 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
         int port = IlpHttpUtils.getHttpPort(serverMain);
         try (Sender sender = Sender.builder()
-                .url("http://localhost:" + port)
+                .address("localhost:" + port)
+                .http()
                 .build()
         ) {
             if (count / 2 > 0) {
