@@ -353,7 +353,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             medianList.clear();
             for (int i = 0; i < perWorkerMapCount; i++) {
                 final Map srcMap = perWorkerParticles.getQuick(i).getMap();
-                medianList.add(srcMap.getHeapSize());
+                medianList.add(srcMap.getUsedHeapSize());
             }
             medianList.sort();
             medianHeapSize = medianList.getQuick(medianList.size() / 2);
@@ -367,7 +367,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         }
 
         // Don't forget to update the stats.
-        stats.update(medianSize, medianHeapSize, destMap.size(), destMap.getHeapSize());
+        stats.update(medianSize, medianHeapSize, destMap.size(), destMap.getUsedHeapSize());
         // Also, clean up shard stats.
         for (int i = 0; i < shardCount; i++) {
             shardStats.getQuick(i).clear();
@@ -409,7 +409,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             for (int i = 0; i < perWorkerMapCount; i++) {
                 final MapParticle srcParticle = perWorkerParticles.getQuick(i);
                 final Map srcMap = srcParticle.getShardMaps().getQuick(shardIndex);
-                medianList.add(srcMap.getHeapSize());
+                medianList.add(srcMap.getUsedHeapSize());
             }
             medianList.sort();
             medianHeapSize = medianList.getQuick(medianList.size() / 2);
@@ -424,7 +424,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         }
 
         // Don't forget to update the stats.
-        stats.update(medianSize, medianHeapSize, destMap.size(), destMap.getHeapSize());
+        stats.update(medianSize, medianHeapSize, destMap.size(), destMap.getUsedHeapSize());
     }
 
     public void release(int slotId) {
