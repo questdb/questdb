@@ -440,7 +440,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
         if (ownerStats.mergedSize > configuration.getGroupByShardingThreshold()) {
             // Looks like we had to shard during previous execution, so let's do it ahead of time.
-            shardAll(false);
+            shardAll();
         }
     }
 
@@ -452,25 +452,10 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         }
     }
 
-    public void shardAll(boolean updateStats) {
+    public void shardAll() {
         ownerParticle.shard();
         for (int i = 0, n = perWorkerParticles.size(); i < n; i++) {
             perWorkerParticles.getQuick(i).shard();
-        }
-        if (updateStats) {
-            // Write sum of per-shard stats into owner stats.
-            long medianSize = 0;
-            long medianHeapSize = 0;
-            long mergedSize = 0;
-            long mergedHeapSize = 0;
-            for (int i = 0; i < shardCount; i++) {
-                MapStats stats = shardStats.getQuick(i);
-                medianSize = Math.max(stats.medianSize, medianSize);
-                medianHeapSize = Math.max(stats.medianHeapSize, medianHeapSize);
-                mergedSize += stats.mergedSize;
-                mergedHeapSize += stats.mergedHeapSize;
-            }
-            ownerStats.update(medianSize, medianHeapSize, mergedSize, mergedHeapSize);
         }
     }
 
@@ -495,6 +480,22 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             particle.shard();
             sharded = true;
         }
+    }
+
+    public void updateShardStats() {
+        // Write sum of per-shard stats into owner stats.
+        long medianSize = 0;
+        long medianHeapSize = 0;
+        long mergedSize = 0;
+        long mergedHeapSize = 0;
+        for (int i = 0; i < shardCount; i++) {
+            MapStats stats = shardStats.getQuick(i);
+            medianSize = Math.max(stats.medianSize, medianSize);
+            medianHeapSize = Math.max(stats.medianHeapSize, medianHeapSize);
+            mergedSize += stats.mergedSize;
+            mergedHeapSize += stats.mergedHeapSize;
+        }
+        ownerStats.update(medianSize, medianHeapSize, mergedSize, mergedHeapSize);
     }
 
     private static class MapStats {

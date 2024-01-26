@@ -308,17 +308,24 @@ public class OrderedMap implements Map, Reopenable {
 
     @Override
     public void restoreInitialCapacity() {
-        if (heapSize != initialHeapSize || keyCapacity != initialKeyCapacity) {
-            heapStart = kPos = Unsafe.realloc(heapStart, heapLimit - heapStart, heapSize = initialHeapSize, heapMemoryTag);
-            heapLimit = heapStart + initialHeapSize;
+        if (keyCapacity != initialKeyCapacity) {
             keyCapacity = initialKeyCapacity;
             keyCapacity = keyCapacity < MIN_KEY_CAPACITY ? MIN_KEY_CAPACITY : Numbers.ceilPow2(keyCapacity);
             mask = keyCapacity - 1;
-            offsets.setCapacity((long) keyCapacity << 1);
-            offsets.setPos((long) keyCapacity << 1);
-
-            clear();
         }
+        offsets.close();
+        offsets = new DirectIntList((long) keyCapacity << 1, listMemoryTag, true);
+        offsets.setPos((long) keyCapacity << 1);
+
+        if (heapSize != initialHeapSize) {
+            heapStart = Unsafe.realloc(heapStart, heapLimit - heapStart, heapSize = initialHeapSize, heapMemoryTag);
+            heapLimit = heapStart + initialHeapSize;
+        }
+
+        kPos = heapStart;
+        free = (int) (keyCapacity * loadFactor);
+        size = 0;
+        nResizes = 0;
     }
 
     @Override
