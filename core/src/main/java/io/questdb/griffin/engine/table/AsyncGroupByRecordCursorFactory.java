@@ -186,7 +186,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.acquire(workerId, owner, circuitBreaker);
         final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
-        final AsyncGroupByAtom.Particle particle = atom.getParticle(slotId);
+        final AsyncGroupByAtom.MapParticle particle = atom.getParticle(slotId);
         final RecordSink mapSink = atom.getMapSink(slotId);
         try {
             if (!particle.isSharded()) {
@@ -204,7 +204,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             PageAddressCacheRecord record,
             DirectLongList rows,
             GroupByFunctionsUpdater functionUpdater,
-            AsyncGroupByAtom.Particle particle,
+            AsyncGroupByAtom.MapParticle particle,
             RecordSink mapSink
     ) {
         final Map map = particle.getMap();
@@ -226,7 +226,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             PageAddressCacheRecord record,
             DirectLongList rows,
             GroupByFunctionsUpdater functionUpdater,
-            AsyncGroupByAtom.Particle particle,
+            AsyncGroupByAtom.MapParticle particle,
             RecordSink mapSink
     ) {
         // The first map is used to write keys.
@@ -261,7 +261,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             PageAddressCacheRecord record,
             long frameRowCount,
             GroupByFunctionsUpdater functionUpdater,
-            AsyncGroupByAtom.Particle particle,
+            AsyncGroupByAtom.MapParticle particle,
             RecordSink mapSink
     ) {
         final Map map = particle.getMap();
@@ -283,7 +283,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             PageAddressCacheRecord record,
             long frameRowCount,
             GroupByFunctionsUpdater functionUpdater,
-            AsyncGroupByAtom.Particle particle,
+            AsyncGroupByAtom.MapParticle particle,
             RecordSink mapSink
     ) {
         // The first map is used to write keys.
@@ -331,7 +331,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.acquire(workerId, owner, circuitBreaker);
         final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
-        final AsyncGroupByAtom.Particle particle = atom.getParticle(slotId);
+        final AsyncGroupByAtom.MapParticle particle = atom.getParticle(slotId);
         final CompiledFilter compiledFilter = atom.getCompiledFilter();
         final Function filter = atom.getFilter(slotId);
         final RecordSink mapSink = atom.getMapSink(slotId);

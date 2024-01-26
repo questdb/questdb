@@ -59,18 +59,18 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     private final ObjList<Function> keyFunctions;
     private final ColumnTypes keyTypes;
     private final RecordSink ownerMapSink;
-    private final MapStats ownerMapStats;
-    private final Particle ownerParticle;
+    private final MapParticle ownerParticle;
+    private final MapStats ownerStats;
     private final ObjList<Function> perWorkerFilters;
     private final ObjList<GroupByFunctionsUpdater> perWorkerFunctionUpdaters;
     private final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
     private final ObjList<ObjList<Function>> perWorkerKeyFunctions;
     private final PerWorkerLocks perWorkerLocks;
     private final ObjList<RecordSink> perWorkerMapSinks;
-    private final ObjList<Particle> perWorkerParticles;
+    private final ObjList<MapParticle> perWorkerParticles;
     private final int shardCount;
     private final int shardCountShr;
-    private final ObjList<MapStats> shardMapStats;
+    private final ObjList<MapStats> shardStats;
     private final ColumnTypes valueTypes;
     private volatile boolean sharded;
 
@@ -124,15 +124,15 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
             shardCount = Math.min(Numbers.ceilPow2(2 * workerCount), MAX_SHARDS);
             shardCountShr = Integer.numberOfLeadingZeros(shardCount) + 1;
-            shardMapStats = new ObjList<>(shardCount);
+            shardStats = new ObjList<>(shardCount);
             for (int i = 0; i < shardCount; i++) {
-                shardMapStats.extendAndSet(i, new MapStats());
+                shardStats.extendAndSet(i, new MapStats());
             }
-            ownerMapStats = new MapStats();
-            ownerParticle = new Particle();
+            ownerStats = new MapStats();
+            ownerParticle = new MapParticle();
             perWorkerParticles = new ObjList<>(slotCount);
             for (int i = 0; i < slotCount; i++) {
-                perWorkerParticles.extendAndSet(i, new Particle());
+                perWorkerParticles.extendAndSet(i, new MapParticle());
             }
 
             ownerMapSink = RecordSinkFactory.getInstance(asm, columnTypes, listColumnFilter, keyFunctions, false);
@@ -172,7 +172,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         sharded = false;
         ownerParticle.close();
         for (int i = 0, n = perWorkerParticles.size(); i < n; i++) {
-            Particle p = perWorkerParticles.getQuick(i);
+            MapParticle p = perWorkerParticles.getQuick(i);
             Misc.free(p);
         }
         if (perWorkerGroupByFunctions != null) {
@@ -238,11 +238,11 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     }
 
     // Thread-unsafe, should be used by query owner thread only.
-    public Particle getOwnerParticle() {
+    public MapParticle getOwnerParticle() {
         return ownerParticle;
     }
 
-    public Particle getParticle(int slotId) {
+    public MapParticle getParticle(int slotId) {
         if (slotId == -1) {
             return ownerParticle;
         }
@@ -250,7 +250,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     }
 
     // Thread-unsafe, should be used by query owner thread only.
-    public ObjList<Particle> getPerWorkerParticles() {
+    public ObjList<MapParticle> getPerWorkerParticles() {
         return perWorkerParticles;
     }
 
@@ -329,7 +329,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         final int perWorkerMapCount = perWorkerParticles.size();
 
         // Pre-size the destination map, if we have the stats.
-        final MapStats stats = ownerMapStats;
+        final MapStats stats = ownerStats;
         if (stats.mergedSize > 0 && stats.mergedSize <= configuration.getGroupByPresizeMaxSize()) {
             destMap.setKeyCapacity((int) stats.mergedSize);
         }
@@ -368,6 +368,10 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
         // Don't forget to update the stats.
         stats.update(medianSize, medianHeapSize, destMap.size(), destMap.getHeapSize());
+        // Also, clean up shard stats.
+        for (int i = 0; i < shardCount; i++) {
+            shardStats.getQuick(i).clear();
+        }
 
         return destMap;
     }
@@ -380,7 +384,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         final int perWorkerMapCount = perWorkerParticles.size();
 
         // Pre-size the destination map, if we have the stats.
-        final MapStats stats = shardMapStats.getQuick(shardIndex);
+        final MapStats stats = shardStats.getQuick(shardIndex);
         if (stats.mergedSize > 0 && stats.mergedSize <= configuration.getGroupByPresizeMaxSize()) {
             destMap.setKeyCapacity((int) stats.mergedSize);
         }
@@ -392,7 +396,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         final LongList medianList = stats.medianList;
         medianList.clear();
         for (int i = 0; i < perWorkerMapCount; i++) {
-            final Particle srcParticle = perWorkerParticles.getQuick(i);
+            final MapParticle srcParticle = perWorkerParticles.getQuick(i);
             final Map srcMap = srcParticle.getShardMaps().getQuick(shardIndex);
             medianList.add(srcMap.size());
         }
@@ -403,7 +407,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         if (destMap.getUsedHeapSize() != -1) {
             medianList.clear();
             for (int i = 0; i < perWorkerMapCount; i++) {
-                final Particle srcParticle = perWorkerParticles.getQuick(i);
+                final MapParticle srcParticle = perWorkerParticles.getQuick(i);
                 final Map srcMap = srcParticle.getShardMaps().getQuick(shardIndex);
                 medianList.add(srcMap.getHeapSize());
             }
@@ -413,7 +417,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
         // Now do the actual merge.
         for (int i = 0; i < perWorkerMapCount; i++) {
-            final Particle srcParticle = perWorkerParticles.getQuick(i);
+            final MapParticle srcParticle = perWorkerParticles.getQuick(i);
             final Map srcMap = srcParticle.getShardMaps().getQuick(shardIndex);
             destMap.merge(srcMap, functionUpdater);
             srcMap.close();
@@ -434,9 +438,9 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             perWorkerParticles.getQuick(i).reopen();
         }
 
-        if (ownerMapStats.mergedSize > configuration.getGroupByShardingThreshold()) {
+        if (ownerStats.mergedSize > configuration.getGroupByShardingThreshold()) {
             // Looks like we had to shard during previous execution, so let's do it ahead of time.
-            shardAll();
+            shardAll(false);
         }
     }
 
@@ -448,11 +452,25 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         }
     }
 
-    public void shardAll() {
+    public void shardAll(boolean updateStats) {
         ownerParticle.shard();
         for (int i = 0, n = perWorkerParticles.size(); i < n; i++) {
-            Particle p = perWorkerParticles.getQuick(i);
-            p.shard();
+            perWorkerParticles.getQuick(i).shard();
+        }
+        if (updateStats) {
+            // Write sum of per-shard stats into owner stats.
+            long medianSize = 0;
+            long medianHeapSize = 0;
+            long mergedSize = 0;
+            long mergedHeapSize = 0;
+            for (int i = 0; i < shardCount; i++) {
+                MapStats stats = shardStats.getQuick(i);
+                medianSize = Math.max(stats.medianSize, medianSize);
+                medianHeapSize = Math.max(stats.medianHeapSize, medianHeapSize);
+                mergedSize += stats.mergedSize;
+                mergedHeapSize += stats.mergedHeapSize;
+            }
+            ownerStats.update(medianSize, medianHeapSize, mergedSize, mergedHeapSize);
         }
     }
 
@@ -469,7 +487,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         }
     }
 
-    public void tryShard(Particle particle) {
+    public void tryShard(MapParticle particle) {
         if (particle.isSharded()) {
             return;
         }
@@ -486,6 +504,13 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         long mergedHeapSize;
         long mergedSize;
 
+        void clear() {
+            this.medianSize = 0;
+            this.medianHeapSize = 0;
+            this.mergedSize = 0;
+            this.mergedHeapSize = 0;
+        }
+
         void update(long medianSize, long medianHeapSize, long mergedSize, long mergedHeapSize) {
             this.medianSize = medianSize;
             this.medianHeapSize = medianHeapSize;
@@ -494,12 +519,12 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         }
     }
 
-    public class Particle implements QuietCloseable {
+    public class MapParticle implements QuietCloseable {
         private final Map map; // non-sharded partial result
         private final ObjList<Map> shards; // this.map split into shards
         private boolean sharded;
 
-        private Particle() {
+        private MapParticle() {
             this.map = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes);
             this.shards = new ObjList<>(shardCount);
         }
@@ -531,8 +556,8 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         }
 
         public void reopen() {
-            int keyCapacity = targetKeyCapacity(ownerMapStats);
-            long heapSize = targetHeapSize(ownerMapStats);
+            int keyCapacity = targetKeyCapacity(ownerStats);
+            long heapSize = targetHeapSize(ownerStats);
             map.reopen(keyCapacity, heapSize);
         }
 
@@ -540,7 +565,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             int size = shards.size();
             if (size == 0) {
                 for (int i = 0; i < shardCount; i++) {
-                    MapStats stats = shardMapStats.getQuick(i);
+                    MapStats stats = shardStats.getQuick(i);
                     int keyCapacity = targetKeyCapacity(stats);
                     long heapSize = targetHeapSize(stats);
                     shards.add(MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes, keyCapacity, heapSize));
@@ -548,7 +573,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             } else {
                 assert size == shardCount;
                 for (int i = 0; i < shardCount; i++) {
-                    MapStats stats = shardMapStats.getQuick(i);
+                    MapStats stats = shardStats.getQuick(i);
                     int keyCapacity = targetKeyCapacity(stats);
                     long heapSize = targetHeapSize(stats);
                     shards.getQuick(i).reopen(keyCapacity, heapSize);

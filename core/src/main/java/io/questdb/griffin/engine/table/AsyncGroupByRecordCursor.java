@@ -246,7 +246,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         doneLatch.reset();
 
         // First, make sure to shard all non-sharded maps, if any.
-        atom.shardAll();
+        atom.shardAll(true);
 
         // Next, merge each set of partial shard maps into the final shard map. This is done in parallel.
         final int shardCount = atom.getShardCount();
