@@ -80,6 +80,20 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     }
 
     @Test
+    public void testConnectWithConfigOption() throws Exception {
+        MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
+                .withExpectedContent("test,sym=bol x=1.0\n")
+                .withExpectedHeader("Authorization", "Basic QWxhZGRpbjpPcGVuU2VzYW1l")
+                .replyWithStatus(204);
+        testWithMock(mockHttpProcessor, sender -> {
+            sender.table("test")
+                    .symbol("sym", "bol")
+                    .doubleColumn("x", 1.0)
+                    .atNow();
+        }, port -> Sender.builder().fromString("http::addr=localhost:" + port + ";user=Aladdin;pass=OpenSesame;"));
+    }
+
+    @Test
     public void testJsonError() throws Exception {
         String jsonResponse = "{\"code\": \"invalid\",\n" +
                 "                    \"message\": \"failed to parse line protocol: invalid field format\",\n" +

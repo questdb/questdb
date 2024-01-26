@@ -27,6 +27,7 @@ package io.questdb.client;
 import io.questdb.ClientTlsConfiguration;
 import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.HttpClientConfiguration;
+import io.questdb.client.impl.ConfigurationStringParser;
 import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.line.LineChannel;
 import io.questdb.cutlass.line.LineSenderException;
@@ -39,6 +40,7 @@ import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.str.StringSink;
 
 import javax.security.auth.DestroyFailedException;
 import java.io.Closeable;
@@ -88,6 +90,10 @@ public interface Sender extends Closeable {
      */
     static LineSenderBuilder builder() {
         return new LineSenderBuilder();
+    }
+
+    static Sender fromString(CharSequence configurationString) {
+        return builder().fromString(configurationString).build();
     }
 
     /**
@@ -281,7 +287,7 @@ public interface Sender extends Closeable {
         private static final int DEFAULT_HTTP_PORT = 9000;
         private static final int DEFAULT_HTTP_TIMEOUT = 30_000;
         private static final int DEFAULT_MAXIMUM_BUFFER_CAPACITY = Integer.MAX_VALUE;
-        private static final int DEFAULT_MAX_PENDING_ROWS = 10_000;
+        private static final int DEFAULT_MAX_PENDING_ROWS = 600;
         private static final long DEFAULT_MAX_RETRY_NANOS = TimeUnit.SECONDS.toNanos(10); // keep sync with the contract of the configuration method
         private static final int DEFAULT_TCP_PORT = 9009;
         private static final int HTTP_TIMEOUT_NOT_SET = -1;
@@ -322,7 +328,7 @@ public interface Sender extends Closeable {
         private int retryTimeoutMillis = MAX_RETRY_MILLIS_NOT_SET;
         private boolean shouldDestroyPrivKey;
         private boolean tlsEnabled;
-        private TlsValidationMode tlsValidationMode = TlsValidationMode.DEFAULT;
+        private TlsValidationMode tlsValidationMode;
         private char[] trustStorePassword;
         private String trustStorePath;
         private String username;
@@ -509,6 +515,189 @@ public interface Sender extends Closeable {
             return this;
         }
 
+        public LineSenderBuilder fromString(CharSequence configurationString) {
+            if (Chars.isBlank(configurationString)) {
+                throw new LineSenderException("configuration string cannot be empty nor null");
+            }
+            ConfigurationStringParser parser = new ConfigurationStringParser();
+            StringSink sink = new StringSink();
+            if (!parser.startFrom(configurationString, sink)) {
+                throw new LineSenderException("invalid configuration string: ").put(configurationString);
+            }
+            if (protocol != PROTOCOL_NOT_SET) {
+                throw new LineSenderException("protocol was already configured ")
+                        .put("[protocol=").put(protocol).put("]");
+            }
+            if (host != null) {
+                throw new LineSenderException("server address was already configured ")
+                        .put("[address=").put(host).put("]");
+            }
+            if (port != PORT_NOT_SET) {
+                throw new LineSenderException("server port was already configured ")
+                        .put("[port=").put(port).put("]");
+            }
+            if (Chars.equals("http", sink)) {
+                http();
+            } else if (Chars.equals("tcp", sink)) {
+                tcp();
+            } else if (Chars.equals("https", sink)) {
+                http();
+                enableTls();
+            } else if (Chars.equals("tcps", sink)) {
+                tcp();
+                enableTls();
+            } else {
+                throw new LineSenderException("invalid schema: ").put(sink);
+            }
+
+            String tcpToken = null;
+            String user = null;
+            String password = null;
+            while (parser.hasNext()) {
+                if (!parser.nextKey(sink)) {
+                    throw new LineSenderException("invalid configuration string: ").put(sink);
+                }
+                if (Chars.equals("addr", sink)) {
+                    if (!parser.nextValue(sink)) {
+                        throw new LineSenderException("invalid address [error=").put(sink).put("]");
+                    }
+                    address(sink);
+                } else if (Chars.equals("port", sink)) {
+                    if (!parser.nextValue(sink)) {
+                        throw new LineSenderException("invalid port [error=").put(sink).put("]");
+                    }
+                    int port;
+                    try {
+                        port = Numbers.parseInt(sink);
+                    } catch (NumericException e) {
+                        throw new LineSenderException("invalid port [port=").put(sink).put("]");
+                    }
+                    if (port < 1 || port > 65535) {
+                        throw new LineSenderException("invalid port [port=").put(port).put("]");
+                    }
+                    this.port = port;
+                } else if (Chars.equals("user", sink)) {
+                    if (!parser.nextValue(sink)) {
+                        throw new LineSenderException("invalid user [user=").put(sink).put("]");
+                    }
+                    user = sink.toString();
+                } else if (Chars.equals("pass", sink)) {
+                    if (!parser.nextValue(sink)) {
+                        throw new LineSenderException("invalid password [error=").put(sink).put("]");
+                    }
+                    password = sink.toString();
+                } else if (Chars.equals("tls_verify", sink)) {
+                    if (!parser.nextValue(sink)) {
+                        throw new LineSenderException("invalid tls_verify [error=").put(sink).put("]");
+                    }
+                    if (tlsValidationMode != null) {
+                        throw new LineSenderException("tls_verify was already configured");
+                    }
+                    if (Chars.equals("on", sink)) {
+                        tlsValidationMode = TlsValidationMode.DEFAULT;
+                    } else if (Chars.equals("unsafe_off", sink)) {
+                        tlsValidationMode = TlsValidationMode.INSECURE;
+                    } else {
+                        throw new LineSenderException("invalid tls_verify [value=").put(sink).put("]");
+                    }
+                } else if (Chars.equals("token", sink)) {
+                    if (!parser.nextValue(sink)) {
+                        throw new LineSenderException("invalid token [error=").put(sink).put("]");
+                    }
+                    if (protocol == PROTOCOL_TCP) {
+                        tcpToken = sink.toString();
+                        // will configure later, we need to know a keyId first
+                    } else if (protocol == PROTOCOL_HTTP) {
+                        httpToken(sink.toString());
+                    } else {
+                        throw new AssertionError();
+                    }
+                } else if (Chars.equals("retry_timeout", sink)) {
+                    if (!parser.nextValue(sink)) {
+                        throw new LineSenderException("invalid retry_timeout [error=").put(sink).put("]");
+                    }
+                    int timeout;
+                    try {
+                        timeout = Numbers.parseInt(sink);
+                    } catch (NumericException e) {
+                        throw new LineSenderException("invalid timeout [timeout=").put(sink).put("]");
+                    }
+                    if (timeout < 0) {
+                        throw new LineSenderException("invalid timeout [timeout=").put(timeout).put("]");
+                    }
+                    retryTimeoutMillis(timeout);
+                } else if (Chars.equals("max_buf_size", sink)) {
+                    if (!parser.nextValue(sink)) {
+                        throw new LineSenderException("invalid max_buf_size [error=").put(sink).put("]");
+                    }
+                    int maxBufferSize;
+                    try {
+                        maxBufferSize = Numbers.parseInt(sink);
+                    } catch (NumericException e) {
+                        throw new LineSenderException("invalid max_buf_size [max_buf_size=").put(sink).put("]");
+                    }
+                    maxBufferCapacity(maxBufferSize);
+                } else if (Chars.equals("auto_flush_rows", sink)) {
+                    if (!parser.nextValue(sink)) {
+                        throw new LineSenderException("invalid auto_flush_rows [error=").put(sink).put("]");
+                    }
+                    int autoFlushRows;
+                    try {
+                        autoFlushRows = Numbers.parseInt(sink);
+                    } catch (NumericException e) {
+                        throw new LineSenderException("invalid auto_flush_rows [auto_flush_rows=").put(sink).put("]");
+                    }
+                    if (autoFlushRows < 1) {
+                        throw new LineSenderException("invalid auto_flush_rows [auto_flush_rows=").put(autoFlushRows).put("]");
+                    }
+                    maxPendingRows(autoFlushRows);
+                } else if (Chars.equals("auto_flush", sink)) {
+                    if (!parser.nextValue(sink)) {
+                        throw new LineSenderException("invalid auto_flush [error=").put(sink).put("]");
+                    }
+                    if (Chars.equals("on", sink)) {
+                        // ok, this is the only mode we support
+                    } else if (Chars.equals("off", sink)) {
+                        throw new LineSenderException("auto_flush=off is not supported");
+                    } else {
+                        throw new LineSenderException("invalid auto_flush [value=").put(sink).put("]");
+                    }
+                } else if (Chars.equals("token_x", sink)) {
+                    if (!parser.nextValue(sink)) {
+                        throw new LineSenderException("invalid token_x [error=").put(sink).put("]");
+                    }
+                    // we ignore token_x, Java client does not need it
+                } else if (Chars.equals("token_y", sink)) {
+                    if (!parser.nextValue(sink)) {
+                        throw new LineSenderException("invalid token_y [error=").put(sink).put("]");
+                    }
+                    // we ignore token_x, Java client does not need it
+                } else {
+                    throw new LineSenderException("invalid configuration string: ").put(sink);
+                }
+            }
+            if (host == null) {
+                throw new LineSenderException("address is missing");
+            }
+            if (port == PORT_NOT_SET) {
+                port = protocol == PROTOCOL_TCP ? DEFAULT_TCP_PORT : DEFAULT_HTTP_PORT;
+            }
+            if (protocol == PROTOCOL_HTTP) {
+                if (user != null) {
+                    httpUsernamePassword(user, password);
+                } else if (password != null) {
+                    throw new LineSenderException("HTTP password is configured, but username is missing");
+                }
+            } else {
+                if (user != null) {
+                    enableAuth(user).authToken(tcpToken);
+                } else if (tcpToken != null) {
+                    throw new LineSenderException("TCP token is configured, but user is missing");
+                }
+            }
+            return this;
+        }
+
         /**
          * Use HTTP protocol as transport.
          * <br>
@@ -561,6 +750,9 @@ public interface Sender extends Closeable {
             if (this.username != null) {
                 throw new LineSenderException("authentication username was already configured ")
                         .put("[username=").put(this.username).put("]");
+            }
+            if (this.httpToken != null) {
+                throw new LineSenderException("token was already configured");
             }
             if (Chars.isBlank(token)) {
                 throw new LineSenderException("token cannot be empty nor null");
@@ -729,6 +921,9 @@ public interface Sender extends Closeable {
             }
             if (port == PORT_NOT_SET) {
                 port = protocol == PROTOCOL_HTTP ? DEFAULT_HTTP_PORT : DEFAULT_TCP_PORT;
+            }
+            if (tlsValidationMode == null) {
+                tlsValidationMode = TlsValidationMode.DEFAULT;
             }
         }
 
