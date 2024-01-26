@@ -433,14 +433,16 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
     @Override
     public void reopen() {
-        ownerParticle.reopen();
-        for (int i = 0, n = perWorkerParticles.size(); i < n; i++) {
-            perWorkerParticles.getQuick(i).reopen();
-        }
-
         if (ownerStats.mergedSize > configuration.getGroupByShardingThreshold()) {
             // Looks like we had to shard during previous execution, so let's do it ahead of time.
+            sharded = true;
             shardAll();
+        } else {
+            // Probably we won't need sharding.
+            ownerParticle.reopen();
+            for (int i = 0, n = perWorkerParticles.size(); i < n; i++) {
+                perWorkerParticles.getQuick(i).reopen();
+            }
         }
     }
 
