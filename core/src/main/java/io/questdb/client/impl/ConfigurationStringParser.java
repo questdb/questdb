@@ -40,22 +40,26 @@ public final class ConfigurationStringParser {
     }
 
     public boolean nextValue(StringSink output) {
-        // todo: escaping ;
         output.clear();
         if (pos == -1) {
             return false;
         }
-        int n = input.length();
-        int start = pos;
-        for (; pos < n; pos++) {
+        for (int n = input.length(); pos < n; pos++) {
             char c = input.charAt(pos);
             if (c == ';') {
-                output.put(input, start, pos);
                 pos++;
-                return true;
+                if (pos == n) {
+                    return true;
+                } else if (input.charAt(pos) == ';') {
+                    output.put(';');
+                } else {
+                    return true;
+                }
+            } else {
+                output.put(c);
             }
         }
-
+        output.clear();
         output.put("missing trailing ';'");
         pos = -1;
         return false;

@@ -80,17 +80,17 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     }
 
     @Test
-    public void testConnectWithConfigOption() throws Exception {
+    public void testConnectWithConfigString() throws Exception {
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
                 .withExpectedContent("test,sym=bol x=1.0\n")
-                .withExpectedHeader("Authorization", "Basic QWxhZGRpbjpPcGVuU2VzYW1l")
+                .withExpectedHeader("Authorization", "Basic QWxhZGRpbjo7T3BlbjtTZXNhbWU7Ow==")
                 .replyWithStatus(204);
         testWithMock(mockHttpProcessor, sender -> {
             sender.table("test")
                     .symbol("sym", "bol")
                     .doubleColumn("x", 1.0)
                     .atNow();
-        }, port -> Sender.builder().fromString("http::addr=localhost:" + port + ";user=Aladdin;pass=OpenSesame;"));
+        }, port -> Sender.builder().fromString("http::addr=localhost:" + port + ";user=Aladdin;pass=;;Open;;Sesame;;;;;")); // escaped semicolons in password
     }
 
     @Test
@@ -144,6 +144,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
         try (Sender sender = Sender.builder().address("localhost:1")
                 .http()
                 .maxBufferCapacity(65536)
+                .maxPendingRows(Integer.MAX_VALUE)
                 .build()
         ) {
             for (int i = 0; i < 100000; i++) {

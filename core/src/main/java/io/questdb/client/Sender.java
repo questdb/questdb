@@ -286,7 +286,7 @@ public interface Sender extends Closeable {
         private static final int DEFAULT_BUFFER_CAPACITY = 64 * 1024;
         private static final int DEFAULT_HTTP_PORT = 9000;
         private static final int DEFAULT_HTTP_TIMEOUT = 30_000;
-        private static final int DEFAULT_MAXIMUM_BUFFER_CAPACITY = Integer.MAX_VALUE;
+        private static final int DEFAULT_MAXIMUM_BUFFER_CAPACITY = 100 * 1024 * 1024;
         private static final int DEFAULT_MAX_PENDING_ROWS = 600;
         private static final long DEFAULT_MAX_RETRY_NANOS = TimeUnit.SECONDS.toNanos(10); // keep sync with the contract of the configuration method
         private static final int DEFAULT_TCP_PORT = 9009;
@@ -304,7 +304,7 @@ public interface Sender extends Closeable {
         private String httpToken;
         private String keyId;
         private int maxPendingRows = MAX_PENDING_ROWS_NOT_SET;
-        private int maximumBufferCapacity = DEFAULT_MAXIMUM_BUFFER_CAPACITY;
+        private int maximumBufferCapacity = BUFFER_CAPACITY_NOT_SET;
         private final HttpClientConfiguration httpClientConfiguration = new DefaultHttpClientConfiguration() {
             @Override
             public int getInitialRequestBufferSize() {
@@ -600,6 +600,25 @@ public interface Sender extends Closeable {
                     } else {
                         throw new LineSenderException("invalid tls_verify [value=").put(sink).put("]");
                     }
+                } else if (Chars.equals("tls_roots", sink)) {
+                    if (!parser.nextValue(sink)) {
+                        throw new LineSenderException("invalid tls_roots [error=").put(sink).put("]");
+                    }
+                    if (trustStorePath != null) {
+                        throw new LineSenderException("tls_roots was already configured");
+                    }
+                    trustStorePath = sink.toString();
+                } else if (Chars.equals("tls_roots_password", sink)) {
+                    if (!parser.nextValue(sink)) {
+                        throw new LineSenderException("invalid tls_roots_password [error=").put(sink).put("]");
+                    }
+                    if (trustStorePassword != null) {
+                        throw new LineSenderException("tls_roots_password was already configured");
+                    }
+                    trustStorePassword = new char[sink.length()];
+                    for (int i = 0, n = sink.length(); i < n; i++) {
+                        trustStorePassword[i] = sink.charAt(i);
+                    }
                 } else if (Chars.equals("token", sink)) {
                     if (!parser.nextValue(sink)) {
                         throw new LineSenderException("invalid token [error=").put(sink).put("]");
@@ -637,6 +656,17 @@ public interface Sender extends Closeable {
                         throw new LineSenderException("invalid max_buf_size [max_buf_size=").put(sink).put("]");
                     }
                     maxBufferCapacity(maxBufferSize);
+                } else if (Chars.equals("init_buf_size", sink)) {
+                    if (!parser.nextValue(sink)) {
+                        throw new LineSenderException("invalid init_buf_size [error=").put(sink).put("]");
+                    }
+                    int initBufferSize;
+                    try {
+                        initBufferSize = Numbers.parseInt(sink);
+                    } catch (NumericException e) {
+                        throw new LineSenderException("invalid init_buf_size [init_buf_size=").put(sink).put("]");
+                    }
+                    bufferCapacity(initBufferSize);
                 } else if (Chars.equals("auto_flush_rows", sink)) {
                     if (!parser.nextValue(sink)) {
                         throw new LineSenderException("invalid auto_flush_rows [error=").put(sink).put("]");
@@ -681,6 +711,13 @@ public interface Sender extends Closeable {
             }
             if (port == PORT_NOT_SET) {
                 port = protocol == PROTOCOL_TCP ? DEFAULT_TCP_PORT : DEFAULT_HTTP_PORT;
+            }
+            if (trustStorePath != null) {
+                if (trustStorePassword == null) {
+                    throw new LineSenderException("tls_roots was configured, but tls_roots_password is missing");
+                }
+            } else if (trustStorePassword != null) {
+                throw new LineSenderException("tls_roots_password was configured, but tls_roots is missing");
             }
             if (protocol == PROTOCOL_HTTP) {
                 if (user != null) {
@@ -799,7 +836,7 @@ public interface Sender extends Closeable {
          * you should call {@link #flush()} periodically or set {@link #maxPendingRows(int)} to make sure that
          * Sender will flush the buffer automatically before it reaches the maximum capacity.
          * <br>
-         * Default value: 2 GB
+         * Default value: 100 MB
          *
          * @param maximumBufferCapacity maximum buffer capacity in bytes.
          * @return this instance for method chaining
@@ -916,6 +953,9 @@ public interface Sender extends Closeable {
             if (bufferCapacity == BUFFER_CAPACITY_NOT_SET) {
                 bufferCapacity = DEFAULT_BUFFER_CAPACITY;
             }
+            if (maximumBufferCapacity == BUFFER_CAPACITY_NOT_SET) {
+                maximumBufferCapacity = DEFAULT_MAXIMUM_BUFFER_CAPACITY;
+            }
             if (protocol == PROTOCOL_NOT_SET) {
                 protocol = PROTOCOL_TCP;
             }
@@ -969,6 +1009,12 @@ public interface Sender extends Closeable {
                 }
                 if (httpTimeout != HTTP_TIMEOUT_NOT_SET) {
                     throw new LineSenderException("HTTP timeout is not supported for TCP protocol");
+                }
+                if (maximumBufferCapacity != bufferCapacity) {
+                    throw new LineSenderException("maximum buffer capacity must be the same as initial buffer capacity for TCP protocol")
+                            .put("[maximumBufferCapacity=").put(maximumBufferCapacity)
+                            .put(", initialBufferCapacity=").put(bufferCapacity)
+                            .put("]");
                 }
             } else {
                 throw new LineSenderException("unsupported protocol ")

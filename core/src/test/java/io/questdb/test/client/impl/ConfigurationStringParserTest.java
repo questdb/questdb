@@ -85,6 +85,29 @@ public final class ConfigurationStringParserTest {
     }
 
     @Test
+    public void testSemicolonEscaping() {
+        ConfigurationStringParser parser = new ConfigurationStringParser();
+        assertSchemaOk(parser, "http::pass=bl;;oggs;;;", "http");
+        assertKeyValue(parser, "pass", "bl;oggs;");
+
+        assertSchemaOk(parser, "http::;;", "http");
+        Assert.assertTrue(parser.hasNext());
+        Assert.assertFalse(parser.nextKey(sink));
+        TestUtils.assertEquals("missing '='", sink);
+
+        assertSchemaOk(parser, "http::foo=bar;;", "http");
+        Assert.assertTrue(parser.hasNext());
+        Assert.assertTrue(parser.nextKey(sink));
+        TestUtils.assertEquals("foo", sink);
+        Assert.assertFalse(parser.nextValue(sink));
+        TestUtils.assertEquals("missing trailing ';'", sink);
+
+        assertSchemaOk(parser, "https::foo=;;;;;", "https");
+        Assert.assertTrue(parser.hasNext());
+        assertKeyValue(parser, "foo", ";;");
+    }
+
+    @Test
     public void testValuesCaseSensitive() {
         ConfigurationStringParser parser = new ConfigurationStringParser();
         assertSchemaOk(parser, "http::addr=localhost;user=JOE;pass=bLogGs;", "http");
