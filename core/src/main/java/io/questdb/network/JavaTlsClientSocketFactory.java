@@ -22,39 +22,22 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http;
+package io.questdb.network;
 
-import io.questdb.cairo.SecurityContext;
-import io.questdb.std.ObjList;
-import io.questdb.std.QuietCloseable;
-import org.jetbrains.annotations.Nullable;
+import io.questdb.ClientTlsConfiguration;
+import io.questdb.log.Log;
 
-public interface HttpAuthenticator extends QuietCloseable {
+public final class JavaTlsClientSocketFactory implements SocketFactory {
+    public static final SocketFactory DEFAULT = new JavaTlsClientSocketFactory(ClientTlsConfiguration.DEFAULT);
+    public static final SocketFactory INSECURE_NO_VALIDATION = new JavaTlsClientSocketFactory(ClientTlsConfiguration.INSECURE_NO_VALIDATION);
+    private final ClientTlsConfiguration tlsConfig;
 
-    /**
-     * Authenticates incoming HTTP request.
-     *
-     * @param headers request headers
-     * @return true if the authentication succeeded, false - otherwise
-     */
-    boolean authenticate(HttpRequestHeader headers);
-
-    default void clear() {
+    public JavaTlsClientSocketFactory(ClientTlsConfiguration tlsConfig) {
+        this.tlsConfig = tlsConfig;
     }
 
     @Override
-    default void close() {
+    public Socket newInstance(NetworkFacade nf, Log log) {
+        return new JavaTlsClientSocket(nf, log, tlsConfig);
     }
-
-    default byte getAuthType() {
-        return SecurityContext.AUTH_TYPE_NONE;
-    }
-
-    /**
-     * Returns list of groups provided by external identity provider, such as OpenID Connect provider.
-     * For other authentication types returns null.
-     */
-    @Nullable ObjList<CharSequence> getGroups();
-
-    CharSequence getPrincipal();
 }
