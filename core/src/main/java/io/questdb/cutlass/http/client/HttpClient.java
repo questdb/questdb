@@ -47,14 +47,13 @@ public abstract class HttpClient implements QuietCloseable {
     private static final String HTTP_NO_CONTENT = String.valueOf(HttpURLConnection.HTTP_NO_CONTENT);
     private static final Log LOG = LogFactory.getLog(HttpClient.class);
     protected final NetworkFacade nf;
+    protected final Socket socket;
     private final HttpClientCookieHandler cookieHandler;
     private final ObjectPool<DirectUtf8String> csPool = new ObjectPool<>(DirectUtf8String.FACTORY, 64);
     private final int defaultTimeout;
     private final int maxBufferSize;
     private final Request request = new Request();
     private final int responseParserBufSize;
-    private final SocketFactory socketFactory;
-    protected Socket socket;
     private long bufLo;
     private int bufferSize;
     private long contentStart = -1;
@@ -66,7 +65,7 @@ public abstract class HttpClient implements QuietCloseable {
 
     public HttpClient(HttpClientConfiguration configuration, SocketFactory socketFactory) {
         this.nf = configuration.getNetworkFacade();
-        this.socketFactory = socketFactory;
+        this.socket = socketFactory.newInstance(nf, LOG);
         this.defaultTimeout = configuration.getTimeout();
         this.cookieHandler = configuration.getCookieHandlerFactory().getInstance();
         this.bufferSize = configuration.getInitialRequestBufferSize();
@@ -91,23 +90,16 @@ public abstract class HttpClient implements QuietCloseable {
     }
 
     public void disconnect() {
-        socket = Misc.free(socket);
+        Misc.free(socket);
     }
 
     public Request newRequest(CharSequence host, int port) {
-        if (socket == null || socket.isClosed()) {
-            this.socket = socketFactory.newInstance(nf, LOG);
-            this.host = host;
-            this.port = port;
-        } else {
-            // Connection reuse.
-            if (!Chars.equals(this.host, host)) {
-                throw new HttpClientException("same host expected for connection reuse [host=").put(this.host).put(']');
-            }
-            if (this.port != port) {
-                throw new HttpClientException("same port expected for connection reuse [port=").put(this.port).put(']');
-            }
+        if (!Chars.equalsNc(host, this.host) || port != this.port) {
+            // Can't reuse the existing connection, if any.
+            socket.close();
         }
+        this.host = host;
+        this.port = port;
         ptr = bufLo;
         contentStart = -1;
         request.contentLengthHeaderReserved = 0;
@@ -402,7 +394,7 @@ public abstract class HttpClient implements QuietCloseable {
 
         public ResponseHeaders send(int timeout) {
             assert state == STATE_URL_DONE || state == STATE_QUERY || state == STATE_HEADER || state == STATE_CONTENT;
-            if (socket.isClosed()) {
+            if (socket == null || socket.isClosed()) {
                 connect(host, port);
             } else if (nf.testConnection(socket.getFd(), responseParserBufLo, 1)) {
                 socket.close();
@@ -429,7 +421,7 @@ public abstract class HttpClient implements QuietCloseable {
             if (state != STATE_CONTENT || contentStart == -1) {
                 throw new IllegalStateException("No content to send");
             }
-            if (socket.isClosed()) {
+            if (socket == null || socket.isClosed()) {
                 connect(host, port);
             }
 
@@ -503,21 +495,21 @@ public abstract class HttpClient implements QuietCloseable {
             nf.configureKeepAlive(fd);
             long addrInfo = nf.getAddrInfo(host, port);
             if (addrInfo == -1) {
-                nf.close(fd);
+                disconnect();
                 throw new HttpClientException("could not resolve host ").put("[host=").put(host).put("]");
             }
 
             if (nf.connectAddrInfo(fd, addrInfo) != 0) {
                 int errno = nf.errno();
-                nf.close(fd);
                 nf.freeAddrInfo(addrInfo);
+                disconnect();
                 throw new HttpClientException("could not connect to host ").put("[host=").put(host).put(", port=").put(port).put(", errno=").put(errno).put(']');
             }
             nf.freeAddrInfo(addrInfo);
 
             if (nf.configureNonBlocking(fd) < 0) {
                 int errno = nf.errno();
-                nf.close(fd);
+                disconnect();
                 throw new HttpClientException("could not configure socket to be non-blocking [fd=").put(fd).put(", errno=").put(errno).put(']');
             }
 

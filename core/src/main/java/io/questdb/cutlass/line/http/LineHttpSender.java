@@ -397,8 +397,7 @@ public final class LineHttpSender implements Sender {
         HttpClient.Request r = client.newRequest(host, port)
                 .POST()
                 .url(PATH)
-                .header("User-Agent", "QuestDB/java/" + questdbVersion)
-                .header("Host", host);
+                .header("User-Agent", "QuestDB/java/" + questdbVersion);
         if (username != null) {
             r.authBasic(username, password);
         } else if (authToken != null) {
