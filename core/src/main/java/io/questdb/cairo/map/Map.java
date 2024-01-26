@@ -63,7 +63,7 @@ public interface Map extends Mutable, Closeable, Reopenable {
      * Reopens previously closed map with given key capacity and page size.
      * Page size value is ignored if the map does not use heap to store keys and values.
      */
-    void reopen(int keyCapacity, int pageSize);
+    void reopen(int keyCapacity, long heapSize);
 
     void restoreInitialCapacity();
 

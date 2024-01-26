@@ -98,8 +98,8 @@ public class OrderedMap implements Map, Reopenable {
     private long heapLimit; // Heap memory limit pointer.
     private long heapSize;
     private long heapStart; // Heap memory start pointer.
+    private long initialHeapSize;
     private int initialKeyCapacity;
-    private int initialPageSize;
     private long kPos;      // Current key-value memory pointer (contains searched key / pending key-value pair).
     private int keyCapacity;
     private int mask;
@@ -110,17 +110,17 @@ public class OrderedMap implements Map, Reopenable {
     private int size = 0;
 
     public OrderedMap(
-            int pageSize,
+            long heapSize,
             @Transient @NotNull ColumnTypes keyTypes,
             int keyCapacity,
             double loadFactor,
             int maxResizes
     ) {
-        this(pageSize, keyTypes, null, keyCapacity, loadFactor, maxResizes);
+        this(heapSize, keyTypes, null, keyCapacity, loadFactor, maxResizes);
     }
 
     public OrderedMap(
-            int pageSize,
+            long heapSize,
             @Transient @NotNull ColumnTypes keyTypes,
             @Transient @Nullable ColumnTypes valueTypes,
             int keyCapacity,
@@ -128,22 +128,22 @@ public class OrderedMap implements Map, Reopenable {
             int maxResizes,
             int memoryTag
     ) {
-        this(pageSize, keyTypes, valueTypes, keyCapacity, loadFactor, maxResizes, memoryTag, memoryTag);
+        this(heapSize, keyTypes, valueTypes, keyCapacity, loadFactor, maxResizes, memoryTag, memoryTag);
     }
 
     public OrderedMap(
-            int pageSize,
+            long heapSize,
             @Transient @NotNull ColumnTypes keyTypes,
             @Transient @Nullable ColumnTypes valueTypes,
             int keyCapacity,
             double loadFactor,
             int maxResizes
     ) {
-        this(pageSize, keyTypes, valueTypes, keyCapacity, loadFactor, maxResizes, MemoryTag.NATIVE_FAST_MAP, MemoryTag.NATIVE_FAST_MAP_INT_LIST);
+        this(heapSize, keyTypes, valueTypes, keyCapacity, loadFactor, maxResizes, MemoryTag.NATIVE_FAST_MAP, MemoryTag.NATIVE_FAST_MAP_INT_LIST);
     }
 
     OrderedMap(
-            int pageSize,
+            long heapSize,
             @NotNull @Transient ColumnTypes keyTypes,
             @Nullable @Transient ColumnTypes valueTypes,
             int keyCapacity,
@@ -152,15 +152,15 @@ public class OrderedMap implements Map, Reopenable {
             int heapMemoryTag,
             int listMemoryTag
     ) {
-        assert pageSize > 3;
+        assert heapSize > 3;
         assert loadFactor > 0 && loadFactor < 1d;
 
         this.heapMemoryTag = heapMemoryTag;
         this.listMemoryTag = listMemoryTag;
-        initialPageSize = pageSize;
+        initialHeapSize = heapSize;
         this.loadFactor = loadFactor;
-        heapStart = kPos = Unsafe.malloc(heapSize = pageSize, heapMemoryTag);
-        heapLimit = heapStart + pageSize;
+        heapStart = kPos = Unsafe.malloc(this.heapSize = heapSize, heapMemoryTag);
+        heapLimit = heapStart + heapSize;
         this.keyCapacity = (int) (keyCapacity / loadFactor);
         this.keyCapacity = this.initialKeyCapacity = Math.max(Numbers.ceilPow2(this.keyCapacity), MIN_KEY_CAPACITY);
         mask = this.keyCapacity - 1;
@@ -290,11 +290,11 @@ public class OrderedMap implements Map, Reopenable {
     }
 
     @Override
-    public void reopen(int keyCapacity, int pageSize) {
+    public void reopen(int keyCapacity, long heapSize) {
         if (heapStart == 0) {
             keyCapacity = (int) (keyCapacity / loadFactor);
             initialKeyCapacity = Math.max(Numbers.ceilPow2(keyCapacity), MIN_KEY_CAPACITY);
-            initialPageSize = pageSize;
+            initialHeapSize = heapSize;
             restoreInitialCapacity();
         }
     }
@@ -308,9 +308,9 @@ public class OrderedMap implements Map, Reopenable {
 
     @Override
     public void restoreInitialCapacity() {
-        if (heapSize != initialPageSize || keyCapacity != initialKeyCapacity) {
-            heapStart = kPos = Unsafe.realloc(heapStart, heapLimit - heapStart, heapSize = initialPageSize, heapMemoryTag);
-            heapLimit = heapStart + initialPageSize;
+        if (heapSize != initialHeapSize || keyCapacity != initialKeyCapacity) {
+            heapStart = kPos = Unsafe.realloc(heapStart, heapLimit - heapStart, heapSize = initialHeapSize, heapMemoryTag);
+            heapLimit = heapStart + initialHeapSize;
             keyCapacity = initialKeyCapacity;
             keyCapacity = keyCapacity < MIN_KEY_CAPACITY ? MIN_KEY_CAPACITY : Numbers.ceilPow2(keyCapacity);
             mask = keyCapacity - 1;

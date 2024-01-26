@@ -41,9 +41,9 @@ public class MapFactory {
             @Transient @NotNull ColumnTypes keyTypes
     ) {
         final int keyCapacity = configuration.getSqlSmallMapKeyCapacity();
-        final int pageSize = configuration.getSqlSmallMapPageSize();
+        final long heapSize = configuration.getSqlSmallMapPageSize();
         return new OrderedMap(
-                pageSize,
+                heapSize,
                 keyTypes,
                 keyCapacity,
                 configuration.getSqlFastMapLoadFactor(),
@@ -60,9 +60,9 @@ public class MapFactory {
             @Transient @Nullable ColumnTypes valueTypes
     ) {
         final int keyCapacity = configuration.getSqlSmallMapKeyCapacity();
-        final int pageSize = configuration.getSqlSmallMapPageSize();
+        final long heapSize = configuration.getSqlSmallMapPageSize();
         return new OrderedMap(
-                pageSize,
+                heapSize,
                 keyTypes,
                 valueTypes,
                 keyCapacity,
@@ -83,8 +83,8 @@ public class MapFactory {
             @Transient @Nullable ColumnTypes valueTypes
     ) {
         final int keyCapacity = configuration.getSqlSmallMapKeyCapacity();
-        final int pageSize = configuration.getSqlSmallMapPageSize();
-        return createUnorderedMap(configuration, keyTypes, valueTypes, keyCapacity, pageSize);
+        final long heapSize = configuration.getSqlSmallMapPageSize();
+        return createUnorderedMap(configuration, keyTypes, valueTypes, keyCapacity, heapSize);
     }
 
     /**
@@ -98,7 +98,7 @@ public class MapFactory {
             @Transient @NotNull ColumnTypes keyTypes,
             @Transient @Nullable ColumnTypes valueTypes,
             int keyCapacity,
-            int pageSize
+            long heapSize
     ) {
         final int maxEntrySize = configuration.getSqlUnorderedMapMaxEntrySize();
 
@@ -125,7 +125,7 @@ public class MapFactory {
         }
 
         return new OrderedMap(
-                pageSize,
+                heapSize,
                 keyTypes,
                 valueTypes,
                 keyCapacity,

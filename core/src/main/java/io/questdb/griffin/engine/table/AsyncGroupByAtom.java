@@ -532,8 +532,8 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
         public void reopen() {
             int keyCapacity = targetKeyCapacity(ownerMapStats);
-            int pageSize = targetPageSize(ownerMapStats);
-            map.reopen(keyCapacity, pageSize);
+            long heapSize = targetHeapSize(ownerMapStats);
+            map.reopen(keyCapacity, heapSize);
         }
 
         private void reopenShards() {
@@ -542,16 +542,16 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
                 for (int i = 0; i < shardCount; i++) {
                     MapStats stats = shardMapStats.getQuick(i);
                     int keyCapacity = targetKeyCapacity(stats);
-                    int pageSize = targetPageSize(stats);
-                    shards.add(MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes, keyCapacity, pageSize));
+                    long heapSize = targetHeapSize(stats);
+                    shards.add(MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes, keyCapacity, heapSize));
                 }
             } else {
                 assert size == shardCount;
                 for (int i = 0; i < shardCount; i++) {
                     MapStats stats = shardMapStats.getQuick(i);
                     int keyCapacity = targetKeyCapacity(stats);
-                    int pageSize = targetPageSize(stats);
-                    shards.getQuick(i).reopen(keyCapacity, pageSize);
+                    long heapSize = targetHeapSize(stats);
+                    shards.getQuick(i).reopen(keyCapacity, heapSize);
                 }
             }
         }
@@ -580,20 +580,20 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             sharded = true;
         }
 
+        private long targetHeapSize(MapStats stats) {
+            int heapSize = configuration.getSqlSmallMapPageSize();
+            if (stats.medianHeapSize <= configuration.getGroupByPresizeMaxHeapSize()) {
+                heapSize = Math.max((int) stats.medianHeapSize, heapSize);
+            }
+            return heapSize;
+        }
+
         private int targetKeyCapacity(MapStats stats) {
             int keyCapacity = configuration.getSqlSmallMapKeyCapacity();
             if (stats.medianSize <= configuration.getGroupByPresizeMaxSize()) {
                 keyCapacity = Math.max((int) stats.medianSize, keyCapacity);
             }
             return keyCapacity;
-        }
-
-        private int targetPageSize(MapStats stats) {
-            int pageSize = configuration.getSqlSmallMapPageSize();
-            if (stats.medianHeapSize <= configuration.getGroupByPresizeMaxHeapSize()) {
-                pageSize = Math.max((int) stats.medianHeapSize, pageSize);
-            }
-            return pageSize;
         }
     }
 }
