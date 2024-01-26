@@ -242,32 +242,34 @@ public class MetricsIODispatcherTest {
                 // Repeated requests over the same connection.
                 // This is to stress out the RequestState pooling logic.
                 for (int i = 0; i < repeatedRequests; i++) {
-                    HttpClient.ResponseHeaders response = client.newRequest()
-                            .GET()
-                            .url("/metrics")
-                            .send("localhost", DefaultIODispatcherConfiguration.INSTANCE.getBindPort());
+                    try (
+                            HttpClient.ResponseHeaders response = client.newRequest("localhost", DefaultIODispatcherConfiguration.INSTANCE.getBindPort())
+                                    .GET()
+                                    .url("/metrics")
+                                    .send()
+                    ) {
+                        response.await(5_000);
+                        utf16Sink.clear();
+                        utf16Sink.put(response.getStatusCode());
+                        TestUtils.assertEquals("200", utf16Sink);
 
-                    response.await(5_000);
-                    utf16Sink.clear();
-                    utf16Sink.put(response.getStatusCode());
-                    TestUtils.assertEquals("200", utf16Sink);
+                        if (parallelRequestBatches == 1) {
+                            // The request state is in use.
+                            Assert.assertEquals(0, pool.size());
+                        } else {
+                            Assert.assertTrue(pool.size() <= parallelRequestBatches);
+                        }
 
-                    if (parallelRequestBatches == 1) {
-                        // The request state is in use.
-                        Assert.assertEquals(0, pool.size());
-                    } else {
-                        Assert.assertTrue(pool.size() <= parallelRequestBatches);
+                        Assert.assertTrue(response.isChunked());
+                        ChunkedResponse chunkedResponse = response.getChunkedResponse();
+
+                        utf16Sink.clear();
+                        Chunk chunk;
+                        while ((chunk = chunkedResponse.recv(5_000)) != null) {
+                            Utf8s.utf8ToUtf16(chunk.lo(), chunk.hi(), utf16Sink);
+                        }
+                        TestUtils.assertEquals(expectedResponse, utf16Sink);
                     }
-
-                    Assert.assertTrue(response.isChunked());
-                    ChunkedResponse chunkedResponse = response.getChunkedResponse();
-
-                    utf16Sink.clear();
-                    Chunk chunk;
-                    while ((chunk = chunkedResponse.recv(5_000)) != null) {
-                        Utf8s.utf8ToUtf16(chunk.lo(), chunk.hi(), utf16Sink);
-                    }
-                    TestUtils.assertEquals(expectedResponse, utf16Sink);
                 }
 
                 if (parallelRequestBatches == 1) {

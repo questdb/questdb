@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.http.processors;
 
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.http.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -50,7 +51,7 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
     private final MimeTypesCache mimeTypes;
     private final PrefixedPath prefixedPath;
     private final HttpRangeParser rangeParser = new HttpRangeParser();
-    private final boolean requiresAuthentication;
+    private final byte requiredAuthType;
 
     public StaticContentProcessor(HttpServerConfiguration configuration) {
         this.mimeTypes = configuration.getStaticContentProcessorConfiguration().getMimeTypesCache();
@@ -59,12 +60,17 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
         this.ff = configuration.getStaticContentProcessorConfiguration().getFilesFacade();
         this.keepAliveHeader = configuration.getStaticContentProcessorConfiguration().getKeepAliveHeader();
         this.httpProtocolVersion = configuration.getHttpContextConfiguration().getHttpVersion();
-        this.requiresAuthentication = configuration.getStaticContentProcessorConfiguration().isAuthenticationRequired();
+        this.requiredAuthType = configuration.getStaticContentProcessorConfiguration().getRequiredAuthType();
     }
 
     @Override
     public void close() {
         Misc.free(prefixedPath);
+    }
+
+    @Override
+    public byte getRequiredAuthType() {
+        return requiredAuthType;
     }
 
     public LogRecord logInfoWithFd(HttpConnectionContext context) {
@@ -101,7 +107,7 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
 
     @Override
     public boolean requiresAuthentication() {
-        return requiresAuthentication;
+        return requiredAuthType == SecurityContext.AUTH_TYPE_CREDENTIALS;
     }
 
     @Override
