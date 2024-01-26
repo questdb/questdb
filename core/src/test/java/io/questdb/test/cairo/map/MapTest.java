@@ -826,7 +826,7 @@ public class MapTest extends AbstractCairoTest {
     @Test
     public void testSetKeyCapacity() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (Map map = createMap(new SingleColumnType(ColumnType.INT), new SingleColumnType(ColumnType.INT), 64, 0.5, 2147483647)) {
+            try (Map map = createMap(new SingleColumnType(ColumnType.INT), new SingleColumnType(ColumnType.INT), 64, 0.5, Integer.MAX_VALUE)) {
                 Assert.assertEquals(128, map.getKeyCapacity());
 
                 map.setKeyCapacity(130);

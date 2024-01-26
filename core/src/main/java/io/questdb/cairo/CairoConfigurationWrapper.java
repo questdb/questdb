@@ -291,6 +291,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getGroupByPresizeMaxHeapSize() {
+        return delegate.getGroupByPresizeMaxHeapSize();
+    }
+
+    @Override
+    public long getGroupByPresizeMaxSize() {
+        return delegate.getGroupByPresizeMaxSize();
+    }
+
+    @Override
     public int getGroupByShardingThreshold() {
         return delegate.getGroupByShardingThreshold();
     }

@@ -304,6 +304,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getGroupByPresizeMaxHeapSize() {
+        return 10 * Numbers.SIZE_1MB;
+    }
+
+    @Override
+    public long getGroupByPresizeMaxSize() {
+        return 1_000_000;
+    }
+
+    @Override
     public int getGroupByShardingThreshold() {
         return 1000;
     }

@@ -1606,6 +1606,22 @@ public class OrderedMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSetHeapSize() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (OrderedMap map = new OrderedMap(1024, new SingleColumnType(ColumnType.INT), new SingleColumnType(ColumnType.INT), 64, 0.5, Integer.MAX_VALUE)) {
+                Assert.assertEquals(1024, map.getHeapSize());
+
+                // this call should be ignored
+                map.setHeapSize(64);
+                Assert.assertEquals(1024, map.getHeapSize());
+
+                map.setHeapSize(4096);
+                Assert.assertEquals(4096, map.getHeapSize());
+            }
+        });
+    }
+
+    @Test
     public void testValueAccess() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final int N = 1000;

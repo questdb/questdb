@@ -95,6 +95,8 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_PARALLEL_GROUP_BY_ENABLED("cairo.sql.parallel.groupby.enabled"),
     CAIRO_SQL_PARALLEL_GROUP_BY_MERGE_QUEUE_CAPACITY("cairo.sql.parallel.groupby.merge.shard.queue.capacity"),
     CAIRO_SQL_PARALLEL_GROUP_BY_SHARDING_THRESHOLD("cairo.sql.parallel.groupby.sharding.threshold"),
+    CAIRO_SQL_PARALLEL_GROUP_BY_PRESIZE_MAX_SIZE("cairo.sql.parallel.groupby.presize.max.size"),
+    CAIRO_SQL_PARALLEL_GROUP_BY_PRESIZE_MAX_HEAP_SIZE("cairo.sql.parallel.groupby.presize.max.heap.size"),
     CAIRO_PAGE_FRAME_SHARD_COUNT("cairo.page.frame.shard.count"),
     CAIRO_PAGE_FRAME_TASK_POOL_CAPACITY("cairo.page.frame.task.pool.capacity"),
     CAIRO_SQL_JOIN_METADATA_PAGE_SIZE("cairo.sql.join.metadata.page.size"),

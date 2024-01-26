@@ -37,7 +37,6 @@ public interface Map extends Mutable, Closeable, Reopenable {
 
     MapRecordCursor getCursor();
 
-    @TestOnly
     default long getHeapSize() {
         return -1;
     }
@@ -67,6 +66,10 @@ public interface Map extends Mutable, Closeable, Reopenable {
     void reopen(int keyCapacity, int pageSize);
 
     void restoreInitialCapacity();
+
+    default void setHeapSize(long heapSize) {
+        // no-op
+    }
 
     void setKeyCapacity(int keyCapacity);
 

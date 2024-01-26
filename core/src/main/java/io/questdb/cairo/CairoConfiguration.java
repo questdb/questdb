@@ -178,6 +178,10 @@ public interface CairoConfiguration {
 
     int getGroupByPoolCapacity();
 
+    long getGroupByPresizeMaxHeapSize();
+
+    long getGroupByPresizeMaxSize();
+
     int getGroupByShardingThreshold();
 
     @NotNull

@@ -322,6 +322,13 @@ public class OrderedMap implements Map, Reopenable {
     }
 
     @Override
+    public void setHeapSize(long heapSize) {
+        if (heapSize > this.heapSize) {
+            growHeap(heapSize);
+        }
+    }
+
+    @Override
     public void setKeyCapacity(int newKeyCapacity) {
         long requiredCapacity = (long) (newKeyCapacity / loadFactor);
         if (requiredCapacity > MAX_SAFE_INT_POW_2) {
@@ -377,6 +384,23 @@ public class OrderedMap implements Map, Reopenable {
         return valueOf(keyWriter.startAddress, keyWriter.appendAddress, true, value);
     }
 
+    private long growHeap(long newHeapSize) {
+        if (newHeapSize > MAX_HEAP_SIZE) {
+            throw LimitOverflowException.instance().put("limit of ").put(MAX_HEAP_SIZE).put(" memory exceeded in FastMap");
+        }
+        long kAddress = Unsafe.realloc(heapStart, heapSize, newHeapSize, heapMemoryTag);
+
+        this.heapSize = newHeapSize;
+        long delta = kAddress - heapStart;
+        kPos += delta;
+        assert kPos > 0;
+
+        this.heapStart = kAddress;
+        this.heapLimit = kAddress + newHeapSize;
+
+        return delta;
+    }
+
     private void mergeFixedSizeKey(OrderedMap srcMap, MapValueMergeFunction mergeFunc) {
         assert keySize >= 0;
 
@@ -412,7 +436,7 @@ public class OrderedMap implements Map, Reopenable {
             }
 
             if (kPos + entrySize > heapLimit) {
-                resize(entrySize, kPos);
+                resizeHeap(entrySize, kPos);
             }
             Vect.memcpy(kPos, srcStartAddress, entrySize);
             setOffset(offsets, index, kPos - heapStart);
@@ -460,7 +484,7 @@ public class OrderedMap implements Map, Reopenable {
 
             long entrySize = keyOffset + srcKeySize + valueSize;
             if (kPos + entrySize > heapLimit) {
-                resize(entrySize, kPos);
+                resizeHeap(entrySize, kPos);
             }
             Vect.memcpy(kPos, srcStartAddress, entrySize);
             setOffset(offsets, index, kPos - heapStart);
@@ -531,29 +555,16 @@ public class OrderedMap implements Map, Reopenable {
     }
 
     // Returns delta between new and old heapStart addresses.
-    private long resize(long entrySize, long appendAddress) {
+    private long resizeHeap(long entrySize, long appendAddress) {
         assert appendAddress >= heapStart;
         if (nResizes < maxResizes) {
             nResizes++;
-            long kCapacity = (heapLimit - heapStart) << 1;
+            long newHeapSize = (heapLimit - heapStart) << 1;
             long target = appendAddress + entrySize - heapStart;
-            if (kCapacity < target) {
-                kCapacity = Numbers.ceilPow2(target);
+            if (newHeapSize < target) {
+                newHeapSize = Numbers.ceilPow2(target);
             }
-            if (kCapacity > MAX_HEAP_SIZE) {
-                throw LimitOverflowException.instance().put("limit of ").put(MAX_HEAP_SIZE).put(" memory exceeded in FastMap");
-            }
-            long kAddress = Unsafe.realloc(heapStart, heapSize, kCapacity, heapMemoryTag);
-
-            this.heapSize = kCapacity;
-            long delta = kAddress - heapStart;
-            kPos += delta;
-            assert kPos > 0;
-
-            this.heapStart = kAddress;
-            this.heapLimit = kAddress + kCapacity;
-
-            return delta;
+            return growHeap(newHeapSize);
         } else {
             throw LimitOverflowException.instance().put("limit of ").put(maxResizes).put(" resizes exceeded in FastMap");
         }
@@ -804,7 +815,7 @@ public class OrderedMap implements Map, Reopenable {
         protected void checkCapacity(long requiredKeySize) {
             long requiredSize = requiredKeySize + valueSize;
             if (appendAddress + requiredSize > heapLimit) {
-                long delta = resize(requiredSize, appendAddress);
+                long delta = resizeHeap(requiredSize, appendAddress);
                 startAddress += delta;
                 appendAddress += delta;
                 assert startAddress > 0;

@@ -55,6 +55,7 @@ import io.questdb.tasks.GroupByMergeShardTask;
 class AsyncGroupByRecordCursor implements RecordCursor {
     private static final Log LOG = LogFactory.getLog(AsyncGroupByRecordCursor.class);
     private final GroupByAllocator allocator;
+    private final CairoConfiguration configuration;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch(); // used for merge shard workers
     private final ObjList<GroupByFunction> groupByFunctions;
     private final MessageBus messageBus;
@@ -76,6 +77,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
             ObjList<Function> recordFunctions,
             MessageBus messageBus
     ) {
+        this.configuration = configuration;
         this.allocator = new GroupByAllocator(configuration);
         this.groupByFunctions = groupByFunctions;
         GroupByUtils.setAllocator(groupByFunctions, allocator);
@@ -224,7 +226,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
 
         if (!atom.isSharded()) {
             // No sharding was necessary, so the maps are small, and we merge them ourselves.
-            final Map dataMap = mergeNonShardedMap(atom);
+            final Map dataMap = atom.mergeOwnerMap();
             mapCursor = dataMap.getCursor();
         } else {
             // We had to shard the maps, so they must be big.
@@ -237,19 +239,6 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         recordA.of(mapCursor.getRecord());
         recordB.of(mapCursor.getRecordB());
         isDataMapBuilt = true;
-    }
-
-    private Map mergeNonShardedMap(AsyncGroupByAtom atom) {
-        final Map destMap = atom.getOwnerParticle().getMap();
-        final int perWorkerMapCount = atom.getPerWorkerParticles().size();
-
-        for (int i = 0; i < perWorkerMapCount; i++) {
-            final Map srcMap = atom.getPerWorkerParticles().getQuick(i).getMap();
-            destMap.merge(srcMap, atom.getFunctionUpdater(-1));
-            srcMap.close();
-        }
-
-        return destMap;
     }
 
     private ObjList<Map> mergeShards(AsyncGroupByAtom atom) {

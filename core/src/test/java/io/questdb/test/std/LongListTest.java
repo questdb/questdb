@@ -178,6 +178,30 @@ public class LongListTest {
     }
 
     @Test
+    public void testMergeSortStructuredSmallList() {
+        LongList list = new LongList();
+        for (int l = 0; l < LongSort.INSERTION_SORT_THRESHOLD - 1; l++) {
+            list.add(l);
+        }
+
+        list.sort();
+
+        assertOrderedAsc(list);
+    }
+
+    @Test
+    public void testMergeSortStructuredSmallListAllEqual() {
+        LongList list = new LongList();
+        for (int l = 0; l < LongSort.INSERTION_SORT_THRESHOLD - 1; l++) {
+            list.add(42);
+        }
+
+        list.sort();
+
+        assertOrderedAsc(list);
+    }
+
+    @Test
     public void testRestoreInitialCapacity() {
         final int N = 1000;
         LongList list = new LongList();
