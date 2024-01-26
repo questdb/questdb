@@ -232,7 +232,7 @@ public class MetricsIODispatcherTest {
         }
 
         final HttpQueryTestBuilder.HttpClientCode makeRequest = engine -> {
-            try (HttpClient client = HttpClientFactory.newInstance()) {
+            try (HttpClient client = HttpClientFactory.newPlainTextInstance()) {
                 if (parallelRequestBatches == 1) {
                     Assert.assertEquals(pool.size(), 0);
                 }

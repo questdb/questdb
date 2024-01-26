@@ -35,10 +35,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.*;
 import io.questdb.std.*;
-import io.questdb.std.str.DirectUtf8String;
-import io.questdb.std.str.StdoutSink;
-import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8s;
+import io.questdb.std.str.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
@@ -248,8 +245,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     }
 
     public boolean handleClientOperation(int operation, HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext)
-            throws HeartBeatException, PeerIsSlowToReadException, ServerDisconnectException, PeerIsSlowToWriteException
-    {
+            throws HeartBeatException, PeerIsSlowToReadException, ServerDisconnectException, PeerIsSlowToWriteException {
         boolean keepGoing;
         switch (operation) {
             case IOOperation.READ:
@@ -280,7 +276,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     @Override
     public void init() {
         if (socket.supportsTls()) {
-            if (socket.startTlsSession() != 0) {
+            if (socket.startTlsSession(null) != 0) {
                 throw CairoException.nonCritical().put("failed to start TLS session");
             }
         }
@@ -810,7 +806,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     || Utf8s.equalsNcAscii("multipart/mixed", headerParser.getContentType());
             final boolean multipartProcessor = processor instanceof HttpMultipartContentListener;
 
-            if (configuration.allowDeflateBeforeSend() && Utf8s.containsAscii(headerParser.getHeader(HEADER_CONTENT_ACCEPT_ENCODING), "gzip")) {
+            DirectUtf8Sequence acceptEncoding = headerParser.getHeader(HEADER_CONTENT_ACCEPT_ENCODING);
+            if (configuration.allowDeflateBeforeSend() && acceptEncoding != null && Utf8s.containsAscii(acceptEncoding, "gzip")) {
                 responseSink.setDeflateBeforeSend(true);
             }
 
@@ -905,13 +902,9 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             throw registerDispatcherDisconnect(DISCONNECT_REASON_PROTOCOL_VIOLATION);
         } catch (Throwable e) {
             LOG.error().$("internal error [fd=").$(getFd()).$(", e=`").$(e).$("`]").$();
-            throw registerDispatcherDisconnect( DISCONNECT_REASON_SERVER_ERROR);
+            throw registerDispatcherDisconnect(DISCONNECT_REASON_SERVER_ERROR);
         }
         return busyRecv;
-    }
-
-    private boolean isRequestBeingRejected() {
-        return rejectProcessor.rejectCode != 0;
     }
 
     private boolean handleClientSend() throws PeerIsSlowToReadException, ServerDisconnectException {
@@ -930,15 +923,19 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 LOG.debug().$("partition is in cold storage").$();
                 throw registerDispatcherWrite();
             } catch (PeerDisconnectedException ignore) {
-                throw registerDispatcherDisconnect( DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND);
+                throw registerDispatcherDisconnect(DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND);
             } catch (ServerDisconnectException ignore) {
                 LOG.info().$("kicked out [fd=").$(getFd()).I$();
-                throw registerDispatcherDisconnect( DISCONNECT_REASON_KICKED_OUT_AT_SEND);
+                throw registerDispatcherDisconnect(DISCONNECT_REASON_KICKED_OUT_AT_SEND);
             }
         } else {
             LOG.error().$("spurious write request [fd=").$(getFd()).I$();
         }
         return false;
+    }
+
+    private boolean isRequestBeingRejected() {
+        return rejectProcessor.rejectCode != 0;
     }
 
     private boolean parseMultipartResult(
@@ -975,7 +972,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private void shiftReceiveBufferUnprocessedBytes(long start, int receivedBytes) {
         // Shift to start
         this.receivedBytes = receivedBytes;
-        Vect.memcpy(recvBuffer, start, receivedBytes);
+        Vect.memmove(recvBuffer, start, receivedBytes);
         LOG.debug().$("peer is slow, waiting for bigger part to parse [multipart]").$();
     }
 

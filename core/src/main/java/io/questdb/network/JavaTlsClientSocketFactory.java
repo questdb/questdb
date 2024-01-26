@@ -22,47 +22,22 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.network;
 
-import io.questdb.cutlass.http.client.HttpClientCookieHandlerFactory;
-import io.questdb.network.*;
+import io.questdb.ClientTlsConfiguration;
+import io.questdb.log.Log;
 
-public interface HttpClientConfiguration {
-    HttpClientCookieHandlerFactory getCookieHandlerFactory();
+public final class JavaTlsClientSocketFactory implements SocketFactory {
+    public static final SocketFactory DEFAULT = new JavaTlsClientSocketFactory(ClientTlsConfiguration.DEFAULT);
+    public static final SocketFactory INSECURE_NO_VALIDATION = new JavaTlsClientSocketFactory(ClientTlsConfiguration.INSECURE_NO_VALIDATION);
+    private final ClientTlsConfiguration tlsConfig;
 
-    default EpollFacade getEpollFacade() {
-        return EpollFacadeImpl.INSTANCE;
+    public JavaTlsClientSocketFactory(ClientTlsConfiguration tlsConfig) {
+        this.tlsConfig = tlsConfig;
     }
 
-    default int getInitialRequestBufferSize() {
-        return Math.min(64 * 1024, getMaximumRequestBufferSize());
-    }
-
-    default KqueueFacade getKQueueFacade() {
-        return KqueueFacadeImpl.INSTANCE;
-    }
-
-    default int getMaximumRequestBufferSize() {
-        return Integer.MAX_VALUE;
-    }
-
-    default NetworkFacade getNetworkFacade() {
-        return NetworkFacadeImpl.INSTANCE;
-    }
-
-    default int getResponseBufferSize() {
-        return 64 * 1024;
-    }
-
-    default SelectFacade getSelectFacade() {
-        return SelectFacadeImpl.INSTANCE;
-    }
-
-    default int getTimeout() {
-        return 60_000;
-    }
-
-    default int getWaitQueueCapacity() {
-        return 4;
+    @Override
+    public Socket newInstance(NetworkFacade nf, Log log) {
+        return new JavaTlsClientSocket(nf, log, tlsConfig);
     }
 }
