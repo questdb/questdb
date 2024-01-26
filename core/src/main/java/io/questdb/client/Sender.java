@@ -92,6 +92,10 @@ public interface Sender extends Closeable {
         return new LineSenderBuilder();
     }
 
+    static Sender fromEnv() {
+        return builder().fromEnv().build();
+    }
+
     static Sender fromString(CharSequence configurationString) {
         return builder().fromString(configurationString).build();
     }
@@ -337,7 +341,6 @@ public interface Sender extends Closeable {
 
         }
 
-
         /**
          * Set address of a QuestDB server. It can be either a domain name or a textual representation of an IP address.
          * Only IPv4 addresses are supported.
@@ -513,6 +516,14 @@ public interface Sender extends Closeable {
             }
             tlsEnabled = true;
             return this;
+        }
+
+        public LineSenderBuilder fromEnv() {
+            String configString = System.getenv("QDB_CLIENT_CONF");
+            if (Chars.isBlank(configString)) {
+                throw new LineSenderException("QDB_CLIENT_CONF environment variable is not set");
+            }
+            return fromString(configString);
         }
 
         public LineSenderBuilder fromString(CharSequence configurationString) {
@@ -950,14 +961,14 @@ public interface Sender extends Closeable {
         }
 
         private void configureDefaults() {
+            if (protocol == PROTOCOL_NOT_SET) {
+                protocol = PROTOCOL_TCP;
+            }
             if (bufferCapacity == BUFFER_CAPACITY_NOT_SET) {
                 bufferCapacity = DEFAULT_BUFFER_CAPACITY;
             }
             if (maximumBufferCapacity == BUFFER_CAPACITY_NOT_SET) {
-                maximumBufferCapacity = DEFAULT_MAXIMUM_BUFFER_CAPACITY;
-            }
-            if (protocol == PROTOCOL_NOT_SET) {
-                protocol = PROTOCOL_TCP;
+                maximumBufferCapacity = protocol == PROTOCOL_HTTP ? DEFAULT_MAXIMUM_BUFFER_CAPACITY : bufferCapacity;
             }
             if (port == PORT_NOT_SET) {
                 port = protocol == PROTOCOL_HTTP ? DEFAULT_HTTP_PORT : DEFAULT_TCP_PORT;

@@ -434,6 +434,18 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testFromEnv() throws Exception {
+        authKeyId = AUTH_KEY_ID1;
+        runInContext(r -> {
+            try (Sender sender = Sender.fromEnv()) {
+                sender.table("mytable").symbol("symbol", "symbol").atNow();
+                sender.flush();
+            }
+            assertTableExistsEventually(engine, "mytable");
+        });
+    }
+
+    @Test
     public void testHostNorAddressSet() throws Exception {
         assertMemoryLeak(() -> {
             Sender.LineSenderBuilder builder = Sender.builder();
