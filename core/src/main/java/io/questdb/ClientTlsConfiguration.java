@@ -22,39 +22,32 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http;
+package io.questdb;
 
-import io.questdb.cairo.SecurityContext;
-import io.questdb.std.ObjList;
-import io.questdb.std.QuietCloseable;
-import org.jetbrains.annotations.Nullable;
+public class ClientTlsConfiguration {
+    public static final int TLS_VALIDATION_MODE_FULL = 0;
+    public static final ClientTlsConfiguration DEFAULT = new ClientTlsConfiguration(null, null, TLS_VALIDATION_MODE_FULL);
+    public static final int TLS_VALIDATION_MODE_NONE = 1;
+    public static final ClientTlsConfiguration INSECURE_NO_VALIDATION = new ClientTlsConfiguration(null, null, TLS_VALIDATION_MODE_NONE);
+    private final int tlsValidationMode;
+    private final char[] trustStorePassword;
+    private final String trustStorePath;
 
-public interface HttpAuthenticator extends QuietCloseable {
-
-    /**
-     * Authenticates incoming HTTP request.
-     *
-     * @param headers request headers
-     * @return true if the authentication succeeded, false - otherwise
-     */
-    boolean authenticate(HttpRequestHeader headers);
-
-    default void clear() {
+    public ClientTlsConfiguration(String trustStorePath, char[] trustStorePassword, int tlsValidationMode) {
+        this.trustStorePath = trustStorePath;
+        this.trustStorePassword = trustStorePassword;
+        this.tlsValidationMode = tlsValidationMode;
     }
 
-    @Override
-    default void close() {
+    public int tlsValidationMode() {
+        return tlsValidationMode;
     }
 
-    default byte getAuthType() {
-        return SecurityContext.AUTH_TYPE_NONE;
+    public char[] trustStorePassword() {
+        return trustStorePassword;
     }
 
-    /**
-     * Returns list of groups provided by external identity provider, such as OpenID Connect provider.
-     * For other authentication types returns null.
-     */
-    @Nullable ObjList<CharSequence> getGroups();
-
-    CharSequence getPrincipal();
+    public String trustStorePath() {
+        return trustStorePath;
+    }
 }
