@@ -90,7 +90,7 @@ public class HttpSecurityTest extends AbstractTest {
         }
     };
     private static final String VALID_BASIC_AUTH_CREDENTIALS_HEADER = "Authorization: " + VALID_BASIC_AUTH_CREDENTIALS;
-    private static final String VALID_REST_TOKEN_AUTH_CREDENTIALS = "Token validToken-XubtaE";
+    private static final String VALID_REST_TOKEN_AUTH_CREDENTIALS = "Bearer validToken-XubtaE";
     private static final HttpAuthenticatorFactory SINGLE_USER_REST_TOKEN_AUTH_FACTORY = () -> new HttpAuthenticator() {
         @Override
         public boolean authenticate(HttpRequestHeader headers) {

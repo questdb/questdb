@@ -35,10 +35,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.*;
 import io.questdb.std.*;
-import io.questdb.std.str.DirectUtf8String;
-import io.questdb.std.str.StdoutSink;
-import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8s;
+import io.questdb.std.str.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
@@ -280,7 +277,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     @Override
     public void init() {
         if (socket.supportsTls()) {
-            if (socket.startTlsSession() != 0) {
+            if (socket.startTlsSession(null) != 0) {
                 throw CairoException.nonCritical().put("failed to start TLS session");
             }
         }
@@ -819,7 +816,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     || Utf8s.equalsNcAscii("multipart/mixed", headerParser.getContentType());
             final boolean multipartProcessor = processor instanceof HttpMultipartContentListener;
 
-            if (configuration.allowDeflateBeforeSend() && Utf8s.containsAscii(headerParser.getHeader(HEADER_CONTENT_ACCEPT_ENCODING), "gzip")) {
+            DirectUtf8Sequence acceptEncoding = headerParser.getHeader(HEADER_CONTENT_ACCEPT_ENCODING);
+            if (configuration.allowDeflateBeforeSend() && acceptEncoding != null && Utf8s.containsAscii(acceptEncoding, "gzip")) {
                 responseSink.setDeflateBeforeSend(true);
             }
 
@@ -980,7 +978,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private void shiftReceiveBufferUnprocessedBytes(long start, int receivedBytes) {
         // Shift to start
         this.receivedBytes = receivedBytes;
-        Vect.memcpy(recvBuffer, start, receivedBytes);
+        Vect.memmove(recvBuffer, start, receivedBytes);
         LOG.debug().$("peer is slow, waiting for bigger part to parse [multipart]").$();
     }
 

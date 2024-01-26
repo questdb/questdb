@@ -31,19 +31,14 @@ import io.questdb.cutlass.json.JsonException;
 
 public class HttpClientMain {
     public static void main(String[] args) throws JsonException {
-
         DefaultCairoConfiguration configuration = new DefaultCairoConfiguration("C:\\qdb2\\db");
-
         try (
                 CairoEngine engine = new CairoEngine(configuration);
                 JsonToTableSerializer jsonToTableSerializer = new JsonToTableSerializer(engine);
-                HttpClient client = HttpClientFactory.newInstance()
+                HttpClient client = HttpClientFactory.newPlainTextInstance()
         ) {
-
-
             for (int i = 0; i < 1; i++) {
                 HttpClient.Request req = client.newRequest("localhost", 9000);
-
                 try (
                         HttpClient.ResponseHeaders rsp = req
                                 .GET()
@@ -59,7 +54,6 @@ public class HttpClientMain {
                     rsp.await();
 
                     if (rsp.isChunked()) {
-
                         jsonToTableSerializer.clear();
 
                         ChunkedResponse chunkedRsp = rsp.getChunkedResponse();

@@ -161,7 +161,7 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
             )) {
                 serverMain.start();
 
-                try (HttpClient httpClient = HttpClientFactory.newInstance(new DefaultHttpClientConfiguration())) {
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
                     String line = "line,sym1=123 field1=123i 1234567890000000000\n";
 
                     for (int i = 0; i < 10; i++) {
@@ -193,7 +193,7 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
                 serverMain.start();
                 String line = "line,sym1=123 field1=123i 1234567890000000000\n";
 
-                try (HttpClient httpClient = HttpClientFactory.newInstance(new DefaultHttpClientConfiguration())) {
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
                     HttpClient.Request request = httpClient.newRequest("localhost", getHttpPort(serverMain));
                     try (
                             HttpClient.ResponseHeaders resp = request.POST()
@@ -204,12 +204,10 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
                                     .putAscii(line)
                                     .send()
                     ) {
-                        try {
-                            resp.await();
-                            Assert.fail();
-                        } catch (HttpClientException e) {
-                            TestUtils.assertContains(e.getMessage(), "peer disconnect");
-                        }
+                        resp.await();
+                        Assert.fail();
+                    } catch (HttpClientException e) {
+                        TestUtils.assertContains(e.getMessage(), "peer disconnect");
                     }
                 }
             }
@@ -225,7 +223,7 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
 
                 Rnd rnd = TestUtils.generateRandom(LOG);
 
-                try (HttpClient httpClient = HttpClientFactory.newInstance(new DefaultHttpClientConfiguration())) {
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
                     String line = "line,sym1=123 field1=123i 1234567890000000000\n";
 
                     int count = 1 + rnd.nextInt(100);
@@ -296,7 +294,7 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
                 AtomicInteger walWriterTaken = countWalWriterTakenFromPool(serverMain);
 
                 int count = 10;
-                try (HttpClient httpClient = HttpClientFactory.newInstance(new DefaultHttpClientConfiguration())) {
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
                     httpClientRef.set(httpClient);
                     String line = ",sym1=123 field1=123i 1234567890000000000\n";
 
@@ -370,7 +368,7 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
 
                 for (int i = 0; i < 10; i++) {
                     counter.set(2);
-                    try (HttpClient httpClient = HttpClientFactory.newInstance(new DefaultHttpClientConfiguration())) {
+                    try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
                         httpClientRef.set(httpClient);
 
                         HttpClient.Request request = httpClient.newRequest("localhost", getHttpPort(serverMain));
@@ -399,8 +397,7 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
                 serverMain.start();
 
-
-                try (HttpClient httpClient = HttpClientFactory.newInstance(new DefaultHttpClientConfiguration())) {
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
                     // Bombard server with partial content requests
                     String line = "line,sym1=123 field1=123i 1234567890000000000\n";
                     AtomicInteger walWriterTaken = countWalWriterTakenFromPool(serverMain);
@@ -612,7 +609,7 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
                 serverMain.start();
                 String line = "line,sym1=123 field1=123i 1234567890000000000\n";
 
-                try (HttpClient httpClient = HttpClientFactory.newInstance(new DefaultHttpClientConfiguration())) {
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
                     HttpClient.Request request = httpClient.newRequest("localhost", getHttpPort(serverMain));
                     try (
                             HttpClient.ResponseHeaders resp = request.PUT()
@@ -627,7 +624,7 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
                     }
                 }
 
-                try (HttpClient httpClient = HttpClientFactory.newInstance(new DefaultHttpClientConfiguration())) {
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
                     HttpClient.Request request = httpClient.newRequest("localhost", getHttpPort(serverMain));
                     try (
                             HttpClient.ResponseHeaders resp = request.GET()
@@ -652,7 +649,7 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
                     DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), "20"
             )) {
                 serverMain.start();
-                try (HttpClient httpClient = HttpClientFactory.newInstance(new DefaultHttpClientConfiguration())) {
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
                     HttpClient.Request request = httpClient.newRequest("localhost", getHttpPort(serverMain));
                     try (
                             HttpClient.ResponseHeaders resp = request.POST()
@@ -785,7 +782,7 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
                 serverMain.start();
                 String line = "line,sym1=123 field1=123i 1234567890000000000\n";
 
-                try (HttpClient httpClient = HttpClientFactory.newInstance(new DefaultHttpClientConfiguration())) {
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
                     HttpClient.Request request = httpClient.newRequest("localhost", getHttpPort(serverMain));
                     try (
                             HttpClient.ResponseHeaders resp = request.POST()

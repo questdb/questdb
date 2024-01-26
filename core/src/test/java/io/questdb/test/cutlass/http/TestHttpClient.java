@@ -40,7 +40,7 @@ import org.junit.Assert;
 import java.util.regex.Pattern;
 
 public class TestHttpClient implements QuietCloseable {
-    private final HttpClient httpClient = HttpClientFactory.newInstance();
+    private final HttpClient httpClient = HttpClientFactory.newPlainTextInstance();
     private final StringSink sink = new StringSink();
     private boolean keepConnection;
 

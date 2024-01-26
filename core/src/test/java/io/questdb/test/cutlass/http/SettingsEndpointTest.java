@@ -28,7 +28,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
             try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
                 serverMain.start();
 
-                try (HttpClient httpClient = HttpClientFactory.newInstance(new DefaultHttpClientConfiguration())) {
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
                     assertSettingsRequest(httpClient, "{}");
                 }
             }
