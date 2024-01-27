@@ -22,39 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http;
+package io.questdb.cutlass.http.client;
 
-import io.questdb.cairo.SecurityContext;
-import io.questdb.std.ObjList;
-import io.questdb.std.QuietCloseable;
-import org.jetbrains.annotations.Nullable;
+public interface Response extends Chunk {
+    void recv();
 
-public interface HttpAuthenticator extends QuietCloseable {
-
-    /**
-     * Authenticates incoming HTTP request.
-     *
-     * @param headers request headers
-     * @return true if the authentication succeeded, false - otherwise
-     */
-    boolean authenticate(HttpRequestHeader headers);
-
-    default void clear() {
-    }
-
-    @Override
-    default void close() {
-    }
-
-    default byte getAuthType() {
-        return SecurityContext.AUTH_TYPE_NONE;
-    }
-
-    /**
-     * Returns list of groups provided by external identity provider, such as OpenID Connect provider.
-     * For other authentication types returns null.
-     */
-    @Nullable ObjList<CharSequence> getGroups();
-
-    CharSequence getPrincipal();
+    void recv(int timeout);
 }

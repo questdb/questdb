@@ -412,7 +412,7 @@ public final class JavaTlsClientSocket implements Socket {
         return newAddress;
     }
 
-    private static InputStream openTruststoreStream(String trustStorePath) throws FileNotFoundException {
+    private static InputStream openTrustStoreStream(String trustStorePath) throws FileNotFoundException {
         InputStream trustStoreStream;
         if (trustStorePath.startsWith("classpath:")) {
             String adjustedPath = trustStorePath.substring("classpath:".length());
@@ -442,7 +442,7 @@ public final class JavaTlsClientSocket implements Socket {
             sslContext = SSLContext.getInstance("TLS");
             TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
             KeyStore jks = KeyStore.getInstance("JKS");
-            try (InputStream trustStoreStream = openTruststoreStream(trustStorePath)) {
+            try (InputStream trustStoreStream = openTrustStoreStream(trustStorePath)) {
                 jks.load(trustStoreStream, tlsConfig.trustStorePassword());
             }
             tmf.init(jks);
