@@ -30,7 +30,7 @@ public class PropBootstrapConfiguration extends DefaultBootstrapConfiguration {
 
     @Override
     public ServerConfiguration getServerConfiguration(Bootstrap bootstrap) throws Exception {
-        return new PropServerConfiguration(
+        return new ReloadingPropServerConfiguration(
                 bootstrap.getRootDirectory(),
                 bootstrap.loadProperties(),
                 getEnv(),

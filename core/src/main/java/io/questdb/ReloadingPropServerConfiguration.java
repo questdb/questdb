@@ -25,6 +25,7 @@
 package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cutlass.http.HttpMinServerConfiguration;
 import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.json.JsonException;
@@ -65,7 +66,7 @@ public class ReloadingPropServerConfiguration implements ServerConfiguration {
             Log log,
             final BuildInformation buildInformation
     ) throws ServerConfigurationException, JsonException {
-        this.config = new PropServerConfiguration(root, properties, env, log, buildInformation);
+        this.config = new ReloadingPropServerConfiguration(root, properties, env, log, buildInformation);
         this.root = root;
         this.log = log;
         this.buildInformation = buildInformation;
@@ -141,6 +142,16 @@ public class ReloadingPropServerConfiguration implements ServerConfiguration {
     @Override
     public WorkerPoolConfiguration getWorkerPoolConfiguration() {
         return this.config.getWorkerPoolConfiguration();
+    }
+
+    @Override
+    public void init(CairoEngine engine, FreeOnExit freeOnExit) {
+        this.config.init(engine, freeOnExit);
+    }
+
+    @Override
+    public boolean isLineTcpEnabled() {
+        return this.config.isLineTcpEnabled();
     }
 
     public boolean reload() {
