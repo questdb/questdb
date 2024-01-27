@@ -39,6 +39,7 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
     private static final Log LOG = LogFactory.getLog(DirectIntList.class);
     private final long initialCapacity;
     private final int memoryTag;
+    private final boolean zeroOnInit;
     private long address;
     private long capacity;
     private long limit;
@@ -48,10 +49,11 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
         this(capacity, memoryTag, false);
     }
 
-    public DirectIntList(long capacity, int memoryTag, boolean zero) {
+    public DirectIntList(long capacity, int memoryTag, boolean zeroOnInit) {
         this.memoryTag = memoryTag;
         this.capacity = capacity << 2;
-        if (zero) {
+        this.zeroOnInit = zeroOnInit;
+        if (zeroOnInit) {
             this.address = Unsafe.calloc(this.capacity, memoryTag, true);
         } else {
             this.address = Unsafe.malloc(this.capacity, memoryTag);
@@ -168,18 +170,25 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
     }
 
     // desired capacity in bytes (not count of INT values)
-    private void setCapacityBytes(long capacity) {
-        if (this.capacity != capacity) {
-            if ((capacity >>> 2) > MAX_SAFE_INT_POW_2) {
+    private void setCapacityBytes(long newCapacity) {
+        if (capacity != newCapacity) {
+            if ((newCapacity >>> 2) > MAX_SAFE_INT_POW_2) {
                 throw CairoException.nonCritical().put("int list capacity overflow");
             }
-            final long oldCapacity = this.capacity;
-            final long oldSize = this.pos - this.address;
-            this.capacity = capacity;
-            long address = Unsafe.realloc(this.address, oldCapacity, capacity, memoryTag);
-            this.address = address;
-            this.limit = address + capacity;
-            this.pos = Math.min(this.limit, address + oldSize);
+            final long oldCapacity = capacity;
+            final long oldSize = pos - address;
+            this.capacity = newCapacity;
+            if (address == 0) {
+                if (zeroOnInit) {
+                    this.address = Unsafe.calloc(newCapacity, memoryTag, true);
+                } else {
+                    this.address = Unsafe.malloc(newCapacity, memoryTag);
+                }
+            } else {
+                this.address = Unsafe.realloc(address, oldCapacity, newCapacity, memoryTag);
+            }
+            this.limit = address + newCapacity;
+            this.pos = Math.min(limit, address + oldSize);
             LOG.debug().$("resized [old=").$(oldCapacity).$(", new=").$(this.capacity).$(']').$();
         }
     }

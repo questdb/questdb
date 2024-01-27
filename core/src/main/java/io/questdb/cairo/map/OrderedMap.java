@@ -308,14 +308,17 @@ public class OrderedMap implements Map, Reopenable {
 
     @Override
     public void restoreInitialCapacity() {
+        boolean needsZeroing = offsets.size() > 0;
         if (keyCapacity != initialKeyCapacity) {
             keyCapacity = initialKeyCapacity;
             keyCapacity = keyCapacity < MIN_KEY_CAPACITY ? MIN_KEY_CAPACITY : Numbers.ceilPow2(keyCapacity);
             mask = keyCapacity - 1;
         }
-        offsets.close();
-        offsets = new DirectIntList((long) keyCapacity << 1, listMemoryTag, true);
+        offsets.setCapacity((long) keyCapacity << 1);
         offsets.setPos((long) keyCapacity << 1);
+        if (needsZeroing) {
+            offsets.zero();
+        }
 
         if (heapSize != initialHeapSize) {
             heapStart = Unsafe.realloc(heapStart, heapLimit - heapStart, heapSize = initialHeapSize, heapMemoryTag);
@@ -326,13 +329,6 @@ public class OrderedMap implements Map, Reopenable {
         free = (int) (keyCapacity * loadFactor);
         size = 0;
         nResizes = 0;
-    }
-
-    @Override
-    public void setHeapSize(long heapSize) {
-        if (heapSize > this.heapSize) {
-            growHeap(heapSize);
-        }
     }
 
     @Override
@@ -389,23 +385,6 @@ public class OrderedMap implements Map, Reopenable {
             rehash();
         }
         return valueOf(keyWriter.startAddress, keyWriter.appendAddress, true, value);
-    }
-
-    private long growHeap(long newHeapSize) {
-        if (newHeapSize > MAX_HEAP_SIZE) {
-            throw LimitOverflowException.instance().put("limit of ").put(MAX_HEAP_SIZE).put(" memory exceeded in FastMap");
-        }
-        long kAddress = Unsafe.realloc(heapStart, heapSize, newHeapSize, heapMemoryTag);
-
-        this.heapSize = newHeapSize;
-        long delta = kAddress - heapStart;
-        kPos += delta;
-        assert kPos > 0;
-
-        this.heapStart = kAddress;
-        this.heapLimit = kAddress + newHeapSize;
-
-        return delta;
     }
 
     private void mergeFixedSizeKey(OrderedMap srcMap, MapValueMergeFunction mergeFunc) {
@@ -571,7 +550,20 @@ public class OrderedMap implements Map, Reopenable {
             if (newHeapSize < target) {
                 newHeapSize = Numbers.ceilPow2(target);
             }
-            return growHeap(newHeapSize);
+            if (newHeapSize > MAX_HEAP_SIZE) {
+                throw LimitOverflowException.instance().put("limit of ").put(MAX_HEAP_SIZE).put(" memory exceeded in FastMap");
+            }
+            long kAddress = Unsafe.realloc(heapStart, heapSize, newHeapSize, heapMemoryTag);
+
+            this.heapSize = newHeapSize;
+            long delta = kAddress - heapStart;
+            kPos += delta;
+            assert kPos > 0;
+
+            this.heapStart = kAddress;
+            this.heapLimit = kAddress + newHeapSize;
+
+            return delta;
         } else {
             throw LimitOverflowException.instance().put("limit of ").put(maxResizes).put(" resizes exceeded in FastMap");
         }

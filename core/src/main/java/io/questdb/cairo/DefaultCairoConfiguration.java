@@ -1001,6 +1001,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isGroupByPresizeEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean isIOURingEnabled() {
         return true;
     }

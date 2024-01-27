@@ -189,12 +189,19 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         final AsyncGroupByAtom.MapParticle particle = atom.getParticle(slotId);
         final RecordSink mapSink = atom.getMapSink(slotId);
         try {
+            if (atom.isSharded()) {
+                particle.shard();
+            } else {
+                particle.reopen();
+            }
+
             if (!particle.isSharded()) {
                 aggregateNonSharded(record, frameRowCount, functionUpdater, particle, mapSink);
             } else {
                 aggregateSharded(record, frameRowCount, functionUpdater, particle, mapSink);
             }
-            atom.tryShard(particle);
+
+            atom.requestSharding(particle);
         } finally {
             atom.release(slotId);
         }
@@ -352,12 +359,19 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
                 );
             }
 
+            if (atom.isSharded()) {
+                particle.shard();
+            } else {
+                particle.reopen();
+            }
+
             if (!particle.isSharded()) {
                 aggregateFilteredNonSharded(record, rows, functionUpdater, particle, mapSink);
             } else {
                 aggregateFilteredSharded(record, rows, functionUpdater, particle, mapSink);
             }
-            atom.tryShard(particle);
+
+            atom.requestSharding(particle);
         } finally {
             atom.release(slotId);
         }

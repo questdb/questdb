@@ -996,6 +996,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isGroupByPresizeEnabled() {
+        return delegate.isGroupByPresizeEnabled();
+    }
+
+    @Override
     public boolean isIOURingEnabled() {
         return delegate.isIOURingEnabled();
     }

@@ -58,9 +58,10 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     private final GroupByFunctionsUpdater functionUpdater;
     private final ObjList<Function> keyFunctions;
     private final ColumnTypes keyTypes;
+    private final MapStats lastOwnerStats;
+    private final ObjList<MapStats> lastShardStats;
     private final RecordSink ownerMapSink;
     private final MapParticle ownerParticle;
-    private final MapStats ownerStats;
     private final ObjList<Function> perWorkerFilters;
     private final ObjList<GroupByFunctionsUpdater> perWorkerFunctionUpdaters;
     private final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
@@ -70,8 +71,8 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     private final ObjList<MapParticle> perWorkerParticles;
     private final int shardCount;
     private final int shardCountShr;
-    private final ObjList<MapStats> shardStats;
     private final ColumnTypes valueTypes;
+    private boolean lastSharded; // whether we had to shard during the last query execution
     private volatile boolean sharded;
 
     public AsyncGroupByAtom(
@@ -124,15 +125,15 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
             shardCount = Math.min(Numbers.ceilPow2(2 * workerCount), MAX_SHARDS);
             shardCountShr = Integer.numberOfLeadingZeros(shardCount) + 1;
-            shardStats = new ObjList<>(shardCount);
+            lastShardStats = new ObjList<>(shardCount);
             for (int i = 0; i < shardCount; i++) {
-                shardStats.extendAndSet(i, new MapStats());
+                lastShardStats.extendAndSet(i, new MapStats());
             }
-            ownerStats = new MapStats();
-            ownerParticle = new MapParticle();
+            lastOwnerStats = new MapStats();
+            ownerParticle = new MapParticle(true);
             perWorkerParticles = new ObjList<>(slotCount);
             for (int i = 0; i < slotCount; i++) {
-                perWorkerParticles.extendAndSet(i, new MapParticle());
+                perWorkerParticles.extendAndSet(i, new MapParticle(false));
             }
 
             ownerMapSink = RecordSinkFactory.getInstance(asm, columnTypes, listColumnFilter, keyFunctions, false);
@@ -169,6 +170,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
     @Override
     public void clear() {
+        lastSharded = false;
         sharded = false;
         ownerParticle.close();
         for (int i = 0, n = perWorkerParticles.size(); i < n; i++) {
@@ -325,19 +327,12 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     }
 
     public Map mergeOwnerMap() {
+        lastSharded = false;
         final Map destMap = ownerParticle.getMap();
         final int perWorkerMapCount = perWorkerParticles.size();
 
-        // Pre-size the destination map, if we have the stats.
-        final MapStats stats = ownerStats;
-        if (stats.mergedSize > 0 && stats.mergedSize <= configuration.getGroupByPresizeMaxSize()) {
-            destMap.setKeyCapacity((int) stats.mergedSize);
-        }
-        if (stats.mergedHeapSize > 0 && stats.mergedHeapSize <= configuration.getGroupByPresizeMaxHeapSize()) {
-            destMap.setHeapSize(stats.mergedHeapSize);
-        }
-
         // Calculate the medians before the merge.
+        final MapStats stats = lastOwnerStats;
         final LongList medianList = stats.medianList;
         medianList.clear();
         for (int i = 0; i < perWorkerMapCount; i++) {
@@ -367,10 +362,8 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         }
 
         // Don't forget to update the stats.
-        stats.update(medianSize, medianHeapSize, destMap.size(), destMap.getUsedHeapSize());
-        // Also, clean up shard stats.
-        for (int i = 0; i < shardCount; i++) {
-            shardStats.getQuick(i).clear();
+        if (configuration.isGroupByPresizeEnabled()) {
+            stats.update(medianSize, medianHeapSize, destMap.size(), destMap.getUsedHeapSize());
         }
 
         return destMap;
@@ -383,16 +376,8 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         final Map destMap = ownerParticle.getShardMaps().getQuick(shardIndex);
         final int perWorkerMapCount = perWorkerParticles.size();
 
-        // Pre-size the destination map, if we have the stats.
-        final MapStats stats = shardStats.getQuick(shardIndex);
-        if (stats.mergedSize > 0 && stats.mergedSize <= configuration.getGroupByPresizeMaxSize()) {
-            destMap.setKeyCapacity((int) stats.mergedSize);
-        }
-        if (stats.mergedHeapSize > 0 && stats.mergedHeapSize <= configuration.getGroupByPresizeMaxHeapSize()) {
-            destMap.setHeapSize(stats.mergedHeapSize);
-        }
-
         // Calculate the medians before the merge.
+        final MapStats stats = lastShardStats.getQuick(shardIndex);
         final LongList medianList = stats.medianList;
         medianList.clear();
         for (int i = 0; i < perWorkerMapCount; i++) {
@@ -424,7 +409,9 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         }
 
         // Don't forget to update the stats.
-        stats.update(medianSize, medianHeapSize, destMap.size(), destMap.getUsedHeapSize());
+        if (configuration.isGroupByPresizeEnabled()) {
+            stats.update(medianSize, medianHeapSize, destMap.size(), destMap.getUsedHeapSize());
+        }
     }
 
     public void release(int slotId) {
@@ -433,16 +420,19 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
     @Override
     public void reopen() {
-        if (ownerStats.mergedSize > configuration.getGroupByShardingThreshold()) {
+        if (lastSharded) {
             // Looks like we had to shard during previous execution, so let's do it ahead of time.
             sharded = true;
-            shardAll();
+            ownerParticle.reopenShards();
         } else {
             // Probably we won't need sharding.
             ownerParticle.reopen();
-            for (int i = 0, n = perWorkerParticles.size(); i < n; i++) {
-                perWorkerParticles.getQuick(i).reopen();
-            }
+        }
+    }
+
+    public void requestSharding(MapParticle particle) {
+        if (!sharded && particle.getMap().size() > configuration.getGroupByShardingThreshold()) {
+            sharded = true;
         }
     }
 
@@ -455,6 +445,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     }
 
     public void shardAll() {
+        lastSharded = true;
         ownerParticle.shard();
         for (int i = 0, n = perWorkerParticles.size(); i < n; i++) {
             perWorkerParticles.getQuick(i).shard();
@@ -474,45 +465,12 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         }
     }
 
-    public void tryShard(MapParticle particle) {
-        if (particle.isSharded()) {
-            return;
-        }
-        if (particle.getMap().size() > configuration.getGroupByShardingThreshold() || sharded) {
-            particle.shard();
-            sharded = true;
-        }
-    }
-
-    public void updateShardStats() {
-        // Write sum of per-shard stats into owner stats.
-        long medianSize = 0;
-        long medianHeapSize = 0;
-        long mergedSize = 0;
-        long mergedHeapSize = 0;
-        for (int i = 0; i < shardCount; i++) {
-            MapStats stats = shardStats.getQuick(i);
-            medianSize = Math.max(stats.medianSize, medianSize);
-            medianHeapSize = Math.max(stats.medianHeapSize, medianHeapSize);
-            mergedSize += stats.mergedSize;
-            mergedHeapSize += stats.mergedHeapSize;
-        }
-        ownerStats.update(medianSize, medianHeapSize, mergedSize, mergedHeapSize);
-    }
-
     private static class MapStats {
         long medianHeapSize;
         LongList medianList = new LongList();
         long medianSize;
         long mergedHeapSize;
         long mergedSize;
-
-        void clear() {
-            this.medianSize = 0;
-            this.medianHeapSize = 0;
-            this.mergedSize = 0;
-            this.mergedHeapSize = 0;
-        }
 
         void update(long medianSize, long medianHeapSize, long mergedSize, long mergedHeapSize) {
             this.medianSize = medianSize;
@@ -524,12 +482,14 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
     public class MapParticle implements QuietCloseable {
         private final Map map; // non-sharded partial result
+        private final boolean owner;
         private final ObjList<Map> shards; // this.map split into shards
         private boolean sharded;
 
-        private MapParticle() {
+        private MapParticle(boolean owner) {
             this.map = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes);
             this.shards = new ObjList<>(shardCount);
+            this.owner = owner;
         }
 
         @Override
@@ -559,32 +519,12 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         }
 
         public void reopen() {
-            int keyCapacity = targetKeyCapacity(ownerStats);
-            long heapSize = targetHeapSize(ownerStats);
+            int keyCapacity = targetKeyCapacity(lastOwnerStats);
+            long heapSize = targetHeapSize(lastOwnerStats);
             map.reopen(keyCapacity, heapSize);
         }
 
-        private void reopenShards() {
-            int size = shards.size();
-            if (size == 0) {
-                for (int i = 0; i < shardCount; i++) {
-                    MapStats stats = shardStats.getQuick(i);
-                    int keyCapacity = targetKeyCapacity(stats);
-                    long heapSize = targetHeapSize(stats);
-                    shards.add(MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes, keyCapacity, heapSize));
-                }
-            } else {
-                assert size == shardCount;
-                for (int i = 0; i < shardCount; i++) {
-                    MapStats stats = shardStats.getQuick(i);
-                    int keyCapacity = targetKeyCapacity(stats);
-                    long heapSize = targetHeapSize(stats);
-                    shards.getQuick(i).reopen(keyCapacity, heapSize);
-                }
-            }
-        }
-
-        private void shard() {
+        public void shard() {
             if (sharded) {
                 return;
             }
@@ -608,18 +548,41 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             sharded = true;
         }
 
+        private void reopenShards() {
+            int size = shards.size();
+            if (size == 0) {
+                for (int i = 0; i < shardCount; i++) {
+                    shards.add(MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes));
+                }
+            } else {
+                assert size == shardCount;
+                for (int i = 0; i < shardCount; i++) {
+                    MapStats stats = lastShardStats.getQuick(i);
+                    int keyCapacity = targetKeyCapacity(stats);
+                    long heapSize = targetHeapSize(stats);
+                    shards.getQuick(i).reopen(keyCapacity, heapSize);
+                }
+            }
+        }
+
         private long targetHeapSize(MapStats stats) {
+            final long statHeapSize = owner ? stats.mergedHeapSize : stats.medianHeapSize;
+            // Per-worker limit is 4x smaller than the owner one.
+            final long statLimit = owner ? configuration.getGroupByPresizeMaxHeapSize() : configuration.getGroupByPresizeMaxHeapSize() << 2;
             int heapSize = configuration.getSqlSmallMapPageSize();
-            if (stats.medianHeapSize <= configuration.getGroupByPresizeMaxHeapSize()) {
-                heapSize = Math.max((int) stats.medianHeapSize, heapSize);
+            if (statHeapSize <= statLimit) {
+                heapSize = Math.max((int) statHeapSize, heapSize);
             }
             return heapSize;
         }
 
         private int targetKeyCapacity(MapStats stats) {
+            final long statKeyCapacity = owner ? stats.mergedSize : stats.medianSize;
+            // Per-worker limit is 4x smaller than the owner one.
+            final long statLimit = owner ? configuration.getGroupByPresizeMaxSize() : configuration.getGroupByPresizeMaxSize() << 2;
             int keyCapacity = configuration.getSqlSmallMapKeyCapacity();
-            if (stats.medianSize <= configuration.getGroupByPresizeMaxSize()) {
-                keyCapacity = Math.max((int) stats.medianSize, keyCapacity);
+            if (statKeyCapacity <= statLimit) {
+                keyCapacity = Math.max((int) statKeyCapacity, keyCapacity);
             }
             return keyCapacity;
         }

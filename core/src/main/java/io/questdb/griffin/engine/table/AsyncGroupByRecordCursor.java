@@ -307,8 +307,6 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                 .$(", reclaimed=").$(reclaimed)
                 .$(", queuedCount=").$(queuedCount).I$();
 
-        atom.updateShardStats();
-
         return atom.getOwnerParticle().getShardMaps();
     }
 

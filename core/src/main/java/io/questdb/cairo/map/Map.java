@@ -67,10 +67,6 @@ public interface Map extends Mutable, Closeable, Reopenable {
 
     void restoreInitialCapacity();
 
-    default void setHeapSize(long heapSize) {
-        // no-op
-    }
-
     void setKeyCapacity(int keyCapacity);
 
     long size();

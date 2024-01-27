@@ -552,6 +552,8 @@ public interface CairoConfiguration {
 
     int getWriterTickRowsCountMod();
 
+    boolean isGroupByPresizeEnabled();
+
     boolean isIOURingEnabled();
 
     boolean isMultiKeyDedupEnabled();
