@@ -170,7 +170,6 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
     @Override
     public void clear() {
-        lastSharded = false;
         sharded = false;
         ownerParticle.close();
         for (int i = 0, n = perWorkerParticles.size(); i < n; i++) {
