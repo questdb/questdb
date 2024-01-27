@@ -30,10 +30,7 @@ import io.questdb.std.str.StringSink;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.ResultSet;
-import java.sql.Statement;
+import java.sql.*;
 
 import static io.questdb.test.cutlass.pgwire.BasePGTest.assertResultSet;
 import static io.questdb.test.tools.TestUtils.unchecked;
@@ -65,9 +62,13 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                 String query = "select count() from (select * from x where l = 42);";
                 String expected = "count[BIGINT]\n" +
                         "100\n";
-                try (ResultSet rs = conn.prepareStatement(query).executeQuery()) {
-                    sink.clear();
-                    assertResultSet(expected, sink, rs);
+                try (PreparedStatement ps = conn.prepareStatement(query)) {
+                    for (int i = 0; i < 10; i++) {
+                        try (ResultSet rs = ps.executeQuery()) {
+                            sink.clear();
+                            assertResultSet(expected, sink, rs);
+                        }
+                    }
                 }
             }
         }
@@ -86,9 +87,13 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                 String query = "select count_distinct(l1), count_distinct(l2) from x;";
                 String expected = "count_distinct[BIGINT],count_distinct1[BIGINT]\n" +
                         "10000,1000\n";
-                try (ResultSet rs = conn.prepareStatement(query).executeQuery()) {
-                    sink.clear();
-                    assertResultSet(expected, sink, rs);
+                try (PreparedStatement ps = conn.prepareStatement(query)) {
+                    for (int i = 0; i < 10; i++) {
+                        try (ResultSet rs = ps.executeQuery()) {
+                            sink.clear();
+                            assertResultSet(expected, sink, rs);
+                        }
+                    }
                 }
             }
         }
@@ -109,9 +114,13 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                         "k0,10000\n" +
                         "k1,10000\n" +
                         "k2,10000\n";
-                try (ResultSet rs = conn.prepareStatement(query).executeQuery()) {
-                    sink.clear();
-                    assertResultSet(expected, sink, rs);
+                try (PreparedStatement ps = conn.prepareStatement(query)) {
+                    for (int i = 0; i < 10; i++) {
+                        try (ResultSet rs = ps.executeQuery()) {
+                            sink.clear();
+                            assertResultSet(expected, sink, rs);
+                        }
+                    }
                 }
             }
         }
