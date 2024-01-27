@@ -66,7 +66,7 @@ public class ReloadingPropServerConfiguration implements ServerConfiguration {
             Log log,
             final BuildInformation buildInformation
     ) throws ServerConfigurationException, JsonException {
-        this.config = new ReloadingPropServerConfiguration(root, properties, env, log, buildInformation);
+        this.config = new PropServerConfiguration(root, properties, env, log, buildInformation);
         this.root = root;
         this.log = log;
         this.buildInformation = buildInformation;
