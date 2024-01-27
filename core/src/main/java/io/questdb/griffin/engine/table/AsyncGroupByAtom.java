@@ -330,7 +330,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         final Map destMap = ownerParticle.getMap();
         final int perWorkerMapCount = perWorkerParticles.size();
 
-        // Calculate the medians before the merge.
+        // Calculate medians before the merge.
         final MapStats stats = lastOwnerStats;
         final LongList medianList = stats.medianList;
         medianList.clear();
@@ -342,15 +342,12 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         // This is not very precise, but does the job.
         long medianSize = medianList.getQuick(medianList.size() / 2);
         medianList.clear();
-        long medianHeapSize = -1;
+        long maxHeapSize = -1;
         if (destMap.getUsedHeapSize() != -1) {
-            medianList.clear();
             for (int i = 0; i < perWorkerMapCount; i++) {
                 final Map srcMap = perWorkerParticles.getQuick(i).getMap();
-                medianList.add(srcMap.getUsedHeapSize());
+                maxHeapSize = Math.max(srcMap.getHeapSize(), maxHeapSize);
             }
-            medianList.sort();
-            medianHeapSize = medianList.getQuick(medianList.size() / 2);
         }
 
         // Now do the actual merge.
@@ -362,7 +359,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
         // Don't forget to update the stats.
         if (configuration.isGroupByPresizeEnabled()) {
-            stats.update(medianSize, medianHeapSize, destMap.size(), destMap.getUsedHeapSize());
+            stats.update(medianSize, maxHeapSize, destMap.size(), destMap.getHeapSize());
         }
 
         return destMap;
@@ -375,7 +372,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         final Map destMap = ownerParticle.getShardMaps().getQuick(shardIndex);
         final int perWorkerMapCount = perWorkerParticles.size();
 
-        // Calculate the medians before the merge.
+        // Calculate medians before the merge.
         final MapStats stats = lastShardStats.getQuick(shardIndex);
         final LongList medianList = stats.medianList;
         medianList.clear();
@@ -387,16 +384,13 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         medianList.sort();
         // This is not very precise, but does the job.
         long medianSize = medianList.getQuick(medianList.size() / 2);
-        long medianHeapSize = -1;
+        long maxHeapSize = -1;
         if (destMap.getUsedHeapSize() != -1) {
-            medianList.clear();
             for (int i = 0; i < perWorkerMapCount; i++) {
                 final MapParticle srcParticle = perWorkerParticles.getQuick(i);
                 final Map srcMap = srcParticle.getShardMaps().getQuick(shardIndex);
-                medianList.add(srcMap.getUsedHeapSize());
+                maxHeapSize = Math.max(srcMap.getHeapSize(), maxHeapSize);
             }
-            medianList.sort();
-            medianHeapSize = medianList.getQuick(medianList.size() / 2);
         }
 
         // Now do the actual merge.
@@ -409,7 +403,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
         // Don't forget to update the stats.
         if (configuration.isGroupByPresizeEnabled()) {
-            stats.update(medianSize, medianHeapSize, destMap.size(), destMap.getUsedHeapSize());
+            stats.update(medianSize, maxHeapSize, destMap.size(), destMap.getHeapSize());
         }
     }
 
@@ -465,15 +459,16 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     }
 
     private static class MapStats {
-        long medianHeapSize;
+        // We don't use median for heap size since heap is mmapped lazily initialized memory.
+        long maxHeapSize;
         LongList medianList = new LongList();
         long medianSize;
         long mergedHeapSize;
         long mergedSize;
 
-        void update(long medianSize, long medianHeapSize, long mergedSize, long mergedHeapSize) {
+        void update(long medianSize, long maxHeapSize, long mergedSize, long mergedHeapSize) {
             this.medianSize = medianSize;
-            this.medianHeapSize = medianHeapSize;
+            this.maxHeapSize = maxHeapSize;
             this.mergedSize = mergedSize;
             this.mergedHeapSize = mergedHeapSize;
         }
@@ -565,7 +560,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         }
 
         private long targetHeapSize(MapStats stats) {
-            final long statHeapSize = owner ? stats.mergedHeapSize : stats.medianHeapSize;
+            final long statHeapSize = owner ? stats.mergedHeapSize : stats.maxHeapSize;
             // Per-worker limit is 4x smaller than the owner one.
             final long statLimit = owner ? configuration.getGroupByPresizeMaxHeapSize() : configuration.getGroupByPresizeMaxHeapSize() << 2;
             int heapSize = configuration.getSqlSmallMapPageSize();
