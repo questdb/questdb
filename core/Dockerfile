@@ -2,7 +2,7 @@ FROM debian:bullseye
 ARG tag_name
 
 ENV GOSU_VERSION=1.14
-ENV JDK_VERSION=17.0.7.7-1
+ENV JDK_VERSION=17.0.10.7-1
 
 RUN apt-get update \
   && apt-get install --no-install-recommends git curl wget gnupg2 ca-certificates lsb-release software-properties-common unzip -y
