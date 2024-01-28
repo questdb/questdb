@@ -89,7 +89,7 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.getHttpServerConfiguration().haltOnError());
         Assert.assertEquals(2097152, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getSendBufferSize());
         Assert.assertEquals("index.html", configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getIndexFileName());
-        Assert.assertTrue(configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().isAuthenticationRequired());
+        Assert.assertEquals(SecurityContext.AUTH_TYPE_CREDENTIALS, configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getRequiredAuthType());
         Assert.assertTrue(configuration.getHttpServerConfiguration().isEnabled());
         Assert.assertFalse(configuration.getHttpServerConfiguration().getHttpContextConfiguration().getDumpNetworkTraffic());
         Assert.assertFalse(configuration.getHttpServerConfiguration().getHttpContextConfiguration().allowDeflateBeforeSend());
@@ -147,9 +147,9 @@ public class PropServerConfigurationTest {
         Assert.assertEquals("Keep-Alive: timeout=5, max=10000" + Misc.EOL, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getKeepAliveHeader());
 
         Assert.assertFalse(configuration.getHttpServerConfiguration().isPessimisticHealthCheckEnabled());
-        Assert.assertTrue(configuration.getHttpServerConfiguration().isHealthCheckAuthenticationRequired());
+        Assert.assertEquals(SecurityContext.AUTH_TYPE_CREDENTIALS, configuration.getHttpServerConfiguration().getRequiredAuthType());
         Assert.assertFalse(configuration.getHttpMinServerConfiguration().isPessimisticHealthCheckEnabled());
-        Assert.assertTrue(configuration.getHttpMinServerConfiguration().isHealthCheckAuthenticationRequired());
+        Assert.assertEquals(SecurityContext.AUTH_TYPE_CREDENTIALS, configuration.getHttpMinServerConfiguration().getRequiredAuthType());
 
         Assert.assertFalse(configuration.getHttpServerConfiguration().getHttpContextConfiguration().readOnlySecurityContext());
         Assert.assertEquals(Long.MAX_VALUE, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getMaxQueryResponseRowLimit());
@@ -919,15 +919,15 @@ public class PropServerConfigurationTest {
             Assert.assertTrue(configuration.getHttpServerConfiguration().haltOnError());
             Assert.assertEquals(128, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getSendBufferSize());
             Assert.assertEquals("index2.html", configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getIndexFileName());
-            Assert.assertFalse(configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().isAuthenticationRequired());
+            Assert.assertEquals(SecurityContext.AUTH_TYPE_NONE, configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getRequiredAuthType());
             Assert.assertFalse(configuration.getHttpServerConfiguration().isQueryCacheEnabled());
             Assert.assertEquals(32, configuration.getHttpServerConfiguration().getQueryCacheBlockCount());
             Assert.assertEquals(16, configuration.getHttpServerConfiguration().getQueryCacheRowCount());
 
             Assert.assertTrue(configuration.getHttpServerConfiguration().isPessimisticHealthCheckEnabled());
-            Assert.assertFalse(configuration.getHttpServerConfiguration().isHealthCheckAuthenticationRequired());
+            Assert.assertEquals(SecurityContext.AUTH_TYPE_NONE, configuration.getHttpServerConfiguration().getRequiredAuthType());
             Assert.assertTrue(configuration.getHttpMinServerConfiguration().isPessimisticHealthCheckEnabled());
-            Assert.assertFalse(configuration.getHttpMinServerConfiguration().isHealthCheckAuthenticationRequired());
+            Assert.assertEquals(SecurityContext.AUTH_TYPE_NONE, configuration.getHttpMinServerConfiguration().getRequiredAuthType());
 
             Assert.assertTrue(configuration.getHttpServerConfiguration().getHttpContextConfiguration().readOnlySecurityContext());
             Assert.assertEquals(50000, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getMaxQueryResponseRowLimit());

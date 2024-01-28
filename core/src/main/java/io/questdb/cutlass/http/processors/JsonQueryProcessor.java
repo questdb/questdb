@@ -64,6 +64,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private final NanosecondClock nanosecondClock;
     private final Path path = new Path();
     private final QueryLogger queryLogger;
+    private final byte requiredAuthType;
     private final SqlExecutionContextImpl sqlExecutionContext;
 
     @TestOnly
@@ -96,6 +97,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         this.configuration = configuration;
         this.engine = engine;
         queryLogger = engine.getConfiguration().getQueryLogger();
+        requiredAuthType = configuration.getRequiredAuthType();
         final QueryExecutor sendConfirmation = this::updateMetricsAndSendConfirmation;
         this.queryExecutors.extendAndSet(CompiledQuery.SELECT, this::executeNewSelect);
         this.queryExecutors.extendAndSet(CompiledQuery.INSERT, this::executeInsert);
@@ -223,6 +225,11 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         logInternalError(e, state, metrics);
         sendException(response, context, 0, e.getFlyweightMessage(), state.getQuery(), configuration.getKeepAliveHeader(), 400);
         response.shutdownWrite();
+    }
+
+    @Override
+    public byte getRequiredAuthType() {
+        return requiredAuthType;
     }
 
     @Override
@@ -753,6 +760,17 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         response.sendHeader();
     }
 
+    static void sendBadRequestResponse(
+            HttpChunkedResponse response,
+            HttpConnectionContext context,
+            CharSequence message,
+            DirectUtf8Sequence query,
+            CharSequence keepAliveHeader
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        header(response, context, keepAliveHeader, 400);
+        JsonQueryProcessorState.prepareBadRequestResponse(response, message, query);
+    }
+
     static void sendException(
             HttpChunkedResponse response,
             HttpConnectionContext context,
@@ -764,17 +782,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         header(response, context, keepAliveHeader, code);
         JsonQueryProcessorState.prepareExceptionJson(response, position, message, query);
-    }
-
-    static void sendBadRequestResponse(
-            HttpChunkedResponse response,
-            HttpConnectionContext context,
-            CharSequence message,
-            DirectUtf8Sequence query,
-            CharSequence keepAliveHeader
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        header(response, context, keepAliveHeader, 400);
-        JsonQueryProcessorState.prepareBadRequestResponse(response, message, query);
     }
 
     @FunctionalInterface

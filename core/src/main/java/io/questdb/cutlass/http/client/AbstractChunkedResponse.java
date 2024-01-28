@@ -49,7 +49,6 @@ public abstract class AbstractChunkedResponse implements Chunk, ChunkedResponse 
     private boolean receive = true;
     private int state = STATE_CHUNK_SIZE;
 
-
     public AbstractChunkedResponse(long bufLo, long bufHi, int defaultTimeout) {
         this.bufLo = bufLo;
         this.bufHi = bufHi;
@@ -128,8 +127,8 @@ public abstract class AbstractChunkedResponse implements Chunk, ChunkedResponse 
                         receive = true;
                         break;
                     }
-                case STATE_CHUNK_DATA:
 
+                case STATE_CHUNK_DATA:
                     // there is data in the buffer
                     if (dataLo < dataHi) {
                         long chunkBytesRemaining = size - consumed;

@@ -325,7 +325,7 @@ public final class LineHttpSender implements Sender {
         int retryBackoff = RETRY_INITIAL_BACKOFF_MS;
         for (; ; ) {
             try {
-                HttpClient.ResponseHeaders response = request.send(host, port);
+                HttpClient.ResponseHeaders response = request.send();
                 response.await();
                 DirectUtf8Sequence statusCode = response.getStatusCode();
                 if (isSuccessResponse(statusCode)) {
@@ -372,7 +372,7 @@ public final class LineHttpSender implements Sender {
         }
 
         /*
-         we are retrying on the following response codes (copied from the Rust client):
+        We are retrying on the following response codes (copied from the Rust client):
         500:  Internal Server Error
         503:  Service Unavailable
         504:  Gateway Timeout
@@ -394,11 +394,10 @@ public final class LineHttpSender implements Sender {
     }
 
     private HttpClient.Request newRequest() {
-        HttpClient.Request r = client.newRequest()
+        HttpClient.Request r = client.newRequest(host, port)
                 .POST()
                 .url(PATH)
-                .header("User-Agent", "QuestDB/java/" + questdbVersion)
-                .header("Host", host);
+                .header("User-Agent", "QuestDB/java/" + questdbVersion);
         if (username != null) {
             r.authBasic(username, password);
         } else if (authToken != null) {
