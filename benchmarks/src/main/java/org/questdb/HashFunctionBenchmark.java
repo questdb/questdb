@@ -24,7 +24,8 @@
 
 package org.questdb;
 
-import io.questdb.std.Hash;
+import io.questdb.std.Crc32Function;
+import io.questdb.std.HashMem32Function;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import org.openjdk.jmh.annotations.*;
@@ -33,23 +34,20 @@ import org.openjdk.jmh.runner.RunnerException;
 import org.openjdk.jmh.runner.options.Options;
 import org.openjdk.jmh.runner.options.OptionsBuilder;
 
-import java.nio.ByteBuffer;
 import java.util.concurrent.TimeUnit;
-import java.util.zip.CRC32C;
 
 @State(Scope.Thread)
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
-public class HashBenchmark {
-    private final CRC32C crc = new CRC32C();
+public class HashFunctionBenchmark {
+    private final Crc32Function crc32c = new Crc32Function();
     @Param({"16", "22", "64", "72", "128", "134", "1024", "1034"})
     public long len;
-    private ByteBuffer buf = ByteBuffer.allocateDirect((int) len);
     private long mem = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
-                .include(HashBenchmark.class.getSimpleName())
+                .include(HashFunctionBenchmark.class.getSimpleName())
                 .warmupIterations(3)
                 .measurementIterations(3)
                 .forks(1)
@@ -61,23 +59,18 @@ public class HashBenchmark {
     @Setup(Level.Trial)
     public void setup() {
         mem = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
-        buf = ByteBuffer.allocateDirect((int) len);
         for (int i = 0; i < len; i++) {
             Unsafe.getUnsafe().putByte(mem + i, (byte) i);
-            buf.put((byte) i);
         }
     }
 
     @Benchmark
     public int testCrc32c() {
-        buf.flip();
-        crc.reset();
-        crc.update(buf);
-        return (int) crc.getValue();
+        return crc32c.hash(mem, len);
     }
 
     @Benchmark
     public int testHashMem32() {
-        return Hash.hashMem32(mem, len);
+        return HashMem32Function.INSTANCE.hash(mem, len);
     }
 }

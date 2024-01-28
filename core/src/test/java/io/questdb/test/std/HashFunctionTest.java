@@ -35,10 +35,29 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.zip.ZipFile;
 
-public class HashTest {
+public class HashFunctionTest {
 
     @Test
-    public void testHashMemEnglishWordsCorpus() throws IOException {
+    public void testHashMemEnglishWordsCorpusCrc32c() throws IOException {
+        testHashMemEnglishWordsCorpus(new Crc32Function());
+    }
+
+    @Test
+    public void testHashMemEnglishWordsCorpusMem32() throws IOException {
+        testHashMemEnglishWordsCorpus(HashMem32Function.INSTANCE);
+    }
+
+    @Test
+    public void testHashMemRandomCorpusCrc32c() {
+        testHashMemRandomCorpus(new Crc32Function());
+    }
+
+    @Test
+    public void testHashMemRandomCorpusMem32() {
+        testHashMemRandomCorpus(HashMem32Function.INSTANCE);
+    }
+
+    private void testHashMemEnglishWordsCorpus(HashFunction func) throws IOException {
         final int maxLen = 128;
         LongHashSet hashes = new LongHashSet(500000);
 
@@ -55,7 +74,7 @@ public class HashTest {
                 for (int i = 0; i < bytes.length; i++) {
                     Unsafe.getUnsafe().putByte(address + i, bytes[i]);
                 }
-                hashes.add(Hash.hashMem32(address, bytes.length));
+                hashes.add(func.hash(address, bytes.length));
             }
             // 466189 is the number of unique values of String#hashCode() on the same corpus.
             Assert.assertTrue("hash function distribution on English words corpus dropped", hashes.size() >= 466189);
@@ -64,8 +83,7 @@ public class HashTest {
         }
     }
 
-    @Test
-    public void testHashMemRandomCorpus() {
+    private void testHashMemRandomCorpus(HashFunction func) {
         final int len = 15;
         Rnd rnd = new Rnd();
         LongHashSet hashes = new LongHashSet(100000);
@@ -74,7 +92,7 @@ public class HashTest {
         try {
             for (int i = 0; i < 100000; i++) {
                 rnd.nextChars(address, len / 2);
-                hashes.add(Hash.hashMem32(address, len));
+                hashes.add(func.hash(address, len));
             }
             Assert.assertTrue("Hash function distribution dropped", hashes.size() > 99990);
         } finally {
