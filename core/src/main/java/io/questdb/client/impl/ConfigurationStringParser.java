@@ -47,14 +47,10 @@ public final class ConfigurationStringParser {
         for (int n = input.length(); pos < n; pos++) {
             char c = input.charAt(pos);
             if (c == ';') {
-                pos++;
-                if (pos == n) {
-                    return true;
-                } else if (input.charAt(pos) == ';') {
-                    output.put(';');
-                } else {
+                if (++pos == n || input.charAt(pos) != ';') {
                     return true;
                 }
+                output.put(';');
             } else {
                 output.put(c);
             }
