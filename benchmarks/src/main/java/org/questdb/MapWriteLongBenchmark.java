@@ -26,10 +26,7 @@ package org.questdb;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SingleColumnType;
-import io.questdb.cairo.map.MapKey;
-import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.map.OrderedMap;
-import io.questdb.cairo.map.Unordered8Map;
+import io.questdb.cairo.map.*;
 import io.questdb.std.Rnd;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
@@ -48,6 +45,7 @@ public class MapWriteLongBenchmark {
     private static final double loadFactor = 0.7;
     private static final HashMap<Long, Long> hmap = new HashMap<>(64, (float) loadFactor);
     private static final OrderedMap orderedMap = new OrderedMap(1024 * 1024, new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), 64, loadFactor, Integer.MAX_VALUE);
+    private static final Unordered16Map unordered16map = new Unordered16Map(new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), 64, loadFactor, Integer.MAX_VALUE);
     private static final Unordered8Map unordered8map = new Unordered8Map(new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), 64, loadFactor, Integer.MAX_VALUE);
     private final Rnd rnd = new Rnd();
     // aim for L1, L2, L3, RAM
@@ -72,6 +70,7 @@ public class MapWriteLongBenchmark {
         hmap.clear();
         orderedMap.clear();
         unordered8map.clear();
+        unordered16map.clear();
     }
 
     @Benchmark
@@ -82,6 +81,14 @@ public class MapWriteLongBenchmark {
     @Benchmark
     public void testOrderedMap() {
         MapKey key = orderedMap.withKey();
+        key.putLong(rnd.nextLong(size));
+        MapValue values = key.createValue();
+        values.putLong(0, rnd.nextLong());
+    }
+
+    @Benchmark
+    public void testUnordered16Map() {
+        MapKey key = unordered16map.withKey();
         key.putLong(rnd.nextLong(size));
         MapValue values = key.createValue();
         values.putLong(0, rnd.nextLong());

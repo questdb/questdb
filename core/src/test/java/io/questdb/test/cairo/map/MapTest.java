@@ -58,6 +58,7 @@ public class MapTest extends AbstractCairoTest {
                 {MapType.ORDERED_MAP},
                 {MapType.UNORDERED_4_MAP},
                 {MapType.UNORDERED_8_MAP},
+                {MapType.UNORDERED_16_MAP},
         });
     }
 
@@ -849,13 +850,15 @@ public class MapTest extends AbstractCairoTest {
                 return new Unordered4Map(keyTypes, valueTypes, keyCapacity, loadFactor, maxResizes);
             case UNORDERED_8_MAP:
                 return new Unordered8Map(keyTypes, valueTypes, keyCapacity, loadFactor, maxResizes);
+            case UNORDERED_16_MAP:
+                return new Unordered16Map(keyTypes, valueTypes, keyCapacity, loadFactor, maxResizes);
             default:
                 throw new IllegalArgumentException("Unknown map type: " + mapType);
         }
     }
 
     public enum MapType {
-        ORDERED_MAP, UNORDERED_4_MAP, UNORDERED_8_MAP
+        ORDERED_MAP, UNORDERED_4_MAP, UNORDERED_8_MAP, UNORDERED_16_MAP
     }
 
     private static class TestMapValueMergeFunction implements MapValueMergeFunction {

@@ -123,6 +123,14 @@ public class MapFactory {
                         configuration.getSqlFastMapLoadFactor(),
                         configuration.getSqlMapMaxResizes()
                 );
+            } else if (keySize <= 2 * Long.BYTES && 2 * Long.BYTES + valueSize <= maxEntrySize) {
+                return new Unordered16Map(
+                        keyTypes,
+                        valueTypes,
+                        keyCapacity,
+                        configuration.getSqlFastMapLoadFactor(),
+                        configuration.getSqlMapMaxResizes()
+                );
             }
         }
 

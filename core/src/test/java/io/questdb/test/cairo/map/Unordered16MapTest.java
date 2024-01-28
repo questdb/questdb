@@ -29,11 +29,12 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.map.Unordered8Map;
+import io.questdb.cairo.map.Unordered16Map;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.Chars;
 import io.questdb.std.Rnd;
+import io.questdb.std.Uuid;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -42,39 +43,40 @@ import org.junit.Test;
 import java.util.HashMap;
 import java.util.Map;
 
-public class Unordered8MapTest extends AbstractCairoTest {
+public class Unordered16MapTest extends AbstractCairoTest {
 
     @Test
     public void testFuzz() throws Exception {
         final Rnd rnd = TestUtils.generateRandom(LOG);
         TestUtils.assertMemoryLeak(() -> {
-            SingleColumnType keyTypes = new SingleColumnType(ColumnType.LONG);
+            SingleColumnType keyTypes = new SingleColumnType(ColumnType.LONG128);
             SingleColumnType valueTypes = new SingleColumnType(ColumnType.LONG);
 
-            HashMap<Long, Long> oracle = new HashMap<>();
-            try (Unordered8Map map = new Unordered8Map(keyTypes, valueTypes, 64, 0.8, Integer.MAX_VALUE)) {
+            HashMap<Uuid, Long> oracle = new HashMap<>();
+            try (Unordered16Map map = new Unordered16Map(keyTypes, valueTypes, 64, 0.8, Integer.MAX_VALUE)) {
                 final int N = 100000;
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
-                    long l = rnd.nextLong();
-                    key.putLong(l);
+                    long l0 = rnd.nextLong();
+                    long l1 = rnd.nextLong();
+                    key.putLong128(l0, l1);
 
                     MapValue value = key.createValue();
-                    value.putLong(0, l);
+                    value.putLong(0, l1);
 
-                    oracle.put(l, l);
+                    oracle.put(new Uuid(l0, l1), l1);
                 }
 
                 Assert.assertEquals(oracle.size(), map.size());
 
                 // assert map contents
-                for (Map.Entry<Long, Long> e : oracle.entrySet()) {
+                for (Map.Entry<Uuid, Long> e : oracle.entrySet()) {
                     MapKey key = map.withKey();
-                    key.putLong(e.getKey());
+                    key.putLong128(e.getKey().getLo(), e.getKey().getHi());
 
                     MapValue value = key.findValue();
                     Assert.assertFalse(value.isNew());
-                    Assert.assertEquals((long) e.getKey(), value.getLong(0));
+                    Assert.assertEquals(e.getKey().getHi(), value.getLong(0));
                     Assert.assertEquals((long) e.getValue(), value.getLong(0));
                 }
             }
@@ -83,9 +85,9 @@ public class Unordered8MapTest extends AbstractCairoTest {
 
     @Test
     public void testSingleZeroKey() {
-        try (Unordered8Map map = new Unordered8Map(new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), 16, 0.8, 24)) {
+        try (Unordered16Map map = new Unordered16Map(new SingleColumnType(ColumnType.LONG128), new SingleColumnType(ColumnType.LONG), 16, 0.8, 24)) {
             MapKey key = map.withKey();
-            key.putLong(0);
+            key.putLong128(0, 0);
             MapValue value = key.createValue();
             Assert.assertTrue(value.isNew());
             value.putLong(0, 42);
@@ -93,13 +95,15 @@ public class Unordered8MapTest extends AbstractCairoTest {
             try (RecordCursor cursor = map.getCursor()) {
                 final Record record = cursor.getRecord();
                 Assert.assertTrue(cursor.hasNext());
-                Assert.assertEquals(0, record.getLong(1));
+                Assert.assertEquals(0, record.getLong128Lo(1));
+                Assert.assertEquals(0, record.getLong128Hi(1));
                 Assert.assertEquals(42, record.getLong(0));
 
                 // Validate that we get the same sequence after toTop.
                 cursor.toTop();
                 Assert.assertTrue(cursor.hasNext());
-                Assert.assertEquals(0, record.getLong(1));
+                Assert.assertEquals(0, record.getLong128Lo(1));
+                Assert.assertEquals(0, record.getLong128Hi(1));
                 Assert.assertEquals(42, record.getLong(0));
             }
         }
@@ -107,15 +111,15 @@ public class Unordered8MapTest extends AbstractCairoTest {
 
     @Test
     public void testTwoKeysIncludingZero() {
-        try (Unordered8Map map = new Unordered8Map(new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), 16, 0.8, 24)) {
+        try (Unordered16Map map = new Unordered16Map(new SingleColumnType(ColumnType.UUID), new SingleColumnType(ColumnType.LONG), 16, 0.8, 24)) {
             MapKey key = map.withKey();
-            key.putLong(0);
+            key.putLong128(0, 0);
             MapValue value = key.createValue();
             Assert.assertTrue(value.isNew());
             value.putLong(0, 0);
 
             key = map.withKey();
-            key.putLong(1);
+            key.putLong128(1, 1);
             value = key.createValue();
             Assert.assertTrue(value.isNew());
             value.putLong(0, 1);
@@ -123,20 +127,24 @@ public class Unordered8MapTest extends AbstractCairoTest {
             try (RecordCursor cursor = map.getCursor()) {
                 final Record record = cursor.getRecord();
                 Assert.assertTrue(cursor.hasNext());
-                Assert.assertEquals(1, record.getLong(1));
+                Assert.assertEquals(1, record.getLong128Lo(1));
+                Assert.assertEquals(1, record.getLong128Hi(1));
                 Assert.assertEquals(1, record.getLong(0));
                 // Zero is always last when iterating.
                 Assert.assertTrue(cursor.hasNext());
-                Assert.assertEquals(0, record.getLong(1));
+                Assert.assertEquals(0, record.getLong128Lo(1));
+                Assert.assertEquals(0, record.getLong128Hi(1));
                 Assert.assertEquals(0, record.getLong(0));
 
                 // Validate that we get the same sequence after toTop.
                 cursor.toTop();
                 Assert.assertTrue(cursor.hasNext());
-                Assert.assertEquals(1, record.getLong(1));
+                Assert.assertEquals(1, record.getLong128Lo(1));
+                Assert.assertEquals(1, record.getLong128Hi(1));
                 Assert.assertEquals(1, record.getLong(0));
                 Assert.assertTrue(cursor.hasNext());
-                Assert.assertEquals(0, record.getLong(1));
+                Assert.assertEquals(0, record.getLong128Lo(1));
+                Assert.assertEquals(0, record.getLong128Hi(1));
                 Assert.assertEquals(0, record.getLong(0));
             }
         }
@@ -147,13 +155,11 @@ public class Unordered8MapTest extends AbstractCairoTest {
         short[] columnTypes = new short[]{
                 ColumnType.BINARY,
                 ColumnType.STRING,
-                ColumnType.LONG128,
-                ColumnType.UUID,
                 ColumnType.LONG256,
         };
         for (short columnType : columnTypes) {
             TestUtils.assertMemoryLeak(() -> {
-                try (Unordered8Map ignore = new Unordered8Map(new SingleColumnType(columnType), new SingleColumnType(ColumnType.LONG), 64, 0.5, 1)) {
+                try (Unordered16Map ignore = new Unordered16Map(new SingleColumnType(columnType), new SingleColumnType(ColumnType.LONG), 64, 0.5, 1)) {
                     Assert.fail();
                 } catch (CairoException e) {
                     Assert.assertTrue(Chars.contains(e.getMessage(), "unexpected key size"));

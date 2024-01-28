@@ -733,6 +733,7 @@ public class Unordered2MapTest extends AbstractCairoTest {
                 ColumnType.STRING,
                 ColumnType.LONG128,
                 ColumnType.UUID,
+                ColumnType.LONG256,
                 ColumnType.LONG,
                 ColumnType.DOUBLE,
                 ColumnType.INT,
