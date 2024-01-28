@@ -41,7 +41,7 @@ import java.util.concurrent.TimeUnit;
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class HashFunctionBenchmark {
     private final Crc32Function crc32c = new Crc32Function();
-    @Param({"16", "22", "64", "72", "128", "134", "1024", "1034"})
+    @Param({"16", "22", "32", "38", "64", "72", "128", "134", "1024", "1034"})
     public long len;
     private long mem = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
 
