@@ -24,6 +24,11 @@ public final class ConfigurationStringParser {
         for (; pos < n; pos++) {
             char c = input.charAt(pos);
             if (c == '=') {
+                if (pos == start) {
+                    output.put("empty key");
+                    pos = -1;
+                    return false;
+                }
                 Chars.toLowerCase(input, start, pos, output);
                 pos++;
                 return true;

@@ -26,6 +26,16 @@ public final class ConfigurationStringParserTest {
     }
 
     @Test
+    public void testKeyCannotBeEmpty() {
+        ConfigurationStringParser parser = new ConfigurationStringParser();
+        assertSchemaOk(parser, "http::=;", "http");
+
+        Assert.assertTrue(parser.hasNext());
+        Assert.assertFalse(parser.nextKey(sink));
+        TestUtils.assertEquals("empty key", sink);
+    }
+
+    @Test
     public void testKeyValue_simple() {
         ConfigurationStringParser parser = new ConfigurationStringParser();
         assertSchemaOk(parser, "http::addr=localhost;user=joe;pass=bloggs;auto_flush_rows=1000;", "http");
