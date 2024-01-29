@@ -48,6 +48,7 @@ import static io.questdb.PropertyKey.LINE_HTTP_ENABLED;
 import static io.questdb.test.cutlass.http.line.IlpHttpUtils.getHttpPort;
 
 public class LineHttpSenderTest extends AbstractBootstrapTest {
+
     @Before
     public void setUp() {
         super.setUp();
@@ -191,7 +192,6 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
     @Test
     public void testLineHttpDisabled() throws Exception {
-        Rnd rnd = TestUtils.generateRandom(LOG);
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     LINE_HTTP_ENABLED.getEnvVarName(), "false"

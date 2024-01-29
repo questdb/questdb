@@ -191,7 +191,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     @Test
     public void testRequestContainsHostHeader() throws Exception {
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
-                .withExpectedHeader("Host", "localhost")
+                .withExpectedHeader("Host", "localhost:9001")
                 .replyWithStatus(204);
 
         testWithMock(mockHttpProcessor, sender -> {
