@@ -35,29 +35,29 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.zip.ZipFile;
 
-public class HashFunctionTest {
+public class Hash64FunctionTest {
 
     @Test
-    public void testHashMemEnglishWordsCorpusCrc32c() throws IOException {
-        testHashMemEnglishWordsCorpus(new Crc32Function());
+    public void testHashMemEnglishWordsCorpusFixedSizeKey() throws IOException {
+        testHashMemEnglishWordsCorpus(Hash64FunctionFactory.createFunction(1));
     }
 
     @Test
-    public void testHashMemEnglishWordsCorpusMem32() throws IOException {
-        testHashMemEnglishWordsCorpus(HashMem32Function.INSTANCE);
+    public void testHashMemEnglishWordsVarSizeKey() throws IOException {
+        testHashMemEnglishWordsCorpus(Hash64FunctionFactory.createFunction(-1));
     }
 
     @Test
-    public void testHashMemRandomCorpusCrc32c() {
-        testHashMemRandomCorpus(new Crc32Function());
+    public void testHashMemRandomCorpusFixedSizeKey() {
+        testHashMemRandomCorpus(Hash64FunctionFactory.createFunction(1));
     }
 
     @Test
-    public void testHashMemRandomCorpusMem32() {
-        testHashMemRandomCorpus(HashMem32Function.INSTANCE);
+    public void testHashMemRandomCorpusVarSizeKey() {
+        testHashMemRandomCorpus(Hash64FunctionFactory.createFunction(-1));
     }
 
-    private void testHashMemEnglishWordsCorpus(HashFunction func) throws IOException {
+    private void testHashMemEnglishWordsCorpus(Hash64Function func) throws IOException {
         final int maxLen = 128;
         LongHashSet hashes = new LongHashSet(500000);
 
@@ -83,7 +83,7 @@ public class HashFunctionTest {
         }
     }
 
-    private void testHashMemRandomCorpus(HashFunction func) {
+    private void testHashMemRandomCorpus(Hash64Function func) {
         final int len = 15;
         Rnd rnd = new Rnd();
         LongHashSet hashes = new LongHashSet(100000);

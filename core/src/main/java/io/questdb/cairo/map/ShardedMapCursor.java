@@ -284,7 +284,7 @@ public class ShardedMapCursor implements MapRecordCursor {
         }
 
         @Override
-        public int keyHashCode() {
+        public long keyHashCode() {
             return baseRecord.keyHashCode();
         }
 

@@ -40,6 +40,7 @@ import org.jetbrains.annotations.Nullable;
  */
 final class OrderedMapFixedSizeRecord implements OrderedMapRecord {
     private final long[] columnOffsets;
+    private final Hash64Function hashFunction;
     private final Long256Impl[] keyLong256A;
     private final Long256Impl[] keyLong256B;
     private final long keySize;
@@ -58,7 +59,8 @@ final class OrderedMapFixedSizeRecord implements OrderedMapRecord {
             long[] valueOffsets,
             OrderedMapValue value,
             @NotNull @Transient ColumnTypes keyTypes,
-            @Nullable @Transient ColumnTypes valueTypes
+            @Nullable @Transient ColumnTypes valueTypes,
+            Hash64Function hashFunction
     ) {
         assert keySize >= 0;
         this.keySize = keySize;
@@ -66,6 +68,7 @@ final class OrderedMapFixedSizeRecord implements OrderedMapRecord {
         this.valueOffsets = valueOffsets;
         this.value = value;
         this.value.linkRecord(this); // provides feature to position this record at location of map value
+        this.hashFunction = hashFunction;
 
         int nColumns;
         int keyIndexOffset;
@@ -130,7 +133,8 @@ final class OrderedMapFixedSizeRecord implements OrderedMapRecord {
             long[] valueOffsets,
             long[] columnOffsets,
             Long256Impl[] keyLong256A,
-            Long256Impl[] keyLong256B
+            Long256Impl[] keyLong256B,
+            Hash64Function hashFunction
     ) {
         this.keySize = keySize;
         this.valueSize = valueSize;
@@ -139,6 +143,7 @@ final class OrderedMapFixedSizeRecord implements OrderedMapRecord {
         this.value = new OrderedMapValue(valueSize, valueOffsets);
         this.keyLong256A = keyLong256A;
         this.keyLong256B = keyLong256B;
+        this.hashFunction = hashFunction;
     }
 
     @SuppressWarnings("MethodDoesntCallSuperMethod")
@@ -162,7 +167,7 @@ final class OrderedMapFixedSizeRecord implements OrderedMapRecord {
             long256A = null;
             long256B = null;
         }
-        return new OrderedMapFixedSizeRecord(keySize, valueSize, valueOffsets, columnOffsets, long256A, long256B);
+        return new OrderedMapFixedSizeRecord(keySize, valueSize, valueOffsets, columnOffsets, long256A, long256B, hashFunction);
     }
 
     @Override
@@ -295,8 +300,8 @@ final class OrderedMapFixedSizeRecord implements OrderedMapRecord {
     }
 
     @Override
-    public int keyHashCode() {
-        return Hash.hashMem32(keyAddress, keySize);
+    public long keyHashCode() {
+        return hashFunction.hash(keyAddress, keySize);
     }
 
     @Override

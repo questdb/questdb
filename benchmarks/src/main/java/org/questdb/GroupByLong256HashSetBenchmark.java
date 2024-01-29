@@ -45,16 +45,8 @@ import java.util.concurrent.TimeUnit;
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class GroupByLong256HashSetBenchmark {
-    private static final double loadFactor = 0.7;
-    private static final int orderedMapPageSize = 1024 * 1024;
     private static final long groupByAllocatorDefaultChunkSize = 128 * 1024;
     private static final long groupByAllocatorMaxChunkSize = Numbers.SIZE_1GB * 8;
-
-    private static final Rnd rnd = new Rnd();
-
-    @Param({"1250", "12500", "125000", "1250000"})
-    public int size;
-
     private static final GroupByAllocator allocator = new GroupByAllocator(new DefaultCairoConfiguration(null) {
         @Override
         public long getGroupByAllocatorDefaultChunkSize() {
@@ -66,9 +58,14 @@ public class GroupByLong256HashSetBenchmark {
             return groupByAllocatorMaxChunkSize;
         }
     });
-    private static final OrderedMap orderedMap = new OrderedMap(orderedMapPageSize, new SingleColumnType(ColumnType.LONG256), null, 64, loadFactor, Integer.MAX_VALUE);
+    private static final double loadFactor = 0.7;
     private static final GroupByLong256HashSet groupByLong256HashSet = new GroupByLong256HashSet(64, loadFactor, 0);
+    private static final int orderedMapPageSize = 1024 * 1024;
+    private static final OrderedMap orderedMap = new OrderedMap(orderedMapPageSize, new SingleColumnType(ColumnType.LONG256), null, 64, loadFactor, Integer.MAX_VALUE);
+    private static final Rnd rnd = new Rnd();
     private static long ptr = 0;
+    @Param({"1250", "12500", "125000", "1250000"})
+    public int size;
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
@@ -91,22 +88,22 @@ public class GroupByLong256HashSetBenchmark {
     }
 
     @Benchmark
-    public void testOrderedMap() {
-        MapKey key = orderedMap.withKey();
-        key.putLong256(rnd.nextLong(size), rnd.nextLong(size), rnd.nextLong(size), rnd.nextLong(size));
-        key.createValue();
-    }
-
-    @Benchmark
     public void testGroupByLong256HashSet() {
         long l0 = rnd.nextLong(size);
         long l1 = rnd.nextLong(size);
         long l2 = rnd.nextLong(size);
         long l3 = rnd.nextLong(size);
-        int index = groupByLong256HashSet.of(ptr).keyIndex(l0, l1, l2, l3);
+        long index = groupByLong256HashSet.of(ptr).keyIndex(l0, l1, l2, l3);
         if (index >= 0) {
             groupByLong256HashSet.addAt(index, l0, l1, l2, l3);
             ptr = groupByLong256HashSet.ptr();
         }
+    }
+
+    @Benchmark
+    public void testOrderedMap() {
+        MapKey key = orderedMap.withKey();
+        key.putLong256(rnd.nextLong(size), rnd.nextLong(size), rnd.nextLong(size), rnd.nextLong(size));
+        key.createValue();
     }
 }

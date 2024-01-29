@@ -145,6 +145,10 @@ public final class Os {
         return type == Os.WINDOWS;
     }
 
+    public static boolean isX86() {
+        return type == LINUX_AMD64 || type == OSX_AMD64 || type == WINDOWS || type == FREEBSD;
+    }
+
     public static void park() {
         LockSupport.parkNanos(Os.PARK_NANOS_MAX);
     }

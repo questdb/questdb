@@ -24,16 +24,16 @@
 
 package io.questdb.std;
 
-public class HashMem32Function implements HashFunction {
-    public static final HashFunction INSTANCE = new HashMem32Function();
+/**
+ * Hash function for native memory, most suitable for keys of 16 bytes and above.
+ */
+public interface Hash64Function extends QuietCloseable {
 
+    /**
+     * *Implementation requirement*: this method may be called multiple times in a row.
+     */
     @Override
-    public void close() {
-        // no-op
-    }
+    void close();
 
-    @Override
-    public int hash(long p, long len) {
-        return Hash.hashMem32(p, len);
-    }
+    long hash(long p, long len);
 }

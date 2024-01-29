@@ -51,7 +51,7 @@ public class GroupByLong128HashSet {
     private final double loadFactor;
     private final long noKeyValue;
     private GroupByAllocator allocator;
-    private int mask;
+    private long mask;
     private long ptr;
 
     public GroupByLong128HashSet(int initialCapacity, double loadFactor, long noKeyValue) {
@@ -71,7 +71,7 @@ public class GroupByLong128HashSet {
      * @return false if key is already in the set and true otherwise.
      */
     public boolean add(long lo, long hi) {
-        int index = keyIndex(lo, hi);
+        long index = keyIndex(lo, hi);
         if (index < 0) {
             return false;
         }
@@ -79,7 +79,7 @@ public class GroupByLong128HashSet {
         return true;
     }
 
-    public void addAt(int index, long lo, long hi) {
+    public void addAt(long index, long lo, long hi) {
         setKeyAt(index, lo, hi);
         int size = size();
         int sizeLimit = sizeLimit();
@@ -93,13 +93,13 @@ public class GroupByLong128HashSet {
         return ptr != 0 ? Unsafe.getUnsafe().getInt(ptr) : 0;
     }
 
-    public long keyAddrAt(int index) {
+    public long keyAddrAt(long index) {
         return ptr + HEADER_SIZE + 16L * index;
     }
 
-    public int keyIndex(long lo, long hi) {
-        int hashCode = Hash.hashLong128(lo, hi);
-        int index = hashCode & mask;
+    public long keyIndex(long lo, long hi) {
+        long hashCode = Hash.hash64Long128(lo, hi);
+        long index = hashCode & mask;
         long keyAddr = keyAddrAt(index);
         long loKey = Unsafe.getUnsafe().getLong(keyAddr);
         long hiKey = Unsafe.getUnsafe().getLong(keyAddr + 8L);
@@ -131,7 +131,7 @@ public class GroupByLong128HashSet {
             long lo = Unsafe.getUnsafe().getLong(p);
             long hi = Unsafe.getUnsafe().getLong(p + 8L);
             if (lo != noKeyValue || hi != noKeyValue) {
-                final int index = keyIndex(lo, hi);
+                long index = keyIndex(lo, hi);
                 if (index >= 0) {
                     addAt(index, lo, hi);
                 }
@@ -178,7 +178,7 @@ public class GroupByLong128HashSet {
         return ptr != 0 ? Unsafe.getUnsafe().getInt(ptr + SIZE_LIMIT_OFFSET) : 0;
     }
 
-    private int probe(long lo, long hi, int index) {
+    private long probe(long lo, long hi, long index) {
         do {
             index = (index + 1) & mask;
             long p = keyAddrAt(index);
@@ -217,7 +217,7 @@ public class GroupByLong128HashSet {
             long lo = Unsafe.getUnsafe().getLong(p);
             long hi = Unsafe.getUnsafe().getLong(p + 8L);
             if (lo != noKeyValue || hi != noKeyValue) {
-                int index = keyIndex(lo, hi);
+                long index = keyIndex(lo, hi);
                 setKeyAt(index, lo, hi);
             }
         }
@@ -225,7 +225,7 @@ public class GroupByLong128HashSet {
         allocator.free(oldPtr, HEADER_SIZE + 16L * oldCapacity);
     }
 
-    private void setKeyAt(int index, long lo, long hi) {
+    private void setKeyAt(long index, long lo, long hi) {
         long p = keyAddrAt(index);
         Unsafe.getUnsafe().putLong(p, lo);
         Unsafe.getUnsafe().putLong(p + 8L, hi);

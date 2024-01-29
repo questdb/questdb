@@ -109,7 +109,7 @@ public class Utf8StringIntHashMap implements Mutable {
     }
 
     public int keyIndex(DirectUtf8Sequence key) {
-        int hashCode = Hash.hashMem32(key);
+        int hashCode = Hash.hash32Utf8(key);
         int index = hashCode & mask;
         if (keys[index] == null) {
             return index;
@@ -121,7 +121,7 @@ public class Utf8StringIntHashMap implements Mutable {
     }
 
     public int keyIndex(Utf8String key) {
-        int hashCode = Hash.hashMem32(key);
+        int hashCode = Hash.hash32Utf8(key);
         int index = hashCode & mask;
         if (keys[index] == null) {
             return index;
@@ -173,7 +173,7 @@ public class Utf8StringIntHashMap implements Mutable {
                     key != null;
                     from = (from + 1) & mask, key = keys[from]
             ) {
-                int hashCode = Hash.hashMem32(key);
+                int hashCode = Hash.hash32Utf8(key);
                 int idealHit = hashCode & mask;
                 if (idealHit != from) {
                     int to;
@@ -257,7 +257,7 @@ public class Utf8StringIntHashMap implements Mutable {
 
     private void putAt0(int index, Utf8String key, int value) {
         keys[index] = key;
-        hashCodes[index] = Hash.hashMem32(key);
+        hashCodes[index] = Hash.hash32Utf8(key);
         values[index] = value;
         if (--free == 0) {
             rehash();

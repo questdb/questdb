@@ -32,8 +32,10 @@ import java.util.zip.CRC32C;
 /**
  * CRC32C-based hash function. Should be preferred on x86 due to AVX2 intrinsics
  * used in the standard CRC32C class.
+ * <p>
+ * Note: CRC32C class is available in Java 9+.
  */
-public class Crc32Function implements HashFunction {
+public class Crc32CFunction implements Hash64Function {
     private static final long ADDRESS_FIELD_OFFSET;
     private static final long CAPACITY_FIELD_OFFSET;
     private static final long LIMIT_FIELD_OFFSET;
@@ -49,11 +51,11 @@ public class Crc32Function implements HashFunction {
     }
 
     @Override
-    public int hash(long p, long len) {
+    public long hash(long p, long len) {
         resetBufferToPointer(p, len);
         crc.reset();
         crc.update(buf);
-        return (int) crc.getValue();
+        return crc.getValue();
     }
 
     private void resetBufferToPointer(long ptr, long len) {

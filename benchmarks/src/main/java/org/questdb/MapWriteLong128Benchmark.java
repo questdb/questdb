@@ -44,7 +44,7 @@ import java.util.concurrent.TimeUnit;
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class MapWriteLong128Benchmark {
 
-    private static final int N = 1_000_000;
+    private static final int N = 1_000;
     private static final double loadFactor = 0.7;
     private static final OrderedMap orderedMap = new OrderedMap(1024 * 1024, new SingleColumnType(ColumnType.LONG128), new SingleColumnType(ColumnType.LONG), 64, loadFactor, 1024);
     private static final Unordered16Map u16map = new Unordered16Map(new SingleColumnType(ColumnType.LONG128), new SingleColumnType(ColumnType.LONG), 64, loadFactor, 1024);
@@ -63,7 +63,7 @@ public class MapWriteLong128Benchmark {
 
     @Benchmark
     public long baseline() {
-        return rnd.nextLong(N) + rnd.nextLong();
+        return rnd.nextLong(N) + rnd.nextLong(N);
     }
 
     @Setup(Level.Iteration)
@@ -76,18 +76,16 @@ public class MapWriteLong128Benchmark {
     @Benchmark
     public void testOrderedMap() {
         MapKey key = orderedMap.withKey();
-        long value = rnd.nextLong(N);
-        key.putLong128(value, value);
+        key.putLong128(rnd.nextLong(N), rnd.nextLong(N));
         MapValue values = key.createValue();
-        values.putLong(0, rnd.nextLong());
+        values.putLong(0, 42);
     }
 
     @Benchmark
     public void testUnordered16Map() {
         MapKey key = u16map.withKey();
-        long value = rnd.nextLong(N);
-        key.putLong128(value, value);
+        key.putLong128(rnd.nextLong(N), rnd.nextLong(N));
         MapValue values = key.createValue();
-        values.putLong(0, rnd.nextLong());
+        values.putLong(0, 42);
     }
 }

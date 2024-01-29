@@ -42,7 +42,7 @@ import java.util.concurrent.TimeUnit;
 
 @State(Scope.Thread)
 @BenchmarkMode(Mode.AverageTime)
-@OutputTimeUnit(TimeUnit.MICROSECONDS)
+@OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class MapReadLongBenchmark {
 
     private static final int N = 5_000_000;
@@ -69,15 +69,15 @@ public class MapReadLongBenchmark {
     }
 
     @Benchmark
+    public Long testHashMap() {
+        return hmap.get(rnd.nextLong(N));
+    }
+
+    @Benchmark
     public MapValue testOrderedMap() {
         MapKey key = orderedMap.withKey();
         key.putLong(rnd.nextLong(N));
         return key.findValue();
-    }
-
-    @Benchmark
-    public Long testHashMap() {
-        return hmap.get(rnd.nextLong(N));
     }
 
     @Benchmark

@@ -46,30 +46,19 @@ public final class Hash {
         return seq == null ? -1 : (Chars.hashCode(seq) & 0xFFFFFFF) & max;
     }
 
-    public static int hashLong(long k) {
-        long h = k * M2;
-        return (int) (h ^ h >>> 32);
+    public static int hash32Long(long k) {
+        return Numbers.decodeLowInt(hash64Long(k));
     }
 
-    public static int hashLong128(long key1, long key2) {
-        long h = key1 * M2 + key2;
-        h *= M2;
-        return (int) (h ^ h >>> 32);
-    }
-
-    public static int hashLong256(long key1, long key2, long key3, long key4) {
-        long h = key1 * M2 + key2;
-        h = (h * M2) + key3;
-        h = (h * M2) + key4;
-        h *= M2;
-        return (int) (h ^ h >>> 32);
+    public static int hash32Long128(long key1, long key2) {
+        return Numbers.decodeLowInt(hash64Long128(key1, key2));
     }
 
     /**
-     * Same as {@link #hashMem32(long, long)}, but with on-heap char sequence
+     * Same as {@link #hash64Mem(long, long)}, but with on-heap char sequence
      * instead of direct unsafe access.
      */
-    public static int hashMem32(Utf8String us) {
+    public static int hash32Utf8(Utf8String us) {
         final int len = us.size();
         long h = 0;
         int i = 0;
@@ -84,7 +73,32 @@ public final class Hash {
             h = h * M2 + us.byteAt(i);
         }
         h *= M2;
-        return (int) (h ^ h >>> 32);
+        return Numbers.decodeLowInt(h ^ h >>> 32);
+    }
+
+    /**
+     * Same as {@link #hash64Mem(long, long)}, but with direct UTF8 string
+     * instead of direct unsafe access.
+     */
+    public static int hash32Utf8(DirectUtf8Sequence seq) {
+        return Numbers.decodeLowInt(hash64Mem(seq.lo(), seq.size()));
+    }
+
+    public static long hash64Long(long k) {
+        k ^= k >> 33;
+        k *= 0xff51afd7ed558ccdL;
+        k ^= k >> 33;
+        k *= 0xc4ceb9fe1a85ec53L;
+        k ^= k >> 33;
+        return k;
+    }
+
+    public static long hash64Long128(long key1, long key2) {
+        return hash64Long(key1 ^ key2);
+    }
+
+    public static long hash64Long256(long key1, long key2, long key3, long key4) {
+        return hash64Long(key1 ^ key2 ^ key3 ^ key4);
     }
 
     /**
@@ -99,7 +113,7 @@ public final class Hash {
      * @param len memory length in bytes
      * @return hash code
      */
-    public static int hashMem32(long p, long len) {
+    public static long hash64Mem(long p, long len) {
         long h = 0;
         int i = 0;
         for (; i + 7 < len; i += 8) {
@@ -113,15 +127,7 @@ public final class Hash {
             h = h * M2 + Unsafe.getUnsafe().getByte(p + i);
         }
         h *= M2;
-        return (int) (h ^ h >>> 32);
-    }
-
-    /**
-     * Same as {@link #hashMem32(long, long)}, but with direct UTF8 string
-     * instead of direct unsafe access.
-     */
-    public static int hashMem32(DirectUtf8Sequence seq) {
-        return hashMem32(seq.lo(), seq.size());
+        return h ^ h >>> 32;
     }
 
     /**

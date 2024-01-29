@@ -41,7 +41,7 @@ import java.util.concurrent.TimeUnit;
 
 @State(Scope.Thread)
 @BenchmarkMode(Mode.AverageTime)
-@OutputTimeUnit(TimeUnit.MICROSECONDS)
+@OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class MapReadLong128Benchmark {
 
     private static final int N = 5_000_000;
@@ -63,38 +63,37 @@ public class MapReadLong128Benchmark {
 
     @Benchmark
     public long baseline() {
-        return rnd.nextLong(N);
+        return rnd.nextLong(N) + rnd.nextLong(N);
     }
 
     @Benchmark
-    public MapValue testFastMap() {
+    public MapValue testOrderedMap() {
         MapKey key = orderedMap.withKey();
-        long value = rnd.nextLong(N);
-        key.putLong128(value, value);
+        key.putLong128(rnd.nextLong(N), rnd.nextLong(N));
         return key.findValue();
     }
 
     @Benchmark
     public MapValue testUnordered16Map() {
         MapKey key = u16map.withKey();
-        long value = rnd.nextLong(N);
-        key.putLong128(value, value);
+        key.putLong128(rnd.nextLong(N), rnd.nextLong(N));
         return key.findValue();
     }
 
     static {
         for (int i = 0; i < N; i++) {
-            MapKey key = orderedMap.withKey();
-            key.putLong128(i, i);
-            MapValue values = key.createValue();
-            values.putLong(0, i);
-        }
+            long l0 = rnd.nextLong(N);
+            long l1 = rnd.nextLong(N);
 
-        for (int i = 0; i < N; i++) {
-            MapKey key = u16map.withKey();
-            key.putLong128(i, i);
-            MapValue values = key.createValue();
-            values.putLong(0, i);
+            MapKey key = orderedMap.withKey();
+            key.putLong128(l0, l1);
+            MapValue value = key.createValue();
+            value.putLong(0, i);
+
+            key = u16map.withKey();
+            key.putLong128(l0, l1);
+            value = key.createValue();
+            value.putLong(0, i);
         }
     }
 }

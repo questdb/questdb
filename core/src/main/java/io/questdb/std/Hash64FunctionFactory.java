@@ -27,6 +27,23 @@ package io.questdb.std;
 /**
  * Hash function for native memory, most suitable for keys of 16 bytes and above.
  */
-public interface HashFunction extends QuietCloseable {
-    int hash(long p, long len);
+public final class Hash64FunctionFactory {
+
+    private Hash64FunctionFactory() {
+    }
+
+    /**
+     * Creates hash function suitable for usage in hash tables
+     * with potentially large var-size keys (but not only).
+     *
+     * @param keySize key size in bytes in case of fixed-size key or -1 in case of var-size key
+     */
+    public static Hash64Function createFunction(long keySize) {
+        //#if jdk.version==8
+        if (keySize == -1 && Os.isX86()) {
+            return new Crc32CFunction();
+        }
+        //#endif
+        return Hash64MemFunction.INSTANCE;
+    }
 }

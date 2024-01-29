@@ -24,8 +24,8 @@
 
 package org.questdb;
 
-import io.questdb.std.Crc32Function;
-import io.questdb.std.HashMem32Function;
+import io.questdb.std.Crc32CFunction;
+import io.questdb.std.Hash64MemFunction;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import org.openjdk.jmh.annotations.*;
@@ -39,15 +39,15 @@ import java.util.concurrent.TimeUnit;
 @State(Scope.Thread)
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
-public class HashFunctionBenchmark {
-    private final Crc32Function crc32c = new Crc32Function();
+public class Hash64FunctionBenchmark {
+    private final Crc32CFunction crc32c = new Crc32CFunction();
     @Param({"16", "22", "32", "38", "64", "72", "128", "134", "1024", "1034"})
     public long len;
     private long mem = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
-                .include(HashFunctionBenchmark.class.getSimpleName())
+                .include(Hash64FunctionBenchmark.class.getSimpleName())
                 .warmupIterations(3)
                 .measurementIterations(3)
                 .forks(1)
@@ -65,12 +65,12 @@ public class HashFunctionBenchmark {
     }
 
     @Benchmark
-    public int testCrc32c() {
+    public long testCrc32c() {
         return crc32c.hash(mem, len);
     }
 
     @Benchmark
-    public int testHashMem32() {
-        return HashMem32Function.INSTANCE.hash(mem, len);
+    public long testHashMem32() {
+        return Hash64MemFunction.INSTANCE.hash(mem, len);
     }
 }

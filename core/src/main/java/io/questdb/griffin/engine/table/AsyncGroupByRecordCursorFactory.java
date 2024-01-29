@@ -244,7 +244,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             final MapKey lookupKey = lookupShard.withKey();
             mapSink.copy(record, lookupKey);
             lookupKey.commit();
-            final int hashCode = lookupKey.hash();
+            final long hashCode = lookupKey.hash();
 
             final Map shard = particle.getShardMap(hashCode);
             final MapKey shardKey;
@@ -301,7 +301,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             final MapKey lookupKey = lookupShard.withKey();
             mapSink.copy(record, lookupKey);
             lookupKey.commit();
-            final int hashCode = lookupKey.hash();
+            final long hashCode = lookupKey.hash();
 
             final Map shard = particle.getShardMap(hashCode);
             final MapKey shardKey;

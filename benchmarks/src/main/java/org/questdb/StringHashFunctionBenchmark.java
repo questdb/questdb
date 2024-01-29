@@ -76,7 +76,7 @@ public class StringHashFunctionBenchmark {
 
     @Benchmark
     public long testHashMemDirectByteCharSequence() {
-        return Hash.hashMem32(utf8Sequence);
+        return Hash.hash32Utf8(utf8Sequence);
     }
 
     @Benchmark

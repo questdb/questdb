@@ -320,6 +320,7 @@ public class MapTest extends AbstractCairoTest {
                 while (cursorA.hasNext()) {
                     MapKey keyB = mapB.withKey();
                     recordA.copyToKey(keyB);
+
                     MapValue valueB = keyB.createValue();
                     Assert.assertTrue(valueB.isNew());
                     recordA.copyValue(valueB);
@@ -410,7 +411,7 @@ public class MapTest extends AbstractCairoTest {
                     MapKey key = map.withKey();
                     key.putInt(i);
                     key.commit();
-                    int hashCode = key.hash();
+                    long hashCode = key.hash();
                     keyHashCodes.add(hashCode);
 
                     MapValue value = key.createValue(hashCode);

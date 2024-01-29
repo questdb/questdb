@@ -105,7 +105,7 @@ public class Utf8StringObjHashMap<V> implements Mutable {
     }
 
     public int keyIndex(DirectUtf8Sequence key) {
-        int hashCode = Hash.hashMem32(key);
+        int hashCode = Hash.hash32Utf8(key);
         int index = Hash.spread(hashCode) & mask;
         if (keys[index] == null) {
             return index;
@@ -117,7 +117,7 @@ public class Utf8StringObjHashMap<V> implements Mutable {
     }
 
     public int keyIndex(Utf8String key) {
-        int hashCode = Hash.hashMem32(key);
+        int hashCode = Hash.hash32Utf8(key);
         int index = Hash.spread(hashCode) & mask;
         if (keys[index] == null) {
             return index;
@@ -147,7 +147,7 @@ public class Utf8StringObjHashMap<V> implements Mutable {
             return false;
         }
         keys[index] = key;
-        hashCodes[index] = Hash.hashMem32(key);
+        hashCodes[index] = Hash.hash32Utf8(key);
         values[index] = value;
         if (--free == 0) {
             rehash();
@@ -164,7 +164,7 @@ public class Utf8StringObjHashMap<V> implements Mutable {
         }
         Utf8String onHeapKey = Utf8String.newInstance(key);
         keys[index] = onHeapKey;
-        hashCodes[index] = Hash.hashMem32(key);
+        hashCodes[index] = Hash.hash32Utf8(key);
         values[index] = value;
         if (--free == 0) {
             rehash();
@@ -209,7 +209,7 @@ public class Utf8StringObjHashMap<V> implements Mutable {
                     key != null;
                     from = (from + 1) & mask, key = keys[from]
             ) {
-                int hashCode = Hash.hashMem32(key);
+                int hashCode = Hash.hash32Utf8(key);
                 int idealHit = Hash.spread(hashCode) & mask;
                 if (idealHit != from) {
                     int to;

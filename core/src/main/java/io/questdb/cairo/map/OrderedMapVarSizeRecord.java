@@ -30,9 +30,9 @@ import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.*;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectString;
+import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -47,6 +47,7 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
     private final DirectBinarySequence[] bs;
     private final DirectString[] csA;
     private final DirectString[] csB;
+    private final Hash64Function hashFunction;
     private final Long256Impl[] keyLong256A;
     private final Long256Impl[] keyLong256B;
     private final ColumnTypes keyTypes;
@@ -68,13 +69,15 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
             long[] valueOffsets,
             OrderedMapValue value,
             @NotNull @Transient ColumnTypes keyTypes,
-            @Nullable @Transient ColumnTypes valueTypes
+            @Nullable @Transient ColumnTypes valueTypes,
+            Hash64Function hashFunction
     ) {
         this.valueSize = valueSize;
         this.valueOffsets = valueOffsets;
         this.value = value;
         this.value.linkRecord(this); // provides feature to position this record at location of map value
         this.splitIndex = valueOffsets != null ? valueOffsets.length : 0;
+        this.hashFunction = hashFunction;
 
         int nColumns;
         int keyIndexOffset;
@@ -154,7 +157,8 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
             DirectString[] csB,
             DirectBinarySequence[] bs,
             Long256Impl[] keyLong256A,
-            Long256Impl[] keyLong256B
+            Long256Impl[] keyLong256B,
+            Hash64Function hashFunction
     ) {
         this.valueSize = valueSize;
         this.valueOffsets = valueOffsets;
@@ -166,6 +170,7 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
         this.bs = bs;
         this.keyLong256A = keyLong256A;
         this.keyLong256B = keyLong256B;
+        this.hashFunction = hashFunction;
     }
 
     @SuppressWarnings("MethodDoesntCallSuperMethod")
@@ -221,7 +226,7 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
             long256A = null;
             long256B = null;
         }
-        return new OrderedMapVarSizeRecord(valueSize, valueOffsets, keyTypes, splitIndex, csA, csB, bs, long256A, long256B);
+        return new OrderedMapVarSizeRecord(valueSize, valueOffsets, keyTypes, splitIndex, csA, csB, bs, long256A, long256B, hashFunction);
     }
 
     @Override
@@ -398,9 +403,9 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
     }
 
     @Override
-    public int keyHashCode() {
+    public long keyHashCode() {
         int keySize = Unsafe.getUnsafe().getInt(startAddress);
-        return Hash.hashMem32(startAddress + Integer.BYTES, keySize);
+        return hashFunction.hash(startAddress + Integer.BYTES, keySize);
     }
 
     @Override

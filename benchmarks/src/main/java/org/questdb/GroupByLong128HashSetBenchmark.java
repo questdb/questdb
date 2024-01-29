@@ -45,16 +45,8 @@ import java.util.concurrent.TimeUnit;
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class GroupByLong128HashSetBenchmark {
-    private static final double loadFactor = 0.7;
-    private static final int orderedMapPageSize = 1024 * 1024;
     private static final long groupByAllocatorDefaultChunkSize = 128 * 1024;
     private static final long groupByAllocatorMaxChunkSize = Numbers.SIZE_1GB * 4;
-
-    private static final Rnd rnd = new Rnd();
-
-    @Param({"2500", "25000", "250000", "2500000"})
-    public int size;
-
     private static final GroupByAllocator allocator = new GroupByAllocator(new DefaultCairoConfiguration(null) {
         @Override
         public long getGroupByAllocatorDefaultChunkSize() {
@@ -66,9 +58,14 @@ public class GroupByLong128HashSetBenchmark {
             return groupByAllocatorMaxChunkSize;
         }
     });
-    private static final OrderedMap orderedMap = new OrderedMap(orderedMapPageSize, new SingleColumnType(ColumnType.UUID), null, 64, loadFactor, Integer.MAX_VALUE);
+    private static final double loadFactor = 0.7;
     private static final GroupByLong128HashSet groupByLong128HashSet = new GroupByLong128HashSet(64, loadFactor, 0);
+    private static final int orderedMapPageSize = 1024 * 1024;
+    private static final OrderedMap orderedMap = new OrderedMap(orderedMapPageSize, new SingleColumnType(ColumnType.UUID), null, 64, loadFactor, Integer.MAX_VALUE);
+    private static final Rnd rnd = new Rnd();
     private static long ptr = 0;
+    @Param({"2500", "25000", "250000", "2500000"})
+    public int size;
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
@@ -91,20 +88,20 @@ public class GroupByLong128HashSetBenchmark {
     }
 
     @Benchmark
-    public void testOrderedMap() {
-        MapKey key = orderedMap.withKey();
-        key.putLong128(rnd.nextLong(size), rnd.nextLong(size));
-        key.createValue();
-    }
-
-    @Benchmark
     public void testGroupByLong128HashSet() {
         long lo = rnd.nextLong(size);
         long hi = rnd.nextLong(size);
-        int index = groupByLong128HashSet.of(ptr).keyIndex(lo, hi);
+        long index = groupByLong128HashSet.of(ptr).keyIndex(lo, hi);
         if (index >= 0) {
             groupByLong128HashSet.addAt(index, lo, hi);
             ptr = groupByLong128HashSet.ptr();
         }
+    }
+
+    @Benchmark
+    public void testOrderedMap() {
+        MapKey key = orderedMap.withKey();
+        key.putLong128(rnd.nextLong(size), rnd.nextLong(size));
+        key.createValue();
     }
 }

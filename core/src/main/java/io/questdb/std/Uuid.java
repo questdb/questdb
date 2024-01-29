@@ -158,7 +158,7 @@ public final class Uuid implements Sinkable {
 
     @Override
     public int hashCode() {
-        return Hash.hashLong128(lo, hi);
+        return Hash.hash32Long128(lo, hi);
     }
 
     public void of(long lo, long hi) {
