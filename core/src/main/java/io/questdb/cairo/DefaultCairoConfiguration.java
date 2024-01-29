@@ -369,6 +369,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getMaxSqlRecompileAttempts() {
+        return 10;
+    }
+
+    @Override
     public int getMaxSwapFileCount() {
         return 30;
     }

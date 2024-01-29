@@ -357,6 +357,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getMaxSqlRecompileAttempts() {
+        return delegate.getMaxSqlRecompileAttempts();
+    }
+
+    @Override
     public int getMaxSwapFileCount() {
         return delegate.getMaxSwapFileCount();
     }

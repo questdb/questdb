@@ -60,6 +60,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
     private final JsonQueryProcessorConfiguration configuration;
     private final CairoEngine engine;
+    private final int maxSqlRecompileAttempts;
     private final Metrics metrics;
     private final NanosecondClock nanosecondClock;
     private final Path path = new Path();
@@ -131,6 +132,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         assert this.queryExecutors.size() == (CompiledQuery.TYPES_COUNT + 1);
         this.sqlExecutionContext = sqlExecutionContext;
         this.nanosecondClock = engine.getConfiguration().getNanosecondClock();
+        this.maxSqlRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
         this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB3);
         this.metrics = engine.getMetrics();
         this.asyncWriterStartTimeout = engine.getConfiguration().getWriterAsyncCommandBusyWaitTimeout();
@@ -456,7 +458,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                     );
                     recompileStale = false;
                 } catch (TableReferenceOutOfDateException e) {
-                    if (retries == TableReferenceOutOfDateException.MAX_RETRY_ATTEMPTS) {
+                    if (retries == maxSqlRecompileAttempts) {
                         throw SqlException.$(0, e.getFlyweightMessage());
                     }
                     LOG.info().$(e.getFlyweightMessage()).$();

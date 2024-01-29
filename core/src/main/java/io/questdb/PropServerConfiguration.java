@@ -194,6 +194,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final double maxRequiredDelimiterStdDev;
     private final double maxRequiredLineLengthStdDev;
     private final long maxRerunWaitCapMs;
+    private final int maxSqlRecompileAttempts;
     private final int maxSwapFileCount;
     private final int maxUncommittedRows;
     private final int metadataStringPoolCapacity;
@@ -957,6 +958,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlJitBindVarsMemoryMaxPages = getInt(properties, env, PropertyKey.CAIRO_SQL_JIT_BIND_VARS_MEMORY_MAX_PAGES, 8);
             this.sqlJitPageAddressCacheThreshold = getIntSize(properties, env, PropertyKey.CAIRO_SQL_JIT_PAGE_ADDRESS_CACHE_THRESHOLD, 1024 * 1024);
             this.sqlJitDebugEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_JIT_DEBUG_ENABLED, false);
+            this.maxSqlRecompileAttempts = getInt(properties, env, PropertyKey.CAIRO_SQL_MAX_RECOMPILE_ATTEMPTS, 10);
 
             String value = getString(properties, env, PropertyKey.CAIRO_WRITER_FO_OPTS, "o_none");
             long lopts = CairoConfiguration.O_NONE;
@@ -2857,6 +2859,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean mangleTableDirNames() {
             return false;
+        }
+
+        @Override
+        public int getMaxSqlRecompileAttempts() {
+            return maxSqlRecompileAttempts;
         }
     }
 

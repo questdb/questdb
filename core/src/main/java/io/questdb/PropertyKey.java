@@ -154,6 +154,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_EXPLAIN_MODEL_POOL_CAPACITY("cairo.sql.explain.model.pool.capacity"),
     CAIRO_O3_MIN_LAG("cairo.o3.min.lag"),
     CAIRO_SQL_BACKUP_ROOT("cairo.sql.backup.root"),
+    CAIRO_SQL_MAX_RECOMPILE_ATTEMPTS("cairo.sql.max.recompile.attempts"),
     CAIRO_ATTACH_PARTITION_SUFFIX("cairo.attach.partition.suffix"),
     CAIRO_ATTACH_PARTITION_COPY("cairo.attach.partition.copy"),
     CAIRO_DETACHED_MKDIR_MODE("cairo.detached.mkdir.mode"),
