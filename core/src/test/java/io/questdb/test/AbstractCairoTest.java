@@ -90,7 +90,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
     public static int walTxnNotificationQueueCapacity = -1;
     public static long writerAsyncCommandBusyWaitTimeout = -1;
     public static long writerAsyncCommandMaxTimeout = -1;
-    protected static String attachableDirSuffix = null;
     protected static CharSequence backupDir;
     protected static DateFormat backupDirTimestampFormat;
     protected static int binaryEncodingMaxLength = -1;

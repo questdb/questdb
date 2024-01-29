@@ -42,7 +42,6 @@ import java.util.Properties;
 
 public class Overrides {
     private final Properties properties = new Properties();
-    private String attachableDirSuffix = null;
     private CharSequence backupDir;
     private DateFormat backupDirTimestampFormat;
     private int binaryEncodingMaxLength = -1;
@@ -122,9 +121,6 @@ public class Overrides {
         TestUtils.resetToDefaultTestProperties(properties);
     }
 
-    public String getAttachableDirSuffix() {
-        return attachableDirSuffix;
-    }
 
 
     public CharSequence getBackupDir() {
@@ -521,7 +517,6 @@ public class Overrides {
         parallelImportStatusLogKeepNDays = -1;
         defaultTableWriteMode = SqlWalMode.WAL_NOT_SET;
         copyPartitionOnAttach = null;
-        attachableDirSuffix = null;
         ff = null;
         dataAppendPageSize = -1;
         o3QuickSortEnabled = false;
@@ -542,11 +537,6 @@ public class Overrides {
 
         TestUtils.resetToDefaultTestProperties(properties);
         changed = true;
-    }
-
-
-    public void setAttachableDirSuffix(String attachableDirSuffix) {
-        this.attachableDirSuffix = attachableDirSuffix;
     }
 
 
@@ -750,6 +740,11 @@ public class Overrides {
 
     public void setProperty(PropertyKey propertyKey, long value) {
         properties.setProperty(propertyKey.getPropertyPath(), String.valueOf(value));
+        changed = true;
+    }
+
+    public void setProperty(PropertyKey propertyKey, String value) {
+        properties.setProperty(propertyKey.getPropertyPath(), value);
         changed = true;
     }
 

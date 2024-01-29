@@ -34,11 +34,6 @@ import io.questdb.test.cairo.Overrides;
 public class StaticOverrides extends Overrides {
 
     @Override
-    public String getAttachableDirSuffix() {
-        return AbstractCairoTest.attachableDirSuffix;
-    }
-
-    @Override
     public CharSequence getBackupDir() {
         return AbstractCairoTest.backupDir;
     }
@@ -197,16 +192,10 @@ public class StaticOverrides extends Overrides {
         AbstractCairoTest.pageFrameReduceQueueCapacity = -1;
         AbstractCairoTest.columnVersionPurgeQueueCapacity = -1;
         AbstractCairoTest.sqlCopyBufferSize = 1024 * 1024;
-        AbstractCairoTest.attachableDirSuffix = null;
         AbstractCairoTest.ff = null;
         AbstractCairoTest.dataAppendPageSize = -1;
         AbstractCairoTest.maxOpenPartitions = -1;
         AbstractCairoTest.factoryProvider = null;
-    }
-
-    @Override
-    public void setAttachableDirSuffix(String attachableDirSuffix) {
-        AbstractCairoTest.attachableDirSuffix = attachableDirSuffix;
     }
 
     @Override

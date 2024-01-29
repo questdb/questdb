@@ -64,11 +64,6 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     }
 
     @Override
-    public @NotNull String getAttachPartitionSuffix() {
-        return overrides.getAttachableDirSuffix() == null ? super.getAttachPartitionSuffix() : overrides.getAttachableDirSuffix();
-    }
-
-    @Override
     public DateFormat getBackupDirTimestampFormat() {
         return overrides.getBackupDirTimestampFormat() == null ? super.getBackupDirTimestampFormat() : overrides.getBackupDirTimestampFormat();
     }

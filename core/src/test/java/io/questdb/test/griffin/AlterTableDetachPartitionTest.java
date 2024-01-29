@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
@@ -107,11 +108,14 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
         assertMemoryLeak(() -> {
             configOverrideCopyPartitionOnAttach(true);
             String tableName = "tabDetachAttachMissingMeta";
-            attachableDirSuffix = DETACHED_DIR_MARKER;
+            node1.getConfigurationOverrides().setProperty(
+                    PropertyKey.CAIRO_ATTACH_PARTITION_SUFFIX,
+                    DETACHED_DIR_MARKER
+            );
             ff = new TestFilesFacadeImpl() {
                 @Override
                 public int copyRecursive(Path src, Path dst, int dirMode) {
-                    if (Utf8s.containsAscii(src, attachableDirSuffix)) {
+                    if (Utf8s.containsAscii(src, DETACHED_DIR_MARKER)) {
                         return 1000;
                     }
                     return 0;
@@ -160,7 +164,10 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 return super.copy(src, dest);
             }
         };
-        attachableDirSuffix = DETACHED_DIR_MARKER;
+        node1.getConfigurationOverrides().setProperty(
+                PropertyKey.CAIRO_ATTACH_PARTITION_SUFFIX,
+                DETACHED_DIR_MARKER
+        );
         assertMemoryLeak(ff1, () -> {
             String tableName = testName.getMethodName();
 
@@ -213,7 +220,10 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
         };
         assertMemoryLeak(ff1, () -> {
             String tableName = "tabDetachAttachMissingMeta";
-            attachableDirSuffix = DETACHED_DIR_MARKER;
+            node1.getConfigurationOverrides().setProperty(
+                    PropertyKey.CAIRO_ATTACH_PARTITION_SUFFIX,
+                    DETACHED_DIR_MARKER
+            );
 
             try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                 createPopulateTable(
@@ -686,7 +696,10 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 () -> {
                     configOverrideCopyPartitionOnAttach(true);
                     String tableName = testName.getMethodName();
-                    attachableDirSuffix = DETACHED_DIR_MARKER;
+                    node1.getConfigurationOverrides().setProperty(
+                            PropertyKey.CAIRO_ATTACH_PARTITION_SUFFIX,
+                            DETACHED_DIR_MARKER
+                    );
 
                     try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                         createPopulateTable(
@@ -745,7 +758,10 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 () -> {
                     configOverrideCopyPartitionOnAttach(true);
                     String tableName = testName.getMethodName();
-                    attachableDirSuffix = DETACHED_DIR_MARKER;
+                    node1.getConfigurationOverrides().setProperty(
+                            PropertyKey.CAIRO_ATTACH_PARTITION_SUFFIX,
+                            DETACHED_DIR_MARKER
+                    );
 
                     try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                         createPopulateTable(
@@ -1121,7 +1137,10 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
         assertMemoryLeak(() -> {
             configOverrideCopyPartitionOnAttach(true);
             String tableName = "tabDetachAttachMissingMeta";
-            attachableDirSuffix = DETACHED_DIR_MARKER;
+            node1.getConfigurationOverrides().setProperty(
+                    PropertyKey.CAIRO_ATTACH_PARTITION_SUFFIX,
+                    DETACHED_DIR_MARKER
+            );
             ff = new TestFilesFacadeImpl() {
                 @Override
                 public int hardLinkDirRecursive(Path src, Path dst, int dirMode) {
