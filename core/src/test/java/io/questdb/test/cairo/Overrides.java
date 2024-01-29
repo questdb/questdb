@@ -36,7 +36,7 @@ import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 
 import java.util.Map;
 
-public class Overrides implements ConfigurationOverrides {
+public class Overrides {
     private String attachableDirSuffix = null;
     private CharSequence backupDir;
     private DateFormat backupDirTimestampFormat;
@@ -112,237 +112,237 @@ public class Overrides implements ConfigurationOverrides {
     private long writerCommandQueueSlotSize = 2048L;
     private Boolean writerMixedIOEnabled = null;
 
-    @Override
+
     public String getAttachableDirSuffix() {
         return attachableDirSuffix;
     }
 
-    @Override
+
     public CharSequence getBackupDir() {
         return backupDir;
     }
 
-    @Override
+
     public DateFormat getBackupDirTimestampFormat() {
         return backupDirTimestampFormat;
     }
 
-    @Override
+
     public int getBinaryEncodingMaxLength() {
         return binaryEncodingMaxLength;
     }
 
-    @Override
+
     public int getCapacity() {
         return capacity;
     }
 
-    @Override
+
     public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
         return circuitBreakerConfiguration;
     }
 
-    @Override
+
     public long getColumnPurgeRetryDelay() {
         return columnPurgeRetryDelay;
     }
 
-    @Override
+
     public int getColumnVersionPurgeQueueCapacity() {
         return columnVersionPurgeQueueCapacity;
     }
 
-    @Override
+
     public int getColumnVersionTaskPoolCapacity() {
         return columnVersionTaskPoolCapacity;
     }
 
-    @Override
+
     public Boolean getCopyPartitionOnAttach() {
         return copyPartitionOnAttach;
     }
 
-    @Override
+
     public long getCurrentMicros() {
         return currentMicros;
     }
 
-    @Override
+
     public long getDataAppendPageSize() {
         return dataAppendPageSize;
     }
 
-    @Override
+
     public int getDefaultTableWriteMode() {
         return defaultTableWriteMode;
     }
 
-    @Override
+
     public Map<String, String> getEnv() {
         return env != null ? env : System.getenv();
     }
 
-    @Override
+
     public FactoryProvider getFactoryProvider() {
         return factoryProvider;
     }
 
-    @Override
+
     public FilesFacade getFilesFacade() {
         return ff;
     }
 
-    @Override
+
     public long getGroupByAllocatorDefaultChunkSize() {
         return groupByAllocatorDefaultChunkSize;
     }
 
-    @Override
+
     public int getGroupByShardingThreshold() {
         return groupByShardingThreshold;
     }
 
-    @Override
+
     public int getInactiveReaderMaxOpenPartitions() {
         return maxOpenPartitions;
     }
 
-    @Override
+
     public String getInputRoot() {
         return inputRoot;
     }
 
-    @Override
+
     public String getInputWorkRoot() {
         return inputWorkRoot;
     }
 
-    @Override
+
     public int getJitMode() {
         return jitMode;
     }
 
-    @Override
+
     public int getMaxFileNameLength() {
         return maxFileNameLength;
     }
 
-    @Override
+
     public int getMaxSqlRecompileAttempts() {
         return maxSqlRecompileAttempts;
     }
 
-    @Override
+
     public int getMaxUncommittedRows() {
         return maxUncommittedRows;
     }
 
-    @Override
+
     public int getO3ColumnMemorySize() {
         return o3ColumnMemorySize;
     }
 
-    @Override
+
     public long getO3MaxLag() {
         return o3MaxLag;
     }
 
-    @Override
+
     public long getO3MinLag() {
         return o3MinLag;
     }
 
-    @Override
+
     public int getO3PartitionSplitMaxCount() {
         return o3PartitionSplitMaxCount;
     }
 
-    @Override
+
     public int getPageFrameMaxRows() {
         return pageFrameMaxRows;
     }
 
-    @Override
+
     public int getPageFrameReduceQueueCapacity() {
         return pageFrameReduceQueueCapacity;
     }
 
-    @Override
+
     public int getPageFrameReduceShardCount() {
         return pageFrameReduceShardCount;
     }
 
-    @Override
+
     public int getParallelImportStatusLogKeepNDays() {
         return parallelImportStatusLogKeepNDays;
     }
 
-    @Override
+
     public long getPartitionO3SplitThreshold() {
         return partitionO3SplitThreshold;
     }
 
-    @Override
+
     public int getRecreateDistressedSequencerAttempts() {
         return recreateDistressedSequencerAttempts;
     }
 
-    @Override
+
     public int getRepeatMigrationsFromVersion() {
         return repeatMigrationsFromVersion;
     }
 
-    @Override
+
     public int getRndFunctionMemoryMaxPages() {
         return rndFunctionMemoryMaxPages;
     }
 
-    @Override
+
     public int getRndFunctionMemoryPageSize() {
         return rndFunctionMemoryPageSize;
     }
 
-    @Override
+
     public RostiAllocFacade getRostiAllocFacade() {
         return rostiAllocFacade;
     }
 
-    @Override
+
     public int getSampleByIndexSearchPageSize() {
         return sampleByIndexSearchPageSize;
     }
 
-    @Override
+
     public boolean getSimulateCrashEnabled() {
         return simulateCrashEnabled;
     }
 
-    @Override
+
     public String getSnapshotInstanceId() {
         return snapshotInstanceId;
     }
 
-    @Override
+
     public Boolean getSnapshotRecoveryEnabled() {
         return snapshotRecoveryEnabled;
     }
 
-    @Override
+
     public long getSpinLockTimeout() {
         return spinLockTimeout;
     }
 
-    @Override
+
     public int getSqlCopyBufferSize() {
         return sqlCopyBufferSize;
     }
 
-    @Override
+
     public int getSqlJoinMetadataMaxResizes() {
         return sqlJoinMetadataMaxResizes;
     }
 
-    @Override
+
     public int getSqlJoinMetadataPageSize() {
         return sqlJoinMetadataPageSize;
     }
@@ -359,122 +359,122 @@ public class Overrides implements ConfigurationOverrides {
         return sqlWindowStorePageSize;
     }
 
-    @Override
+
     public int getTableRegistryCompactionThreshold() {
         return tableRegistryCompactionThreshold;
     }
 
-    @Override
+
     public MicrosecondClock getTestMicrosClock() {
         return testMicrosClock;
     }
 
-    @Override
+
     public int getWalApplyLookAheadTransactionCount() {
         return walLookAheadTransactionCount;
     }
 
-    @Override
+
     public long getWalApplyTableTimeQuota() {
         return walApplyTableTimeQuota;
     }
 
-    @Override
+
     public long getWalMaxLagSize() {
         return walMaxLagSize;
     }
 
-    @Override
+
     public int getWalMaxLagTxnCount() {
         return walMaxLagTxnCount;
     }
 
-    @Override
+
     public int getWalMaxSegmentFileDescriptorsCache() {
         return walMaxSegmentFileDescriptorsCache;
     }
 
-    @Override
+
     public long getWalPurgeInterval() {
         return walPurgeInterval;
     }
 
-    @Override
+
     public long getWalSegmentRolloverRowCount() {
         return walSegmentRolloverRowCount;
     }
 
-    @Override
+
     public long getWalSegmentRolloverSize() {
         return walSegmentRolloverSize;
     }
 
-    @Override
+
     public int getWalTxnNotificationQueueCapacity() {
         return walTxnNotificationQueueCapacity;
     }
 
-    @Override
+
     public long getWriterAsyncCommandBusyWaitTimeout() {
         return writerAsyncCommandBusyWaitTimeout;
     }
 
-    @Override
+
     public long getWriterAsyncCommandMaxTimeout() {
         return writerAsyncCommandMaxTimeout;
     }
 
-    @Override
+
     public int getWriterCommandQueueCapacity() {
         return writerCommandQueueCapacity;
     }
 
-    @Override
+
     public long getWriterCommandQueueSlotSize() {
         return writerCommandQueueSlotSize;
     }
 
-    @Override
+
     public Boolean isColumnPreTouchEnabled() {
         return columnPreTouchEnabled;
     }
 
-    @Override
+
     public boolean isHidingTelemetryTable() {
         return hideTelemetryTable;
     }
 
-    @Override
+
     public Boolean isIoURingEnabled() {
         return ioURingEnabled;
     }
 
-    @Override
+
     public boolean isO3QuickSortEnabled() {
         return o3QuickSortEnabled;
     }
 
-    @Override
+
     public Boolean isParallelFilterEnabled() {
         return parallelFilterEnabled;
     }
 
-    @Override
+
     public Boolean isParallelGroupByEnabled() {
         return parallelGroupByEnabled;
     }
 
-    @Override
+
     public Boolean isWriterMixedIOEnabled() {
         return writerMixedIOEnabled;
     }
 
-    @Override
+
     public boolean mangleTableDirNames() {
         return mangleTableDirNames;
     }
 
-    @Override
+
     public void reset() {
         hideTelemetryTable = false;
         maxUncommittedRows = -1;
@@ -531,72 +531,72 @@ public class Overrides implements ConfigurationOverrides {
         maxSqlRecompileAttempts = -1;
     }
 
-    @Override
+
     public void setAttachableDirSuffix(String attachableDirSuffix) {
         this.attachableDirSuffix = attachableDirSuffix;
     }
 
-    @Override
+
     public void setBackupDir(CharSequence backupDir) {
         this.backupDir = backupDir;
     }
 
-    @Override
+
     public void setBackupDirTimestampFormat(DateFormat backupDirTimestampFormat) {
         this.backupDirTimestampFormat = backupDirTimestampFormat;
     }
 
-    @Override
+
     public void setBinaryEncodingMaxLength(int binaryEncodingMaxLength) {
         this.binaryEncodingMaxLength = binaryEncodingMaxLength;
     }
 
-    @Override
+
     public void setCapacity(int capacity) {
         this.capacity = capacity;
     }
 
-    @Override
+
     public void setCircuitBreakerConfiguration(SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration) {
         this.circuitBreakerConfiguration = circuitBreakerConfiguration;
     }
 
-    @Override
+
     public void setColumnPreTouchEnabled(Boolean columnPreTouchEnabled) {
         this.columnPreTouchEnabled = columnPreTouchEnabled;
     }
 
-    @Override
+
     public void setColumnPurgeRetryDelay(long columnPurgeRetryDelay) {
         this.columnPurgeRetryDelay = columnPurgeRetryDelay;
     }
 
-    @Override
+
     public void setColumnVersionPurgeQueueCapacity(int columnVersionPurgeQueueCapacity) {
         this.columnVersionPurgeQueueCapacity = columnVersionPurgeQueueCapacity;
     }
 
-    @Override
+
     public void setColumnVersionTaskPoolCapacity(int columnVersionTaskPoolCapacity) {
         this.columnVersionTaskPoolCapacity = columnVersionTaskPoolCapacity;
     }
 
-    @Override
+
     public void setCopyPartitionOnAttach(Boolean copyPartitionOnAttach) {
         this.copyPartitionOnAttach = copyPartitionOnAttach;
     }
 
-    @Override
+
     public void setCurrentMicros(long currentMicros) {
         this.currentMicros = currentMicros;
     }
 
-    @Override
+
     public void setDataAppendPageSize(long dataAppendPageSize) {
         this.dataAppendPageSize = dataAppendPageSize;
     }
 
-    @Override
+
     public void setDefaultTableWriteMode(int defaultTableWriteMode) {
         this.defaultTableWriteMode = defaultTableWriteMode;
     }
@@ -605,237 +605,237 @@ public class Overrides implements ConfigurationOverrides {
         this.env = env;
     }
 
-    @Override
+
     public void setFactoryProvider(FactoryProvider factoryProvider) {
         this.factoryProvider = factoryProvider;
     }
 
-    @Override
+
     public void setFilesFacade(FilesFacade ff) {
         this.ff = ff;
     }
 
-    @Override
+
     public void setGroupByAllocatorDefaultChunkSize(long groupByAllocatorDefaultChunkSize) {
         this.groupByAllocatorDefaultChunkSize = groupByAllocatorDefaultChunkSize;
     }
 
-    @Override
+
     public void setGroupByShardingThreshold(int groupByShardingThreshold) {
         this.groupByShardingThreshold = groupByShardingThreshold;
     }
 
-    @Override
+
     public void setHideTelemetryTable(boolean hideTelemetryTable) {
         this.hideTelemetryTable = hideTelemetryTable;
     }
 
-    @Override
+
     public void setInactiveReaderMaxOpenPartitions(int maxOpenPartitions) {
         this.maxOpenPartitions = maxOpenPartitions;
     }
 
-    @Override
+
     public void setInputRoot(String inputRoot) {
         this.inputRoot = inputRoot;
     }
 
-    @Override
+
     public void setInputWorkRoot(String inputWorkRoot) {
         this.inputWorkRoot = inputWorkRoot;
     }
 
-    @Override
+
     public void setIoURingEnabled(Boolean ioURingEnabled) {
         this.ioURingEnabled = ioURingEnabled;
     }
 
-    @Override
+
     public void setJitMode(int jitMode) {
         this.jitMode = jitMode;
     }
 
-    @Override
+
     public void setMangleTableDirNames(boolean mangle) {
         this.mangleTableDirNames = mangle;
     }
 
-    @Override
+
     public void setMaxFileNameLength(int maxFileNameLength) {
         this.maxFileNameLength = maxFileNameLength;
     }
 
-    @Override
+
     public void setMaxSqlRecompileAttempts(int maxSqlRecompileAttempts) {
         this.maxSqlRecompileAttempts = maxSqlRecompileAttempts;
     }
 
-    @Override
+
     public void setMaxUncommittedRows(int maxUncommittedRows) {
         this.maxUncommittedRows = maxUncommittedRows;
     }
 
-    @Override
+
     public void setO3ColumnMemorySize(int size) {
         o3ColumnMemorySize = size;
     }
 
-    @Override
+
     public void setO3MaxLag(long o3MaxLag) {
         this.o3MaxLag = o3MaxLag;
     }
 
-    @Override
+
     public void setO3MinLag(long minLag) {
         o3MinLag = minLag;
     }
 
-    @Override
+
     public void setO3PartitionSplitMaxCount(int o3PartitionSplitMaxCount) {
         this.o3PartitionSplitMaxCount = o3PartitionSplitMaxCount;
     }
 
-    @Override
+
     public void setO3QuickSortEnabled(boolean o3QuickSortEnabled) {
         this.o3QuickSortEnabled = o3QuickSortEnabled;
     }
 
-    @Override
+
     public void setPageFrameMaxRows(int pageFrameMaxRows) {
         this.pageFrameMaxRows = pageFrameMaxRows;
     }
 
-    @Override
+
     public void setPageFrameReduceQueueCapacity(int pageFrameReduceQueueCapacity) {
         this.pageFrameReduceQueueCapacity = pageFrameReduceQueueCapacity;
     }
 
-    @Override
+
     public void setPageFrameReduceShardCount(int pageFrameReduceShardCount) {
         this.pageFrameReduceShardCount = pageFrameReduceShardCount;
     }
 
-    @Override
+
     public void setParallelFilterEnabled(Boolean parallelFilterEnabled) {
         this.parallelFilterEnabled = parallelFilterEnabled;
     }
 
-    @Override
+
     public void setParallelGroupByEnabled(Boolean parallelGroupByEnabled) {
         this.parallelGroupByEnabled = parallelGroupByEnabled;
     }
 
-    @Override
+
     public void setParallelImportStatusLogKeepNDays(int parallelImportStatusLogKeepNDays) {
         this.parallelImportStatusLogKeepNDays = parallelImportStatusLogKeepNDays;
     }
 
-    @Override
+
     public void setPartitionO3SplitThreshold(long value) {
         this.partitionO3SplitThreshold = value;
     }
 
-    @Override
+
     public void setRecreateDistressedSequencerAttempts(int recreateDistressedSequencerAttempts) {
         this.recreateDistressedSequencerAttempts = recreateDistressedSequencerAttempts;
     }
 
-    @Override
+
     public void setRegistryCompactionThreshold(int value) {
         tableRegistryCompactionThreshold = value;
     }
 
-    @Override
+
     public void setRepeatMigrationsFromVersion(int value) {
         repeatMigrationsFromVersion = value;
     }
 
-    @Override
+
     public void setRndFunctionMemoryMaxPages(int rndFunctionMemoryMaxPages) {
         this.rndFunctionMemoryMaxPages = rndFunctionMemoryMaxPages;
     }
 
-    @Override
+
     public void setRndFunctionMemoryPageSize(int rndFunctionMemoryPageSize) {
         this.rndFunctionMemoryPageSize = rndFunctionMemoryPageSize;
     }
 
-    @Override
+
     public void setRostiAllocFacade(RostiAllocFacade rostiAllocFacade) {
         this.rostiAllocFacade = rostiAllocFacade;
     }
 
-    @Override
+
     public void setSampleByIndexSearchPageSize(int sampleByIndexSearchPageSize) {
         this.sampleByIndexSearchPageSize = sampleByIndexSearchPageSize;
     }
 
-    @Override
+
     public void setSimulateCrashEnabled(boolean enabled) {
         this.simulateCrashEnabled = enabled;
     }
 
-    @Override
+
     public void setSnapshotInstanceId(String snapshotInstanceId) {
         this.snapshotInstanceId = snapshotInstanceId;
     }
 
-    @Override
+
     public void setSnapshotRecoveryEnabled(Boolean snapshotRecoveryEnabled) {
         this.snapshotRecoveryEnabled = snapshotRecoveryEnabled;
     }
 
-    @Override
+
     public void setSpinLockTimeout(long spinLockTimeout) {
         this.spinLockTimeout = spinLockTimeout;
     }
 
-    @Override
+
     public void setSqlCopyBufferSize(int sqlCopyBufferSize) {
         this.sqlCopyBufferSize = sqlCopyBufferSize;
     }
 
-    @Override
+
     public void setSqlJoinMetadataMaxResizes(int sqlJoinMetadataMaxResizes) {
         this.sqlJoinMetadataMaxResizes = sqlJoinMetadataMaxResizes;
     }
 
-    @Override
+
     public void setSqlJoinMetadataPageSize(int sqlJoinMetadataPageSize) {
         this.sqlJoinMetadataPageSize = sqlJoinMetadataPageSize;
     }
 
-    @Override
+
     public void setSqlWindowMaxRecursion(int maxRecursion) {
         this.sqlWindowMaxRecursion = maxRecursion;
     }
 
-    @Override
+
     public void setSqlWindowStoreMaxPages(int windowStoreMaxPages) {
         this.sqlWindowStoreMaxPages = windowStoreMaxPages;
     }
 
-    @Override
+
     public void setSqlWindowStorePageSize(int windowStorePageSize) {
         this.sqlWindowStorePageSize = windowStorePageSize;
     }
 
-    @Override
+
     public void setTestMicrosClock(MicrosecondClock testMicrosClock) {
         this.testMicrosClock = testMicrosClock;
     }
 
-    @Override
+
     public void setWalApplyTableTimeQuota(long walApplyTableTimeQuota) {
         this.walApplyTableTimeQuota = walApplyTableTimeQuota;
     }
 
-    @Override
+
     public void setWalLookAheadTransactionCount(int walLookAheadTransactionCount) {
         this.walLookAheadTransactionCount = walLookAheadTransactionCount;
     }
 
-    @Override
+
     public void setWalMaxLagSize(long value) {
         walMaxLagSize = value;
     }
@@ -844,52 +844,52 @@ public class Overrides implements ConfigurationOverrides {
         this.walMaxLagTxnCount = walMaxLagTxnCount;
     }
 
-    @Override
+
     public void setWalMaxSegmentFileDescriptorsCache(int value) {
         walMaxSegmentFileDescriptorsCache = value;
     }
 
-    @Override
+
     public void setWalPurgeInterval(long walPurgeInterval) {
         this.walPurgeInterval = walPurgeInterval;
     }
 
-    @Override
+
     public void setWalSegmentRolloverRowCount(long walSegmentRolloverRowCount) {
         this.walSegmentRolloverRowCount = walSegmentRolloverRowCount;
     }
 
-    @Override
+
     public void setWalSegmentRolloverSize(long walSegmentRolloverSize) {
         this.walSegmentRolloverSize = walSegmentRolloverSize;
     }
 
-    @Override
+
     public void setWalTxnNotificationQueueCapacity(int walTxnNotificationQueueCapacity) {
         this.walTxnNotificationQueueCapacity = walTxnNotificationQueueCapacity;
     }
 
-    @Override
+
     public void setWriterAsyncCommandBusyWaitTimeout(long writerAsyncCommandBusyWaitTimeout) {
         this.writerAsyncCommandBusyWaitTimeout = writerAsyncCommandBusyWaitTimeout;
     }
 
-    @Override
+
     public void setWriterAsyncCommandMaxTimeout(long writerAsyncCommandMaxTimeout) {
         this.writerAsyncCommandMaxTimeout = writerAsyncCommandMaxTimeout;
     }
 
-    @Override
+
     public void setWriterCommandQueueCapacity(int writerCommandQueueCapacity) {
         this.writerCommandQueueCapacity = writerCommandQueueCapacity;
     }
 
-    @Override
+
     public void setWriterCommandQueueSlotSize(long writerCommandQueueSlotSize) {
         this.writerCommandQueueSlotSize = writerCommandQueueSlotSize;
     }
 
-    @Override
+
     public void setWriterMixedIOEnabled(Boolean writerMixedIOEnabled) {
         this.writerMixedIOEnabled = writerMixedIOEnabled;
     }

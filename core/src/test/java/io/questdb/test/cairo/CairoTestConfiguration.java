@@ -39,11 +39,11 @@ import org.jetbrains.annotations.NotNull;
 import java.util.Map;
 
 public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
-    private final ConfigurationOverrides overrides;
+    private final Overrides overrides;
     private final TelemetryConfiguration telemetryConfiguration;
     private final VolumeDefinitions volumeDefinitions = new VolumeDefinitions();
 
-    public CairoTestConfiguration(CharSequence root, TelemetryConfiguration telemetryConfiguration, ConfigurationOverrides overrides) {
+    public CairoTestConfiguration(CharSequence root, TelemetryConfiguration telemetryConfiguration, Overrides overrides) {
         super(root);
         this.telemetryConfiguration = telemetryConfiguration;
         this.overrides = overrides;

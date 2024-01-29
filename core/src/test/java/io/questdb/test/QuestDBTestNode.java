@@ -36,7 +36,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.std.Misc;
-import io.questdb.test.cairo.ConfigurationOverrides;
+import io.questdb.test.cairo.Overrides;
 import io.questdb.test.tools.TestUtils;
 
 public class QuestDBTestNode {
@@ -61,7 +61,7 @@ public class QuestDBTestNode {
         return cairo.configuration;
     }
 
-    public ConfigurationOverrides getConfigurationOverrides() {
+    public Overrides getConfigurationOverrides() {
         return cairo.overrides;
     }
 
@@ -92,7 +92,7 @@ public class QuestDBTestNode {
     public void initCairo(
             String root,
             boolean ownRoot,
-            ConfigurationOverrides overrides,
+            Overrides overrides,
             TestCairoEngineFactory engineFactory,
             TestCairoConfigurationFactory configurationFactory
     ) {
@@ -138,7 +138,7 @@ public class QuestDBTestNode {
         private final CairoConfiguration configuration;
         private final MessageBus messageBus;
         private final Metrics metrics;
-        private final ConfigurationOverrides overrides;
+        private final Overrides overrides;
         private final boolean ownRoot;
         private final CharSequence root;
         private CairoEngine engine;
@@ -146,7 +146,7 @@ public class QuestDBTestNode {
         private Cairo(
                 String root,
                 boolean ownRoot,
-                ConfigurationOverrides overrides,
+                Overrides overrides,
                 TestCairoEngineFactory engineFactory,
                 TestCairoConfigurationFactory configurationFactory
         ) {

@@ -55,7 +55,10 @@ import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
-import io.questdb.test.cairo.*;
+import io.questdb.test.cairo.CairoTestConfiguration;
+import io.questdb.test.cairo.Overrides;
+import io.questdb.test.cairo.RecordCursorPrinter;
+import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -424,6 +427,32 @@ public abstract class AbstractCairoTest extends AbstractTest {
         bindVariableService = node1.getBindVariableService();
         sqlExecutionContext = node1.getSqlExecutionContext();
     }
+
+//    private static ConfigurationOverrides createStaticOverrides() {
+//        var staticOverrides = new Overrides();
+//        staticOverrides.setCurrentMicros(currentMicros);
+//        staticOverrides.setTestMicrosClock(testMicrosClock);
+//        staticOverrides.setWriterAsyncCommandBusyWaitTimeout(writerAsyncCommandBusyWaitTimeout);
+//        staticOverrides.setWriterAsyncCommandMaxTimeout(writerAsyncCommandMaxTimeout);
+//        staticOverrides.setPageFrameMaxRows(pageFrameMaxRows);
+//        staticOverrides.setGroupByShardingThreshold(groupByShardingThreshold);
+//        staticOverrides.setSpinLockTimeout(spinLockTimeout);
+//        staticOverrides.setWalTxnNotificationQueueCapacity(walTxnNotificationQueueCapacity);
+//        staticOverrides.setSnapshotInstanceId(snapshotInstanceId);
+//        staticOverrides.setSnapshotRecoveryEnabled(snapshotRecoveryEnabled);
+//        staticOverrides.setWriterCommandQueueCapacity(writerCommandQueueCapacity);
+//        staticOverrides.setPageFrameReduceShardCount(pageFrameReduceShardCount);
+//        staticOverrides.setPageFrameReduceQueueCapacity(pageFrameReduceQueueCapacity);
+//        staticOverrides.setColumnVersionTaskPoolCapacity(columnVersionPurgeQueueCapacity);
+//        staticOverrides.setSqlCopyBufferSize(sqlCopyBufferSize);
+//        staticOverrides.setAttachableDirSuffix(attachableDirSuffix);
+//        staticOverrides.setFilesFacade(ff);
+//        staticOverrides.setDataAppendPageSize(dataAppendPageSize);
+//        staticOverrides.setDataAppendPageSize(dataAppendPageSize);
+//        staticOverrides.setInactiveReaderMaxOpenPartitions(maxOpenPartitions);
+//        staticOverrides.setFactoryProvider(factoryProvider);
+//        return staticOverrides;
+//    }
 
     public static void snapshotMemoryUsage() {
         memoryUsage = getMemUsedByFactories();
@@ -1408,7 +1437,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
             String root,
             boolean ownRoot,
             int nodeId,
-            ConfigurationOverrides overrides,
+            Overrides overrides,
             TestCairoEngineFactory engineFactory,
             TestCairoConfigurationFactory configurationFactory
     ) {
