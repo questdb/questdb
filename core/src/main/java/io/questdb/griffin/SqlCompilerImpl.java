@@ -2365,7 +2365,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                     factory.getMetadata(),
                                     cursor,
                                     copier,
-                                    writerTimestampIndex,
+                                    timestampIndexFound,
                                     model.getBatchSize(),
                                     model.getO3MaxLag(),
                                     circuitBreaker
