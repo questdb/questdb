@@ -359,6 +359,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
         try (Sender sender = Sender.builder()
                 .address("localhost:" + port)
                 .http()
+                .maxPendingRows(Integer.MAX_VALUE) // we want to flush manually
                 .build()
         ) {
             if (count / 2 > 0) {
