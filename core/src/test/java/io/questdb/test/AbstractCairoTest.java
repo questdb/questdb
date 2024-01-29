@@ -24,10 +24,7 @@
 
 package io.questdb.test;
 
-import io.questdb.FactoryProvider;
-import io.questdb.MessageBus;
-import io.questdb.MessageBusImpl;
-import io.questdb.Metrics;
+import io.questdb.*;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
@@ -77,6 +74,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 
 public abstract class AbstractCairoTest extends AbstractTest {
+
     protected static final Log LOG = LogFactory.getLog(AbstractCairoTest.class);
     protected static final PlanSink planSink = new TextPlanSink();
     protected static final RecordCursorPrinter printer = new RecordCursorPrinter();
@@ -85,8 +83,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
     private static final long[] SNAPSHOT = new long[MemoryTag.SIZE];
     private static final LongList rows = new LongList();
     public static long dataAppendPageSize = -1;
-    public static int recreateDistressedSequencerAttempts = 3;
     public static long spinLockTimeout = -1;
+    public static StaticOverrides staticOverrides = new StaticOverrides();
     public static int walTxnNotificationQueueCapacity = -1;
     public static long writerAsyncCommandBusyWaitTimeout = -1;
     public static long writerAsyncCommandMaxTimeout = -1;
@@ -120,7 +118,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static int pageFrameReduceQueueCapacity = -1;
     protected static int pageFrameReduceShardCount = -1;
     protected static SecurityContext securityContext;
-    protected static String snapshotInstanceId = null;
     protected static Boolean snapshotRecoveryEnabled = null;
     protected static int sqlCopyBufferSize = 1024 * 1024;
     protected static SqlExecutionContext sqlExecutionContext;
@@ -415,7 +412,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         // created mid-test
         AbstractTest.setUpStatic();
         nodes.clear();
-        node1 = newNode(Chars.toString(root), false, 1, new StaticOverrides(), getEngineFactory(), getConfigurationFactory());
+        node1 = newNode(Chars.toString(root), false, 1, staticOverrides, getEngineFactory(), getConfigurationFactory());
         configuration = node1.getConfiguration();
         securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getRootContext();
         metrics = node1.getMetrics();
@@ -425,6 +422,28 @@ public abstract class AbstractCairoTest extends AbstractTest {
         node1.initGriffin(circuitBreaker);
         bindVariableService = node1.getBindVariableService();
         sqlExecutionContext = node1.getSqlExecutionContext();
+    }
+
+    public static void snapshotMemoryUsage() {
+        memoryUsage = getMemUsedByFactories();
+
+        for (int i = 0; i < MemoryTag.SIZE; i++) {
+            SNAPSHOT[i] = Unsafe.getMemUsedByTag(i);
+        }
+    }
+
+    @AfterClass
+    public static void tearDownStatic() {
+        forEachNode(QuestDBTestNode::closeCairo);
+        circuitBreaker = Misc.free(circuitBreaker);
+        nodes.clear();
+        backupDir = null;
+        backupDirTimestampFormat = null;
+        factoryProvider = null;
+        engineFactory = null;
+        configurationFactory = null;
+        AbstractTest.tearDownStatic();
+        DumpThreadStacksFunctionFactory.dumpThreadStacks();
     }
 
 //    private static ConfigurationOverrides createStaticOverrides() {
@@ -452,28 +471,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
 //        staticOverrides.setFactoryProvider(factoryProvider);
 //        return staticOverrides;
 //    }
-
-    public static void snapshotMemoryUsage() {
-        memoryUsage = getMemUsedByFactories();
-
-        for (int i = 0; i < MemoryTag.SIZE; i++) {
-            SNAPSHOT[i] = Unsafe.getMemUsedByTag(i);
-        }
-    }
-
-    @AfterClass
-    public static void tearDownStatic() {
-        forEachNode(QuestDBTestNode::closeCairo);
-        circuitBreaker = Misc.free(circuitBreaker);
-        nodes.clear();
-        backupDir = null;
-        backupDirTimestampFormat = null;
-        factoryProvider = null;
-        engineFactory = null;
-        configurationFactory = null;
-        AbstractTest.tearDownStatic();
-        DumpThreadStacksFunctionFactory.dumpThreadStacks();
-    }
 
     @Before
     public void setUp() {
@@ -1595,6 +1592,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
         return select(selectSql, sqlExecutionContext);
     }
 
+    protected static void setProperty(PropertyKey propertyKey, int maxValue) {
+        staticOverrides.setProperty(propertyKey, maxValue);
+    }
+
     protected static void tickWalQueue(int ticks) {
         try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
             for (int i = 0; i < ticks; i++) {
@@ -1936,6 +1937,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
             engine.registerTableToken(token);
         }
         return token;
+    }
+
+    protected void setProperty(PropertyKey propertyKey, String snapshotId) {
+        staticOverrides.setProperty(propertyKey, snapshotId);
     }
 
     protected long update(CharSequence updateSql) throws SqlException {

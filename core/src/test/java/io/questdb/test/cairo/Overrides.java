@@ -86,14 +86,12 @@ public class Overrides {
     private int parallelImportStatusLogKeepNDays = -1;
     private long partitionO3SplitThreshold;
     private CairoConfiguration propsConfig;
-    private int recreateDistressedSequencerAttempts = 3;
     private int repeatMigrationsFromVersion = -1;
     private int rndFunctionMemoryMaxPages = -1;
     private int rndFunctionMemoryPageSize = -1;
     private RostiAllocFacade rostiAllocFacade = null;
     private int sampleByIndexSearchPageSize;
     private boolean simulateCrashEnabled;
-    private String snapshotInstanceId = null;
     private Boolean snapshotRecoveryEnabled = null;
     private long spinLockTimeout = -1;
     private int sqlCopyBufferSize = 1024 * 1024;
@@ -294,11 +292,6 @@ public class Overrides {
     }
 
 
-    public int getRecreateDistressedSequencerAttempts() {
-        return recreateDistressedSequencerAttempts;
-    }
-
-
     public int getRepeatMigrationsFromVersion() {
         return repeatMigrationsFromVersion;
     }
@@ -328,10 +321,6 @@ public class Overrides {
         return simulateCrashEnabled;
     }
 
-
-    public String getSnapshotInstanceId() {
-        return snapshotInstanceId;
-    }
 
 
     public Boolean getSnapshotRecoveryEnabled() {
@@ -498,7 +487,6 @@ public class Overrides {
         rndFunctionMemoryPageSize = -1;
         rndFunctionMemoryMaxPages = -1;
         spinLockTimeout = -1;
-        snapshotInstanceId = null;
         snapshotRecoveryEnabled = null;
         parallelFilterEnabled = null;
         parallelGroupByEnabled = null;
@@ -744,12 +732,12 @@ public class Overrides {
     }
 
     public void setProperty(PropertyKey propertyKey, String value) {
-        properties.setProperty(propertyKey.getPropertyPath(), value);
+        if (value != null) {
+            properties.setProperty(propertyKey.getPropertyPath(), value);
+        } else {
+            properties.remove(propertyKey.getPropertyPath());
+        }
         changed = true;
-    }
-
-    public void setRecreateDistressedSequencerAttempts(int recreateDistressedSequencerAttempts) {
-        this.recreateDistressedSequencerAttempts = recreateDistressedSequencerAttempts;
     }
 
     public void setRegistryCompactionThreshold(int value) {
@@ -778,10 +766,6 @@ public class Overrides {
 
     public void setSimulateCrashEnabled(boolean enabled) {
         this.simulateCrashEnabled = enabled;
-    }
-
-    public void setSnapshotInstanceId(String snapshotInstanceId) {
-        this.snapshotInstanceId = snapshotInstanceId;
     }
 
     public void setSnapshotRecoveryEnabled(Boolean snapshotRecoveryEnabled) {

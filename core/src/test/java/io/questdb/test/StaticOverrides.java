@@ -119,16 +119,6 @@ public class StaticOverrides extends Overrides {
     }
 
     @Override
-    public int getRecreateDistressedSequencerAttempts() {
-        return AbstractCairoTest.recreateDistressedSequencerAttempts;
-    }
-
-    @Override
-    public String getSnapshotInstanceId() {
-        return AbstractCairoTest.snapshotInstanceId;
-    }
-
-    @Override
     public Boolean getSnapshotRecoveryEnabled() {
         return AbstractCairoTest.snapshotRecoveryEnabled;
     }
@@ -185,7 +175,6 @@ public class StaticOverrides extends Overrides {
         AbstractCairoTest.groupByShardingThreshold = -1;
         AbstractCairoTest.spinLockTimeout = -1;
         AbstractCairoTest.walTxnNotificationQueueCapacity = -1;
-        AbstractCairoTest.snapshotInstanceId = null;
         AbstractCairoTest.snapshotRecoveryEnabled = null;
         AbstractCairoTest.writerCommandQueueCapacity = 4;
         AbstractCairoTest.pageFrameReduceShardCount = -1;
@@ -281,16 +270,6 @@ public class StaticOverrides extends Overrides {
     @Override
     public void setPageFrameReduceShardCount(int pageFrameReduceShardCount) {
         AbstractCairoTest.pageFrameReduceShardCount = pageFrameReduceShardCount;
-    }
-
-    @Override
-    public void setRecreateDistressedSequencerAttempts(int recreateDistressedSequencerAttempts) {
-        AbstractCairoTest.recreateDistressedSequencerAttempts = recreateDistressedSequencerAttempts;
-    }
-
-    @Override
-    public void setSnapshotInstanceId(String snapshotInstanceId) {
-        AbstractCairoTest.snapshotInstanceId = snapshotInstanceId;
     }
 
     @Override

@@ -24,10 +24,7 @@
 
 package io.questdb.test;
 
-import io.questdb.DefaultTelemetryConfiguration;
-import io.questdb.MessageBus;
-import io.questdb.Metrics;
-import io.questdb.TelemetryConfiguration;
+import io.questdb.*;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.BindVariableService;
@@ -111,6 +108,10 @@ public class QuestDBTestNode {
             throw new IllegalStateException("Cairo is not initialised yet");
         }
         griffin = new Griffin(cairo, circuitBreaker);
+    }
+
+    public void setProperty(PropertyKey propertyKey, int value) {
+        getConfigurationOverrides().setProperty(propertyKey, value);
     }
 
     public void setUpCairo() {

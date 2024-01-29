@@ -252,11 +252,6 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     }
 
     @Override
-    public @NotNull CharSequence getSnapshotInstanceId() {
-        return overrides.getSnapshotInstanceId() != null ? overrides.getSnapshotInstanceId() : super.getSnapshotInstanceId();
-    }
-
-    @Override
     public long getSpinLockTimeout() {
         return overrides.getSpinLockTimeout() > -1 ? overrides.getSpinLockTimeout() : 5000L;
     }
@@ -359,11 +354,6 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     @Override
     public long getWalPurgeInterval() {
         return overrides.getWalPurgeInterval() < 0 ? super.getWalPurgeInterval() : overrides.getWalPurgeInterval();
-    }
-
-    @Override
-    public int getWalRecreateDistressedSequencerAttempts() {
-        return overrides.getRecreateDistressedSequencerAttempts();
     }
 
     @Override
