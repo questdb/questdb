@@ -3392,7 +3392,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
 
             // backup conf directory
-            mkBackupDstDir(PropServerConfiguration.CONFIG_DIRECTORY, "could not create backup [conf dir=");
+            mkBackupDstDir(ReloadingPropServerConfiguration.CONFIG_DIRECTORY, "could not create backup [conf dir=");
             ff.copyRecursive(srcPath.of(configuration.getConfRoot()).$(), auxPath.of(dstPath).$(), configuration.getMkDirMode());
             compiledQuery.ofBackupTable();
         }

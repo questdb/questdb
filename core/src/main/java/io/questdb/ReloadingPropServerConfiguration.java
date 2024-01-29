@@ -50,6 +50,13 @@ import java.util.Properties;
 
 public class ReloadingPropServerConfiguration implements ServerConfiguration {
 
+    public static final long COMMIT_INTERVAL_DEFAULT = PropServerConfiguration.COMMIT_INTERVAL_DEFAULT;
+    public static final String CONFIG_DIRECTORY = PropServerConfiguration.CONFIG_DIRECTORY;
+    public static final String SNAPSHOT_DIRECTORY = PropServerConfiguration.SNAPSHOT_DIRECTORY;
+    public static final String DB_DIRECTORY = PropServerConfiguration.DB_DIRECTORY;
+    public static final String TMP_DIRECTORY = PropServerConfiguration.TMP_DIRECTORY;
+
+
     private ServerConfiguration config;
     private final String root;
     private final Log log;
@@ -57,6 +64,7 @@ public class ReloadingPropServerConfiguration implements ServerConfiguration {
     private final FilesFacade filesFacade;
     private final MicrosecondClock microsecondClock;
     private final FactoryProviderFactory fpf;
+
 
 
     public ReloadingPropServerConfiguration(
@@ -92,6 +100,10 @@ public class ReloadingPropServerConfiguration implements ServerConfiguration {
         this.filesFacade = filesFacade;
         this.microsecondClock = microsecondClock;
         this.fpf = fpf;
+    }
+
+    public static String rootSubdir(CharSequence dbRoot, CharSequence subdir) {
+        return PropServerConfiguration.rootSubdir(dbRoot, subdir);
     }
 
     @Override
@@ -196,5 +208,15 @@ public class ReloadingPropServerConfiguration implements ServerConfiguration {
         }
 
         return true;
+    }
+
+    public static class ValidationResult {
+        public final boolean isError;
+        public final String message;
+
+        private ValidationResult(boolean isError, String message) {
+            this.isError = isError;
+            this.message = message;
+        }
     }
 }

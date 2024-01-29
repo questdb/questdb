@@ -36,7 +36,7 @@ public class HttpErrorHandlingTest extends BootstrapTest {
                 new PropBootstrapConfiguration() {
                     @Override
                     public ServerConfiguration getServerConfiguration(Bootstrap bootstrap) throws Exception {
-                        return new PropServerConfiguration(
+                        return new ReloadingPropServerConfiguration(
                                 bootstrap.getRootDirectory(),
                                 bootstrap.loadProperties(),
                                 getEnv(),
@@ -78,7 +78,7 @@ public class HttpErrorHandlingTest extends BootstrapTest {
                 new PropBootstrapConfiguration() {
                     @Override
                     public ServerConfiguration getServerConfiguration(Bootstrap bootstrap) throws Exception {
-                        return new PropServerConfiguration(
+                        return new ReloadingPropServerConfiguration(
                                 bootstrap.getRootDirectory(),
                                 bootstrap.loadProperties(),
                                 getEnv(),

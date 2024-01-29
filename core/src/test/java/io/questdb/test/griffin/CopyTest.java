@@ -24,7 +24,7 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.PropServerConfiguration;
+import io.questdb.ReloadingPropServerConfiguration;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SqlWalMode;
 import io.questdb.cairo.sql.RecordCursor;
@@ -302,7 +302,7 @@ public class CopyTest extends AbstractCairoTest {
     @Test
     public void testParallelCopyIntoExistingTableWithDefaultWorkDir() throws Exception {
         String inputWorkRootTmp = inputWorkRoot;
-        try (Path path = new Path().of(configuration.getRoot()).concat(PropServerConfiguration.TMP_DIRECTORY).$()) {
+        try (Path path = new Path().of(configuration.getRoot()).concat(ReloadingPropServerConfiguration.TMP_DIRECTORY).$()) {
             inputWorkRoot = path.toString();
         }
 
@@ -374,7 +374,7 @@ public class CopyTest extends AbstractCairoTest {
     @Test
     public void testParallelCopyIntoNewTableWithDefaultWorkDir() throws Exception {
         String inputWorkRootTmp = inputWorkRoot;
-        try (Path path = new Path().of(configuration.getRoot()).concat(PropServerConfiguration.TMP_DIRECTORY).$()) {
+        try (Path path = new Path().of(configuration.getRoot()).concat(ReloadingPropServerConfiguration.TMP_DIRECTORY).$()) {
             inputWorkRoot = path.toString();
         }
 

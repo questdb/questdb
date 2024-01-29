@@ -26,7 +26,7 @@ package io.questdb.test.cutlass.line.tcp;
 
 import io.questdb.FreeOnExit;
 import io.questdb.Metrics;
-import io.questdb.PropServerConfiguration;
+import io.questdb.ReloadingPropServerConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cutlass.line.tcp.LineTcpReceiver;
@@ -99,7 +99,7 @@ public class LineTcpO3Test extends AbstractCairoTest {
             throw new ExceptionInInitializerError();
         }
 
-        PropServerConfiguration serverConf;
+        ReloadingPropServerConfiguration serverConf;
         Properties properties = new Properties();
         String name;
         if (walEnabled) {
@@ -108,7 +108,7 @@ public class LineTcpO3Test extends AbstractCairoTest {
             name = LineTcpO3Test.class.getSimpleName() + ".server.conf";
         }
         try (InputStream is = LineTcpO3Test.class.getResourceAsStream(name)) {
-            File mimeTypesFile = new File(new File(root, PropServerConfiguration.CONFIG_DIRECTORY), "mime.types");
+            File mimeTypesFile = new File(new File(root, ReloadingPropServerConfiguration.CONFIG_DIRECTORY), "mime.types");
             if (!mimeTypesFile.exists()) {
                 mimeTypesFile.getParentFile().mkdirs();
                 FileOutputStream fos = new FileOutputStream(mimeTypesFile);
@@ -116,7 +116,7 @@ public class LineTcpO3Test extends AbstractCairoTest {
                 fos.close();
             }
             properties.load(is);
-            serverConf = new PropServerConfiguration(root, properties, null, LOG, null);
+            serverConf = new ReloadingPropServerConfiguration(root, properties, null, LOG, null);
         } catch (Exception ex) {
             throw new RuntimeException(ex);
         }

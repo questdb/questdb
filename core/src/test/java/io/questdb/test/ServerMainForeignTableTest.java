@@ -24,7 +24,7 @@
 
 package io.questdb.test;
 
-import io.questdb.PropServerConfiguration;
+import io.questdb.ReloadingPropServerConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.cairo.*;
@@ -198,8 +198,8 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
 
             // copy the table to a foreign location, remove it, then symlink it
             try (
-                    Path filePath = new Path().of(root).concat(PropServerConfiguration.DB_DIRECTORY).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
-                    Path fakeTablePath = new Path().of(root).concat(PropServerConfiguration.DB_DIRECTORY).concat("coconut").$();
+                    Path filePath = new Path().of(root).concat(ReloadingPropServerConfiguration.DB_DIRECTORY).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
+                    Path fakeTablePath = new Path().of(root).concat(ReloadingPropServerConfiguration.DB_DIRECTORY).concat("coconut").$();
                     Path foreignPath = new Path().of(root).concat("banana").concat(tableName).slash$()
             ) {
                 if (!Files.exists(foreignPath)) {

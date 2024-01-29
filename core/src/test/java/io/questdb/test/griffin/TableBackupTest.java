@@ -24,7 +24,7 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.PropServerConfiguration;
+import io.questdb.ReloadingPropServerConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
@@ -178,7 +178,7 @@ public class TableBackupTest {
                 return super.rename(from, to);
             }
         };
-        CharSequence root = temp.newFolder(String.format("dbRoot%c%s", Files.SEPARATOR, PropServerConfiguration.DB_DIRECTORY)).getAbsolutePath();
+        CharSequence root = temp.newFolder(String.format("dbRoot%c%s", Files.SEPARATOR, ReloadingPropServerConfiguration.DB_DIRECTORY)).getAbsolutePath();
         backupRoot = temp.newFolder("dbBackupRoot").getAbsolutePath();
         mainConfiguration = new DefaultTestCairoConfiguration(root) {
             @Override
@@ -204,7 +204,7 @@ public class TableBackupTest {
         mainEngine = new CairoEngine(mainConfiguration);
         mainCompiler = mainEngine.getSqlCompiler();
         mainSqlExecutionContext = TestUtils.createSqlExecutionCtx(mainEngine);
-        File confRoot = new File(PropServerConfiguration.rootSubdir(root, PropServerConfiguration.CONFIG_DIRECTORY));  // dummy configuration
+        File confRoot = new File(ReloadingPropServerConfiguration.rootSubdir(root, ReloadingPropServerConfiguration.CONFIG_DIRECTORY));  // dummy configuration
         Assert.assertTrue(confRoot.mkdirs());
         Assert.assertTrue(new File(confRoot, "server.conf").createNewFile());
         Assert.assertTrue(new File(confRoot, "mime.types").createNewFile());
@@ -468,7 +468,7 @@ public class TableBackupTest {
         finalBackupPath.trimTo(finalBackupPathLen).concat(mainConfiguration.getDbDirectory()).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
         Assert.assertTrue(Files.exists(finalBackupPath));
 
-        finalBackupPath.trimTo(finalBackupPathLen).concat(PropServerConfiguration.CONFIG_DIRECTORY).slash$();
+        finalBackupPath.trimTo(finalBackupPathLen).concat(ReloadingPropServerConfiguration.CONFIG_DIRECTORY).slash$();
         final int trimLen = finalBackupPath.size();
         Assert.assertTrue(Files.exists(finalBackupPath.concat("server.conf").$()));
         Assert.assertTrue(Files.exists(finalBackupPath.trimTo(trimLen).concat("mime.types").$()));
@@ -600,6 +600,6 @@ public class TableBackupTest {
         }
         finalBackupPath.slash$();
         finalBackupPathLen = finalBackupPath.size();
-        finalBackupPath.trimTo(finalBackupPathLen).concat(PropServerConfiguration.DB_DIRECTORY).slash$();
+        finalBackupPath.trimTo(finalBackupPathLen).concat(ReloadingPropServerConfiguration.DB_DIRECTORY).slash$();
     }
 }
