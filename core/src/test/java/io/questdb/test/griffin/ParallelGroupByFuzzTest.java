@@ -59,6 +59,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CyclicBarrier;
 
+import static io.questdb.PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT;
 import static org.junit.Assert.fail;
 
 // This is not a fuzz test in traditional sense, but it's multi-threaded and we want to run it
@@ -92,7 +93,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         pageFrameMaxRows = PAGE_FRAME_MAX_ROWS;
         // We intentionally use small values for shard count and reduce
         // queue capacity to exhibit various edge cases.
-        pageFrameReduceShardCount = 2;
+        setProperty(CAIRO_PAGE_FRAME_SHARD_COUNT, 2);
         pageFrameReduceQueueCapacity = PAGE_FRAME_COUNT;
         // Set the sharding threshold to a small value to test sharding.
         groupByShardingThreshold = 2;

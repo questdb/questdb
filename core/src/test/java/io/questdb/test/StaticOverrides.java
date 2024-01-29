@@ -114,11 +114,6 @@ public class StaticOverrides extends Overrides {
     }
 
     @Override
-    public int getPageFrameReduceShardCount() {
-        return AbstractCairoTest.pageFrameReduceShardCount;
-    }
-
-    @Override
     public Boolean getSnapshotRecoveryEnabled() {
         return AbstractCairoTest.snapshotRecoveryEnabled;
     }
@@ -177,7 +172,6 @@ public class StaticOverrides extends Overrides {
         AbstractCairoTest.walTxnNotificationQueueCapacity = -1;
         AbstractCairoTest.snapshotRecoveryEnabled = null;
         AbstractCairoTest.writerCommandQueueCapacity = 4;
-        AbstractCairoTest.pageFrameReduceShardCount = -1;
         AbstractCairoTest.pageFrameReduceQueueCapacity = -1;
         AbstractCairoTest.columnVersionPurgeQueueCapacity = -1;
         AbstractCairoTest.sqlCopyBufferSize = 1024 * 1024;
@@ -265,11 +259,6 @@ public class StaticOverrides extends Overrides {
     @Override
     public void setPageFrameReduceQueueCapacity(int pageFrameReduceQueueCapacity) {
         AbstractCairoTest.pageFrameReduceQueueCapacity = pageFrameReduceQueueCapacity;
-    }
-
-    @Override
-    public void setPageFrameReduceShardCount(int pageFrameReduceShardCount) {
-        AbstractCairoTest.pageFrameReduceShardCount = pageFrameReduceShardCount;
     }
 
     @Override

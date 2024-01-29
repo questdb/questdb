@@ -56,6 +56,7 @@ import org.junit.Test;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static io.questdb.PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT;
 import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ANY;
 
 public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
@@ -66,7 +67,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
     public static void setUpStatic() throws Exception {
         // Having a single shard is important for many tests in this suite. See resetTaskCapacities
         // method for more detail.
-        pageFrameReduceShardCount = 1;
+        setProperty(CAIRO_PAGE_FRAME_SHARD_COUNT, 1);
         // We intentionally use a small capacity for the reduce queue to exhibit various edge cases.
         pageFrameReduceQueueCapacity = QUEUE_CAPACITY;
 

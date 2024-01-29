@@ -29,6 +29,8 @@ import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import static io.questdb.PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT;
+
 public class OrderByWithAsyncFilterTest extends AbstractCairoTest {
 
     private static final String DDL = "create table weather_data as \n" +
@@ -43,7 +45,7 @@ public class OrderByWithAsyncFilterTest extends AbstractCairoTest {
         pageFrameMaxRows = PAGE_FRAME_MAX_ROWS;
         // We intentionally use small values for shard count and reduce
         // queue capacity to exhibit various edge cases.
-        pageFrameReduceShardCount = 2;
+        setProperty(CAIRO_PAGE_FRAME_SHARD_COUNT, 2);
         pageFrameReduceQueueCapacity = PAGE_FRAME_COUNT;
 
         AbstractCairoTest.setUpStatic();
@@ -53,7 +55,7 @@ public class OrderByWithAsyncFilterTest extends AbstractCairoTest {
     @Before
     public void setUp() {
         pageFrameMaxRows = PAGE_FRAME_MAX_ROWS;
-        pageFrameReduceShardCount = 2;
+        setProperty(CAIRO_PAGE_FRAME_SHARD_COUNT, 2);
         pageFrameReduceQueueCapacity = PAGE_FRAME_COUNT;
         super.setUp();
     }

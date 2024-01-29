@@ -206,11 +206,6 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     }
 
     @Override
-    public int getPageFrameReduceShardCount() {
-        return overrides.getPageFrameReduceShardCount() < 0 ? super.getPageFrameReduceShardCount() : overrides.getPageFrameReduceShardCount();
-    }
-
-    @Override
     public long getPartitionO3SplitMinSize() {
         return overrides.getPartitionO3SplitThreshold() > -1L ? overrides.getPartitionO3SplitThreshold() : super.getPartitionO3SplitMinSize();
     }

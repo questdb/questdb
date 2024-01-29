@@ -80,7 +80,6 @@ public class Overrides {
     private boolean o3QuickSortEnabled = false;
     private int pageFrameMaxRows = -1;
     private int pageFrameReduceQueueCapacity = -1;
-    private int pageFrameReduceShardCount = -1;
     private Boolean parallelFilterEnabled = null;
     private Boolean parallelGroupByEnabled = null;
     private int parallelImportStatusLogKeepNDays = -1;
@@ -274,11 +273,6 @@ public class Overrides {
 
     public int getPageFrameReduceQueueCapacity() {
         return pageFrameReduceQueueCapacity;
-    }
-
-
-    public int getPageFrameReduceShardCount() {
-        return pageFrameReduceShardCount;
     }
 
 
@@ -493,7 +487,6 @@ public class Overrides {
         writerMixedIOEnabled = null;
         columnPreTouchEnabled = null;
         writerCommandQueueCapacity = 4;
-        pageFrameReduceShardCount = -1;
         pageFrameReduceQueueCapacity = -1;
         columnVersionPurgeQueueCapacity = -1;
         columnVersionTaskPoolCapacity = -1;
@@ -700,12 +693,6 @@ public class Overrides {
     public void setPageFrameReduceQueueCapacity(int pageFrameReduceQueueCapacity) {
         this.pageFrameReduceQueueCapacity = pageFrameReduceQueueCapacity;
     }
-
-
-    public void setPageFrameReduceShardCount(int pageFrameReduceShardCount) {
-        this.pageFrameReduceShardCount = pageFrameReduceShardCount;
-    }
-
 
     public void setParallelFilterEnabled(Boolean parallelFilterEnabled) {
         this.parallelFilterEnabled = parallelFilterEnabled;

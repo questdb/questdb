@@ -54,6 +54,8 @@ import org.junit.Test;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static io.questdb.PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT;
+
 public class ParallelFilterTest extends AbstractCairoTest {
 
     private static final int PAGE_FRAME_COUNT = 4; // also used to set queue size, so must be a power of 2
@@ -116,7 +118,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
         pageFrameMaxRows = PAGE_FRAME_MAX_ROWS;
         // We intentionally use small values for shard count and reduce
         // queue capacity to exhibit various edge cases.
-        pageFrameReduceShardCount = 2;
+        setProperty(CAIRO_PAGE_FRAME_SHARD_COUNT, 2);
         pageFrameReduceQueueCapacity = PAGE_FRAME_COUNT;
         super.setUp();
     }

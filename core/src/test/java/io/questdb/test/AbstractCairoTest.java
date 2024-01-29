@@ -116,7 +116,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static ObjList<QuestDBTestNode> nodes = new ObjList<>();
     protected static int pageFrameMaxRows = -1;
     protected static int pageFrameReduceQueueCapacity = -1;
-    protected static int pageFrameReduceShardCount = -1;
     protected static SecurityContext securityContext;
     protected static Boolean snapshotRecoveryEnabled = null;
     protected static int sqlCopyBufferSize = 1024 * 1024;
@@ -410,6 +409,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         // logger doesn't relinquish memory until JVM stops
         // which causes memory leak detector to fail should logger be
         // created mid-test
+        staticOverrides.reset();
         AbstractTest.setUpStatic();
         nodes.clear();
         node1 = newNode(Chars.toString(root), false, 1, staticOverrides, getEngineFactory(), getConfigurationFactory());
