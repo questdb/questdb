@@ -82,8 +82,12 @@ public class TableSequencerImpl implements TableSequencer {
             metadata = new SequencerMetadata(ff);
             metadataSvc = new SequencerMetadataService(metadata, tableToken);
             walIdGenerator = new IDGenerator(configuration, WAL_INDEX_FILE_NAME);
-            tableTransactionLog = new TableTransactionLog(ff, engine.getConfiguration().getDefaultWalSeqChunkTxnCount());
-            microClock = engine.getConfiguration().getMicrosecondClock();
+            tableTransactionLog = new TableTransactionLog(
+                    ff,
+                    configuration.getMkDirMode(),
+                    configuration.getDefaultWalSeqChunkTxnCount()
+            );
+            microClock = configuration.getMicrosecondClock();
         } catch (Throwable th) {
             LOG.critical().$("could not create sequencer [name=").utf8(tableToken.getDirName())
                     .$(", error=").$(th.getMessage())

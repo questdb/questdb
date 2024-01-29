@@ -27,12 +27,15 @@ package io.questdb.cairo.wal.seq;
 import io.questdb.cairo.MemorySerializer;
 import io.questdb.std.str.Path;
 
-public interface TableTransactionLogFile {
-    int HEADER_RESERVED = 7 * Long.BYTES;
-    long MAX_TXN_OFFSET = Integer.BYTES;
+import java.io.Closeable;
+
+public interface TableTransactionLogFile extends Closeable {
+    int HEADER_RESERVED = 6 * Long.BYTES + Integer.BYTES;
+    long MAX_TXN_OFFSET_64 = Integer.BYTES;
     int STRUCTURAL_CHANGE_WAL_ID = -1;
-    long TABLE_CREATE_TIMESTAMP_OFFSET = MAX_TXN_OFFSET + Long.BYTES;
-    long HEADER_SIZE = TABLE_CREATE_TIMESTAMP_OFFSET + Long.BYTES + HEADER_RESERVED;
+    long TABLE_CREATE_TIMESTAMP_OFFSET_64 = MAX_TXN_OFFSET_64 + Long.BYTES;
+    long SEQ_CHUNK_SIZE_32 = TABLE_CREATE_TIMESTAMP_OFFSET_64 + Long.BYTES;
+    long HEADER_SIZE = SEQ_CHUNK_SIZE_32 + Integer.BYTES + HEADER_RESERVED;
     long TX_LOG_STRUCTURE_VERSION_OFFSET = 0L;
     long TX_LOG_WAL_ID_OFFSET = TX_LOG_STRUCTURE_VERSION_OFFSET + Long.BYTES;
     long TX_LOG_SEGMENT_OFFSET = TX_LOG_WAL_ID_OFFSET + Integer.BYTES;
@@ -43,8 +46,6 @@ public interface TableTransactionLogFile {
     long addEntry(long structureVersion, int walId, int segmentId, int segmentTxn, long timestamp);
 
     void beginMetadataChangeEntry(long newStructureVersion, MemorySerializer serializer, Object instance, long timestamp);
-
-    void close();
 
     void create(Path path, long tableCreateTimestamp);
 

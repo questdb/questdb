@@ -1,156 +1,396 @@
-///*******************************************************************************
-// *     ___                  _   ____  ____
-// *    / _ \ _   _  ___  ___| |_|  _ \| __ )
-// *   | | | | | | |/ _ \/ __| __| | | |  _ \
-// *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
-// *    \__\_\\__,_|\___||___/\__|____/|____/
-// *
-// *  Copyright (c) 2014-2019 Appsicle
-// *  Copyright (c) 2019-2023 QuestDB
-// *
-// *  Licensed under the Apache License, Version 2.0 (the "License");
-// *  you may not use this file except in compliance with the License.
-// *  You may obtain a copy of the License at
-// *
-// *  http://www.apache.org/licenses/LICENSE-2.0
-// *
-// *  Unless required by applicable law or agreed to in writing, software
-// *  distributed under the License is distributed on an "AS IS" BASIS,
-// *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// *  See the License for the specific language governing permissions and
-// *  limitations under the License.
-// *
-// ******************************************************************************/
-//
-//package io.questdb.cairo.wal.seq;
-//
-//import io.questdb.cairo.CairoConfiguration;
-//import io.questdb.cairo.CairoException;
-//import io.questdb.cairo.vm.Vm;
-//import io.questdb.cairo.vm.api.MemoryCMARW;
-//import io.questdb.cairo.wal.WalUtils;
-//import io.questdb.std.FilesFacade;
-//import io.questdb.std.MemoryTag;
-//import io.questdb.std.str.Path;
-//
-//import java.util.concurrent.atomic.AtomicLong;
-//
-//import static io.questdb.cairo.TableUtils.openSmallFile;
-//import static io.questdb.cairo.wal.WalUtils.*;
-//
-//public class TableTransactionLogV2 extends TableTransactionLog {
-//    private final AtomicLong maxTxn = new AtomicLong();
-//    private final MemoryCMARW txnChunkMem = Vm.getCMARWInstance();
-//    private final MemoryCMARW txnMem = Vm.getCMARWInstance();
-//    private int txnChunkTransactionCount;
-//
-//    TableTransactionLogV2(FilesFacade ff) {
-//        super(ff);
-//    }
-//
-//    @Override
-//    public long addEntry(long structureVersion, int walId, int segmentId, int segmentTxn, long timestamp) {
-//        return 0;
-//    }
-//
-//    @Override
-//    public void close() {
-//        txnMem.close();
-//        super.close();
-//    }
-//
-//    public void create(Path path, long tableCreateTimestamp, int txnChunkTransactionCount) {
-//        createTxnFile(path, tableCreateTimestamp);
-//        jumpToTxnChunk(0);
-//        creatMetaMem(path, tableCreateTimestamp);
-//    }
-//
-//    @Override
-//    public long endMetadataChangeEntry() {
-//        return 0;
-//    }
-//
-//    @Override
-//    public boolean isDropped() {
-//        long lastTxn = maxTxn.get();
-//        if (lastTxn > 0) {
-//            return WalUtils.DROP_TABLE_WALID == txnMem.getInt(HEADER_SIZE + (lastTxn - 1) * RECORD_SIZE + TX_LOG_WAL_ID_OFFSET);
-//        }
-//        return false;
-//    }
-//
-//    @Override
-//    public long lastTxn() {
-//        return maxTxn.get();
-//    }
-//
-//    @Override
-//    public void open(Path path) {
-//        this.rootPath.clear();
-//        path.toSink(this.rootPath);
-//
-//        if (!txnMem.isOpen()) {
-//            openTxnFile(path);
-//            openMetadataFiles(path);
-//        }
-//
-//        long formatVersion = txnMem.getLong(0);
-//        if (formatVersion != WAL_FORMAT_VERSION_V2) {
-//            throw CairoException.critical(0).put("invalid transaction log file version [expected=")
-//                    .put(WAL_FORMAT_VERSION_V2).put(", actual=").put(formatVersion).put("]: ").put(path);
-//        }
-//        txnChunkTransactionCount = txnMem.getInt(TX_CHUNK_TRANSACTION_COUNT_OFFSET);
-//        if (txnChunkTransactionCount == 0) {
-//            throw CairoException.critical(0).put("invalid transaction log file, version is but the chunk is 0: ").put(path);
-//        }
-//
-//        long lastTxn = txnMem.getLong(MAX_TXN_OFFSET);
-//        maxTxn.set(lastTxn);
-//
-//        jumpToTxnChunk(lastTxn - 1);
-//        long maxStructureVersion = txnChunkMem.getLong(getRecordChunkPosition(lastTxn - 1) + TX_LOG_STRUCTURE_VERSION_OFFSET);
-//
-//        jumpToTxnChunk(lastTxn);
-//        openMeta(lastTxn, maxStructureVersion);
-//    }
-//
-//    @Override
-//    public boolean reload(Path path) {
-//        txnMem.close(false);
-//        txnChunkMem.close(false);
-//        openSmallFile(ff, path, path.size(), txnMem, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);
-//        return super.reloadMetadata(path);
-//    }
-//
-//    public void sync() {
-//        txnMem.sync(false);
-//        syncMetadata();
-//    }
-//
-//    private void createTxnFile(Path path, long tableCreateTimestamp) {
-//        openTxnFile(path);
-//        txnMem.jumpTo(0L);
-//        txnMem.putInt(WAL_FORMAT_VERSION_V2);
-//        txnMem.putLong(0L);
-//        txnMem.putLong(tableCreateTimestamp);
-//        txnMem.putInt(txnChunkTransactionCount);
-//        txnMem.sync(false);
-//    }
-//
-//    private long getRecordChunkPosition(long txn) {
-//        return (txn % txnChunkTransactionCount) * RECORD_SIZE;
-//    }
-//
-//    private void jumpToTxnChunk(long txn) {
-//        long chunk = txn / txnChunkTransactionCount;
-//    }
-//
-//    private void openTxnFile(Path path) {
-//        final int pathLength = path.size();
-//        try {
-//            txnMem.of(ff, path.concat(TXNLOG_FILE_NAME).$(), HEADER_SIZE, CairoConfiguration.O_NONE, MemoryTag.MMAP_TX_LOG);
-//        } finally {
-//            path.trimTo(pathLength);
-//        }
-//    }
-//}
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2023 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo.wal.seq;
+
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.MemorySerializer;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.cairo.wal.WalUtils;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
+import io.questdb.std.str.Path;
+import org.jetbrains.annotations.NotNull;
+
+import java.util.concurrent.atomic.AtomicLong;
+
+import static io.questdb.cairo.wal.WalUtils.*;
+
+public class TableTransactionLogV2 implements TableTransactionLogFile {
+    private static final Log LOG = LogFactory.getLog(TableTransactionLogV2.class);
+    private static final ThreadLocal<TransactionLogCursorImpl> tlTransactionLogCursor = new ThreadLocal<>();
+    private final FilesFacade ff;
+    private final AtomicLong maxTxn = new AtomicLong();
+    private final int mkDirMode;
+    private final Path rootPath;
+    private final MemoryCMARW txnChunkMem = Vm.getCMARWInstance();
+    private final MemoryCMARW txnMem = Vm.getCMARWInstance();
+    private long chunkId = -1;
+    private int chunkTransactionCount;
+
+    public TableTransactionLogV2(FilesFacade ff, int chunkTransactionCount, int mkDirMode) {
+        this.ff = ff;
+        this.chunkTransactionCount = chunkTransactionCount;
+        this.mkDirMode = mkDirMode;
+        rootPath = new Path();
+    }
+
+    public static void clearThreadLocals() {
+        TransactionLogCursorImpl cursor = tlTransactionLogCursor.get();
+        cursor.closePath();
+    }
+
+    public long addEntry(long structureVersion, int walId, int segmentId, int segmentTxn, long timestamp) {
+        openTxnChunk();
+
+        txnChunkMem.putLong(structureVersion);
+        txnChunkMem.putInt(walId);
+        txnChunkMem.putInt(segmentId);
+        txnChunkMem.putInt(segmentTxn);
+        txnChunkMem.putLong(timestamp);
+
+        Unsafe.getUnsafe().storeFence();
+        long maxTxn = this.maxTxn.incrementAndGet();
+        txnMem.putLong(MAX_TXN_OFFSET_64, maxTxn);
+        txnMem.sync(false);
+        // Transactions are 1 based here
+        return maxTxn;
+    }
+
+    public void beginMetadataChangeEntry(long newStructureVersion, MemorySerializer serializer, Object instance, long timestamp) {
+        openTxnChunk();
+
+        txnChunkMem.putLong(newStructureVersion);
+        txnChunkMem.putInt(STRUCTURAL_CHANGE_WAL_ID);
+        txnChunkMem.putInt(-1);
+        txnChunkMem.putInt(-1);
+        txnChunkMem.putLong(timestamp);
+    }
+
+    @Override
+    public void close() {
+        if (txnMem.isOpen()) {
+            long maxTxnInFile = txnMem.getLong(MAX_TXN_OFFSET_64);
+            if (maxTxnInFile != maxTxn.get()) {
+                LOG.error().$("Max txn in the file ").$(maxTxnInFile).$(" but in memory is ").$(maxTxn.get()).$();
+            }
+        }
+        txnMem.close(false);
+        txnChunkMem.close(false);
+        rootPath.close();
+    }
+
+    public void create(Path path, long tableCreateTimestamp) {
+        createTxnFile(path, tableCreateTimestamp);
+        createChunksDir(path, mkDirMode);
+    }
+
+    @Override
+    public long endMetadataChangeEntry() {
+        // Transactions are 1 based here
+        long nextTxn = maxTxn.incrementAndGet();
+        txnMem.putLong(MAX_TXN_OFFSET_64, nextTxn);
+        return nextTxn;
+    }
+
+    @Override
+    public TransactionLogCursor getCursor(long txnLo, Path path) {
+        TransactionLogCursorImpl cursor = tlTransactionLogCursor.get();
+        if (cursor == null) {
+            cursor = new TransactionLogCursorImpl(ff, txnLo, path.$(), chunkTransactionCount);
+            tlTransactionLogCursor.set(cursor);
+            return cursor;
+        }
+        try {
+            return cursor.of(ff, txnLo, path, chunkTransactionCount);
+        } catch (Throwable th) {
+            cursor.close();
+            throw th;
+        }
+    }
+
+    public boolean isDropped() {
+        long lastTxn = maxTxn.get();
+        if (lastTxn > 0) {
+            return WalUtils.DROP_TABLE_WALID == txnMem.getInt(HEADER_SIZE + (lastTxn - 1) * RECORD_SIZE + TX_LOG_WAL_ID_OFFSET);
+        }
+        return false;
+    }
+
+    public long lastTxn() {
+        return maxTxn.get();
+    }
+
+    @Override
+    public long open(Path path) {
+        if (!txnMem.isOpen()) {
+            txnMem.close(false);
+            openTxnMem(path);
+        }
+
+        long lastTxn = txnMem.getLong(MAX_TXN_OFFSET_64);
+        maxTxn.set(lastTxn);
+        chunkTransactionCount = txnMem.getInt(SEQ_CHUNK_SIZE_32);
+
+        openTxnChunk();
+        long lastChunkTxn = lastTxn % chunkTransactionCount;
+
+        return txnChunkMem.getLong(lastChunkTxn * RECORD_SIZE + TX_LOG_STRUCTURE_VERSION_OFFSET);
+    }
+
+    public void sync() {
+        txnMem.sync(false);
+    }
+
+    private void createChunksDir(Path path, int mkDirMode) {
+        int rootLen = rootPath.size();
+        path.concat(TXNLOG_CHUNK_DIR).$();
+        try {
+            if (!ff.exists(path) && ff.mkdir(path, mkDirMode) != 0) {
+                throw CairoException.critical(ff.errno()).put("could not create directory [path='").put(path).put("']");
+            }
+        } finally {
+            rootPath.trimTo(rootLen);
+        }
+    }
+
+    private void createTxnFile(Path path, long tableCreateTimestamp) {
+        openTxnMem(path);
+
+        txnMem.jumpTo(0L);
+        txnMem.putInt(WAL_FORMAT_VERSION_V1);
+        txnMem.putLong(0L);
+        txnMem.putLong(tableCreateTimestamp);
+        txnMem.putInt(0);
+        txnMem.sync(false);
+    }
+
+    private void openTxnChunk() {
+        long txn = this.maxTxn.get();
+        long chunk = txn / chunkTransactionCount;
+        if (chunkId != chunk) {
+            int size = rootPath.size();
+            try {
+                rootPath.concat(TXNLOG_CHUNK_DIR).slash().put(chunk).$();
+                long chunkSize = chunkTransactionCount * RECORD_SIZE;
+                txnChunkMem.of(ff, rootPath, chunkSize, chunkSize, MemoryTag.MMAP_TX_LOG);
+                txnChunkMem.jumpTo((txn % chunkTransactionCount) * RECORD_SIZE);
+                chunkId = chunk;
+            } finally {
+                rootPath.trimTo(size);
+            }
+        }
+    }
+
+    private void openTxnMem(Path path) {
+        rootPath.of(path);
+        int rootLen = rootPath.size();
+        rootPath.concat(TXNLOG_FILE_NAME).$();
+        try {
+            txnMem.of(ff, rootPath, HEADER_SIZE, HEADER_SIZE, MemoryTag.MMAP_TX_LOG);
+        } finally {
+            rootPath.trimTo(rootLen);
+        }
+    }
+
+    private static class TransactionLogCursorImpl implements TransactionLogCursor {
+        private long address;
+        private int chunkFd = -1;
+        private long chunkId = -1;
+        private long chunkMapSize;
+        private int chunkTransactionCount;
+        private FilesFacade ff;
+        private int headerFd;
+        private Path rootPath;
+        private long txn = -2;
+        private long txnCount = -1;
+        private long txnLo;
+        private long txnOffset;
+
+        public TransactionLogCursorImpl(FilesFacade ff, long txnLo, final Path path, int chunkTransactionCount) {
+            rootPath = new Path();
+            try {
+                of(ff, txnLo, path, chunkTransactionCount);
+            } catch (Throwable th) {
+                close();
+                throw th;
+            }
+        }
+
+        @Override
+        public void close() {
+            if (headerFd > 0) {
+                ff.close(headerFd);
+            }
+            if (txnCount > -1 && address > 0) {
+                ff.munmap(address, chunkMapSize, MemoryTag.MMAP_TX_LOG_CURSOR);
+                txnCount = 0;
+                address = 0;
+            }
+            closeChunk();
+        }
+
+        public void closePath() {
+            if (rootPath != null) {
+                rootPath.close();
+                rootPath = null;
+            }
+        }
+
+        @Override
+        public boolean extend() {
+            final long newTxnCount = ff.readNonNegativeLong(headerFd, MAX_TXN_OFFSET_64);
+            boolean extended = newTxnCount > txnCount;
+            if (extended) {
+                txnCount = newTxnCount;
+            }
+            return extended;
+        }
+
+        @Override
+        public long getCommitTimestamp() {
+            return Unsafe.getUnsafe().getLong(address + txnOffset + TX_LOG_COMMIT_TIMESTAMP_OFFSET);
+        }
+
+        @Override
+        public long getMaxTxn() {
+            return txnCount - 1;
+        }
+
+        @Override
+        public int getSegmentId() {
+            return Unsafe.getUnsafe().getInt(address + txnOffset + TX_LOG_SEGMENT_OFFSET);
+        }
+
+        @Override
+        public int getSegmentTxn() {
+            return Unsafe.getUnsafe().getInt(address + txnOffset + TX_LOG_SEGMENT_TXN_OFFSET);
+        }
+
+        @Override
+        public long getStructureVersion() {
+            return Unsafe.getUnsafe().getLong(address + txnOffset + TX_LOG_STRUCTURE_VERSION_OFFSET);
+        }
+
+        @Override
+        public long getTxn() {
+            return txn;
+        }
+
+        @Override
+        public int getWalId() {
+            return Unsafe.getUnsafe().getInt(address + txnOffset + TX_LOG_WAL_ID_OFFSET);
+        }
+
+        @Override
+        public boolean hasNext() {
+            if (txn >= txnCount) {
+                txnCount = ff.readNonNegativeLong(headerFd, MAX_TXN_OFFSET_64);
+                if (txn >= txnCount) {
+                    return false;
+                }
+            }
+
+            openChunk(txn);
+            txn++;
+            return true;
+        }
+
+        @Override
+        public void setPosition(long txn) {
+            long zeroBasedTxn = txn - 1;
+            openChunk(zeroBasedTxn);
+            this.txn = txn;
+        }
+
+        @Override
+        public void toTop() {
+            if (txnCount > -1L) {
+                setPosition(txnLo);
+            }
+        }
+
+        private static int openFileRO(final FilesFacade ff, final Path path, final String fileName) {
+            final int rootLen = path.size();
+            path.concat(fileName).$();
+            try {
+                return TableUtils.openRO(ff, path, LOG);
+            } finally {
+                path.trimTo(rootLen);
+            }
+        }
+
+        private void closeChunk() {
+            if (chunkFd > -1) {
+                ff.munmap(address, chunkMapSize, MemoryTag.MMAP_TX_LOG_CURSOR);
+                ff.close(chunkFd);
+                chunkFd = -1;
+                chunkId = -2;
+                address = 0;
+            }
+        }
+
+        @NotNull
+        private TransactionLogCursorImpl of(FilesFacade ff, long txnLo, Path path, int chunkTransactionCount) {
+            this.chunkTransactionCount = chunkTransactionCount;
+            chunkMapSize = chunkTransactionCount * RECORD_SIZE;
+            this.ff = ff;
+            this.headerFd = openFileRO(ff, path, TXNLOG_FILE_NAME);
+            long newTxnCount = ff.readNonNegativeLong(headerFd, MAX_TXN_OFFSET_64);
+            rootPath.of(path);
+
+            if (newTxnCount > -1L) {
+                this.txnCount = newTxnCount;
+                setPosition(txnLo);
+            } else {
+                throw CairoException.critical(ff.errno()).put("cannot read sequencer transactions [path=").put(path).put(']');
+            }
+            this.txnLo = txnLo;
+            return this;
+        }
+
+        private void openChunk(long zeroBasedTxn) {
+            long chunk = zeroBasedTxn / chunkTransactionCount;
+            if (chunk != chunkId) {
+                closeChunk();
+                int size = rootPath.size();
+                try {
+                    rootPath.concat(TXNLOG_CHUNK_DIR).slash().put(chunk).$();
+                    chunkFd = TableUtils.openRO(ff, rootPath, LOG);
+                    address = ff.mmap(chunkFd, chunkMapSize, 0, Files.MAP_RO, MemoryTag.MMAP_TX_LOG_CURSOR);
+                    chunkId = chunk;
+                } finally {
+                    rootPath.trimTo(size);
+                }
+            }
+            this.txnOffset = (zeroBasedTxn % chunkTransactionCount) * RECORD_SIZE;
+        }
+    }
+}

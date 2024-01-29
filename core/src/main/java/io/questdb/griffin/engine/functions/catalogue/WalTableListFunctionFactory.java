@@ -230,7 +230,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                             metaFd = TableUtils.openRO(ff, rootPath, META_FILE_NAME, LOG);
                             txnFd = TableUtils.openRO(ff, rootPath, TXNLOG_FILE_NAME, LOG);
                             suspendedFlag = ff.readNonNegativeByte(metaFd, SEQ_META_SUSPENDED) > 0;
-                            sequencerTxn = ff.readNonNegativeLong(txnFd, TableTransactionLogFile.MAX_TXN_OFFSET);
+                            sequencerTxn = ff.readNonNegativeLong(txnFd, TableTransactionLogFile.MAX_TXN_OFFSET_64);
                         } finally {
                             rootPath.trimTo(rootLen);
                             ff.close(metaFd);

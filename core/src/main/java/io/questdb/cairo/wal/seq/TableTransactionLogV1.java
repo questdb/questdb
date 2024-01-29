@@ -52,7 +52,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
     private final AtomicLong maxTxn = new AtomicLong();
     private final MemoryCMARW txnMem = Vm.getCMARWInstance();
 
-    TableTransactionLogV1(FilesFacade ff) {
+    public TableTransactionLogV1(FilesFacade ff) {
         this.ff = ff;
     }
 
@@ -65,7 +65,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
 
         Unsafe.getUnsafe().storeFence();
         long maxTxn = this.maxTxn.incrementAndGet();
-        txnMem.putLong(MAX_TXN_OFFSET, maxTxn);
+        txnMem.putLong(MAX_TXN_OFFSET_64, maxTxn);
         txnMem.sync(false);
         // Transactions are 1 based here
         return maxTxn;
@@ -82,7 +82,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
     @Override
     public void close() {
         if (txnMem.isOpen()) {
-            long maxTxnInFile = txnMem.getLong(MAX_TXN_OFFSET);
+            long maxTxnInFile = txnMem.getLong(MAX_TXN_OFFSET_64);
             if (maxTxnInFile != maxTxn.get()) {
                 LOG.error().$("Max txn in the file ").$(maxTxnInFile).$(" but in memory is ").$(maxTxn.get()).$();
             }
@@ -98,7 +98,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
     public long endMetadataChangeEntry() {
         // Transactions are 1 based here
         long nextTxn = maxTxn.incrementAndGet();
-        txnMem.putLong(MAX_TXN_OFFSET, nextTxn);
+        txnMem.putLong(MAX_TXN_OFFSET_64, nextTxn);
         return nextTxn;
     }
 
@@ -137,7 +137,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
             openSmallFile(ff, path, path.size(), txnMem, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);
         }
 
-        long lastTxn = txnMem.getLong(MAX_TXN_OFFSET);
+        long lastTxn = txnMem.getLong(MAX_TXN_OFFSET_64);
         maxTxn.set(lastTxn);
         txnMem.jumpTo(HEADER_SIZE);
         long maxStructureVersion = txnMem.getLong(HEADER_SIZE + (lastTxn - 1) * RECORD_SIZE + TX_LOG_STRUCTURE_VERSION_OFFSET);
@@ -159,6 +159,8 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         txnMem.putLong(tableCreateTimestamp);
         txnMem.putInt(0);
         txnMem.sync(false);
+
+        txnMem.jumpTo(HEADER_SIZE);
     }
 
     private static class TransactionLogCursorImpl implements TransactionLogCursor {
@@ -193,7 +195,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
 
         @Override
         public boolean extend() {
-            final long newTxnCount = ff.readNonNegativeLong(fd, MAX_TXN_OFFSET);
+            final long newTxnCount = ff.readNonNegativeLong(fd, MAX_TXN_OFFSET_64);
             if (newTxnCount > txnCount) {
                 remap(newTxnCount);
 
@@ -245,7 +247,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
                 return true;
             }
 
-            final long newTxnCount = ff.readNonNegativeLong(fd, MAX_TXN_OFFSET);
+            final long newTxnCount = ff.readNonNegativeLong(fd, MAX_TXN_OFFSET_64);
             if (newTxnCount > txnCount) {
                 remap(newTxnCount);
                 return hasNext(getMappedLen());
@@ -294,7 +296,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         private TransactionLogCursorImpl of(FilesFacade ff, long txnLo, Path path) {
             this.ff = ff;
             this.fd = openFileRO(ff, path, TXNLOG_FILE_NAME);
-            long newTxnCount = ff.readNonNegativeLong(fd, MAX_TXN_OFFSET);
+            long newTxnCount = ff.readNonNegativeLong(fd, MAX_TXN_OFFSET_64);
             if (newTxnCount > -1L) {
                 this.txnCount = newTxnCount;
                 this.address = ff.mmap(fd, getMappedLen(), 0, Files.MAP_RO, MemoryTag.MMAP_TX_LOG_CURSOR);

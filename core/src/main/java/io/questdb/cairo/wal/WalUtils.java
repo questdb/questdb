@@ -48,6 +48,7 @@ public class WalUtils {
     public static final long SEQ_META_OFFSET_COLUMNS = SEQ_META_SUSPENDED + Byte.BYTES;
     public static final String TABLE_REGISTRY_NAME_FILE = "tables.d";
     public static final String TXNLOG_FILE_NAME = "_txnlog";
+    public static final String TXNLOG_CHUNK_DIR = "_txn_parts";
     public static final String TXNLOG_FILE_NAME_META_INX = "_txnlog.meta.i";
     public static final String TXNLOG_FILE_NAME_META_VAR = "_txnlog.meta.d";
     public static final int WALE_HEADER_SIZE = Integer.BYTES + Integer.BYTES;

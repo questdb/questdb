@@ -78,6 +78,10 @@ public class Path implements Utf8Sink, LPSZ, Closeable {
         return PATH.get().of(root);
     }
 
+    public static Path getThreadLocal(Utf8Sequence root) {
+        return PATH.get().of(root);
+    }
+
     /**
      * Creates path from another instance of Path. The assumption is that
      * the source path is already UTF8 encoded and does not require re-encoding.

@@ -134,7 +134,7 @@ public class TableSequencerAPI implements QuietCloseable {
                         // through the WAL tables periodically, so eventually we should see the updates.
                         path.of(root).concat(tableToken.getDirName()).concat(SEQ_DIR);
                         int fdTxn = TableUtils.openRO(ff, path, TXNLOG_FILE_NAME, LOG);
-                        lastTxn = ff.readNonNegativeLong(fdTxn, TableTransactionLogFile.MAX_TXN_OFFSET); // does not throw
+                        lastTxn = ff.readNonNegativeLong(fdTxn, TableTransactionLogFile.MAX_TXN_OFFSET_64); // does not throw
                         ff.close(fdTxn);
                     } else {
                         // Slow path.

@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.wal.seq;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.MemorySerializer;
 import io.questdb.cairo.TableUtils;
@@ -35,7 +36,8 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
@@ -43,8 +45,7 @@ import java.lang.ThreadLocal;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cairo.TableUtils.openSmallFile;
-import static io.questdb.cairo.wal.WalUtils.TXNLOG_FILE_NAME_META_INX;
-import static io.questdb.cairo.wal.WalUtils.TXNLOG_FILE_NAME_META_VAR;
+import static io.questdb.cairo.wal.WalUtils.*;
 
 public class TableTransactionLog implements Closeable {
     private static final Log LOG = LogFactory.getLog(TableTransactionLog.class);
@@ -53,22 +54,24 @@ public class TableTransactionLog implements Closeable {
     private final int defaultChunkSize;
     private final FilesFacade ff;
     private final AtomicLong maxMetadataVersion = new AtomicLong();
-    private final StringSink rootPath = new StringSink();
+    private final int mkDirMode;
+    private final Utf8StringSink rootPath = new Utf8StringSink();
     private final MemoryCMARW txnMetaMem = Vm.getCMARWInstance();
     private final MemoryCMARW txnMetaMemIndex = Vm.getCMARWInstance();
-    private final TableTransactionLogFile txnLogFile;
+    private TableTransactionLogFile txnLogFile;
 
-    TableTransactionLog(FilesFacade ff, int defaultChunkSize) {
+    TableTransactionLog(FilesFacade ff, int mkDirMode, int defaultChunkSize) {
         this.ff = ff;
         this.defaultChunkSize = defaultChunkSize;
-        this.txnLogFile = new TableTransactionLogV1(ff);
+        this.mkDirMode = mkDirMode;
     }
 
     @Override
     public void close() {
-        txnLogFile.close();
+        txnLogFile = Misc.free(txnLogFile);
         txnMetaMem.close(false);
         txnMetaMemIndex.close(false);
+        rootPath.clear();
     }
 
     public boolean reload(Path path) {
@@ -90,6 +93,42 @@ public class TableTransactionLog implements Closeable {
             return TableUtils.openRO(ff, path, LOG);
         } finally {
             path.trimTo(rootLen);
+        }
+    }
+
+    private static TableTransactionLogFile openTxnFile(Path path, FilesFacade ff, int mkDirMode) {
+        int pathLen = path.size();
+        int logFileFd = TableUtils.openRW(ff, path.concat(TXNLOG_FILE_NAME).$(), LOG, CairoConfiguration.O_NONE);
+        int formatVersion;
+        try {
+            formatVersion = ff.readNonNegativeInt(logFileFd, 0);
+            if (formatVersion < 0) {
+                throw CairoException.critical(0).put("invalid transaction log file: ").put(path).put(", cannot read version at offset 0");
+            }
+        } finally {
+            path.trimTo(pathLen);
+            ff.close(logFileFd);
+        }
+
+        switch (formatVersion) {
+            case WAL_FORMAT_VERSION_V1:
+                return new TableTransactionLogV1(ff);
+            case WAL_FORMAT_VERSION_V2:
+                return new TableTransactionLogV2(ff, -1, mkDirMode);
+            default:
+                throw new UnsupportedOperationException("Unsupported transaction log version: " + formatVersion);
+        }
+    }
+
+    private void createTxnLogFileInstance() {
+        if (txnLogFile == null) {
+            if (defaultChunkSize > 0) {
+                txnLogFile = new TableTransactionLogV2(ff, defaultChunkSize, mkDirMode);
+            } else {
+                txnLogFile = new TableTransactionLogV1(ff);
+            }
+        } else {
+            throw new IllegalStateException("transaction log file already opened");
         }
     }
 
@@ -119,9 +158,11 @@ public class TableTransactionLog implements Closeable {
     }
 
     void create(Path path, long tableCreateTimestamp) {
-        assert defaultChunkSize < 1;
+        this.rootPath.put(path);
 
+        createTxnLogFileInstance();
         txnLogFile.create(path, tableCreateTimestamp);
+
         openFiles(path);
 
         txnMetaMem.jumpTo(0L);
@@ -162,19 +203,22 @@ public class TableTransactionLog implements Closeable {
     }
 
     void open(Path path) {
-        this.rootPath.clear();
-        path.toSink(this.rootPath);
+        if (this.rootPath.size() == 0) {
+            assert txnLogFile == null;
+            this.rootPath.put(path);
 
-        long maxStructureVersion = txnLogFile.open(path);
+            txnLogFile = openTxnFile(path, ff, mkDirMode);
+            long maxStructureVersion = txnLogFile.open(path);
 
-        if (!txnMetaMem.isOpen()) {
             openFiles(path);
+            maxMetadataVersion.set(maxStructureVersion);
+            long structureAppendOffset = maxStructureVersion * Long.BYTES;
+            long txnMetaMemSize = txnMetaMemIndex.getLong(structureAppendOffset);
+            txnMetaMemIndex.jumpTo(structureAppendOffset + Long.BYTES);
+            txnMetaMem.jumpTo(txnMetaMemSize);
+        } else {
+            assert Utf8s.equals(path, this.rootPath);
         }
-        maxMetadataVersion.set(maxStructureVersion);
-        long structureAppendOffset = maxStructureVersion * Long.BYTES;
-        long txnMetaMemSize = txnMetaMemIndex.getLong(structureAppendOffset);
-        txnMetaMemIndex.jumpTo(structureAppendOffset + Long.BYTES);
-        txnMetaMem.jumpTo(txnMetaMemSize);
     }
 
     void openFiles(Path path) {
