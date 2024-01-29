@@ -205,6 +205,8 @@ public interface CairoConfiguration {
 
     int getMaxFileNameLength();
 
+    int getMaxSqlRecompileAttempts();
+
     int getMaxSwapFileCount();
 
     int getMaxSymbolNotEqualsCount();
