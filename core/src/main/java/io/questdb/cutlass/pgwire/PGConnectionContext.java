@@ -125,6 +125,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private final int forceRecvFragmentationChunkSize;
     private final int forceSendFragmentationChunkSize;
     private final int maxBlobSizeOnQuery;
+    private final int maxRecompileAttempts;
     private final Metrics metrics;
     private final CharSequenceObjHashMap<Portal> namedPortalMap;
     private final WeakMutableObjectPool<Portal> namedPortalPool;
@@ -223,6 +224,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         this.engine = engine;
         queryLogger = engine.getConfiguration().getQueryLogger();
         this.utf8Sink = new DirectUtf16Sink(engine.getConfiguration().getTextConfiguration().getUtf8SinkSize());
+        this.maxRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
         this.bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
         this.recvBufferSize = Numbers.ceilPow2(configuration.getRecvBufferSize());
         this.sendBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
@@ -1492,7 +1494,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 prepareCommandComplete(true);
                 return;
             } catch (TableReferenceOutOfDateException ex) {
-                if (!recompileStale || retries == TableReferenceOutOfDateException.MAX_RETRY_ATTEMPTS) {
+                if (!recompileStale || retries == maxRecompileAttempts) {
                     if (transactionState == IN_TRANSACTION) {
                         transactionState = ERROR_TRANSACTION;
                     }
@@ -1554,7 +1556,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 }
                 prepareCommandComplete(true);
             } catch (TableReferenceOutOfDateException e) {
-                if (retries == TableReferenceOutOfDateException.MAX_RETRY_ATTEMPTS) {
+                if (retries == maxRecompileAttempts) {
                     if (transactionState == IN_TRANSACTION) {
                         transactionState = ERROR_TRANSACTION;
                     }
@@ -2795,7 +2797,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     // cache random if it was replaced
                     rnd = sqlExecutionContext.getRandom();
                 } catch (TableReferenceOutOfDateException e) {
-                    if (retries == TableReferenceOutOfDateException.MAX_RETRY_ATTEMPTS) {
+                    if (retries == maxRecompileAttempts) {
                         throw SqlException.$(0, e.getFlyweightMessage());
                     }
                     LOG.info().$(e.getFlyweightMessage()).$();
@@ -3040,17 +3042,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
 
         @Override
-        public Utf8Sink putUtf8(long lo, long hi) {
-            // Once this is actually needed, the impl would look something like:
-            // final long size = hi - lo;
-            // ensureCapacity(size);
-            // Vect.memcpy(sendBufferPtr, lo, size);
-            // sendBufferPtr += size;
-            // return this;
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
         public Utf8Sink put(@Nullable Utf8Sequence us) {
             // this method is only called by date format utility to print timezone name
             if (us != null) {
@@ -3134,6 +3125,17 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             checkCapacity(Short.BYTES);
             putShort(sendBufferPtr, value);
             sendBufferPtr += Short.BYTES;
+        }
+
+        @Override
+        public Utf8Sink putUtf8(long lo, long hi) {
+            // Once this is actually needed, the impl would look something like:
+            // final long size = hi - lo;
+            // ensureCapacity(size);
+            // Vect.memcpy(sendBufferPtr, lo, size);
+            // sendBufferPtr += size;
+            // return this;
+            throw new UnsupportedOperationException();
         }
 
         public void resetToBookmark() {
