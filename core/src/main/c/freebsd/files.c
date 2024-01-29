@@ -246,10 +246,10 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_allocate
     if (rc == 0) {
         return JNI_TRUE;
     }
-    if (rc == EINVAL) {
+    if (rc == EINVAL && len > 0) {
         // Some file systems (such as ZFS) do not support posix_fallocate
         struct stat st;
-        rc = fstat((int) fd, &st);
+        int rc = fstat((int) fd, &st);
         if (rc != 0) {
             return JNI_FALSE;
         }
@@ -261,6 +261,8 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_allocate
         }
         return JNI_TRUE;
     }
+
+    errno = rc; // communicate errno to caller
     return JNI_FALSE;
 }
 

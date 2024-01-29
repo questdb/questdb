@@ -150,13 +150,14 @@ public class RetryIODispatcherTest extends AbstractTest {
                             .withTempFolder(root)
                             .withWorkerCount(2)
                             .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                            .withCustomTextImportProcessor(((configuration, engine, workerCount) -> new TextImportProcessor(engine) {
+                            .withCustomTextImportProcessor(((configuration, engine, workerCount) -> new TextImportProcessor(engine, configuration) {
                                 @Override
                                 public void onRequestRetry(HttpConnectionContext context) throws ServerDisconnectException {
                                     throw ServerDisconnectException.INSTANCE;
                                 }
                             })),
-                    0, ValidImportRequest, ValidImportResponse, false, true);
+                    0, ValidImportRequest, ValidImportResponse, false, true
+            );
             TestUtils.removeTestPath(root);
             TestUtils.createTestPath(root);
         }
@@ -230,7 +231,8 @@ public class RetryIODispatcherTest extends AbstractTest {
                             "93\r\n" +
                                     "{\"query\":\"select count(*) from \\\"fhv_tripdata_2017-02.csv\\\"\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"timestamp\":-1,\"dataset\":[[" + (parallelCount * insertCount + 1 - failedImports.get()) * validRequestRecordCount + "]],\"count\":1}\r\n" +
                                     "00\r\n" +
-                                    "\r\n");
+                                    "\r\n"
+                    );
                 });
     }
 
@@ -321,7 +323,8 @@ public class RetryIODispatcherTest extends AbstractTest {
                             (rowsExpected < 100 ? "92" : "93") + "\r\n" +
                                     "{\"query\":\"select count(*) from \\\"fhv_tripdata_2017-02.csv\\\"\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"timestamp\":-1,\"dataset\":[[" + rowsExpected + "]],\"count\":1}\r\n" +
                                     "00\r\n" +
-                                    "\r\n");
+                                    "\r\n"
+                    );
 
                 });
     }
@@ -340,7 +343,8 @@ public class RetryIODispatcherTest extends AbstractTest {
                                     .withMultipartIdleSpinCount(10)
                             ),
                     500, ValidImportRequest, ValidImportResponse
-                    , true, false);
+                    , true, false
+            );
             TestUtils.removeTestPath(root);
             TestUtils.createTestPath(root);
         }
@@ -358,7 +362,8 @@ public class RetryIODispatcherTest extends AbstractTest {
                             .withHttpServerConfigBuilder(
                                     new HttpServerConfigurationBuilder().withNetwork(getSendDelayNetworkFacade(500))
                             ),
-                    0, ValidImportRequest, ValidImportResponse, true, true);
+                    0, ValidImportRequest, ValidImportResponse, true, true
+            );
             TestUtils.removeTestPath(root);
             TestUtils.createTestPath(root);
         }
@@ -410,7 +415,8 @@ public class RetryIODispatcherTest extends AbstractTest {
                         new HttpServerConfigurationBuilder()
                                 .withReceiveBufferSize(50)
                 ).run((engine) -> new SendAndReceiveRequestBuilder()
-                        .execute(ValidImportRequest,
+                        .execute(
+                                ValidImportRequest,
                                 "HTTP/1.1 200 OK\r\n" +
                                         "Server: questDB/1.0\r\n" +
                                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
@@ -420,7 +426,8 @@ public class RetryIODispatcherTest extends AbstractTest {
                                         "58\r\n" +
                                         "cannot parse import because of receive buffer is not big enough to parse table structure\r\n" +
                                         "00\r\n" +
-                                        "\r\n")
+                                        "\r\n"
+                        )
                 );
     }
 
@@ -437,7 +444,8 @@ public class RetryIODispatcherTest extends AbstractTest {
                                     new HttpServerConfigurationBuilder()
                                             .withReceiveBufferSize(256)
                             ),
-                    200, ValidImportRequest, ValidImportResponse, false, true);
+                    200, ValidImportRequest, ValidImportResponse, false, true
+            );
             TestUtils.removeTestPath(root);
             TestUtils.createTestPath(root);
         }
@@ -521,8 +529,10 @@ public class RetryIODispatcherTest extends AbstractTest {
                     Assert.assertFalse(finished);
 
                     writer.close();
-                    Assert.assertTrue("Table rename did not complete within timeout after writer is released",
-                            countDownLatch.await(5, TimeUnit.SECONDS));
+                    Assert.assertTrue(
+                            "Table rename did not complete within timeout after writer is released",
+                            countDownLatch.await(5, TimeUnit.SECONDS)
+                    );
                 });
     }
 
@@ -773,7 +783,8 @@ public class RetryIODispatcherTest extends AbstractTest {
                             "63\r\n" +
                                     "{\"query\":\"SELECT 1\",\"columns\":[{\"name\":\"1\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}\r\n" +
                                     "00\r\n" +
-                                    "\r\n");
+                                    "\r\n"
+                    );
                     nonInsertQueries++;
 
                     final int maxWaitTimeMillis = 3000;
@@ -789,8 +800,10 @@ public class RetryIODispatcherTest extends AbstractTest {
                         Os.sleep(sleepMillis);
                     }
                     startedInserts = metrics.jsonQuery().startedQueriesCount() - nonInsertQueries;
-                    Assert.assertTrue("expected at least " + parallelCount + "insert attempts, but got: " + startedInserts,
-                            startedInserts >= parallelCount);
+                    Assert.assertTrue(
+                            "expected at least " + parallelCount + "insert attempts, but got: " + startedInserts,
+                            startedInserts >= parallelCount
+                    );
 
                     for (int n = 0; n < fds.length; n++) {
                         Assert.assertNotEquals(fds[n], -1);
@@ -847,6 +860,7 @@ public class RetryIODispatcherTest extends AbstractTest {
                         "{\"query\":\"select count(*) from \\\"fhv_tripdata_2017-02.csv\\\"\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"timestamp\":-1,\"dataset\":[[" + nRows +
                         "]],\"count\":1}\r\n" +
                         "00\r\n" +
-                        "\r\n");
+                        "\r\n"
+        );
     }
 }

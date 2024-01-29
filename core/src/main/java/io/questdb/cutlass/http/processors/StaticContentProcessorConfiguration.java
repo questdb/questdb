@@ -38,5 +38,5 @@ public interface StaticContentProcessorConfiguration {
 
     CharSequence getPublicDirectory();
 
-    boolean isAuthenticationRequired();
+    byte getRequiredAuthType();
 }
