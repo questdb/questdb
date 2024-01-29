@@ -66,6 +66,7 @@ public class Overrides implements ConfigurationOverrides {
     private boolean mangleTableDirNames = true;
     private int maxFileNameLength = -1;
     private int maxOpenPartitions = -1;
+    private int maxSqlRecompileAttempts = -1;
     private int maxUncommittedRows = -1;
     private int o3ColumnMemorySize = -1;
     private long o3MaxLag = -1;
@@ -224,6 +225,11 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public int getMaxFileNameLength() {
         return maxFileNameLength;
+    }
+
+    @Override
+    public int getMaxSqlRecompileAttempts() {
+        return maxSqlRecompileAttempts;
     }
 
     @Override
@@ -522,6 +528,7 @@ public class Overrides implements ConfigurationOverrides {
         env = null;
         walMaxLagSize = -1;
         groupByAllocatorDefaultChunkSize = -1;
+        maxSqlRecompileAttempts = -1;
     }
 
     @Override
@@ -656,6 +663,11 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public void setMaxFileNameLength(int maxFileNameLength) {
         this.maxFileNameLength = maxFileNameLength;
+    }
+
+    @Override
+    public void setMaxSqlRecompileAttempts(int maxSqlRecompileAttempts) {
+        this.maxSqlRecompileAttempts = maxSqlRecompileAttempts;
     }
 
     @Override
