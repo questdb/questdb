@@ -377,6 +377,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     protected HttpServerConfiguration httpServerConfiguration = new PropHttpServerConfiguration();
     protected JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new PropJsonQueryProcessorConfiguration();
     protected StaticContentProcessorConfiguration staticContentProcessorConfiguration;
+    private boolean allowTableRegistrySharedWrite;
     private long cairoSqlCopyMaxIndexChunkSize;
     private FactoryProvider factoryProvider;
     private short floatDefaultColumnType;
@@ -490,7 +491,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     public PropServerConfiguration(
             String root,
             Properties properties,
-            @Nullable Map<String, String> env,
+            @Nullable    Map<String, String> env,
             Log log,
             final BuildInformation buildInformation
     ) throws ServerConfigurationException, JsonException {
@@ -502,7 +503,8 @@ public class PropServerConfiguration implements ServerConfiguration {
                 buildInformation,
                 FilesFacadeImpl.INSTANCE,
                 MicrosecondClockImpl.INSTANCE,
-                (configuration, engine, freeOnExitList) -> DefaultFactoryProvider.INSTANCE
+                (configuration, engine, freeOnExitList) -> DefaultFactoryProvider.INSTANCE,
+                true
         );
     }
 
@@ -515,6 +517,30 @@ public class PropServerConfiguration implements ServerConfiguration {
             FilesFacade filesFacade,
             MicrosecondClock microsecondClock,
             FactoryProviderFactory fpf
+    ) throws ServerConfigurationException, JsonException {
+        this(
+                root,
+                properties,
+                env,
+                log,
+                buildInformation,
+                filesFacade,
+                microsecondClock,
+                fpf,
+                true
+        );
+    }
+
+    public PropServerConfiguration(
+            String root,
+            Properties properties,
+            @Nullable Map<String, String> env,
+            Log log,
+            final BuildInformation buildInformation,
+            FilesFacade filesFacade,
+            MicrosecondClock microsecondClock,
+            FactoryProviderFactory fpf,
+            boolean loadMimeTypeCache
     ) throws ServerConfigurationException, JsonException {
         this.log = log;
         this.filesFacade = filesFacade;
@@ -751,7 +777,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.maxHttpQueryResponseRowLimit = getLong(properties, env, PropertyKey.HTTP_SECURITY_MAX_RESPONSE_ROWS, Long.MAX_VALUE);
             this.interruptOnClosedConnection = getBoolean(properties, env, PropertyKey.HTTP_SECURITY_INTERRUPT_ON_CLOSED_CONNECTION, true);
 
-            if (httpServerEnabled) {
+            if (loadMimeTypeCache && httpServerEnabled) {
                 this.jsonQueryConnectionCheckFrequency = getInt(properties, env, PropertyKey.HTTP_JSON_QUERY_CONNECTION_CHECK_FREQUENCY, 1_000_000);
                 this.jsonQueryFloatScale = getInt(properties, env, PropertyKey.HTTP_JSON_QUERY_FLOAT_SCALE, 4);
                 this.jsonQueryDoubleScale = getInt(properties, env, PropertyKey.HTTP_JSON_QUERY_DOUBLE_SCALE, 12);
@@ -1221,6 +1247,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.buildInformation = buildInformation;
             this.binaryEncodingMaxLength = getInt(properties, env, PropertyKey.BINARYDATA_ENCODING_MAXLENGTH, 32768);
         }
+        this.allowTableRegistrySharedWrite = getBoolean(properties, env, PropertyKey.DEBUG_ALLOW_TABLE_REGISTRY_SHARED_WRITE, false);
     }
 
     public static String rootSubdir(CharSequence dbRoot, CharSequence subdir) {
@@ -1846,7 +1873,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public boolean getAllowTableRegistrySharedWrite() {
-            return false;
+            return allowTableRegistrySharedWrite;
         }
 
         @Override

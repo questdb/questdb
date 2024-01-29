@@ -27,7 +27,10 @@ package io.questdb.test.cairo;
 import io.questdb.FactoryProvider;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
+import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.NanosecondClock;
 import io.questdb.std.RostiAllocFacade;
@@ -38,15 +41,21 @@ import org.jetbrains.annotations.NotNull;
 
 import java.util.Map;
 
-public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
+public class CairoTestConfiguration extends CairoConfigurationWrapper {
     private final Overrides overrides;
+    private final String root;
     private final TelemetryConfiguration telemetryConfiguration;
     private final VolumeDefinitions volumeDefinitions = new VolumeDefinitions();
 
     public CairoTestConfiguration(CharSequence root, TelemetryConfiguration telemetryConfiguration, Overrides overrides) {
-        super(root);
+        this.root = Chars.toString(root);
         this.telemetryConfiguration = telemetryConfiguration;
         this.overrides = overrides;
+    }
+
+    @Override
+    protected CairoConfiguration getDelegate() {
+        return overrides.getConfiguration(root);
     }
 
     @Override
@@ -330,11 +339,6 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     @Override
     public int getWalApplyLookAheadTransactionCount() {
         return overrides.getWalApplyLookAheadTransactionCount() >= 0 ? overrides.getWalApplyLookAheadTransactionCount() : super.getWalApplyLookAheadTransactionCount();
-    }
-
-    @Override
-    public long getWalApplyTableTimeQuota() {
-        return overrides.getWalApplyTableTimeQuota() >= 0 ? overrides.getWalApplyTableTimeQuota() : super.getWalApplyTableTimeQuota();
     }
 
     @Override

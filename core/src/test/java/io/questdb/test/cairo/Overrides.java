@@ -25,6 +25,8 @@
 package io.questdb.test.cairo;
 
 import io.questdb.FactoryProvider;
+import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.SqlWalMode;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
@@ -33,15 +35,19 @@ import io.questdb.std.RostiAllocFacade;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.test.tools.TestUtils;
 
 import java.util.Map;
+import java.util.Properties;
 
 public class Overrides {
+    private final Properties properties = new Properties();
     private String attachableDirSuffix = null;
     private CharSequence backupDir;
     private DateFormat backupDirTimestampFormat;
     private int binaryEncodingMaxLength = -1;
     private int capacity = -1;
+    private boolean changed = true;
     private SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration;
     private Boolean columnPreTouchEnabled = null;
     private long columnPurgeRetryDelay = -1;
@@ -80,6 +86,7 @@ public class Overrides {
     private Boolean parallelGroupByEnabled = null;
     private int parallelImportStatusLogKeepNDays = -1;
     private long partitionO3SplitThreshold;
+    private CairoConfiguration propsConfig;
     private int recreateDistressedSequencerAttempts = 3;
     private int repeatMigrationsFromVersion = -1;
     private int rndFunctionMemoryMaxPages = -1;
@@ -97,7 +104,6 @@ public class Overrides {
     private int sqlWindowStoreMaxPages;
     private int sqlWindowStorePageSize;
     private int tableRegistryCompactionThreshold;
-    private long walApplyTableTimeQuota = -1;
     private int walLookAheadTransactionCount = -1;
     private long walMaxLagSize = -1;
     private int walMaxLagTxnCount = -1;
@@ -112,6 +118,9 @@ public class Overrides {
     private long writerCommandQueueSlotSize = 2048L;
     private Boolean writerMixedIOEnabled = null;
 
+    public Overrides() {
+        TestUtils.resetToDefaultTestProperties(properties);
+    }
 
     public String getAttachableDirSuffix() {
         return attachableDirSuffix;
@@ -155,6 +164,14 @@ public class Overrides {
 
     public int getColumnVersionTaskPoolCapacity() {
         return columnVersionTaskPoolCapacity;
+    }
+
+    public CairoConfiguration getConfiguration(String root) {
+        if (changed) {
+            this.propsConfig = io.questdb.test.tools.TestUtils.getTestConfiguration(root, properties);
+            changed = false;
+        }
+        return this.propsConfig;
     }
 
 
@@ -237,11 +254,9 @@ public class Overrides {
         return maxUncommittedRows;
     }
 
-
     public int getO3ColumnMemorySize() {
         return o3ColumnMemorySize;
     }
-
 
     public long getO3MaxLag() {
         return o3MaxLag;
@@ -375,11 +390,6 @@ public class Overrides {
     }
 
 
-    public long getWalApplyTableTimeQuota() {
-        return walApplyTableTimeQuota;
-    }
-
-
     public long getWalMaxLagSize() {
         return walMaxLagSize;
     }
@@ -476,6 +486,7 @@ public class Overrides {
 
 
     public void reset() {
+        o3ColumnMemorySize = -1;
         hideTelemetryTable = false;
         maxUncommittedRows = -1;
         o3MaxLag = -1;
@@ -519,7 +530,6 @@ public class Overrides {
         walPurgeInterval = -1;
         tableRegistryCompactionThreshold = -1;
         maxOpenPartitions = -1;
-        walApplyTableTimeQuota = -1;
         walLookAheadTransactionCount = -1;
         walMaxLagTxnCount = -1;
         repeatMigrationsFromVersion = -1;
@@ -529,6 +539,9 @@ public class Overrides {
         walMaxLagSize = -1;
         groupByAllocatorDefaultChunkSize = -1;
         maxSqlRecompileAttempts = -1;
+
+        TestUtils.resetToDefaultTestProperties(properties);
+        changed = true;
     }
 
 
@@ -735,101 +748,86 @@ public class Overrides {
         this.partitionO3SplitThreshold = value;
     }
 
+    public void setProperty(PropertyKey propertyKey, long value) {
+        properties.setProperty(propertyKey.getPropertyPath(), String.valueOf(value));
+        changed = true;
+    }
 
     public void setRecreateDistressedSequencerAttempts(int recreateDistressedSequencerAttempts) {
         this.recreateDistressedSequencerAttempts = recreateDistressedSequencerAttempts;
     }
 
-
     public void setRegistryCompactionThreshold(int value) {
         tableRegistryCompactionThreshold = value;
     }
-
 
     public void setRepeatMigrationsFromVersion(int value) {
         repeatMigrationsFromVersion = value;
     }
 
-
     public void setRndFunctionMemoryMaxPages(int rndFunctionMemoryMaxPages) {
         this.rndFunctionMemoryMaxPages = rndFunctionMemoryMaxPages;
     }
-
 
     public void setRndFunctionMemoryPageSize(int rndFunctionMemoryPageSize) {
         this.rndFunctionMemoryPageSize = rndFunctionMemoryPageSize;
     }
 
-
     public void setRostiAllocFacade(RostiAllocFacade rostiAllocFacade) {
         this.rostiAllocFacade = rostiAllocFacade;
     }
-
 
     public void setSampleByIndexSearchPageSize(int sampleByIndexSearchPageSize) {
         this.sampleByIndexSearchPageSize = sampleByIndexSearchPageSize;
     }
 
-
     public void setSimulateCrashEnabled(boolean enabled) {
         this.simulateCrashEnabled = enabled;
     }
-
 
     public void setSnapshotInstanceId(String snapshotInstanceId) {
         this.snapshotInstanceId = snapshotInstanceId;
     }
 
-
     public void setSnapshotRecoveryEnabled(Boolean snapshotRecoveryEnabled) {
         this.snapshotRecoveryEnabled = snapshotRecoveryEnabled;
     }
-
 
     public void setSpinLockTimeout(long spinLockTimeout) {
         this.spinLockTimeout = spinLockTimeout;
     }
 
-
     public void setSqlCopyBufferSize(int sqlCopyBufferSize) {
         this.sqlCopyBufferSize = sqlCopyBufferSize;
     }
-
 
     public void setSqlJoinMetadataMaxResizes(int sqlJoinMetadataMaxResizes) {
         this.sqlJoinMetadataMaxResizes = sqlJoinMetadataMaxResizes;
     }
 
-
     public void setSqlJoinMetadataPageSize(int sqlJoinMetadataPageSize) {
         this.sqlJoinMetadataPageSize = sqlJoinMetadataPageSize;
     }
-
 
     public void setSqlWindowMaxRecursion(int maxRecursion) {
         this.sqlWindowMaxRecursion = maxRecursion;
     }
 
-
     public void setSqlWindowStoreMaxPages(int windowStoreMaxPages) {
         this.sqlWindowStoreMaxPages = windowStoreMaxPages;
     }
-
 
     public void setSqlWindowStorePageSize(int windowStorePageSize) {
         this.sqlWindowStorePageSize = windowStorePageSize;
     }
 
-
     public void setTestMicrosClock(MicrosecondClock testMicrosClock) {
         this.testMicrosClock = testMicrosClock;
     }
 
-
     public void setWalApplyTableTimeQuota(long walApplyTableTimeQuota) {
-        this.walApplyTableTimeQuota = walApplyTableTimeQuota;
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, walApplyTableTimeQuota);
     }
-
 
     public void setWalLookAheadTransactionCount(int walLookAheadTransactionCount) {
         this.walLookAheadTransactionCount = walLookAheadTransactionCount;
