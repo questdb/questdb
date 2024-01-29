@@ -109,12 +109,12 @@ public class LineRawHttpFuzzTest extends AbstractBootstrapTest {
                 Rnd rnd = TestUtils.generateRandom(LOG);
 
                 int totalCount = 0;
-                try (HttpClient httpClient = HttpClientFactory.newInstance(new DefaultHttpClientConfiguration())) {
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
                     String line = "line,sym1=123 field1=123i 1234567890000000000\n";
 
                     for (int r = 0; r < 3; r++) {
                         int count = 1 + rnd.nextInt(100);
-                        HttpClient.Request request = httpClient.newRequest();
+                        HttpClient.Request request = httpClient.newRequest("localhost", getHttpPort(serverMain));
                         request.POST()
                                 .url("/write ")
                                 .withChunkedContent();
@@ -132,9 +132,10 @@ public class LineRawHttpFuzzTest extends AbstractBootstrapTest {
                         }
 
                         request.putEOL().putAscii("0").putEOL().putEOL();
-                        HttpClient.ResponseHeaders resp = request.send("localhost", getHttpPort(serverMain), 5000);
-                        resp.await();
-                        totalCount += count;
+                        try (HttpClient.ResponseHeaders resp = request.send(5000)) {
+                            resp.await();
+                            totalCount += count;
+                        }
                     }
                 }
 
@@ -260,13 +261,13 @@ public class LineRawHttpFuzzTest extends AbstractBootstrapTest {
                 Rnd rnd = TestUtils.generateRandom(LOG);
 
                 int totalCount = 0;
-                try (HttpClient httpClient = HttpClientFactory.newInstance(new DefaultHttpClientConfiguration())) {
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
                     String line = "line,sym1=123 field1=123i 1234567890000000000\n";
 
                     for (int r = 0; r < 30; r++) {
                         if (r % 3 == 0) {
                             int count = 1 + rnd.nextInt(1000);
-                            HttpClient.Request request = httpClient.newRequest();
+                            HttpClient.Request request = httpClient.newRequest("localhost", getHttpPort(serverMain));
                             request.POST()
                                     .url("/not_found_chunked ")
                                     .withChunkedContent();
@@ -278,12 +279,13 @@ public class LineRawHttpFuzzTest extends AbstractBootstrapTest {
                                 request.putAscii(line);
                             }
                             request.putEOL().putAscii("0").putEOL().putEOL();
-                            HttpClient.ResponseHeaders resp = request.send("localhost", getHttpPort(serverMain), 5000);
-                            resp.await();
+                            try (HttpClient.ResponseHeaders resp = request.send(5000)) {
+                                resp.await();
+                            }
                         } else if (r % 3 == 1) {
                             // Good request
                             int count = 1 + rnd.nextInt(100);
-                            HttpClient.Request request = httpClient.newRequest();
+                            HttpClient.Request request = httpClient.newRequest("localhost", getHttpPort(serverMain));
                             request.POST()
                                     .url("/write ")
                                     .withChunkedContent();
@@ -297,13 +299,14 @@ public class LineRawHttpFuzzTest extends AbstractBootstrapTest {
                             }
 
                             request.putEOL().putAscii("0").putEOL().putEOL();
-                            HttpClient.ResponseHeaders resp = request.send("localhost", getHttpPort(serverMain), 5000);
-                            resp.await();
-                            totalCount += count;
+                            try (HttpClient.ResponseHeaders resp = request.send(5000)) {
+                                resp.await();
+                                totalCount += count;
+                            }
                         } else {
                             // Good request
                             int count = 1 + rnd.nextInt(100);
-                            HttpClient.Request request = httpClient.newRequest();
+                            HttpClient.Request request = httpClient.newRequest("localhost", getHttpPort(serverMain));
                             request.POST()
                                     .url("/not_found ")
                                     .withContent();
@@ -313,8 +316,9 @@ public class LineRawHttpFuzzTest extends AbstractBootstrapTest {
                             }
 
                             request.putEOL().putAscii("0").putEOL().putEOL();
-                            HttpClient.ResponseHeaders resp = request.send("localhost", getHttpPort(serverMain), 5000);
-                            resp.await();
+                            try (HttpClient.ResponseHeaders resp = request.send(5000)) {
+                                resp.await();
+                            }
                         }
                     }
                 }
