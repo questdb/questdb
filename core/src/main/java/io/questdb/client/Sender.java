@@ -27,7 +27,7 @@ package io.questdb.client;
 import io.questdb.ClientTlsConfiguration;
 import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.HttpClientConfiguration;
-import io.questdb.client.impl.ConfigStringParser;
+import io.questdb.client.impl.ConfStringParser;
 import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.line.LineChannel;
 import io.questdb.cutlass.line.LineSenderException;
@@ -531,7 +531,7 @@ public interface Sender extends Closeable {
                 throw new LineSenderException("configuration string cannot be empty nor null");
             }
             StringSink sink = new StringSink();
-            int pos = ConfigStringParser.of(configurationString, sink);
+            int pos = ConfStringParser.of(configurationString, sink);
             if (pos < 0) {
                 throw new LineSenderException("invalid configuration string: ").put(configurationString);
             }
@@ -564,18 +564,18 @@ public interface Sender extends Closeable {
             String tcpToken = null;
             String user = null;
             String password = null;
-            while (ConfigStringParser.hasNext(configurationString, pos)) {
-                pos = ConfigStringParser.nextKey(configurationString, pos, sink);
+            while (ConfStringParser.hasNext(configurationString, pos)) {
+                pos = ConfStringParser.nextKey(configurationString, pos, sink);
                 if (pos < 0) {
                     throw new LineSenderException("invalid configuration string: ").put(sink);
                 }
                 if (Chars.equals("addr", sink)) {
-                    if ((pos = ConfigStringParser.value(configurationString, pos, sink)) < 0) {
+                    if ((pos = ConfStringParser.value(configurationString, pos, sink)) < 0) {
                         throw new LineSenderException("invalid address [error=").put(sink).put("]");
                     }
                     address(sink);
                 } else if (Chars.equals("port", sink)) {
-                    if ((pos = ConfigStringParser.value(configurationString, pos, sink)) < 0) {
+                    if ((pos = ConfStringParser.value(configurationString, pos, sink)) < 0) {
                         throw new LineSenderException("invalid port [error=").put(sink).put("]");
                     }
                     int port;
@@ -589,17 +589,17 @@ public interface Sender extends Closeable {
                     }
                     this.port = port;
                 } else if (Chars.equals("user", sink)) {
-                    if ((pos = ConfigStringParser.value(configurationString, pos, sink)) < 0) {
+                    if ((pos = ConfStringParser.value(configurationString, pos, sink)) < 0) {
                         throw new LineSenderException("invalid user [user=").put(sink).put("]");
                     }
                     user = sink.toString();
                 } else if (Chars.equals("pass", sink)) {
-                    if ((pos = ConfigStringParser.value(configurationString, pos, sink)) < 0) {
+                    if ((pos = ConfStringParser.value(configurationString, pos, sink)) < 0) {
                         throw new LineSenderException("invalid password [error=").put(sink).put("]");
                     }
                     password = sink.toString();
                 } else if (Chars.equals("tls_verify", sink)) {
-                    if ((pos = ConfigStringParser.value(configurationString, pos, sink)) < 0) {
+                    if ((pos = ConfStringParser.value(configurationString, pos, sink)) < 0) {
                         throw new LineSenderException("invalid tls_verify [error=").put(sink).put("]");
                     }
                     if (tlsValidationMode != null) {
@@ -613,7 +613,7 @@ public interface Sender extends Closeable {
                         throw new LineSenderException("invalid tls_verify [value=").put(sink).put("]");
                     }
                 } else if (Chars.equals("tls_roots", sink)) {
-                    if ((pos = ConfigStringParser.value(configurationString, pos, sink)) < 0) {
+                    if ((pos = ConfStringParser.value(configurationString, pos, sink)) < 0) {
                         throw new LineSenderException("invalid tls_roots [error=").put(sink).put("]");
                     }
                     if (trustStorePath != null) {
@@ -621,7 +621,7 @@ public interface Sender extends Closeable {
                     }
                     trustStorePath = sink.toString();
                 } else if (Chars.equals("tls_roots_password", sink)) {
-                    if ((pos = ConfigStringParser.value(configurationString, pos, sink)) < 0) {
+                    if ((pos = ConfStringParser.value(configurationString, pos, sink)) < 0) {
                         throw new LineSenderException("invalid tls_roots_password [error=").put(sink).put("]");
                     }
                     if (trustStorePassword != null) {
@@ -632,7 +632,7 @@ public interface Sender extends Closeable {
                         trustStorePassword[i] = sink.charAt(i);
                     }
                 } else if (Chars.equals("token", sink)) {
-                    if ((pos = ConfigStringParser.value(configurationString, pos, sink)) < 0) {
+                    if ((pos = ConfStringParser.value(configurationString, pos, sink)) < 0) {
                         throw new LineSenderException("invalid token [error=").put(sink).put("]");
                     }
                     if (protocol == PROTOCOL_TCP) {
@@ -644,7 +644,7 @@ public interface Sender extends Closeable {
                         throw new AssertionError();
                     }
                 } else if (Chars.equals("retry_timeout", sink)) {
-                    if ((pos = ConfigStringParser.value(configurationString, pos, sink)) < 0) {
+                    if ((pos = ConfStringParser.value(configurationString, pos, sink)) < 0) {
                         throw new LineSenderException("invalid retry_timeout [error=").put(sink).put("]");
                     }
                     int timeout;
@@ -658,7 +658,7 @@ public interface Sender extends Closeable {
                     }
                     retryTimeoutMillis(timeout);
                 } else if (Chars.equals("max_buf_size", sink)) {
-                    if ((pos = ConfigStringParser.value(configurationString, pos, sink)) < 0) {
+                    if ((pos = ConfStringParser.value(configurationString, pos, sink)) < 0) {
                         throw new LineSenderException("invalid max_buf_size [error=").put(sink).put("]");
                     }
                     int maxBufferSize;
@@ -669,7 +669,7 @@ public interface Sender extends Closeable {
                     }
                     maxBufferCapacity(maxBufferSize);
                 } else if (Chars.equals("init_buf_size", sink)) {
-                    if ((pos = ConfigStringParser.value(configurationString, pos, sink)) < 0) {
+                    if ((pos = ConfStringParser.value(configurationString, pos, sink)) < 0) {
                         throw new LineSenderException("invalid init_buf_size [error=").put(sink).put("]");
                     }
                     int initBufferSize;
@@ -680,7 +680,7 @@ public interface Sender extends Closeable {
                     }
                     bufferCapacity(initBufferSize);
                 } else if (Chars.equals("auto_flush_rows", sink)) {
-                    if ((pos = ConfigStringParser.value(configurationString, pos, sink)) < 0) {
+                    if ((pos = ConfStringParser.value(configurationString, pos, sink)) < 0) {
                         throw new LineSenderException("invalid auto_flush_rows [error=").put(sink).put("]");
                     }
                     int autoFlushRows;
@@ -694,7 +694,7 @@ public interface Sender extends Closeable {
                     }
                     maxPendingRows(autoFlushRows);
                 } else if (Chars.equals("auto_flush", sink)) {
-                    if ((pos = ConfigStringParser.value(configurationString, pos, sink)) < 0) {
+                    if ((pos = ConfStringParser.value(configurationString, pos, sink)) < 0) {
                         throw new LineSenderException("invalid auto_flush [error=").put(sink).put("]");
                     }
                     if (Chars.equals("on", sink)) {
@@ -705,12 +705,12 @@ public interface Sender extends Closeable {
                         throw new LineSenderException("invalid auto_flush [value=").put(sink).put("]");
                     }
                 } else if (Chars.equals("token_x", sink)) {
-                    if ((pos = ConfigStringParser.value(configurationString, pos, sink)) < 0) {
+                    if ((pos = ConfStringParser.value(configurationString, pos, sink)) < 0) {
                         throw new LineSenderException("invalid token_x [error=").put(sink).put("]");
                     }
                     // we ignore token_x, Java client does not need it
                 } else if (Chars.equals("token_y", sink)) {
-                    if ((pos = ConfigStringParser.value(configurationString, pos, sink)) < 0) {
+                    if ((pos = ConfStringParser.value(configurationString, pos, sink)) < 0) {
                         throw new LineSenderException("invalid token_y [error=").put(sink).put("]");
                     }
                     // we ignore token_x, Java client does not need it

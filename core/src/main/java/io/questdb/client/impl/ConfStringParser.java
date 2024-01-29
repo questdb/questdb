@@ -17,8 +17,8 @@ import io.questdb.std.str.StringSink;
  * <p>
  * When the returned position handler is positive, it can be used to parse the next key or value.
  */
-public final class ConfigStringParser {
-    private ConfigStringParser() {
+public final class ConfStringParser {
+    private ConfStringParser() {
     }
 
     /**

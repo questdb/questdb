@@ -1,13 +1,13 @@
 package io.questdb.test.client.impl;
 
-import io.questdb.client.impl.ConfigStringParser;
+import io.questdb.client.impl.ConfStringParser;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-public final class ConfigStringParserTest {
+public final class ConfStringParserTest {
     private static final StringSink sink = new StringSink();
 
     @Before
@@ -19,7 +19,7 @@ public final class ConfigStringParserTest {
     public void testEmptyValue() {
         String config = "http::addr=;";
         int pos = assertSchemaOk(config, "http");
-        pos = assertKeyValue(config, pos, "addr", "");
+        pos = assertNextKeyValueOk(config, pos, "addr", "");
         assertNoNext(config, pos);
     }
 
@@ -27,11 +27,8 @@ public final class ConfigStringParserTest {
     public void testKeyCannotBeEmpty() {
         String config = "http::=;";
         int pos = assertSchemaOk(config, "http");
-
-        assertHasNext(config, pos);
-
-        Assert.assertTrue(ConfigStringParser.nextKey(config, pos, sink) < 0);
-        TestUtils.assertEquals("empty key", sink);
+        pos = assertNextKeyError(config, pos, "empty key");
+        assertNoNext(config, pos);
     }
 
     @Test
@@ -39,10 +36,10 @@ public final class ConfigStringParserTest {
         String config = "http::addr=localhost;user=joe;pass=bloggs;auto_flush_rows=1000;";
         int pos = assertSchemaOk(config, "http");
 
-        pos = assertKeyValue(config, pos, "addr", "localhost");
-        pos = assertKeyValue(config, pos, "user", "joe");
-        pos = assertKeyValue(config, pos, "pass", "bloggs");
-        pos = assertKeyValue(config, pos, "auto_flush_rows", "1000");
+        pos = assertNextKeyValueOk(config, pos, "addr", "localhost");
+        pos = assertNextKeyValueOk(config, pos, "user", "joe");
+        pos = assertNextKeyValueOk(config, pos, "pass", "bloggs");
+        pos = assertNextKeyValueOk(config, pos, "auto_flush_rows", "1000");
         assertNoNext(config, pos);
     }
 
@@ -52,9 +49,9 @@ public final class ConfigStringParserTest {
 
         int pos = assertSchemaOk("http::addr=localhost;USER=joe;pAsS=bloggs;", "http");
         assertHasNext(config, pos);
-        pos = assertKeyValue(config, pos, "addr", "localhost");
-        pos = assertKeyValue(config, pos, "user", "joe");
-        pos = assertKeyValue(config, pos, "pass", "bloggs");
+        pos = assertNextKeyValueOk(config, pos, "addr", "localhost");
+        pos = assertNextKeyValueOk(config, pos, "user", "joe");
+        pos = assertNextKeyValueOk(config, pos, "pass", "bloggs");
         assertNoNext(config, pos);
     }
 
@@ -62,7 +59,6 @@ public final class ConfigStringParserTest {
     public void testMissingEquals() {
         String config = "http::addrlocalhost;foo=bar";
         int pos = assertSchemaOk("http::addrlocalhost;foo=bar", "http");
-
         pos = assertNextKeyError(config, pos, "missing '='");
         assertNoNext(config, pos);
     }
@@ -73,8 +69,7 @@ public final class ConfigStringParserTest {
         int pos = assertSchemaOk("http::addr=localhost", "http");
 
         assertHasNext(config, pos);
-        pos = assertNextKey(config, pos, "addr");
-
+        pos = assertNextKeyOk(config, pos, "addr");
         pos = assertNextValueError(config, pos, "missing trailing ';'");
         assertNoNext(config, pos);
     }
@@ -97,7 +92,8 @@ public final class ConfigStringParserTest {
     public void testSemicolonEscaping() {
         String config = "http::pass=bl;;oggs;;;";
         int pos = assertSchemaOk(config, "http");
-        assertKeyValue(config, pos, "pass", "bl;oggs;");
+        pos = assertNextKeyValueOk(config, pos, "pass", "bl;oggs;");
+        assertNoNext(config, pos);
 
         config = "http::;;";
         pos = assertSchemaOk(config, "http");
@@ -108,14 +104,14 @@ public final class ConfigStringParserTest {
         config = "http::foo=bar;;";
         pos = assertSchemaOk(config, "http");
         assertHasNext(config, pos);
-        pos = assertNextKey(config, pos, "foo");
+        pos = assertNextKeyOk(config, pos, "foo");
         pos = assertNextValueError(config, pos, "missing trailing ';'");
         assertNoNext(config, pos);
 
         config = "https::foo=;;;;;";
         pos = assertSchemaOk(config, "https");
         assertHasNext(config, pos);
-        pos = assertKeyValue(config, pos, "foo", ";;");
+        pos = assertNextKeyValueOk(config, pos, "foo", ";;");
         assertNoNext(config, pos);
     }
 
@@ -123,66 +119,64 @@ public final class ConfigStringParserTest {
     public void testValuesCaseSensitive() {
         String config = "http::addr=localhost;user=JOE;pass=bLogGs;";
         int pos = assertSchemaOk(config, "http");
-        pos = assertKeyValue(config, pos, "addr", "localhost");
-        pos = assertKeyValue(config, pos, "user", "JOE");
-        pos = assertKeyValue(config, pos, "pass", "bLogGs");
+        pos = assertNextKeyValueOk(config, pos, "addr", "localhost");
+        pos = assertNextKeyValueOk(config, pos, "user", "JOE");
+        pos = assertNextKeyValueOk(config, pos, "pass", "bLogGs");
         assertNoNext(config, pos);
     }
 
     private static void assertHasNext(CharSequence input, int pos) {
-        Assert.assertTrue(ConfigStringParser.hasNext(input, pos));
-    }
-
-    private static int assertKeyValue(CharSequence input, int pos, String expectedKey, String expectedValue) {
-        pos = assertNextKey(input, pos, expectedKey);
-        pos = assertNextValue(input, pos, expectedValue);
-        return pos;
-    }
-
-    private static int assertNextKey(CharSequence input, int pos, String expectedKey) {
-        Assert.assertTrue(ConfigStringParser.hasNext(input, pos));
-        pos = ConfigStringParser.nextKey(input, pos, sink);
-
-        Assert.assertTrue(pos >= 0);
-        TestUtils.assertEquals(expectedKey, sink);
-
-        return pos;
+        Assert.assertTrue(ConfStringParser.hasNext(input, pos));
     }
 
     private static int assertNextKeyError(CharSequence input, int pos, String expectedError) {
-        Assert.assertTrue(ConfigStringParser.hasNext(input, pos));
-        pos = ConfigStringParser.nextKey(input, pos, sink);
+        Assert.assertTrue(ConfStringParser.hasNext(input, pos));
+        pos = ConfStringParser.nextKey(input, pos, sink);
         Assert.assertTrue(pos < 0);
         TestUtils.assertEquals(expectedError, sink);
         return pos;
     }
 
-    private static int assertNextValue(CharSequence input, int pos, String expectedValue) {
-        pos = ConfigStringParser.value(input, pos, sink);
+    private static int assertNextKeyOk(CharSequence input, int pos, String expectedKey) {
+        Assert.assertTrue(ConfStringParser.hasNext(input, pos));
+        pos = ConfStringParser.nextKey(input, pos, sink);
+        Assert.assertTrue(pos >= 0);
+        TestUtils.assertEquals(expectedKey, sink);
+        return pos;
+    }
+
+    private static int assertNextKeyValueOk(CharSequence input, int pos, String expectedKey, String expectedValue) {
+        pos = assertNextKeyOk(input, pos, expectedKey);
+        pos = assertNextValueOk(input, pos, expectedValue);
+        return pos;
+    }
+
+    private static int assertNextValueError(CharSequence input, int pos, String expectedError) {
+        pos = ConfStringParser.value(input, pos, sink);
+        Assert.assertTrue(pos < 0);
+        TestUtils.assertEquals(expectedError, sink);
+        return pos;
+    }
+
+    private static int assertNextValueOk(CharSequence input, int pos, String expectedValue) {
+        pos = ConfStringParser.value(input, pos, sink);
         Assert.assertTrue(pos >= 0);
         TestUtils.assertEquals(expectedValue, sink);
         return pos;
     }
 
-    private static int assertNextValueError(CharSequence input, int pos, String expectedError) {
-        pos = ConfigStringParser.value(input, pos, sink);
-        Assert.assertTrue(pos < 0);
-        TestUtils.assertEquals(expectedError, sink);
-        return pos;
-    }
-
     private static void assertNoNext(CharSequence input, int pos) {
-        Assert.assertFalse(ConfigStringParser.hasNext(input, pos));
+        Assert.assertFalse(ConfStringParser.hasNext(input, pos));
     }
 
     private static void assertSchemaError(String configString, String expectedMessage) {
-        int pos = ConfigStringParser.of(configString, sink);
+        int pos = ConfStringParser.of(configString, sink);
         Assert.assertTrue(pos < 0);
         TestUtils.assertEquals(expectedMessage, sink);
     }
 
     private static int assertSchemaOk(String configString, String expectedSchema) {
-        int pos = ConfigStringParser.of(configString, sink);
+        int pos = ConfStringParser.of(configString, sink);
         Assert.assertTrue(pos >= 0);
         TestUtils.assertEquals(expectedSchema, sink);
         return pos;
