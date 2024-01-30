@@ -111,12 +111,12 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testAuthTooSmallBuffer() throws Exception {
         assertMemoryLeak(() -> {
-            Sender.LineSenderBuilder builder = Sender.builder()
-                    .enableAuth("foo").authToken(AUTH_TOKEN_KEY1).address(LOCALHOST + ":9001")
-                    .bufferCapacity(1);
             try {
+                Sender.LineSenderBuilder builder = Sender.builder()
+                        .enableAuth("foo").authToken(AUTH_TOKEN_KEY1).address(LOCALHOST + ":9001")
+                        .bufferCapacity(1);
                 builder.build();
-                fail("tiny buffer should be be allowed as it wont fit auth challenge");
+                fail("tiny buffer should NOT be allowed as it wont fit auth challenge");
             } catch (LineSenderException e) {
                 TestUtils.assertContains(e.getMessage(), "minimalCapacity");
                 TestUtils.assertContains(e.getMessage(), "requestedCapacity");
@@ -177,7 +177,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
             assertConfStrError("http::addr=localhost:8080;max_buf_size=-32;", "maximum buffer capacity cannot be less than initial buffer capacity [maximumBufferCapacity=-32, initialBufferCapacity=65536]");
             assertConfStrError("http::addr=localhost:8080;max_buf_size=notanumber;", "invalid max_buf_size [value=notanumber]");
             assertConfStrError("http::addr=localhost:8080;init_buf_size=notanumber;", "invalid init_buf_size [value=notanumber]");
-            assertConfStrError("http::addr=localhost:8080;init_buf_size=-42;", "buffer capacity too small [capacity=-42, min=513]");
+            assertConfStrError("http::addr=localhost:8080;init_buf_size=-42;", "buffer capacity cannot be negative [capacity=-42]");
             assertConfStrError("http::addr=localhost:8080;auto_flush_rows=0;", "invalid auto_flush_rows [auto_flush_rows=0]");
             assertConfStrError("http::addr=localhost:8080;auto_flush_rows=notanumber;", "invalid auto_flush_rows [value=notanumber]");
             assertConfStrError("http::addr=localhost:8080;auto_flush=invalid;", "invalid auto_flush [value=invalid]");

@@ -422,8 +422,9 @@ public interface Sender extends Closeable {
                 throw new LineSenderException("buffer capacity was already configured ")
                         .put("[capacity=").put(this.bufferCapacity).put("]");
             }
-            if (bufferCapacity < MIN_BUFFER_SIZE) {
-                throw new LineSenderException("buffer capacity too small [capacity=").put(bufferCapacity).put(", min=").put(MIN_BUFFER_SIZE).put("]");
+            if (bufferCapacity < 0) {
+                throw new LineSenderException("buffer capacity cannot be negative ")
+                        .put("[capacity=").put(bufferCapacity).put("]");
             }
             this.bufferCapacity = bufferCapacity;
             return this;
