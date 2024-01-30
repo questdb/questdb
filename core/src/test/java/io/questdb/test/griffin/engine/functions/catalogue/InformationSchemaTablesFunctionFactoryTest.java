@@ -24,7 +24,6 @@
 
 package io.questdb.test.griffin.engine.functions.catalogue;
 
-import io.questdb.PropertyKey;
 import io.questdb.TelemetryConfigLogger;
 import io.questdb.tasks.TelemetryTask;
 import io.questdb.test.AbstractCairoTest;
@@ -35,7 +34,7 @@ public class InformationSchemaTablesFunctionFactoryTest extends AbstractCairoTes
     @Test
     public void testSelectWhenTelemetryTablesAreHidden() throws Exception {
         assertMemoryLeak(() -> {
-            node1.setProperty(PropertyKey.TELEMETRY_HIDE_TABLES, true);
+            node1.getConfigurationOverrides().setIsHidingTelemetryTable(true);
             ddl("create table " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME + " (i int)");
             ddl("create table " + TelemetryTask.TABLE_NAME + " (i int)");
 
