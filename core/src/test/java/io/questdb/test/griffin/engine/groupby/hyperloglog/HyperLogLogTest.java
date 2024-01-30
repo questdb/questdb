@@ -29,8 +29,10 @@ import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.hyperloglog.HyperLogLog;
 import io.questdb.std.Hash;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 import static io.questdb.test.griffin.engine.groupby.hyperloglog.HyperLogLogTestUtils.assertCardinality;
@@ -102,6 +104,40 @@ public class HyperLogLogTest extends AbstractTest {
                     }
 
                     long estimatedCardinality = hll.computeCardinality();
+                    assertCardinality(exactCardinality, finalPrecision, estimatedCardinality);
+                }
+            });
+        }
+    }
+
+    @Test
+    public void testFuzz() throws Exception {
+        CairoConfiguration config = new DefaultCairoConfiguration(root) {
+            @Override
+            public long getGroupByAllocatorDefaultChunkSize() {
+                return 64;
+            }
+        };
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        for (int precision = 4; precision <= 18; precision++) {
+            int finalPrecision = precision;
+            assertMemoryLeak(() -> {
+                try (GroupByAllocator allocator = new GroupByAllocator(config)) {
+                    IntHashSet oracle = new IntHashSet();
+
+                    HyperLogLog hll = new HyperLogLog(finalPrecision);
+                    hll.setAllocator(allocator);
+                    hll.of(0);
+
+                    int N = 10000000;
+                    for (int i = 0; i < N; i++) {
+                        int value = rnd.nextInt();
+                        hll.add(Hash.murmur3ToLong(value));
+                        oracle.add(value);
+                    }
+
+                    long estimatedCardinality = hll.computeCardinality();
+                    int exactCardinality = oracle.size();
                     assertCardinality(exactCardinality, finalPrecision, estimatedCardinality);
                 }
             });
