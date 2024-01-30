@@ -27,6 +27,7 @@ package io.questdb.tasks;
 import io.questdb.cairo.TableToken;
 import io.questdb.std.LongList;
 import io.questdb.std.Mutable;
+import org.jetbrains.annotations.NotNull;
 
 public class ColumnPurgeTask implements Mutable {
     public static final int BLOCK_SIZE = 4;
@@ -100,7 +101,12 @@ public class ColumnPurgeTask implements Mutable {
         return updatedColumnInfo;
     }
 
+    public boolean isEmpty() {
+        return tableName == null;
+    }
+
     public void of(
+            @NotNull
             TableToken tableName,
             CharSequence columnName,
             int tableId,
@@ -120,6 +126,7 @@ public class ColumnPurgeTask implements Mutable {
     }
 
     public void of(
+            @NotNull
             TableToken tableName,
             CharSequence columnName,
             int tableId,

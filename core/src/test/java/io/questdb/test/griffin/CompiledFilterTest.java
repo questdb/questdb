@@ -58,24 +58,25 @@ public class CompiledFilterTest extends AbstractCairoTest {
     @Test
     public void testAllBindVariableTypes() throws Exception {
         assertMemoryLeak(() -> {
-
-            ddl("create table x as (select" +
-                    " rnd_boolean() aboolean," +
-                    " rnd_byte(2,50) abyte," +
-                    " rnd_geohash(4) ageobyte," +
-                    " rnd_short(10,1024) ashort," +
-                    " rnd_geohash(12) ageoshort," +
-                    " rnd_char() achar," +
-                    " rnd_int() anint," +
-                    " rnd_geohash(16) ageoint," +
-                    " rnd_symbol(4,4,4,2) asymbol," +
-                    " rnd_float(2) afloat," +
-                    " rnd_long() along," +
-                    " rnd_double(2) adouble," +
-                    " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) adate," +
-                    " rnd_geohash(32) ageolong," +
-                    " timestamp_sequence(400000000000, 500000000) atimestamp" +
-                    " from long_sequence(100)) timestamp(atimestamp)");
+            ddl(
+                    "create table x as (select" +
+                            " rnd_boolean() aboolean," +
+                            " rnd_byte(2,50) abyte," +
+                            " rnd_geohash(4) ageobyte," +
+                            " rnd_short(10,1024) ashort," +
+                            " rnd_geohash(12) ageoshort," +
+                            " rnd_char() achar," +
+                            " rnd_int() anint," +
+                            " rnd_geohash(16) ageoint," +
+                            " rnd_symbol(4,4,4,2) asymbol," +
+                            " rnd_float(2) afloat," +
+                            " rnd_long() along," +
+                            " rnd_double(2) adouble," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) adate," +
+                            " rnd_geohash(32) ageolong," +
+                            " timestamp_sequence(400000000000, 500000000) atimestamp" +
+                            " from long_sequence(100)) timestamp(atimestamp)"
+            );
 
             bindVariableService.clear();
             bindVariableService.setBoolean("aboolean", false);

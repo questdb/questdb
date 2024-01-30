@@ -53,6 +53,71 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHandlesDroppedTablesAfterRestart() throws Exception {
+        assertMemoryLeak(() -> {
+            currentMicros = 0;
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                createTable("up_part_o3");
+                createTable("up_part_o3_2");
+
+
+                drainWalQueue();
+                try (TableReader rdr = getReader("up_part_o3")) {
+                    try (TableReader rdr2 = getReader("up_part_o3_2")) {
+                        update("UPDATE up_part_o3 SET x = 100, str='abcd', sym2='EE' WHERE ts >= '1970-01-03'");
+                        update("UPDATE up_part_o3_2 SET x = 100, str='abcd', sym2='EE' WHERE ts >= '1970-01-03'");
+                        drainWalQueue();
+
+                        drop("drop table up_part_o3");
+
+                        runPurgeJob(purgeJob);
+                        rdr.openPartition(0);
+                        rdr2.openPartition(0);
+                        runPurgeJob(purgeJob);
+                    }
+                }
+            }
+
+
+            String purgeLogTableName;
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                purgeLogTableName = purgeJob.getLogTableName();
+            }
+
+            assertSql(
+                    "ts\tx\tstr\tsym1\tsym2\n" +
+                            "1970-01-01T02:00:00.000000Z\t1\ta\tA\t2\n" +
+                            "1970-01-02T02:00:00.000000Z\t2\tb\tC\t4\n" +
+                            "1970-01-03T02:00:00.000000Z\t100\tabcd\tA\tEE\n" +
+                            "1970-01-04T02:00:00.000000Z\t100\tabcd\tA\tEE\n" +
+                            "1970-01-05T02:00:00.000000Z\t100\tabcd\tD\tEE\n",
+                    "up_part_o3_2"
+            );
+
+            // cleaned everything, table is truncated
+            assertSql("ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n", purgeLogTableName);
+
+            // Check logging is ok. This test reproduces logging failure because of exception in the middle of logging.
+            // The result can be that this loop never finishes.
+            for(int i = 0; i < 1025; i++) {
+                LOG.infoW().$("test").$();
+            }
+        });
+    }
+
+    private static void createTable(String upPartO3) throws SqlException {
+        ddl("create table " + upPartO3 + " as" +
+                " (select timestamp_sequence('1970-01-01T02', 24 * 60 * 60 * 1000000L) ts," +
+                " x," +
+                " rnd_str('a', 'b', 'c', 'd') str," +
+                " rnd_symbol('A', 'B', 'C', 'D') sym1," +
+                " rnd_symbol('1', '2', '3', '4') sym2" +
+                " from long_sequence(5)), index(sym2)" +
+                " timestamp(ts) PARTITION BY DAY WAL");
+    }
+
+    @Test
     public void testManyUpdatesInserts() throws Exception {
         assertMemoryLeak(() -> {
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {

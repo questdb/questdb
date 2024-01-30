@@ -40,6 +40,10 @@ public interface HttpRequestProcessor {
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
     }
 
+    default byte getRequiredAuthType() {
+        return SecurityContext.AUTH_TYPE_CREDENTIALS;
+    }
+
     default void onConnectionClosed(HttpConnectionContext context) {
     }
 
@@ -64,7 +68,7 @@ public interface HttpRequestProcessor {
     }
 
     default boolean requiresAuthentication() {
-        return true;
+        return getRequiredAuthType() != SecurityContext.AUTH_TYPE_NONE;
     }
 
     default void resumeRecv(HttpConnectionContext context) {
