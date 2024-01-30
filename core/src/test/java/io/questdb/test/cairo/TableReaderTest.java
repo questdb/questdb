@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -2390,7 +2391,7 @@ public class TableReaderTest extends AbstractCairoTest {
         final long tsStep = Timestamps.SECOND_MICROS;
         final int rows = expectedPartitions * 60 * 60;
 
-        maxOpenPartitions = openPartitionsLimit;
+        node1.setProperty(PropertyKey.CAIRO_INACTIVE_READER_MAX_OPEN_PARTITIONS, openPartitionsLimit);
 
         try (TableModel model = new TableModel(configuration, "x", PartitionBy.HOUR).col("i", ColumnType.INT).timestamp()) {
             TestUtils.create(model, engine);

@@ -136,11 +136,6 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     }
 
     @Override
-    public int getInactiveReaderMaxOpenPartitions() {
-        return overrides.getInactiveReaderMaxOpenPartitions() > 0 ? overrides.getInactiveReaderMaxOpenPartitions() : super.getInactiveReaderMaxOpenPartitions();
-    }
-
-    @Override
     public long getInactiveWalWriterTTL() {
         return -10000;
     }

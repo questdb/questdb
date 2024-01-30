@@ -105,7 +105,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static String inputRoot = null;
     protected static String inputWorkRoot = null;
     protected static IOURingFacade ioURingFacade = IOURingFacadeImpl.INSTANCE;
-    protected static int maxOpenPartitions = -1;
     protected static MessageBus messageBus;
     protected static Metrics metrics;
     protected static QuestDBTestNode node1;

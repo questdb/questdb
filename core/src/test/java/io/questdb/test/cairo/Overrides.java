@@ -69,7 +69,6 @@ public class Overrides {
     private int jitMode = SqlJitMode.JIT_MODE_ENABLED;
     private boolean mangleTableDirNames = true;
     private int maxFileNameLength = -1;
-    private int maxOpenPartitions = -1;
     private int maxSqlRecompileAttempts = -1;
     private int maxUncommittedRows = -1;
     private int o3ColumnMemorySize = -1;
@@ -199,12 +198,6 @@ public class Overrides {
     public long getGroupByAllocatorDefaultChunkSize() {
         return groupByAllocatorDefaultChunkSize;
     }
-
-
-    public int getInactiveReaderMaxOpenPartitions() {
-        return maxOpenPartitions;
-    }
-
 
     public String getInputRoot() {
         return inputRoot;
@@ -450,7 +443,6 @@ public class Overrides {
         mangleTableDirNames = true;
         walPurgeInterval = -1;
         tableRegistryCompactionThreshold = -1;
-        maxOpenPartitions = -1;
         walLookAheadTransactionCount = -1;
         walMaxLagTxnCount = -1;
         repeatMigrationsFromVersion = -1;
@@ -552,11 +544,6 @@ public class Overrides {
 
     public void setHideTelemetryTable(boolean hideTelemetryTable) {
         this.hideTelemetryTable = hideTelemetryTable;
-    }
-
-
-    public void setInactiveReaderMaxOpenPartitions(int maxOpenPartitions) {
-        this.maxOpenPartitions = maxOpenPartitions;
     }
 
 
