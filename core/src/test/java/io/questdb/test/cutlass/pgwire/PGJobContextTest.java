@@ -33,10 +33,7 @@ import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireServer;
-import io.questdb.griffin.QueryFutureUpdateListener;
-import io.questdb.griffin.QueryRegistry;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -3150,7 +3147,7 @@ if __name__ == "__main__":
                                 }
                             }
 
-                            // run simple query to test that previous query cancellatio doesn't 'spill into' other queries
+                            // run simple query to test that previous query cancellation doesn't 'spill into' other queries
                             try (PreparedStatement stmt = connection.prepareStatement("select sleep(1)")) {
                                 try (ResultSet result = stmt.executeQuery()) {
                                     result.next();
@@ -3191,7 +3188,7 @@ if __name__ == "__main__":
                 pstmt.setString(1, "SELECT symbol,approx_percentile(price, 50, 2) from trades");
                 ResultSet rs = pstmt.executeQuery();
                 sink.clear();
-                assertResultSet("query_id[BIGINT],worker_id[BIGINT],worker_pool[VARCHAR],username[VARCHAR],query_start[TIMESTAMP],state_change[TIMESTAMP],state[VARCHAR],query[VARCHAR]\n",
+                assertResultSet("query_id[BIGINT],worker_id[BIGINT],worker_pool[VARCHAR],username[VARCHAR],query_start[TIMESTAMP],state_change[TIMESTAMP],state[VARCHAR],is_wal[BIT],query[VARCHAR]\n",
                         sink, rs);
             }
         });
@@ -11637,7 +11634,7 @@ create table tab as (
         private volatile CharSequence queryText;
 
         @Override
-        public void onRegister(CharSequence query, long queryId) {
+        public void onRegister(CharSequence query, long queryId, SqlExecutionContext context) {
             if (queryText == null) {
                 return;
             }
