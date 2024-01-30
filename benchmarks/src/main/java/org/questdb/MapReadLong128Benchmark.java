@@ -82,18 +82,17 @@ public class MapReadLong128Benchmark {
 
     static {
         for (int i = 0; i < N; i++) {
-            long l0 = rnd.nextLong(N);
-            long l1 = rnd.nextLong(N);
+            for (int j = 0; j < N; j++) {
+                MapKey key = orderedMap.withKey();
+                key.putLong128(i, j);
+                MapValue value = key.createValue();
+                value.putLong(0, i);
 
-            MapKey key = orderedMap.withKey();
-            key.putLong128(l0, l1);
-            MapValue value = key.createValue();
-            value.putLong(0, i);
-
-            key = u16map.withKey();
-            key.putLong128(l0, l1);
-            value = key.createValue();
-            value.putLong(0, i);
+                key = u16map.withKey();
+                key.putLong128(i, j);
+                value = key.createValue();
+                value.putLong(0, i);
+            }
         }
     }
 }
