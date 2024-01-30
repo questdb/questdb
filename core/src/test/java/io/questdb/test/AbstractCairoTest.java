@@ -424,32 +424,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         DumpThreadStacksFunctionFactory.dumpThreadStacks();
     }
 
-//    private static ConfigurationOverrides createStaticOverrides() {
-//        var staticOverrides = new Overrides();
-//        staticOverrides.setCurrentMicros(currentMicros);
-//        staticOverrides.setTestMicrosClock(testMicrosClock);
-//        staticOverrides.setWriterAsyncCommandBusyWaitTimeout(writerAsyncCommandBusyWaitTimeout);
-//        staticOverrides.setWriterAsyncCommandMaxTimeout(writerAsyncCommandMaxTimeout);
-//        staticOverrides.setPageFrameMaxRows(pageFrameMaxRows);
-//        staticOverrides.setGroupByShardingThreshold(groupByShardingThreshold);
-//        staticOverrides.setSpinLockTimeout(spinLockTimeout);
-//        staticOverrides.setWalTxnNotificationQueueCapacity(walTxnNotificationQueueCapacity);
-//        staticOverrides.setSnapshotInstanceId(snapshotInstanceId);
-//        staticOverrides.setSnapshotRecoveryEnabled(snapshotRecoveryEnabled);
-//        staticOverrides.setWriterCommandQueueCapacity(writerCommandQueueCapacity);
-//        staticOverrides.setPageFrameReduceShardCount(pageFrameReduceShardCount);
-//        staticOverrides.setPageFrameReduceQueueCapacity(pageFrameReduceQueueCapacity);
-//        staticOverrides.setColumnVersionTaskPoolCapacity(columnVersionPurgeQueueCapacity);
-//        staticOverrides.setSqlCopyBufferSize(sqlCopyBufferSize);
-//        staticOverrides.setAttachableDirSuffix(attachableDirSuffix);
-//        staticOverrides.setFilesFacade(ff);
-//        staticOverrides.setDataAppendPageSize(dataAppendPageSize);
-//        staticOverrides.setDataAppendPageSize(dataAppendPageSize);
-//        staticOverrides.setInactiveReaderMaxOpenPartitions(maxOpenPartitions);
-//        staticOverrides.setFactoryProvider(factoryProvider);
-//        return staticOverrides;
-//    }
-
     @Before
     public void setUp() {
         super.setUp();
