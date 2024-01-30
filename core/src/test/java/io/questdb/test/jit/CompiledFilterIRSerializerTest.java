@@ -355,6 +355,14 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testStringNullConstant() throws Exception {
+        serialize("astring <> null");
+        assertIR("(i32 -1L)(str astring)(<>)(ret)");
+        serialize("astring = null");
+        assertIR("(i32 -1L)(str astring)(=)(ret)");
+    }
+
+    @Test
     public void testNullConstantValues() throws Exception {
         String[][] columns = new String[][]{
                 {"anint", "i32", Numbers.INT_NaN + "L"},
@@ -416,6 +424,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         filterToOptions.put("anint = 0 or abyte = 0", 4);
         filterToOptions.put("afloat = 0 or abyte = 0", 4);
         filterToOptions.put("afloat / abyte = 0", 4);
+        filterToOptions.put("astring = null", 4);
         // 8B
         filterToOptions.put("along = 0 or ashort = 0", 8);
         filterToOptions.put("adouble = 0 or ashort = 0", 8);
@@ -898,6 +907,8 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                     return "f64";
                 case I16_TYPE:
                     return "i128";
+                case STR_TYPE:
+                    return "str";
                 default:
                     return "unknown: " + type;
             }
