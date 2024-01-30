@@ -132,10 +132,12 @@ public class ApproxCountDistinctIntGroupByFunction extends LongFunction implemen
             if (srcCount == 0 || srcCount == Numbers.LONG_NaN) {
                 return;
             }
-            // TODO: How to handle the case when srcCount is not equal to 0 and not equal to NaN? This can occur as a
-            //  result of interpolation. Interpolation (sample by) doesn't support parallel execution yet.
+            // If reached here, it would mean that the value has been overwritten by interpolation
+            // associated with SAMPLE BY. However, since merge() is called only when the execution
+            // is parallel, this cannot happen. To produce the correct result, interpolation can
+            // only run on merged data (yielded by the merge phase), not on individual partitions.
+            assert false: "merging overwritten values with HyperLogLog is unsupported";
         }
-
         long srcPtr = srcValue.getLong(hllPtrIndex);
         if (srcPtr == 0) {
             return;
@@ -148,7 +150,8 @@ public class ApproxCountDistinctIntGroupByFunction extends LongFunction implemen
                 destValue.putLong(hllPtrIndex, srcPtr);
                 return;
             }
-            // TODO: Same here.
+            // See the comment above. The same applies here.
+            assert false: "merging overwritten values with HyperLogLog is unsupported";
         }
 
         long destPtr = destValue.getLong(hllPtrIndex);
