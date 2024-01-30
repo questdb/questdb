@@ -4817,12 +4817,14 @@ public class SqlOptimiser implements Mutable {
                 newGroupByModel.moveGroupByFrom(groupBy);
                 newGroupByModel.moveLimitFrom(selectChoose);
                 newGroupByModel.moveJoinAliasFrom(selectChoose);
+                newGroupByModel.moveSampleByFrom(selectChoose);
 
                 final QueryModel newSelectModel = queryModelPool.next();
                 newSelectModel.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
                 newSelectModel.moveGroupByFrom(selectChoose);
                 newSelectModel.moveLimitFrom(groupBy);
                 newSelectModel.moveJoinAliasFrom(groupBy);
+                newSelectModel.moveSampleByFrom(groupBy);
 
                 ObjList<QueryColumn> selectChooseColumns = selectChoose.getColumns();
                 ObjList<QueryColumn> groupByColumns = groupBy.getColumns();
