@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.wal;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
@@ -42,6 +43,7 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.Overrides;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -278,7 +280,8 @@ public class WalTableSqlTest extends AbstractCairoTest {
             }
 
             // Eject after every transaction
-            node1.getConfigurationOverrides().setWalApplyTableTimeQuota(1);
+            Overrides overrides1 = node1.getConfigurationOverrides();
+            overrides1.setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 1);
 
             try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
                 for (int i = 0; i < count; i++) {
@@ -290,7 +293,8 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     rowCount += rows;
                 }
             }
-            node1.getConfigurationOverrides().setWalApplyTableTimeQuota(Timestamps.MINUTE_MICROS);
+            Overrides overrides = node1.getConfigurationOverrides();
+            overrides.setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, Timestamps.MINUTE_MICROS);
             drainWalQueue();
 
             assertSql("count\n" + rowCount + "\n", "select count(*) from " + tableName);
@@ -1252,7 +1256,8 @@ public class WalTableSqlTest extends AbstractCairoTest {
             insert("insert into " + tableName + " values (101, 'a1a1', 'str-1', '2022-02-24T02', 'a2a2')");
 
 
-            node1.getConfigurationOverrides().setWalApplyTableTimeQuota(0);
+            Overrides overrides = node1.getConfigurationOverrides();
+            overrides.setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 0);
             runApplyOnce();
 
             TableToken token = engine.verifyTableName(tableName);
@@ -1625,7 +1630,8 @@ public class WalTableSqlTest extends AbstractCairoTest {
             // In order
             insert("insert into " + tableName + " values (101, 'a1a1', 'str-1', '2022-02-24T02', 'a2a2')");
 
-            node1.getConfigurationOverrides().setWalApplyTableTimeQuota(0);
+            Overrides overrides = node1.getConfigurationOverrides();
+            overrides.setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 0);
             runApplyOnce();
 
             TableToken token = engine.verifyTableName(tableName);

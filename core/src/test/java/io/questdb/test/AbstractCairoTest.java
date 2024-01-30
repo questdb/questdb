@@ -43,10 +43,8 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
-import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
-import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.Path;
@@ -1246,10 +1244,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected static void configOverrideSqlWindowStorePageSize(int windowStorePageSize) {
         node1.getConfigurationOverrides().setSqlWindowStorePageSize(windowStorePageSize);
-    }
-
-    protected static void configOverrideWalApplyTableTimeQuota(long walApplyTableTimeQuota) {
-        node1.getConfigurationOverrides().setWalApplyTableTimeQuota(walApplyTableTimeQuota);
     }
 
     protected static void configOverrideWalMaxLagTxnCount() {

@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.wal;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -1406,7 +1407,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
     @Test
     public void testMaxLagTxnCount() throws Exception {
-        configOverrideWalApplyTableTimeQuota(0);
+        node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 0);
         configOverrideWalMaxLagTxnCount();
         assertMemoryLeak(() -> {
             TableToken tableToken = createTable(testName.getMethodName());

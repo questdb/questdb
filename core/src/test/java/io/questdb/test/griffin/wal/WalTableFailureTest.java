@@ -1054,7 +1054,8 @@ public class WalTableFailureTest extends AbstractCairoTest {
         };
 
         assertMemoryLeak(filesFacade, () -> {
-            node1.getConfigurationOverrides().setWalApplyTableTimeQuota(0);
+            Overrides overrides = node1.getConfigurationOverrides();
+            overrides.setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 0);
 
             //1
             TableToken tableToken = createStandardWalTable(testName.getMethodName());

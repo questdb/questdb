@@ -34,6 +34,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.Overrides;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.mp.TestWorkerPool;
 import org.junit.After;
@@ -205,13 +206,15 @@ public class AbstractFuzzTest extends AbstractCairoTest {
     }
 
     protected void setFuzzProperties(long maxApplyTimePerTable, long splitPartitionThreshold, int o3PartitionSplitMaxCount) {
-        node1.getConfigurationOverrides().setWalApplyTableTimeQuota(maxApplyTimePerTable);
+        Overrides overrides = node1.getConfigurationOverrides();
+        overrides.setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, maxApplyTimePerTable);
         node1.getConfigurationOverrides().setPartitionO3SplitThreshold(splitPartitionThreshold);
         node1.getConfigurationOverrides().setO3PartitionSplitMaxCount(o3PartitionSplitMaxCount);
     }
 
     protected void setFuzzProperties(long maxApplyTimePerTable, long splitPartitionThreshold, int o3PartitionSplitMaxCount, long walMaxLagSize, int maxWalFdCache) {
-        node1.getConfigurationOverrides().setWalApplyTableTimeQuota(maxApplyTimePerTable);
+        Overrides overrides = node1.getConfigurationOverrides();
+        overrides.setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, maxApplyTimePerTable);
         node1.getConfigurationOverrides().setPartitionO3SplitThreshold(splitPartitionThreshold);
         node1.getConfigurationOverrides().setO3PartitionSplitMaxCount(o3PartitionSplitMaxCount);
         node1.getConfigurationOverrides().setWalMaxLagSize(walMaxLagSize);

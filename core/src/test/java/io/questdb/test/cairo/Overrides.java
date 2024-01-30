@@ -604,10 +604,6 @@ public class Overrides {
         this.testMicrosClock = testMicrosClock;
     }
 
-    public void setWalApplyTableTimeQuota(long walApplyTableTimeQuota) {
-        setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, walApplyTableTimeQuota);
-    }
-
     public void setWalLookAheadTransactionCount(int walLookAheadTransactionCount) {
         this.walLookAheadTransactionCount = walLookAheadTransactionCount;
     }
@@ -618,7 +614,7 @@ public class Overrides {
     }
 
     public void setWalMaxLagTxnCount(int walMaxLagTxnCount) {
-        this.walMaxLagTxnCount = walMaxLagTxnCount;
+        setProperty(PropertyKey.CAIRO_WAL_MAX_LAG_TXN_COUNT, walMaxLagTxnCount);
     }
 
 
