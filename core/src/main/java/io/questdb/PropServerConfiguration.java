@@ -354,7 +354,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int walPurgeWaitBeforeDelete;
     private final int walRecreateDistressedSequencerAttempts;
     private final long walSegmentRolloverRowCount;
-    private final long walSegmentRolloverSize;
     private final double walSquashUncommittedRowsMultiplier;
     private final boolean walSupported;
     private final int walTxnNotificationQueueCapacity;
@@ -377,6 +376,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     protected HttpServerConfiguration httpServerConfiguration = new PropHttpServerConfiguration();
     protected JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new PropJsonQueryProcessorConfiguration();
     protected StaticContentProcessorConfiguration staticContentProcessorConfiguration;
+    protected long walSegmentRolloverSize;
     private long cairoSqlCopyMaxIndexChunkSize;
     private FactoryProvider factoryProvider;
     private short floatDefaultColumnType;
@@ -2133,6 +2133,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getMaxSqlRecompileAttempts() {
+            return maxSqlRecompileAttempts;
+        }
+
+        @Override
         public int getMaxSwapFileCount() {
             return maxSwapFileCount;
         }
@@ -2838,11 +2843,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean mangleTableDirNames() {
             return false;
-        }
-
-        @Override
-        public int getMaxSqlRecompileAttempts() {
-            return maxSqlRecompileAttempts;
         }
     }
 
