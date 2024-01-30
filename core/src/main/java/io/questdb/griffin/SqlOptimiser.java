@@ -2804,7 +2804,7 @@ public class SqlOptimiser implements Mutable {
         if (model.getSelectModelType() == QueryModel.SELECT_MODEL_WINDOW && model.getOrderBy().size() > 0) {
             topLevelOrderByMnemonic = OrderByMnemonic.ORDER_BY_REQUIRED;
         }
-        //
+
         // determine if ordering is required
         switch (topLevelOrderByMnemonic) {
             case OrderByMnemonic.ORDER_BY_UNKNOWN:
@@ -4163,6 +4163,9 @@ public class SqlOptimiser implements Mutable {
     ) throws SqlException {
         assert model.getNestedModel() != null;
 
+
+        final StringSink sink = new StringSink();
+
         groupByAliases.clear();
         groupByNodes.clear();
 
@@ -4799,6 +4802,55 @@ public class SqlOptimiser implements Mutable {
         return root;
     }
 
+    private void rewriteGroupByToExtractAliases(QueryModel model) {
+        // original query: select a, b, c as z, count(*) as views from quest where a = 1 group by a,b,z
+        // expecting an output from rewriteSelectClause0 like
+        // select-group-by a, b, z, count() views from (select-choose a, b, c z from (quest timestamp (ts) where a = 1))
+        // we want to transform this into
+        // select-group-by a, b, c z, count() views from (select-choose a, b, c from (quest timestamp (ts) where a = 1))
+        // for now - lets solve specific case, and then generalise
+        if (model.getSelectModelType() == QueryModel.SELECT_MODEL_GROUP_BY) {
+            if (model.getNestedModel().getSelectModelType() == QueryModel.SELECT_MODEL_CHOOSE) {
+
+                QueryModel selectChoose = model.getNestedModel();
+
+                // check if any were aliased
+                boolean aliased = false;
+                ObjList<QueryColumn> selectChooseColumns = selectChoose.getColumns();
+                QueryColumn col;
+                for (int i = 0; i < selectChooseColumns.size(); i++) {
+                    col = selectChooseColumns.getQuick(i);
+                    if (col.getAlias() != col.getAst().token) {
+                        aliased = true;
+                        break;
+                    }
+                }
+
+                // guard against noop
+                if (!aliased) {
+                    return;
+                }
+
+                // search the upper model from any col names that are actually aliased in the select-choose
+                ObjList<QueryColumn> groupByColumns = model.getColumns();
+                for (int i = 0; i < selectChooseColumns.size(); i++) {
+                    col = selectChooseColumns.getQuick(i);
+
+                    // if it was aliased
+                    if (col.getAlias() != col.getAst().token) {
+                        // look for the token in the group by model
+                        final QueryColumn groupByCol = model.getAliasToColumnMap().get(col.getAlias());
+                        groupByCol.of(groupByCol.getAlias(), col.getAst(), col.isIncludeIntoWildcard(), col.getColumnType());
+                    }
+
+                }
+
+                // clear elided node?
+                model.setNestedModel(selectChoose.getNestedModel());
+            }
+        }
+    }
+
     // the intent is to either validate top-level columns in select columns or replace them with function calls
     // if columns do not exist
     private void rewriteTopLevelLiteralsToFunctions(QueryModel model) {
@@ -5079,6 +5131,7 @@ public class SqlOptimiser implements Mutable {
             resolveJoinColumns(rewrittenModel);
             optimiseBooleanNot(rewrittenModel);
             rewrittenModel = rewriteSelectClause(rewrittenModel, true, sqlExecutionContext, sqlParserCallback);
+            rewriteGroupByToExtractAliases(rewrittenModel);
             optimiseJoins(rewrittenModel);
             rewriteCountDistinct(rewrittenModel);
             rewriteNegativeLimit(rewrittenModel, sqlExecutionContext);
