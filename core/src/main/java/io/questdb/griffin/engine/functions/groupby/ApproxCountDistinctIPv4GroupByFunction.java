@@ -169,9 +169,9 @@ public class ApproxCountDistinctIPv4GroupByFunction extends LongFunction impleme
     @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         setValueIndex(columnTypes.getColumnCount());
-        columnTypes.add(ColumnType.LONG);
-        columnTypes.add(ColumnType.BOOLEAN);
-        columnTypes.add(ColumnType.LONG);
+        columnTypes.add(ColumnType.LONG); // overwritten value
+        columnTypes.add(ColumnType.LONG); // pointer to HyperLogLog
+        columnTypes.add(ColumnType.BOOLEAN); // flag denoting whether the value has been overwritten
     }
 
     @Override
@@ -198,13 +198,13 @@ public class ApproxCountDistinctIPv4GroupByFunction extends LongFunction impleme
     @Override
     public void setValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
-        this.overwrittenFlagIndex = valueIndex + 1;
-        this.hllPtrIndex = valueIndex + 2;
+        this.hllPtrIndex = valueIndex + 1;
+        this.overwrittenFlagIndex = valueIndex + 2;
     }
 
     private void overwrite(MapValue mapValue, long value) {
         mapValue.putLong(valueIndex, value);
-        mapValue.putBool(overwrittenFlagIndex, true);
         mapValue.putLong(hllPtrIndex, 0);
+        mapValue.putBool(overwrittenFlagIndex, true);
     }
 }
