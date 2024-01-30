@@ -32,7 +32,6 @@ import io.questdb.cairo.SqlWalMode;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.RostiAllocFacade;
-import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.test.tools.TestUtils;
@@ -42,12 +41,10 @@ import java.util.Properties;
 
 public class Overrides {
     private final Properties properties = new Properties();
-    private int binaryEncodingMaxLength = -1;
     private int capacity = -1;
     private boolean changed = true;
     private SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration;
     private Boolean columnPreTouchEnabled = null;
-    private long columnPurgeRetryDelay = -1;
     private int columnVersionTaskPoolCapacity = -1;
     private Boolean copyPartitionOnAttach = null;
     private long currentMicros = -1;
@@ -104,10 +101,6 @@ public class Overrides {
     }
 
 
-    public int getBinaryEncodingMaxLength() {
-        return binaryEncodingMaxLength;
-    }
-
 
     public int getCapacity() {
         return capacity;
@@ -117,12 +110,6 @@ public class Overrides {
     public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
         return circuitBreakerConfiguration;
     }
-
-
-    public long getColumnPurgeRetryDelay() {
-        return columnPurgeRetryDelay;
-    }
-
 
     public int getColumnVersionTaskPoolCapacity() {
         return columnVersionTaskPoolCapacity;
@@ -413,11 +400,6 @@ public class Overrides {
     }
 
 
-    public void setBinaryEncodingMaxLength(int binaryEncodingMaxLength) {
-        this.binaryEncodingMaxLength = binaryEncodingMaxLength;
-    }
-
-
     public void setCapacity(int capacity) {
         this.capacity = capacity;
     }
@@ -430,11 +412,6 @@ public class Overrides {
 
     public void setColumnPreTouchEnabled(Boolean columnPreTouchEnabled) {
         this.columnPreTouchEnabled = columnPreTouchEnabled;
-    }
-
-
-    public void setColumnPurgeRetryDelay(long columnPurgeRetryDelay) {
-        this.columnPurgeRetryDelay = columnPurgeRetryDelay;
     }
 
 

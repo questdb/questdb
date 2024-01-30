@@ -64,19 +64,11 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     }
 
     @Override
-    public int getBinaryEncodingMaxLength() {
-        return overrides.getBinaryEncodingMaxLength() > 0 ? overrides.getBinaryEncodingMaxLength() : super.getBinaryEncodingMaxLength();
-    }
-
-    @Override
     public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
         return overrides.getCircuitBreakerConfiguration() != null ? overrides.getCircuitBreakerConfiguration() : super.getCircuitBreakerConfiguration();
     }
 
-    @Override
-    public long getColumnPurgeRetryDelay() {
-        return overrides.getColumnPurgeRetryDelay() > 0 ? overrides.getColumnPurgeRetryDelay() : 10;
-    }
+
 
     @Override
     public int getColumnPurgeTaskPoolCapacity() {

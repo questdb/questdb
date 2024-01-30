@@ -35,18 +35,8 @@ import io.questdb.test.cairo.Overrides;
 public class StaticOverrides extends Overrides {
 
     @Override
-    public int getBinaryEncodingMaxLength() {
-        return AbstractCairoTest.binaryEncodingMaxLength;
-    }
-
-    @Override
     public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
         return AbstractCairoTest.circuitBreakerConfiguration;
-    }
-
-    @Override
-    public long getColumnPurgeRetryDelay() {
-        return AbstractCairoTest.columnPurgeRetryDelay;
     }
 
     @Override
@@ -95,18 +85,8 @@ public class StaticOverrides extends Overrides {
     }
 
     @Override
-    public void setBinaryEncodingMaxLength(int binaryEncodingMaxLength) {
-        AbstractCairoTest.binaryEncodingMaxLength = binaryEncodingMaxLength;
-    }
-
-    @Override
     public void setCircuitBreakerConfiguration(SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration) {
         AbstractCairoTest.circuitBreakerConfiguration = circuitBreakerConfiguration;
-    }
-
-    @Override
-    public void setColumnPurgeRetryDelay(long columnPurgeRetryDelay) {
-        AbstractCairoTest.columnPurgeRetryDelay = columnPurgeRetryDelay;
     }
 
     @Override

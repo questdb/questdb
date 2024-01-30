@@ -83,11 +83,9 @@ public abstract class AbstractCairoTest extends AbstractTest {
     private static final long[] SNAPSHOT = new long[MemoryTag.SIZE];
     private static final LongList rows = new LongList();
     public static StaticOverrides staticOverrides = new StaticOverrides();
-    protected static int binaryEncodingMaxLength = -1;
     protected static BindVariableService bindVariableService;
     protected static NetworkSqlExecutionCircuitBreaker circuitBreaker;
     protected static SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration;
-    protected static long columnPurgeRetryDelay = -1;
     protected static CairoConfiguration configuration;
     protected static TestCairoConfigurationFactory configurationFactory;
     protected static long currentMicros = -1;

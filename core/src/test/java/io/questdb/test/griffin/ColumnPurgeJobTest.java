@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalUtils;
@@ -49,7 +50,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
     public void setUpUpdates() {
         iteration = 1;
         currentMicros = 0;
-        columnPurgeRetryDelay = 1;
+        node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 1);
     }
 
     @Test
