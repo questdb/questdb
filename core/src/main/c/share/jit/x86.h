@@ -105,11 +105,6 @@ namespace questdb::x86 {
                 c.movsd(row_data, mem);
                 return {row_data, type, data_kind_t::kMemory};
             }
-            case data_type_t::str: {
-                Gp row_data = c.newGpq("str_mem");
-                c.mov(row_data, mem);
-                return {row_data, type, data_kind_t::kMemory};
-            }
             default:
                 __builtin_unreachable();
         }
