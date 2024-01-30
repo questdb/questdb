@@ -165,8 +165,7 @@ public class QuestDBTestNode {
             final TelemetryConfiguration telemetryConfiguration = new DefaultTelemetryConfiguration() {
                 @Override
                 public boolean hideTables() {
-                    return true;
-//                    return overrides.isHidingTelemetryTable();
+                    return overrides.isHidingTelemetryTable();
                 }
             };
 

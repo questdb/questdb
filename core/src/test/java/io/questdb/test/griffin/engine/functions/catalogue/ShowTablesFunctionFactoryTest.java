@@ -59,7 +59,7 @@ public class ShowTablesFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testMetadataQueryDefaultHysteresisParams() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 83737);
-        node1.setProperty(PropertyKey.CAIRO_O3_MAX_LAG, 28291);
+        node1.setProperty(PropertyKey.CAIRO_O3_MAX_LAG, 28);
 
         try (TableModel tm1 = new TableModel(configuration, "table1", PartitionBy.DAY)) {
             tm1.col("abc", ColumnType.STRING);
@@ -69,7 +69,7 @@ public class ShowTablesFunctionFactoryTest extends AbstractCairoTest {
 
         assertSql(
                 "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
-                        "1\ttable1\tts1\tDAY\t83737\t28291\n", "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()"
+                        "1\ttable1\tts1\tDAY\t83737\t28000\n", "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()"
         );
     }
 

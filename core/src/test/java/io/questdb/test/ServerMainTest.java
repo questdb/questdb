@@ -424,9 +424,6 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "circuit.breaker.buffer.size\tQDB_CIRCUIT_BREAKER_BUFFER_SIZE\t64\tdefault\tfalse\tfalse\n" +
                                     "circuit.breaker.throttle\tQDB_CIRCUIT_BREAKER_THROTTLE\t2000000\tdefault\tfalse\tfalse\n" +
                                     "config.validation.strict\tQDB_CONFIG_VALIDATION_STRICT\tfalse\tdefault\tfalse\tfalse\n" +
-                                    "debug.force.recv.fragmentation.chunk.size\tQDB_DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE\t2147483647\tdefault\tfalse\tfalse\n" +
-                                    "debug.wal.purge.wait.before.delete\tQDB_DEBUG_WAL_PURGE_WAIT_BEFORE_DELETE\t0\tdefault\tfalse\tfalse\n" +
-                                    "debug.force.send.fragmentation.chunk.size\tQDB_DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE\t2147483647\tdefault\tfalse\tfalse\n" +
                                     "http.allow.deflate.before.send\tQDB_HTTP_ALLOW_DEFLATE_BEFORE_SEND\tfalse\tdefault\tfalse\tfalse\n" +
                                     "http.bind.to\tQDB_HTTP_BIND_TO\t0.0.0.0:9010\tconf\tfalse\tfalse\n" +
                                     "http.busy.retry.exponential.wait.multiplier\tQDB_HTTP_BUSY_RETRY_EXPONENTIAL_WAIT_MULTIPLIER\t2.0\tdefault\tfalse\tfalse\n" +

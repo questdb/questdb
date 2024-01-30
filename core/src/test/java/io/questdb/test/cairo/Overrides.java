@@ -27,8 +27,6 @@ package io.questdb.test.cairo;
 import io.questdb.FactoryProvider;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.SqlJitMode;
-import io.questdb.cairo.SqlWalMode;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.RostiAllocFacade;
@@ -41,74 +39,29 @@ import java.util.Properties;
 
 public class Overrides {
     private final Properties properties = new Properties();
-//    private int capacity = -1;
     private boolean changed = true;
     private SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration;
-//    private Boolean columnPreTouchEnabled = null;
-//    private int columnVersionTaskPoolCapacity = -1;
-//    private Boolean copyPartitionOnAttach = null;
     private long currentMicros = -1;
     private final MicrosecondClock defaultMicrosecondClock = () -> currentMicros >= 0 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
+    private boolean isHiddenTelemetryTable = false;
     private MicrosecondClock testMicrosClock = defaultMicrosecondClock;
-//    private int defaultTableWriteMode = SqlWalMode.WAL_NOT_SET;
     private Map<String, String> env = null;
     private FactoryProvider factoryProvider = null;
     private FilesFacade ff;
-//    private long groupByAllocatorDefaultChunkSize = -1;
-//    private boolean hideTelemetryTable = false;
-    private String inputRoot = null;
-    private String inputWorkRoot = null;
-//    private Boolean ioURingEnabled = null;
-//    private int jitMode = SqlJitMode.JIT_MODE_ENABLED;
+    private final String inputRoot = null;
+    private final String inputWorkRoot = null;
     private boolean mangleTableDirNames = true;
-//    private int maxFileNameLength = -1;
-//    private int maxSqlRecompileAttempts = -1;
-//    private int maxUncommittedRows = -1;
-//    private int o3ColumnMemorySize = -1;
-//    private long o3MaxLag = -1;
-//    private long o3MinLag = -1;
-//    private int o3PartitionSplitMaxCount = -1;
-//    private boolean o3QuickSortEnabled = false;
-//    private Boolean parallelFilterEnabled = null;
-//    private int parallelImportStatusLogKeepNDays = -1;
-//    private long partitionO3SplitThreshold;
     private CairoConfiguration propsConfig;
-//    private int repeatMigrationsFromVersion = -1;
-//    private int rndFunctionMemoryMaxPages = -1;
-//    private int rndFunctionMemoryPageSize = -1;
     private String root;
     private RostiAllocFacade rostiAllocFacade = null;
-//    private int sampleByIndexSearchPageSize;
-//    private boolean simulateCrashEnabled;
-//    private int sqlJoinMetadataMaxResizes = -1;
-//    private int sqlJoinMetadataPageSize = -1;
-//    private int sqlWindowMaxRecursion;
-//    private int sqlWindowStoreMaxPages;
-//    private int sqlWindowStorePageSize;
-//    private int tableRegistryCompactionThreshold;
-//    private int walLookAheadTransactionCount = -1;
-//    private long walMaxLagSize = -1;
-//    private int walMaxLagTxnCount = -1;
-//    private int walMaxSegmentFileDescriptorsCache = -1;
 
     public Overrides() {
         TestUtils.resetToDefaultTestProperties(properties);
     }
 
-
-
-//    public int getCapacity() {
-//        return capacity;
-//    }
-//
-//
     public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
         return circuitBreakerConfiguration;
     }
-//
-//    public int getColumnVersionTaskPoolCapacity() {
-//        return columnVersionTaskPoolCapacity;
-//    }
 
     public CairoConfiguration getConfiguration(String root) {
         if (changed || this.root != root) {
@@ -119,26 +72,13 @@ public class Overrides {
         return this.propsConfig;
     }
 
-
-//    public Boolean getCopyPartitionOnAttach() {
-//        return copyPartitionOnAttach;
-//    }
-
-
     public long getCurrentMicros() {
         return currentMicros;
     }
 
-
-//    public int getDefaultTableWriteMode() {
-//        return defaultTableWriteMode;
-//    }
-
-
     public Map<String, String> getEnv() {
         return env != null ? env : System.getenv();
     }
-
 
     public FactoryProvider getFactoryProvider() {
         return factoryProvider;
@@ -149,178 +89,25 @@ public class Overrides {
         return ff;
     }
 
-
-//    public long getGroupByAllocatorDefaultChunkSize() {
-//        return groupByAllocatorDefaultChunkSize;
-//    }
-//
     public String getInputRoot() {
         return inputRoot;
     }
-//
-//
+
     public String getInputWorkRoot() {
         return inputWorkRoot;
     }
-//
-//
-//    public int getJitMode() {
-//        return jitMode;
-//    }
-//
-//
-//    public int getMaxFileNameLength() {
-//        return maxFileNameLength;
-//    }
-//
-//
-//    public int getMaxSqlRecompileAttempts() {
-//        return maxSqlRecompileAttempts;
-//    }
-//
-//
-//    public int getMaxUncommittedRows() {
-//        return maxUncommittedRows;
-//    }
-//
-//    public int getO3ColumnMemorySize() {
-//        return o3ColumnMemorySize;
-//    }
-//
-//    public long getO3MaxLag() {
-//        return o3MaxLag;
-//    }
-//
-//
-//    public long getO3MinLag() {
-//        return o3MinLag;
-//    }
-//
-//
-//    public int getO3PartitionSplitMaxCount() {
-//        return o3PartitionSplitMaxCount;
-//    }
-//
-//
-//    public int getParallelImportStatusLogKeepNDays() {
-//        return parallelImportStatusLogKeepNDays;
-//    }
-
-
-//    public long getPartitionO3SplitThreshold() {
-//        return partitionO3SplitThreshold;
-//    }
-//
-//
-//    public int getRepeatMigrationsFromVersion() {
-//        return repeatMigrationsFromVersion;
-//    }
-//
-//
-//    public int getRndFunctionMemoryMaxPages() {
-//        return rndFunctionMemoryMaxPages;
-//    }
-//
-//
-//    public int getRndFunctionMemoryPageSize() {
-//        return rndFunctionMemoryPageSize;
-//    }
-
 
     public RostiAllocFacade getRostiAllocFacade() {
         return rostiAllocFacade;
     }
 
+    public MicrosecondClock getTestMicrosClock() {
+        return testMicrosClock;
+    }
 
-//    public int getSampleByIndexSearchPageSize() {
-//        return sampleByIndexSearchPageSize;
-//    }
-//
-//
-//    public boolean getSimulateCrashEnabled() {
-//        return simulateCrashEnabled;
-//    }
-//
-//
-//    public int getSqlJoinMetadataMaxResizes() {
-//        return sqlJoinMetadataMaxResizes;
-//    }
-//
-//
-//    public int getSqlJoinMetadataPageSize() {
-//        return sqlJoinMetadataPageSize;
-//    }
-//
-//    public int getSqlWindowMaxRecursion() {
-//        return sqlWindowMaxRecursion;
-//    }
-//
-//    public int getSqlWindowStoreMaxPages() {
-//        return sqlWindowStoreMaxPages;
-//    }
-//
-//    public int getSqlWindowStorePageSize() {
-//        return sqlWindowStorePageSize;
-//    }
-//
-//
-//    public int getTableRegistryCompactionThreshold() {
-//        return tableRegistryCompactionThreshold;
-//    }
-//
-//
-public MicrosecondClock getTestMicrosClock() {
-    return testMicrosClock;
-}
-//
-//
-//    public int getWalApplyLookAheadTransactionCount() {
-//        return walLookAheadTransactionCount;
-//    }
-//
-//
-//    public long getWalMaxLagSize() {
-//        return walMaxLagSize;
-//    }
-//
-//
-//    public int getWalMaxLagTxnCount() {
-//        return walMaxLagTxnCount;
-//    }
-
-
-//    public int getWalMaxSegmentFileDescriptorsCache() {
-//        return walMaxSegmentFileDescriptorsCache;
-//    }
-//
-//
-//
-//
-//    public Boolean isColumnPreTouchEnabled() {
-//        return columnPreTouchEnabled;
-//    }
-//
-//
-//    public boolean isHidingTelemetryTable() {
-//        return hideTelemetryTable;
-//    }
-//
-//
-//    public Boolean isIoURingEnabled() {
-//        return ioURingEnabled;
-//    }
-//
-//
-//    public boolean isO3QuickSortEnabled() {
-//        return o3QuickSortEnabled;
-//    }
-//
-//
-//    public Boolean isParallelFilterEnabled() {
-//        return parallelFilterEnabled;
-//    }
-
-
+    public boolean isHidingTelemetryTable() {
+        return isHiddenTelemetryTable;
+    }
 
     public boolean mangleTableDirNames() {
         return mangleTableDirNames;
@@ -328,177 +115,34 @@ public MicrosecondClock getTestMicrosClock() {
 
 
     public void reset() {
-//        o3ColumnMemorySize = -1;
-//        maxUncommittedRows = -1;
-//        o3MaxLag = -1;
-//        o3MinLag = -1;
         currentMicros = -1;
         testMicrosClock = defaultMicrosecondClock;
-//        sampleByIndexSearchPageSize = -1;
-//        jitMode = SqlJitMode.JIT_MODE_ENABLED;
-//        rndFunctionMemoryPageSize = -1;
-//        rndFunctionMemoryMaxPages = -1;
-//        parallelFilterEnabled = null;
-//        columnPreTouchEnabled = null;
-//        columnVersionTaskPoolCapacity = -1;
         rostiAllocFacade = null;
-//        sqlJoinMetadataPageSize = -1;
-//        sqlJoinMetadataMaxResizes = -1;
-//        ioURingEnabled = null;
-//        parallelImportStatusLogKeepNDays = -1;
-//        defaultTableWriteMode = SqlWalMode.WAL_NOT_SET;
-//        copyPartitionOnAttach = null;
         ff = null;
-//        o3QuickSortEnabled = false;
         mangleTableDirNames = true;
-//        tableRegistryCompactionThreshold = -1;
-//        walLookAheadTransactionCount = -1;
-//        walMaxLagTxnCount = -1;
-//        repeatMigrationsFromVersion = -1;
         factoryProvider = null;
-//        simulateCrashEnabled = false;
         env = null;
-//        walMaxLagSize = -1;
-//        groupByAllocatorDefaultChunkSize = -1;
-//        maxSqlRecompileAttempts = -1;
+        isHiddenTelemetryTable = false;
 
         TestUtils.resetToDefaultTestProperties(properties);
         changed = true;
     }
 
-
-//    public void setCapacity(int capacity) {
-//        this.capacity = capacity;
-//    }
-
-//
-//    public void setCircuitBreakerConfiguration(SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration) {
-//        this.circuitBreakerConfiguration = circuitBreakerConfiguration;
-//    }
-//
-//
-//    public void setColumnPreTouchEnabled(Boolean columnPreTouchEnabled) {
-//        this.columnPreTouchEnabled = columnPreTouchEnabled;
-//    }
-//
-//
-//    public void setColumnVersionTaskPoolCapacity(int columnVersionTaskPoolCapacity) {
-//        this.columnVersionTaskPoolCapacity = columnVersionTaskPoolCapacity;
-//    }
-//
-//
-//    public void setCopyPartitionOnAttach(Boolean copyPartitionOnAttach) {
-//        this.copyPartitionOnAttach = copyPartitionOnAttach;
-//    }
-//
-//
     public void setCurrentMicros(long currentMicros) {
         this.currentMicros = currentMicros;
     }
-
-
-//    public void setDefaultTableWriteMode(int defaultTableWriteMode) {
-//        this.defaultTableWriteMode = defaultTableWriteMode;
-//    }
 
     public void setEnv(Map<String, String> env) {
         this.env = env;
     }
 
+    public void setIsHidingTelemetryTable(boolean val) {
+        this.isHiddenTelemetryTable = val;
+    }
 
-//    public void setFactoryProvider(FactoryProvider factoryProvider) {
-//        this.factoryProvider = factoryProvider;
-//    }
-//
-//
-//    public void setFilesFacade(FilesFacade ff) {
-//        this.ff = ff;
-//    }
-
-//
-//    public void setGroupByAllocatorDefaultChunkSize(long groupByAllocatorDefaultChunkSize) {
-//        this.groupByAllocatorDefaultChunkSize = groupByAllocatorDefaultChunkSize;
-//    }
-//
-//
-//    public void setHideTelemetryTable(boolean hideTelemetryTable) {
-//        this.hideTelemetryTable = hideTelemetryTable;
-//    }
-//
-//
-//    public void setInputRoot(String inputRoot) {
-//        this.inputRoot = inputRoot;
-//    }
-//
-//
-//    public void setInputWorkRoot(String inputWorkRoot) {
-//        this.inputWorkRoot = inputWorkRoot;
-//    }
-//
-//
-//    public void setIoURingEnabled(Boolean ioURingEnabled) {
-//        this.ioURingEnabled = ioURingEnabled;
-//    }
-//
-//
-//    public void setJitMode(int jitMode) {
-//        this.jitMode = jitMode;
-//    }
-//
-//
     public void setMangleTableDirNames(boolean mangle) {
         this.mangleTableDirNames = mangle;
     }
-//
-//
-//    public void setMaxFileNameLength(int maxFileNameLength) {
-//        this.maxFileNameLength = maxFileNameLength;
-//    }
-//
-//
-//    public void setMaxSqlRecompileAttempts(int maxSqlRecompileAttempts) {
-//        this.maxSqlRecompileAttempts = maxSqlRecompileAttempts;
-//    }
-//
-//
-//    public void setMaxUncommittedRows(int maxUncommittedRows) {
-//        this.maxUncommittedRows = maxUncommittedRows;
-//    }
-//
-//
-//    public void setO3ColumnMemorySize(int size) {
-//        o3ColumnMemorySize = size;
-//    }
-//
-//
-//    public void setO3MaxLag(long o3MaxLag) {
-//        this.o3MaxLag = o3MaxLag;
-//    }
-//
-//
-//    public void setO3MinLag(long minLag) {
-//        o3MinLag = minLag;
-//    }
-//
-//
-
-    //
-    //
-    //    public void setO3QuickSortEnabled(boolean o3QuickSortEnabled) {
-    //        this.o3QuickSortEnabled = o3QuickSortEnabled;
-    //    }
-    //
-    //
-    //    public void setParallelFilterEnabled(Boolean parallelFilterEnabled) {
-    //        this.parallelFilterEnabled = parallelFilterEnabled;
-    //    }
-    //
-    //
-    //    public void setParallelImportStatusLogKeepNDays(int parallelImportStatusLogKeepNDays) {
-    //        this.parallelImportStatusLogKeepNDays = parallelImportStatusLogKeepNDays;
-    //    }
-    //
-    //
 
     public void setProperty(PropertyKey propertyKey, long value) {
         properties.setProperty(propertyKey.getPropertyPath(), String.valueOf(value));
@@ -519,72 +163,7 @@ public MicrosecondClock getTestMicrosClock() {
         changed = true;
     }
 
-//    public void setRegistryCompactionThreshold(int value) {
-//        tableRegistryCompactionThreshold = value;
-//    }
-//
-//    public void setRepeatMigrationsFromVersion(int value) {
-//        repeatMigrationsFromVersion = value;
-//    }
-//
-//    public void setRndFunctionMemoryMaxPages(int rndFunctionMemoryMaxPages) {
-//        this.rndFunctionMemoryMaxPages = rndFunctionMemoryMaxPages;
-//    }
-//
-//    public void setRndFunctionMemoryPageSize(int rndFunctionMemoryPageSize) {
-//        this.rndFunctionMemoryPageSize = rndFunctionMemoryPageSize;
-//    }
-//
     public void setRostiAllocFacade(RostiAllocFacade rostiAllocFacade) {
         this.rostiAllocFacade = rostiAllocFacade;
     }
-//
-//    public void setSampleByIndexSearchPageSize(int sampleByIndexSearchPageSize) {
-//        this.sampleByIndexSearchPageSize = sampleByIndexSearchPageSize;
-//    }
-//
-//    public void setSimulateCrashEnabled(boolean enabled) {
-//        this.simulateCrashEnabled = enabled;
-//    }
-//
-//    public void setSqlJoinMetadataMaxResizes(int sqlJoinMetadataMaxResizes) {
-//        this.sqlJoinMetadataMaxResizes = sqlJoinMetadataMaxResizes;
-//    }
-//
-//    public void setSqlJoinMetadataPageSize(int sqlJoinMetadataPageSize) {
-//        this.sqlJoinMetadataPageSize = sqlJoinMetadataPageSize;
-//    }
-//
-//    public void setSqlWindowMaxRecursion(int maxRecursion) {
-//        this.sqlWindowMaxRecursion = maxRecursion;
-//    }
-//
-//    public void setSqlWindowStoreMaxPages(int windowStoreMaxPages) {
-//        this.sqlWindowStoreMaxPages = windowStoreMaxPages;
-//    }
-//
-//    public void setSqlWindowStorePageSize(int windowStorePageSize) {
-//        this.sqlWindowStorePageSize = windowStorePageSize;
-//    }
-//
-//    public void setTestMicrosClock(MicrosecondClock testMicrosClock) {
-//        this.testMicrosClock = testMicrosClock;
-//    }
-//
-//    public void setWalLookAheadTransactionCount(int walLookAheadTransactionCount) {
-//        this.walLookAheadTransactionCount = walLookAheadTransactionCount;
-//    }
-//
-//
-//    public void setWalMaxLagSize(long value) {
-//        walMaxLagSize = value;
-//    }
-//
-//
-//    public void setWalMaxSegmentFileDescriptorsCache(int value) {
-//        walMaxSegmentFileDescriptorsCache = value;
-//    }
-
-
-
 }

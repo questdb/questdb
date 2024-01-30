@@ -541,7 +541,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             FilesFacade filesFacade,
             MicrosecondClock microsecondClock,
             FactoryProviderFactory fpf,
-            boolean loadMimeTypeCache
+            boolean loadAdditionalConfigurations
     ) throws ServerConfigurationException, JsonException {
         this.log = log;
         this.filesFacade = filesFacade;
@@ -778,7 +778,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.maxHttpQueryResponseRowLimit = getLong(properties, env, PropertyKey.HTTP_SECURITY_MAX_RESPONSE_ROWS, Long.MAX_VALUE);
             this.interruptOnClosedConnection = getBoolean(properties, env, PropertyKey.HTTP_SECURITY_INTERRUPT_ON_CLOSED_CONNECTION, true);
 
-            if (loadMimeTypeCache && httpServerEnabled) {
+            if (loadAdditionalConfigurations && httpServerEnabled) {
                 this.jsonQueryConnectionCheckFrequency = getInt(properties, env, PropertyKey.HTTP_JSON_QUERY_CONNECTION_CHECK_FREQUENCY, 1_000_000);
                 this.jsonQueryFloatScale = getInt(properties, env, PropertyKey.HTTP_JSON_QUERY_FLOAT_SCALE, 4);
                 this.jsonQueryDoubleScale = getInt(properties, env, PropertyKey.HTTP_JSON_QUERY_DOUBLE_SCALE, 12);
@@ -1004,8 +1004,10 @@ public class PropServerConfiguration implements ServerConfiguration {
                     this.locale
             );
 
-            try (JsonLexer lexer = new JsonLexer(1024, 1024)) {
-                inputFormatConfiguration.parseConfiguration(PropServerConfiguration.class, lexer, confRoot, sqlCopyFormatsFile);
+            if (loadAdditionalConfigurations) {
+                try (JsonLexer lexer = new JsonLexer(1024, 1024)) {
+                    inputFormatConfiguration.parseConfiguration(PropServerConfiguration.class, lexer, confRoot, sqlCopyFormatsFile);
+                }
             }
 
             this.cairoSqlCopyRoot = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_ROOT, null);
@@ -1542,7 +1544,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
         }
 
-        allPairs.put(key, new ConfigPropertyValueImpl(result, valueSource, false));
+        if (!key.isDebug()) {
+            allPairs.put(key, new ConfigPropertyValueImpl(result, valueSource, false));
+        }
         return result;
     }
 

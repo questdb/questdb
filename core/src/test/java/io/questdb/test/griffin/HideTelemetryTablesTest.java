@@ -24,7 +24,6 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.PropertyKey;
 import io.questdb.TelemetryConfigLogger;
 import io.questdb.tasks.TelemetryTask;
 import io.questdb.test.AbstractCairoTest;
@@ -34,7 +33,7 @@ public class HideTelemetryTablesTest extends AbstractCairoTest {
 
     @Test
     public void testHide() throws Exception {
-        node1.setProperty(PropertyKey.TELEMETRY_HIDE_TABLES, true);
+        node1.getConfigurationOverrides().setIsHidingTelemetryTable(true);
 
         assertMemoryLeak(() -> {
             ddl("create table test(a int)");
@@ -49,6 +48,8 @@ public class HideTelemetryTablesTest extends AbstractCairoTest {
 
     @Test
     public void testShow() throws Exception {
+        node1.getConfigurationOverrides().setIsHidingTelemetryTable(false);
+
         assertMemoryLeak(() -> {
             ddl("create table test(a int)");
             ddl("create table " + TelemetryTask.TABLE_NAME + "(a int)");
