@@ -227,11 +227,6 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     }
 
     @Override
-    public long getSpinLockTimeout() {
-        return overrides.getSpinLockTimeout() > -1 ? overrides.getSpinLockTimeout() : 5000L;
-    }
-
-    @Override
     public int getSqlCopyBufferSize() {
         return overrides.getSqlCopyBufferSize();
     }

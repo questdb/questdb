@@ -89,11 +89,6 @@ public class StaticOverrides extends Overrides {
     }
 
     @Override
-    public long getSpinLockTimeout() {
-        return AbstractCairoTest.spinLockTimeout;
-    }
-
-    @Override
     public int getSqlCopyBufferSize() {
         return AbstractCairoTest.sqlCopyBufferSize;
     }
@@ -114,7 +109,6 @@ public class StaticOverrides extends Overrides {
 
         AbstractCairoTest.currentMicros = -1;
         AbstractCairoTest.testMicrosClock = AbstractCairoTest.defaultMicrosecondClock;
-        AbstractCairoTest.spinLockTimeout = -1;
         AbstractCairoTest.sqlCopyBufferSize = 1024 * 1024;
         AbstractCairoTest.ff = null;
         AbstractCairoTest.dataAppendPageSize = -1;
@@ -174,11 +168,6 @@ public class StaticOverrides extends Overrides {
     @Override
     public void setInputWorkRoot(String inputWorkRoot) {
         AbstractCairoTest.inputWorkRoot = inputWorkRoot;
-    }
-
-    @Override
-    public void setSpinLockTimeout(long spinLockTimeout) {
-        AbstractCairoTest.spinLockTimeout = spinLockTimeout;
     }
 
     @Override

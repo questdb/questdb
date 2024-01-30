@@ -1863,7 +1863,7 @@ public class TableReaderTest extends AbstractCairoTest {
     public void testMetadataFileDoesNotExist() throws Exception {
         String tableName = "testMetadataFileDoesNotExist";
         TableToken tableToken = createTable(tableName, PartitionBy.HOUR);
-        spinLockTimeout = 10;
+        node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 10);
         AtomicInteger openCount = new AtomicInteger(1000);
 
         assertMemoryLeak(() -> {
@@ -1900,7 +1900,7 @@ public class TableReaderTest extends AbstractCairoTest {
     public void testMetadataFileDoesNotExist2() throws Exception {
         String tableName = "testMetadataFileDoesNotExist";
         TableToken tableToken = createTable(tableName, PartitionBy.HOUR);
-        spinLockTimeout = 10;
+        node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 10);
         AtomicInteger openCount = new AtomicInteger(1000);
 
         assertMemoryLeak(() -> {
@@ -1954,7 +1954,7 @@ public class TableReaderTest extends AbstractCairoTest {
     public void testMetadataVersionDoesNotMatch() throws Exception {
         String tableName = "testMetadataVersionDoesNotMatch";
         TableToken tableToken = createTable(tableName, PartitionBy.HOUR);
-        spinLockTimeout = 10;
+        node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 10);
 
         assertMemoryLeak(() -> {
             try (TableReader reader = getReader(tableToken)) {

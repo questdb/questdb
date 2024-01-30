@@ -38,6 +38,7 @@ import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.Overrides;
 import io.questdb.test.cutlass.line.tcp.load.LineData;
 import io.questdb.test.cutlass.line.tcp.load.TableData;
 import io.questdb.test.tools.TestUtils;
@@ -77,7 +78,8 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
         setProperty(CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, "5000");
         super.setUp();
         node1.setProperty(CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 5000);
-        node1.getConfigurationOverrides().setSpinLockTimeout(5000);
+        Overrides overrides = node1.getConfigurationOverrides();
+        overrides.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 5000);
     }
 
     @Test

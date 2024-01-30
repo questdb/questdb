@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.wal;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
@@ -46,6 +47,7 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.Overrides;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -1247,7 +1249,8 @@ public class WalTableFailureTest extends AbstractCairoTest {
     public void testWalUpdateFailedCompilationSuspendsTable() throws Exception {
         String tableName = testName.getMethodName();
         String query = "update " + tableName + " set x = 1111";
-        node1.getConfigurationOverrides().setSpinLockTimeout(1);
+        Overrides overrides = node1.getConfigurationOverrides();
+        overrides.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 1);
         runCheckTableSuspended(tableName, query, new TestFilesFacadeImpl() {
             private int attempt = 0;
 

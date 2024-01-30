@@ -83,7 +83,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
     private static final long[] SNAPSHOT = new long[MemoryTag.SIZE];
     private static final LongList rows = new LongList();
     public static long dataAppendPageSize = -1;
-    public static long spinLockTimeout = -1;
     public static StaticOverrides staticOverrides = new StaticOverrides();
     protected static CharSequence backupDir;
     protected static DateFormat backupDirTimestampFormat;
