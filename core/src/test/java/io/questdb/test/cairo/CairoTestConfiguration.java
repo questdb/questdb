@@ -304,11 +304,6 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     }
 
     @Override
-    public long getWriterCommandQueueSlotSize() {
-        return overrides.getWriterCommandQueueSlotSize();
-    }
-
-    @Override
     public boolean isIOURingEnabled() {
         return overrides.isIoURingEnabled() != null ? overrides.isIoURingEnabled() : super.isIOURingEnabled();
     }

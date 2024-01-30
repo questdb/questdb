@@ -70,11 +70,6 @@ public class StaticOverrides extends Overrides {
     }
 
     @Override
-    public long getWriterCommandQueueSlotSize() {
-        return AbstractCairoTest.writerCommandQueueSlotSize;
-    }
-
-    @Override
     public void reset() {
         super.reset();
 
@@ -119,8 +114,4 @@ public class StaticOverrides extends Overrides {
         AbstractCairoTest.testMicrosClock = testMicrosClock;
     }
 
-    @Override
-    public void setWriterCommandQueueSlotSize(long writerCommandQueueSlotSize) {
-        AbstractCairoTest.writerCommandQueueSlotSize = writerCommandQueueSlotSize;
-    }
 }

@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableReader;
@@ -414,8 +415,7 @@ public class TableWriterAsyncCmdTest extends AbstractCairoTest {
 
     @Test
     public void testCommandQueueBufferOverflow() throws Exception {
-        long tmpWriterCommandQueueSlotSize = writerCommandQueueSlotSize;
-        writerCommandQueueSlotSize = 4L;
+        node1.setProperty(PropertyKey.CAIRO_WRITER_COMMAND_QUEUE_SLOT_SIZE, 4);
         assertMemoryLeak(() -> {
             ddl("create table product (timestamp timestamp)", sqlExecutionContext);
 
@@ -433,7 +433,6 @@ public class TableWriterAsyncCmdTest extends AbstractCairoTest {
                 }
             }
         });
-        writerCommandQueueSlotSize = tmpWriterCommandQueueSlotSize;
     }
 
     @Test

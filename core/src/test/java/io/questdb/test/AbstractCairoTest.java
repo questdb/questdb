@@ -104,7 +104,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static ObjList<QuestDBTestNode> nodes = new ObjList<>();
     protected static SecurityContext securityContext;
     protected static SqlExecutionContext sqlExecutionContext;
-    protected static long writerCommandQueueSlotSize = 2048L;
     static boolean[] FACTORY_TAGS = new boolean[MemoryTag.SIZE];
     private static long memoryUsage = -1;
     @Rule

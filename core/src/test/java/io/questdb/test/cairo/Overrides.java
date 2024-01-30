@@ -93,7 +93,6 @@ public class Overrides {
     private long walPurgeInterval = -1;
     private long walSegmentRolloverRowCount = -1;
     private long walSegmentRolloverSize = -1;
-    private long writerCommandQueueSlotSize = 2048L;
     private Boolean writerMixedIOEnabled = null;
 
     public Overrides() {
@@ -315,10 +314,6 @@ public class Overrides {
 
 
 
-
-    public long getWriterCommandQueueSlotSize() {
-        return writerCommandQueueSlotSize;
-    }
 
 
     public Boolean isColumnPreTouchEnabled() {
@@ -644,10 +639,6 @@ public class Overrides {
 
     public void setWalSegmentRolloverSize(long walSegmentRolloverSize) {
         this.walSegmentRolloverSize = walSegmentRolloverSize;
-    }
-
-    public void setWriterCommandQueueSlotSize(long writerCommandQueueSlotSize) {
-        this.writerCommandQueueSlotSize = writerCommandQueueSlotSize;
     }
 
 
