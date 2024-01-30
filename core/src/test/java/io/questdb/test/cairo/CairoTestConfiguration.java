@@ -294,16 +294,6 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     }
 
     @Override
-    public long getWalSegmentRolloverRowCount() {
-        return overrides.getWalSegmentRolloverRowCount() < 0 ? super.getWalSegmentRolloverRowCount() : overrides.getWalSegmentRolloverRowCount();
-    }
-
-    @Override
-    public long getWalSegmentRolloverSize() {
-        return overrides.getWalSegmentRolloverSize() < 0 ? super.getWalSegmentRolloverSize() : overrides.getWalSegmentRolloverSize();
-    }
-
-    @Override
     public boolean isIOURingEnabled() {
         return overrides.isIoURingEnabled() != null ? overrides.isIoURingEnabled() : super.isIOURingEnabled();
     }
@@ -326,11 +316,6 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     @Override
     public boolean isSqlParallelFilterPreTouchEnabled() {
         return overrides.isColumnPreTouchEnabled() != null ? overrides.isColumnPreTouchEnabled() : super.isSqlParallelFilterPreTouchEnabled();
-    }
-
-    @Override
-    public boolean isWriterMixedIOEnabled() {
-        return overrides.isWriterMixedIOEnabled() != null ? overrides.isWriterMixedIOEnabled() : super.isWriterMixedIOEnabled();
     }
 
     @Override

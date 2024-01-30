@@ -77,7 +77,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         boolean mixedIOSupported = configuration.getFilesFacade().allowMixedIO(root);
         Assume.assumeFalse(allowMixedIO && !mixedIOSupported);
 
-        configOverrideWriterMixedIOEnabled(allowMixedIO);
+        node1.setProperty(PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, allowMixedIO);
         Overrides overrides = node1.getConfigurationOverrides();
         overrides.setProperty(PropertyKey.CAIRO_O3_COLUMN_MEMORY_SIZE, 512 * 1024);
         setFuzzProperties(100, 1000, 2);

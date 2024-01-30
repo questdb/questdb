@@ -1098,7 +1098,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
             final int numOfRows = 4000;
             final int maxRowCount = 500;
-            configOverrideWalSegmentRolloverRowCount(maxRowCount);
+            node1.setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, maxRowCount);
             Assert.assertEquals(configuration.getWalSegmentRolloverRowCount(), maxRowCount);
             final int numOfSegments = numOfRows / maxRowCount;
             final int numOfThreads = 10;
@@ -2521,7 +2521,8 @@ public class WalWriterTest extends AbstractCairoTest {
                 }
 
                 final long rolloverSize = 1024;
-                configOverrideWalSegmentRolloverSize(rolloverSize);  // 1 KiB
+                // 1 KiB
+                node1.setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_SIZE, rolloverSize);
 
                 final long eventsBytesPerTxn = 50 + additionalBytesPerTxn;
                 final long eventsHeader = 12;  // number of bytes in the events file header.
@@ -2585,7 +2586,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 }
             });
         } finally {
-            configOverrideWalSegmentRolloverSize(0);
+            node1.setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_SIZE, 0);
         }
     }
 

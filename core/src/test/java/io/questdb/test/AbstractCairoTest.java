@@ -1247,20 +1247,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected static void configOverrideWalMaxLagTxnCount() {
-        node1.getConfigurationOverrides().setWalMaxLagTxnCount(1);
-    }
-
-    @SuppressWarnings("SameParameterValue")
-    protected static void configOverrideWalSegmentRolloverRowCount(long walSegmentRolloverRowCount) {
-        node1.getConfigurationOverrides().setWalSegmentRolloverRowCount(walSegmentRolloverRowCount);
-    }
-
-    protected static void configOverrideWalSegmentRolloverSize(long walSegmentRolloverSize) {
-        node1.getConfigurationOverrides().setWalSegmentRolloverSize(walSegmentRolloverSize);
-    }
-
-    protected static void configOverrideWriterMixedIOEnabled(boolean enableMixedIO) {
-        node1.getConfigurationOverrides().setWriterMixedIOEnabled(enableMixedIO);
+        Overrides overrides = node1.getConfigurationOverrides();
+        overrides.setProperty(PropertyKey.CAIRO_WAL_MAX_LAG_TXN_COUNT, 1);
     }
 
     protected static void configureForBackups() throws IOException {

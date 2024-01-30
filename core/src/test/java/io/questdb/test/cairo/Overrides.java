@@ -91,9 +91,6 @@ public class Overrides {
     private int walMaxLagTxnCount = -1;
     private int walMaxSegmentFileDescriptorsCache = -1;
     private long walPurgeInterval = -1;
-    private long walSegmentRolloverRowCount = -1;
-    private long walSegmentRolloverSize = -1;
-    private Boolean writerMixedIOEnabled = null;
 
     public Overrides() {
         TestUtils.resetToDefaultTestProperties(properties);
@@ -303,17 +300,6 @@ public class Overrides {
     }
 
 
-    public long getWalSegmentRolloverRowCount() {
-        return walSegmentRolloverRowCount;
-    }
-
-
-    public long getWalSegmentRolloverSize() {
-        return walSegmentRolloverSize;
-    }
-
-
-
 
 
     public Boolean isColumnPreTouchEnabled() {
@@ -341,10 +327,6 @@ public class Overrides {
     }
 
 
-    public Boolean isWriterMixedIOEnabled() {
-        return writerMixedIOEnabled;
-    }
-
 
     public boolean mangleTableDirNames() {
         return mangleTableDirNames;
@@ -353,7 +335,6 @@ public class Overrides {
 
     public void reset() {
         o3ColumnMemorySize = -1;
-        hideTelemetryTable = false;
         maxUncommittedRows = -1;
         o3MaxLag = -1;
         o3MinLag = -1;
@@ -364,7 +345,6 @@ public class Overrides {
         rndFunctionMemoryPageSize = -1;
         rndFunctionMemoryMaxPages = -1;
         parallelFilterEnabled = null;
-        writerMixedIOEnabled = null;
         columnPreTouchEnabled = null;
         columnVersionTaskPoolCapacity = -1;
         rostiAllocFacade = null;
@@ -376,7 +356,6 @@ public class Overrides {
         copyPartitionOnAttach = null;
         ff = null;
         o3QuickSortEnabled = false;
-        walSegmentRolloverRowCount = -1;
         mangleTableDirNames = true;
         walPurgeInterval = -1;
         tableRegistryCompactionThreshold = -1;
@@ -613,10 +592,6 @@ public class Overrides {
         walMaxLagSize = value;
     }
 
-    public void setWalMaxLagTxnCount(int walMaxLagTxnCount) {
-        setProperty(PropertyKey.CAIRO_WAL_MAX_LAG_TXN_COUNT, walMaxLagTxnCount);
-    }
-
 
     public void setWalMaxSegmentFileDescriptorsCache(int value) {
         walMaxSegmentFileDescriptorsCache = value;
@@ -627,18 +602,4 @@ public class Overrides {
         this.walPurgeInterval = walPurgeInterval;
     }
 
-
-    public void setWalSegmentRolloverRowCount(long walSegmentRolloverRowCount) {
-        this.walSegmentRolloverRowCount = walSegmentRolloverRowCount;
-    }
-
-
-    public void setWalSegmentRolloverSize(long walSegmentRolloverSize) {
-        this.walSegmentRolloverSize = walSegmentRolloverSize;
-    }
-
-
-    public void setWriterMixedIOEnabled(Boolean writerMixedIOEnabled) {
-        this.writerMixedIOEnabled = writerMixedIOEnabled;
-    }
 }

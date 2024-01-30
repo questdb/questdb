@@ -995,7 +995,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
             this.writerFileOpenOpts = lopts;
 
-            this.writerMixedIOEnabled = ff.allowMixedIO(this.root);
+            this.writerMixedIOEnabled = getBoolean(properties, env, PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, ff.allowMixedIO(this.root));
 
             this.inputFormatConfiguration = new InputFormatConfiguration(
                     new DateFormatFactory(),
