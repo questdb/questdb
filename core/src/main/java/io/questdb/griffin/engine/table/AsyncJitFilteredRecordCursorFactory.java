@@ -278,8 +278,6 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
             @Nullable PageFrameSequence<?> stealingFrameSequence
     ) {
         final DirectLongList rows = task.getFilteredRows();
-        final DirectLongList columns = task.getColumns();
-        final DirectLongList varLenIndexes = task.getVarLenIndexes();
         final long frameRowCount = task.getFrameRowCount();
         final AsyncJitFilterAtom atom = task.getFrameSequence(AsyncJitFilterAtom.class).getAtom();
         final PageAddressCache pageAddressCache = task.getPageAddressCache();
@@ -306,31 +304,9 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
 
         // Use JIT-compiled filter.
 
-        final long columnCount = pageAddressCache.getColumnCount();
-        if (columns.getCapacity() < columnCount) {
-            columns.setCapacity(columnCount);
-        }
-        columns.clear();
-        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-            columns.add(pageAddressCache.getPageAddress(task.getFrameIndex(), columnIndex));
-        }
-
-        if (varLenIndexes.getCapacity() < columnCount) {
-            varLenIndexes.setCapacity(columnCount);
-        }
-        varLenIndexes.clear();
-        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-            varLenIndexes.add(
-                    pageAddressCache.isVarLenColumn(columnIndex)
-                            ? pageAddressCache.getIndexPageAddress(task.getFrameIndex(), columnIndex)
-                            : 0
-            );
-        }
-
-        final long rowCount = task.getFrameRowCount();
-        if (rows.getCapacity() < rowCount) {
-            rows.setCapacity(rowCount);
-        }
+        task.populateJitData();
+        final DirectLongList columns = task.getColumns();
+        final DirectLongList varLenIndexes = task.getVarLenIndexes();
 
         long hi = atom.compiledFilter.call(
                 columns.getAddress(),
@@ -340,7 +316,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                 atom.bindVarMemory.getAddress(),
                 atom.bindVarFunctions.size(),
                 rows.getAddress(),
-                rowCount,
+                frameRowCount,
                 0
         );
         rows.setPos(hi);

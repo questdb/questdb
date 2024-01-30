@@ -227,16 +227,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
                 // Use Java-based filter when there is no compiled filter or in case of a page frame with column tops.
                 applyFilter(filter, rows, record, task.getFrameRowCount());
             } else {
-                applyCompiledFilter(
-                        compiledFilter,
-                        atom.getBindVarMemory(),
-                        atom.getBindVarFunctions(),
-                        pageAddressCache,
-                        task.getColumns(),
-                        rows,
-                        task.getFrameRowCount(),
-                        task.getFrameIndex()
-                );
+                applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
             }
 
             aggregateFiltered(record, rows, value, functionUpdater);
@@ -249,32 +240,21 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
             CompiledFilter compiledFilter,
             MemoryCARW bindVarMemory,
             ObjList<Function> bindVarFunctions,
-            PageAddressCache pageAddressCache,
-            DirectLongList columns,
-            DirectLongList rows,
-            long rowCount,
-            int frameIndex
+            PageFrameReduceTask task
     ) {
-        final long columnCount = pageAddressCache.getColumnCount();
-        if (columns.getCapacity() < columnCount) {
-            columns.setCapacity(columnCount);
-        }
-        columns.clear();
-        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-            columns.add(pageAddressCache.getPageAddress(frameIndex, columnIndex));
-        }
-
-        if (rows.getCapacity() < rowCount) {
-            rows.setCapacity(rowCount);
-        }
-
+        task.populateJitData();
+        final DirectLongList columns = task.getColumns();
+        final DirectLongList varLenIndexes = task.getVarLenIndexes();
+        final DirectLongList rows = task.getFilteredRows();
         long hi = compiledFilter.call(
                 columns.getAddress(),
                 columns.size(),
+                varLenIndexes.getAddress(),
+                varLenIndexes.size(),
                 bindVarMemory.getAddress(),
                 bindVarFunctions.size(),
                 rows.getAddress(),
-                rowCount,
+                task.getFrameRowCount(),
                 0
         );
         rows.setPos(hi);

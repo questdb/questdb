@@ -176,4 +176,32 @@ public class PageFrameReduceTask implements Closeable {
 
         frameSequence = null;
     }
+
+    public void populateJitData() {
+        PageAddressCache pageAddressCache = getPageAddressCache();
+        final long columnCount = pageAddressCache.getColumnCount();
+        if (columns.getCapacity() < columnCount) {
+            columns.setCapacity(columnCount);
+        }
+        columns.clear();
+        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+            columns.add(pageAddressCache.getPageAddress(getFrameIndex(), columnIndex));
+        }
+
+        if (varLenIndexes.getCapacity() < columnCount) {
+            varLenIndexes.setCapacity(columnCount);
+        }
+        varLenIndexes.clear();
+        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+            varLenIndexes.add(
+                    pageAddressCache.isVarLenColumn(columnIndex)
+                            ? pageAddressCache.getIndexPageAddress(getFrameIndex(), columnIndex)
+                            : 0
+            );
+        }
+        final long rowCount = getFrameRowCount();
+        if (filteredRows.getCapacity() < rowCount) {
+            filteredRows.setCapacity(rowCount);
+        }
+    }
 }
