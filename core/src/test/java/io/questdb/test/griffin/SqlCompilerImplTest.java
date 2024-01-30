@@ -5741,14 +5741,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 compiler.compile("alter table tab add column i2 int zoom boom", sqlExecutionContext);
                 Assert.fail();
             } catch (Exception e) {
-                Assert.assertTrue(compiler.unknownAddColumnSuffixCalled);
+                Assert.assertTrue(compiler.addColumnSuffixCalled);
             }
 
             try {
                 compiler.compile("create table tab3 (i int) foobar", sqlExecutionContext);
                 Assert.fail();
             } catch (Exception e) {
-                Assert.assertTrue(compiler.unknownCreateTableSuffixCalled);
+                Assert.assertTrue(compiler.createTableSuffixCalled);
             }
         }
     }
@@ -6080,11 +6080,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     static class SqlCompilerWrapper extends SqlCompilerImpl {
+        boolean addColumnSuffixCalled;
+        boolean createTableSuffixCalled;
         boolean dropTableCalled;
         boolean parseShowSqlCalled;
-        boolean unknownAddColumnSuffixCalled;
         boolean unknownAlterStatementCalled;
-        boolean unknownCreateTableSuffixCalled;
         boolean unknownDropColumnSuffixCalled;
         boolean unknownDropStatementCalled;
         boolean unknownDropTableSuffixCalled;
@@ -6094,27 +6094,27 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         }
 
         @Override
+        public ExecutionModel createTableSuffix(GenericLexer lexer, SecurityContext securityContext, CreateTableModel model, CharSequence tok) throws SqlException {
+            createTableSuffixCalled = true;
+            return super.createTableSuffix(lexer, securityContext, model, tok);
+        }
+
+        @Override
         public int parseShowSql(GenericLexer lexer, QueryModel model, CharSequence tok, ObjectPool<ExpressionNode> expressionNodePool) throws SqlException {
             parseShowSqlCalled = true;
             return super.parseShowSql(lexer, model, tok, expressionNodePool);
         }
 
         @Override
-        public ExecutionModel unknownCreateTableSuffix(GenericLexer lexer, SqlExecutionContext executionContext, CreateTableModel model, CharSequence tok) throws SqlException {
-            unknownCreateTableSuffixCalled = true;
-            return super.unknownCreateTableSuffix(lexer, executionContext, model, tok);
+        protected void addColumnSuffix(SecurityContext securityContext, CharSequence tok, TableToken tableToken, AlterOperationBuilder dropColumnStatement) throws SqlException {
+            addColumnSuffixCalled = true;
+            super.addColumnSuffix(securityContext, tok, tableToken, dropColumnStatement);
         }
 
         @Override
         protected boolean dropTable(SqlExecutionContext executionContext, CharSequence tableName, int tableNamePosition, boolean hasIfExists) throws SqlException {
             dropTableCalled = true;
             return super.dropTable(executionContext, tableName, tableNamePosition, hasIfExists);
-        }
-
-        @Override
-        protected void unknownAddColumnSuffix(SecurityContext securityContext, CharSequence tok, TableToken tableToken, AlterOperationBuilder dropColumnStatement) throws SqlException {
-            unknownAddColumnSuffixCalled = true;
-            super.unknownAddColumnSuffix(securityContext, tok, tableToken, dropColumnStatement);
         }
 
         @Override

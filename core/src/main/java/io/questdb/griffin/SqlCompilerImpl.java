@@ -797,11 +797,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
             semicolonPos = Chars.equals(tok, ';') ? lexer.lastTokenPosition() : -1;
             if (semicolonPos < 0 && !Chars.equals(tok, ',')) {
-                unknownAddColumnSuffix(securityContext, tok, tableToken, alterOperationBuilder);
+                addColumnSuffix(securityContext, tok, tableToken, alterOperationBuilder);
+                compiledQuery.ofAlter(alterOperationBuilder.build());
                 return;
             }
         } while (true);
 
+        addColumnSuffix(securityContext, null, tableToken, alterOperationBuilder);
         compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
@@ -2807,6 +2809,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return tok;
     }
 
+    protected void addColumnSuffix(
+            @Transient SecurityContext securityContext,
+            @Nullable CharSequence tok,
+            TableToken tableToken,
+            AlterOperationBuilder addColumnStatement
+    ) throws SqlException {
+        if (tok != null) {
+            throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
+        }
+    }
+
     // returns true if it dropped the table, false otherwise (or throws exception)
     protected boolean dropTable(
             SqlExecutionContext executionContext,
@@ -2941,15 +2954,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         keywordBasedExecutors.put("snapshot", snapshotDatabase);
         keywordBasedExecutors.put("deallocate", compileDeallocate);
         keywordBasedExecutors.put("cancel", cancelQuery);
-    }
-
-    protected void unknownAddColumnSuffix(
-            @Transient SecurityContext securityContext,
-            CharSequence tok,
-            TableToken tableToken,
-            AlterOperationBuilder addColumnStatement
-    ) throws SqlException {
-        throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
     }
 
     protected void unknownAlterStatement(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {

@@ -732,10 +732,8 @@ public class SqlParser {
             }
         }
 
-        if (tok == null || Chars.equals(tok, ';')) {
-            return model;
-        }
-        return sqlParserCallback.unknownCreateTableSuffix(lexer, executionContext, model, tok);
+        boolean expectedTok = tok == null || Chars.equals(tok, ';');
+        return sqlParserCallback.createTableSuffix(lexer, executionContext.getSecurityContext(), model, expectedTok ? null : tok);
     }
 
     private void parseCreateTableAsSelect(GenericLexer lexer, CreateTableModel model, SqlExecutionContext executionContext, SqlParserCallback sqlParserCallback) throws SqlException {

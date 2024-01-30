@@ -139,4 +139,11 @@ public interface SecurityContext extends Mutable {
     default CharSequence getSessionPrincipal() {
         return getPrincipal();
     }
+
+    /**
+     * User account is stored in an external system, e.g. OpenID Connect provider.
+     */
+    default boolean isExternal() {
+        return false;
+    }
 }
