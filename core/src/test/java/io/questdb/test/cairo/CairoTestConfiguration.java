@@ -352,11 +352,6 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     }
 
     @Override
-    public int getWalTxnNotificationQueueCapacity() {
-        return overrides.getWalTxnNotificationQueueCapacity() > 0 ? overrides.getWalTxnNotificationQueueCapacity() : 256;
-    }
-
-    @Override
     public long getWriterAsyncCommandMaxTimeout() {
         return overrides.getWriterAsyncCommandMaxTimeout() < 0 ? super.getWriterAsyncCommandMaxTimeout() : overrides.getWriterAsyncCommandMaxTimeout();
     }

@@ -51,6 +51,7 @@ import org.junit.Test;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static io.questdb.PropertyKey.CAIRO_WAL_TXN_NOTIFICATION_QUEUE_CAPACITY;
 import static io.questdb.cairo.TableUtils.COLUMN_VERSION_FILE_NAME;
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
@@ -59,7 +60,7 @@ import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
 public class WalTableSqlTest extends AbstractCairoTest {
     @BeforeClass
     public static void setUpStatic() throws Exception {
-        walTxnNotificationQueueCapacity = 8;
+        setProperty(CAIRO_WAL_TXN_NOTIFICATION_QUEUE_CAPACITY, 8);
         AbstractCairoTest.setUpStatic();
     }
 
@@ -1071,7 +1072,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
             try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
                 drainWalQueue(walApplyJob);
 
-                for (int i = 0; i < walTxnNotificationQueueCapacity; i++) {
+                for (int i = 0; i < configuration.getWalTxnNotificationQueueCapacity(); i++) {
                     insert("insert into " + tableName + "1 values (101, 'a1a1', '2022-02-24T01')");
                 }
 

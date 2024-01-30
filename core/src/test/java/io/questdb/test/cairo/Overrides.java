@@ -55,6 +55,7 @@ public class Overrides {
     private Boolean copyPartitionOnAttach = null;
     private long currentMicros = -1;
     private final MicrosecondClock defaultMicrosecondClock = () -> currentMicros >= 0 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
+    private String root;
     private MicrosecondClock testMicrosClock = defaultMicrosecondClock;
     private long dataAppendPageSize = -1;
     private int defaultTableWriteMode = SqlWalMode.WAL_NOT_SET;
@@ -104,7 +105,6 @@ public class Overrides {
     private long walPurgeInterval = -1;
     private long walSegmentRolloverRowCount = -1;
     private long walSegmentRolloverSize = -1;
-    private int walTxnNotificationQueueCapacity = -1;
     private long writerAsyncCommandMaxTimeout = -1;
     private int writerCommandQueueCapacity = 4;
     private long writerCommandQueueSlotSize = 2048L;
@@ -156,9 +156,10 @@ public class Overrides {
     }
 
     public CairoConfiguration getConfiguration(String root) {
-        if (changed) {
+        if (changed || this.root != root) {
             this.propsConfig = io.questdb.test.tools.TestUtils.getTestConfiguration(root, properties);
             changed = false;
+            this.root = root;
         }
         return this.propsConfig;
     }
@@ -378,10 +379,6 @@ public class Overrides {
         return walSegmentRolloverSize;
     }
 
-
-    public int getWalTxnNotificationQueueCapacity() {
-        return walTxnNotificationQueueCapacity;
-    }
 
 
     public long getWriterAsyncCommandMaxTimeout() {
@@ -784,11 +781,6 @@ public class Overrides {
 
     public void setWalSegmentRolloverSize(long walSegmentRolloverSize) {
         this.walSegmentRolloverSize = walSegmentRolloverSize;
-    }
-
-
-    public void setWalTxnNotificationQueueCapacity(int walTxnNotificationQueueCapacity) {
-        this.walTxnNotificationQueueCapacity = walTxnNotificationQueueCapacity;
     }
 
 

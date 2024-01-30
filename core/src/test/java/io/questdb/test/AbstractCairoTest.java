@@ -85,7 +85,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
     public static long dataAppendPageSize = -1;
     public static long spinLockTimeout = -1;
     public static StaticOverrides staticOverrides = new StaticOverrides();
-    public static int walTxnNotificationQueueCapacity = -1;
     public static long writerAsyncCommandMaxTimeout = -1;
     protected static CharSequence backupDir;
     protected static DateFormat backupDirTimestampFormat;
@@ -1592,6 +1591,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
         staticOverrides.setProperty(propertyKey, maxValue);
     }
 
+    protected static void setProperty(PropertyKey propertyKey, String snapshotId) {
+        staticOverrides.setProperty(propertyKey, snapshotId);
+    }
+
     protected static void tickWalQueue(int ticks) {
         try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
             for (int i = 0; i < ticks; i++) {
@@ -1933,10 +1936,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
             engine.registerTableToken(token);
         }
         return token;
-    }
-
-    protected void setProperty(PropertyKey propertyKey, String snapshotId) {
-        staticOverrides.setProperty(propertyKey, snapshotId);
     }
 
     protected long update(CharSequence updateSql) throws SqlException {
