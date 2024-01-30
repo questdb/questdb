@@ -41,6 +41,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.NotNull;
 
 import javax.security.auth.DestroyFailedException;
 import java.io.Closeable;
@@ -375,7 +376,7 @@ public interface Sender extends Closeable {
                 }
                 this.host = address.subSequence(0, portIndex).toString();
                 try {
-                    port = Numbers.parseInt(address, portIndex + 1, address.length());
+                    port(Numbers.parseInt(address, portIndex + 1, address.length()));
                 } catch (NumericException e) {
                     throw new LineSenderException("cannot parse port from address ", e).
                             put("[address=").put(address).put("]");
@@ -501,6 +502,9 @@ public interface Sender extends Closeable {
                 throw new LineSenderException("authentication keyId was already configured ")
                         .put("[keyId=").put(this.keyId).put("]");
             }
+            if (Chars.isBlank(keyId)) {
+                throw new LineSenderException("keyId cannot be empty nor null");
+            }
             this.keyId = keyId;
             return new LineSenderBuilder.AuthBuilder();
         }
@@ -526,14 +530,14 @@ public interface Sender extends Closeable {
             return fromString(configString);
         }
 
-        public LineSenderBuilder fromString(CharSequence configurationString) {
-            if (Chars.isBlank(configurationString)) {
+        public LineSenderBuilder fromString(CharSequence confStr) {
+            if (Chars.isBlank(confStr)) {
                 throw new LineSenderException("configuration string cannot be empty nor null");
             }
             StringSink sink = new StringSink();
-            int pos = ConfStringParser.of(configurationString, sink);
+            int pos = ConfStringParser.of(confStr, sink);
             if (pos < 0) {
-                throw new LineSenderException("invalid configuration string: ").put(configurationString);
+                throw new LineSenderException("invalid configuration string: ").put(sink);
             }
             if (protocol != PROTOCOL_NOT_SET) {
                 throw new LineSenderException("protocol was already configured ")
@@ -564,44 +568,28 @@ public interface Sender extends Closeable {
             String tcpToken = null;
             String user = null;
             String password = null;
-            while (ConfStringParser.hasNext(configurationString, pos)) {
-                pos = ConfStringParser.nextKey(configurationString, pos, sink);
+            while (ConfStringParser.hasNext(confStr, pos)) {
+                pos = ConfStringParser.nextKey(confStr, pos, sink);
                 if (pos < 0) {
-                    throw new LineSenderException("invalid configuration string: ").put(sink);
+                    throw new LineSenderException("invalid configuration string [error=").put(sink).put(']');
                 }
                 if (Chars.equals("addr", sink)) {
-                    if ((pos = ConfStringParser.value(configurationString, pos, sink)) < 0) {
-                        throw new LineSenderException("invalid address [error=").put(sink).put("]");
-                    }
+                    pos = getValue(confStr, pos, sink, "address");
                     address(sink);
-                } else if (Chars.equals("port", sink)) {
-                    if ((pos = ConfStringParser.value(configurationString, pos, sink)) < 0) {
-                        throw new LineSenderException("invalid port [error=").put(sink).put("]");
+                    if (port == PORT_NOT_SET) {
+                        port(protocol == PROTOCOL_TCP ? DEFAULT_TCP_PORT : DEFAULT_HTTP_PORT);
                     }
-                    int port;
-                    try {
-                        port = Numbers.parseInt(sink);
-                    } catch (NumericException e) {
-                        throw new LineSenderException("invalid port [port=").put(sink).put("]");
-                    }
-                    if (port < 1 || port > 65535) {
-                        throw new LineSenderException("invalid port [port=").put(port).put("]");
-                    }
-                    this.port = port;
                 } else if (Chars.equals("user", sink)) {
-                    if ((pos = ConfStringParser.value(configurationString, pos, sink)) < 0) {
-                        throw new LineSenderException("invalid user [user=").put(sink).put("]");
-                    }
+                    pos = getValue(confStr, pos, sink, "user");
                     user = sink.toString();
                 } else if (Chars.equals("pass", sink)) {
-                    if ((pos = ConfStringParser.value(configurationString, pos, sink)) < 0) {
-                        throw new LineSenderException("invalid password [error=").put(sink).put("]");
+                    pos = getValue(confStr, pos, sink, "pass");
+                    if (protocol == PROTOCOL_TCP) {
+                        throw new LineSenderException("password is not supported for TCP protocol");
                     }
                     password = sink.toString();
                 } else if (Chars.equals("tls_verify", sink)) {
-                    if ((pos = ConfStringParser.value(configurationString, pos, sink)) < 0) {
-                        throw new LineSenderException("invalid tls_verify [error=").put(sink).put("]");
-                    }
+                    pos = getValue(confStr, pos, sink, "tls_verify");
                     if (tlsValidationMode != null) {
                         throw new LineSenderException("tls_verify was already configured");
                     }
@@ -613,17 +601,13 @@ public interface Sender extends Closeable {
                         throw new LineSenderException("invalid tls_verify [value=").put(sink).put("]");
                     }
                 } else if (Chars.equals("tls_roots", sink)) {
-                    if ((pos = ConfStringParser.value(configurationString, pos, sink)) < 0) {
-                        throw new LineSenderException("invalid tls_roots [error=").put(sink).put("]");
-                    }
+                    pos = getValue(confStr, pos, sink, "tls_roots");
                     if (trustStorePath != null) {
                         throw new LineSenderException("tls_roots was already configured");
                     }
                     trustStorePath = sink.toString();
                 } else if (Chars.equals("tls_roots_password", sink)) {
-                    if ((pos = ConfStringParser.value(configurationString, pos, sink)) < 0) {
-                        throw new LineSenderException("invalid tls_roots_password [error=").put(sink).put("]");
-                    }
+                    pos = getValue(confStr, pos, sink, "tls_roots_password");
                     if (trustStorePassword != null) {
                         throw new LineSenderException("tls_roots_password was already configured");
                     }
@@ -632,9 +616,7 @@ public interface Sender extends Closeable {
                         trustStorePassword[i] = sink.charAt(i);
                     }
                 } else if (Chars.equals("token", sink)) {
-                    if ((pos = ConfStringParser.value(configurationString, pos, sink)) < 0) {
-                        throw new LineSenderException("invalid token [error=").put(sink).put("]");
-                    }
+                    pos = getValue(confStr, pos, sink, "token");
                     if (protocol == PROTOCOL_TCP) {
                         tcpToken = sink.toString();
                         // will configure later, we need to know a keyId first
@@ -644,85 +626,40 @@ public interface Sender extends Closeable {
                         throw new AssertionError();
                     }
                 } else if (Chars.equals("retry_timeout", sink)) {
-                    if ((pos = ConfStringParser.value(configurationString, pos, sink)) < 0) {
-                        throw new LineSenderException("invalid retry_timeout [error=").put(sink).put("]");
-                    }
-                    int timeout;
-                    try {
-                        timeout = Numbers.parseInt(sink);
-                    } catch (NumericException e) {
-                        throw new LineSenderException("invalid timeout [timeout=").put(sink).put("]");
-                    }
-                    if (timeout < 0) {
-                        throw new LineSenderException("invalid timeout [timeout=").put(timeout).put("]");
-                    }
+                    pos = getValue(confStr, pos, sink, "retry_timeout");
+                    int timeout = parseIntValue(sink, "retry_timeout");
                     retryTimeoutMillis(timeout);
                 } else if (Chars.equals("max_buf_size", sink)) {
-                    if ((pos = ConfStringParser.value(configurationString, pos, sink)) < 0) {
-                        throw new LineSenderException("invalid max_buf_size [error=").put(sink).put("]");
-                    }
-                    int maxBufferSize;
-                    try {
-                        maxBufferSize = Numbers.parseInt(sink);
-                    } catch (NumericException e) {
-                        throw new LineSenderException("invalid max_buf_size [max_buf_size=").put(sink).put("]");
-                    }
+                    pos = getValue(confStr, pos, sink, "max_buf_size");
+                    int maxBufferSize = parseIntValue(sink, "max_buf_size");
                     maxBufferCapacity(maxBufferSize);
                 } else if (Chars.equals("init_buf_size", sink)) {
-                    if ((pos = ConfStringParser.value(configurationString, pos, sink)) < 0) {
-                        throw new LineSenderException("invalid init_buf_size [error=").put(sink).put("]");
-                    }
-                    int initBufferSize;
-                    try {
-                        initBufferSize = Numbers.parseInt(sink);
-                    } catch (NumericException e) {
-                        throw new LineSenderException("invalid init_buf_size [init_buf_size=").put(sink).put("]");
-                    }
+                    pos = getValue(confStr, pos, sink, "init_buf_size");
+                    int initBufferSize = parseIntValue(sink, "init_buf_size");
                     bufferCapacity(initBufferSize);
                 } else if (Chars.equals("auto_flush_rows", sink)) {
-                    if ((pos = ConfStringParser.value(configurationString, pos, sink)) < 0) {
-                        throw new LineSenderException("invalid auto_flush_rows [error=").put(sink).put("]");
-                    }
-                    int autoFlushRows;
-                    try {
-                        autoFlushRows = Numbers.parseInt(sink);
-                    } catch (NumericException e) {
-                        throw new LineSenderException("invalid auto_flush_rows [auto_flush_rows=").put(sink).put("]");
-                    }
+                    pos = getValue(confStr, pos, sink, "auto_flush_rows");
+                    int autoFlushRows = parseIntValue(sink, "auto_flush_rows");
                     if (autoFlushRows < 1) {
                         throw new LineSenderException("invalid auto_flush_rows [auto_flush_rows=").put(autoFlushRows).put("]");
                     }
                     maxPendingRows(autoFlushRows);
                 } else if (Chars.equals("auto_flush", sink)) {
-                    if ((pos = ConfStringParser.value(configurationString, pos, sink)) < 0) {
-                        throw new LineSenderException("invalid auto_flush [error=").put(sink).put("]");
-                    }
-                    if (Chars.equals("on", sink)) {
-                        // ok, this is the only mode we support
-                    } else if (Chars.equals("off", sink)) {
+                    pos = getValue(confStr, pos, sink, "auto_flush");
+                    if (Chars.equals("off", sink)) {
                         throw new LineSenderException("auto_flush=off is not supported");
-                    } else {
+                    } else if (!Chars.equals("on", sink)) {
                         throw new LineSenderException("invalid auto_flush [value=").put(sink).put("]");
                     }
-                } else if (Chars.equals("token_x", sink)) {
-                    if ((pos = ConfStringParser.value(configurationString, pos, sink)) < 0) {
-                        throw new LineSenderException("invalid token_x [error=").put(sink).put("]");
-                    }
-                    // we ignore token_x, Java client does not need it
-                } else if (Chars.equals("token_y", sink)) {
-                    if ((pos = ConfStringParser.value(configurationString, pos, sink)) < 0) {
-                        throw new LineSenderException("invalid token_y [error=").put(sink).put("]");
-                    }
-                    // we ignore token_x, Java client does not need it
                 } else {
-                    throw new LineSenderException("invalid configuration string: ").put(sink);
+                    // ignore unknown keys, unless they are malformed
+                    if ((pos = ConfStringParser.value(confStr, pos, sink)) < 0) {
+                        throw new LineSenderException("invalid parameter [error=").put(sink).put("]");
+                    }
                 }
             }
             if (host == null) {
                 throw new LineSenderException("address is missing");
-            }
-            if (port == PORT_NOT_SET) {
-                port = protocol == PROTOCOL_TCP ? DEFAULT_TCP_PORT : DEFAULT_HTTP_PORT;
             }
             if (trustStorePath != null) {
                 if (trustStorePassword == null) {
@@ -898,6 +835,9 @@ public interface Sender extends Closeable {
                 throw new LineSenderException("post is already configured ")
                         .put("[port=").put(port).put("]");
             }
+            if (port < 1 || port > 65535) {
+                throw new LineSenderException("invalid port [port=").put(port).put("]");
+            }
             this.port = port;
             return this;
         }
@@ -934,6 +874,9 @@ public interface Sender extends Closeable {
                 throw new LineSenderException("retry timeout cannot be negative ")
                         .put("[retryTimeoutMillis=").put(retryTimeoutMillis).put("]");
             }
+            if (protocol == PROTOCOL_TCP) {
+                throw new LineSenderException("retrying is not supported for TCP protocol");
+            }
             this.retryTimeoutMillis = retryTimeoutMillis;
             return this;
         }
@@ -952,6 +895,24 @@ public interface Sender extends Closeable {
             }
             protocol = PROTOCOL_TCP;
             return this;
+        }
+
+        private static int getValue(CharSequence configurationString, int pos, StringSink sink, String name) {
+            if ((pos = ConfStringParser.value(configurationString, pos, sink)) < 0) {
+                throw new LineSenderException("invalid ").put(name).put(" [error=").put(sink).put("]");
+            }
+            return pos;
+        }
+
+        private static int parseIntValue(@NotNull StringSink value, @NotNull String name) {
+            if (Chars.isBlank(value)) {
+                throw new LineSenderException(name).put(" cannot be empty");
+            }
+            try {
+                return Numbers.parseInt(value);
+            } catch (NumericException e) {
+                throw new LineSenderException("invalid ").put(name).put(" [").put(name).put("=").put(value).put("]");
+            }
         }
 
         private static RuntimeException rethrow(Throwable t) {
@@ -1094,6 +1055,9 @@ public interface Sender extends Closeable {
              * @return an instance of LineSenderBuilder for further configuration
              */
             public LineSenderBuilder authToken(String token) {
+                if (Chars.isBlank(token)) {
+                    throw new LineSenderException("token cannot be empty nor null");
+                }
                 try {
                     LineSenderBuilder.this.privateKey = AuthUtils.toPrivateKey(token);
                 } catch (IllegalArgumentException e) {

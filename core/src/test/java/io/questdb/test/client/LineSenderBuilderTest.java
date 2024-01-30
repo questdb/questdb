@@ -151,6 +151,33 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testConfString() throws Exception {
+        assertMemoryLeak(() -> {
+            assertConfStrError("foo", "invalid configuration string: schema name must start with schema type, e.g. http::");
+            assertConfStrError("http::addr=bar", "invalid address [error=missing trailing semicolon at position 14]");
+            assertConfStrError("badschema::addr=bar;", "invalid schema: badschema");
+            assertConfStrError("http::addr=localhost:-1;", "invalid port [port=-1]");
+            assertConfStrError("http::addr=localhost;auto_flush=off;", "auto_flush=off is not supported");
+            assertConfStrError("http::auto_flush=on;", "address is missing");
+            assertConfStrError("http::addr=localhost;tls_roots=/some/path;", "tls_roots was configured, but tls_roots_password is missing");
+            assertConfStrError("http::addr=localhost;tls_roots_password=hunter123;", "tls_roots_password was configured, but tls_roots is missing");
+            assertConfStrError("tcp::addr=localhost;user=foo;", "token cannot be empty nor null");
+            assertConfStrError("tcp::addr=localhost;token=foo;", "TCP token is configured, but user is missing");
+            assertConfStrError("http::addr=localhost;user=foo;", "password cannot be empty nor null");
+            assertConfStrError("http::addr=localhost;pass=foo;", "HTTP password is configured, but username is missing");
+            assertConfStrError("tcp::addr=localhost;pass=foo;", "password is not supported for TCP protocol");
+            assertConfStrError("tcp::addr=localhost;retry_timeout=;", "retry_timeout cannot be empty");
+            assertConfStrError("tcp::addr=localhost;max_buf_size=;", "max_buf_size cannot be empty");
+            assertConfStrError("tcp::addr=localhost;init_buf_size=;", "init_buf_size cannot be empty");
+            assertConfStrError("tcp::addr=localhost;invali=", "invalid parameter [error=missing trailing semicolon at position 27]");
+            assertConfStrError("tcp::1addr=localhost;", "invalid configuration string [error=key must start with a letter, not '1' at position 5]");
+
+            assertConfStrOk("http::addr=localhost;");
+            assertConfStrOk("http::addr=localhost:8080;");
+        });
+    }
+
+    @Test
     public void testConnectPlain() throws Exception {
         runInContext(r -> {
             try (Sender sender = Sender.builder().address(LOCALHOST).port(bindPort).build()) {
@@ -745,5 +772,20 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
                 TestUtils.assertContains(e.getMessage(), "username/password authentication is not supported for TCP protocol");
             }
         });
+    }
+
+    private static void assertConfStrError(String conf, String expectedError) {
+        try {
+            Sender.builder().fromString(conf);
+            fail("should fail with bad conf string");
+        } catch (LineSenderException e) {
+            TestUtils.assertContains(e.getMessage(), expectedError);
+        }
+    }
+
+    private static void assertConfStrOk(String conf) {
+        try (Sender s = Sender.fromString(conf)) {
+
+        }
     }
 }

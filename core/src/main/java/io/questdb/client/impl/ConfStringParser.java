@@ -67,18 +67,25 @@ public final class ConfStringParser {
                 Chars.toLowerCase(input, start, pos, output);
                 return pos + 1;
             } else if (c == ';') {
-                output.put("missing '='");
+                output.put("incomplete key-value pair before end of input at position ").put(pos);
+                return -1;
+            } else if (pos == start && !isValidFirstIdentifierChar(c)) {
+                output.put("key must start with a letter, not '").put(c).put("' at position ").put(pos);
+                return -1;
+            } else if (!isValidIdentifierChar(c)) {
+                output.put("key must be consist of letters and digits, not '").put(c).put("' at position ").put(pos);
                 return -1;
             }
+
         }
         output.clear();
-        output.put("missing '='");
+        output.put("incomplete key-value pair before end of input at position ").put(pos);
         return -1;
     }
 
     /**
      * Parses schema name from input. Schema name must start with schema type, e.g. http::.
-     * <b>
+     * <p>
      * This is the starting point for all configuration parsing. It returns a position handler
      * that can be used to parse the rest of the configuration.
      * <p>
@@ -94,10 +101,6 @@ public final class ConfStringParser {
         char lastChar = 0;
         for (int i = 0, n = input.length(); i < n; i++) {
             char c = input.charAt(i);
-            if (Character.isWhitespace(c)) {
-                output.put("schema contains a whitespace");
-                return -1;
-            }
             if (lastChar == ':') {
                 if (c == ':') {
                     if (i == 1) {
@@ -105,15 +108,23 @@ public final class ConfStringParser {
                         return -1;
                     }
                     if (i == n - 1) {
-                        output.put("missing trailing ';'");
+                        output.put("missing trailing semicolon at position ").put(i);
                         return -1;
                     }
                     Chars.toLowerCase(input, 0, i - 1, output);
                     return i + 1;
                 } else {
-                    output.put("schema name must start with schema type, e.g. http::");
+                    output.put("bad separator, expected '::' got ':").put(c).put("' at position ").put(i - 1);
                     return -1;
                 }
+            } else if (c == ':') {
+                lastChar = c;
+            } else if (!isValidIdentifierChar(c)) {
+                output.put("bad separator, expected ':' got '").put(c).put("' at position ").put(i);
+                return -1;
+            } else if (i == 0 && !isValidFirstIdentifierChar(c)) {
+                output.put("schema name must start with a letter, not '").put(c).put("' at position ").put(i);
+                return -1;
             } else {
                 lastChar = c;
             }
@@ -152,7 +163,15 @@ public final class ConfStringParser {
             }
         }
         output.clear();
-        output.put("missing trailing ';'");
+        output.put("missing trailing semicolon at position ").put(pos);
         return -1;
+    }
+
+    private static boolean isValidFirstIdentifierChar(char c) {
+        return Character.isLetter(c) || c == '_';
+    }
+
+    private static boolean isValidIdentifierChar(char c) {
+        return Character.isLetterOrDigit(c) || c == '_';
     }
 }

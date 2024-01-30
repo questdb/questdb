@@ -16,6 +16,14 @@ public final class ConfStringParserTest {
     }
 
     @Test
+    public void testByteNotCharPosition() {
+        String input = "p::n=静;:=42;";
+        int pos = assertSchemaOk(input, "p");
+        pos = assertNextKeyValueOk(input, pos, "n", "静");
+        assertNextKeyError(input, pos, "key must start with a letter, not ':' at position 7");
+    }
+
+    @Test
     public void testEmptyValue() {
         String config = "http::addr=;";
         int pos = assertSchemaOk(config, "http");
@@ -24,10 +32,34 @@ public final class ConfStringParserTest {
     }
 
     @Test
+    public void testIncompleteKeyNoValue() {
+        String config = "http::host";
+        int pos = assertSchemaOk(config, "http");
+        pos = assertNextKeyError(config, pos, "incomplete key-value pair before end of input at position 10");
+        assertNoNext(config, pos);
+    }
+
+    @Test
     public void testKeyCannotBeEmpty() {
         String config = "http::=;";
         int pos = assertSchemaOk(config, "http");
         pos = assertNextKeyError(config, pos, "empty key");
+        assertNoNext(config, pos);
+    }
+
+    @Test
+    public void testKeyMustConsistsOfLettersOrDigits() {
+        String config = "https::ho st=localhost;";
+        int pos = assertSchemaOk(config, "https");
+        pos = assertNextKeyError(config, pos, "key must be consist of letters and digits, not ' ' at position 9");
+        assertNoNext(config, pos);
+    }
+
+    @Test
+    public void testKeyMustNotStartWithDigits() {
+        String config = "https::2host=localhost;";
+        int pos = assertSchemaOk(config, "https");
+        pos = assertNextKeyError(config, pos, "key must start with a letter, not '2' at position 7");
         assertNoNext(config, pos);
     }
 
@@ -59,29 +91,33 @@ public final class ConfStringParserTest {
     public void testMissingEquals() {
         String config = "http::addrlocalhost;foo=bar";
         int pos = assertSchemaOk("http::addrlocalhost;foo=bar", "http");
-        pos = assertNextKeyError(config, pos, "missing '='");
+        pos = assertNextKeyError(config, pos, "incomplete key-value pair before end of input at position 19");
         assertNoNext(config, pos);
     }
 
     @Test
     public void testMissingTrailingSemicolon() {
-        String config = "http::addr=localhost";
-        int pos = assertSchemaOk("http::addr=localhost", "http");
+        String config = "http::host=localhost;port=9000";
+        int pos = assertSchemaOk(config, "http");
 
         assertHasNext(config, pos);
-        pos = assertNextKeyOk(config, pos, "addr");
-        pos = assertNextValueError(config, pos, "missing trailing ';'");
+        pos = assertNextKeyValueOk(config, pos, "host", "localhost");
+        pos = assertNextKeyOk(config, pos, "port");
+        pos = assertNextValueError(config, pos, "missing trailing semicolon at position 30");
         assertNoNext(config, pos);
     }
 
     @Test
     public void testSchemaParser() {
-        assertSchemaError("ht tp::", "schema contains a whitespace");
-        assertSchemaError("http::", "missing trailing ';'");
+        assertSchemaError("ht tp::", "bad separator, expected ':' got ' ' at position 2");
+        assertSchemaError("http::", "missing trailing semicolon at position 5");
         assertSchemaError("::", "schema is empty");
         assertSchemaError("", "schema name must start with schema type, e.g. http::");
-        assertSchemaError("httpaddr=localhost;user=joe;pass=bloggs;auto_flush_rows=1000;", "schema name must start with schema type, e.g. http::");
-        assertSchemaError("http:a::addr=localhost;user=joe;pass=bloggs;auto_flush_rows=1000;", "schema name must start with schema type, e.g. http::");
+        assertSchemaError("httpaddr=localhost;user=joe;pass=bloggs;auto_flush_rows=1000;", "bad separator, expected ':' got '=' at position 8");
+        assertSchemaError("http:a::addr=localhost;user=joe;pass=bloggs;auto_flush_rows=1000;", "bad separator, expected '::' got ':a' at position 4");
+        assertSchemaError("x;/host=localhost;", "bad separator, expected ':' got ';' at position 1");
+        assertSchemaError("x:;host=localhost;", "bad separator, expected '::' got ':;' at position 1");
+        assertSchemaError("http://localhost:9000;host=localhost;", "bad separator, expected '::' got ':/' at position 4");
         assertSchemaOk("http::;", "http");
         assertSchemaOk("HTTP::;", "http");
         assertSchemaOk("http::addr=localhost;user=joe;pass=bloggs;auto_flush_rows=1000;", "http");
@@ -98,14 +134,14 @@ public final class ConfStringParserTest {
         config = "http::;;";
         pos = assertSchemaOk(config, "http");
         assertHasNext(config, pos);
-        pos = assertNextKeyError(config, pos, "missing '='");
+        pos = assertNextKeyError(config, pos, "incomplete key-value pair before end of input at position 6");
         assertNoNext(config, pos);
 
         config = "http::foo=bar;;";
         pos = assertSchemaOk(config, "http");
         assertHasNext(config, pos);
         pos = assertNextKeyOk(config, pos, "foo");
-        pos = assertNextValueError(config, pos, "missing trailing ';'");
+        pos = assertNextValueError(config, pos, "missing trailing semicolon at position 15");
         assertNoNext(config, pos);
 
         config = "https::foo=;;;;;";
