@@ -4802,7 +4802,7 @@ public class SqlOptimiser implements Mutable {
         return root;
     }
 
-    private void rewriteGroupByToExtractAliases(QueryModel model) {
+    private QueryModel rewriteGroupByToExtractAliases(QueryModel model) throws SqlException {
         // original query: select a, b, c as z, count(*) as views from quest where a = 1 group by a,b,z
         // expecting an output from rewriteSelectClause0 like
         // select-group-by a, b, z, count() views from (select-choose a, b, c z from (quest timestamp (ts) where a = 1))
@@ -4812,43 +4812,43 @@ public class SqlOptimiser implements Mutable {
         if (model.getSelectModelType() == QueryModel.SELECT_MODEL_GROUP_BY) {
             if (model.getNestedModel().getSelectModelType() == QueryModel.SELECT_MODEL_CHOOSE) {
 
+                final QueryModel newGroupByModel = queryModelPool.next();
+                newGroupByModel.setSelectModelType(QueryModel.SELECT_MODEL_GROUP_BY);
+
+                final QueryModel newSelectModel = queryModelPool.next();
+                newSelectModel.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
+
+
+                newSelectModel.moveGroupByFrom(model);
+                newSelectModel.moveLimitFrom(model);
+                newSelectModel.moveJoinAliasFrom(model);
+
                 QueryModel selectChoose = model.getNestedModel();
 
-                // check if any were aliased
-                boolean aliased = false;
+                newGroupByModel.moveGroupByFrom(selectChoose);
+                newGroupByModel.moveLimitFrom(selectChoose);
+                newGroupByModel.moveJoinAliasFrom(selectChoose);
+
+
                 ObjList<QueryColumn> selectChooseColumns = selectChoose.getColumns();
-                QueryColumn col;
+
                 for (int i = 0; i < selectChooseColumns.size(); i++) {
-                    col = selectChooseColumns.getQuick(i);
-                    if (col.getAlias() != col.getAst().token) {
-                        aliased = true;
-                        break;
-                    }
+                    newGroupByModel.addBottomUpColumn(selectChooseColumns.getQuick(i));
                 }
 
-                // guard against noop
-                if (!aliased) {
-                    return;
-                }
-
-                // search the upper model from any col names that are actually aliased in the select-choose
                 ObjList<QueryColumn> groupByColumns = model.getColumns();
-                for (int i = 0; i < selectChooseColumns.size(); i++) {
-                    col = selectChooseColumns.getQuick(i);
-
-                    // if it was aliased
-                    if (col.getAlias() != col.getAst().token) {
-                        // look for the token in the group by model
-                        final QueryColumn groupByCol = model.getAliasToColumnMap().get(col.getAlias());
-                        groupByCol.of(groupByCol.getAlias(), col.getAst(), col.isIncludeIntoWildcard(), col.getColumnType());
-                    }
-
+                for (int i = 0; i < groupByColumns.size(); i++) {
+                    newSelectModel.addBottomUpColumn(groupByColumns.getQuick(i));
                 }
 
-                // clear elided node?
-                model.setNestedModel(selectChoose.getNestedModel());
+                newGroupByModel.setNestedModel(selectChoose.getNestedModel());
+                newSelectModel.setNestedModel(newGroupByModel);
+
+
+                return newSelectModel;
             }
         }
+        return model;
     }
 
     // the intent is to either validate top-level columns in select columns or replace them with function calls
@@ -5131,7 +5131,7 @@ public class SqlOptimiser implements Mutable {
             resolveJoinColumns(rewrittenModel);
             optimiseBooleanNot(rewrittenModel);
             rewrittenModel = rewriteSelectClause(rewrittenModel, true, sqlExecutionContext, sqlParserCallback);
-            rewriteGroupByToExtractAliases(rewrittenModel);
+            rewrittenModel = rewriteGroupByToExtractAliases(rewrittenModel);
             optimiseJoins(rewrittenModel);
             rewriteCountDistinct(rewrittenModel);
             rewriteNegativeLimit(rewrittenModel, sqlExecutionContext);
