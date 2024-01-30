@@ -37,6 +37,7 @@ import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.PropertyKey.CAIRO_ROOT;
 import static io.questdb.cairo.DebugUtils.LOG;
@@ -153,6 +154,7 @@ public class Overrides {
 
     public void setProperty(PropertyKey propertyKey, long value) {
         properties.setProperty(propertyKey.getPropertyPath(), String.valueOf(value));
+        changed = true;
     }
 
     public void setProperty(PropertyKey propertyKey, String value) {
@@ -199,8 +201,13 @@ public class Overrides {
             throw new RuntimeException(e);
         }
         propCairoConfiguration.init(null, new FreeOnExit());
+
+        System.out.println("config reloadCount: " + reloadCount.incrementAndGet());
+
         return propCairoConfiguration.getCairoConfiguration();
     }
+
+    static AtomicInteger reloadCount = new AtomicInteger();
 
     private static void resetToDefaultTestProperties(Properties properties) {
         properties.clear();
