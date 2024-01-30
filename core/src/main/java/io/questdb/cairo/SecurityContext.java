@@ -137,4 +137,8 @@ public interface SecurityContext {
     default CharSequence getSessionPrincipal() {
         return getPrincipal();
     }
+
+    default boolean isExternal() {
+        return false;
+    }
 }
