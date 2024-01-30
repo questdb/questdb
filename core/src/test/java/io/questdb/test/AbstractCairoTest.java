@@ -92,7 +92,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static NetworkSqlExecutionCircuitBreaker circuitBreaker;
     protected static SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration;
     protected static long columnPurgeRetryDelay = -1;
-    protected static int columnVersionPurgeQueueCapacity = -1;
     protected static CairoConfiguration configuration;
     protected static TestCairoConfigurationFactory configurationFactory;
     protected static long currentMicros = -1;

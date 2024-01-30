@@ -59,11 +59,6 @@ public class StaticOverrides extends Overrides {
     }
 
     @Override
-    public int getColumnVersionPurgeQueueCapacity() {
-        return AbstractCairoTest.columnVersionPurgeQueueCapacity;
-    }
-
-    @Override
     public long getCurrentMicros() {
         return AbstractCairoTest.currentMicros;
     }
@@ -120,7 +115,6 @@ public class StaticOverrides extends Overrides {
         AbstractCairoTest.currentMicros = -1;
         AbstractCairoTest.testMicrosClock = AbstractCairoTest.defaultMicrosecondClock;
         AbstractCairoTest.spinLockTimeout = -1;
-        AbstractCairoTest.columnVersionPurgeQueueCapacity = -1;
         AbstractCairoTest.sqlCopyBufferSize = 1024 * 1024;
         AbstractCairoTest.ff = null;
         AbstractCairoTest.dataAppendPageSize = -1;
@@ -150,11 +144,6 @@ public class StaticOverrides extends Overrides {
     @Override
     public void setColumnPurgeRetryDelay(long columnPurgeRetryDelay) {
         AbstractCairoTest.columnPurgeRetryDelay = columnPurgeRetryDelay;
-    }
-
-    @Override
-    public void setColumnVersionPurgeQueueCapacity(int columnVersionPurgeQueueCapacity) {
-        AbstractCairoTest.columnVersionPurgeQueueCapacity = columnVersionPurgeQueueCapacity;
     }
 
     @Override

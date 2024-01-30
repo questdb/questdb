@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnPurgeJob;
 import io.questdb.cairo.TableReader;
@@ -51,7 +52,7 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
-        columnVersionPurgeQueueCapacity = 2;
+        setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_QUEUE_CAPACITY, 2);
         AbstractCairoTest.setUpStatic();
     }
 
@@ -60,7 +61,7 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
         iteration = 1;
         currentMicros = 0;
         columnPurgeRetryDelay = 1;
-        columnVersionPurgeQueueCapacity = 2;
+        node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_QUEUE_CAPACITY, 2);
         super.setUp();
     }
 

@@ -50,7 +50,6 @@ public class Overrides {
     private SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration;
     private Boolean columnPreTouchEnabled = null;
     private long columnPurgeRetryDelay = -1;
-    private int columnVersionPurgeQueueCapacity = -1;
     private int columnVersionTaskPoolCapacity = -1;
     private Boolean copyPartitionOnAttach = null;
     private long currentMicros = -1;
@@ -137,11 +136,6 @@ public class Overrides {
 
     public long getColumnPurgeRetryDelay() {
         return columnPurgeRetryDelay;
-    }
-
-
-    public int getColumnVersionPurgeQueueCapacity() {
-        return columnVersionPurgeQueueCapacity;
     }
 
 
@@ -421,7 +415,6 @@ public class Overrides {
         parallelFilterEnabled = null;
         writerMixedIOEnabled = null;
         columnPreTouchEnabled = null;
-        columnVersionPurgeQueueCapacity = -1;
         columnVersionTaskPoolCapacity = -1;
         rostiAllocFacade = null;
         sqlCopyBufferSize = 1024 * 1024;
@@ -485,11 +478,6 @@ public class Overrides {
 
     public void setColumnPurgeRetryDelay(long columnPurgeRetryDelay) {
         this.columnPurgeRetryDelay = columnPurgeRetryDelay;
-    }
-
-
-    public void setColumnVersionPurgeQueueCapacity(int columnVersionPurgeQueueCapacity) {
-        this.columnVersionPurgeQueueCapacity = columnVersionPurgeQueueCapacity;
     }
 
 

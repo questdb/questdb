@@ -84,11 +84,6 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     }
 
     @Override
-    public int getColumnPurgeQueueCapacity() {
-        return overrides.getColumnVersionPurgeQueueCapacity() < 0 ? super.getColumnPurgeQueueCapacity() : overrides.getColumnVersionPurgeQueueCapacity();
-    }
-
-    @Override
     public long getColumnPurgeRetryDelay() {
         return overrides.getColumnPurgeRetryDelay() > 0 ? overrides.getColumnPurgeRetryDelay() : 10;
     }
