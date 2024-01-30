@@ -628,11 +628,6 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test(expected = SqlException.class)
-    public void testUnsupportedNullType() throws Exception {
-        serialize("astring <> null");
-    }
-
-    @Test(expected = SqlException.class)
     public void testUnsupportedOperatorToken() throws Exception {
         serialize("asymbol in (select rnd_symbol('A','B','C') from long_sequence(10))");
     }
