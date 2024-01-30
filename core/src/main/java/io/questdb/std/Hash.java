@@ -74,7 +74,7 @@ public final class Hash {
             h = h * M + us.byteAt(i);
         }
         h *= M;
-        return Numbers.decodeLowInt(h ^ h >>> 24);
+        return Numbers.decodeLowInt(h ^ h >>> 32);
     }
 
     /**
@@ -87,13 +87,13 @@ public final class Hash {
 
     public static long hash64Long(long k) {
         long h = k * M;
-        return (int) (h ^ h >>> 24);
+        return (int) (h ^ h >>> 32);
     }
 
     public static long hash64Long128(long key1, long key2) {
         long h = key1 * M + key2;
         h *= M;
-        return (int) (h ^ h >>> 24);
+        return (int) (h ^ h >>> 32);
     }
 
     public static long hash64Long256(long key1, long key2, long key3, long key4) {
@@ -101,7 +101,7 @@ public final class Hash {
         h = (h * M) + key3;
         h = (h * M) + key4;
         h *= M;
-        return (int) (h ^ h >>> 24);
+        return (int) (h ^ h >>> 32);
     }
 
     /**
@@ -130,7 +130,7 @@ public final class Hash {
             h = h * M + Unsafe.getUnsafe().getByte(p + i);
         }
         h *= M;
-        return h ^ h >>> 24;
+        return h ^ h >>> 32;
     }
 
     /**
