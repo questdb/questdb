@@ -43,6 +43,8 @@ import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
+import static io.questdb.PropertyKey.CAIRO_SNAPSHOT_RECOVERY_ENABLED;
+
 public class SnapshotTest extends AbstractCairoTest {
 
     private static final TestFilesFacade testFilesFacade = new TestFilesFacade();
@@ -124,7 +126,7 @@ public class SnapshotTest extends AbstractCairoTest {
 
     @Test
     public void testRecoverSnapshotForDifferentInstanceIdsWhenRecoveryIsDisabled() throws Exception {
-        snapshotRecoveryEnabled = false;
+        setProperty(CAIRO_SNAPSHOT_RECOVERY_ENABLED, "false");
         testRecoverSnapshot("id1", "id2", false);
     }
 

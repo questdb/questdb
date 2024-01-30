@@ -392,11 +392,6 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     }
 
     @Override
-    public boolean isSnapshotRecoveryEnabled() {
-        return overrides.getSnapshotRecoveryEnabled() == null ? super.isSnapshotRecoveryEnabled() : overrides.getSnapshotRecoveryEnabled();
-    }
-
-    @Override
     public boolean isSqlParallelFilterEnabled() {
         return overrides.isParallelFilterEnabled() != null ? overrides.isParallelFilterEnabled() : super.isSqlParallelFilterEnabled();
     }

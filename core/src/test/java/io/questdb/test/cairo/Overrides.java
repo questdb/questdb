@@ -89,7 +89,6 @@ public class Overrides {
     private RostiAllocFacade rostiAllocFacade = null;
     private int sampleByIndexSearchPageSize;
     private boolean simulateCrashEnabled;
-    private Boolean snapshotRecoveryEnabled = null;
     private long spinLockTimeout = -1;
     private int sqlCopyBufferSize = 1024 * 1024;
     private int sqlJoinMetadataMaxResizes = -1;
@@ -304,12 +303,6 @@ public class Overrides {
     }
 
 
-
-    public Boolean getSnapshotRecoveryEnabled() {
-        return snapshotRecoveryEnabled;
-    }
-
-
     public long getSpinLockTimeout() {
         return spinLockTimeout;
     }
@@ -468,7 +461,6 @@ public class Overrides {
         rndFunctionMemoryPageSize = -1;
         rndFunctionMemoryMaxPages = -1;
         spinLockTimeout = -1;
-        snapshotRecoveryEnabled = null;
         parallelFilterEnabled = null;
         parallelGroupByEnabled = null;
         writerMixedIOEnabled = null;
@@ -730,10 +722,6 @@ public class Overrides {
 
     public void setSimulateCrashEnabled(boolean enabled) {
         this.simulateCrashEnabled = enabled;
-    }
-
-    public void setSnapshotRecoveryEnabled(Boolean snapshotRecoveryEnabled) {
-        this.snapshotRecoveryEnabled = snapshotRecoveryEnabled;
     }
 
     public void setSpinLockTimeout(long spinLockTimeout) {

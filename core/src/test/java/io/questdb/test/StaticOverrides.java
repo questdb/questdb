@@ -104,11 +104,6 @@ public class StaticOverrides extends Overrides {
     }
 
     @Override
-    public Boolean getSnapshotRecoveryEnabled() {
-        return AbstractCairoTest.snapshotRecoveryEnabled;
-    }
-
-    @Override
     public long getSpinLockTimeout() {
         return AbstractCairoTest.spinLockTimeout;
     }
@@ -159,7 +154,6 @@ public class StaticOverrides extends Overrides {
         AbstractCairoTest.groupByShardingThreshold = -1;
         AbstractCairoTest.spinLockTimeout = -1;
         AbstractCairoTest.walTxnNotificationQueueCapacity = -1;
-        AbstractCairoTest.snapshotRecoveryEnabled = null;
         AbstractCairoTest.writerCommandQueueCapacity = 4;
         AbstractCairoTest.columnVersionPurgeQueueCapacity = -1;
         AbstractCairoTest.sqlCopyBufferSize = 1024 * 1024;
@@ -237,11 +231,6 @@ public class StaticOverrides extends Overrides {
     @Override
     public void setInputWorkRoot(String inputWorkRoot) {
         AbstractCairoTest.inputWorkRoot = inputWorkRoot;
-    }
-
-    @Override
-    public void setSnapshotRecoveryEnabled(Boolean snapshotRecoveryEnabled) {
-        AbstractCairoTest.snapshotRecoveryEnabled = snapshotRecoveryEnabled;
     }
 
     @Override
