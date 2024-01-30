@@ -81,6 +81,8 @@ public interface ConfigurationOverrides {
 
     int getMaxFileNameLength();
 
+    int getMaxSqlRecompileAttempts();
+
     int getMaxUncommittedRows();
 
     int getO3ColumnMemorySize();
@@ -234,6 +236,8 @@ public interface ConfigurationOverrides {
     void setMangleTableDirNames(boolean mangle);
 
     void setMaxFileNameLength(int maxFileNameLength);
+
+    void setMaxSqlRecompileAttempts(int maxSqlRecompileAttempts);
 
     void setMaxUncommittedRows(int configOverrideMaxUncommittedRows);
 
