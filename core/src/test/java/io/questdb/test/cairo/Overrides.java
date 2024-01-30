@@ -79,7 +79,6 @@ public class Overrides {
     private int o3PartitionSplitMaxCount = -1;
     private boolean o3QuickSortEnabled = false;
     private int pageFrameMaxRows = -1;
-    private int pageFrameReduceQueueCapacity = -1;
     private Boolean parallelFilterEnabled = null;
     private Boolean parallelGroupByEnabled = null;
     private int parallelImportStatusLogKeepNDays = -1;
@@ -269,12 +268,6 @@ public class Overrides {
     public int getPageFrameMaxRows() {
         return pageFrameMaxRows;
     }
-
-
-    public int getPageFrameReduceQueueCapacity() {
-        return pageFrameReduceQueueCapacity;
-    }
-
 
     public int getParallelImportStatusLogKeepNDays() {
         return parallelImportStatusLogKeepNDays;
@@ -487,7 +480,6 @@ public class Overrides {
         writerMixedIOEnabled = null;
         columnPreTouchEnabled = null;
         writerCommandQueueCapacity = 4;
-        pageFrameReduceQueueCapacity = -1;
         columnVersionPurgeQueueCapacity = -1;
         columnVersionTaskPoolCapacity = -1;
         rostiAllocFacade = null;
@@ -687,11 +679,6 @@ public class Overrides {
 
     public void setPageFrameMaxRows(int pageFrameMaxRows) {
         this.pageFrameMaxRows = pageFrameMaxRows;
-    }
-
-
-    public void setPageFrameReduceQueueCapacity(int pageFrameReduceQueueCapacity) {
-        this.pageFrameReduceQueueCapacity = pageFrameReduceQueueCapacity;
     }
 
     public void setParallelFilterEnabled(Boolean parallelFilterEnabled) {

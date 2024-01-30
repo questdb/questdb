@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Before;
 import org.junit.BeforeClass;
@@ -46,7 +47,7 @@ public class OrderByWithAsyncFilterTest extends AbstractCairoTest {
         // We intentionally use small values for shard count and reduce
         // queue capacity to exhibit various edge cases.
         setProperty(CAIRO_PAGE_FRAME_SHARD_COUNT, 2);
-        pageFrameReduceQueueCapacity = PAGE_FRAME_COUNT;
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, PAGE_FRAME_COUNT);
 
         AbstractCairoTest.setUpStatic();
     }
@@ -56,7 +57,7 @@ public class OrderByWithAsyncFilterTest extends AbstractCairoTest {
     public void setUp() {
         pageFrameMaxRows = PAGE_FRAME_MAX_ROWS;
         setProperty(CAIRO_PAGE_FRAME_SHARD_COUNT, 2);
-        pageFrameReduceQueueCapacity = PAGE_FRAME_COUNT;
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, PAGE_FRAME_COUNT);
         super.setUp();
     }
 

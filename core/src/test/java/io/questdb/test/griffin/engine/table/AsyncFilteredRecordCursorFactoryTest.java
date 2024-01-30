@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.table;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
@@ -40,6 +41,7 @@ import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.jit.JitUtil;
 import io.questdb.mp.*;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -69,7 +71,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         // method for more detail.
         setProperty(CAIRO_PAGE_FRAME_SHARD_COUNT, 1);
         // We intentionally use a small capacity for the reduce queue to exhibit various edge cases.
-        pageFrameReduceQueueCapacity = QUEUE_CAPACITY;
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, QUEUE_CAPACITY);
 
         AbstractCairoTest.setUpStatic();
     }
@@ -588,7 +590,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         // reduced and/or collected before the factory gets closed. When that happens, row id and
         // column lists' capacities in the reduce queue's tasks don't get reset to initial values,
         // so the memory leak check fails. As a workaround, we clean up the memory manually.
-        final long maxPageFrameRows = configuration.getSqlPageFrameMaxRows();
+        final long maxPageFrameRows = configuration.getPageFrameReduceRowIdListCapacity();
         final RingQueue<PageFrameReduceTask> tasks = engine.getMessageBus().getPageFrameReduceQueue(0);
         for (int i = 0; i < tasks.getCycle(); i++) {
             PageFrameReduceTask task = tasks.get(i);
@@ -643,7 +645,10 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
 
     private void testFullQueue(String query) throws Exception {
         final int pageFrameRows = 100;
-        pageFrameMaxRows = pageFrameRows;
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, pageFrameRows);
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, pageFrameRows);
+        Assert.assertEquals(pageFrameRows, configuration.getSqlPageFrameMaxRows());
+        Assert.assertEquals(Numbers.ceilPow2(pageFrameRows), configuration.getPageFrameReduceQueueCapacity());
 
         withPool((engine, compiler, sqlExecutionContext) -> {
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
