@@ -65,6 +65,7 @@ public class PageFrameReduceTask implements Closeable {
     public void close() {
         Misc.free(filteredRows);
         Misc.free(columns);
+        Misc.free(varLenIndexes);
     }
 
     public DirectLongList getColumns() {
@@ -135,6 +136,7 @@ public class PageFrameReduceTask implements Closeable {
     public void resetCapacities() {
         filteredRows.resetCapacity();
         columns.resetCapacity();
+        varLenIndexes.resetCapacity();
     }
 
     public void setErrorMsg(Throwable th) {
