@@ -4802,52 +4802,81 @@ public class SqlOptimiser implements Mutable {
         return root;
     }
 
+    // Queries of the form: select a, b, c as z, count(*) as views from quest where a = 1 group by a,b,z
+    // produce a SelectedRecord node that prevents optimisation of the filter.
+    // Queries of the form: select a, b, c , count(*) as views from quest where a = 1 group by a,b,c
+    // optimise as expected.
+    // This function inverts the select-choose/select-group-by nodes
+    // This increases the number of queries that can have the AsyncJitFilter optimised into a top-level Async Group By
     private QueryModel rewriteGroupByToExtractAliases(QueryModel model) throws SqlException {
-        // original query: select a, b, c as z, count(*) as views from quest where a = 1 group by a,b,z
-        // expecting an output from rewriteSelectClause0 like
-        // select-group-by a, b, z, count() views from (select-choose a, b, c z from (quest timestamp (ts) where a = 1))
-        // we want to transform this into
-        // select-group-by a, b, c z, count() views from (select-choose a, b, c from (quest timestamp (ts) where a = 1))
-        // for now - lets solve specific case, and then generalise
+        // Look for queries like (select-group-by (select-choose))
         if (model.getSelectModelType() == QueryModel.SELECT_MODEL_GROUP_BY) {
             if (model.getNestedModel().getSelectModelType() == QueryModel.SELECT_MODEL_CHOOSE) {
+                final QueryModel groupBy = model;
+                final QueryModel selectChoose = groupBy.getNestedModel();
 
                 final QueryModel newGroupByModel = queryModelPool.next();
                 newGroupByModel.setSelectModelType(QueryModel.SELECT_MODEL_GROUP_BY);
-
-                final QueryModel newSelectModel = queryModelPool.next();
-                newSelectModel.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
-
-
-                newSelectModel.moveGroupByFrom(model);
-                newSelectModel.moveLimitFrom(model);
-                newSelectModel.moveJoinAliasFrom(model);
-
-                QueryModel selectChoose = model.getNestedModel();
-
-                newGroupByModel.moveGroupByFrom(selectChoose);
+                newGroupByModel.moveGroupByFrom(groupBy);
                 newGroupByModel.moveLimitFrom(selectChoose);
                 newGroupByModel.moveJoinAliasFrom(selectChoose);
 
+                final QueryModel newSelectModel = queryModelPool.next();
+                newSelectModel.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
+                newSelectModel.moveGroupByFrom(selectChoose);
+                newSelectModel.moveLimitFrom(groupBy);
+                newSelectModel.moveJoinAliasFrom(groupBy);
 
                 ObjList<QueryColumn> selectChooseColumns = selectChoose.getColumns();
+                ObjList<QueryColumn> groupByColumns = groupBy.getColumns();
 
+                QueryColumn selectColumn;
+                QueryColumn groupByColumn;
+
+                // add columns from the select-choose to the new select-group-by
                 for (int i = 0; i < selectChooseColumns.size(); i++) {
-                    newGroupByModel.addBottomUpColumn(selectChooseColumns.getQuick(i));
+                    selectColumn = selectChooseColumns.getQuick(i);
+                    // if the column appears in the group by, then keep it i.e so we can pass through columns
+                    if (groupBy.getAliasToColumnMap().get(selectColumn.getAlias()) != null) {
+                        newGroupByModel.addBottomUpColumn(selectColumn);
+                    }
                 }
 
-                ObjList<QueryColumn> groupByColumns = model.getColumns();
+                // look for any aliases in the old select-group-by that also need to be retained
                 for (int i = 0; i < groupByColumns.size(); i++) {
-                    newSelectModel.addBottomUpColumn(groupByColumns.getQuick(i));
+                    groupByColumn = groupByColumns.getQuick(i);
+                    if (groupByColumn.getAlias() != groupByColumn.getAst().token) {
+                        // Aliased - so push it down.
+                        newGroupByModel.addBottomUpColumn(groupByColumn);
+                        // add the aliased name to the select-choose
+                        newSelectModel.addBottomUpColumn(nextColumn(groupByColumn.getAlias()));
+                    } else if (groupByColumn.getAlias() == groupByColumn.getAst().token && groupByColumn.getAst().type == 8) {
+                        // transform "select-group-by sum(val) sum from (select-choose a.val val from (a))
+                        // to        "select-choose sum from (select-group-by sum(a.val) from (a))
+                        // therefore, check if we need to "un-alias" the name before we move it down.
+                        final ExpressionNode rhs = groupByColumn.getAst().rhs;
+                        if (rhs != null) {
+                            selectColumn = selectChoose.getAliasToColumnMap().get(rhs.token);
+                            if (selectColumn != null && selectColumn.getAlias() != selectColumn.getAst().token) {
+                                groupByColumn.getAst().rhs = selectColumn.getAst();
+                            }
+                        }
+                        newGroupByModel.addBottomUpColumn(groupByColumn);
+                        // add the aliased name to the select-choose
+                        newSelectModel.addBottomUpColumn(nextColumn(groupByColumn.getAlias()));
+                    }
+                    else {
+                        // just add it straight to the select-choose
+                        newSelectModel.addBottomUpColumn(groupByColumn);
+                    }
                 }
-
+                // nest it (select-choose (select-group-by)) (inverted from what was input originally)
                 newGroupByModel.setNestedModel(selectChoose.getNestedModel());
                 newSelectModel.setNestedModel(newGroupByModel);
-
-
                 return newSelectModel;
             }
         }
+
         return model;
     }
 

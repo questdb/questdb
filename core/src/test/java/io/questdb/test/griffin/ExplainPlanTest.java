@@ -2462,12 +2462,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a (s symbol, ts timestamp) timestamp(ts) partition by year;",
                 "select s as symbol, count() from a",
                 "GroupBy vectorized: true workers: 1\n" +
-                        "  keys: [symbol]\n" +
-                        "  values: [count(*)]\n" +
-                        "    SelectedRecord\n" +
-                        "        DataFrame\n" +
-                        "            Row forward scan\n" +
-                        "            Frame forward scan on: a\n"
+                           "  keys: [s]\n" +
+                           "  values: [count(*)]\n" +
+                           "    DataFrame\n" +
+                           "        Row forward scan\n" +
+                           "        Frame forward scan on: a\n"
         );
     }
 
@@ -2477,11 +2476,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a (s symbol, ts timestamp) timestamp(ts) partition by year;",
                 "select s, count() from a",
                 "GroupBy vectorized: true workers: 1\n" +
-                        "  keys: [s]\n" +
-                        "  values: [count(*)]\n" +
-                        "    DataFrame\n" +
-                        "        Row forward scan\n" +
-                        "        Frame forward scan on: a\n"
+                            "  keys: [s]\n" +
+                            "  values: [count(*)]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: a\n"
         );
     }
 
