@@ -124,11 +124,6 @@ public class StaticOverrides extends Overrides {
     }
 
     @Override
-    public long getWriterAsyncCommandBusyWaitTimeout() {
-        return AbstractCairoTest.writerAsyncCommandBusyWaitTimeout;
-    }
-
-    @Override
     public long getWriterAsyncCommandMaxTimeout() {
         return AbstractCairoTest.writerAsyncCommandMaxTimeout;
     }
@@ -149,7 +144,6 @@ public class StaticOverrides extends Overrides {
 
         AbstractCairoTest.currentMicros = -1;
         AbstractCairoTest.testMicrosClock = AbstractCairoTest.defaultMicrosecondClock;
-        AbstractCairoTest.writerAsyncCommandBusyWaitTimeout = -1;
         AbstractCairoTest.writerAsyncCommandMaxTimeout = -1;
         AbstractCairoTest.groupByShardingThreshold = -1;
         AbstractCairoTest.spinLockTimeout = -1;
@@ -251,11 +245,6 @@ public class StaticOverrides extends Overrides {
     @Override
     public void setWalTxnNotificationQueueCapacity(int walTxnNotificationQueueCapacity) {
         AbstractCairoTest.walTxnNotificationQueueCapacity = walTxnNotificationQueueCapacity;
-    }
-
-    @Override
-    public void setWriterAsyncCommandBusyWaitTimeout(long writerAsyncCommandBusyWaitTimeout) {
-        AbstractCairoTest.writerAsyncCommandBusyWaitTimeout = writerAsyncCommandBusyWaitTimeout;
     }
 
     @Override

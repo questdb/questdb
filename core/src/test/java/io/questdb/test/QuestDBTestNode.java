@@ -114,6 +114,10 @@ public class QuestDBTestNode {
         getConfigurationOverrides().setProperty(propertyKey, value);
     }
 
+    public void setProperty(PropertyKey propertyKey, String value) {
+        getConfigurationOverrides().setProperty(propertyKey, value);
+    }
+
     public void setUpCairo() {
         cairo.setUp();
     }

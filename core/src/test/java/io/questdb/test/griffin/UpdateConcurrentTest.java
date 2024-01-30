@@ -52,6 +52,8 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT;
+
 public class UpdateConcurrentTest extends AbstractCairoTest {
     private static final ThreadLocal<SCSequence> eventSubSequence = new ThreadLocal<>(SCSequence::new);
     private static final ThreadLocal<StringSink> readerSink = new ThreadLocal<>(StringSink::new);
@@ -141,7 +143,7 @@ public class UpdateConcurrentTest extends AbstractCairoTest {
     }
 
     private void testConcurrency(int numOfWriters, int numOfReaders, int numOfUpdates, PartitionMode partitionMode) throws Exception {
-        writerAsyncCommandBusyWaitTimeout = 20_000L; // On in CI Windows updates are particularly slow
+        setProperty(CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, "20000"); // On in CI Windows updates are particularly slow
         writerAsyncCommandMaxTimeout = 30_000L;
         spinLockTimeout = 20_000L;
         assertMemoryLeak(() -> {

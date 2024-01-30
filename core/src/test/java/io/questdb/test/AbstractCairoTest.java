@@ -86,7 +86,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
     public static long spinLockTimeout = -1;
     public static StaticOverrides staticOverrides = new StaticOverrides();
     public static int walTxnNotificationQueueCapacity = -1;
-    public static long writerAsyncCommandBusyWaitTimeout = -1;
     public static long writerAsyncCommandMaxTimeout = -1;
     protected static CharSequence backupDir;
     protected static DateFormat backupDirTimestampFormat;

@@ -49,6 +49,8 @@ import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT;
+
 public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTest {
     private static final Log LOG = LogFactory.getLog(LineTcpReceiverUpdateFuzzTest.class);
     private final ConcurrentLinkedQueue<String> updateSqlQueue = new ConcurrentLinkedQueue<>();
@@ -71,9 +73,9 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
     @Before
     public void setUp() {
         writerCommandQueueCapacity = 1024;
-        writerAsyncCommandBusyWaitTimeout = 5000;
+        setProperty(CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, "5000");
         super.setUp();
-        node1.getConfigurationOverrides().setWriterAsyncCommandBusyWaitTimeout(5000);
+        node1.setProperty(CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 5000);
         node1.getConfigurationOverrides().setSpinLockTimeout(5000);
     }
 
