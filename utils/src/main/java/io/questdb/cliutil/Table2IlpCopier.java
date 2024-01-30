@@ -129,7 +129,6 @@ public class Table2IlpCopier {
         properties.setProperty("sslmode", "disable");
         properties.setProperty("binaryTransfer", "true");
         properties.setProperty("preferQueryMode", "extendedForPrepared");
-        properties.setProperty("options", "-c statement_timeout=" + Integer.MAX_VALUE);
         return DriverManager.getConnection(connectionString, properties);
     }
 
