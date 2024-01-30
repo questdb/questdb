@@ -1433,8 +1433,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
         staticOverrides.setProperty(propertyKey, maxValue);
     }
 
-    protected static void setProperty(PropertyKey propertyKey, String snapshotId) {
-        staticOverrides.setProperty(propertyKey, snapshotId);
+    protected static void setProperty(PropertyKey propertyKey, String value) {
+        staticOverrides.setProperty(propertyKey, value);
     }
 
     protected static void tickWalQueue(int ticks) {

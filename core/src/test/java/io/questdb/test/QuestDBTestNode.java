@@ -35,6 +35,7 @@ import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.std.Misc;
 import io.questdb.test.cairo.Overrides;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 
 public class QuestDBTestNode {
     private final int nodeId;
@@ -114,7 +115,7 @@ public class QuestDBTestNode {
         getConfigurationOverrides().setProperty(propertyKey, value);
     }
 
-    public void setProperty(PropertyKey propertyKey, String value) {
+    public void setProperty(PropertyKey propertyKey, @NotNull String value) {
         getConfigurationOverrides().setProperty(propertyKey, value);
     }
 
