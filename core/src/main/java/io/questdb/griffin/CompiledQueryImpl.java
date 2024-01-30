@@ -57,18 +57,22 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     private UpdateOperation updateOp;
 
     public CompiledQueryImpl(CairoEngine engine) {
-        //type inference fails on java 8 if <UpdateOperation> is removed
+        // type inference fails on java 8 if <UpdateOperation> is removed
         updateOperationDispatcher = new OperationDispatcher<UpdateOperation>(engine, "sync 'UPDATE' execution") {
             @Override
             protected long apply(UpdateOperation operation, TableWriterAPI writerAPI) {
                 return writerAPI.apply(operation);
             }
         };
-        //type inference fails on java 8 if <AlterOperation> is removed 
+        // type inference fails on java 8 if <AlterOperation> is removed
         alterOperationDispatcher = new OperationDispatcher<AlterOperation>(engine, "Alter table execute") {
             @Override
             protected long apply(AlterOperation operation, TableWriterAPI writerAPI) {
-                return writerAPI.apply(operation, true);
+                try {
+                    return writerAPI.apply(operation, true);
+                } finally {
+                    operation.clearSecurityContext();
+                }
             }
         };
     }

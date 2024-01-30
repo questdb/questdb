@@ -523,7 +523,11 @@ public class SqlParser {
         return parseCreateTable(lexer, executionContext, sqlParserCallback);
     }
 
-    private ExecutionModel parseCreateTable(GenericLexer lexer, SqlExecutionContext executionContext, SqlParserCallback sqlParserCallback) throws SqlException {
+    private ExecutionModel parseCreateTable(
+            GenericLexer lexer,
+            SqlExecutionContext executionContext,
+            SqlParserCallback sqlParserCallback
+    ) throws SqlException {
         final CreateTableModel model = createTableModelPool.next();
         final CharSequence tableName;
         CharSequence tok = tok(lexer, "table name or 'if'");
@@ -576,7 +580,7 @@ public class SqlParser {
             // ignore index, validate column
             int timestampIdx = getCreateTableColumnIndex(model, timestamp.token, timestamp.position);
             int timestampType = model.getColumnType(timestampIdx);
-            if (timestampType != ColumnType.TIMESTAMP && timestampType != -1) { //type can be -1 for create table as select because types aren't known yet
+            if (timestampType != ColumnType.TIMESTAMP && timestampType != -1) { // type can be -1 for create table as select because types aren't known yet
                 throw SqlException.position(timestamp.position).put("TIMESTAMP column expected [actual=").put(ColumnType.nameOf(timestampType)).put(']');
             }
             model.setTimestamp(timestamp);
@@ -617,9 +621,9 @@ public class SqlParser {
                 }
             }
         }
-        final boolean isWalEnabled = configuration.isWalSupported() &&
-                PartitionBy.isPartitioned(model.getPartitionBy()) &&
-                ((walSetting == WAL_NOT_SET && configuration.getWalEnabledDefault()) || walSetting == WAL_ENABLED);
+        final boolean isWalEnabled = configuration.isWalSupported()
+                && PartitionBy.isPartitioned(model.getPartitionBy())
+                && ((walSetting == WAL_NOT_SET && configuration.getWalEnabledDefault()) || walSetting == WAL_ENABLED);
         model.setWalEnabled(isWalEnabled);
 
         int maxUncommittedRows = configuration.getMaxUncommittedRows();
@@ -731,7 +735,7 @@ public class SqlParser {
         if (tok == null || Chars.equals(tok, ';')) {
             return model;
         }
-        throw errUnexpected(lexer, tok);
+        return sqlParserCallback.unknownCreateTableSuffix(lexer, executionContext, model, tok);
     }
 
     private void parseCreateTableAsSelect(GenericLexer lexer, CreateTableModel model, SqlExecutionContext executionContext, SqlParserCallback sqlParserCallback) throws SqlException {
@@ -859,12 +863,12 @@ public class SqlParser {
                 tok = tok(lexer, "',' or ')'");
             }
 
-            //ignoring `PRECISION`
+            // ignoring `PRECISION`
             if (SqlKeywords.isPrecisionKeyword(tok)) {
                 tok = tok(lexer, "'NOT' or 'NULL' or ',' or ')'");
             }
 
-            //ignoring `NULL` and `NOT NULL`
+            // ignoring `NULL` and `NOT NULL`
             if (SqlKeywords.isNotKeyword(tok)) {
                 tok = tok(lexer, "'NULL'");
             }
@@ -1109,8 +1113,8 @@ public class SqlParser {
                 } else {
                     showKind = sqlParserCallback.parseShowSql(lexer, model, tok, expressionNodePool);
                 }
-
             }
+
             if (showKind == -1) {
                 throw SqlException.position(lexer.getPosition()).put("expected ")
                         .put("'TABLES', 'COLUMNS FROM <tab>', 'PARTITIONS FROM <tab>', ")
