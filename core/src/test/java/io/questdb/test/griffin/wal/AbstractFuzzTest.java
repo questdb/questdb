@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.wal;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.log.Log;
@@ -219,7 +220,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
 
     protected void setRandomAppendPageSize(Rnd rnd) {
         int minPage = 18;
-        dataAppendPageSize = 1L << (minPage + rnd.nextInt(22 - minPage)); // MAX page size 4Mb
-        LOG.info().$("dataAppendPageSize=").$(dataAppendPageSize).$();
+        setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, 1L << (minPage + rnd.nextInt(22 - minPage))); // MAX page size 4Mb
+        LOG.info().$("dataAppendPageSize=").$(configuration.getDataAppendPageSize()).$();
     }
 }

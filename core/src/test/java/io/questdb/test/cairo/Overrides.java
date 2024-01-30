@@ -55,7 +55,6 @@ public class Overrides {
     private long currentMicros = -1;
     private final MicrosecondClock defaultMicrosecondClock = () -> currentMicros >= 0 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
     private MicrosecondClock testMicrosClock = defaultMicrosecondClock;
-    private long dataAppendPageSize = -1;
     private int defaultTableWriteMode = SqlWalMode.WAL_NOT_SET;
     private Map<String, String> env = null;
     private FactoryProvider factoryProvider = null;
@@ -86,7 +85,6 @@ public class Overrides {
     private RostiAllocFacade rostiAllocFacade = null;
     private int sampleByIndexSearchPageSize;
     private boolean simulateCrashEnabled;
-    private int sqlCopyBufferSize = 1024 * 1024;
     private int sqlJoinMetadataMaxResizes = -1;
     private int sqlJoinMetadataPageSize = -1;
     private int sqlWindowMaxRecursion;
@@ -159,11 +157,6 @@ public class Overrides {
 
     public long getCurrentMicros() {
         return currentMicros;
-    }
-
-
-    public long getDataAppendPageSize() {
-        return dataAppendPageSize;
     }
 
 
@@ -276,11 +269,6 @@ public class Overrides {
 
     public boolean getSimulateCrashEnabled() {
         return simulateCrashEnabled;
-    }
-
-
-    public int getSqlCopyBufferSize() {
-        return sqlCopyBufferSize;
     }
 
 
@@ -410,7 +398,6 @@ public class Overrides {
         columnPreTouchEnabled = null;
         columnVersionTaskPoolCapacity = -1;
         rostiAllocFacade = null;
-        sqlCopyBufferSize = 1024 * 1024;
         sqlJoinMetadataPageSize = -1;
         sqlJoinMetadataMaxResizes = -1;
         ioURingEnabled = null;
@@ -418,7 +405,6 @@ public class Overrides {
         defaultTableWriteMode = SqlWalMode.WAL_NOT_SET;
         copyPartitionOnAttach = null;
         ff = null;
-        dataAppendPageSize = -1;
         o3QuickSortEnabled = false;
         walSegmentRolloverRowCount = -1;
         mangleTableDirNames = true;
@@ -486,11 +472,6 @@ public class Overrides {
 
     public void setCurrentMicros(long currentMicros) {
         this.currentMicros = currentMicros;
-    }
-
-
-    public void setDataAppendPageSize(long dataAppendPageSize) {
-        this.dataAppendPageSize = dataAppendPageSize;
     }
 
 
@@ -647,10 +628,6 @@ public class Overrides {
 
     public void setSimulateCrashEnabled(boolean enabled) {
         this.simulateCrashEnabled = enabled;
-    }
-
-    public void setSqlCopyBufferSize(int sqlCopyBufferSize) {
-        this.sqlCopyBufferSize = sqlCopyBufferSize;
     }
 
     public void setSqlJoinMetadataMaxResizes(int sqlJoinMetadataMaxResizes) {

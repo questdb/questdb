@@ -25,6 +25,7 @@
 package io.questdb.test;
 
 import io.questdb.FactoryProvider;
+import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.datetime.DateFormat;
@@ -64,11 +65,6 @@ public class StaticOverrides extends Overrides {
     }
 
     @Override
-    public long getDataAppendPageSize() {
-        return AbstractCairoTest.dataAppendPageSize;
-    }
-
-    @Override
     public FactoryProvider getFactoryProvider() {
         return AbstractCairoTest.factoryProvider;
     }
@@ -89,11 +85,6 @@ public class StaticOverrides extends Overrides {
     }
 
     @Override
-    public int getSqlCopyBufferSize() {
-        return AbstractCairoTest.sqlCopyBufferSize;
-    }
-
-    @Override
     public MicrosecondClock getTestMicrosClock() {
         return AbstractCairoTest.testMicrosClock;
     }
@@ -109,9 +100,8 @@ public class StaticOverrides extends Overrides {
 
         AbstractCairoTest.currentMicros = -1;
         AbstractCairoTest.testMicrosClock = AbstractCairoTest.defaultMicrosecondClock;
-        AbstractCairoTest.sqlCopyBufferSize = 1024 * 1024;
+        setProperty(PropertyKey.CAIRO_SQL_COPY_BUFFER_SIZE, 1024 * 1024);
         AbstractCairoTest.ff = null;
-        AbstractCairoTest.dataAppendPageSize = -1;
         AbstractCairoTest.factoryProvider = null;
     }
 
@@ -146,11 +136,6 @@ public class StaticOverrides extends Overrides {
     }
 
     @Override
-    public void setDataAppendPageSize(long dataAppendPageSize) {
-        AbstractCairoTest.dataAppendPageSize = dataAppendPageSize;
-    }
-
-    @Override
     public void setFactoryProvider(FactoryProvider factoryProvider) {
         AbstractCairoTest.factoryProvider = factoryProvider;
     }
@@ -168,11 +153,6 @@ public class StaticOverrides extends Overrides {
     @Override
     public void setInputWorkRoot(String inputWorkRoot) {
         AbstractCairoTest.inputWorkRoot = inputWorkRoot;
-    }
-
-    @Override
-    public void setSqlCopyBufferSize(int sqlCopyBufferSize) {
-        AbstractCairoTest.sqlCopyBufferSize = sqlCopyBufferSize;
     }
 
     @Override

@@ -82,7 +82,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
     private final static double EPSILON = 0.000001;
     private static final long[] SNAPSHOT = new long[MemoryTag.SIZE];
     private static final LongList rows = new LongList();
-    public static long dataAppendPageSize = -1;
     public static StaticOverrides staticOverrides = new StaticOverrides();
     protected static CharSequence backupDir;
     protected static DateFormat backupDirTimestampFormat;
@@ -108,7 +107,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static QuestDBTestNode node1;
     protected static ObjList<QuestDBTestNode> nodes = new ObjList<>();
     protected static SecurityContext securityContext;
-    protected static int sqlCopyBufferSize = 1024 * 1024;
     protected static SqlExecutionContext sqlExecutionContext;
     protected static long writerCommandQueueSlotSize = 2048L;
     static boolean[] FACTORY_TAGS = new boolean[MemoryTag.SIZE];

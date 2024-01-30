@@ -105,11 +105,6 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     }
 
     @Override
-    public long getDataAppendPageSize() {
-        return overrides.getDataAppendPageSize() > 0 ? overrides.getDataAppendPageSize() : super.getDataAppendPageSize();
-    }
-
-    @Override
     public Map<String, String> getEnv() {
         return overrides.getEnv();
     }
@@ -224,11 +219,6 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     @Override
     public boolean getSimulateCrashEnabled() {
         return overrides.getSimulateCrashEnabled();
-    }
-
-    @Override
-    public int getSqlCopyBufferSize() {
-        return overrides.getSqlCopyBufferSize();
     }
 
     @Override

@@ -208,7 +208,7 @@ public class TableWriterTest extends AbstractCairoTest {
             setProperty(PropertyKey.CAIRO_WRITER_COMMAND_QUEUE_CAPACITY, Numbers.ceilPow2(2 * totalColAddCount));
             int tableId = 11;
             // Reduce disk space by for the test run.
-            dataAppendPageSize = 1 << 20; // 1MB
+            setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, 1<< 20); // 1MB
 
             TableToken tableToken;
             try (Path path = new Path()) {
