@@ -1003,10 +1003,8 @@ public class PropServerConfiguration implements ServerConfiguration {
                     this.locale
             );
 
-            if (loadAdditionalConfigurations) {
-                try (JsonLexer lexer = new JsonLexer(1024, 1024)) {
-                    inputFormatConfiguration.parseConfiguration(PropServerConfiguration.class, lexer, confRoot, sqlCopyFormatsFile);
-                }
+            try (JsonLexer lexer = new JsonLexer(1024, 1024)) {
+                inputFormatConfiguration.parseConfiguration(PropServerConfiguration.class, lexer, confRoot, sqlCopyFormatsFile);
             }
 
             this.cairoSqlCopyRoot = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_ROOT, null);
