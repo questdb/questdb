@@ -300,6 +300,9 @@ public class Overrides {
         properties.setProperty(PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT.getPropertyPath(), "4");
         properties.setProperty(PropertyKey.DEBUG_ENABLE_TEST_FACTORIES.getPropertyPath(), "true");
         properties.setProperty(PropertyKey.CAIRO_O3_MAX_LAG.getPropertyPath(), "300000");
+        properties.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED.getPropertyPath(), "true");
+        properties.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUP_BY_ENABLED.getPropertyPath(), "true");
+        properties.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT.getPropertyPath(), "false");
     }
 
     private CairoConfiguration getDefaultConfiguration(String root) {
