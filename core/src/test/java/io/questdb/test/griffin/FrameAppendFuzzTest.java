@@ -145,7 +145,7 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
     @Override
     protected void runFuzz(Rnd rnd) throws Exception {
         int size = rnd.nextInt(16 * 1024 * 1024);
-        node1.setProperty(PropertyKey.CAIRO_O3_COLUMN_MEMORY_SIZE, size);
+        node1.setProperty(PropertyKey.DEBUG_CAIRO_O3_COLUMN_MEMORY_SIZE, size);
 
         String tableName = testName.getMethodName();
         String tableNameMerged = testName.getMethodName() + "_merged";

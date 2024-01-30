@@ -79,14 +79,7 @@ public class InsertTest extends AbstractCairoTest {
     @Before
     public void setUp() {
         super.setUp();
-        int defaultTableWriteMode = walEnabled ? 1 : 0;
-        node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, defaultTableWriteMode);
-    }
-
-    @After
-    public void tearDown() throws Exception {
-        super.tearDown();
-        node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, -1);
+        node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, walEnabled);
     }
 
     @Test

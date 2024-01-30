@@ -109,7 +109,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_ATTACH_PARTITION_COPY, true);
             String tableName = "tabDetachAttachMissingMeta";
-            node1.getConfigurationOverrides().setProperty(
+            node1.setProperty(
                     PropertyKey.CAIRO_ATTACH_PARTITION_SUFFIX,
                     DETACHED_DIR_MARKER
             );
@@ -165,7 +165,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 return super.copy(src, dest);
             }
         };
-        node1.getConfigurationOverrides().setProperty(
+        node1.setProperty(
                 PropertyKey.CAIRO_ATTACH_PARTITION_SUFFIX,
                 DETACHED_DIR_MARKER
         );
@@ -221,7 +221,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
         };
         assertMemoryLeak(ff1, () -> {
             String tableName = "tabDetachAttachMissingMeta";
-            node1.getConfigurationOverrides().setProperty(
+            node1.setProperty(
                     PropertyKey.CAIRO_ATTACH_PARTITION_SUFFIX,
                     DETACHED_DIR_MARKER
             );
@@ -697,7 +697,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 () -> {
                     node1.setProperty(PropertyKey.CAIRO_ATTACH_PARTITION_COPY, true);
                     String tableName = testName.getMethodName();
-                    node1.getConfigurationOverrides().setProperty(
+                    node1.setProperty(
                             PropertyKey.CAIRO_ATTACH_PARTITION_SUFFIX,
                             DETACHED_DIR_MARKER
                     );
@@ -759,7 +759,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 () -> {
                     node1.setProperty(PropertyKey.CAIRO_ATTACH_PARTITION_COPY, true);
                     String tableName = testName.getMethodName();
-                    node1.getConfigurationOverrides().setProperty(
+                    node1.setProperty(
                             PropertyKey.CAIRO_ATTACH_PARTITION_SUFFIX,
                             DETACHED_DIR_MARKER
                     );
@@ -1138,7 +1138,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_ATTACH_PARTITION_COPY, true);
             String tableName = "tabDetachAttachMissingMeta";
-            node1.getConfigurationOverrides().setProperty(
+            node1.setProperty(
                     PropertyKey.CAIRO_ATTACH_PARTITION_SUFFIX,
                     DETACHED_DIR_MARKER
             );

@@ -174,7 +174,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
 
             try {
                 int size = rnd.nextInt(16 * 1024 * 1024);
-                node1.setProperty(PropertyKey.CAIRO_O3_COLUMN_MEMORY_SIZE, size);
+                node1.setProperty(PropertyKey.DEBUG_CAIRO_O3_COLUMN_MEMORY_SIZE, size);
                 setZeroWalPurgeInterval();
                 fuzzer.runFuzz(getTestName(), rnd);
             } finally {

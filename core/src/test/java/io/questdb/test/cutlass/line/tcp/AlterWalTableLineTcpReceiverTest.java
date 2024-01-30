@@ -61,7 +61,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
     @Before
     public void setUp() {
         super.setUp();
-        node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, SqlWalMode.WAL_ENABLED);
+        node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, true);
     }
 
     @Test

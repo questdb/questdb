@@ -170,14 +170,12 @@ public class PGJobContextTest extends BasePGTest {
                 .$(", recvBufferSize=").$(recvBufferSize)
                 .$(", forceRecvFragmentationChunkSize=").$(forceRecvFragmentationChunkSize)
                 .I$();
-        int defaultTableWriteMode = walEnabled ? SqlWalMode.WAL_ENABLED : SqlWalMode.WAL_DISABLED;
-        node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, defaultTableWriteMode);
+        node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, walEnabled);
     }
 
     @After
     public void tearDown() throws Exception {
         super.tearDown();
-        node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, -1);
     }
 
     @Test
@@ -10336,7 +10334,6 @@ create table tab as (
                         }
                     }
                 } finally {
-//                    pool.halt();
                     engine.releaseAllWriters();
                 }
                 // Failure may not happen if we're lucky, even when they are expected

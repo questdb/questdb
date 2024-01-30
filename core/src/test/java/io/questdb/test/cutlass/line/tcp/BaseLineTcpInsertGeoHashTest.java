@@ -59,8 +59,7 @@ abstract class BaseLineTcpInsertGeoHashTest extends BaseLineTcpContextTest {
     @Override
     public void setUp() {
         super.setUp();
-        int defaultTableWriteMode = walEnabled ? SqlWalMode.WAL_ENABLED : SqlWalMode.WAL_DISABLED;
-        node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, defaultTableWriteMode);
+        node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, walEnabled);
     }
 
     @Test

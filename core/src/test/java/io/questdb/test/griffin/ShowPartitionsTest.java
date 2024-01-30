@@ -60,7 +60,7 @@ public class ShowPartitionsTest extends AbstractCairoTest {
     public ShowPartitionsTest(WalMode walMode, String tableNameSuffix) {
         isWal = walMode == WalMode.WITH_WAL;
         this.tableNameSuffix = tableNameSuffix;
-        node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, isWal ? SqlWalMode.WAL_ENABLED : SqlWalMode.WAL_DISABLED);
+        node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, isWal);
     }
 
     @Parameterized.Parameters(name = "{0}-{1}")

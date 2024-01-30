@@ -1274,6 +1274,7 @@ public final class TestUtils {
         properties.setProperty(PropertyKey.CAIRO_COLUMN_INDEXER_QUEUE_CAPACITY.getPropertyPath(), "1024");
         properties.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_QUEUE_CAPACITY.getPropertyPath(), "64");
         properties.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_MULTIPLIER.getPropertyPath(), "2");
+        properties.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY.getPropertyPath(), "10");
         properties.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_TASK_POOL_CAPACITY.getPropertyPath(), "64");
         properties.setProperty(PropertyKey.CAIRO_SQL_COPY_MODEL_POOL_CAPACITY.getPropertyPath(), "16");
         properties.setProperty(PropertyKey.CAIRO_SQL_CREATE_TABEL_MODEL_POOL_CAPACITY.getPropertyPath(), "32");
@@ -1295,7 +1296,7 @@ public final class TestUtils {
         properties.setProperty(PropertyKey.CAIRO_MAX_CRASH_FILES.getPropertyPath(), "1");
         properties.setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS.getPropertyPath(), "1000");
         properties.setProperty(PropertyKey.CAIRO_O3_CALLBACK_QUEUE_CAPACITY.getPropertyPath(), "1024");
-        properties.setProperty(PropertyKey.CAIRO_O3_COLUMN_MEMORY_SIZE.getPropertyPath(), "1048576");
+        properties.setProperty(PropertyKey.DEBUG_CAIRO_O3_COLUMN_MEMORY_SIZE.getPropertyPath(), "1048576");
         properties.setProperty(PropertyKey.CAIRO_O3_COPY_QUEUE_CAPACITY.getPropertyPath(), "1024");
         properties.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS.getPropertyPath(), "15");
         properties.setProperty(PropertyKey.CAIRO_COMMIT_LAG.getPropertyPath(), "300000000");

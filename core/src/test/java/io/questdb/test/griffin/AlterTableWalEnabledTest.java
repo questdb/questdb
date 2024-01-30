@@ -40,14 +40,14 @@ public class AlterTableWalEnabledTest extends AbstractCairoTest {
     @Test
     public void testDefaultWalEnabledMode() throws Exception {
         assertMemoryLeak(() -> {
-            node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, SqlWalMode.WAL_ENABLED);
+            node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, true);
             createTableWrite("my_table_wal", null, "HOUR");
             assertWalEnabled("my_table_wal", true);
 
             createTableWrite("my_table_wal_none", null, "NONE");
             assertWalEnabled("my_table_wal_none", false);
 
-            node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, SqlWalMode.WAL_DISABLED);
+            node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, false);
             createTableWrite("my_table_dir", null, "HOUR");
             assertWalEnabled("my_table_dir", false);
         });
