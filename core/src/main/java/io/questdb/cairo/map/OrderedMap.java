@@ -79,7 +79,6 @@ public class OrderedMap implements Map, Reopenable {
     private static final long MAX_HEAP_SIZE = (Integer.toUnsignedLong(-1) - 1) << 3;
     private static final int MIN_KEY_CAPACITY = 16;
     private final OrderedMapCursor cursor;
-    private final Hash64Function hashFunction;
     private final int heapMemoryTag;
     private final Key key;
     private final long keyOffset;
@@ -184,7 +183,6 @@ public class OrderedMap implements Map, Reopenable {
             }
         }
         this.keySize = keySize;
-        hashFunction = Hash64FunctionFactory.createFunction(keySize);
 
         // Reserve 4 bytes for key length in case of var-size keys.
         keyOffset = keySize != -1 ? 0 : Integer.BYTES;
@@ -218,11 +216,11 @@ public class OrderedMap implements Map, Reopenable {
 
         assert keySize + valueSize <= heapLimit - heapStart : "page size is too small to fit a single key";
         if (keySize == -1) {
-            record = new OrderedMapVarSizeRecord(valueSize, valueOffsets, value, keyTypes, valueTypes, hashFunction);
+            record = new OrderedMapVarSizeRecord(valueSize, valueOffsets, value, keyTypes, valueTypes);
             key = new VarSizeKey();
             mergeRef = this::mergeVarSizeKey;
         } else {
-            record = new OrderedMapFixedSizeRecord(keySize, valueSize, valueOffsets, value, keyTypes, valueTypes, hashFunction);
+            record = new OrderedMapFixedSizeRecord(keySize, valueSize, valueOffsets, value, keyTypes, valueTypes);
             key = new FixedSizeKey();
             mergeRef = this::mergeFixedSizeKey;
         }
@@ -240,7 +238,6 @@ public class OrderedMap implements Map, Reopenable {
 
     @Override
     public final void close() {
-        Misc.free(hashFunction);
         Misc.free(offsets);
         if (heapStart != 0) {
             Unsafe.free(heapStart, heapSize, heapMemoryTag);
@@ -614,7 +611,7 @@ public class OrderedMap implements Map, Reopenable {
 
         @Override
         public long hash() {
-            return hashFunction.hash(startAddress, keySize);
+            return Hash.hash64Mem(startAddress, keySize);
         }
 
         public FixedSizeKey init() {
@@ -859,7 +856,7 @@ public class OrderedMap implements Map, Reopenable {
 
         @Override
         public long hash() {
-            return hashFunction.hash(startAddress + keyOffset, len);
+            return Hash.hash64Mem(startAddress + keyOffset, len);
         }
 
         @Override

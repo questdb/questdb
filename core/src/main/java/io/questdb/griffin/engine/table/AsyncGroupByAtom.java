@@ -48,8 +48,8 @@ import java.io.Closeable;
 import static io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory.prepareBindVarMemory;
 
 public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Plannable {
-    // We use the first 8 bits of a hash code to determine the shard, hence 256 as the number of shards.
-    private static final int SHARDS = 256;
+    // We use the first 8 bits of a hash code to determine the shard, hence 128 as the max number of shards.
+    private static final int MAX_SHARDS = 128;
     private final ObjList<Function> bindVarFunctions;
     private final MemoryCARW bindVarMemory;
     private final CompiledFilter compiledFilter;
@@ -123,7 +123,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
             perWorkerLocks = new PerWorkerLocks(configuration, slotCount);
 
-            shardCount = SHARDS;
+            shardCount = Math.min(Numbers.ceilPow2(4 * workerCount), MAX_SHARDS);
             shardCountShr = Long.numberOfLeadingZeros(shardCount) + 1;
             lastShardStats = new ObjList<>(shardCount);
             for (int i = 0; i < shardCount; i++) {

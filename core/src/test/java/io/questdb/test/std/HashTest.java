@@ -35,29 +35,10 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.zip.ZipFile;
 
-public class Hash64FunctionTest {
+public class HashTest {
 
     @Test
-    public void testHashMemEnglishWordsCorpusFixedSizeKey() throws IOException {
-        testHashMemEnglishWordsCorpus(Hash64FunctionFactory.createFunction(1));
-    }
-
-    @Test
-    public void testHashMemEnglishWordsVarSizeKey() throws IOException {
-        testHashMemEnglishWordsCorpus(Hash64FunctionFactory.createFunction(-1));
-    }
-
-    @Test
-    public void testHashMemRandomCorpusFixedSizeKey() {
-        testHashMemRandomCorpus(Hash64FunctionFactory.createFunction(1));
-    }
-
-    @Test
-    public void testHashMemRandomCorpusVarSizeKey() {
-        testHashMemRandomCorpus(Hash64FunctionFactory.createFunction(-1));
-    }
-
-    private void testHashMemEnglishWordsCorpus(Hash64Function func) throws IOException {
+    public void testHashMemEnglishWordsCorpus() throws IOException {
         final int maxLen = 128;
         LongHashSet hashes = new LongHashSet(500000);
 
@@ -74,7 +55,7 @@ public class Hash64FunctionTest {
                 for (int i = 0; i < bytes.length; i++) {
                     Unsafe.getUnsafe().putByte(address + i, bytes[i]);
                 }
-                hashes.add(func.hash(address, bytes.length));
+                hashes.add(Hash.hash64Mem(address, bytes.length));
             }
             // 466189 is the number of unique values of String#hashCode() on the same corpus.
             Assert.assertTrue("hash function distribution on English words corpus dropped", hashes.size() >= 466189);
@@ -83,7 +64,8 @@ public class Hash64FunctionTest {
         }
     }
 
-    private void testHashMemRandomCorpus(Hash64Function func) {
+    @Test
+    public void testHashMemRandomCorpus() {
         final int len = 15;
         Rnd rnd = new Rnd();
         LongHashSet hashes = new LongHashSet(100000);
@@ -92,7 +74,7 @@ public class Hash64FunctionTest {
         try {
             for (int i = 0; i < 100000; i++) {
                 rnd.nextChars(address, len / 2);
-                hashes.add(func.hash(address, len));
+                hashes.add(Hash.hash64Mem(address, len));
             }
             Assert.assertTrue("Hash function distribution dropped", hashes.size() > 99990);
         } finally {

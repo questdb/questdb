@@ -47,7 +47,6 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
     private final DirectBinarySequence[] bs;
     private final DirectString[] csA;
     private final DirectString[] csB;
-    private final Hash64Function hashFunction;
     private final Long256Impl[] keyLong256A;
     private final Long256Impl[] keyLong256B;
     private final ColumnTypes keyTypes;
@@ -69,15 +68,13 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
             long[] valueOffsets,
             OrderedMapValue value,
             @NotNull @Transient ColumnTypes keyTypes,
-            @Nullable @Transient ColumnTypes valueTypes,
-            Hash64Function hashFunction
+            @Nullable @Transient ColumnTypes valueTypes
     ) {
         this.valueSize = valueSize;
         this.valueOffsets = valueOffsets;
         this.value = value;
         this.value.linkRecord(this); // provides feature to position this record at location of map value
         this.splitIndex = valueOffsets != null ? valueOffsets.length : 0;
-        this.hashFunction = hashFunction;
 
         int nColumns;
         int keyIndexOffset;
@@ -157,8 +154,7 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
             DirectString[] csB,
             DirectBinarySequence[] bs,
             Long256Impl[] keyLong256A,
-            Long256Impl[] keyLong256B,
-            Hash64Function hashFunction
+            Long256Impl[] keyLong256B
     ) {
         this.valueSize = valueSize;
         this.valueOffsets = valueOffsets;
@@ -170,7 +166,6 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
         this.bs = bs;
         this.keyLong256A = keyLong256A;
         this.keyLong256B = keyLong256B;
-        this.hashFunction = hashFunction;
     }
 
     @SuppressWarnings("MethodDoesntCallSuperMethod")
@@ -226,7 +221,7 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
             long256A = null;
             long256B = null;
         }
-        return new OrderedMapVarSizeRecord(valueSize, valueOffsets, keyTypes, splitIndex, csA, csB, bs, long256A, long256B, hashFunction);
+        return new OrderedMapVarSizeRecord(valueSize, valueOffsets, keyTypes, splitIndex, csA, csB, bs, long256A, long256B);
     }
 
     @Override
@@ -405,15 +400,15 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
     @Override
     public long keyHashCode() {
         int keySize = Unsafe.getUnsafe().getInt(startAddress);
-        return hashFunction.hash(startAddress + Integer.BYTES, keySize);
+        return Hash.hash64Mem(startAddress + OrderedMap.VAR_KEY_HEADER_SIZE, keySize);
     }
 
     @Override
     public void of(long address) {
         this.startAddress = address;
-        this.keyAddress = address + Integer.BYTES;
+        this.keyAddress = address + OrderedMap.VAR_KEY_HEADER_SIZE;
         int keySize = Unsafe.getUnsafe().getInt(address);
-        this.valueAddress = address + Integer.BYTES + keySize;
+        this.valueAddress = address + OrderedMap.VAR_KEY_HEADER_SIZE + keySize;
         this.lastKeyIndex = -1;
         this.lastKeyOffset = -1;
     }

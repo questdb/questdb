@@ -29,7 +29,8 @@ import io.questdb.std.str.Utf8String;
 
 public final class Hash {
 
-    private static final long M2 = 0x7a646e4d;
+    // Constant from FxHasher.
+    private static final long M = 0x517cc1b727220a95L;
     private static final int SPREAD_HASH_BITS = 0x7fffffff;
 
     private Hash() {
@@ -63,17 +64,17 @@ public final class Hash {
         long h = 0;
         int i = 0;
         for (; i + 7 < len; i += 8) {
-            h = h * M2 + us.longAt(i);
+            h = h * M + us.longAt(i);
         }
         if (i + 3 < len) {
-            h = h * M2 + us.intAt(i);
+            h = h * M + us.intAt(i);
             i += 4;
         }
         for (; i < len; i++) {
-            h = h * M2 + us.byteAt(i);
+            h = h * M + us.byteAt(i);
         }
-        h *= M2;
-        return Numbers.decodeLowInt(h ^ h >>> 32);
+        h *= M;
+        return Numbers.decodeLowInt(h ^ h >>> 24);
     }
 
     /**
@@ -85,20 +86,22 @@ public final class Hash {
     }
 
     public static long hash64Long(long k) {
-        k ^= k >> 33;
-        k *= 0xff51afd7ed558ccdL;
-        k ^= k >> 33;
-        k *= 0xc4ceb9fe1a85ec53L;
-        k ^= k >> 33;
-        return k;
+        long h = k * M;
+        return (int) (h ^ h >>> 24);
     }
 
     public static long hash64Long128(long key1, long key2) {
-        return hash64Long(key1 ^ key2);
+        long h = key1 * M + key2;
+        h *= M;
+        return (int) (h ^ h >>> 24);
     }
 
     public static long hash64Long256(long key1, long key2, long key3, long key4) {
-        return hash64Long(key1 ^ key2 ^ key3 ^ key4);
+        long h = key1 * M + key2;
+        h = (h * M) + key3;
+        h = (h * M) + key4;
+        h *= M;
+        return (int) (h ^ h >>> 24);
     }
 
     /**
@@ -117,17 +120,17 @@ public final class Hash {
         long h = 0;
         int i = 0;
         for (; i + 7 < len; i += 8) {
-            h = h * M2 + Unsafe.getUnsafe().getLong(p + i);
+            h = h * M + Unsafe.getUnsafe().getLong(p + i);
         }
         if (i + 3 < len) {
-            h = h * M2 + Unsafe.getUnsafe().getInt(p + i);
+            h = h * M + Unsafe.getUnsafe().getInt(p + i);
             i += 4;
         }
         for (; i < len; i++) {
-            h = h * M2 + Unsafe.getUnsafe().getByte(p + i);
+            h = h * M + Unsafe.getUnsafe().getByte(p + i);
         }
-        h *= M2;
-        return h ^ h >>> 32;
+        h *= M;
+        return h ^ h >>> 24;
     }
 
     /**

@@ -1200,7 +1200,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             this.sqlCompilerPoolCapacity = 2 * (httpWorkerCount + pgWorkerCount + sharedWorkerCount + walApplyWorkerCount);
 
-            final int defaultReduceQueueCapacity = Math.min(2 * sharedWorkerCount, 64);
+            final int defaultReduceQueueCapacity = Math.min(4 * sharedWorkerCount, 64);
             this.cairoPageFrameReduceQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, defaultReduceQueueCapacity));
             this.cairoGroupByMergeShardQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUP_BY_MERGE_QUEUE_CAPACITY, defaultReduceQueueCapacity));
             this.cairoGroupByShardingThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUP_BY_SHARDING_THRESHOLD, 100_000);
@@ -2149,6 +2149,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getMaxSqlRecompileAttempts() {
+            return maxSqlRecompileAttempts;
+        }
+
+        @Override
         public int getMaxSwapFileCount() {
             return maxSwapFileCount;
         }
@@ -2859,11 +2864,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean mangleTableDirNames() {
             return false;
-        }
-
-        @Override
-        public int getMaxSqlRecompileAttempts() {
-            return maxSqlRecompileAttempts;
         }
     }
 
