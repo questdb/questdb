@@ -55,7 +55,6 @@ public class Overrides {
     private Boolean copyPartitionOnAttach = null;
     private long currentMicros = -1;
     private final MicrosecondClock defaultMicrosecondClock = () -> currentMicros >= 0 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
-    private String root;
     private MicrosecondClock testMicrosClock = defaultMicrosecondClock;
     private long dataAppendPageSize = -1;
     private int defaultTableWriteMode = SqlWalMode.WAL_NOT_SET;
@@ -63,7 +62,6 @@ public class Overrides {
     private FactoryProvider factoryProvider = null;
     private FilesFacade ff;
     private long groupByAllocatorDefaultChunkSize = -1;
-    private int groupByShardingThreshold = -1;
     private boolean hideTelemetryTable = false;
     private String inputRoot = null;
     private String inputWorkRoot = null;
@@ -80,13 +78,13 @@ public class Overrides {
     private int o3PartitionSplitMaxCount = -1;
     private boolean o3QuickSortEnabled = false;
     private Boolean parallelFilterEnabled = null;
-    private Boolean parallelGroupByEnabled = null;
     private int parallelImportStatusLogKeepNDays = -1;
     private long partitionO3SplitThreshold;
     private CairoConfiguration propsConfig;
     private int repeatMigrationsFromVersion = -1;
     private int rndFunctionMemoryMaxPages = -1;
     private int rndFunctionMemoryPageSize = -1;
+    private String root;
     private RostiAllocFacade rostiAllocFacade = null;
     private int sampleByIndexSearchPageSize;
     private boolean simulateCrashEnabled;
@@ -112,7 +110,6 @@ public class Overrides {
     public Overrides() {
         TestUtils.resetToDefaultTestProperties(properties);
     }
-
 
 
     public CharSequence getBackupDir() {
@@ -201,11 +198,6 @@ public class Overrides {
 
     public long getGroupByAllocatorDefaultChunkSize() {
         return groupByAllocatorDefaultChunkSize;
-    }
-
-
-    public int getGroupByShardingThreshold() {
-        return groupByShardingThreshold;
     }
 
 
@@ -379,7 +371,6 @@ public class Overrides {
     }
 
 
-
     public int getWriterCommandQueueCapacity() {
         return writerCommandQueueCapacity;
     }
@@ -415,11 +406,6 @@ public class Overrides {
     }
 
 
-    public Boolean isParallelGroupByEnabled() {
-        return parallelGroupByEnabled;
-    }
-
-
     public Boolean isWriterMixedIOEnabled() {
         return writerMixedIOEnabled;
     }
@@ -439,13 +425,11 @@ public class Overrides {
         currentMicros = -1;
         testMicrosClock = defaultMicrosecondClock;
         sampleByIndexSearchPageSize = -1;
-        groupByShardingThreshold = -1;
         jitMode = SqlJitMode.JIT_MODE_ENABLED;
         rndFunctionMemoryPageSize = -1;
         rndFunctionMemoryMaxPages = -1;
         spinLockTimeout = -1;
         parallelFilterEnabled = null;
-        parallelGroupByEnabled = null;
         writerMixedIOEnabled = null;
         columnPreTouchEnabled = null;
         writerCommandQueueCapacity = 4;
@@ -566,11 +550,6 @@ public class Overrides {
     }
 
 
-    public void setGroupByShardingThreshold(int groupByShardingThreshold) {
-        this.groupByShardingThreshold = groupByShardingThreshold;
-    }
-
-
     public void setHideTelemetryTable(boolean hideTelemetryTable) {
         this.hideTelemetryTable = hideTelemetryTable;
     }
@@ -651,11 +630,6 @@ public class Overrides {
     }
 
 
-    public void setParallelGroupByEnabled(Boolean parallelGroupByEnabled) {
-        this.parallelGroupByEnabled = parallelGroupByEnabled;
-    }
-
-
     public void setParallelImportStatusLogKeepNDays(int parallelImportStatusLogKeepNDays) {
         this.parallelImportStatusLogKeepNDays = parallelImportStatusLogKeepNDays;
     }
@@ -676,6 +650,11 @@ public class Overrides {
         } else {
             properties.remove(propertyKey.getPropertyPath());
         }
+        changed = true;
+    }
+
+    public void setProperty(PropertyKey propertyKey, boolean value) {
+        properties.setProperty(propertyKey.getPropertyPath(), String.valueOf(value));
         changed = true;
     }
 

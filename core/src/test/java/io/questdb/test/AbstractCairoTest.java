@@ -102,7 +102,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static TestCairoEngineFactory engineFactory;
     protected static FactoryProvider factoryProvider;
     protected static FilesFacade ff;
-    protected static int groupByShardingThreshold = -1;
     protected static String inputRoot = null;
     protected static String inputWorkRoot = null;
     protected static IOURingFacade ioURingFacade = IOURingFacadeImpl.INSTANCE;
@@ -1217,10 +1216,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
     @SuppressWarnings("SameParameterValue")
     protected static void configOverrideO3QuickSortEnabled(boolean o3QuickSortEnabled) {
         node1.getConfigurationOverrides().setO3QuickSortEnabled(o3QuickSortEnabled);
-    }
-
-    protected static void configOverrideParallelGroupByEnabled(boolean parallelGroupByEnabled) {
-        node1.getConfigurationOverrides().setParallelGroupByEnabled(parallelGroupByEnabled);
     }
 
     protected static void configOverrideParallelImportStatusLogKeepNDays(int parallelImportStatusLogKeepNDays) {

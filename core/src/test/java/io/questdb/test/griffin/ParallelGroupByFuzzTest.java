@@ -60,7 +60,6 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CyclicBarrier;
 
-import static io.questdb.PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT;
 import static org.junit.Assert.fail;
 
 // This is not a fuzz test in traditional sense, but it's multi-threaded and we want to run it
@@ -94,12 +93,12 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, PAGE_FRAME_MAX_ROWS);
         // We intentionally use small values for shard count and reduce
         // queue capacity to exhibit various edge cases.
-        setProperty(CAIRO_PAGE_FRAME_SHARD_COUNT, 2);
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 2);
         setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, PAGE_FRAME_COUNT);
         // Set the sharding threshold to a small value to test sharding.
-        groupByShardingThreshold = 2;
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUP_BY_SHARDING_THRESHOLD, 2);
         super.setUp();
-        configOverrideParallelGroupByEnabled(enableParallelGroupBy);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUP_BY_ENABLED, enableParallelGroupBy);
     }
 
     @Test

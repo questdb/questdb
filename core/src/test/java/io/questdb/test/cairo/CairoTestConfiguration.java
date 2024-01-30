@@ -136,11 +136,6 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     }
 
     @Override
-    public int getGroupByShardingThreshold() {
-        return overrides.getGroupByShardingThreshold() < 0 ? super.getGroupByShardingThreshold() : overrides.getGroupByShardingThreshold();
-    }
-
-    @Override
     public int getInactiveReaderMaxOpenPartitions() {
         return overrides.getInactiveReaderMaxOpenPartitions() > 0 ? overrides.getInactiveReaderMaxOpenPartitions() : super.getInactiveReaderMaxOpenPartitions();
     }
@@ -384,11 +379,6 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     @Override
     public boolean isSqlParallelFilterPreTouchEnabled() {
         return overrides.isColumnPreTouchEnabled() != null ? overrides.isColumnPreTouchEnabled() : super.isSqlParallelFilterPreTouchEnabled();
-    }
-
-    @Override
-    public boolean isSqlParallelGroupByEnabled() {
-        return overrides.isParallelGroupByEnabled() != null ? overrides.isParallelGroupByEnabled() : super.isSqlParallelGroupByEnabled();
     }
 
     @Override

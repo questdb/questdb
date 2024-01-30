@@ -7453,7 +7453,7 @@ nodejs code:
     public void testRunAlterWhenTableLockedAndAlterTakesTooLong() throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
-            node1.setProperty(CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 5000);
+            node1.setProperty(CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 2000);
             node1.setProperty(CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT, 30_000);
             SOCountDownLatch queryStartedCountDown = new SOCountDownLatch();
             ff = new TestFilesFacadeImpl() {
@@ -7475,7 +7475,10 @@ nodejs code:
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             skipOnWalRun(); // Alters do not wait for WAL tables
+            node1.setProperty(CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 1000);
             long writerAsyncCommandMaxTimeout = configuration.getWriterAsyncCommandBusyWaitTimeout();
+            Assert.assertEquals(1000, writerAsyncCommandMaxTimeout);
+            node1.setProperty(CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT, writerAsyncCommandMaxTimeout);
             SOCountDownLatch queryStartedCountDown = new SOCountDownLatch();
             ff = new TestFilesFacadeImpl() {
                 @Override
@@ -7483,7 +7486,7 @@ nodejs code:
                     if (Utf8s.endsWithAscii(name, "_meta.swp")) {
                         queryStartedCountDown.await();
                         // wait for twice the time to allow busy wait to time out
-                        Os.sleep(configuration.getWriterAsyncCommandBusyWaitTimeout() * 2);
+                        Os.sleep(writerAsyncCommandMaxTimeout * 2);
                     }
                     return super.openRW(name, opts);
                 }
@@ -7495,6 +7498,7 @@ nodejs code:
     @Test
     public void testRunAlterWhenTableLockedAndAlterTimeoutsToStart() throws Exception {
         skipOnWalRun(); // non-partitioned table
+        node1.setProperty(CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 10);
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
@@ -7512,7 +7516,7 @@ nodejs code:
     @Test
     public void testRunAlterWhenTableLockedWithInserts() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        setProperty(CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, "10000");
+        node1.setProperty(CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 10_000);
         assertMemoryLeak(() -> testAddColumnBusyWriter(true, new SOCountDownLatch()));
     }
 
@@ -10276,6 +10280,7 @@ create table tab as (
             pool.start(LOG);
             int iteration = 0;
 
+
             do {
                 final String tableName = "xyz" + iteration++;
                 ddl("create table " + tableName + " (a int)");
@@ -10329,12 +10334,14 @@ create table tab as (
                         }
                     }
                 } finally {
-                    pool.halt();
+//                    pool.halt();
                     engine.releaseAllWriters();
                 }
                 // Failure may not happen if we're lucky, even when they are expected
                 // When alterRequestReturnSuccess if false and errors are 0, repeat
             } while (!alterRequestReturnSuccess && errors.get() == 0);
+        } finally {
+            pool.halt();
         }
     }
 

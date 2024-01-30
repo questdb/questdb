@@ -84,11 +84,6 @@ public class StaticOverrides extends Overrides {
     }
 
     @Override
-    public int getGroupByShardingThreshold() {
-        return AbstractCairoTest.groupByShardingThreshold;
-    }
-
-    @Override
     public int getInactiveReaderMaxOpenPartitions() {
         return AbstractCairoTest.maxOpenPartitions;
     }
@@ -134,7 +129,6 @@ public class StaticOverrides extends Overrides {
 
         AbstractCairoTest.currentMicros = -1;
         AbstractCairoTest.testMicrosClock = AbstractCairoTest.defaultMicrosecondClock;
-        AbstractCairoTest.groupByShardingThreshold = -1;
         AbstractCairoTest.spinLockTimeout = -1;
         AbstractCairoTest.writerCommandQueueCapacity = 4;
         AbstractCairoTest.columnVersionPurgeQueueCapacity = -1;
@@ -193,11 +187,6 @@ public class StaticOverrides extends Overrides {
     @Override
     public void setFilesFacade(FilesFacade ff) {
         AbstractCairoTest.ff = ff;
-    }
-
-    @Override
-    public void setGroupByShardingThreshold(int groupByShardingThreshold) {
-        AbstractCairoTest.groupByShardingThreshold = groupByShardingThreshold;
     }
 
     @Override
