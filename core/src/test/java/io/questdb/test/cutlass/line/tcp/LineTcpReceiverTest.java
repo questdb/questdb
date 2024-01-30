@@ -130,7 +130,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Override
     public void setUp() {
         super.setUp();
-        configOverrideDefaultTableWriteMode(walEnabled ? SqlWalMode.WAL_ENABLED : SqlWalMode.WAL_DISABLED);
+        int defaultTableWriteMode = walEnabled ? SqlWalMode.WAL_ENABLED : SqlWalMode.WAL_DISABLED;
+        node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, defaultTableWriteMode);
         path = new Path();
     }
 
@@ -340,7 +341,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testDropTable() throws Exception {
         Assume.assumeTrue(walEnabled);
-        configOverrideMaxUncommittedRows(2);
+        node1.setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 2);
         node1.setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 2);
         String weather = "weather";
         FilesFacade filesFacade = new TestFilesFacadeImpl() {
@@ -679,7 +680,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testRenameTable() throws Exception {
         Assume.assumeTrue(walEnabled);
-        configOverrideMaxUncommittedRows(2);
+        node1.setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 2);
         node1.setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 2);
         String weather = "weather";
         String meteorology = "meteorology";
@@ -735,7 +736,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testRenameTableSameMeta() throws Exception {
         Assume.assumeTrue(walEnabled);
-        configOverrideMaxUncommittedRows(2);
+        node1.setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 2);
         node1.setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 2);
         String weather = "weather";
         String meteorology = "meteorology";

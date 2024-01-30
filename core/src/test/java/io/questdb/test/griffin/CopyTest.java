@@ -80,7 +80,8 @@ public class CopyTest extends AbstractCairoTest {
     @Before
     public void setUp() {
         super.setUp();
-        configOverrideDefaultTableWriteMode(walEnabled ? SqlWalMode.WAL_ENABLED : SqlWalMode.WAL_DISABLED);
+        int defaultTableWriteMode = walEnabled ? SqlWalMode.WAL_ENABLED : SqlWalMode.WAL_DISABLED;
+        node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, defaultTableWriteMode);
     }
 
     @Test
@@ -391,7 +392,7 @@ public class CopyTest extends AbstractCairoTest {
 
     @Test
     public void testParallelCopyIntoNewTableWithUringDisabled() throws Exception {
-        configOverrideIoURingEnabled(false);
+        node1.setProperty(PropertyKey.CAIRO_IO_URING_ENABLED, false);
 
         CopyRunnable stmt = () -> runAndFetchCopyID("copy x from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
                 "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ", sqlExecutionContext);

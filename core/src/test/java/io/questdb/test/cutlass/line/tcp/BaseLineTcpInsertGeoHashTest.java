@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.line.tcp;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
@@ -58,7 +59,8 @@ abstract class BaseLineTcpInsertGeoHashTest extends BaseLineTcpContextTest {
     @Override
     public void setUp() {
         super.setUp();
-        configOverrideDefaultTableWriteMode(walEnabled ? SqlWalMode.WAL_ENABLED : SqlWalMode.WAL_DISABLED);
+        int defaultTableWriteMode = walEnabled ? SqlWalMode.WAL_ENABLED : SqlWalMode.WAL_DISABLED;
+        node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, defaultTableWriteMode);
     }
 
     @Test

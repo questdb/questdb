@@ -554,7 +554,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
     @Test
     public void testCreateDropRestartRestartNoRegistryCompaction() throws Exception {
-        node1.getConfigurationOverrides().setRegistryCompactionThreshold(100);
+        node1.setProperty(PropertyKey.CAIRO_TABLE_REGISTRY_COMPACTION_THRESHOLD, 100);
         testCreateDropRestartRestart0();
     }
 

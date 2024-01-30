@@ -127,26 +127,26 @@ public class ParallelFilterTest extends AbstractCairoTest {
     @Test
     public void testAsyncOffloadNegativeLimitTimeoutWithJitEnabled() throws Exception {
         Assume.assumeTrue(JitUtil.isJitSupported());
-        configOverrideJitMode(SqlJitMode.JIT_MODE_ENABLED);
+        node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.JIT_MODE_ENABLED);
         testAsyncOffloadNegativeLimitTimeout();
     }
 
     @Test
     public void testAsyncOffloadNegativeLimitTimeoutWithoutJit() throws Exception {
-        configOverrideJitMode(SqlJitMode.JIT_MODE_DISABLED);
+        node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.JIT_MODE_DISABLED);
         testAsyncOffloadNegativeLimitTimeout();
     }
 
     @Test
     public void testAsyncOffloadTimeoutWithJitEnabled() throws Exception {
         Assume.assumeTrue(JitUtil.isJitSupported());
-        configOverrideJitMode(SqlJitMode.JIT_MODE_ENABLED);
+        node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.JIT_MODE_ENABLED);
         testAsyncOffloadTimeout();
     }
 
     @Test
     public void testAsyncOffloadTimeoutWithoutJit() throws Exception {
-        configOverrideJitMode(SqlJitMode.JIT_MODE_DISABLED);
+        node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.JIT_MODE_DISABLED);
         testAsyncOffloadTimeout();
     }
 
@@ -539,7 +539,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
     }
 
     private void testParallelStress(String query, String expected, int workerCount, int threadCount, int jitMode) throws Exception {
-        configOverrideJitMode(jitMode);
+        node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, jitMode);
 
         WorkerPool pool = new WorkerPool(() -> workerCount);
 

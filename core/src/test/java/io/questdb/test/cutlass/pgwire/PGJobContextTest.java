@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.pgwire;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
@@ -169,13 +170,14 @@ public class PGJobContextTest extends BasePGTest {
                 .$(", recvBufferSize=").$(recvBufferSize)
                 .$(", forceRecvFragmentationChunkSize=").$(forceRecvFragmentationChunkSize)
                 .I$();
-        configOverrideDefaultTableWriteMode(walEnabled ? SqlWalMode.WAL_ENABLED : SqlWalMode.WAL_DISABLED);
+        int defaultTableWriteMode = walEnabled ? SqlWalMode.WAL_ENABLED : SqlWalMode.WAL_DISABLED;
+        node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, defaultTableWriteMode);
     }
 
     @After
     public void tearDown() throws Exception {
         super.tearDown();
-        configOverrideDefaultTableWriteMode(-1);
+        node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, -1);
     }
 
     @Test

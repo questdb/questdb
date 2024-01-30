@@ -761,7 +761,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
 
     @Test
     public void testPurgeTaskRecycle() throws Exception {
-        configOverrideColumnVersionTaskPoolCapacity(1);
+        node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_TASK_POOL_CAPACITY, 1);
         assertMemoryLeak(() -> {
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 ddl("create table up_part_o3_many as" +

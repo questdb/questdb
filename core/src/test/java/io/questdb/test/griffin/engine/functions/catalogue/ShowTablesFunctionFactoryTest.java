@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.functions.catalogue;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.test.AbstractCairoTest;
@@ -57,8 +58,8 @@ public class ShowTablesFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testMetadataQueryDefaultHysteresisParams() throws Exception {
-        configOverrideMaxUncommittedRows(83737);
-        configOverrideO3MaxLag();
+        node1.setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 83737);
+        node1.setProperty(PropertyKey.CAIRO_O3_MAX_LAG, 28291);
 
         try (TableModel tm1 = new TableModel(configuration, "table1", PartitionBy.DAY)) {
             tm1.col("abc", ColumnType.STRING);

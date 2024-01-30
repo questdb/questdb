@@ -34,37 +34,30 @@ import io.questdb.test.cairo.Overrides;
 
 public class StaticOverrides extends Overrides {
 
-    @Override
     public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
         return AbstractCairoTest.circuitBreakerConfiguration;
     }
 
-    @Override
     public long getCurrentMicros() {
         return AbstractCairoTest.currentMicros;
     }
 
-    @Override
     public FactoryProvider getFactoryProvider() {
         return AbstractCairoTest.factoryProvider;
     }
 
-    @Override
     public FilesFacade getFilesFacade() {
         return AbstractCairoTest.ff;
     }
 
-    @Override
     public String getInputRoot() {
         return AbstractCairoTest.inputRoot;
     }
 
-    @Override
     public String getInputWorkRoot() {
         return AbstractCairoTest.inputWorkRoot;
     }
 
-    @Override
     public MicrosecondClock getTestMicrosClock() {
         return AbstractCairoTest.testMicrosClock;
     }
@@ -79,37 +72,26 @@ public class StaticOverrides extends Overrides {
         AbstractCairoTest.factoryProvider = null;
     }
 
-    @Override
     public void setCircuitBreakerConfiguration(SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration) {
         AbstractCairoTest.circuitBreakerConfiguration = circuitBreakerConfiguration;
     }
 
-    @Override
-    public void setCurrentMicros(long currentMicros) {
-        AbstractCairoTest.currentMicros = currentMicros;
-    }
-
-    @Override
     public void setFactoryProvider(FactoryProvider factoryProvider) {
         AbstractCairoTest.factoryProvider = factoryProvider;
     }
 
-    @Override
     public void setFilesFacade(FilesFacade ff) {
         AbstractCairoTest.ff = ff;
     }
 
-    @Override
     public void setInputRoot(String inputRoot) {
         AbstractCairoTest.inputRoot = inputRoot;
     }
 
-    @Override
     public void setInputWorkRoot(String inputWorkRoot) {
         AbstractCairoTest.inputWorkRoot = inputWorkRoot;
     }
 
-    @Override
     public void setTestMicrosClock(MicrosecondClock testMicrosClock) {
         AbstractCairoTest.testMicrosClock = testMicrosClock;
     }

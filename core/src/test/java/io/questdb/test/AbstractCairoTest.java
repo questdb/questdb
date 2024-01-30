@@ -305,10 +305,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         assertFactoryMemoryUsage();
     }
 
-    public static void configOverrideGroupByAllocatorDefaultChunkSize(long groupByAllocatorDefaultChunkSize) {
-        node1.getConfigurationOverrides().setGroupByAllocatorDefaultChunkSize(groupByAllocatorDefaultChunkSize);
-    }
-
     public static void configOverrideMangleTableDirNames(boolean mangle) {
         node1.getConfigurationOverrides().setMangleTableDirNames(mangle);
     }
@@ -1120,104 +1116,12 @@ public abstract class AbstractCairoTest extends AbstractTest {
         CairoEngine.compile(compiler, sql, sqlExecutionContext);
     }
 
-    protected static void configOverrideColumnPreTouchEnabled(Boolean columnPreTouchEnabled) {
-        node1.getConfigurationOverrides().setColumnPreTouchEnabled(columnPreTouchEnabled);
-    }
-
-    @SuppressWarnings("SameParameterValue")
-    protected static void configOverrideColumnVersionTaskPoolCapacity(int columnVersionTaskPoolCapacity) {
-        node1.getConfigurationOverrides().setColumnVersionTaskPoolCapacity(columnVersionTaskPoolCapacity);
-    }
-
-    @SuppressWarnings("SameParameterValue")
-    protected static void configOverrideCopyPartitionOnAttach(Boolean copyPartitionOnAttach) {
-        node1.getConfigurationOverrides().setCopyPartitionOnAttach(copyPartitionOnAttach);
-    }
-
-    protected static void configOverrideDefaultTableWriteMode(int defaultTableWriteMode) {
-        node1.getConfigurationOverrides().setDefaultTableWriteMode(defaultTableWriteMode);
-    }
-
     protected static void configOverrideEnv(Map<String, String> env) {
         node1.getConfigurationOverrides().setEnv(env);
     }
 
-    @SuppressWarnings("SameParameterValue")
-    protected static void configOverrideHideTelemetryTable(boolean hideTelemetryTable) {
-        node1.getConfigurationOverrides().setHideTelemetryTable(hideTelemetryTable);
-    }
-
-    @SuppressWarnings("SameParameterValue")
-    protected static void configOverrideIoURingEnabled(Boolean ioURingEnabled) {
-        node1.getConfigurationOverrides().setIoURingEnabled(ioURingEnabled);
-    }
-
-    protected static void configOverrideJitMode(int jitMode) {
-        node1.getConfigurationOverrides().setJitMode(jitMode);
-    }
-
-    protected static void configOverrideMaxUncommittedRows(int maxUncommittedRows) {
-        node1.getConfigurationOverrides().setMaxUncommittedRows(maxUncommittedRows);
-    }
-
-    protected static void configOverrideO3ColumnMemorySize(int size) {
-        node1.getConfigurationOverrides().setO3ColumnMemorySize(size);
-    }
-
-    protected static void configOverrideO3MaxLag() {
-        node1.getConfigurationOverrides().setO3MaxLag(28291);
-    }
-
-    protected static void configOverrideO3MinLag(long minLag) {
-        node1.getConfigurationOverrides().setO3MinLag(minLag);
-    }
-
-    @SuppressWarnings("SameParameterValue")
-    protected static void configOverrideO3QuickSortEnabled(boolean o3QuickSortEnabled) {
-        node1.getConfigurationOverrides().setO3QuickSortEnabled(o3QuickSortEnabled);
-    }
-
-    protected static void configOverrideParallelImportStatusLogKeepNDays(int parallelImportStatusLogKeepNDays) {
-        node1.getConfigurationOverrides().setParallelImportStatusLogKeepNDays(parallelImportStatusLogKeepNDays);
-    }
-
-    protected static void configOverrideRndFunctionMemoryMaxPages(int rndFunctionMemoryMaxPages) {
-        node1.getConfigurationOverrides().setRndFunctionMemoryMaxPages(rndFunctionMemoryMaxPages);
-    }
-
-    @SuppressWarnings("SameParameterValue")
-    protected static void configOverrideRndFunctionMemoryPageSize(int rndFunctionMemoryPageSize) {
-        node1.getConfigurationOverrides().setRndFunctionMemoryPageSize(rndFunctionMemoryPageSize);
-    }
-
     protected static void configOverrideRostiAllocFacade(RostiAllocFacade rostiAllocFacade) {
         node1.getConfigurationOverrides().setRostiAllocFacade(rostiAllocFacade);
-    }
-
-    protected static void configOverrideSampleByIndexSearchPageSize(int sampleByIndexSearchPageSize) {
-        node1.getConfigurationOverrides().setSampleByIndexSearchPageSize(sampleByIndexSearchPageSize);
-    }
-
-    @SuppressWarnings("SameParameterValue")
-    protected static void configOverrideSqlJoinMetadataMaxResizes(int sqlJoinMetadataMaxResizes) {
-        node1.getConfigurationOverrides().setSqlJoinMetadataMaxResizes(sqlJoinMetadataMaxResizes);
-    }
-
-    @SuppressWarnings("SameParameterValue")
-    protected static void configOverrideSqlJoinMetadataPageSize(int sqlJoinMetadataPageSize) {
-        node1.getConfigurationOverrides().setSqlJoinMetadataPageSize(sqlJoinMetadataPageSize);
-    }
-
-    protected static void configOverrideSqlWindowMaxRecursion(int maxRecursion) {
-        node1.getConfigurationOverrides().setSqlWindowMaxRecursion(maxRecursion);
-    }
-
-    protected static void configOverrideSqlWindowStoreMaxPages(int windowStoreMaxPages) {
-        node1.getConfigurationOverrides().setSqlWindowStoreMaxPages(windowStoreMaxPages);
-    }
-
-    protected static void configOverrideSqlWindowStorePageSize(int windowStorePageSize) {
-        node1.getConfigurationOverrides().setSqlWindowStorePageSize(windowStorePageSize);
     }
 
     protected static void configOverrideWalMaxLagTxnCount() {

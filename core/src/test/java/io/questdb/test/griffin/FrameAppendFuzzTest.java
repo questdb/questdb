@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -143,7 +144,8 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
 
     @Override
     protected void runFuzz(Rnd rnd) throws Exception {
-        configOverrideO3ColumnMemorySize(rnd.nextInt(16 * 1024 * 1024));
+        int size = rnd.nextInt(16 * 1024 * 1024);
+        node1.setProperty(PropertyKey.CAIRO_O3_COLUMN_MEMORY_SIZE, size);
 
         String tableName = testName.getMethodName();
         String tableNameMerged = testName.getMethodName() + "_merged";

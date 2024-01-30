@@ -37,6 +37,7 @@ import io.questdb.std.RostiAllocFacade;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.test.StaticOverrides;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Map;
@@ -58,33 +59,33 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
         return overrides.getConfiguration(root);
     }
 
-    @Override
-    public boolean attachPartitionCopy() {
-        return overrides.getCopyPartitionOnAttach() == null ? super.attachPartitionCopy() : overrides.getCopyPartitionOnAttach();
-    }
+//    @Override
+//    public boolean attachPartitionCopy() {
+//        return overrides.getCopyPartitionOnAttach() == null ? super.attachPartitionCopy() : overrides.getCopyPartitionOnAttach();
+//    }
 
     @Override
     public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
         return overrides.getCircuitBreakerConfiguration() != null ? overrides.getCircuitBreakerConfiguration() : super.getCircuitBreakerConfiguration();
     }
 
-
-
-    @Override
-    public int getColumnPurgeTaskPoolCapacity() {
-        return overrides.getColumnVersionTaskPoolCapacity() >= 0 ? overrides.getColumnVersionTaskPoolCapacity() : super.getColumnPurgeTaskPoolCapacity();
-    }
-
-    @Override
-    public int getMaxSqlRecompileAttempts() {
-        return overrides.getMaxSqlRecompileAttempts() > 0 ? overrides.getMaxSqlRecompileAttempts() : super.getMaxSqlRecompileAttempts();
-    }
-
-
-    @Override
-    public int getCopyPoolCapacity() {
-        return overrides.getCapacity() == -1 ? super.getCopyPoolCapacity() : overrides.getCapacity();
-    }
+//
+//
+//    @Override
+//    public int getColumnPurgeTaskPoolCapacity() {
+//        return overrides.getColumnVersionTaskPoolCapacity() >= 0 ? overrides.getColumnVersionTaskPoolCapacity() : super.getColumnPurgeTaskPoolCapacity();
+//    }
+//
+//    @Override
+//    public int getMaxSqlRecompileAttempts() {
+//        return overrides.getMaxSqlRecompileAttempts() > 0 ? overrides.getMaxSqlRecompileAttempts() : super.getMaxSqlRecompileAttempts();
+//    }
+//
+//
+//    @Override
+//    public int getCopyPoolCapacity() {
+//        return overrides.getCapacity() == -1 ? super.getCopyPoolCapacity() : overrides.getCapacity();
+//    }
 
     @Override
     public Map<String, String> getEnv() {
@@ -101,26 +102,26 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
         // This method gets called in super constructor, hence the extra null check.
         return overrides != null && overrides.getFilesFacade() != null ? overrides.getFilesFacade() : super.getFilesFacade();
     }
-
-    @Override
-    public long getGroupByAllocatorDefaultChunkSize() {
-        return overrides != null && overrides.getGroupByAllocatorDefaultChunkSize() != -1 ? overrides.getGroupByAllocatorDefaultChunkSize() : super.getGroupByAllocatorDefaultChunkSize();
-    }
+//
+//    @Override
+//    public long getGroupByAllocatorDefaultChunkSize() {
+//        return overrides != null && overrides.getGroupByAllocatorDefaultChunkSize() != -1 ? overrides.getGroupByAllocatorDefaultChunkSize() : super.getGroupByAllocatorDefaultChunkSize();
+//    }
 
     @Override
     public long getInactiveWalWriterTTL() {
         return -10000;
     }
 
-    @Override
-    public int getMaxFileNameLength() {
-        return overrides.getMaxFileNameLength() > 0 ? overrides.getMaxFileNameLength() : super.getMaxFileNameLength();
-    }
-
-    @Override
-    public int getMaxUncommittedRows() {
-        return overrides.getMaxUncommittedRows() >= 0 ? overrides.getMaxUncommittedRows() : super.getMaxUncommittedRows();
-    }
+//    @Override
+//    public int getMaxFileNameLength() {
+//        return overrides.getMaxFileNameLength() > 0 ? overrides.getMaxFileNameLength() : super.getMaxFileNameLength();
+//    }
+//
+//    @Override
+//    public int getMaxUncommittedRows() {
+//        return overrides.getMaxUncommittedRows() >= 0 ? overrides.getMaxUncommittedRows() : super.getMaxUncommittedRows();
+//    }
 
     @Override
     public int getMetadataPoolCapacity() {
@@ -142,30 +143,30 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
         return () -> overrides.getTestMicrosClock().getTicks() * 1000L;
     }
 
-    @Override
-    public int getO3ColumnMemorySize() {
-        return overrides.getO3ColumnMemorySize() < 0 ? super.getO3ColumnMemorySize() : overrides.getO3ColumnMemorySize();
-    }
+//    @Override
+//    public int getO3ColumnMemorySize() {
+//        return overrides.getO3ColumnMemorySize() < 0 ? super.getO3ColumnMemorySize() : overrides.getO3ColumnMemorySize();
+//    }
+//
+//    @Override
+//    public int getO3LastPartitionMaxSplits() {
+//        return overrides.getO3PartitionSplitMaxCount() >= 0 ? overrides.getO3PartitionSplitMaxCount() : super.getO3LastPartitionMaxSplits();
+//    }
 
-    @Override
-    public int getO3LastPartitionMaxSplits() {
-        return overrides.getO3PartitionSplitMaxCount() >= 0 ? overrides.getO3PartitionSplitMaxCount() : super.getO3LastPartitionMaxSplits();
-    }
-
-    @Override
-    public long getO3MaxLag() {
-        return overrides.getO3MaxLag() >= 0 ? overrides.getO3MaxLag() : super.getO3MaxLag();
-    }
-
-    @Override
-    public long getO3MinLag() {
-        return overrides.getO3MinLag() >= 0 ? overrides.getO3MinLag() : super.getO3MinLag();
-    }
-
-    @Override
-    public long getPartitionO3SplitMinSize() {
-        return overrides.getPartitionO3SplitThreshold() > -1L ? overrides.getPartitionO3SplitThreshold() : super.getPartitionO3SplitMinSize();
-    }
+//    @Override
+//    public long getO3MaxLag() {
+//        return overrides.getO3MaxLag() >= 0 ? overrides.getO3MaxLag() : super.getO3MaxLag();
+//    }
+//
+//    @Override
+//    public long getO3MinLag() {
+//        return overrides.getO3MinLag() >= 0 ? overrides.getO3MinLag() : super.getO3MinLag();
+//    }
+//
+//    @Override
+//    public long getPartitionO3SplitMinSize() {
+//        return overrides.getPartitionO3SplitThreshold() > -1L ? overrides.getPartitionO3SplitThreshold() : super.getPartitionO3SplitMinSize();
+//    }
 
     @Override
     public int getPartitionPurgeListCapacity() {
@@ -173,35 +174,35 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
         return 512;
     }
 
-    @Override
-    public int getRepeatMigrationsFromVersion() {
-        return overrides.getRepeatMigrationsFromVersion();
-    }
-
-    @Override
-    public int getRndFunctionMemoryMaxPages() {
-        return overrides.getRndFunctionMemoryMaxPages() < 0 ? super.getRndFunctionMemoryMaxPages() : overrides.getRndFunctionMemoryMaxPages();
-    }
-
-    @Override
-    public int getRndFunctionMemoryPageSize() {
-        return overrides.getRndFunctionMemoryPageSize() < 0 ? super.getRndFunctionMemoryPageSize() : overrides.getRndFunctionMemoryPageSize();
-    }
+//    @Override
+//    public int getRepeatMigrationsFromVersion() {
+//        return overrides.getRepeatMigrationsFromVersion();
+//    }
+//
+//    @Override
+//    public int getRndFunctionMemoryMaxPages() {
+//        return overrides.getRndFunctionMemoryMaxPages() < 0 ? super.getRndFunctionMemoryMaxPages() : overrides.getRndFunctionMemoryMaxPages();
+//    }
+//
+//    @Override
+//    public int getRndFunctionMemoryPageSize() {
+//        return overrides.getRndFunctionMemoryPageSize() < 0 ? super.getRndFunctionMemoryPageSize() : overrides.getRndFunctionMemoryPageSize();
+//    }
 
     @Override
     public @NotNull RostiAllocFacade getRostiAllocFacade() {
         return overrides.getRostiAllocFacade() != null ? overrides.getRostiAllocFacade() : super.getRostiAllocFacade();
     }
 
-    @Override
-    public int getSampleByIndexSearchPageSize() {
-        return overrides.getSampleByIndexSearchPageSize() > 0 ? overrides.getSampleByIndexSearchPageSize() : super.getSampleByIndexSearchPageSize();
-    }
-
-    @Override
-    public boolean getSimulateCrashEnabled() {
-        return overrides.getSimulateCrashEnabled();
-    }
+//    @Override
+//    public int getSampleByIndexSearchPageSize() {
+//        return overrides.getSampleByIndexSearchPageSize() > 0 ? overrides.getSampleByIndexSearchPageSize() : super.getSampleByIndexSearchPageSize();
+//    }
+//
+//    @Override
+//    public boolean getSimulateCrashEnabled() {
+//        return overrides.getSimulateCrashEnabled();
+//    }
 
     @Override
     public CharSequence getSqlCopyInputRoot() {
@@ -213,45 +214,45 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
         return overrides.getInputWorkRoot();
     }
 
-    @Override
-    public int getSqlCopyLogRetentionDays() {
-        return overrides.getParallelImportStatusLogKeepNDays() >= 0 ? overrides.getParallelImportStatusLogKeepNDays() : super.getSqlCopyLogRetentionDays();
-    }
-
-    @Override
-    public int getSqlJitMode() {
-        return overrides.getJitMode();
-    }
-
-    @Override
-    public int getSqlJoinMetadataMaxResizes() {
-        return overrides.getSqlJoinMetadataMaxResizes() > -1 ? overrides.getSqlJoinMetadataMaxResizes() : super.getSqlJoinMetadataMaxResizes();
-    }
-
-    @Override
-    public int getSqlJoinMetadataPageSize() {
-        return overrides.getSqlJoinMetadataPageSize() > -1 ? overrides.getSqlJoinMetadataPageSize() : super.getSqlJoinMetadataPageSize();
-    }
-
-    @Override
-    public int getSqlWindowMaxRecursion() {
-        return overrides.getSqlWindowMaxRecursion() > 0 ? overrides.getSqlWindowMaxRecursion() : super.getSqlWindowMaxRecursion();
-    }
-
-    @Override
-    public int getSqlWindowStoreMaxPages() {
-        return overrides.getSqlWindowStoreMaxPages() > 0 ? overrides.getSqlWindowStoreMaxPages() : super.getSqlWindowStoreMaxPages();
-    }
-
-    @Override
-    public int getSqlWindowStorePageSize() {
-        return overrides.getSqlWindowStorePageSize() > 0 ? overrides.getSqlWindowStorePageSize() : super.getSqlWindowStorePageSize();
-    }
-
-    @Override
-    public int getTableRegistryCompactionThreshold() {
-        return overrides.getTableRegistryCompactionThreshold() > 0 ? overrides.getTableRegistryCompactionThreshold() : super.getTableRegistryCompactionThreshold();
-    }
+//    @Override
+//    public int getSqlCopyLogRetentionDays() {
+//        return overrides.getParallelImportStatusLogKeepNDays() >= 0 ? overrides.getParallelImportStatusLogKeepNDays() : super.getSqlCopyLogRetentionDays();
+//    }
+//
+//    @Override
+//    public int getSqlJitMode() {
+//        return overrides.getJitMode();
+//    }
+//
+//    @Override
+//    public int getSqlJoinMetadataMaxResizes() {
+//        return overrides.getSqlJoinMetadataMaxResizes() > -1 ? overrides.getSqlJoinMetadataMaxResizes() : super.getSqlJoinMetadataMaxResizes();
+//    }
+//
+//    @Override
+//    public int getSqlJoinMetadataPageSize() {
+//        return overrides.getSqlJoinMetadataPageSize() > -1 ? overrides.getSqlJoinMetadataPageSize() : super.getSqlJoinMetadataPageSize();
+//    }
+//
+//    @Override
+//    public int getSqlWindowMaxRecursion() {
+//        return overrides.getSqlWindowMaxRecursion() > 0 ? overrides.getSqlWindowMaxRecursion() : super.getSqlWindowMaxRecursion();
+//    }
+//
+//    @Override
+//    public int getSqlWindowStoreMaxPages() {
+//        return overrides.getSqlWindowStoreMaxPages() > 0 ? overrides.getSqlWindowStoreMaxPages() : super.getSqlWindowStoreMaxPages();
+//    }
+//
+//    @Override
+//    public int getSqlWindowStorePageSize() {
+//        return overrides.getSqlWindowStorePageSize() > 0 ? overrides.getSqlWindowStorePageSize() : super.getSqlWindowStorePageSize();
+//    }
+//
+//    @Override
+//    public int getTableRegistryCompactionThreshold() {
+//        return overrides.getTableRegistryCompactionThreshold() > 0 ? overrides.getTableRegistryCompactionThreshold() : super.getTableRegistryCompactionThreshold();
+//    }
 
     @Override
     public @NotNull TelemetryConfiguration getTelemetryConfiguration() {
@@ -263,60 +264,56 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
         return volumeDefinitions;
     }
 
-    @Override
-    public int getWalApplyLookAheadTransactionCount() {
-        return overrides.getWalApplyLookAheadTransactionCount() >= 0 ? overrides.getWalApplyLookAheadTransactionCount() : super.getWalApplyLookAheadTransactionCount();
-    }
-
-    @Override
-    public boolean getWalEnabledDefault() {
-        return overrides.getDefaultTableWriteMode() < 0 ? super.getWalEnabledDefault() : overrides.getDefaultTableWriteMode() == 1;
-    }
-
-    @Override
-    public long getWalMaxLagSize() {
-        return overrides.getWalMaxLagSize() >= 0 ? overrides.getWalMaxLagSize() : super.getWalMaxLagSize();
-    }
-
-    @Override
-    public int getWalMaxLagTxnCount() {
-        return overrides.getWalMaxLagTxnCount() >= 0 ? overrides.getWalMaxLagTxnCount() : super.getWalMaxLagTxnCount();
-    }
-
-    @Override
-    public int getWalMaxSegmentFileDescriptorsCache() {
-        return overrides.getWalMaxSegmentFileDescriptorsCache() >= 0 ? overrides.getWalMaxSegmentFileDescriptorsCache() : super.getWalMaxSegmentFileDescriptorsCache();
-    }
-
-    @Override
-    public long getWalPurgeInterval() {
-        return overrides.getWalPurgeInterval() < 0 ? super.getWalPurgeInterval() : overrides.getWalPurgeInterval();
-    }
-
-    @Override
-    public boolean isIOURingEnabled() {
-        return overrides.isIoURingEnabled() != null ? overrides.isIoURingEnabled() : super.isIOURingEnabled();
-    }
+//    @Override
+//    public int getWalApplyLookAheadTransactionCount() {
+//        return overrides.getWalApplyLookAheadTransactionCount() >= 0 ? overrides.getWalApplyLookAheadTransactionCount() : super.getWalApplyLookAheadTransactionCount();
+//    }
+//
+//    @Override
+//    public boolean getWalEnabledDefault() {
+//        return overrides.getDefaultTableWriteMode() < 0 ? super.getWalEnabledDefault() : overrides.getDefaultTableWriteMode() == 1;
+//    }
+//
+//    @Override
+//    public long getWalMaxLagSize() {
+//        return overrides.getWalMaxLagSize() >= 0 ? overrides.getWalMaxLagSize() : super.getWalMaxLagSize();
+//    }
+//
+//    @Override
+//    public int getWalMaxLagTxnCount() {
+//        return overrides.getWalMaxLagTxnCount() >= 0 ? overrides.getWalMaxLagTxnCount() : super.getWalMaxLagTxnCount();
+//    }
+//
+//    @Override
+//    public int getWalMaxSegmentFileDescriptorsCache() {
+//        return overrides.getWalMaxSegmentFileDescriptorsCache() >= 0 ? overrides.getWalMaxSegmentFileDescriptorsCache() : super.getWalMaxSegmentFileDescriptorsCache();
+//    }
+//
+//
+//    @Override
+//    public boolean isIOURingEnabled() {
+//        return overrides.isIoURingEnabled() != null ? overrides.isIoURingEnabled() : super.isIOURingEnabled();
+//    }
 
     @Override
     public boolean isMultiKeyDedupEnabled() {
         return true;
     }
 
-    @Override
-    public boolean isO3QuickSortEnabled() {
-        return overrides.isO3QuickSortEnabled();
-    }
-
-    @Override
-    public boolean isSqlParallelFilterEnabled() {
-        return overrides.isParallelFilterEnabled() != null ? overrides.isParallelFilterEnabled() : super.isSqlParallelFilterEnabled();
-    }
-
-    @Override
-    public boolean isSqlParallelFilterPreTouchEnabled() {
-        return overrides.isColumnPreTouchEnabled() != null ? overrides.isColumnPreTouchEnabled() : super.isSqlParallelFilterPreTouchEnabled();
-    }
+//    @Override
+//    public boolean isO3QuickSortEnabled() {
+//        return overrides.isO3QuickSortEnabled();
+//    }
+//
+//    @Override
+//    public boolean isSqlParallelFilterEnabled() {
+//        return overrides.isParallelFilterEnabled() != null ? overrides.isParallelFilterEnabled() : super.isSqlParallelFilterEnabled();
+//    }
+//
+//    @Override
+//    public boolean isSqlParallelFilterPreTouchEnabled() {
+//        return overrides.isColumnPreTouchEnabled() != null ? overrides.isColumnPreTouchEnabled() : super.isSqlParallelFilterPreTouchEnabled();
+//    }
 
     @Override
     public boolean mangleTableDirNames() {

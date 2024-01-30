@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
@@ -78,13 +79,14 @@ public class InsertTest extends AbstractCairoTest {
     @Before
     public void setUp() {
         super.setUp();
-        configOverrideDefaultTableWriteMode(walEnabled ? 1 : 0);
+        int defaultTableWriteMode = walEnabled ? 1 : 0;
+        node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, defaultTableWriteMode);
     }
 
     @After
     public void tearDown() throws Exception {
         super.tearDown();
-        configOverrideDefaultTableWriteMode(-1);
+        node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, -1);
     }
 
     @Test

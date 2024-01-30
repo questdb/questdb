@@ -2855,7 +2855,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                     " long_sequence(5)" +
                     ") timestamp(ts) partition by DAY", sqlExecutionContext);
 
-            configOverrideParallelImportStatusLogKeepNDays(daysToKeep);
+            node1.setProperty(PropertyKey.CAIRO_SQL_COPY_LOG_RETENTION_DAYS, daysToKeep);
             new CopyRequestJob(engine, 1).close();
             assertQuery(
                     "count\n" + daysToKeep + "\n",

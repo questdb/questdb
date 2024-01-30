@@ -199,7 +199,7 @@ public class CompiledFilterTest extends AbstractCairoTest {
     @Test
     public void testMixedSelectPreTouchEnabled() throws Exception {
         assertMemoryLeak(() -> {
-            configOverrideColumnPreTouchEnabled(true);
+            node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_ENABLED, true);
 
             ddl("create table t1 as (select " +
                     " x," +
@@ -601,7 +601,7 @@ public class CompiledFilterTest extends AbstractCairoTest {
     private void testFilterWithColTops(String query, String expected, int jitMode, boolean preTouch) throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.setJitMode(jitMode);
-            configOverrideColumnPreTouchEnabled(preTouch);
+            node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_ENABLED, preTouch);
 
             ddl("create table t1 as (select " +
                     " x," +
@@ -650,7 +650,7 @@ public class CompiledFilterTest extends AbstractCairoTest {
 
     private void testSelectAllTypesFromRecord(boolean preTouch) throws Exception {
         assertMemoryLeak(() -> {
-            configOverrideColumnPreTouchEnabled(preTouch);
+            node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_ENABLED, preTouch);
 
             final String query = "select * from x where b = true and kk < 10";
             final String expected = "kk\ta\tb\tc\td\te\tf\tg\ti\tj\tk\tl\tm\tn\tcc\tl2\thash1b\thash2b\thash3b\thash1c\thash2c\thash4c\thash8c\n" +

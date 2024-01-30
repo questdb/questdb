@@ -514,7 +514,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
     @Test
     public void testPreTouchDisabled() throws Exception {
         withPool((engine, compiler, sqlExecutionContext) -> {
-            configOverrideColumnPreTouchEnabled(false);
+            node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_ENABLED, false);
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
 
             ddl("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(100000)) timestamp(t) partition by hour", sqlExecutionContext);

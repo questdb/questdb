@@ -152,7 +152,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testWalWriteEqualTimestamp() throws Exception {
-        configOverrideO3QuickSortEnabled(true);
+        node1.setProperty(PropertyKey.CAIRO_O3_QUICKSORT_ENABLED, true);
         Rnd rnd = generateRandom(LOG);
         setFuzzProbabilities(0, 0, 0, 0, 0, 0, 0, 1, 0, 0.5, 0.0);
         setFuzzCounts(
@@ -187,7 +187,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testWalWriteManySmallTransactions() throws Exception {
-        configOverrideO3QuickSortEnabled(true);
+        node1.setProperty(PropertyKey.CAIRO_O3_QUICKSORT_ENABLED, true);
         Rnd rnd = generateRandom(LOG);
         setFuzzProbabilities(0, 0, 0, 0, 0, 0, 0, 1, 0, 0.01, 0.0);
         setFuzzCounts(
@@ -215,7 +215,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testWalWriteManyTablesInOrder() throws Exception {
-        configOverrideO3QuickSortEnabled(true);
+        node1.setProperty(PropertyKey.CAIRO_O3_QUICKSORT_ENABLED, true);
         Rnd rnd = generateRandom(LOG);
         setRandomAppendPageSize(rnd);
         int tableCount = 3;
@@ -244,8 +244,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     @Test
     public void testWalWriteTinyO3Memory() throws Exception {
         final int o3MemorySize = 256;
-        Overrides overrides = node1.getConfigurationOverrides();
-        overrides.setO3ColumnMemorySize(o3MemorySize);
+        node1.setProperty(PropertyKey.CAIRO_O3_COLUMN_MEMORY_SIZE, o3MemorySize);
         Assert.assertEquals(o3MemorySize, node1.getConfiguration().getO3ColumnMemorySize());
         Rnd rnd = generateRandom(LOG);
         setFuzzProbabilities(0, 0.2, 0.1, 0, 0, 0, 0, 1.0, 0.01, 0.01, 0.0);
