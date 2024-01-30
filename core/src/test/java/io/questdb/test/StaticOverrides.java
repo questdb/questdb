@@ -35,16 +35,6 @@ import io.questdb.test.cairo.Overrides;
 public class StaticOverrides extends Overrides {
 
     @Override
-    public CharSequence getBackupDir() {
-        return AbstractCairoTest.backupDir;
-    }
-
-    @Override
-    public DateFormat getBackupDirTimestampFormat() {
-        return AbstractCairoTest.backupDirTimestampFormat;
-    }
-
-    @Override
     public int getBinaryEncodingMaxLength() {
         return AbstractCairoTest.binaryEncodingMaxLength;
     }
@@ -100,19 +90,8 @@ public class StaticOverrides extends Overrides {
 
         AbstractCairoTest.currentMicros = -1;
         AbstractCairoTest.testMicrosClock = AbstractCairoTest.defaultMicrosecondClock;
-        setProperty(PropertyKey.CAIRO_SQL_COPY_BUFFER_SIZE, 1024 * 1024);
         AbstractCairoTest.ff = null;
         AbstractCairoTest.factoryProvider = null;
-    }
-
-    @Override
-    public void setBackupDir(CharSequence backupDir) {
-        AbstractCairoTest.backupDir = backupDir;
-    }
-
-    @Override
-    public void setBackupDirTimestampFormat(DateFormat backupDirTimestampFormat) {
-        AbstractCairoTest.backupDirTimestampFormat = backupDirTimestampFormat;
     }
 
     @Override

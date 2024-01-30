@@ -83,8 +83,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
     private static final long[] SNAPSHOT = new long[MemoryTag.SIZE];
     private static final LongList rows = new LongList();
     public static StaticOverrides staticOverrides = new StaticOverrides();
-    protected static CharSequence backupDir;
-    protected static DateFormat backupDirTimestampFormat;
     protected static int binaryEncodingMaxLength = -1;
     protected static BindVariableService bindVariableService;
     protected static NetworkSqlExecutionCircuitBreaker circuitBreaker;
@@ -424,8 +422,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         forEachNode(QuestDBTestNode::closeCairo);
         circuitBreaker = Misc.free(circuitBreaker);
         nodes.clear();
-        backupDir = null;
-        backupDirTimestampFormat = null;
         factoryProvider = null;
         engineFactory = null;
         configurationFactory = null;
@@ -1277,8 +1273,9 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected static void configureForBackups() throws IOException {
-        backupDir = temp.newFolder().getAbsolutePath();
-        backupDirTimestampFormat = new TimestampFormatCompiler().compile("ddMMMyyyy");
+        String backupDir = temp.newFolder().getAbsolutePath();
+        setProperty(PropertyKey.CAIRO_SQL_BACKUP_ROOT, backupDir);
+        setProperty(PropertyKey.CAIRO_SQL_BACKUP_DIR_DATETIME_FORMAT, "ddMMMyyyy");
     }
 
     protected static boolean couldObtainLock(Path path) {

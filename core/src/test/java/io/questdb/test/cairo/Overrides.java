@@ -42,8 +42,6 @@ import java.util.Properties;
 
 public class Overrides {
     private final Properties properties = new Properties();
-    private CharSequence backupDir;
-    private DateFormat backupDirTimestampFormat;
     private int binaryEncodingMaxLength = -1;
     private int capacity = -1;
     private boolean changed = true;
@@ -103,16 +101,6 @@ public class Overrides {
 
     public Overrides() {
         TestUtils.resetToDefaultTestProperties(properties);
-    }
-
-
-    public CharSequence getBackupDir() {
-        return backupDir;
-    }
-
-
-    public DateFormat getBackupDirTimestampFormat() {
-        return backupDirTimestampFormat;
     }
 
 
@@ -422,16 +410,6 @@ public class Overrides {
 
         TestUtils.resetToDefaultTestProperties(properties);
         changed = true;
-    }
-
-
-    public void setBackupDir(CharSequence backupDir) {
-        this.backupDir = backupDir;
-    }
-
-
-    public void setBackupDirTimestampFormat(DateFormat backupDirTimestampFormat) {
-        this.backupDirTimestampFormat = backupDirTimestampFormat;
     }
 
 

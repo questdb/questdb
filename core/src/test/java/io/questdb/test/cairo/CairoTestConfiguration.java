@@ -64,16 +64,6 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     }
 
     @Override
-    public DateFormat getBackupDirTimestampFormat() {
-        return overrides.getBackupDirTimestampFormat() == null ? super.getBackupDirTimestampFormat() : overrides.getBackupDirTimestampFormat();
-    }
-
-    @Override
-    public CharSequence getBackupRoot() {
-        return overrides.getBackupDir() == null ? super.getBackupRoot() : overrides.getBackupDir();
-    }
-
-    @Override
     public int getBinaryEncodingMaxLength() {
         return overrides.getBinaryEncodingMaxLength() > 0 ? overrides.getBinaryEncodingMaxLength() : super.getBinaryEncodingMaxLength();
     }
