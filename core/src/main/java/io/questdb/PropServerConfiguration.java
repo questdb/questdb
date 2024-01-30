@@ -1205,7 +1205,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             final int defaultReduceShardCount = Math.min(sharedWorkerCount, 4);
             this.cairoPageFrameReduceShardCount = getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, defaultReduceShardCount);
             this.sqlParallelFilterPreTouchEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_ENABLED, true);
-            this.sqlCopyModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_COPY_MODEL_POOL_CAPACITY, sharedWorkerCount);
+            this.sqlCopyModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_COPY_MODEL_POOL_CAPACITY, 32);
 
             boolean defaultParallelSqlEnabled = sharedWorkerCount >= 4;
             this.sqlParallelFilterEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED, defaultParallelSqlEnabled);
