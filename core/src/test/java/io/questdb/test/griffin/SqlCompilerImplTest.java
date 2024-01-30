@@ -67,7 +67,12 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     public static void setUpStatic() throws Exception {
         path = new Path();
         AbstractCairoTest.setUpStatic();
+    }
+
+    @Before
+    public void setUp() {
         node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_MAX_RECURSION, 512);
+        super.setUp();
     }
 
     @AfterClass
