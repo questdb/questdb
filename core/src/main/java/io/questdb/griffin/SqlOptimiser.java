@@ -4163,9 +4163,6 @@ public class SqlOptimiser implements Mutable {
     ) throws SqlException {
         assert model.getNestedModel() != null;
 
-
-        final StringSink sink = new StringSink();
-
         groupByAliases.clear();
         groupByNodes.clear();
 
