@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.line.tcp;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.griffin.SqlException;
@@ -65,14 +66,14 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
-        writerCommandQueueCapacity = 1024;
+        setProperty(PropertyKey.CAIRO_WRITER_COMMAND_QUEUE_CAPACITY, 1024);
         AbstractCairoTest.setUpStatic();
     }
 
     @Override
     @Before
     public void setUp() {
-        writerCommandQueueCapacity = 1024;
+        setProperty(PropertyKey.CAIRO_WRITER_COMMAND_QUEUE_CAPACITY, 1024);
         setProperty(CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, "5000");
         super.setUp();
         node1.setProperty(CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 5000);

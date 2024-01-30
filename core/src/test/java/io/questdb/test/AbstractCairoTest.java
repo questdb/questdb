@@ -112,7 +112,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static SecurityContext securityContext;
     protected static int sqlCopyBufferSize = 1024 * 1024;
     protected static SqlExecutionContext sqlExecutionContext;
-    protected static int writerCommandQueueCapacity = 4;
     protected static long writerCommandQueueSlotSize = 2048L;
     static boolean[] FACTORY_TAGS = new boolean[MemoryTag.SIZE];
     private static long memoryUsage = -1;

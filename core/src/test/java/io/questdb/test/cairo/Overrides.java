@@ -102,7 +102,6 @@ public class Overrides {
     private long walPurgeInterval = -1;
     private long walSegmentRolloverRowCount = -1;
     private long walSegmentRolloverSize = -1;
-    private int writerCommandQueueCapacity = 4;
     private long writerCommandQueueSlotSize = 2048L;
     private Boolean writerMixedIOEnabled = null;
 
@@ -364,9 +363,6 @@ public class Overrides {
     }
 
 
-    public int getWriterCommandQueueCapacity() {
-        return writerCommandQueueCapacity;
-    }
 
 
     public long getWriterCommandQueueSlotSize() {
@@ -425,7 +421,6 @@ public class Overrides {
         parallelFilterEnabled = null;
         writerMixedIOEnabled = null;
         columnPreTouchEnabled = null;
-        writerCommandQueueCapacity = 4;
         columnVersionPurgeQueueCapacity = -1;
         columnVersionTaskPoolCapacity = -1;
         rostiAllocFacade = null;
@@ -741,11 +736,6 @@ public class Overrides {
     public void setWalSegmentRolloverSize(long walSegmentRolloverSize) {
         this.walSegmentRolloverSize = walSegmentRolloverSize;
     }
-
-    public void setWriterCommandQueueCapacity(int writerCommandQueueCapacity) {
-        this.writerCommandQueueCapacity = writerCommandQueueCapacity;
-    }
-
 
     public void setWriterCommandQueueSlotSize(long writerCommandQueueSlotSize) {
         this.writerCommandQueueSlotSize = writerCommandQueueSlotSize;

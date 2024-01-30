@@ -342,11 +342,6 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     }
 
     @Override
-    public int getWriterCommandQueueCapacity() {
-        return overrides.getWriterCommandQueueCapacity();
-    }
-
-    @Override
     public long getWriterCommandQueueSlotSize() {
         return overrides.getWriterCommandQueueSlotSize();
     }

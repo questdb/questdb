@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
@@ -61,14 +62,14 @@ public class UpdateConcurrentTest extends AbstractCairoTest {
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
-        writerCommandQueueCapacity = 128;
+        setProperty(PropertyKey.CAIRO_WRITER_COMMAND_QUEUE_CAPACITY, 128);
         AbstractCairoTest.setUpStatic();
     }
 
     @Override
     @Before
     public void setUp() {
-        writerCommandQueueCapacity = 128;
+        setProperty(PropertyKey.CAIRO_WRITER_COMMAND_QUEUE_CAPACITY, 128);
         super.setUp();
     }
 

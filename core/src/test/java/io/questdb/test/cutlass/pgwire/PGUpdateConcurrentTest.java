@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.pgwire;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
@@ -55,14 +56,14 @@ public class PGUpdateConcurrentTest extends BasePGTest {
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
-        writerCommandQueueCapacity = 256;
+        setProperty(PropertyKey.CAIRO_WRITER_COMMAND_QUEUE_CAPACITY, 256);
         AbstractCairoTest.setUpStatic();
     }
 
     @Override
     @Before
     public void setUp() {
-        writerCommandQueueCapacity = 256;
+        node1.setProperty(PropertyKey.CAIRO_WRITER_COMMAND_QUEUE_CAPACITY, 256);
         super.setUp();
     }
 

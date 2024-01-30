@@ -109,11 +109,6 @@ public class StaticOverrides extends Overrides {
     }
 
     @Override
-    public int getWriterCommandQueueCapacity() {
-        return AbstractCairoTest.writerCommandQueueCapacity;
-    }
-
-    @Override
     public long getWriterCommandQueueSlotSize() {
         return AbstractCairoTest.writerCommandQueueSlotSize;
     }
@@ -125,7 +120,6 @@ public class StaticOverrides extends Overrides {
         AbstractCairoTest.currentMicros = -1;
         AbstractCairoTest.testMicrosClock = AbstractCairoTest.defaultMicrosecondClock;
         AbstractCairoTest.spinLockTimeout = -1;
-        AbstractCairoTest.writerCommandQueueCapacity = 4;
         AbstractCairoTest.columnVersionPurgeQueueCapacity = -1;
         AbstractCairoTest.sqlCopyBufferSize = 1024 * 1024;
         AbstractCairoTest.ff = null;
@@ -206,11 +200,6 @@ public class StaticOverrides extends Overrides {
     @Override
     public void setTestMicrosClock(MicrosecondClock testMicrosClock) {
         AbstractCairoTest.testMicrosClock = testMicrosClock;
-    }
-
-    @Override
-    public void setWriterCommandQueueCapacity(int writerCommandQueueCapacity) {
-        AbstractCairoTest.writerCommandQueueCapacity = writerCommandQueueCapacity;
     }
 
     @Override
