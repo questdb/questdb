@@ -87,6 +87,7 @@ import java.util.stream.LongStream;
 import java.util.stream.Stream;
 
 import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT;
+import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT;
 import static io.questdb.cairo.sql.SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK;
 import static io.questdb.test.tools.TestUtils.assertEquals;
 import static io.questdb.test.tools.TestUtils.*;
@@ -7452,8 +7453,8 @@ nodejs code:
     public void testRunAlterWhenTableLockedAndAlterTakesTooLong() throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
-            node1.setProperty(CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, "5000");
-            writerAsyncCommandMaxTimeout = 30_000;
+            node1.setProperty(CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 5000);
+            node1.setProperty(CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT, 30_000);
             SOCountDownLatch queryStartedCountDown = new SOCountDownLatch();
             ff = new TestFilesFacadeImpl() {
                 @Override
@@ -7474,7 +7475,7 @@ nodejs code:
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             skipOnWalRun(); // Alters do not wait for WAL tables
-            writerAsyncCommandMaxTimeout = configuration.getWriterAsyncCommandBusyWaitTimeout();
+            long writerAsyncCommandMaxTimeout = configuration.getWriterAsyncCommandBusyWaitTimeout();
             SOCountDownLatch queryStartedCountDown = new SOCountDownLatch();
             ff = new TestFilesFacadeImpl() {
                 @Override

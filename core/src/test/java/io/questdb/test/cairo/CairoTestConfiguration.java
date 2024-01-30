@@ -352,11 +352,6 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     }
 
     @Override
-    public long getWriterAsyncCommandMaxTimeout() {
-        return overrides.getWriterAsyncCommandMaxTimeout() < 0 ? super.getWriterAsyncCommandMaxTimeout() : overrides.getWriterAsyncCommandMaxTimeout();
-    }
-
-    @Override
     public int getWriterCommandQueueCapacity() {
         return overrides.getWriterCommandQueueCapacity();
     }

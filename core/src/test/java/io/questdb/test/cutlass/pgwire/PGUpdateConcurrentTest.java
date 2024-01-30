@@ -48,6 +48,7 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT;
+import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT;
 
 public class PGUpdateConcurrentTest extends BasePGTest {
     private static final ThreadLocal<StringSink> readerSink = new ThreadLocal<>(StringSink::new);
@@ -164,8 +165,8 @@ public class PGUpdateConcurrentTest extends BasePGTest {
     @Test
     public void testUpdateWithQueryTimeout() throws Exception {
         assertMemoryLeak(() -> {
-            setProperty(CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, "20000");
-            writerAsyncCommandMaxTimeout = 90_000L;
+            node1.setProperty(CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 20_000L);
+            node1.setProperty(CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT, 90_000L);
             try (
                     PGWireServer server1 = createPGServer(1);
                     WorkerPool workerPool = server1.getWorkerPool()) {
@@ -275,7 +276,7 @@ public class PGUpdateConcurrentTest extends BasePGTest {
 
     private void testConcurrency(int numOfWriters, int numOfReaders, int numOfUpdates, PartitionMode partitionMode) throws Exception {
         setProperty(CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, "20000"); // On in CI Windows updates are particularly slow
-        writerAsyncCommandMaxTimeout = 90_000L;
+        node1.setProperty(CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT, 90_000L);
         spinLockTimeout = 20_000L;
         assertMemoryLeak(() -> {
             CyclicBarrier barrier = new CyclicBarrier(numOfWriters + numOfReaders);

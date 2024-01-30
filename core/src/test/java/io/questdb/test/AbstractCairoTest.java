@@ -85,7 +85,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
     public static long dataAppendPageSize = -1;
     public static long spinLockTimeout = -1;
     public static StaticOverrides staticOverrides = new StaticOverrides();
-    public static long writerAsyncCommandMaxTimeout = -1;
     protected static CharSequence backupDir;
     protected static DateFormat backupDirTimestampFormat;
     protected static int binaryEncodingMaxLength = -1;
@@ -1587,7 +1586,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         return select(selectSql, sqlExecutionContext);
     }
 
-    protected static void setProperty(PropertyKey propertyKey, int maxValue) {
+    protected static void setProperty(PropertyKey propertyKey, long maxValue) {
         staticOverrides.setProperty(propertyKey, maxValue);
     }
 

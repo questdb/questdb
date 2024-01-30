@@ -110,7 +110,7 @@ public class QuestDBTestNode {
         griffin = new Griffin(cairo, circuitBreaker);
     }
 
-    public void setProperty(PropertyKey propertyKey, int value) {
+    public void setProperty(PropertyKey propertyKey, long value) {
         getConfigurationOverrides().setProperty(propertyKey, value);
     }
 

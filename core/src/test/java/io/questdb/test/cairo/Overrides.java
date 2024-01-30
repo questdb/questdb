@@ -105,7 +105,6 @@ public class Overrides {
     private long walPurgeInterval = -1;
     private long walSegmentRolloverRowCount = -1;
     private long walSegmentRolloverSize = -1;
-    private long writerAsyncCommandMaxTimeout = -1;
     private int writerCommandQueueCapacity = 4;
     private long writerCommandQueueSlotSize = 2048L;
     private Boolean writerMixedIOEnabled = null;
@@ -381,11 +380,6 @@ public class Overrides {
 
 
 
-    public long getWriterAsyncCommandMaxTimeout() {
-        return writerAsyncCommandMaxTimeout;
-    }
-
-
     public int getWriterCommandQueueCapacity() {
         return writerCommandQueueCapacity;
     }
@@ -445,7 +439,6 @@ public class Overrides {
         currentMicros = -1;
         testMicrosClock = defaultMicrosecondClock;
         sampleByIndexSearchPageSize = -1;
-        writerAsyncCommandMaxTimeout = -1;
         groupByShardingThreshold = -1;
         jitMode = SqlJitMode.JIT_MODE_ENABLED;
         rndFunctionMemoryPageSize = -1;
@@ -782,12 +775,6 @@ public class Overrides {
     public void setWalSegmentRolloverSize(long walSegmentRolloverSize) {
         this.walSegmentRolloverSize = walSegmentRolloverSize;
     }
-
-
-    public void setWriterAsyncCommandMaxTimeout(long writerAsyncCommandMaxTimeout) {
-        this.writerAsyncCommandMaxTimeout = writerAsyncCommandMaxTimeout;
-    }
-
 
     public void setWriterCommandQueueCapacity(int writerCommandQueueCapacity) {
         this.writerCommandQueueCapacity = writerCommandQueueCapacity;
