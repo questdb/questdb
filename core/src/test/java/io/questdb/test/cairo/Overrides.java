@@ -28,6 +28,7 @@ import io.questdb.*;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.json.JsonException;
+import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.RostiAllocFacade;
@@ -45,8 +46,6 @@ import static io.questdb.cairo.DebugUtils.LOG;
 public class Overrides {
     private static final BuildInformationHolder buildInformationHolder = new BuildInformationHolder();
     private final Properties defaultProperties = new Properties();
-    private final String inputRoot = null;
-    private final String inputWorkRoot = null;
     private final Properties properties = new Properties();
     private boolean changed = true;
     private SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration;
@@ -60,7 +59,6 @@ public class Overrides {
     private boolean isHiddenTelemetryTable = false;
     private boolean mangleTableDirNames = true;
     private CairoConfiguration propsConfig;
-    private String root;
     private RostiAllocFacade rostiAllocFacade = null;
 
     public Overrides() {
@@ -100,11 +98,11 @@ public class Overrides {
     }
 
     public String getInputRoot() {
-        return inputRoot;
+        return null;
     }
 
     public String getInputWorkRoot() {
-        return inputWorkRoot;
+        return null;
     }
 
     public RostiAllocFacade getRostiAllocFacade() {
@@ -136,6 +134,10 @@ public class Overrides {
         changed = true;
     }
 
+    public void resetStatic() {
+        reset();
+    }
+
     public void setCurrentMicros(long currentMicros) {
         this.currentMicros = currentMicros;
     }
@@ -153,27 +155,30 @@ public class Overrides {
     }
 
     public void setProperty(PropertyKey propertyKey, long value) {
-        properties.setProperty(propertyKey.getPropertyPath(), String.valueOf(value));
-        changed = true;
+        setProperty(propertyKey, String.valueOf(value));
     }
 
     public void setProperty(PropertyKey propertyKey, String value) {
+        String propertyPath = propertyKey.getPropertyPath();
         if (value != null) {
-            properties.setProperty(propertyKey.getPropertyPath(), value);
+            if (!value.equals(defaultProperties.get(propertyPath))) {
+                String existing = (String) properties.setProperty(propertyPath, value);
+                changed = !Chars.equalsNc(value, existing);
+            } else {
+                int abc = 0;
+            }
         } else {
-            properties.remove(propertyKey.getPropertyPath());
+            properties.remove(propertyPath);
+            changed = true;
         }
-        changed = true;
     }
 
     public void setProperty(PropertyKey propertyKey, boolean value) {
-        properties.setProperty(propertyKey.getPropertyPath(), String.valueOf(value));
-        changed = true;
+        setProperty(propertyKey, value ? "true" : "false");
     }
 
     public void setRostiAllocFacade(RostiAllocFacade rostiAllocFacade) {
         this.rostiAllocFacade = rostiAllocFacade;
-        changed = true;
     }
 
     private static CairoConfiguration getTestConfiguration(String root, Properties defaultProperties, Properties properties) {
@@ -298,11 +303,10 @@ public class Overrides {
     }
 
     private CairoConfiguration getDefaultConfiguration(String root) {
-        if (defaultConfiguration != null && this.root.equals(root)) {
+        if (defaultConfiguration != null) {
             return defaultConfiguration;
         }
         defaultConfiguration = getTestConfiguration(root, defaultProperties, null);
-        this.root = root;
         return defaultConfiguration;
     }
 }
