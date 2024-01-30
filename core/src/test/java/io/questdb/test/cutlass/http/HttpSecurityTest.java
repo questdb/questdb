@@ -26,16 +26,19 @@ package io.questdb.test.cutlass.http;
 
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.http.HttpAuthenticator;
 import io.questdb.cutlass.http.HttpAuthenticatorFactory;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractTest;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Rule;
@@ -50,6 +53,11 @@ public class HttpSecurityTest extends AbstractTest {
         @Override
         public boolean authenticate(HttpRequestHeader headers) {
             return false;
+        }
+
+        @Override
+        public @Nullable ObjList<CharSequence> getGroups() {
+            return null;
         }
 
         @Override
@@ -72,16 +80,26 @@ public class HttpSecurityTest extends AbstractTest {
         }
 
         @Override
+        public @Nullable ObjList<CharSequence> getGroups() {
+            return null;
+        }
+
+        @Override
         public CharSequence getPrincipal() {
             return "foo";
         }
     };
     private static final String VALID_BASIC_AUTH_CREDENTIALS_HEADER = "Authorization: " + VALID_BASIC_AUTH_CREDENTIALS;
-    private static final String VALID_REST_TOKEN_AUTH_CREDENTIALS = "Token validToken-XubtaE";
+    private static final String VALID_REST_TOKEN_AUTH_CREDENTIALS = "Bearer validToken-XubtaE";
     private static final HttpAuthenticatorFactory SINGLE_USER_REST_TOKEN_AUTH_FACTORY = () -> new HttpAuthenticator() {
         @Override
         public boolean authenticate(HttpRequestHeader headers) {
             return Utf8s.equalsNcAscii(VALID_REST_TOKEN_AUTH_CREDENTIALS, headers.getHeader(new Utf8String("Authorization")));
+        }
+
+        @Override
+        public @Nullable ObjList<CharSequence> getGroups() {
+            return null;
         }
 
         @Override
@@ -490,20 +508,20 @@ public class HttpSecurityTest extends AbstractTest {
     }
 
     private void testAdditionalUnprotectedHttpEndpoint(HttpQueryTestBuilder.HttpClientCode code) throws Exception {
-        testHttpEndpoint(HttpSecurityTest.SINGLE_USER_BASIC_AUTH_FACTORY, false, false, code);
+        testHttpEndpoint(HttpSecurityTest.SINGLE_USER_BASIC_AUTH_FACTORY, SecurityContext.AUTH_TYPE_NONE, SecurityContext.AUTH_TYPE_NONE, code);
     }
 
     private void testHttpEndpoint(
             HttpAuthenticatorFactory factory,
             HttpQueryTestBuilder.HttpClientCode code
     ) throws Exception {
-        testHttpEndpoint(factory, true, true, code);
+        testHttpEndpoint(factory, SecurityContext.AUTH_TYPE_CREDENTIALS, SecurityContext.AUTH_TYPE_CREDENTIALS, code);
     }
 
     private void testHttpEndpoint(
             HttpAuthenticatorFactory factory,
-            boolean staticContentAuthRequired,
-            boolean healthCheckAuthRequired,
+            byte httpStaticContentAuthType,
+            byte httpHealthCheckAuthType,
             HttpQueryTestBuilder.HttpClientCode code
     ) throws Exception {
         final FactoryProvider factoryProvider = new DefaultFactoryProvider() {
@@ -516,8 +534,8 @@ public class HttpSecurityTest extends AbstractTest {
                 .withWorkerCount(1)
                 .withTempFolder(root)
                 .withFactoryProvider(factoryProvider)
-                .withStaticContentAuthRequired(staticContentAuthRequired)
-                .withHealthCheckAuthRequired(healthCheckAuthRequired)
+                .withStaticContentAuthRequired(httpStaticContentAuthType)
+                .withHealthCheckAuthRequired(httpHealthCheckAuthType)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .run(code);
     }

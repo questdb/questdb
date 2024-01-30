@@ -91,6 +91,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final FilesFacade ff;
     private final FunctionParser functionParser;
     private final ListColumnFilter listColumnFilter = new ListColumnFilter();
+    private final int maxRecompileAttempts;
     private final MemoryMARW mem = Vm.getMARWInstance();
     private final MessageBus messageBus;
     private final SqlParser parser;
@@ -123,6 +124,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     public SqlCompilerImpl(CairoEngine engine) {
         this.engine = engine;
         queryLogger = engine.getConfiguration().getQueryLogger();
+        this.maxRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
         this.queryBuilder = new QueryBuilder(this);
         this.configuration = engine.getConfiguration();
         this.ff = configuration.getFilesFacade();
@@ -297,7 +299,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     batchCallback.postCompile(this, compiledQuery, currentQuery);
                     recompileStale = false;
                 } catch (TableReferenceOutOfDateException e) {
-                    if (retries == TableReferenceOutOfDateException.MAX_RETRY_ATTEMPTS) {
+                    if (retries == maxRecompileAttempts) {
                         throw e;
                     }
                     LOG.info().$(e.getFlyweightMessage()).$();
@@ -2363,7 +2365,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                     factory.getMetadata(),
                                     cursor,
                                     copier,
-                                    writerTimestampIndex,
+                                    timestampIndexFound,
                                     model.getBatchSize(),
                                     model.getO3MaxLag(),
                                     circuitBreaker
@@ -2852,7 +2854,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             boolean isSelect
     ) throws SqlException {
         QueryModel queryModel = initialQueryModel;
-        int remainingRetries = TableReferenceOutOfDateException.MAX_RETRY_ATTEMPTS;
+        int remainingRetries = maxRecompileAttempts;
         for (; ; ) {
             try {
                 return generateFactory(queryModel, executionContext, isSelect);

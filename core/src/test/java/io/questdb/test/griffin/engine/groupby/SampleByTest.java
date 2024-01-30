@@ -2690,7 +2690,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "  values: [first(val),avg(val),last(val),max(val)]\n" +
                             "    SelectedRecord\n" +
                             "        Async Filter workers: 1\n" +
-                            "          filter: ((ts2>=1669852800000000 and sym='B') and 0<length(sym)*ts2::long)\n" +
+                            "          filter: (ts2>=1669852800000000 and sym='B' and 0<length(sym)*ts2::long)\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: x\n"
@@ -2828,7 +2828,7 @@ public class SampleByTest extends AbstractCairoTest {
                     continue;
                 }
 
-                String plan = "Filter filter: ((tstmp>=1669852800000000 and sym='B') and 0<length(sym)*tstmp::long)\n" +
+                String plan = "Filter filter: (tstmp>=1669852800000000 and sym='B' and 0<length(sym)*tstmp::long)\n" +
                         "    SampleBy\n" +
                         (isNone(fill) ? "" : "      fill: " + fill + "\n") +
                         "      keys: [tstmp,sym]\n" +

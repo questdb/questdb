@@ -35,11 +35,16 @@ import io.questdb.network.PeerIsSlowToReadException;
 public class HealthCheckProcessor implements HttpRequestProcessor {
 
     private final boolean pessimisticMode;
-    private final boolean requiresAuthentication;
+    private final byte requiredAuthType;
 
     public HealthCheckProcessor(HttpMinServerConfiguration configuration) {
         this.pessimisticMode = configuration.isPessimisticHealthCheckEnabled();
-        this.requiresAuthentication = configuration.isHealthCheckAuthenticationRequired();
+        this.requiredAuthType = configuration.getRequiredAuthType();
+    }
+
+    @Override
+    public byte getRequiredAuthType() {
+        return requiredAuthType;
     }
 
     @Override
@@ -63,10 +68,5 @@ public class HealthCheckProcessor implements HttpRequestProcessor {
         response.sendHeader();
         response.putAscii("Status: Healthy");
         response.sendChunk(true);
-    }
-
-    @Override
-    public boolean requiresAuthentication() {
-        return requiresAuthentication;
     }
 }

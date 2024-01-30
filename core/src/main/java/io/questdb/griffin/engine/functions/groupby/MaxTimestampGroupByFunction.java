@@ -50,11 +50,7 @@ public class MaxTimestampGroupByFunction extends TimestampFunction implements Gr
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        long max = mapValue.getTimestamp(valueIndex);
-        long next = arg.getTimestamp(record);
-        if (next > max) {
-            mapValue.putTimestamp(valueIndex, next);
-        }
+        mapValue.maxLong(valueIndex, arg.getTimestamp(record));
     }
 
     @Override
@@ -84,7 +80,7 @@ public class MaxTimestampGroupByFunction extends TimestampFunction implements Gr
 
     @Override
     public boolean isParallelismSupported() {
-        return true;
+        return UnaryFunction.super.isParallelismSupported();
     }
 
     @Override
