@@ -7453,7 +7453,7 @@ nodejs code:
     public void testRunAlterWhenTableLockedAndAlterTakesTooLong() throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
-            node1.setProperty(CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 2000);
+            node1.setProperty(CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 1000);
             node1.setProperty(CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT, 30_000);
             SOCountDownLatch queryStartedCountDown = new SOCountDownLatch();
             ff = new TestFilesFacadeImpl() {
@@ -7461,7 +7461,7 @@ nodejs code:
                 public int openRW(LPSZ name, long opts) {
                     if (Utf8s.endsWithAscii(name, "_meta.swp")) {
                         queryStartedCountDown.await();
-                        Os.sleep(configuration.getWriterAsyncCommandBusyWaitTimeout());
+                        Os.sleep(configuration.getWriterAsyncCommandBusyWaitTimeout() * 2);
                     }
                     return super.openRW(name, opts);
                 }
@@ -7486,7 +7486,7 @@ nodejs code:
                     if (Utf8s.endsWithAscii(name, "_meta.swp")) {
                         queryStartedCountDown.await();
                         // wait for twice the time to allow busy wait to time out
-                        Os.sleep(writerAsyncCommandMaxTimeout * 2);
+                        Os.sleep(configuration.getWriterAsyncCommandBusyWaitTimeout() * 2);
                     }
                     return super.openRW(name, opts);
                 }
@@ -7498,8 +7498,8 @@ nodejs code:
     @Test
     public void testRunAlterWhenTableLockedAndAlterTimeoutsToStart() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        node1.setProperty(CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 10);
         assertMemoryLeak(() -> {
+            node1.setProperty(CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 1);
             ff = new TestFilesFacadeImpl() {
                 @Override
                 public int openRW(LPSZ name, long opts) {
@@ -10277,11 +10277,10 @@ create table tab as (
              )
         ) {
             Assert.assertNotNull(server);
-            pool.start(LOG);
             int iteration = 0;
 
-
             do {
+                pool.start(LOG);
                 final String tableName = "xyz" + iteration++;
                 ddl("create table " + tableName + " (a int)");
 
@@ -10334,13 +10333,12 @@ create table tab as (
                         }
                     }
                 } finally {
+                    pool.halt();
                     engine.releaseAllWriters();
                 }
                 // Failure may not happen if we're lucky, even when they are expected
                 // When alterRequestReturnSuccess if false and errors are 0, repeat
             } while (!alterRequestReturnSuccess && errors.get() == 0);
-        } finally {
-            pool.halt();
         }
     }
 
