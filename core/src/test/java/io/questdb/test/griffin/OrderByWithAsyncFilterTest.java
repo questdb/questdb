@@ -43,7 +43,7 @@ public class OrderByWithAsyncFilterTest extends AbstractCairoTest {
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
-        pageFrameMaxRows = PAGE_FRAME_MAX_ROWS;
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, PAGE_FRAME_MAX_ROWS);
         // We intentionally use small values for shard count and reduce
         // queue capacity to exhibit various edge cases.
         setProperty(CAIRO_PAGE_FRAME_SHARD_COUNT, 2);
@@ -55,7 +55,7 @@ public class OrderByWithAsyncFilterTest extends AbstractCairoTest {
     // tearDown() overrides settings set in setUpStatic()
     @Before
     public void setUp() {
-        pageFrameMaxRows = PAGE_FRAME_MAX_ROWS;
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, PAGE_FRAME_MAX_ROWS);
         setProperty(CAIRO_PAGE_FRAME_SHARD_COUNT, 2);
         setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, PAGE_FRAME_COUNT);
         super.setUp();

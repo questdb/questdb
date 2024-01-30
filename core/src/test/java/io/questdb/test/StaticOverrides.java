@@ -104,11 +104,6 @@ public class StaticOverrides extends Overrides {
     }
 
     @Override
-    public int getPageFrameMaxRows() {
-        return AbstractCairoTest.pageFrameMaxRows;
-    }
-
-    @Override
     public Boolean getSnapshotRecoveryEnabled() {
         return AbstractCairoTest.snapshotRecoveryEnabled;
     }
@@ -161,7 +156,6 @@ public class StaticOverrides extends Overrides {
         AbstractCairoTest.testMicrosClock = AbstractCairoTest.defaultMicrosecondClock;
         AbstractCairoTest.writerAsyncCommandBusyWaitTimeout = -1;
         AbstractCairoTest.writerAsyncCommandMaxTimeout = -1;
-        AbstractCairoTest.pageFrameMaxRows = -1;
         AbstractCairoTest.groupByShardingThreshold = -1;
         AbstractCairoTest.spinLockTimeout = -1;
         AbstractCairoTest.walTxnNotificationQueueCapacity = -1;
@@ -243,11 +237,6 @@ public class StaticOverrides extends Overrides {
     @Override
     public void setInputWorkRoot(String inputWorkRoot) {
         AbstractCairoTest.inputWorkRoot = inputWorkRoot;
-    }
-
-    @Override
-    public void setPageFrameMaxRows(int pageFrameMaxRows) {
-        AbstractCairoTest.pageFrameMaxRows = pageFrameMaxRows;
     }
 
     @Override

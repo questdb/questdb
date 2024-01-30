@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -75,7 +76,7 @@ public class AggregateTest extends AbstractCairoTest {
     @Override
     @Before
     public void setUp() {
-        pageFrameMaxRows = PAGE_FRAME_MAX_ROWS;
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, PAGE_FRAME_MAX_ROWS);
         super.setUp();
         configOverrideParallelGroupByEnabled(enableParallelGroupBy);
     }
@@ -1373,7 +1374,7 @@ public class AggregateTest extends AbstractCairoTest {
     @Test
     public void testOOMInRostiMergeResetsAllocatedNativeMemoryToMinSizes() throws Exception {
         final int WORKER_COUNT = 2;
-        pageFrameMaxRows = 1000; // if it's default (1mil) then rosti could create single task for whole table data
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1000); // if it's default (1mil) then rosti could create single task for whole table data
 
         RostiAllocFacade rostiAllocFacade = new RostiAllocFacadeImpl() {
             final long[] pRostis = new long[WORKER_COUNT];

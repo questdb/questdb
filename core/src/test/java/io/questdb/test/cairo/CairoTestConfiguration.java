@@ -282,11 +282,6 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     }
 
     @Override
-    public int getSqlPageFrameMaxRows() {
-        return overrides.getPageFrameMaxRows() < 0 ? super.getSqlPageFrameMaxRows() : overrides.getPageFrameMaxRows();
-    }
-
-    @Override
     public int getSqlWindowMaxRecursion() {
         return overrides.getSqlWindowMaxRecursion() > 0 ? overrides.getSqlWindowMaxRecursion() : super.getSqlWindowMaxRecursion();
     }

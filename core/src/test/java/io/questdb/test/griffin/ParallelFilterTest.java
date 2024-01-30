@@ -116,7 +116,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
 
     @Before
     public void setUp() {
-        pageFrameMaxRows = PAGE_FRAME_MAX_ROWS;
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, PAGE_FRAME_MAX_ROWS);
         // We intentionally use small values for shard count and reduce
         // queue capacity to exhibit various edge cases.
         setProperty(CAIRO_PAGE_FRAME_SHARD_COUNT, 2);

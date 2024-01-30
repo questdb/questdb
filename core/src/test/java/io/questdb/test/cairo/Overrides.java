@@ -78,7 +78,6 @@ public class Overrides {
     private long o3MinLag = -1;
     private int o3PartitionSplitMaxCount = -1;
     private boolean o3QuickSortEnabled = false;
-    private int pageFrameMaxRows = -1;
     private Boolean parallelFilterEnabled = null;
     private Boolean parallelGroupByEnabled = null;
     private int parallelImportStatusLogKeepNDays = -1;
@@ -264,10 +263,6 @@ public class Overrides {
         return o3PartitionSplitMaxCount;
     }
 
-
-    public int getPageFrameMaxRows() {
-        return pageFrameMaxRows;
-    }
 
     public int getParallelImportStatusLogKeepNDays() {
         return parallelImportStatusLogKeepNDays;
@@ -468,7 +463,6 @@ public class Overrides {
         sampleByIndexSearchPageSize = -1;
         writerAsyncCommandBusyWaitTimeout = -1;
         writerAsyncCommandMaxTimeout = -1;
-        pageFrameMaxRows = -1;
         groupByShardingThreshold = -1;
         jitMode = SqlJitMode.JIT_MODE_ENABLED;
         rndFunctionMemoryPageSize = -1;
@@ -676,10 +670,6 @@ public class Overrides {
         this.o3QuickSortEnabled = o3QuickSortEnabled;
     }
 
-
-    public void setPageFrameMaxRows(int pageFrameMaxRows) {
-        this.pageFrameMaxRows = pageFrameMaxRows;
-    }
 
     public void setParallelFilterEnabled(Boolean parallelFilterEnabled) {
         this.parallelFilterEnabled = parallelFilterEnabled;

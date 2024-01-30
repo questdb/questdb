@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.Record;
@@ -265,7 +266,8 @@ public class CompiledFilterTest extends AbstractCairoTest {
 
     @Test
     public void testPageFrameMaxSize() throws Exception {
-        pageFrameMaxRows = 128;
+        int pageFrameMaxRows = 128;
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, pageFrameMaxRows);
         final long N = 8 * pageFrameMaxRows + 1;
         assertMemoryLeak(() -> {
             ddl("create table t1 as (select " +

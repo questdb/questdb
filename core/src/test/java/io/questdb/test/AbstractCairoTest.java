@@ -114,7 +114,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static Metrics metrics;
     protected static QuestDBTestNode node1;
     protected static ObjList<QuestDBTestNode> nodes = new ObjList<>();
-    protected static int pageFrameMaxRows = -1;
     protected static SecurityContext securityContext;
     protected static Boolean snapshotRecoveryEnabled = null;
     protected static int sqlCopyBufferSize = 1024 * 1024;
