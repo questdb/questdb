@@ -171,9 +171,23 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
             assertConfStrError("tcp::addr=localhost;init_buf_size=;", "init_buf_size cannot be empty");
             assertConfStrError("tcp::addr=localhost;invali=", "invalid parameter [error=missing trailing semicolon at position 27]");
             assertConfStrError("tcp::1addr=localhost;", "invalid configuration string [error=key must start with a letter, not '1' at position 5]");
+            assertConfStrError("http::addr=localhost:8080;tls_verify=unsafe_off;", "TSL validation disabled, but TLS was not enabled");
+            assertConfStrError("http::addr=localhost:8080;tls_verify=bad;", "invalid tls_verify [value=bad, allowed-values=[on, unsafe_off]]");
+            assertConfStrError("tcps::addr=localhost;pass=unsafe_off;", "password is not supported for TCP protocol");
+            assertConfStrError("http::addr=localhost:8080;max_buf_size=-32;", "maximum buffer capacity cannot be less than initial buffer capacity [maximumBufferCapacity=-32, initialBufferCapacity=65536]");
+            assertConfStrError("http::addr=localhost:8080;max_buf_size=notanumber;", "invalid max_buf_size [value=notanumber]");
+            assertConfStrError("http::addr=localhost:8080;init_buf_size=notanumber;", "invalid init_buf_size [value=notanumber]");
+            assertConfStrError("http::addr=localhost:8080;init_buf_size=-42;", "buffer capacity too small [capacity=-42, min=513]");
+            assertConfStrError("http::addr=localhost:8080;auto_flush_rows=0;", "invalid auto_flush_rows [auto_flush_rows=0]");
+            assertConfStrError("http::addr=localhost:8080;auto_flush_rows=notanumber;", "invalid auto_flush_rows [value=notanumber]");
+            assertConfStrError("http::addr=localhost:8080;auto_flush=invalid;", "invalid auto_flush [value=invalid]");
 
             assertConfStrOk("http::addr=localhost;");
             assertConfStrOk("http::addr=localhost:8080;");
+            assertConfStrOk("http::addr=localhost:8080;token=foo;");
+            assertConfStrOk("http::addr=localhost:8080;token=foo;retry_timeout=1000;max_buf_size=1000000;");
+            assertConfStrOk("https::addr=localhost:8080;tls_verify=unsafe_off;auto_flush_rows=100;");
+            assertConfStrOk("https::addr=localhost:8080;tls_verify=on;");
         });
     }
 
@@ -776,8 +790,9 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
 
     private static void assertConfStrError(String conf, String expectedError) {
         try {
-            Sender.builder().fromString(conf);
-            fail("should fail with bad conf string");
+            try (Sender s = Sender.builder().fromString(conf).build()) {
+                fail("should fail with bad conf string");
+            }
         } catch (LineSenderException e) {
             TestUtils.assertContains(e.getMessage(), expectedError);
         }

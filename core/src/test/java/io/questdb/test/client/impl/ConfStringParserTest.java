@@ -4,16 +4,10 @@ import io.questdb.client.impl.ConfStringParser;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Test;
 
 public final class ConfStringParserTest {
     private static final StringSink sink = new StringSink();
-
-    @Before
-    public void setUp() {
-        sink.clear();
-    }
 
     @Test
     public void testByteNotCharPosition() {

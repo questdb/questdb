@@ -298,7 +298,7 @@ public interface Sender extends Closeable {
         private static final int HTTP_TIMEOUT_NOT_SET = -1;
         private static final int MAX_PENDING_ROWS_NOT_SET = -1;
         private static final int MAX_RETRY_MILLIS_NOT_SET = -1;
-        private static final int MIN_BUFFER_SIZE_FOR_AUTH = 512 + 1; // challenge size + 1;
+        private static final int MIN_BUFFER_SIZE = 512 + 1; // challenge size + 1;
         private static final byte PORT_NOT_SET = 0;
         private static final int PROTOCOL_HTTP = 1;
         private static final int PROTOCOL_NOT_SET = -1;
@@ -421,6 +421,9 @@ public interface Sender extends Closeable {
             if (this.bufferCapacity != BUFFER_CAPACITY_NOT_SET) {
                 throw new LineSenderException("buffer capacity was already configured ")
                         .put("[capacity=").put(this.bufferCapacity).put("]");
+            }
+            if (bufferCapacity < MIN_BUFFER_SIZE) {
+                throw new LineSenderException("buffer capacity too small [capacity=").put(bufferCapacity).put(", min=").put(MIN_BUFFER_SIZE).put("]");
             }
             this.bufferCapacity = bufferCapacity;
             return this;
@@ -598,7 +601,7 @@ public interface Sender extends Closeable {
                     } else if (Chars.equals("unsafe_off", sink)) {
                         tlsValidationMode = TlsValidationMode.INSECURE;
                     } else {
-                        throw new LineSenderException("invalid tls_verify [value=").put(sink).put("]");
+                        throw new LineSenderException("invalid tls_verify [value=").put(sink).put(", allowed-values=[on, unsafe_off]]");
                     }
                 } else if (Chars.equals("tls_roots", sink)) {
                     pos = getValue(confStr, pos, sink, "tls_roots");
@@ -911,7 +914,7 @@ public interface Sender extends Closeable {
             try {
                 return Numbers.parseInt(value);
             } catch (NumericException e) {
-                throw new LineSenderException("invalid ").put(name).put(" [").put(name).put("=").put(value).put("]");
+                throw new LineSenderException("invalid ").put(name).put(" [value=").put(value).put("]");
             }
         }
 
@@ -951,9 +954,9 @@ public interface Sender extends Closeable {
             if (!tlsEnabled && tlsValidationMode != TlsValidationMode.DEFAULT) {
                 throw new LineSenderException("TSL validation disabled, but TLS was not enabled");
             }
-            if (keyId != null && bufferCapacity < MIN_BUFFER_SIZE_FOR_AUTH) {
+            if (keyId != null && bufferCapacity < MIN_BUFFER_SIZE) {
                 throw new LineSenderException("Requested buffer too small ")
-                        .put("[minimalCapacity=").put(MIN_BUFFER_SIZE_FOR_AUTH)
+                        .put("[minimalCapacity=").put(MIN_BUFFER_SIZE)
                         .put(", requestedCapacity=").put(bufferCapacity)
                         .put("]");
             }
