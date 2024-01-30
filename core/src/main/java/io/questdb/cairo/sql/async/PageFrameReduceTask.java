@@ -44,6 +44,7 @@ public class PageFrameReduceTask implements Closeable {
 
     // Used to pass the list of column page frame addresses to a JIT-compiled filter.
     private final DirectLongList columns;
+    private final DirectLongList varLenIndexes;
     private final StringSink errorMsg = new StringSink();
     private final DirectLongList filteredRows; // Used for TYPE_FILTER.
     private final long pageFrameQueueCapacity;
@@ -56,6 +57,7 @@ public class PageFrameReduceTask implements Closeable {
     public PageFrameReduceTask(CairoConfiguration configuration, int memoryTag) {
         this.filteredRows = new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), memoryTag);
         this.columns = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), memoryTag);
+        this.varLenIndexes = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), memoryTag);
         this.pageFrameQueueCapacity = configuration.getPageFrameReduceQueueCapacity();
     }
 
@@ -67,6 +69,10 @@ public class PageFrameReduceTask implements Closeable {
 
     public DirectLongList getColumns() {
         return columns;
+    }
+
+    public DirectLongList getVarLenIndexes() {
+        return varLenIndexes;
     }
 
     public CharSequence getErrorMsg() {

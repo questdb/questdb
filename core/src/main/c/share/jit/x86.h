@@ -39,9 +39,21 @@ namespace questdb::x86 {
     }
 
     jit_value_t
-    read_mem(Compiler &c, data_type_t type, int32_t column_idx, const Gp &cols_ptr, const Gp &input_index) {
+    read_mem(Compiler &c, data_type_t type, int32_t column_idx, const Gp &cols_ptr, const Gp &varlen_indexes_ptr, const Gp &input_index) {
         Gp column_address = c.newInt64("column_address");
         c.mov(column_address, ptr(cols_ptr, 8 * column_idx, 8));
+        if (type == data_type_t::str) {
+            // For strings, the JIT-compiled filter only supports length checking.
+            // This includes a NULL check because it's encoded as string length -1.
+            // We reach the string by looking up its offset in the varlen column index.
+            Gp offset = c.newInt64("offset");
+            auto offset_shift = type_shift(data_type_t::i64);
+            auto offset_size = 1 << offset_shift;
+            // Reuse offset register to first dereference the varlen indexes array, then access its slot
+            c.mov(offset, ptr(varlen_indexes_ptr, 8 * column_idx, 8));
+            c.mov(offset, ptr(offset, input_index, offset_shift, 0, offset_size));
+            return {Mem(column_address, offset, 0, 0, 4), data_type_t::i32, data_kind_t::kMemory};
+        }
         auto shift = type_shift(type);
         auto type_size = 1 << shift;
         if (type_size <= 8) {
@@ -91,6 +103,11 @@ namespace questdb::x86 {
             case data_type_t::f64: {
                 Xmm row_data = c.newXmmSd("f64_mem");
                 c.movsd(row_data, mem);
+                return {row_data, type, data_kind_t::kMemory};
+            }
+            case data_type_t::str: {
+                Gp row_data = c.newGpq("str_mem");
+                c.mov(row_data, mem);
                 return {row_data, type, data_kind_t::kMemory};
             }
             default:
@@ -251,6 +268,7 @@ namespace questdb::x86 {
             case data_type_t::i8:
             case data_type_t::i16:
             case data_type_t::i32:
+            case data_type_t::str:
                 return {int32_eq(c, lhs.gp().r32(), rhs.gp().r32()), data_type_t::i32, dk};
             case data_type_t::i64:
                 return {int64_eq(c, lhs.gp(), rhs.gp()), data_type_t::i32, dk};
@@ -272,6 +290,7 @@ namespace questdb::x86 {
             case data_type_t::i8:
             case data_type_t::i16:
             case data_type_t::i32:
+            case data_type_t::str:
                 return {int32_ne(c, lhs.gp().r32(), rhs.gp().r32()), data_type_t::i32, dk};
             case data_type_t::i64:
                 return {int64_ne(c, lhs.gp(), rhs.gp()), data_type_t::i32, dk};
@@ -549,6 +568,7 @@ namespace questdb::x86 {
                 }
                 break;
             case data_type_t::i128:
+            case data_type_t::str:
                 return std::make_pair(lhs, rhs);
             default:
                 __builtin_unreachable();
@@ -618,6 +638,7 @@ namespace questdb::x86 {
     emit_code(Compiler &c, const instruction_t *istream, size_t size, ZoneStack<jit_value_t> &values,
               bool null_check,
               const Gp &cols_ptr,
+              const Gp &varlen_indexes_ptr,
               const Gp &vars_ptr,
               const Gp &input_index) {
 
@@ -637,7 +658,7 @@ namespace questdb::x86 {
                 case opcodes::Mem: {
                     auto type = static_cast<data_type_t>(instr.options);
                     auto idx  = static_cast<int32_t>(instr.ipayload.lo);
-                    values.append(read_mem(c, type, idx, cols_ptr, input_index));
+                    values.append(read_mem(c, type, idx, cols_ptr, varlen_indexes_ptr, input_index));
                 }
                     break;
                 case opcodes::Imm:

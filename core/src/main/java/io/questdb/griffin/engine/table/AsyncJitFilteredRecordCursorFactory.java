@@ -279,6 +279,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     ) {
         final DirectLongList rows = task.getFilteredRows();
         final DirectLongList columns = task.getColumns();
+        final DirectLongList varLenIndexes = task.getVarLenIndexes();
         final long frameRowCount = task.getFrameRowCount();
         final AsyncJitFilterAtom atom = task.getFrameSequence(AsyncJitFilterAtom.class).getAtom();
         final PageAddressCache pageAddressCache = task.getPageAddressCache();
@@ -314,6 +315,18 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
             columns.add(pageAddressCache.getPageAddress(task.getFrameIndex(), columnIndex));
         }
 
+        if (varLenIndexes.getCapacity() < columnCount) {
+            varLenIndexes.setCapacity(columnCount);
+        }
+        varLenIndexes.clear();
+        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+            varLenIndexes.add(
+                    pageAddressCache.isVarLenColumn(columnIndex)
+                            ? pageAddressCache.getIndexPageAddress(task.getFrameIndex(), columnIndex)
+                            : 0
+            );
+        }
+
         final long rowCount = task.getFrameRowCount();
         if (rows.getCapacity() < rowCount) {
             rows.setCapacity(rowCount);
@@ -322,6 +335,8 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         long hi = atom.compiledFilter.call(
                 columns.getAddress(),
                 columns.size(),
+                varLenIndexes.getAddress(),
+                varLenIndexes.size(),
                 atom.bindVarMemory.getAddress(),
                 atom.bindVarFunctions.size(),
                 rows.getAddress(),

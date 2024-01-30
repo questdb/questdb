@@ -50,8 +50,10 @@ struct JitGlobalContext {
 static JitGlobalContext gGlobalContext;
 #endif
 
-using CompiledFn = int64_t (*)(int64_t *cols, int64_t cols_count, int64_t *vars, int64_t vars_count, int64_t *rows,
-                               int64_t rows_count,
+using CompiledFn = int64_t (*)(int64_t *cols, int64_t cols_count,
+                               int64_t *varlen_indexes, int64_t varlen_indexes_count,
+                               int64_t *vars, int64_t vars_count,
+                               int64_t *rows, int64_t rows_count,
                                int64_t rows_start_offset);
 
 struct Function {
@@ -92,7 +94,7 @@ struct Function {
         c.bind(l_loop);
 
         for (int i = 0; i < unroll_factor; ++i) {
-            questdb::x86::emit_code(c, istream, size, values, null_check, cols_ptr, vars_ptr, input_index);
+            questdb::x86::emit_code(c, istream, size, values, null_check, cols_ptr, varlen_indexes_ptr, vars_ptr, input_index);
 
             auto mask = values.pop();
 
@@ -190,28 +192,34 @@ struct Function {
     }
 
     void begin_fn() {
-        c.addFunc(FuncSignatureT<int64_t, int64_t *, int64_t, int64_t *, int64_t, int64_t *, int64_t, int64_t>(
-                CallConv::kIdHost));
+        c.addFunc(FuncSignatureT<int64_t, int64_t *, int64_t, int64_t *, int64_t, int64_t *, int64_t, int64_t *, int64_t, int64_t>(
+            CallConv::kIdHost));
         cols_ptr = c.newIntPtr("cols_ptr");
         cols_size = c.newInt64("cols_size");
 
         c.setArg(0, cols_ptr);
         c.setArg(1, cols_size);
 
+        varlen_indexes_ptr = c.newIntPtr("varlen_indexes_ptr");
+        varlen_indexes_size = c.newInt64("varlen_indexes_size");
+
+        c.setArg(2, varlen_indexes_ptr);
+        c.setArg(3, varlen_indexes_size);
+
         vars_ptr = c.newIntPtr("vars_ptr");
         vars_size = c.newInt64("vars_size");
 
-        c.setArg(2, vars_ptr);
-        c.setArg(3, vars_size);
+        c.setArg(4, vars_ptr);
+        c.setArg(5, vars_size);
 
         rows_ptr = c.newIntPtr("rows_ptr");
         rows_size = c.newInt64("rows_size");
 
-        c.setArg(4, rows_ptr);
-        c.setArg(5, rows_size);
+        c.setArg(6, rows_ptr);
+        c.setArg(7, rows_size);
 
         rows_id_start_offset = c.newInt64("rows_id_start_offset");
-        c.setArg(6, rows_id_start_offset);
+        c.setArg(8, rows_id_start_offset);
 
         input_index = c.newInt64("input_index");
         c.mov(input_index, 0);
@@ -232,6 +240,8 @@ struct Function {
 
     x86::Gp cols_ptr;
     x86::Gp cols_size;
+    x86::Gp varlen_indexes_ptr;
+    x86::Gp varlen_indexes_size;
     x86::Gp vars_ptr;
     x86::Gp vars_size;
     x86::Gp rows_ptr;
@@ -337,6 +347,8 @@ JNIEXPORT jlong JNICALL Java_io_questdb_jit_FiltersCompiler_callFunction(JNIEnv 
                                                                          jlong fnAddress,
                                                                          jlong colsAddress,
                                                                          jlong colsSize,
+                                                                         jlong varlenColsAddress,
+                                                                         jlong varlenColsSize,
                                                                          jlong varsAddress,
                                                                          jlong varsSize,
                                                                          jlong rowsAddress,
@@ -346,6 +358,8 @@ JNIEXPORT jlong JNICALL Java_io_questdb_jit_FiltersCompiler_callFunction(JNIEnv 
     auto fn = reinterpret_cast<CompiledFn>(fnAddress);
     return fn(reinterpret_cast<int64_t *>(colsAddress),
               colsSize,
+              reinterpret_cast<int64_t *>(varlenColsAddress),
+              varlenColsSize,
               reinterpret_cast<int64_t *>(varsAddress),
               varsSize,
               reinterpret_cast<int64_t *>(rowsAddress),
