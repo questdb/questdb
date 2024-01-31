@@ -211,7 +211,7 @@ public class SnapshotTest extends AbstractCairoTest {
 
     @Test
     public void testRunWalPurgeJobLockTimeout() throws Exception {
-        circuitBreaker.setTimeout(-100); // trigger timeout on first check
+        configureCircuitBreakerTimeoutOnFirstCheck(); // trigger timeout on first check
         assertMemoryLeak(() -> {
             ddl("create table test (ts timestamp, name symbol, val int)");
             SimpleWaitingLock lock = new SimpleWaitingLock();
@@ -233,7 +233,7 @@ public class SnapshotTest extends AbstractCairoTest {
             try {
                 t.start();
                 latch2.await();
-                circuitBreaker.setTimeout(-100);
+                configureCircuitBreakerTimeoutOnFirstCheck();
                 assertException("snapshot prepare");
             } catch (CairoException ex) {
                 latch1.countDown();
@@ -463,7 +463,7 @@ public class SnapshotTest extends AbstractCairoTest {
 
     @Test
     public void testSnapshotPrepareFailsOnLockedTableReader() throws Exception {
-        circuitBreaker.setTimeout(-100); // trigger timeout on first check
+        configureCircuitBreakerTimeoutOnFirstCheck(); // trigger timeout on first check
         assertMemoryLeak(() -> {
             ddl("create table test (ts timestamp, name symbol, val int)");
 
@@ -963,6 +963,16 @@ public class SnapshotTest extends AbstractCairoTest {
                     tableName
             );
         });
+    }
+
+    private static void configureCircuitBreakerTimeoutOnFirstCheck() {
+        circuitBreaker.setTimeout(-100);
+        circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
+            @Override
+            public long getQueryTimeout() {
+                return 1;
+            }
+        };
     }
 
     private void testRecoverSnapshot(String snapshotId, String restartedId, boolean expectRecovery) throws Exception {
