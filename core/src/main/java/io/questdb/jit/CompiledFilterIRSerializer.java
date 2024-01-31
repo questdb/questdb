@@ -65,7 +65,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     public static final int I2_TYPE = 1;
     public static final int I4_TYPE = 2;
     public static final int I8_TYPE = 4;
-    public static final int STR_TYPE = 7;
+    public static final int VARLEN_HEADER_TYPE = 7;
     // Constants
     public static final int IMM = 1;
     public static final int LE = 11;  // a <= b
@@ -297,7 +297,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             case ColumnType.UUID:
                 return I16_TYPE;
             case ColumnType.STRING:
-                return STR_TYPE;
+            case ColumnType.BINARY:
+                return VARLEN_HEADER_TYPE;
             default:
                 return UNDEFINED_CODE;
         }
@@ -744,7 +745,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             case I16_TYPE:
                 putOperand(offset, IMM, typeCode, Numbers.LONG_NaN, Numbers.LONG_NaN);
                 break;
-            case STR_TYPE:
+            case VARLEN_HEADER_TYPE:
                 putOperand(offset, IMM, I4_TYPE, -1);
                 break;
             default:
@@ -953,12 +954,12 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         private static final int F4_INDEX = 3;
         private static final int F8_INDEX = 5;
         private static final int I16_INDEX = 6;
-        private static final int STR_INDEX = 7;
+        private static final int VARLEN_HEADER_INDEX = 7;
         private static final int I1_INDEX = 0;
         private static final int I2_INDEX = 1;
         private static final int I4_INDEX = 2;
         private static final int I8_INDEX = 4;
-        private static final int TYPES_COUNT = STR_INDEX + 1;
+        private static final int TYPES_COUNT = VARLEN_HEADER_INDEX + 1;
 
 
         private final byte[] sizes = new byte[TYPES_COUNT];
@@ -987,7 +988,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         public boolean hasMixedSizes() {
-            if (sizes[STR_INDEX] != 0) {
+            if (sizes[VARLEN_HEADER_INDEX] != 0) {
                 return true;
             }
             byte prevSize = 0;
@@ -1040,8 +1041,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 case I16_TYPE:
                     sizes[I16_INDEX] = 16;
                     break;
-                case STR_TYPE:
-                    sizes[STR_INDEX] = 4;
+                case VARLEN_HEADER_TYPE:
+                    sizes[VARLEN_HEADER_INDEX] = 4;
                     break;
             }
         }
@@ -1062,8 +1063,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     return F8_TYPE;
                 case I16_INDEX:
                     return I16_TYPE;
-                case STR_INDEX:
-                    return STR_TYPE;
+                case VARLEN_HEADER_INDEX:
+                    return VARLEN_HEADER_TYPE;
             }
             return UNDEFINED_CODE;
         }

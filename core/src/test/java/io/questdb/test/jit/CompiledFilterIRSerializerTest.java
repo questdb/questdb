@@ -357,9 +357,9 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     @Test
     public void testStringNullConstant() throws Exception {
         serialize("astring <> null");
-        assertIR("(i32 -1L)(str astring)(<>)(ret)");
+        assertIR("(i32 -1L)(varlen_header astring)(<>)(ret)");
         serialize("astring = null");
-        assertIR("(i32 -1L)(str astring)(=)(ret)");
+        assertIR("(i32 -1L)(varlen_header astring)(=)(ret)");
     }
 
     @Test
@@ -902,8 +902,8 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                     return "f64";
                 case I16_TYPE:
                     return "i128";
-                case STR_TYPE:
-                    return "str";
+                case VARLEN_HEADER_TYPE:
+                    return "varlen_header";
                 default:
                     return "unknown: " + type;
             }

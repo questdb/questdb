@@ -42,7 +42,7 @@ namespace questdb::x86 {
     read_mem(Compiler &c, data_type_t type, int32_t column_idx, const Gp &cols_ptr, const Gp &varlen_indexes_ptr, const Gp &input_index) {
         Gp column_address = c.newInt64("column_address");
         c.mov(column_address, ptr(cols_ptr, 8 * column_idx, 8));
-        if (type == data_type_t::str) {
+        if (type == data_type_t::varlen_header) {
             // For strings, the JIT-compiled filter only supports length checking.
             // This includes a NULL check because it's encoded as string length -1.
             // We reach the string by looking up its offset in the varlen column index.
@@ -263,7 +263,7 @@ namespace questdb::x86 {
             case data_type_t::i8:
             case data_type_t::i16:
             case data_type_t::i32:
-            case data_type_t::str:
+            case data_type_t::varlen_header:
                 return {int32_eq(c, lhs.gp().r32(), rhs.gp().r32()), data_type_t::i32, dk};
             case data_type_t::i64:
                 return {int64_eq(c, lhs.gp(), rhs.gp()), data_type_t::i32, dk};
@@ -285,7 +285,7 @@ namespace questdb::x86 {
             case data_type_t::i8:
             case data_type_t::i16:
             case data_type_t::i32:
-            case data_type_t::str:
+            case data_type_t::varlen_header:
                 return {int32_ne(c, lhs.gp().r32(), rhs.gp().r32()), data_type_t::i32, dk};
             case data_type_t::i64:
                 return {int64_ne(c, lhs.gp(), rhs.gp()), data_type_t::i32, dk};
@@ -563,7 +563,7 @@ namespace questdb::x86 {
                 }
                 break;
             case data_type_t::i128:
-            case data_type_t::str:
+            case data_type_t::varlen_header:
                 return std::make_pair(lhs, rhs);
             default:
                 __builtin_unreachable();
