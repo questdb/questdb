@@ -746,8 +746,8 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     private void testSquashPartitionsOnEmptyTable(String wal) throws Exception {
         assertMemoryLeak(() -> {
             // 4kb prefix split threshold
-            node1.getConfigurationOverrides().setPartitionO3SplitThreshold(4 * (1 << 10));
-            node1.getConfigurationOverrides().setO3PartitionSplitMaxCount(2);
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE,  4 * (1 << 10));
+            node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
 
             ddl(
                     "create table x (" +
