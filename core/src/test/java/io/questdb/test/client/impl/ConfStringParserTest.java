@@ -77,14 +77,14 @@ public final class ConfStringParserTest {
     }
 
     @Test
-    public void testKeysCaseInsensitive() {
+    public void testKeysCaseSensitive() {
         String config = "http::addr=localhost;USER=joe;pAsS=bloggs;";
 
         int pos = assertSchemaOk("http::addr=localhost;USER=joe;pAsS=bloggs;", "http");
         assertHasNext(config, pos);
         pos = assertNextKeyValueOk(config, pos, "addr", "localhost");
-        pos = assertNextKeyValueOk(config, pos, "user", "joe");
-        pos = assertNextKeyValueOk(config, pos, "pass", "bloggs");
+        pos = assertNextKeyValueOk(config, pos, "USER", "joe");
+        pos = assertNextKeyValueOk(config, pos, "pAsS", "bloggs");
         assertNoNext(config, pos);
     }
 
@@ -106,6 +106,13 @@ public final class ConfStringParserTest {
         pos = assertNextKeyOk(config, pos, "port");
         pos = assertNextValueError(config, pos, "missing trailing semicolon at position 30");
         assertNoNext(config, pos);
+    }
+
+    @Test
+    public void testSchemaCaseInsensitive() {
+        assertSchemaOk("http::addr=localhost;USER=joe;pAsS=bloggs;", "http");
+        assertSchemaOk("HTTP::addr=localhost;USER=joe;pAsS=bloggs;", "http");
+        assertSchemaOk("HtTp::addr=localhost;USER=joe;pAsS=bloggs;", "http");
     }
 
     @Test

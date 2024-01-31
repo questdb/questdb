@@ -64,7 +64,7 @@ public final class ConfStringParser {
                     output.put("empty key");
                     return -1;
                 }
-                Chars.toLowerCase(input, start, pos, output);
+                output.put(input, start, pos);
                 return pos + 1;
             } else if (c == ';') {
                 output.put("incomplete key-value pair before end of input at position ").put(pos);
