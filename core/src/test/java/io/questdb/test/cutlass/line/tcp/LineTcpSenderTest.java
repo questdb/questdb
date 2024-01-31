@@ -201,6 +201,31 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testConfString() throws Exception {
+        authKeyId = AUTH_KEY_ID1;
+        runInContext(r -> {
+            String confString = "tcp::addr=127.0.0.1:" + bindPort + ";user=" + AUTH_KEY_ID1 + ";token=" + TOKEN + ";";
+            try (Sender sender = Sender.fromString(confString)) {
+                long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2022-02-25");
+                sender.table("mytable")
+                        .longColumn("int_field", 42)
+                        .boolColumn("bool_field", true)
+                        .stringColumn("string_field", "foo")
+                        .doubleColumn("double_field", 42.0)
+                        .timestampColumn("ts_field", tsMicros, ChronoUnit.MICROS)
+                        .at(tsMicros, ChronoUnit.MICROS);
+                sender.flush();
+            }
+
+            assertTableSizeEventually(engine, "mytable", 1);
+            try (TableReader reader = getReader("mytable")) {
+                TestUtils.assertReader("int_field\tbool_field\tstring_field\tdouble_field\tts_field\ttimestamp\n" +
+                        "42\ttrue\tfoo\t42.0\t2022-02-25T00:00:00.000000Z\t2022-02-25T00:00:00.000000Z\n", reader, new StringSink());
+            }
+        });
+    }
+
+    @Test
     public void testControlCharInColumnName() {
         assertControlCharacterException();
     }

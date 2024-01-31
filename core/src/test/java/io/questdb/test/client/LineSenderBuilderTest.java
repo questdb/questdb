@@ -153,6 +153,29 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testAutoFlushRowsNotSupportedForTcp() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                Sender.builder().address(LOCALHOST).autoFlushRows(1).build();
+                fail("auto flush rows should not be supported for TCP");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "auto flush rows is not supported for TCP protocol");
+            }
+        });
+    }
+
+    @Test
+    public void testAutoFlushRows_doubleConfiguration() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                Sender.builder().autoFlushRows(1).autoFlushRows(1);
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "auto flush rows was already configured [autoFlushRows=1]");
+            }
+        });
+    }
+
+    @Test
     public void testBufferSizeDoubleSet() throws Exception {
         assertMemoryLeak(() -> {
             Sender.LineSenderBuilder builder = Sender.builder().bufferCapacity(1024);
@@ -195,8 +218,8 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
             assertConfStrError("http::addr=localhost:8080;auto_flush_rows=0;", "invalid auto_flush_rows [value=0]");
             assertConfStrError("http::addr=localhost:8080;auto_flush_rows=notanumber;", "invalid auto_flush_rows [value=notanumber]");
             assertConfStrError("http::addr=localhost:8080;auto_flush=invalid;", "invalid auto_flush [value=invalid, allowed-values=[on, off]]");
-            assertConfStrError("http::addr=localhost:8080;auto_flush=off;auto_flush_rows=100;", "cannot set max pending rows when auto-flush is disabled");
-            assertConfStrError("http::addr=localhost:8080;auto_flush_rows=100;auto_flush=off;", "max pending rows was already configured [maxPendingRows=100]");
+            assertConfStrError("http::addr=localhost:8080;auto_flush=off;auto_flush_rows=100;", "cannot set auto flush rows when auto-flush is disabled");
+            assertConfStrError("http::addr=localhost:8080;auto_flush_rows=100;auto_flush=off;", "auto flush rows was already configured [autoFlushRows=100]");
             assertConfStrError(Sender.builder().http(), "http::addr=localhost:8080;auto_flush_rows=100;auto_flush=off;", "protocol was already configured [protocol=http]");
             assertConfStrError(Sender.builder().tcp(), "http::addr=localhost:8080;auto_flush_rows=100;auto_flush=off;", "protocol was already configured [protocol=tcp]");
             assertConfStrError(Sender.builder().address("remote"), "http::addr=localhost:8080;auto_flush_rows=100;auto_flush=off;", "server address was already configured [address=remote]");
@@ -610,29 +633,6 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
                 fail("should fail with malformated port");
             } catch (LineSenderException e) {
                 TestUtils.assertContains(e.getMessage(), "cannot parse port");
-            }
-        });
-    }
-
-    @Test
-    public void testMaxPendingRowsNotSupportedForTcp() throws Exception {
-        assertMemoryLeak(() -> {
-            try {
-                Sender.builder().address(LOCALHOST).autoFlushRows(1).build();
-                fail("max pending rows should not be supported for TCP");
-            } catch (LineSenderException e) {
-                TestUtils.assertContains(e.getMessage(), "max pending rows is not supported for TCP protocol");
-            }
-        });
-    }
-
-    @Test
-    public void testMaxPendingRows_doubleConfiguration() throws Exception {
-        assertMemoryLeak(() -> {
-            try {
-                Sender.builder().autoFlushRows(1).autoFlushRows(1);
-            } catch (LineSenderException e) {
-                TestUtils.assertContains(e.getMessage(), "max pending rows was already configured [maxPendingRows=1]");
             }
         });
     }

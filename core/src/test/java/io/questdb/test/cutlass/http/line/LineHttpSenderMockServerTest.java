@@ -53,6 +53,38 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     private static final Metrics metrics = Metrics.enabled();
 
     @Test
+    public void testAutoFlushRows() throws Exception {
+        MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
+                .withExpectedContent("test x=1.0\n")
+                .replyWithStatus(204)
+                .withExpectedContent("test x=2.0\n" +
+                        "test x=3.0\n")
+                .replyWithStatus(204)
+                .withExpectedContent("test x=4.0\n" +
+                        "test x=5.0\n")
+                .replyWithStatus(204)
+                .withExpectedContent("test x=6.0\n")
+                .replyWithStatus(204);
+
+        testWithMock(mockHttpProcessor, sender -> {
+            // first row to be flushed explicitly
+            sender.table("test").doubleColumn("x", 1.0).atNow();
+            sender.flush();
+
+            // 1st implicit batch sent due to autoFlushRows
+            sender.table("test").doubleColumn("x", 2.0).atNow();
+            sender.table("test").doubleColumn("x", 3.0).atNow();
+
+            // 2nd implicit batch sent due to autoFlushRows
+            sender.table("test").doubleColumn("x", 4.0).atNow();
+            sender.table("test").doubleColumn("x", 5.0).atNow();
+
+            // the last row is flushed on close()
+            sender.table("test").doubleColumn("x", 6.0).atNow();
+        }, DEFAULT_FACTORY.andThen(b -> b.autoFlushRows(2)));
+    }
+
+    @Test
     public void testBadJsonError() throws Exception {
         String badJsonResponse = "{\"foo\": \"bar\"}";
 
@@ -118,38 +150,6 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 .replyWithContent(400, jsonResponse, HttpConstants.CONTENT_TYPE_JSON);
 
         testWithMock(mockHttpProcessor, errorVerifier("Could not flush buffer: failed to parse line protocol: invalid field format [http-status=400, id: ABC-2, code: invalid, line: 2]"));
-    }
-
-    @Test
-    public void testMaxPendingRows() throws Exception {
-        MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
-                .withExpectedContent("test x=1.0\n")
-                .replyWithStatus(204)
-                .withExpectedContent("test x=2.0\n" +
-                        "test x=3.0\n")
-                .replyWithStatus(204)
-                .withExpectedContent("test x=4.0\n" +
-                        "test x=5.0\n")
-                .replyWithStatus(204)
-                .withExpectedContent("test x=6.0\n")
-                .replyWithStatus(204);
-
-        testWithMock(mockHttpProcessor, sender -> {
-            // first row to be flushed explicitly
-            sender.table("test").doubleColumn("x", 1.0).atNow();
-            sender.flush();
-
-            // 1st implicit batch sent due to maxPendingRows
-            sender.table("test").doubleColumn("x", 2.0).atNow();
-            sender.table("test").doubleColumn("x", 3.0).atNow();
-
-            // 2nd implicit batch sent due to maxPendingRows
-            sender.table("test").doubleColumn("x", 4.0).atNow();
-            sender.table("test").doubleColumn("x", 5.0).atNow();
-
-            // the last row is flushed on close()
-            sender.table("test").doubleColumn("x", 6.0).atNow();
-        }, DEFAULT_FACTORY.andThen(b -> b.autoFlushRows(2)));
     }
 
     @Test
