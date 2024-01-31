@@ -126,7 +126,7 @@ public class SnapshotTest extends AbstractCairoTest {
 
     @Test
     public void testRecoverSnapshotForDifferentInstanceIdsWhenRecoveryIsDisabled() throws Exception {
-        setProperty(CAIRO_SNAPSHOT_RECOVERY_ENABLED, "false");
+        node1.setProperty(CAIRO_SNAPSHOT_RECOVERY_ENABLED, "false");
         testRecoverSnapshot("id1", "id2", false);
     }
 
@@ -967,7 +967,7 @@ public class SnapshotTest extends AbstractCairoTest {
 
     private void testRecoverSnapshot(String snapshotId, String restartedId, boolean expectRecovery) throws Exception {
         assertMemoryLeak(() -> {
-            setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, snapshotId);
+            node1.setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, snapshotId);
 
             final String nonPartitionedTable = "npt";
             ddl(

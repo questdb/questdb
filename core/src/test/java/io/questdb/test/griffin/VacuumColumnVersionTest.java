@@ -60,7 +60,7 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
     public void setUp() {
         iteration = 1;
         currentMicros = 0;
-        setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 1);
+        node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 1);
         node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_QUEUE_CAPACITY, 2);
         super.setUp();
     }
