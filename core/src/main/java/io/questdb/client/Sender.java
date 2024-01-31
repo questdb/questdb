@@ -139,7 +139,7 @@ public interface Sender extends Closeable {
      * @param configurationString configuration string
      * @return Sender instance
      * @see #fromEnv()
-     * @see #builder()#fromString(CharSequence)
+     * @see LineSenderBuilder#fromString(CharSequence)
      */
     static Sender fromString(CharSequence configurationString) {
         return builder().fromString(configurationString).build();
@@ -331,6 +331,7 @@ public interface Sender extends Closeable {
      * }</pre>
      */
     final class LineSenderBuilder {
+        private static final int AUTO_FLUSH_DISABLED = 0;
         private static final byte BUFFER_CAPACITY_NOT_SET = 0;
         private static final int DEFAULT_BUFFER_CAPACITY = 64 * 1024;
         private static final int DEFAULT_HTTP_PORT = 9000;
@@ -535,6 +536,32 @@ public interface Sender extends Closeable {
         }
 
         /**
+         * Disables automatic flushing of buffered data.
+         * <p>
+         * Sender buffers data locally before sending it to a server. This method disables automatic flushing and
+         * you must explicitly call {@link #flush()} to send buffered data to a server. It also disables auto-flushing
+         * on close. This gives you a fine control over batching behaviour.
+         * <p>
+         * You must ensure maximum buffer capacity is large enough to accommodate all locally buffered data.
+         * <p>
+         * This method is only used when communicating over HTTP protocol. It's illegal to call this method when
+         * communicating over TCP protocol.
+         * <br>
+         *
+         * @return this instance for method chaining
+         * @see #maxPendingRows(int)
+         * @see #maxBufferCapacity(int)
+         */
+        public LineSenderBuilder disableAutoFlush() {
+            if (this.maxPendingRows != -1) {
+                throw new LineSenderException("max pending rows was already configured ")
+                        .put("[maxPendingRows=").put(this.maxPendingRows).put("]");
+            }
+            this.maxPendingRows = AUTO_FLUSH_DISABLED;
+            return this;
+        }
+
+        /**
          * Configure authentication. This is needed when QuestDB server required clients to authenticate.
          * <br>
          * This is only used when communicating over TCP transport, and it's illegal to call this method when
@@ -601,7 +628,8 @@ public interface Sender extends Closeable {
             }
             if (protocol != PROTOCOL_NOT_SET) {
                 throw new LineSenderException("protocol was already configured ")
-                        .put("[protocol=").put(protocol).put("]");
+                        .put("[protocol=")
+                        .put(protocol == PROTOCOL_HTTP ? "http" : "tcp").put("]");
             }
             if (host != null) {
                 throw new LineSenderException("server address was already configured ")
@@ -612,15 +640,21 @@ public interface Sender extends Closeable {
                         .put("[port=").put(port).put("]");
             }
             if (Chars.equals("http", sink)) {
+                if (tlsEnabled) {
+                    throw new LineSenderException("cannot use http protocol when TLS is enabled. use https instead");
+                }
                 http();
             } else if (Chars.equals("tcp", sink)) {
+                if (tlsEnabled) {
+                    throw new LineSenderException("cannot use tcp protocol when TLS is enabled. use tcps instead");
+                }
                 tcp();
             } else if (Chars.equals("https", sink)) {
                 http();
-                enableTls();
+                tlsEnabled = true;
             } else if (Chars.equals("tcps", sink)) {
                 tcp();
-                enableTls();
+                tlsEnabled = true;
             } else {
                 throw new LineSenderException("invalid schema: ").put(sink);
             }
@@ -701,15 +735,15 @@ public interface Sender extends Closeable {
                     pos = getValue(configurationString, pos, sink, "auto_flush_rows");
                     int autoFlushRows = parseIntValue(sink, "auto_flush_rows");
                     if (autoFlushRows < 1) {
-                        throw new LineSenderException("invalid auto_flush_rows [auto_flush_rows=").put(autoFlushRows).put("]");
+                        throw new LineSenderException("invalid auto_flush_rows [value=").put(autoFlushRows).put("]");
                     }
                     maxPendingRows(autoFlushRows);
                 } else if (Chars.equals("auto_flush", sink)) {
                     pos = getValue(configurationString, pos, sink, "auto_flush");
-                    if (Chars.equals("off", sink)) {
-                        throw new LineSenderException("auto_flush=off is not supported");
-                    } else if (!Chars.equals("on", sink)) {
-                        throw new LineSenderException("invalid auto_flush [value=").put(sink).put("]");
+                    if (Chars.equalsIgnoreCase("off", sink)) {
+                        disableAutoFlush();
+                    } else if (!Chars.equalsIgnoreCase("on", sink)) {
+                        throw new LineSenderException("invalid auto_flush [value=").put(sink).put(", allowed-values=[on, off]]");
                     }
                 } else {
                     // ignore unknown keys, unless they are malformed
@@ -870,15 +904,23 @@ public interface Sender extends Closeable {
          * The Sender will automatically flush the buffer when it reaches this limit. You must make sure that
          * the buffer is flushed before it reaches the maximum capacity. Otherwise, the Sender will throw an exception
          * when you try to add more data to the buffer.
+         * <br>
+         * Setting this to 1 means that the Sender will send each row to a server immediately after it is added. This
+         * effectively disables batching and may lead to a significant performance degradation.
+         * <br>
+         * You cannot set this value when auto-flush is disabled. See {@link #disableAutoFlush()}.
          *
          * @param maxPendingRows maximum number of rows that can be buffered locally before they are sent to a server.
          * @return this instance for method chaining
          * @see #flush()
+         * @see #disableAutoFlush()
          */
         public LineSenderBuilder maxPendingRows(int maxPendingRows) {
-            if (this.maxPendingRows != -1) {
+            if (this.maxPendingRows > 0) {
                 throw new LineSenderException("max pending rows was already configured ")
                         .put("[maxPendingRows=").put(this.maxPendingRows).put("]");
+            } else if (this.maxPendingRows == AUTO_FLUSH_DISABLED) {
+                throw new LineSenderException("cannot set max pending rows when auto-flush is disabled");
             }
             this.maxPendingRows = maxPendingRows;
             return this;
@@ -1031,7 +1073,9 @@ public interface Sender extends Closeable {
                 if (username != null || password != null) {
                     throw new LineSenderException("username/password authentication is not supported for TCP protocol");
                 }
-                if (maxPendingRows != MAX_PENDING_ROWS_NOT_SET) {
+                if (maxPendingRows == AUTO_FLUSH_DISABLED) {
+                    throw new LineSenderException("disabling auto-flush is not supported for TCP protocol");
+                } else if (maxPendingRows != MAX_PENDING_ROWS_NOT_SET) {
                     throw new LineSenderException("max pending rows is not supported for TCP protocol");
                 }
                 if (httpToken != null) {

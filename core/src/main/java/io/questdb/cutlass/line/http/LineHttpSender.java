@@ -134,7 +134,10 @@ public final class LineHttpSender implements Sender {
             return;
         }
         try {
-            flush0(true);
+            if (maxPendingRows != 0) {
+                // maxPendingRows == 0 means that auto-flush is disabled
+                flush0(true);
+            }
         } finally {
             Misc.free(jsonErrorParser);
             closed = true;

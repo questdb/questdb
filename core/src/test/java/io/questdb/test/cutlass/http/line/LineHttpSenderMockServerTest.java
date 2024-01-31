@@ -94,6 +94,19 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     }
 
     @Test
+    public void testDisableAutoFlush() throws Exception {
+        MockHttpProcessor mockHttpProcessor = new MockHttpProcessor();
+        testWithMock(mockHttpProcessor, sender -> {
+            for (int i = 0; i < 1_000_000; i++) { // sufficient large number of rows to trigger auto-flush unless it is disabled
+                sender.table("test")
+                        .symbol("sym", "bol")
+                        .doubleColumn("x", 1.0)
+                        .atNow();
+            }
+        }, port -> Sender.builder().fromString("http::addr=localhost:" + port + ";auto_flush=off;"));
+    }
+
+    @Test
     public void testJsonError() throws Exception {
         String jsonResponse = "{\"code\": \"invalid\",\n" +
                 "                    \"message\": \"failed to parse line protocol: invalid field format\",\n" +

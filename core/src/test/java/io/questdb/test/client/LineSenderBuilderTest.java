@@ -157,7 +157,6 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
             assertConfStrError("http::addr=bar", "invalid address [error=missing trailing semicolon at position 14]");
             assertConfStrError("badschema::addr=bar;", "invalid schema: badschema");
             assertConfStrError("http::addr=localhost:-1;", "invalid port [port=-1]");
-            assertConfStrError("http::addr=localhost;auto_flush=off;", "auto_flush=off is not supported");
             assertConfStrError("http::auto_flush=on;", "address is missing");
             assertConfStrError("http::addr=localhost;tls_roots=/some/path;", "tls_roots was configured, but tls_roots_password is missing");
             assertConfStrError("http::addr=localhost;tls_roots_password=hunter123;", "tls_roots_password was configured, but tls_roots is missing");
@@ -178,10 +177,25 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
             assertConfStrError("http::addr=localhost:8080;max_buf_size=notanumber;", "invalid max_buf_size [value=notanumber]");
             assertConfStrError("http::addr=localhost:8080;init_buf_size=notanumber;", "invalid init_buf_size [value=notanumber]");
             assertConfStrError("http::addr=localhost:8080;init_buf_size=-42;", "buffer capacity cannot be negative [capacity=-42]");
-            assertConfStrError("http::addr=localhost:8080;auto_flush_rows=0;", "invalid auto_flush_rows [auto_flush_rows=0]");
+            assertConfStrError("http::addr=localhost:8080;auto_flush_rows=0;", "invalid auto_flush_rows [value=0]");
             assertConfStrError("http::addr=localhost:8080;auto_flush_rows=notanumber;", "invalid auto_flush_rows [value=notanumber]");
-            assertConfStrError("http::addr=localhost:8080;auto_flush=invalid;", "invalid auto_flush [value=invalid]");
+            assertConfStrError("http::addr=localhost:8080;auto_flush=invalid;", "invalid auto_flush [value=invalid, allowed-values=[on, off]]");
+            assertConfStrError("http::addr=localhost:8080;auto_flush=off;auto_flush_rows=100;", "cannot set max pending rows when auto-flush is disabled");
+            assertConfStrError("http::addr=localhost:8080;auto_flush_rows=100;auto_flush=off;", "max pending rows was already configured [maxPendingRows=100]");
+            assertConfStrError(Sender.builder().http(), "http::addr=localhost:8080;auto_flush_rows=100;auto_flush=off;", "protocol was already configured [protocol=http]");
+            assertConfStrError(Sender.builder().tcp(), "http::addr=localhost:8080;auto_flush_rows=100;auto_flush=off;", "protocol was already configured [protocol=tcp]");
+            assertConfStrError(Sender.builder().address("remote"), "http::addr=localhost:8080;auto_flush_rows=100;auto_flush=off;", "server address was already configured [address=remote]");
+            assertConfStrError(Sender.builder().address("remote:1234"), "http::addr=localhost:8080;auto_flush_rows=100;auto_flush=off;", "server address was already configured [address=remote]");
+            assertConfStrError(Sender.builder().port(1234), "http::addr=localhost:8080;auto_flush_rows=100;auto_flush=off;", "server port was already configured [port=1234]");
+            assertConfStrError(Sender.builder().advancedTls().disableCertificateValidation(), "http::addr=localhost:8080;tls_verify=on;", "tls_verify was already configured");
+            assertConfStrError(Sender.builder().enableTls(), "http::addr=localhost:8080;", "cannot use http protocol when TLS is enabled. use https instead");
+            assertConfStrError(Sender.builder().enableTls(), "tcp::addr=localhost:8080;", "cannot use tcp protocol when TLS is enabled. use tcps instead");
 
+            assertConfStrOk(Sender.builder().enableTls(), "https::addr=localhost:8080;");
+            assertConfStrOk("http::addr=localhost:8080;auto_flush=on;auto_flush_rows=100;");
+            assertConfStrOk("http::addr=localhost:8080;auto_flush_rows=100;auto_flush=on;");
+            assertConfStrOk("http::addr=localhost;auto_flush=on;");
+            assertConfStrOk("http::addr=localhost;auto_flush=off;");
             assertConfStrOk("http::addr=localhost;");
             assertConfStrOk("http::addr=localhost:8080;");
             assertConfStrOk("http::addr=localhost:8080;token=foo;");
@@ -438,10 +452,20 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testDisableAutoFlushNotSupportedForTcp() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Sender s = Sender.builder().address(LOCALHOST).tcp().disableAutoFlush().build();) {
+                fail("TCP does not support disabling auto-flush");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "auto-flush is not supported for TCP protocol");
+            }
+        });
+    }
+
+    @Test
     public void testDnsResolutionFail() throws Exception {
         assertMemoryLeak(() -> {
-            try {
-                Sender.builder().address("this-domain-does-not-exist-i-hope-better-to-use-a-silly-tld.silly-tld").build();
+            try (Sender s = Sender.builder().address("this-domain-does-not-exist-i-hope-better-to-use-a-silly-tld.silly-tld").build()) {
                 fail("dns resolution errors should fail fast");
             } catch (LineSenderException e) {
                 TestUtils.assertContains(e.getMessage(), "could not resolve");
@@ -789,8 +813,12 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     }
 
     private static void assertConfStrError(String conf, String expectedError) {
+        assertConfStrError(Sender.builder(), conf, expectedError);
+    }
+
+    private static void assertConfStrError(Sender.LineSenderBuilder sb, String conf, String expectedError) {
         try {
-            try (Sender s = Sender.builder().fromString(conf).build()) {
+            try (Sender s = sb.fromString(conf).build()) {
                 fail("should fail with bad conf string");
             }
         } catch (LineSenderException e) {
@@ -799,7 +827,11 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     }
 
     private static void assertConfStrOk(String conf) {
-        try (Sender s = Sender.fromString(conf)) {
+        assertConfStrOk(Sender.builder(), conf);
+    }
+
+    private static void assertConfStrOk(Sender.LineSenderBuilder sb, String conf) {
+        try (Sender s = sb.fromString(conf).build()) {
 
         }
     }
