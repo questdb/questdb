@@ -50,6 +50,12 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
         setCommandCorrelationId(NO_CORRELATION_ID);
     }
 
+    public void clearSecurityContext() {
+        if (securityContext != null) {
+            securityContext.clear();
+        }
+    }
+
     @Override
     public void close() {
         // intentionally left empty
