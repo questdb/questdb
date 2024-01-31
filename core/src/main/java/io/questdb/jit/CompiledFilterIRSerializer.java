@@ -36,6 +36,7 @@ import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.*;
 
+import java.util.ArrayDeque;
 import java.util.Arrays;
 
 /**
@@ -86,6 +87,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     public static final int VAR = 3;
     // Stub value for opcodes and options
     static final int UNDEFINED_CODE = -1;
+    private static final int INSTRUCTION_SIZE = Integer.BYTES + Integer.BYTES + Long.BYTES + Long.BYTES;
     // contains <memory_offset, constant_node> pairs for backfilling purposes
     private final LongObjHashMap<ExpressionNode> backfillNodes = new LongObjHashMap<>();
     private final PredicateContext predicateContext = new PredicateContext();
@@ -174,6 +176,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         traverseAlgo.traverse(node, this);
         putOperator(RET);
 
+        ensureOnlyVarlenHeaderChecks();
         TypesObserver typesObserver = predicateContext.globalTypesObserver;
         int options = debug ? 1 : 0;
         int typeSize = typesObserver.maxSize();
@@ -233,6 +236,38 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 backfillNodes.clear();
             } catch (SqlWrapperException e) {
                 throw e.wrappedException;
+            }
+        }
+    }
+
+    private void ensureOnlyVarlenHeaderChecks() throws SqlException {
+        final ArrayDeque<Integer> typeStack = new ArrayDeque<>();
+        for (long offset = 0; offset < memory.size(); offset += INSTRUCTION_SIZE) {
+            int opCode = memory.getInt(offset);
+            int typeCode = memory.getInt(offset + Integer.BYTES);
+            switch (opCode) {
+                case -1:
+                    throw SqlException.$(0, "invalid opcode");
+                case RET:
+                    return;
+                case VAR:
+                case MEM:
+                case IMM:
+                    typeStack.push(typeCode);
+                    break;
+                case NEG:
+                case NOT:
+                    typeStack.pop();
+                    typeStack.push(typeCode);
+                    break;
+                default:
+                    // If none of the above, assume it's a binary operator
+                    int lhsType = typeStack.pop();
+                    int rhsType = typeStack.pop();
+                    if (lhsType == VARLEN_HEADER_TYPE && rhsType == VARLEN_HEADER_TYPE) {
+                        throw SqlException.$(0, "varlen columns can only be used in length/NULL checks");
+                    }
+                    typeStack.push(typeCode);
             }
         }
     }
