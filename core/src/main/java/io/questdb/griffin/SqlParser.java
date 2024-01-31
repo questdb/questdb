@@ -861,12 +861,12 @@ public class SqlParser {
                 tok = tok(lexer, "',' or ')'");
             }
 
-            // ignoring `PRECISION`
+            // ignore `PRECISION`
             if (SqlKeywords.isPrecisionKeyword(tok)) {
                 tok = tok(lexer, "'NOT' or 'NULL' or ',' or ')'");
             }
 
-            // ignoring `NULL` and `NOT NULL`
+            // ignore `NULL` and `NOT NULL`
             if (SqlKeywords.isNotKeyword(tok)) {
                 tok = tok(lexer, "'NULL'");
             }
