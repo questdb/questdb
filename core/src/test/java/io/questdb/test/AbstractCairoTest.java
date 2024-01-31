@@ -62,6 +62,7 @@ import org.junit.*;
 import org.junit.rules.TestWatcher;
 import org.junit.rules.Timeout;
 import org.junit.runner.Description;
+import org.junit.runner.OrderWith;
 
 import java.io.File;
 import java.io.IOException;
@@ -71,6 +72,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 
+@OrderWith(RandomOrder.class)
 public abstract class AbstractCairoTest extends AbstractTest {
 
     protected static final Log LOG = LogFactory.getLog(AbstractCairoTest.class);
@@ -1129,12 +1131,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         overrides.setProperty(PropertyKey.CAIRO_WAL_MAX_LAG_TXN_COUNT, 1);
     }
 
-    protected static void configureForBackups() throws IOException {
-        String backupDir = temp.newFolder().getAbsolutePath();
-        setProperty(PropertyKey.CAIRO_SQL_BACKUP_ROOT, backupDir);
-        setProperty(PropertyKey.CAIRO_SQL_BACKUP_DIR_DATETIME_FORMAT, "ddMMMyyyy");
-    }
-
     protected static boolean couldObtainLock(Path path) {
         final int lockFd = TableUtils.lock(TestFilesFacadeImpl.INSTANCE, path, false);
         if (lockFd != -1L) {
@@ -1723,6 +1719,12 @@ public abstract class AbstractCairoTest extends AbstractTest {
             path.of(root).concat(tableToken).concat("wal").put(walId).put(".lock").$();
             Assert.assertEquals(Utf8s.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path));
         }
+    }
+
+    protected void configureForBackups() throws IOException {
+        String backupDir = temp.newFolder().getAbsolutePath();
+        node1.setProperty(PropertyKey.CAIRO_SQL_BACKUP_ROOT, backupDir);
+        node1.setProperty(PropertyKey.CAIRO_SQL_BACKUP_DIR_DATETIME_FORMAT, "ddMMMyyyy");
     }
 
     protected void createPopulateTable(TableModel tableModel, int totalRows, String startDate, int partitionCount) throws NumericException, SqlException {
