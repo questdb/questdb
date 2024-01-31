@@ -44,7 +44,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
     protected int blockValueCountMod;
     protected MillisecondClock clock;
     protected int keyCount;
-    protected long spinLockTimeoutUs;
+    protected long spinLockTimeoutMs;
     protected long unIndexedNullCount;
     private int keyCountIncludingNulls;
 
@@ -94,7 +94,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
     public void of(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn, long unIndexedNullCount) {
         this.unIndexedNullCount = unIndexedNullCount;
         final int plen = path.size();
-        this.spinLockTimeoutUs = configuration.getSpinLockTimeout();
+        this.spinLockTimeoutMs = configuration.getSpinLockTimeout();
 
         try {
             this.keyMem.wholeFile(configuration.getFilesFacade(), BitmapIndexUtils.keyFileName(path, name, columnNameTxn), MemoryTag.MMAP_INDEX_READER);
@@ -118,13 +118,12 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
             int blockValueCountMod;
             int keyCount;
             long valueMemSize;
-            final long deadline = clock.getTicks() + spinLockTimeoutUs;
+            final long deadline = clock.getTicks() + spinLockTimeoutMs;
             while (true) {
                 long seq = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
 
                 Unsafe.getUnsafe().loadFence();
                 if (this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK) == seq) {
-
                     blockValueCountMod = this.keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_BLOCK_VALUE_COUNT) - 1;
                     keyCount = this.keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);
                     valueMemSize = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
@@ -136,7 +135,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
                 }
 
                 if (clock.getTicks() > deadline) {
-                    LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutUs).utf8("ms]").$();
+                    LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutMs).utf8("ms]").$();
                     throw CairoException.critical(0).put(INDEX_CORRUPT);
                 }
 
@@ -161,7 +160,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
 
     public void updateKeyCount() {
         int keyCount;
-        final long deadline = clock.getTicks() + spinLockTimeoutUs;
+        final long deadline = clock.getTicks() + spinLockTimeoutMs;
         while (true) {
             long seq = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
 
@@ -177,7 +176,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
 
             if (clock.getTicks() > deadline) {
                 this.keyCount = 0;
-                LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutUs).utf8("ms]").$();
+                LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutMs).utf8("ms]").$();
                 throw CairoException.critical(0).put(INDEX_CORRUPT);
             }
             Os.pause();

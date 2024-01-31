@@ -1654,7 +1654,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         int walRootPathLen = walPath.size();
         long maxTimestamp = txWriter.getMaxTimestamp();
         if (isLastPartitionClosed()) {
-            if (txWriter.getPartitionCount() == 0 && txWriter.getLagRowCount() == 0) {
+            if (isEmptyTable()) {
                 // The table is empty, last partition does not exist
                 // WAL processing needs last partition to store LAG data
                 // Create artificial partition at the point of o3TimestampMin.
@@ -2248,6 +2248,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Do not cache txWriter.getPartitionCount() as it changes during the squashing
         for (int i = 0; i < txWriter.getPartitionCount(); i++) {
             squashPartitionForce(i);
+        }
+        // Reopen last partition if we've closed it.
+        if (isLastPartitionClosed() && !isEmptyTable()) {
+            openLastPartition();
         }
     }
 
@@ -4077,6 +4081,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             performRecovery();
         }
         txWriter.initLastPartition(ts);
+    }
+
+    private boolean isEmptyTable() {
+        return txWriter.getPartitionCount() == 0 && txWriter.getLagRowCount() == 0;
     }
 
     private boolean isLastPartitionClosed() {
@@ -7232,7 +7240,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void squashSplitPartitions(long timestampMin, long timestampMax, int maxLastSubPartitionCount) {
-
         if (timestampMin > txWriter.getMaxTimestamp() || txWriter.getPartitionCount() < 2) {
             return;
         }
