@@ -106,17 +106,17 @@ public class SnapshotTest extends AbstractCairoTest {
 
     @Test
     public void testRecoverSnapshotForDefaultInstanceIds() throws Exception {
-        testRecoverSnapshot(null, null, false);
+        testRecoverSnapshot("", "", false);
     }
 
     @Test
     public void testRecoverSnapshotForDefaultRestartedId() throws Exception {
-        testRecoverSnapshot("id1", null, false);
+        testRecoverSnapshot("id1", "", false);
     }
 
     @Test
     public void testRecoverSnapshotForDefaultSnapshotId() throws Exception {
-        testRecoverSnapshot(null, "id1", false);
+        testRecoverSnapshot("", "id1", false);
     }
 
     @Test
@@ -978,6 +978,7 @@ public class SnapshotTest extends AbstractCairoTest {
     private void testRecoverSnapshot(String snapshotId, String restartedId, boolean expectRecovery) throws Exception {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, snapshotId);
+            Assert.assertEquals(engine.getConfiguration().getSnapshotInstanceId(), snapshotId);
 
             final String nonPartitionedTable = "npt";
             ddl(
@@ -1004,7 +1005,9 @@ public class SnapshotTest extends AbstractCairoTest {
 
             // Release all readers and writers, but keep the snapshot dir around.
             engine.clear();
-            setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, restartedId);
+            node1.setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, restartedId);
+            Assert.assertEquals(engine.getConfiguration().getSnapshotInstanceId(), restartedId);
+
             engine.recoverSnapshot();
 
             // In case of recovery, data inserted after PREPARE SNAPSHOT should be discarded.
