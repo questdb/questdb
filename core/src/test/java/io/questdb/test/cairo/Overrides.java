@@ -39,7 +39,6 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
 
-import static io.questdb.PropertyKey.CAIRO_ROOT;
 import static io.questdb.cairo.DebugUtils.LOG;
 
 public class Overrides {
@@ -189,7 +188,6 @@ public class Overrides {
         }
 
         PropServerConfiguration propCairoConfiguration;
-        props.put(CAIRO_ROOT.getPropertyPath(), root);
         try {
             propCairoConfiguration = new PropServerConfiguration(
                     root,
