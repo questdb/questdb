@@ -53,6 +53,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
     private final ObjList<TableUpdateDetails>[] assignedTables;
     private final boolean autoCreateNewColumns;
     private final boolean autoCreateNewTables;
+    private final MillisecondClock clock;
     private final LineTcpReceiverConfiguration configuration;
     private final MemoryMARW ddlMem = Vm.getMARWInstance();
     private final DefaultColumnTypes defaultColumnTypes;
@@ -64,6 +65,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
     private final Path path = new Path();
     private final MPSequence[] pubSeq;
     private final RingQueue<LineTcpMeasurementEvent>[] queue;
+    private final long spinLockTimeoutMs;
     private final StringSink[] tableNameSinks;
     private final TableStructureAdapter tableStructureAdapter;
     private final ReadWriteLock tableUpdateDetailsLock = new SimpleReadWriteLock();
@@ -82,7 +84,8 @@ public class LineTcpMeasurementScheduler implements Closeable {
         this.telemetry = engine.getTelemetry();
         CairoConfiguration cairoConfiguration = engine.getConfiguration();
         this.configuration = lineConfiguration;
-        MillisecondClock milliClock = cairoConfiguration.getMillisecondClock();
+        this.clock = cairoConfiguration.getMillisecondClock();
+        this.spinLockTimeoutMs = cairoConfiguration.getSpinLockTimeout();
         this.defaultColumnTypes = new DefaultColumnTypes(lineConfiguration);
         final int ioWorkerPoolSize = ioWorkerPool.getWorkerCount();
         this.netIoJobs = new NetworkIOJob[ioWorkerPoolSize];
@@ -141,13 +144,18 @@ public class LineTcpMeasurementScheduler implements Closeable {
                     i,
                     q,
                     subSeq,
-                    milliClock,
+                    clock,
                     commitInterval, this, engine.getMetrics(), assignedTables[i]
             );
             writerWorkerPool.assign(i, lineTcpWriterJob);
             writerWorkerPool.freeOnExit(lineTcpWriterJob);
         }
-        this.tableStructureAdapter = new TableStructureAdapter(cairoConfiguration, defaultColumnTypes, configuration.getDefaultPartitionBy(), cairoConfiguration.getWalEnabledDefault());
+        this.tableStructureAdapter = new TableStructureAdapter(
+                cairoConfiguration,
+                defaultColumnTypes,
+                configuration.getDefaultPartitionBy(),
+                cairoConfiguration.getWalEnabledDefault()
+        );
         writerIdleTimeout = lineConfiguration.getWriterIdleTimeout();
         ilpWalAppender = new IlpWalAppender(
                 autoCreateNewColumns,
@@ -378,83 +386,95 @@ public class LineTcpMeasurementScheduler implements Closeable {
 
         tableUpdateDetailsLock.writeLock().lock();
         try {
-            TableUpdateDetails tud;
-            // check if the global cache has the table
-            final int tudKeyIndex = tableUpdateDetailsUtf16.keyIndex(tableNameUtf16);
-            if (tudKeyIndex < 0) {
-                // it does, which means that table is non-WAL
-                // we should not have "shared" WAL tables
-                tud = tableUpdateDetailsUtf16.valueAt(tudKeyIndex);
-            } else {
-                final int status = engine.getTableStatus(path, tableNameUtf16);
-                if (status != TableUtils.TABLE_EXISTS) {
-                    if (!autoCreateNewTables) {
-                        throw CairoException.nonCritical()
-                                .put("table does not exist, creating new tables is disabled [table=").put(tableNameUtf16)
-                                .put(']');
+            final long deadline = clock.getTicks() + spinLockTimeoutMs;
+            while (true) {
+                TableUpdateDetails tud;
+                // check if the global cache has the table
+                final int tudKeyIndex = tableUpdateDetailsUtf16.keyIndex(tableNameUtf16);
+                if (tudKeyIndex < 0) {
+                    // it does, which means that table is non-WAL
+                    // we should not have "shared" WAL tables
+                    tud = tableUpdateDetailsUtf16.valueAt(tudKeyIndex);
+                } else {
+                    final int status = engine.getTableStatus(path, tableNameUtf16);
+                    if (status != TableUtils.TABLE_EXISTS) {
+                        if (!autoCreateNewTables) {
+                            throw CairoException.nonCritical()
+                                    .put("table does not exist, creating new tables is disabled [table=").put(tableNameUtf16)
+                                    .put(']');
+                        }
+                        if (!autoCreateNewColumns) {
+                            throw CairoException.nonCritical()
+                                    .put("table does not exist, cannot create table, creating new columns is disabled [table=").put(tableNameUtf16)
+                                    .put(']');
+                        }
+                        // validate that parser entities do not contain NULLs
+                        TableStructureAdapter tsa = tableStructureAdapter.of(tableNameUtf16, parser);
+                        for (int i = 0, n = tsa.getColumnCount(); i < n; i++) {
+                            if (tsa.getColumnType(i) == LineTcpParser.ENTITY_TYPE_NULL) {
+                                throw CairoException.nonCritical().put("unknown column type [columnName=").put(tsa.getColumnName(i)).put(']');
+                            }
+                        }
+                        engine.createTable(securityContext, ddlMem, path, true, tsa, false);
                     }
-                    if (!autoCreateNewColumns) {
-                        throw CairoException.nonCritical()
-                                .put("table does not exist, cannot create table, creating new columns is disabled [table=").put(tableNameUtf16)
-                                .put(']');
-                    }
-                    // validate that parser entities do not contain NULLs
-                    TableStructureAdapter tsa = tableStructureAdapter.of(tableNameUtf16, parser);
-                    for (int i = 0, n = tsa.getColumnCount(); i < n; i++) {
-                        if (tsa.getColumnType(i) == LineTcpParser.ENTITY_TYPE_NULL) {
-                            throw CairoException.nonCritical().put("unknown column type [columnName=").put(tsa.getColumnName(i)).put(']');
+
+                    // by the time we get here, the table should exist on disk
+                    // check the global idle cache - TUD can be there
+                    final int idleTudKeyIndex = idleTableUpdateDetailsUtf16.keyIndex(tableNameUtf16);
+                    if (idleTudKeyIndex < 0) {
+                        // TUD is found in global idle cache - this meant it is non-WAL
+                        tud = idleTableUpdateDetailsUtf16.valueAt(idleTudKeyIndex);
+                        LOG.info().$("idle table going active [tableName=").$(tud.getTableNameUtf16()).I$();
+                        if (tud.getWriter() == null) {
+                            tud.closeNoLock();
+                            // Use actual table name from the "details" to avoid case mismatches in the
+                            // WriterPool. There was an error in the LineTcpReceiverFuzzTest, which helped
+                            // to identify the cause
+                            tud = unsafeAssignTableToWriterThread(tudKeyIndex, tud.getTableNameUtf16(), tud.getTableNameUtf8());
+                        } else {
+                            idleTableUpdateDetailsUtf16.removeAt(idleTudKeyIndex);
+                            tableUpdateDetailsUtf16.putAt(tudKeyIndex, tud.getTableNameUtf16(), tud);
+                        }
+                    } else {
+                        // check if table on disk is WAL
+                        TableToken tableToken = engine.getTableTokenIfExists(tableNameUtf16);
+                        if (tableToken == null) {
+                            // someone already dropped the table
+                            if (clock.getTicks() > deadline) {
+                                throw CairoException.nonCritical()
+                                        .put("could not create table within timeout [table=").put(tableNameUtf16)
+                                        .put(", timeout=").put(spinLockTimeoutMs)
+                                        .put(']');
+                            }
+                            continue; // go for another spin
+                        }
+                        TelemetryTask.store(telemetry, TelemetryOrigin.ILP_TCP, TelemetrySystemEvent.ILP_RESERVE_WRITER);
+                        if (engine.isWalTable(tableToken)) {
+                            // create WAL-oriented TUD and DON'T add it to the global cache
+                            tud = new WalTableUpdateDetails(
+                                    engine,
+                                    securityContext,
+                                    engine.getWalWriter(tableToken),
+                                    defaultColumnTypes,
+                                    Utf8String.newInstance(tableNameUtf8),
+                                    netIoJob.getSymbolCachePool(),
+                                    configuration.getCommitInterval(),
+                                    true,
+                                    engine.getConfiguration().getMaxUncommittedRows()
+                            );
+                            ctx.addTableUpdateDetails(Utf8String.newInstance(tableNameUtf8), tud);
+                            return tud;
+                        } else {
+                            tud = unsafeAssignTableToWriterThread(tudKeyIndex, tableNameUtf16, Utf8String.newInstance(tableNameUtf8));
                         }
                     }
-                    engine.createTable(securityContext, ddlMem, path, true, tsa, false);
                 }
 
-                // by the time we get here, definitely exists on disk
-                // check the global idle cache - TUD can be there
-                final int idleTudKeyIndex = idleTableUpdateDetailsUtf16.keyIndex(tableNameUtf16);
-                if (idleTudKeyIndex < 0) {
-                    // TUD is found in global idle cache - this meant it is non-WAL
-                    tud = idleTableUpdateDetailsUtf16.valueAt(idleTudKeyIndex);
-                    LOG.info().$("idle table going active [tableName=").$(tud.getTableNameUtf16()).I$();
-                    if (tud.getWriter() == null) {
-                        tud.closeNoLock();
-                        // Use actual table name from the "details" to avoid case mismatches in the
-                        // WriterPool. There was an error in the LineTcpReceiverFuzzTest, which helped
-                        // to identify the cause
-                        tud = unsafeAssignTableToWriterThread(tudKeyIndex, tud.getTableNameUtf16(), tud.getTableNameUtf8());
-                    } else {
-                        idleTableUpdateDetailsUtf16.removeAt(idleTudKeyIndex);
-                        tableUpdateDetailsUtf16.putAt(tudKeyIndex, tud.getTableNameUtf16(), tud);
-                    }
-                } else {
-                    TelemetryTask.store(telemetry, TelemetryOrigin.ILP_TCP, TelemetrySystemEvent.ILP_RESERVE_WRITER);
-                    // check if table on disk is WAL
-                    path.of(engine.getConfiguration().getRoot());
-                    TableToken tableToken = engine.getTableTokenIfExists(tableNameUtf16);
-                    if (engine.isWalTable(tableToken)) {
-                        // create WAL-oriented TUD and DON'T add it to the global cache
-                        tud = new WalTableUpdateDetails(
-                                engine,
-                                securityContext,
-                                engine.getWalWriter(tableToken),
-                                defaultColumnTypes,
-                                Utf8String.newInstance(tableNameUtf8),
-                                netIoJob.getSymbolCachePool(),
-                                configuration.getCommitInterval(),
-                                true,
-                                engine.getConfiguration().getMaxUncommittedRows()
-                        );
-                        ctx.addTableUpdateDetails(Utf8String.newInstance(tableNameUtf8), tud);
-                        return tud;
-                    } else {
-                        tud = unsafeAssignTableToWriterThread(tudKeyIndex, tableNameUtf16, Utf8String.newInstance(tableNameUtf8));
-                    }
-                }
+                // tud.getTableNameUtf8() can be different case from incoming tableNameUtf8
+                Utf8String key = Utf8s.equals(tud.getTableNameUtf8(), tableNameUtf8) ? tud.getTableNameUtf8() : Utf8String.newInstance(tableNameUtf8);
+                netIoJob.addTableUpdateDetails(key, tud);
+                return tud;
             }
-
-            // tud.getTableNameUtf8() can be different case from incoming tableNameUtf8
-            Utf8String key = Utf8s.equals(tud.getTableNameUtf8(), tableNameUtf8) ? tud.getTableNameUtf8() : Utf8String.newInstance(tableNameUtf8);
-            netIoJob.addTableUpdateDetails(key, tud);
-            return tud;
         } finally {
             tableUpdateDetailsLock.writeLock().unlock();
         }
