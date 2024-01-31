@@ -135,7 +135,7 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
                 int port = tlsProxy.getListeningPort();
                 String address = "localhost:" + port;
                 long count = 10_000;
-                try (Sender sender = Sender.fromString("https::addr=" + address + ";tls_verify=unsafe_off;")) {
+                try (Sender sender = Sender.fromConfig("https::addr=" + address + ";tls_verify=unsafe_off;")) {
                     for (long i = 1; i <= count; i++) {
                         sender.table(tableName).longColumn("value", i).atNow();
                     }

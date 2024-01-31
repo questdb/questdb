@@ -122,7 +122,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                     .symbol("sym", "bol")
                     .doubleColumn("x", 1.0)
                     .atNow();
-        }, port -> Sender.builder().fromString("http::addr=localhost:" + port + ";user=Aladdin;pass=;;Open;;Sesame;;;;;")); // escaped semicolons in password
+        }, port -> Sender.builder().fromConfig("http::addr=localhost:" + port + ";user=Aladdin;pass=;;Open;;Sesame;;;;;")); // escaped semicolons in password
     }
 
     @Test
@@ -135,7 +135,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                         .doubleColumn("x", 1.0)
                         .atNow();
             }
-        }, port -> Sender.builder().fromString("http::addr=localhost:" + port + ";auto_flush=off;"));
+        }, port -> Sender.builder().fromConfig("http::addr=localhost:" + port + ";auto_flush=off;"));
     }
 
     @Test

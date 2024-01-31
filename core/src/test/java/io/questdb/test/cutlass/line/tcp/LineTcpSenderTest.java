@@ -205,7 +205,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
         authKeyId = AUTH_KEY_ID1;
         runInContext(r -> {
             String confString = "tcp::addr=127.0.0.1:" + bindPort + ";user=" + AUTH_KEY_ID1 + ";token=" + TOKEN + ";";
-            try (Sender sender = Sender.fromString(confString)) {
+            try (Sender sender = Sender.fromConfig(confString)) {
                 long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2022-02-25");
                 sender.table("mytable")
                         .longColumn("int_field", 42)

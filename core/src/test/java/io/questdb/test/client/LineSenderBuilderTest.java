@@ -833,7 +833,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
 
     private static void assertConfStrError(Sender.LineSenderBuilder sb, String conf, String expectedError) {
         try {
-            try (Sender s = sb.fromString(conf).build()) {
+            try (Sender s = sb.fromConfig(conf).build()) {
                 fail("should fail with bad conf string");
             }
         } catch (LineSenderException e) {
@@ -846,7 +846,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     }
 
     private static void assertConfStrOk(Sender.LineSenderBuilder sb, String conf) {
-        try (Sender s = sb.fromString(conf).build()) {
+        try (Sender s = sb.fromConfig(conf).build()) {
 
         }
     }

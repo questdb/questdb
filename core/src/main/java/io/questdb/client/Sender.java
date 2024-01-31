@@ -94,37 +94,6 @@ public interface Sender extends Closeable {
     }
 
     /**
-     * Create a new Sender instance described by a configuration string available as an environment variable.
-     * <br>
-     * It obtains a string from an environment variable <code>QDB_CLIENT_CONF</code> and then calls
-     * {@link #fromString(CharSequence)}.
-     * <br>
-     * This is a convenience method suitable for Cloud environments.
-     * <br>
-     * <b>Example</b><br>
-     * 1. Export a configuration string as an environment variable:
-     * <pre>{@code export QDB_CLIENT_CONF="http::addr=localhost:9000;auto_flush_rows=100;"}</pre>
-     * 2. Create and use a Sender:
-     * <pre>{@code
-     * try (Sender sender = Sender.fromEnv()) {
-     *  for (int i = 0; i < 1000; i++) {
-     *    sender.table("my_table").longColumn("value", i).atNow();
-     *  }
-     * }
-     * }</pre>
-     *
-     * @return Sender instance
-     * @see #fromString(CharSequence)
-     */
-    static Sender fromEnv() {
-        String configString = System.getenv("QDB_CLIENT_CONF");
-        if (Chars.isBlank(configString)) {
-            throw new LineSenderException("QDB_CLIENT_CONF environment variable is not set");
-        }
-        return fromString(configString);
-    }
-
-    /**
      * Create a Sender instance from a configuration string.
      * <br>
      * Configuration string fully describes Sender configuration.
@@ -143,10 +112,41 @@ public interface Sender extends Closeable {
      * @param configurationString configuration string
      * @return Sender instance
      * @see #fromEnv()
-     * @see LineSenderBuilder#fromString(CharSequence)
+     * @see LineSenderBuilder#fromConfig(CharSequence)
      */
-    static Sender fromString(CharSequence configurationString) {
-        return builder().fromString(configurationString).build();
+    static Sender fromConfig(CharSequence configurationString) {
+        return builder().fromConfig(configurationString).build();
+    }
+
+    /**
+     * Create a new Sender instance described by a configuration string available as an environment variable.
+     * <br>
+     * It obtains a string from an environment variable <code>QDB_CLIENT_CONF</code> and then calls
+     * {@link #fromConfig(CharSequence)}.
+     * <br>
+     * This is a convenience method suitable for Cloud environments.
+     * <br>
+     * <b>Example</b><br>
+     * 1. Export a configuration string as an environment variable:
+     * <pre>{@code export QDB_CLIENT_CONF="http::addr=localhost:9000;auto_flush_rows=100;"}</pre>
+     * 2. Create and use a Sender:
+     * <pre>{@code
+     * try (Sender sender = Sender.fromEnv()) {
+     *  for (int i = 0; i < 1000; i++) {
+     *    sender.table("my_table").longColumn("value", i).atNow();
+     *  }
+     * }
+     * }</pre>
+     *
+     * @return Sender instance
+     * @see #fromConfig(CharSequence)
+     */
+    static Sender fromEnv() {
+        String configString = System.getenv("QDB_CLIENT_CONF");
+        if (Chars.isBlank(configString)) {
+            throw new LineSenderException("QDB_CLIENT_CONF environment variable is not set");
+        }
+        return fromConfig(configString);
     }
 
     /**
@@ -646,9 +646,9 @@ public interface Sender extends Closeable {
          *
          * @param configurationString configuration string
          * @return this instance for method chaining
-         * @see #fromString(CharSequence)
+         * @see #fromConfig(CharSequence)
          */
-        public LineSenderBuilder fromString(CharSequence configurationString) {
+        public LineSenderBuilder fromConfig(CharSequence configurationString) {
             if (Chars.isBlank(configurationString)) {
                 throw new LineSenderException("configuration string cannot be empty nor null");
             }
