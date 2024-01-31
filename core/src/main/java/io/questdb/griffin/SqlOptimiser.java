@@ -4820,14 +4820,14 @@ public class SqlOptimiser implements Mutable {
 
                 final QueryModel newGroupByModel = queryModelPool.next();
                 newGroupByModel.setSelectModelType(QueryModel.SELECT_MODEL_GROUP_BY);
-                newGroupByModel.moveGroupByFrom(groupBy);
+                newGroupByModel.moveGroupByFrom(selectChoose);
                 newGroupByModel.moveLimitFrom(selectChoose);
                 newGroupByModel.moveJoinAliasFrom(selectChoose);
                 newGroupByModel.moveSampleByFrom(groupBy);
 
                 final QueryModel newSelectModel = queryModelPool.next();
                 newSelectModel.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
-                newSelectModel.moveGroupByFrom(selectChoose);
+                newSelectModel.moveGroupByFrom(groupBy);
                 newSelectModel.moveLimitFrom(groupBy);
                 newSelectModel.moveJoinAliasFrom(groupBy);
                 newSelectModel.moveSampleByFrom(selectChoose);
@@ -4839,11 +4839,17 @@ public class SqlOptimiser implements Mutable {
                 QueryColumn groupByColumn;
 
                 // add columns from the select-choose to the new select-group-by
-                for (int i = 0; i < selectChooseColumns.size(); i++) {
+            {                for (int i = 0; i < selectChooseColumns.size(); i++) {
                     selectColumn = selectChooseColumns.getQuick(i);
                     // if the column appears in the group by, then keep it i.e so we can pass through columns
-                    if (groupBy.getAliasToColumnMap().get(selectColumn.getAlias()) != null) {
+                    // check for cases like
+                    // select-group-by max(ts) ts from (select-choose data.ts ts)
+                    // in this case, moving max(ts) ts inside breaks because there's already a ts
+                    // but we don't need the other ts
+                    if (groupBy.getAliasToColumnMap().get(selectColumn.getAlias()) != null
+                            && groupBy.getAliasToColumnMap().get(selectColumn.getAlias()).getAst().type == selectColumn.getAst().type) {
                         newGroupByModel.addBottomUpColumn(selectColumn);
+                        }
                     }
                 }
 
