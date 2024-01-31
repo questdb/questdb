@@ -96,6 +96,9 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                     .col("atimestamp", ColumnType.TIMESTAMP)
                     .col("adouble", ColumnType.DOUBLE)
                     .col("astring", ColumnType.STRING)
+                    .col("astring2", ColumnType.STRING)
+                    .col("abinary", ColumnType.BINARY)
+                    .col("abinary2", ColumnType.BINARY)
                     .col("auuid", ColumnType.UUID)
                     .col("along128", ColumnType.LONG128)
                     .timestamp();
@@ -360,6 +363,34 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         assertIR("(i32 -1L)(varlen_header astring)(<>)(ret)");
         serialize("astring = null");
         assertIR("(i32 -1L)(varlen_header astring)(=)(ret)");
+    }
+
+    @Test
+    public void testBinaryNullConstant() throws Exception {
+        serialize("abinary <> null");
+        assertIR("(i32 -1L)(varlen_header abinary)(<>)(ret)");
+        serialize("abinary = null");
+        assertIR("(i32 -1L)(varlen_header abinary)(=)(ret)");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedStringEquality() throws Exception {
+        serialize("astring = astring2");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedStringInequality() throws Exception {
+        serialize("astring <> astring2");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedBinaryEquality() throws Exception {
+        serialize("abinary = abinary2");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedBinaryInequality() throws Exception {
+        serialize("abinary <> abinary2");
     }
 
     @Test
