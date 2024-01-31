@@ -190,10 +190,11 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
             assertQuery(
                     "event\tcount\n" +
-                            "1\t1\n" +
-                            "3\t1\n",
+                            "3\t1\n" +
+                            "1\t1\n",
                     "SELECT event, count()\n" +
-                            "FROM (t1 UNION t2) WHERE origin = 1",
+                            "FROM (t1 UNION t2) WHERE origin = 1\n" +
+                            "ORDER BY event DESC",
                     null,
                     true,
                     true

@@ -293,8 +293,9 @@ public class UuidTest extends AbstractCairoTest {
 
         assertSql(
                 "u\tsum\n" +
-                        "11111111-1111-1111-1111-111111111111\t1\n" +
-                        "22222222-2222-2222-2222-222222222222\t5\n", "select u, sum(i) from x group by u"
+                        "22222222-2222-2222-2222-222222222222\t5\n" +
+                        "11111111-1111-1111-1111-111111111111\t1\n",
+                "select u, sum(i) from x group by u order by u desc"
         );
     }
 
@@ -311,7 +312,8 @@ public class UuidTest extends AbstractCairoTest {
                 "u\n" +
                         "11111111-1111-1111-1111-111111111111\n" +
                         "22222222-2222-2222-2222-222222222222\n" +
-                        "33333333-3333-3333-3333-333333333333\n", "select * from x where u in ('11111111-1111-1111-1111-111111111111', 'not uuid', '55555555-5555-5555-5555-555555555555', cast ('22222222-2222-2222-2222-222222222222' as UUID), cast ('33333333-3333-3333-3333-333333333333' as symbol))"
+                        "33333333-3333-3333-3333-333333333333\n",
+                "select * from x where u in ('11111111-1111-1111-1111-111111111111', 'not uuid', '55555555-5555-5555-5555-555555555555', cast ('22222222-2222-2222-2222-222222222222' as UUID), cast ('33333333-3333-3333-3333-333333333333' as symbol))"
         );
     }
 
@@ -323,7 +325,9 @@ public class UuidTest extends AbstractCairoTest {
                 "select * from long_sequence(1) where cast ('11111111-1111-1111-1111-111111111111' as uuid) in ('11111111-1111-1111-1111-111111111111')"
         );
 
-        assertSql("x\n", "select * from long_sequence(1) where cast (null as uuid) in ('11111111-1111-1111-1111-111111111111')"
+        assertSql(
+                "x\n",
+                "select * from long_sequence(1) where cast (null as uuid) in ('11111111-1111-1111-1111-111111111111')"
         );
     }
 
@@ -357,7 +361,8 @@ public class UuidTest extends AbstractCairoTest {
                 "ts\ti\tu\n" +
                         "2018-01-01T00:00:00.000000Z\t1\t\n" +
                         "2018-01-02T00:00:00.000000Z\t1\t00000000-0000-0000-0000-000000000000\n" +
-                        "2018-01-03T00:00:00.000000Z\t1\t\n", "select * from x"
+                        "2018-01-03T00:00:00.000000Z\t1\t\n",
+                "select * from x"
         );
     }
 
@@ -451,12 +456,11 @@ public class UuidTest extends AbstractCairoTest {
     public void testInsertWithExplicitCast() throws Exception {
         ddl("create table x (u UUID)");
         insert("insert into x values (cast('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' as uuid))");
-        assertSql
-                (
-                        "u\n" +
-                                "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n",
-                        "select * from x"
-                );
+        assertSql(
+                "u\n" +
+                        "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n",
+                "select * from x"
+        );
     }
 
     @Test

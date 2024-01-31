@@ -1026,7 +1026,7 @@ public class GroupByTest extends AbstractCairoTest {
             compile("create table t as (" +
                     "    select 1 as l, 'a' as s, -1 max " +
                     "    union all " +
-                    "    select 1, 'a', -2 )");
+                    "    select 1, 'b', -2 )");
 
             String query = "select s, max, max(l) from t group by s, max order by s";
             assertPlan(
@@ -1044,8 +1044,8 @@ public class GroupByTest extends AbstractCairoTest {
 
             assertQuery(
                     "s\tmax\tmax1\n" +
-                            "a\t-2\t1\n" +
-                            "a\t-1\t1\n",
+                            "a\t-1\t1\n" +
+                            "b\t-2\t1\n",
                     query,
                     null,
                     true,
@@ -1174,25 +1174,31 @@ public class GroupByTest extends AbstractCairoTest {
             String query = "select t1.x, max(t2.y), dateadd('d', t1.x, '2023-03-01T00:00:00')::long + t2.x " +
                     "from t1 " +
                     "join t2 on t1.y = t2.y  " +
-                    "group by t1.x, t2.x, dateadd('d', t1.x, '2023-03-01T00:00:00') ";
+                    "group by t1.x, t2.x, dateadd('d', t1.x, '2023-03-01T00:00:00') " +
+                    "order by 1, 3";
 
-            assertPlan(query, "VirtualRecord\n" +
-                    "  functions: [x,max,dateadd::long+x1]\n" +
-                    "    GroupBy vectorized: false\n" +
-                    "      keys: [x,x1,dateadd]\n" +
-                    "      values: [max(y)]\n" +
-                    "        VirtualRecord\n" +
-                    "          functions: [x,y,x1,dateadd('d',1677628800000000,x)]\n" +
-                    "            SelectedRecord\n" +
-                    "                Hash Join Light\n" +
-                    "                  condition: t2.y=t1.y\n" +
-                    "                    DataFrame\n" +
-                    "                        Row forward scan\n" +
-                    "                        Frame forward scan on: t1\n" +
-                    "                    Hash\n" +
-                    "                        DataFrame\n" +
-                    "                            Row forward scan\n" +
-                    "                            Frame forward scan on: t2\n");
+            assertPlan(
+                    query,
+                    "Sort light\n" +
+                            "  keys: [x, column]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [x,max,dateadd::long+x1]\n" +
+                            "        GroupBy vectorized: false\n" +
+                            "          keys: [x,x1,dateadd]\n" +
+                            "          values: [max(y)]\n" +
+                            "            VirtualRecord\n" +
+                            "              functions: [x,y,x1,dateadd('d',1677628800000000,x)]\n" +
+                            "                SelectedRecord\n" +
+                            "                    Hash Join Light\n" +
+                            "                      condition: t2.y=t1.y\n" +
+                            "                        DataFrame\n" +
+                            "                            Row forward scan\n" +
+                            "                            Frame forward scan on: t1\n" +
+                            "                        Hash\n" +
+                            "                            DataFrame\n" +
+                            "                                Row forward scan\n" +
+                            "                                Frame forward scan on: t2\n"
+            );
 
             assertQuery(
                     "x\tmax\tcolumn\n" +
