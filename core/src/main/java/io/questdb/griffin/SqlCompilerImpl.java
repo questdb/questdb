@@ -1278,20 +1278,23 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
 
         tok = SqlUtil.fetchNext(lexer);
+        int position = lexer.lastTokenPosition();
         try {
             long queryId = Numbers.parseLong(tok);
-
             tok = SqlUtil.fetchNext(lexer);
             if (tok != null && !isSemicolon(tok)) {
                 throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
             }
-
-            if (!executionContext.getCairoEngine().getQueryRegistry().cancel(queryId, executionContext)) {
-                throw SqlException.$(lexer.lastTokenPosition(), "query to cancel not found in registry [id=").put(queryId).put(']');
+            try {
+                if (!executionContext.getCairoEngine().getQueryRegistry().cancel(queryId, executionContext)) {
+                    throw SqlException.$(position, "query to cancel not found in registry [id=").put(queryId).put(']');
+                }
+            } catch (CairoException e) {
+                throw SqlException.$(position, e.getFlyweightMessage());
             }
             compiledQuery.ofCancelQuery();
         } catch (NumericException e) {
-            throw SqlException.$(lexer.lastTokenPosition(), "non-negative integer literal expected as query id");
+            throw SqlException.$(position, "non-negative integer literal expected as query id");
         }
     }
 
