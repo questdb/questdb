@@ -38,6 +38,7 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.SimpleWaitingLock;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -994,6 +995,9 @@ public class SnapshotTest extends AbstractCairoTest {
 
             ddl("snapshot prepare");
 
+            path.trimTo(rootLen).slash$();
+            Assert.assertTrue(Utf8s.toString(path), configuration.getFilesFacade().exists(path));
+
             insert(
                     "insert into " + nonPartitionedTable +
                             " select rnd_str(3,6,2) a, x+20 b from long_sequence(20)"
@@ -1026,7 +1030,13 @@ public class SnapshotTest extends AbstractCairoTest {
 
             // Recovery should delete the snapshot dir. Otherwise, the dir should be kept as is.
             path.trimTo(rootLen).slash$();
-            Assert.assertEquals(!expectRecovery, configuration.getFilesFacade().exists(path));
+            if (expectRecovery == configuration.getFilesFacade().exists(path)) {
+                if (expectRecovery) {
+                    Assert.fail("Recovery should happen but the snapshot path still exists:" + Utf8s.toString(path));
+                } else {
+                    Assert.fail("Recovery shouldn't happen but the snapshot path does not exist:" + Utf8s.toString(path));
+                }
+            }
         });
     }
 

@@ -30,10 +30,7 @@ import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
-import io.questdb.std.Chars;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.NanosecondClock;
-import io.questdb.std.RostiAllocFacade;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import org.jetbrains.annotations.NotNull;
@@ -43,11 +40,13 @@ import java.util.Map;
 public class CairoTestConfiguration extends CairoConfigurationWrapper {
     private final Overrides overrides;
     private final String root;
+    private final String snapshotRoot;
     private final TelemetryConfiguration telemetryConfiguration;
     private final VolumeDefinitions volumeDefinitions = new VolumeDefinitions();
 
     public CairoTestConfiguration(CharSequence root, TelemetryConfiguration telemetryConfiguration, Overrides overrides) {
         this.root = Chars.toString(root);
+        this.snapshotRoot = Chars.toString(root) + Files.SEPARATOR + "snapshot";
         this.telemetryConfiguration = telemetryConfiguration;
         this.overrides = overrides;
     }
@@ -58,10 +57,14 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     }
 
     @Override
-    public String getRoot() {
+    public @NotNull String getRoot() {
         return root;
     }
 
+    @Override
+    public @NotNull CharSequence getSnapshotRoot() {
+        return snapshotRoot;
+    }
     @Override
     public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
         return overrides.getCircuitBreakerConfiguration() != null ? overrides.getCircuitBreakerConfiguration() : super.getCircuitBreakerConfiguration();
