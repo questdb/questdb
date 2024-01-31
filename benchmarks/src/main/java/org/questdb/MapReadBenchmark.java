@@ -88,9 +88,7 @@ public class MapReadBenchmark {
             key.putStr(String.valueOf(i));
             MapValue values = key.createValue();
             values.putLong(0, i);
-        }
 
-        for (int i = 0; i < N; i++) {
             hmap.put(String.valueOf(i), (long) i);
         }
     }

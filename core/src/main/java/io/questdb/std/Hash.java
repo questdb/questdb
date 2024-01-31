@@ -31,6 +31,7 @@ public final class Hash {
 
     // Constant from FxHasher.
     private static final long M = 0x517cc1b727220a95L;
+    private static final int R_DIST = 17;
     private static final int SPREAD_HASH_BITS = 0x7fffffff;
 
     private Hash() {
@@ -64,17 +65,19 @@ public final class Hash {
         long h = 0;
         int i = 0;
         for (; i + 7 < len; i += 8) {
-            h = h * M + us.longAt(i);
+            h = Long.rotateLeft(h * M, R_DIST);
+            h ^= us.longAt(i);
         }
         if (i + 3 < len) {
-            h = h * M + us.intAt(i);
+            h = Long.rotateLeft(h * M, R_DIST);
+            h ^= us.intAt(i);
             i += 4;
         }
         for (; i < len; i++) {
-            h = h * M + us.byteAt(i);
+            h = Long.rotateLeft(h * M, R_DIST);
+            h ^= us.byteAt(i);
         }
-        h *= M;
-        return Numbers.decodeLowInt(h ^ h >>> 32);
+        return Numbers.decodeLowInt(Long.rotateLeft(h * M, R_DIST));
     }
 
     /**
@@ -86,31 +89,32 @@ public final class Hash {
     }
 
     public static long hash64Long(long k) {
-        long h = k * M;
-        return (int) (h ^ h >>> 32);
+        return Long.rotateLeft(k * M, R_DIST);
     }
 
-    public static long hash64Long128(long key1, long key2) {
-        long h = key1 * M + key2;
-        h *= M;
-        return (int) (h ^ h >>> 32);
+    public static long hash64Long128(long k1, long k2) {
+        long h = Long.rotateLeft(k1 * M, R_DIST);
+        h ^= k2;
+        return Long.rotateLeft(h * M, R_DIST);
     }
 
-    public static long hash64Long256(long key1, long key2, long key3, long key4) {
-        long h = key1 * M + key2;
-        h = (h * M) + key3;
-        h = (h * M) + key4;
-        h *= M;
-        return (int) (h ^ h >>> 32);
+    public static long hash64Long256(long k1, long k2, long k3, long k4) {
+        long h = Long.rotateLeft(k1 * M, R_DIST);
+        h ^= k2;
+        h = Long.rotateLeft(h * M, R_DIST);
+        h ^= k3;
+        h = Long.rotateLeft(h * M, R_DIST);
+        h ^= k4;
+        return Long.rotateLeft(h, R_DIST);
     }
 
     /**
      * Calculates positive integer hash of memory pointer using a polynomial
      * hash function.
      * <p>
-     * The function is a modified version of the function from
+     * The function is a heavily modified version of the function from
      * <a href="https://vanilla-java.github.io/2018/08/15/Looking-at-randomness-and-performance-for-hash-codes.html">this article</a>
-     * by Peter Lawrey.
+     * by Peter Lawrey. It also borrows ideas from Rust compiler's FxHash.
      *
      * @param p   memory pointer
      * @param len memory length in bytes
@@ -120,17 +124,19 @@ public final class Hash {
         long h = 0;
         int i = 0;
         for (; i + 7 < len; i += 8) {
-            h = h * M + Unsafe.getUnsafe().getLong(p + i);
+            h = Long.rotateLeft(h * M, R_DIST);
+            h ^= Unsafe.getUnsafe().getLong(p + i);
         }
         if (i + 3 < len) {
-            h = h * M + Unsafe.getUnsafe().getInt(p + i);
+            h = Long.rotateLeft(h * M, R_DIST);
+            h ^= Unsafe.getUnsafe().getInt(p + i);
             i += 4;
         }
         for (; i < len; i++) {
-            h = h * M + Unsafe.getUnsafe().getByte(p + i);
+            h = Long.rotateLeft(h * M, R_DIST);
+            h ^= Unsafe.getUnsafe().getByte(p + i);
         }
-        h *= M;
-        return h ^ h >>> 32;
+        return Long.rotateLeft(h * M, R_DIST);
     }
 
     /**
@@ -146,7 +152,7 @@ public final class Hash {
      * are already reasonably distributed (so don't benefit from
      * spreading), and because we use trees to handle large sets of
      * collisions in bins, we just XOR some shifted bits in the
-     * cheapest possible way to reduce systematic lossage, as well as
+     * cheapest possible way to reduce systematic loss, as well as
      * to incorporate impact of the highest bits that would otherwise
      * never be used in index calculations because of table bounds.
      *
