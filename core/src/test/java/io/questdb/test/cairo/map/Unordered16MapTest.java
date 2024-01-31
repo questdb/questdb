@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.map;
 
+import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SingleColumnType;
@@ -32,9 +33,7 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.map.Unordered16Map;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.std.Chars;
-import io.questdb.std.Rnd;
-import io.questdb.std.Uuid;
+import io.questdb.std.*;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -44,6 +43,172 @@ import java.util.HashMap;
 import java.util.Map;
 
 public class Unordered16MapTest extends AbstractCairoTest {
+
+    @Test
+    public void testAllValueTypes() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            Rnd rnd = new Rnd();
+
+            ArrayColumnTypes keyTypes = new ArrayColumnTypes();
+            keyTypes.add(ColumnType.BYTE);
+            keyTypes.add(ColumnType.SHORT);
+            keyTypes.add(ColumnType.INT);
+            keyTypes.add(ColumnType.LONG);
+
+            ArrayColumnTypes valueTypes = new ArrayColumnTypes();
+            valueTypes.add(ColumnType.BYTE);
+            valueTypes.add(ColumnType.SHORT);
+            valueTypes.add(ColumnType.CHAR);
+            valueTypes.add(ColumnType.INT);
+            valueTypes.add(ColumnType.LONG);
+            valueTypes.add(ColumnType.FLOAT);
+            valueTypes.add(ColumnType.DOUBLE);
+            valueTypes.add(ColumnType.BOOLEAN);
+            valueTypes.add(ColumnType.DATE);
+            valueTypes.add(ColumnType.TIMESTAMP);
+            valueTypes.add(ColumnType.getGeoHashTypeWithBits(20));
+            valueTypes.add(ColumnType.LONG256);
+            valueTypes.add(ColumnType.UUID);
+
+            try (Unordered16Map map = new Unordered16Map(keyTypes, valueTypes, 64, 0.8, 24)) {
+                final int N = 10000;
+                for (int i = 0; i < N; i++) {
+                    MapKey key = map.withKey();
+                    key.putByte(rnd.nextByte());
+                    key.putShort(rnd.nextShort());
+                    key.putInt(rnd.nextInt());
+                    key.putLong(rnd.nextLong());
+
+                    MapValue value = key.createValue();
+                    Assert.assertTrue(value.isNew());
+
+                    value.putByte(0, rnd.nextByte());
+                    value.putShort(1, rnd.nextShort());
+                    value.putChar(2, rnd.nextChar());
+                    value.putInt(3, rnd.nextInt());
+                    value.putLong(4, rnd.nextLong());
+                    value.putFloat(5, rnd.nextFloat());
+                    value.putDouble(6, rnd.nextDouble());
+                    value.putBool(7, rnd.nextBoolean());
+                    value.putDate(8, rnd.nextLong());
+                    value.putTimestamp(9, rnd.nextLong());
+                    value.putInt(10, rnd.nextInt());
+                    Long256Impl long256 = new Long256Impl();
+                    long256.setAll(
+                            rnd.nextLong(),
+                            rnd.nextLong(),
+                            rnd.nextLong(),
+                            rnd.nextLong()
+                    );
+                    value.putLong256(11, long256);
+                    value.putLong128(12, rnd.nextLong(), rnd.nextLong());
+                }
+
+                rnd.reset();
+
+                // assert that all values are good
+                for (int i = 0; i < N; i++) {
+                    MapKey key = map.withKey();
+                    key.putByte(rnd.nextByte());
+                    key.putShort(rnd.nextShort());
+                    key.putInt(rnd.nextInt());
+                    key.putLong(rnd.nextLong());
+
+                    MapValue value = key.createValue();
+                    Assert.assertFalse(value.isNew());
+
+                    Assert.assertEquals(rnd.nextByte(), value.getByte(0));
+                    Assert.assertEquals(rnd.nextShort(), value.getShort(1));
+                    Assert.assertEquals(rnd.nextChar(), value.getChar(2));
+                    Assert.assertEquals(rnd.nextInt(), value.getInt(3));
+                    Assert.assertEquals(rnd.nextLong(), value.getLong(4));
+                    Assert.assertEquals(rnd.nextFloat(), value.getFloat(5), 0.000000001f);
+                    Assert.assertEquals(rnd.nextDouble(), value.getDouble(6), 0.000000001d);
+                    Assert.assertEquals(rnd.nextBoolean(), value.getBool(7));
+                    Assert.assertEquals(rnd.nextLong(), value.getDate(8));
+                    Assert.assertEquals(rnd.nextLong(), value.getTimestamp(9));
+                    Assert.assertEquals(rnd.nextInt(), value.getInt(10));
+                    Long256Impl long256 = new Long256Impl();
+                    long256.setAll(
+                            rnd.nextLong(),
+                            rnd.nextLong(),
+                            rnd.nextLong(),
+                            rnd.nextLong()
+                    );
+                    Assert.assertEquals(long256, value.getLong256A(11));
+                    Assert.assertEquals(rnd.nextLong(), value.getLong128Lo(12));
+                    Assert.assertEquals(rnd.nextLong(), value.getLong128Hi(12));
+                }
+
+                try (RecordCursor cursor = map.getCursor()) {
+                    HashMap<String, Long> keyToRowIds = new HashMap<>();
+                    LongList rowIds = new LongList();
+                    final Record record = cursor.getRecord();
+                    while (cursor.hasNext()) {
+                        // key part, comes after value part in records
+                        int col = 13;
+                        byte b = record.getByte(col++);
+                        short sh = record.getShort(col++);
+                        int in = record.getInt(col++);
+                        long l = record.getLong(col);
+                        String key = b + "," + sh + "," + in + "," + l;
+                        keyToRowIds.put(key, record.getRowId());
+                        rowIds.add(record.getRowId());
+                    }
+
+                    // Validate that we get the same sequence after toTop.
+                    cursor.toTop();
+                    int i = 0;
+                    while (cursor.hasNext()) {
+                        int col = 13;
+                        byte b = record.getByte(col++);
+                        short sh = record.getShort(col++);
+                        int in = record.getInt(col++);
+                        long l = record.getLong(col);
+                        String key = b + "," + sh + "," + in + "," + l;
+                        Assert.assertEquals((long) keyToRowIds.get(key), record.getRowId());
+                        Assert.assertEquals(rowIds.getQuick(i++), record.getRowId());
+                    }
+
+                    // Validate that recordAt jumps to what we previously inserted.
+                    rnd.reset();
+                    for (i = 0; i < N; i++) {
+                        byte b = rnd.nextByte();
+                        short sh = rnd.nextShort();
+                        int in = rnd.nextInt();
+                        long l = rnd.nextLong();
+                        String key = b + "," + sh + "," + in + "," + l;
+                        long rowId = keyToRowIds.get(key);
+                        cursor.recordAt(record, rowId);
+
+                        // value part, it comes first in record
+                        int col = 0;
+                        Assert.assertEquals(rnd.nextByte(), record.getByte(col++));
+                        Assert.assertEquals(rnd.nextShort(), record.getShort(col++));
+                        Assert.assertEquals(rnd.nextChar(), record.getChar(col++));
+                        Assert.assertEquals(rnd.nextInt(), record.getInt(col++));
+                        Assert.assertEquals(rnd.nextLong(), record.getLong(col++));
+                        Assert.assertEquals(rnd.nextFloat(), record.getFloat(col++), 0.000000001f);
+                        Assert.assertEquals(rnd.nextDouble(), record.getDouble(col++), 0.000000001d);
+                        Assert.assertEquals(rnd.nextBoolean(), record.getBool(col++));
+                        Assert.assertEquals(rnd.nextLong(), record.getDate(col++));
+                        Assert.assertEquals(rnd.nextLong(), record.getTimestamp(col++));
+                        Assert.assertEquals(rnd.nextInt(), record.getInt(col++));
+                        Long256Impl long256 = new Long256Impl();
+                        long256.setAll(
+                                rnd.nextLong(),
+                                rnd.nextLong(),
+                                rnd.nextLong(),
+                                rnd.nextLong()
+                        );
+                        Assert.assertEquals(long256, record.getLong256A(col++));
+                        Assert.assertEquals(rnd.nextLong(), record.getLong128Lo(col));
+                        Assert.assertEquals(rnd.nextLong(), record.getLong128Hi(col));
+                    }
+                }
+            }
+        });
+    }
 
     @Test
     public void testFuzz() throws Exception {
