@@ -138,6 +138,21 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testAutoFlushMustBePositive() {
+        try (Sender s = Sender.builder().autoFlushRows(0).build()) {
+            fail("auto-flush must be positive");
+        } catch (LineSenderException e) {
+            TestUtils.assertContains(e.getMessage(), "auto flush rows has to be positive [autoFlushRows=0]");
+        }
+
+        try (Sender s = Sender.builder().autoFlushRows(-1).build()) {
+            fail("auto-flush must be positive");
+        } catch (LineSenderException e) {
+            TestUtils.assertContains(e.getMessage(), "auto flush rows has to be positive [autoFlushRows=-1]");
+        }
+    }
+
+    @Test
     public void testBufferSizeDoubleSet() throws Exception {
         assertMemoryLeak(() -> {
             Sender.LineSenderBuilder builder = Sender.builder().bufferCapacity(1024);
@@ -603,7 +618,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     public void testMaxPendingRowsNotSupportedForTcp() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                Sender.builder().address(LOCALHOST).maxPendingRows(1).build();
+                Sender.builder().address(LOCALHOST).autoFlushRows(1).build();
                 fail("max pending rows should not be supported for TCP");
             } catch (LineSenderException e) {
                 TestUtils.assertContains(e.getMessage(), "max pending rows is not supported for TCP protocol");
@@ -615,7 +630,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     public void testMaxPendingRows_doubleConfiguration() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                Sender.builder().maxPendingRows(1).maxPendingRows(1);
+                Sender.builder().autoFlushRows(1).autoFlushRows(1);
             } catch (LineSenderException e) {
                 TestUtils.assertContains(e.getMessage(), "max pending rows was already configured [maxPendingRows=1]");
             }

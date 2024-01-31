@@ -213,7 +213,7 @@ public interface Sender extends Closeable {
      *
      * @see LineSenderBuilder#bufferCapacity(int)
      * @see LineSenderBuilder#maxBufferCapacity(int)
-     * @see LineSenderBuilder#maxPendingRows(int)
+     * @see LineSenderBuilder#autoFlushRows(int)
      */
     void flush();
 
@@ -332,28 +332,28 @@ public interface Sender extends Closeable {
      */
     final class LineSenderBuilder {
         private static final int AUTO_FLUSH_DISABLED = 0;
+        private static final int AUTO_FLUSH_ROWS_NOT_SET = -1;
         private static final byte BUFFER_CAPACITY_NOT_SET = 0;
+        private static final int DEFAULT_AUTO_FLUSH_ROWS = 600;
         private static final int DEFAULT_BUFFER_CAPACITY = 64 * 1024;
         private static final int DEFAULT_HTTP_PORT = 9000;
         private static final int DEFAULT_HTTP_TIMEOUT = 30_000;
         private static final int DEFAULT_MAXIMUM_BUFFER_CAPACITY = 100 * 1024 * 1024;
-        private static final int DEFAULT_MAX_PENDING_ROWS = 600;
         private static final long DEFAULT_MAX_RETRY_NANOS = TimeUnit.SECONDS.toNanos(10); // keep sync with the contract of the configuration method
         private static final int DEFAULT_TCP_PORT = 9009;
         private static final int HTTP_TIMEOUT_NOT_SET = -1;
-        private static final int MAX_PENDING_ROWS_NOT_SET = -1;
         private static final int MAX_RETRY_MILLIS_NOT_SET = -1;
         private static final int MIN_BUFFER_SIZE = 512 + 1; // challenge size + 1;
         private static final byte PORT_NOT_SET = 0;
         private static final int PROTOCOL_HTTP = 1;
         private static final int PROTOCOL_NOT_SET = -1;
         private static final int PROTOCOL_TCP = 0;
+        private int autoFlushRows = AUTO_FLUSH_ROWS_NOT_SET;
         private int bufferCapacity = BUFFER_CAPACITY_NOT_SET;
         private String host;
         private int httpTimeout = HTTP_TIMEOUT_NOT_SET;
         private String httpToken;
         private String keyId;
-        private int maxPendingRows = MAX_PENDING_ROWS_NOT_SET;
         private int maximumBufferCapacity = BUFFER_CAPACITY_NOT_SET;
         private final HttpClientConfiguration httpClientConfiguration = new DefaultHttpClientConfiguration() {
             @Override
@@ -449,11 +449,46 @@ public interface Sender extends Closeable {
         }
 
         /**
+         * Set the maximum number of rows that can be buffered locally before they are automatically sent to a server.
+         * <br>
+         * This is only used when communicating over HTTP transport, and it's illegal to call this method when
+         * communicating over TCP transport.
+         * <br>
+         * The Sender will automatically flush the buffer when it reaches this limit. You must make sure that
+         * the buffer is flushed before it reaches the maximum capacity. Otherwise, the Sender will throw an exception
+         * when you try to add more data to the buffer.
+         * <br>
+         * Setting this to 1 means that the Sender will send each row to a server immediately after it is added. This
+         * effectively disables batching and may lead to a significant performance degradation.
+         * <br>
+         * You cannot set this value when auto-flush is disabled. See {@link #disableAutoFlush()}.
+         *
+         * @param autoFlushRows maximum number of rows that can be buffered locally before they are sent to a server.
+         * @return this instance for method chaining
+         * @see #flush()
+         * @see #disableAutoFlush()
+         */
+        public LineSenderBuilder autoFlushRows(int autoFlushRows) {
+            if (this.autoFlushRows > 0) {
+                throw new LineSenderException("auto flush rows was already configured ")
+                        .put("[autoFlushRows=").put(this.autoFlushRows).put("]");
+            } else if (this.autoFlushRows == AUTO_FLUSH_DISABLED) {
+                throw new LineSenderException("cannot set auto flush rows when auto-flush is disabled");
+            }
+            if (autoFlushRows < 1) {
+                throw new LineSenderException("auto flush rows has to be positive ")
+                        .put("[autoFlushRows=").put(autoFlushRows).put("]");
+            }
+            this.autoFlushRows = autoFlushRows;
+            return this;
+        }
+
+        /**
          * Configure capacity of an internal buffer.
          * <p>
          * When communicating over HTTP protocol this buffer size is treated as the initial buffer capacity. Buffer can
          * grow up to {@link #maxBufferCapacity(int)}. You should call {@link #flush()} to send buffered data to
-         * a server. Otherwise, data will be sent automatically when number of buffered rows reaches {@link #maxPendingRows(int)}.
+         * a server. Otherwise, data will be sent automatically when number of buffered rows reaches {@link #autoFlushRows(int)}.
          * <br>
          * When communicating over TCP protocol this buffer size is treated as the maximum buffer capacity. The Sender
          * will automatically flush the buffer when it reaches this capacity.
@@ -488,14 +523,14 @@ public interface Sender extends Closeable {
 
             NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             if (protocol == PROTOCOL_HTTP) {
-                int actualMaxPendingRows = maxPendingRows == MAX_PENDING_ROWS_NOT_SET ? DEFAULT_MAX_PENDING_ROWS : maxPendingRows;
+                int actualAutoFlushRows = autoFlushRows == AUTO_FLUSH_ROWS_NOT_SET ? DEFAULT_AUTO_FLUSH_ROWS : autoFlushRows;
                 long actualMaxRetriesNanos = retryTimeoutMillis == MAX_RETRY_MILLIS_NOT_SET ? DEFAULT_MAX_RETRY_NANOS : retryTimeoutMillis * 1_000_000L;
                 ClientTlsConfiguration tlsConfig = null;
                 if (tlsEnabled) {
                     assert (trustStorePath == null) == (trustStorePassword == null); //either both null or both non-null
                     tlsConfig = new ClientTlsConfiguration(trustStorePath, trustStorePassword, tlsValidationMode == TlsValidationMode.DEFAULT ? ClientTlsConfiguration.TLS_VALIDATION_MODE_FULL : ClientTlsConfiguration.TLS_VALIDATION_MODE_NONE);
                 }
-                return new LineHttpSender(host, port, httpClientConfiguration, tlsConfig, actualMaxPendingRows, httpToken, username, password, actualMaxRetriesNanos);
+                return new LineHttpSender(host, port, httpClientConfiguration, tlsConfig, actualAutoFlushRows, httpToken, username, password, actualMaxRetriesNanos);
             }
             assert protocol == PROTOCOL_TCP;
             LineChannel channel = new PlainTcpLineChannel(nf, host, port, bufferCapacity * 2);
@@ -549,15 +584,15 @@ public interface Sender extends Closeable {
          * <br>
          *
          * @return this instance for method chaining
-         * @see #maxPendingRows(int)
+         * @see #autoFlushRows(int)
          * @see #maxBufferCapacity(int)
          */
         public LineSenderBuilder disableAutoFlush() {
-            if (this.maxPendingRows != -1) {
-                throw new LineSenderException("max pending rows was already configured ")
-                        .put("[maxPendingRows=").put(this.maxPendingRows).put("]");
+            if (this.autoFlushRows != -1) {
+                throw new LineSenderException("auto flush rows was already configured ")
+                        .put("[autoFlushRows=").put(this.autoFlushRows).put("]");
             }
-            this.maxPendingRows = AUTO_FLUSH_DISABLED;
+            this.autoFlushRows = AUTO_FLUSH_DISABLED;
             return this;
         }
 
@@ -737,7 +772,7 @@ public interface Sender extends Closeable {
                     if (autoFlushRows < 1) {
                         throw new LineSenderException("invalid auto_flush_rows [value=").put(autoFlushRows).put("]");
                     }
-                    maxPendingRows(autoFlushRows);
+                    autoFlushRows(autoFlushRows);
                 } else if (Chars.equals("auto_flush", sink)) {
                     pos = getValue(configurationString, pos, sink, "auto_flush");
                     if (Chars.equalsIgnoreCase("off", sink)) {
@@ -872,12 +907,14 @@ public interface Sender extends Closeable {
         }
 
         /**
-         * Set the maximum buffer capacity in bytes. This is only used when communicating over HTTP transport.
+         * Set the maximum local buffer capacity in bytes.
          * <br>
          * This is a hard limit on the maximum buffer capacity. The buffer cannot grow beyond this limit and Sender
          * will throw an exception if you try to accommodate more data in the buffer. To prevent this from happening
-         * you should call {@link #flush()} periodically or set {@link #maxPendingRows(int)} to make sure that
+         * you should call {@link #flush()} periodically or set {@link #autoFlushRows(int)} to make sure that
          * Sender will flush the buffer automatically before it reaches the maximum capacity.
+         * <br>
+         * This is only used when communicating over HTTP transport since TCP transport uses a fixed buffer size.
          * <br>
          * Default value: 100 MB
          *
@@ -892,37 +929,6 @@ public interface Sender extends Closeable {
                         .put("]");
             }
             this.maximumBufferCapacity = maximumBufferCapacity;
-            return this;
-        }
-
-        /**
-         * Set the maximum number of rows that can be buffered locally before they are automatically sent to a server.
-         * <br>
-         * This is only used when communicating over HTTP transport, and it's illegal to call this method when
-         * communicating over TCP transport.
-         * <br>
-         * The Sender will automatically flush the buffer when it reaches this limit. You must make sure that
-         * the buffer is flushed before it reaches the maximum capacity. Otherwise, the Sender will throw an exception
-         * when you try to add more data to the buffer.
-         * <br>
-         * Setting this to 1 means that the Sender will send each row to a server immediately after it is added. This
-         * effectively disables batching and may lead to a significant performance degradation.
-         * <br>
-         * You cannot set this value when auto-flush is disabled. See {@link #disableAutoFlush()}.
-         *
-         * @param maxPendingRows maximum number of rows that can be buffered locally before they are sent to a server.
-         * @return this instance for method chaining
-         * @see #flush()
-         * @see #disableAutoFlush()
-         */
-        public LineSenderBuilder maxPendingRows(int maxPendingRows) {
-            if (this.maxPendingRows > 0) {
-                throw new LineSenderException("max pending rows was already configured ")
-                        .put("[maxPendingRows=").put(this.maxPendingRows).put("]");
-            } else if (this.maxPendingRows == AUTO_FLUSH_DISABLED) {
-                throw new LineSenderException("cannot set max pending rows when auto-flush is disabled");
-            }
-            this.maxPendingRows = maxPendingRows;
             return this;
         }
 
@@ -1073,10 +1079,10 @@ public interface Sender extends Closeable {
                 if (username != null || password != null) {
                     throw new LineSenderException("username/password authentication is not supported for TCP protocol");
                 }
-                if (maxPendingRows == AUTO_FLUSH_DISABLED) {
+                if (autoFlushRows == AUTO_FLUSH_DISABLED) {
                     throw new LineSenderException("disabling auto-flush is not supported for TCP protocol");
-                } else if (maxPendingRows != MAX_PENDING_ROWS_NOT_SET) {
-                    throw new LineSenderException("max pending rows is not supported for TCP protocol");
+                } else if (autoFlushRows != AUTO_FLUSH_ROWS_NOT_SET) {
+                    throw new LineSenderException("auto flush rows is not supported for TCP protocol");
                 }
                 if (httpToken != null) {
                     throw new LineSenderException("HTTP token authentication is not supported for TCP protocol");

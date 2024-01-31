@@ -149,7 +149,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
 
             // the last row is flushed on close()
             sender.table("test").doubleColumn("x", 6.0).atNow();
-        }, DEFAULT_FACTORY.andThen(b -> b.maxPendingRows(2)));
+        }, DEFAULT_FACTORY.andThen(b -> b.autoFlushRows(2)));
     }
 
     @Test
@@ -157,7 +157,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
         try (Sender sender = Sender.builder().address("localhost:1")
                 .http()
                 .maxBufferCapacity(65536)
-                .maxPendingRows(Integer.MAX_VALUE)
+                .autoFlushRows(Integer.MAX_VALUE)
                 .build()
         ) {
             for (int i = 0; i < 100000; i++) {
