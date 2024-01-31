@@ -4823,14 +4823,14 @@ public class SqlOptimiser implements Mutable {
                 newGroupByModel.moveGroupByFrom(groupBy);
                 newGroupByModel.moveLimitFrom(selectChoose);
                 newGroupByModel.moveJoinAliasFrom(selectChoose);
-                newGroupByModel.moveSampleByFrom(selectChoose);
+                newGroupByModel.moveSampleByFrom(groupBy);
 
                 final QueryModel newSelectModel = queryModelPool.next();
                 newSelectModel.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
                 newSelectModel.moveGroupByFrom(selectChoose);
                 newSelectModel.moveLimitFrom(groupBy);
                 newSelectModel.moveJoinAliasFrom(groupBy);
-                newSelectModel.moveSampleByFrom(groupBy);
+                newSelectModel.moveSampleByFrom(selectChoose);
 
                 ObjList<QueryColumn> selectChooseColumns = selectChoose.getColumns();
                 ObjList<QueryColumn> groupByColumns = groupBy.getColumns();
@@ -4850,12 +4850,8 @@ public class SqlOptimiser implements Mutable {
                 // look for any aliases in the old select-group-by that also need to be retained
                 for (int i = 0; i < groupByColumns.size(); i++) {
                     groupByColumn = groupByColumns.getQuick(i);
-                    if (groupByColumn.getAlias() != groupByColumn.getAst().token) {
-                        // Aliased - so push it down.
-                        newGroupByModel.addBottomUpColumn(groupByColumn);
-                        // add the aliased name to the select-choose
-                        newSelectModel.addBottomUpColumn(nextColumn(groupByColumn.getAlias()));
-                    } else if (groupByColumn.getAlias() == groupByColumn.getAst().token && groupByColumn.getAst().type == 8) {
+
+                    if (groupByColumn.getAst().type == 8) {
                         // transform "select-group-by sum(val) sum from (select-choose a.val val from (a))
                         // to        "select-choose sum from (select-group-by sum(a.val) from (a))
                         // therefore, check if we need to "un-alias" the name before we move it down.
@@ -4866,6 +4862,12 @@ public class SqlOptimiser implements Mutable {
                                 groupByColumn.getAst().rhs = selectColumn.getAst();
                             }
                         }
+                        newGroupByModel.addBottomUpColumn(groupByColumn);
+                        // add the aliased name to the select-choose
+                        newSelectModel.addBottomUpColumn(nextColumn(groupByColumn.getAlias()));
+                    } else
+                    if (groupByColumn.getAlias() != groupByColumn.getAst().token) {
+                        // Aliased - so push it down.
                         newGroupByModel.addBottomUpColumn(groupByColumn);
                         // add the aliased name to the select-choose
                         newSelectModel.addBottomUpColumn(nextColumn(groupByColumn.getAlias()));
