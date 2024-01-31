@@ -4033,10 +4033,10 @@ public class SqlOptimiser implements Mutable {
                     nested = base.getNestedModel();
                     // if its of the form (select-virtual (select-choose (select-group-by)))
                     if (nested != null && nested.getSelectModelType() == QueryModel.SELECT_MODEL_CHOOSE &&
-                        nested.getNestedModel() != null && nested.getNestedModel().getSelectModelType() == QueryModel.SELECT_MODEL_GROUP_BY) {
+                        nested.getNestedModel() != null && nested.getNestedModel().getSelectModelType() == QueryModel.SELECT_MODEL_GROUP_BY && baseOuter == null) {
                             baseOuter = base;
+                        break;
                         }
-                    break;
                 case QueryModel.SELECT_MODEL_CHOOSE:
                     nested = base.getNestedModel();
                     // only make it the outer if baseOuter has not already been set
@@ -4871,12 +4871,30 @@ public class SqlOptimiser implements Mutable {
                         // transform "select-group-by sum(val) sum from (select-choose a.val val from (a))
                         // to        "select-choose sum from (select-group-by sum(a.val) from (a))
                         // therefore, check if we need to "un-alias" the name before we move it down.
-                        final ExpressionNode rhs = groupByColumn.getAst().rhs;
-                        if (rhs != null) {
+                        ExpressionNode rhs = groupByColumn.getAst().rhs;
+
+                        while (rhs != null) {
+                            // if there are args
+                            if (rhs.args != null && rhs.args.size() > 0) {
+                                ExpressionNode argNode = null;
+                                // check the args for aliases
+                                for (int j = 0; j < rhs.args.size(); j++) {
+                                    argNode = rhs.args.getQuick(j);
+                                    if (argNode != null) {
+                                        QueryColumn possibleAlias = selectChoose.getAliasToColumnMap().get(argNode.token);
+                                        if (possibleAlias != null && possibleAlias.getAlias() == argNode.token) {
+                                            // it was aliased, so copy the name
+                                            argNode.token = possibleAlias.getAst().token;
+                                        }
+                                    }
+                                }
+                            }
+
                             selectColumn = selectChoose.getAliasToColumnMap().get(rhs.token);
                             if (selectColumn != null && selectColumn.getAlias() != selectColumn.getAst().token) {
                                 groupByColumn.getAst().rhs = selectColumn.getAst();
                             }
+                            rhs = rhs.rhs;
                         }
                         newGroupByModel.addBottomUpColumn(groupByColumn);
                         // add the aliased name to the select-choose
