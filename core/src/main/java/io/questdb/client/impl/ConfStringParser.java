@@ -69,11 +69,8 @@ public final class ConfStringParser {
             } else if (c == ';') {
                 output.put("incomplete key-value pair before end of input at position ").put(pos);
                 return -1;
-            } else if (pos == start && !isValidFirstIdentifierChar(c)) {
-                output.put("key must start with a letter, not '").put(c).put("' at position ").put(pos);
-                return -1;
-            } else if (!isValidIdentifierChar(c)) {
-                output.put("key must be consist of letters and digits, not '").put(c).put("' at position ").put(pos);
+            } else if (invalidIdentifierChar(c)) {
+                output.put("key must be consist of alpha-numerical ascii characters and underscore, not '").put(c).put("' at position ").put(pos);
                 return -1;
             }
 
@@ -119,11 +116,8 @@ public final class ConfStringParser {
                 }
             } else if (c == ':') {
                 lastChar = c;
-            } else if (!isValidIdentifierChar(c)) {
+            } else if (invalidIdentifierChar(c)) {
                 output.put("bad separator, expected ':' got '").put(c).put("' at position ").put(i);
-                return -1;
-            } else if (i == 0 && !isValidFirstIdentifierChar(c)) {
-                output.put("schema name must start with a letter, not '").put(c).put("' at position ").put(i);
                 return -1;
             } else {
                 lastChar = c;
@@ -167,11 +161,12 @@ public final class ConfStringParser {
         return -1;
     }
 
-    private static boolean isValidFirstIdentifierChar(char c) {
-        return Character.isLetter(c) || c == '_';
+    private static boolean invalidIdentifierChar(char c) {
+        return !Character.isDigit(c) && c != '_' && !isAsciiLetter(c);
     }
 
-    private static boolean isValidIdentifierChar(char c) {
-        return Character.isLetterOrDigit(c) || c == '_';
+    private static boolean isAsciiLetter(char c) {
+        char lower = (char) (c | 0x20);
+        return lower >= 'a' && lower <= 'z';
     }
 }

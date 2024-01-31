@@ -14,7 +14,7 @@ public final class ConfStringParserTest {
         String input = "p::n=静;:=42;";
         int pos = assertSchemaOk(input, "p");
         pos = assertNextKeyValueOk(input, pos, "n", "静");
-        assertNextKeyError(input, pos, "key must start with a letter, not ':' at position 7");
+        assertNextKeyError(input, pos, "key must be consist of alpha-numerical ascii characters and underscore, not ':' at position 7");
     }
 
     @Test
@@ -42,18 +42,25 @@ public final class ConfStringParserTest {
     }
 
     @Test
-    public void testKeyMustConsistsOfLettersOrDigits() {
+    public void testKeyMustConsistsOfAlphanumericalsAndUnderscore() {
         String config = "https::ho st=localhost;";
         int pos = assertSchemaOk(config, "https");
-        pos = assertNextKeyError(config, pos, "key must be consist of letters and digits, not ' ' at position 9");
+        pos = assertNextKeyError(config, pos, "key must be consist of alpha-numerical ascii characters and underscore, not ' ' at position 9");
         assertNoNext(config, pos);
-    }
 
-    @Test
-    public void testKeyMustNotStartWithDigits() {
-        String config = "https::2host=localhost;";
-        int pos = assertSchemaOk(config, "https");
-        pos = assertNextKeyError(config, pos, "key must start with a letter, not '2' at position 7");
+        config = "tcp::long_key=localhost;";
+        pos = assertSchemaOk(config, "tcp");
+        pos = assertNextKeyValueOk(config, pos, "long_key", "localhost");
+        assertNoNext(config, pos);
+
+        config = "tcp::1long_key=localhost;";
+        pos = assertSchemaOk(config, "tcp");
+        pos = assertNextKeyValueOk(config, pos, "1long_key", "localhost");
+        assertNoNext(config, pos);
+
+        config = "tcp::1long_key_=localhost;";
+        pos = assertSchemaOk(config, "tcp");
+        pos = assertNextKeyValueOk(config, pos, "1long_key_", "localhost");
         assertNoNext(config, pos);
     }
 

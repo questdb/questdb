@@ -169,7 +169,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
             assertConfStrError("tcp::addr=localhost;max_buf_size=;", "max_buf_size cannot be empty");
             assertConfStrError("tcp::addr=localhost;init_buf_size=;", "init_buf_size cannot be empty");
             assertConfStrError("tcp::addr=localhost;invali=", "invalid parameter [error=missing trailing semicolon at position 27]");
-            assertConfStrError("tcp::1addr=localhost;", "invalid configuration string [error=key must start with a letter, not '1' at position 5]");
+            assertConfStrError("tcp::Řaddr=localhost;", "invalid configuration string [error=key must be consist of alpha-numerical ascii characters and underscore, not 'Ř' at position 5]");
             assertConfStrError("http::addr=localhost:8080;tls_verify=unsafe_off;", "TSL validation disabled, but TLS was not enabled");
             assertConfStrError("http::addr=localhost:8080;tls_verify=bad;", "invalid tls_verify [value=bad, allowed-values=[on, unsafe_off]]");
             assertConfStrError("tcps::addr=localhost;pass=unsafe_off;", "password is not supported for TCP protocol");
