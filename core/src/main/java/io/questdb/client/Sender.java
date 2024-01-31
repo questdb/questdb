@@ -93,10 +93,54 @@ public interface Sender extends Closeable {
         return new LineSenderBuilder();
     }
 
+    /**
+     * Create a new Sender instance described by a configuration string available as an environment variable.
+     * <br>
+     * It obtains a string from an environment variable <code>QDB_CLIENT_CONF</code> and then calls
+     * {@link #fromString(CharSequence)}.
+     * <br>
+     * This is a convenience method suitable for Cloud environments.
+     * <br>
+     * <b>Example</b><br>
+     * 1. Export a configuration string as an environment variable:
+     * <pre>{@code export QDB_CLIENT_CONF="http::addr=localhost:9000;auto_flush_rows=100;"}</pre>
+     * 2. Create and use a Sender:
+     * <pre>{@code
+     * try (Sender sender = Sender.fromEnv()) {
+     *  for (int i = 0; i < 1000; i++) {
+     *    sender.table("my_table").longColumn("value", i).atNow();
+     *  }
+     * }
+     * }</pre>
+     *
+     * @return Sender instance
+     * @see #fromString(CharSequence)
+     */
     static Sender fromEnv() {
         return builder().fromEnv().build();
     }
 
+    /**
+     * Create a Sender instance from a configuration string.
+     * <br>
+     * Configuration string fully describes Sender configuration.
+     * <p>
+     * <b>Example 1</b><br>
+     * This example creates a Sender instance that connects to a QuestDB server over HTTP transport. The created Sender
+     * will auto-flush data when number of buffered rows reaches 1000.
+     * <code>http::addr=localhost:9000;auto_flush_rows=1000;</code>
+     * <br>
+     * <b>Example 2</b><br>
+     * This example creates a Sender instance that connects to a QuestDB server over TCP transport.
+     * <code>tcp::addr=localhost:9009;</code>
+     * <p>
+     * Refer to <a href="https://questdb.io/docs/">QuestDB documentation</a> for a full list of configuration options.
+     *
+     * @param configurationString configuration string
+     * @return Sender instance
+     * @see #fromEnv()
+     * @see #builder()#fromString(CharSequence)
+     */
     static Sender fromString(CharSequence configurationString) {
         return builder().fromString(configurationString).build();
     }
@@ -534,12 +578,24 @@ public interface Sender extends Closeable {
             return fromString(configString);
         }
 
-        public LineSenderBuilder fromString(CharSequence confStr) {
-            if (Chars.isBlank(confStr)) {
+        /**
+         * Configure SenderBuilder from a configuration string.
+         * <br>
+         * This allows to use a configuration string as a template and amend it with additional configuration options.
+         * <br>
+         * It does not allow to override already configured options and throws an exception if you try to do so.
+         * <br>
+         *
+         * @param configurationString configuration string
+         * @return this instance for method chaining
+         * @see #fromString(CharSequence)
+         */
+        public LineSenderBuilder fromString(CharSequence configurationString) {
+            if (Chars.isBlank(configurationString)) {
                 throw new LineSenderException("configuration string cannot be empty nor null");
             }
             StringSink sink = new StringSink();
-            int pos = ConfStringParser.of(confStr, sink);
+            int pos = ConfStringParser.of(configurationString, sink);
             if (pos < 0) {
                 throw new LineSenderException("invalid configuration string: ").put(sink);
             }
@@ -572,28 +628,28 @@ public interface Sender extends Closeable {
             String tcpToken = null;
             String user = null;
             String password = null;
-            while (ConfStringParser.hasNext(confStr, pos)) {
-                pos = ConfStringParser.nextKey(confStr, pos, sink);
+            while (ConfStringParser.hasNext(configurationString, pos)) {
+                pos = ConfStringParser.nextKey(configurationString, pos, sink);
                 if (pos < 0) {
                     throw new LineSenderException("invalid configuration string [error=").put(sink).put(']');
                 }
                 if (Chars.equals("addr", sink)) {
-                    pos = getValue(confStr, pos, sink, "address");
+                    pos = getValue(configurationString, pos, sink, "address");
                     address(sink);
                     if (port == PORT_NOT_SET) {
                         port(protocol == PROTOCOL_TCP ? DEFAULT_TCP_PORT : DEFAULT_HTTP_PORT);
                     }
                 } else if (Chars.equals("user", sink)) {
-                    pos = getValue(confStr, pos, sink, "user");
+                    pos = getValue(configurationString, pos, sink, "user");
                     user = sink.toString();
                 } else if (Chars.equals("pass", sink)) {
-                    pos = getValue(confStr, pos, sink, "pass");
+                    pos = getValue(configurationString, pos, sink, "pass");
                     if (protocol == PROTOCOL_TCP) {
                         throw new LineSenderException("password is not supported for TCP protocol");
                     }
                     password = sink.toString();
                 } else if (Chars.equals("tls_verify", sink)) {
-                    pos = getValue(confStr, pos, sink, "tls_verify");
+                    pos = getValue(configurationString, pos, sink, "tls_verify");
                     if (tlsValidationMode != null) {
                         throw new LineSenderException("tls_verify was already configured");
                     }
@@ -605,13 +661,13 @@ public interface Sender extends Closeable {
                         throw new LineSenderException("invalid tls_verify [value=").put(sink).put(", allowed-values=[on, unsafe_off]]");
                     }
                 } else if (Chars.equals("tls_roots", sink)) {
-                    pos = getValue(confStr, pos, sink, "tls_roots");
+                    pos = getValue(configurationString, pos, sink, "tls_roots");
                     if (trustStorePath != null) {
                         throw new LineSenderException("tls_roots was already configured");
                     }
                     trustStorePath = sink.toString();
                 } else if (Chars.equals("tls_roots_password", sink)) {
-                    pos = getValue(confStr, pos, sink, "tls_roots_password");
+                    pos = getValue(configurationString, pos, sink, "tls_roots_password");
                     if (trustStorePassword != null) {
                         throw new LineSenderException("tls_roots_password was already configured");
                     }
@@ -620,7 +676,7 @@ public interface Sender extends Closeable {
                         trustStorePassword[i] = sink.charAt(i);
                     }
                 } else if (Chars.equals("token", sink)) {
-                    pos = getValue(confStr, pos, sink, "token");
+                    pos = getValue(configurationString, pos, sink, "token");
                     if (protocol == PROTOCOL_TCP) {
                         tcpToken = sink.toString();
                         // will configure later, we need to know a keyId first
@@ -630,26 +686,26 @@ public interface Sender extends Closeable {
                         throw new AssertionError();
                     }
                 } else if (Chars.equals("retry_timeout", sink)) {
-                    pos = getValue(confStr, pos, sink, "retry_timeout");
+                    pos = getValue(configurationString, pos, sink, "retry_timeout");
                     int timeout = parseIntValue(sink, "retry_timeout");
                     retryTimeoutMillis(timeout);
                 } else if (Chars.equals("max_buf_size", sink)) {
-                    pos = getValue(confStr, pos, sink, "max_buf_size");
+                    pos = getValue(configurationString, pos, sink, "max_buf_size");
                     int maxBufferSize = parseIntValue(sink, "max_buf_size");
                     maxBufferCapacity(maxBufferSize);
                 } else if (Chars.equals("init_buf_size", sink)) {
-                    pos = getValue(confStr, pos, sink, "init_buf_size");
+                    pos = getValue(configurationString, pos, sink, "init_buf_size");
                     int initBufferSize = parseIntValue(sink, "init_buf_size");
                     bufferCapacity(initBufferSize);
                 } else if (Chars.equals("auto_flush_rows", sink)) {
-                    pos = getValue(confStr, pos, sink, "auto_flush_rows");
+                    pos = getValue(configurationString, pos, sink, "auto_flush_rows");
                     int autoFlushRows = parseIntValue(sink, "auto_flush_rows");
                     if (autoFlushRows < 1) {
                         throw new LineSenderException("invalid auto_flush_rows [auto_flush_rows=").put(autoFlushRows).put("]");
                     }
                     maxPendingRows(autoFlushRows);
                 } else if (Chars.equals("auto_flush", sink)) {
-                    pos = getValue(confStr, pos, sink, "auto_flush");
+                    pos = getValue(configurationString, pos, sink, "auto_flush");
                     if (Chars.equals("off", sink)) {
                         throw new LineSenderException("auto_flush=off is not supported");
                     } else if (!Chars.equals("on", sink)) {
@@ -657,7 +713,7 @@ public interface Sender extends Closeable {
                     }
                 } else {
                     // ignore unknown keys, unless they are malformed
-                    if ((pos = ConfStringParser.value(confStr, pos, sink)) < 0) {
+                    if ((pos = ConfStringParser.value(configurationString, pos, sink)) < 0) {
                         throw new LineSenderException("invalid parameter [error=").put(sink).put("]");
                     }
                 }
