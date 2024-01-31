@@ -7740,16 +7740,14 @@ public class IODispatcherTest extends AbstractTest {
                 )
                 .run((engine) -> {
                     DelayedWALListener registryListener = new DelayedWALListener();
-                    engine.getQueryRegistry().setListener(registryListener);
-
-                    String ddl = "create table tab (b boolean, ts timestamp, sym symbol) timestamp(ts) partition by DAY WAL";
-                    String insertSql = "insert into tab select true, (86400000000*x)::timestamp, null from long_sequence(1000)";
-                    final String command = "update tab set b=true where sleep(120000)";
-
                     try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
-                        engine.ddl(ddl, executionContext);
-                        engine.insert(insertSql, executionContext);
+                        engine.getQueryRegistry().setListener(registryListener);
+
+                        engine.ddl("create table tab (b boolean, ts timestamp, sym symbol) timestamp(ts) partition by DAY WAL", executionContext);
+                        engine.insert("insert into tab select true, (86400000000*x)::timestamp, null from long_sequence(1000)", executionContext);
                         drainWalQueue(engine);
+
+                        final String command = "update tab set b=false";
 
                         started.setCount(2);
                         stopped.setCount(2);
@@ -7762,13 +7760,7 @@ public class IODispatcherTest extends AbstractTest {
                             try (TestHttpClient testHttpClient = new TestHttpClient()) {
                                 started.countDown();
                                 try {
-                                    testHttpClient.assertGetRegexp(
-                                            url,
-                                            ".*(\"ddl\":\"OK\").*",
-                                            command,
-                                            null, null,
-                                            null
-                                    );
+                                    testHttpClient.assertGetRegexp(url, ".*(\"ddl\":\"OK\").*", command, null, null, null);
                                 } catch (Throwable e) {
                                     queryError.set(e);
                                 }
@@ -7801,31 +7793,21 @@ public class IODispatcherTest extends AbstractTest {
                         long start = System.currentTimeMillis();
 
                         //wait until query appears in registry and get query id
-                        while (true) {
-                            Os.sleep(1);
-                            testHttpClient.assertGetRegexp(
-                                    "/query",
-                                    ".*dataset.*",
-                                    "select query_id from query_activity() where is_wal = true and query = '" + command.replace("'", "''") + "'",
-                                    null, null, null,
-                                    new CharSequenceObjHashMap<String>() {{
-                                        put("nm", "true");
-                                    }},
-                                    "200"
-                            );
-                            String response = testHttpClient.getSink().toString();
-                            int startIdx = response.indexOf("\"dataset\":[[");
-                            if (startIdx > -1) {
-                                startIdx += "\"dataset\":[[".length();
-                                int endIdx = response.indexOf("]]", startIdx);
-                                queryId = Numbers.parseLong(response, startIdx, endIdx);
-                                break;
-                            }
-                            if (System.currentTimeMillis() - start > TIMEOUT) {
-                                throw new RuntimeException("Timed out waiting for command to appear in registry: " + command);
-                            }
-                            if (queryError.get() != null) {
-                                throw new RuntimeException("Query to cancel failed!", queryError.get());
+                        try (RecordCursorFactory factory = engine.select("select query_id from query_activity() where is_wal = true and query = '" + command + "'", executionContext)) {
+                            while (true) {
+                                try (RecordCursor cursor = factory.getCursor(executionContext)) {
+                                    if (cursor.hasNext()) {
+                                        queryId = cursor.getRecord().getLong(0);
+                                        break;
+                                    }
+                                }
+                                Os.sleep(1);
+                                if (System.currentTimeMillis() - start > TIMEOUT) {
+                                    throw new RuntimeException("Timed out waiting for command to appear in registry: " + command);
+                                }
+                                if (queryError.get() != null) {
+                                    throw new RuntimeException("Query failed!", queryError.get());
+                                }
                             }
                         }
 
@@ -7836,14 +7818,20 @@ public class IODispatcherTest extends AbstractTest {
                                 null, null,
                                 "200"
                         );
-                    } catch (Throwable t) {
-                        throw new RuntimeException("Failed on\n ddl: " + ddl +
-                                "\n query: " + command +
-                                "\n exception: ", t);
-                    } finally {
+
                         registryListener.queryFound.countDown();
                         queryError.set(new Exception());//stop wal thread
                         stopped.await();
+
+                        StringSink sink = new StringSink();
+                        TestUtils.assertSql(
+                                engine,
+                                executionContext,
+                                "select count(*) from tab where b=false",
+                                sink,
+                                "count\n1000\n");
+
+                    } finally {
                         engine.getQueryRegistry().setListener(null);
                     }
                 });
@@ -7915,10 +7903,11 @@ public class IODispatcherTest extends AbstractTest {
                 O3Utils.setupWorkerPool(workerPool, engine, engine.getConfiguration().getCircuitBreakerConfiguration());
 
                 workerPool.start(LOG);
-                DelayedWALListener registryListener = new DelayedWALListener();
-                engine.getQueryRegistry().setListener(registryListener);
 
                 try {
+                    DelayedWALListener registryListener = new DelayedWALListener();
+                    engine.getQueryRegistry().setListener(registryListener);
+
                     String ddl = "create table tab (b boolean, ts timestamp, sym symbol) timestamp(ts) partition by DAY WAL";
                     final String command = "update tab set b=false where b=true and sleep(1)";
 
@@ -7932,19 +7921,12 @@ public class IODispatcherTest extends AbstractTest {
 
                     registryListener.queryText = command;
                     registryListener.queryFound.setCount(1);
-                    registryListener.doThrow = false;
 
                     new Thread(() -> {
                         try (TestHttpClient testHttpClient = new TestHttpClient()) {
                             started.countDown();
                             try {
-                                testHttpClient.assertGetRegexp(
-                                        "/query",
-                                        ".*(\"ddl\":\"OK\").*",
-                                        command,
-                                        null, null,
-                                        null
-                                );
+                                testHttpClient.assertGetRegexp("/query", ".*(\"ddl\":\"OK\").*", command, null, null, null);
                             } catch (Throwable e) {
                                 queryError.set(e);
                             }
@@ -7978,31 +7960,21 @@ public class IODispatcherTest extends AbstractTest {
 
                     //wait until query appears in registry and get query id
                     try {
-                        while (true) {
-                            Os.sleep(1);
-                            testHttpClient.assertGetRegexp(
-                                    "/query",
-                                    ".*dataset.*",
-                                    "select query_id from query_activity() where is_wal = true and query = '" + command.replace("'", "''") + "'",
-                                    null, null, null,
-                                    new CharSequenceObjHashMap<String>() {{
-                                        put("nm", "true");
-                                    }},
-                                    "200"
-                            );
-                            String response = testHttpClient.getSink().toString();
-                            int startIdx = response.indexOf("\"dataset\":[[");
-                            if (startIdx > -1) {
-                                startIdx += "\"dataset\":[[".length();
-                                int endIdx = response.indexOf("]]", startIdx);
-                                queryId = Numbers.parseLong(response, startIdx, endIdx);
-                                break;
-                            }
-                            if (System.currentTimeMillis() - start > TIMEOUT) {
-                                throw new RuntimeException("Timed out waiting for command to appear in registry: " + command);
-                            }
-                            if (queryError.get() != null) {
-                                throw new RuntimeException("Query failed!", queryError.get());
+                        try (RecordCursorFactory factory = engine.select("select query_id from query_activity() where is_wal = true and query = '" + command.replace("'", "''") + "'", executionContext)) {
+                            while (true) {
+                                try (RecordCursor cursor = factory.getCursor(executionContext)) {
+                                    if (cursor.hasNext()) {
+                                        queryId = cursor.getRecord().getLong(0);
+                                        break;
+                                    }
+                                }
+                                Os.sleep(1);
+                                if (System.currentTimeMillis() - start > TIMEOUT) {
+                                    throw new RuntimeException("Timed out waiting for command to appear in registry: " + command);
+                                }
+                                if (queryError.get() != null) {
+                                    throw new RuntimeException("Query failed!", queryError.get());
+                                }
                             }
                         }
                     } finally {
@@ -9343,7 +9315,6 @@ public class IODispatcherTest extends AbstractTest {
 
     private static class DelayedWALListener implements QueryRegistry.Listener {
         private final SOCountDownLatch queryFound = new SOCountDownLatch(1);
-        private boolean doThrow = true;
         private volatile CharSequence queryText;
 
         @Override
@@ -9359,10 +9330,6 @@ public class IODispatcherTest extends AbstractTest {
             if (Chars.equalsNc(queryText, query)) {
                 queryFound.await();
                 queryText = null;
-
-                if (doThrow) {
-                    throw CairoException.critical(666).put("cancelling WAL application!");
-                }
             }
         }
     }
