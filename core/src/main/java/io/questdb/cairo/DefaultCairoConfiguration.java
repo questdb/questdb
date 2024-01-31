@@ -763,7 +763,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getSqlUnorderedMapMaxEntrySize() {
-        return 32;
+        return 16;
     }
 
     @Override

@@ -95,6 +95,7 @@ final class Unordered8MapRecord implements MapRecord {
             offset += size;
         }
 
+        assert offset <= Unordered8Map.KEY_SIZE;
         offset = Unordered8Map.KEY_SIZE;
         if (valueTypes != null) {
             for (int i = 0, n = valueTypes.getColumnCount(); i < n; i++) {

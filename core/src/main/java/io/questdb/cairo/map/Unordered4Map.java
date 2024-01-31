@@ -34,10 +34,10 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * Unordered16Map is a general purpose off-heap hash table with keys up to 16 bytes in size used
+ * Unordered4Map is a general purpose off-heap hash table with keys up to 4 bytes in size used
  * to store intermediate data of group by, sample by queries. It provides {@link MapKey} and
  * {@link MapValue}, as well as {@link RecordCursor} interfaces for data access and modification.
- * The preferred way to create an Unordered16Map is {@link MapFactory}.
+ * The preferred way to create an Unordered4Map is {@link MapFactory}.
  * <p>
  * Map iteration provided by {@link RecordCursor} does not preserve the key insertion order, hence
  * the unordered map name.
@@ -59,27 +59,27 @@ import org.jetbrains.annotations.Nullable;
  * <p>
  * Key-value pairs stored in the hash table may have the following layout:
  * <pre>
- * |   Key columns 0..K   | Optional padding | Value columns 0..V |
- * +----------------------+------------------+--------------------+
- * |    up to 16 bytes    |        -         |         -          |
- * +----------------------+------------------+--------------------+
+ * |   Key columns 0..K  | Optional padding | Value columns 0..V |
+ * +---------------------+------------------+--------------------+
+ * |    up to 4 bytes    |        -         |         -          |
+ * +---------------------+------------------+--------------------+
  * </pre>
  */
-public class Unordered16Map implements Map, Reopenable {
+public class Unordered4Map implements Map, Reopenable {
 
-    static final long KEY_SIZE = 2 * Long.BYTES;
+    static final long KEY_SIZE = Integer.BYTES;
     private static final long MAX_SAFE_INT_POW_2 = 1L << 31;
     private static final int MIN_KEY_CAPACITY = 16;
-    private final Unordered16MapCursor cursor;
+    private final Unordered4MapCursor cursor;
     private final long entrySize;
     private final Key key;
     private final double loadFactor;
     private final int maxResizes;
     private final int memoryTag;
-    private final Unordered16MapRecord record;
-    private final Unordered16MapValue value;
-    private final Unordered16MapValue value2;
-    private final Unordered16MapValue value3;
+    private final Unordered4MapRecord record;
+    private final Unordered4MapValue value;
+    private final Unordered4MapValue value2;
+    private final Unordered4MapValue value3;
     private int free;
     private boolean hasZero;
     private int initialKeyCapacity;
@@ -92,7 +92,7 @@ public class Unordered16Map implements Map, Reopenable {
     private int size = 0;
     private long zeroMemStart; // Zero key-value pair memory start pointer.
 
-    public Unordered16Map(
+    public Unordered4Map(
             @Transient @NotNull ColumnTypes keyTypes,
             @Transient @Nullable ColumnTypes valueTypes,
             int keyCapacity,
@@ -102,7 +102,7 @@ public class Unordered16Map implements Map, Reopenable {
         this(keyTypes, valueTypes, keyCapacity, loadFactor, maxResizes, MemoryTag.NATIVE_UNORDERED_MAP);
     }
 
-    Unordered16Map(
+    Unordered4Map(
             @NotNull @Transient ColumnTypes keyTypes,
             @Nullable @Transient ColumnTypes valueTypes,
             int keyCapacity,
@@ -156,23 +156,22 @@ public class Unordered16Map implements Map, Reopenable {
             }
         }
 
-        this.entrySize = Bytes.align8b(KEY_SIZE + valueSize);
+        this.entrySize = Bytes.align4b(KEY_SIZE + valueSize);
         final long sizeBytes = entrySize * this.keyCapacity;
         memStart = Unsafe.malloc(sizeBytes, memoryTag);
         Vect.memset(memStart, sizeBytes, 0);
         memLimit = memStart + sizeBytes;
         keyMemStart = Unsafe.malloc(KEY_SIZE, memoryTag);
-        Unsafe.getUnsafe().putLong(keyMemStart, 0);
-        Unsafe.getUnsafe().putLong(keyMemStart + 8L, 0);
+        Unsafe.getUnsafe().putInt(keyMemStart, 0);
         zeroMemStart = Unsafe.malloc(entrySize, memoryTag);
         Vect.memset(zeroMemStart, entrySize, 0);
 
-        value = new Unordered16MapValue(valueSize, valueOffsets);
-        value2 = new Unordered16MapValue(valueSize, valueOffsets);
-        value3 = new Unordered16MapValue(valueSize, valueOffsets);
+        value = new Unordered4MapValue(valueSize, valueOffsets);
+        value2 = new Unordered4MapValue(valueSize, valueOffsets);
+        value3 = new Unordered4MapValue(valueSize, valueOffsets);
 
-        record = new Unordered16MapRecord(valueSize, valueOffsets, value, keyTypes, valueTypes);
-        cursor = new Unordered16MapCursor(record, this);
+        record = new Unordered4MapRecord(valueSize, valueOffsets, value, keyTypes, valueTypes);
+        cursor = new Unordered4MapCursor(record, this);
         key = new Key();
     }
 
@@ -183,8 +182,7 @@ public class Unordered16Map implements Map, Reopenable {
         nResizes = 0;
         hasZero = false;
         Vect.memset(memStart, memLimit - memStart, 0);
-        Unsafe.getUnsafe().putLong(keyMemStart, 0);
-        Unsafe.getUnsafe().putLong(keyMemStart + 8L, 0);
+        Unsafe.getUnsafe().putInt(keyMemStart, 0);
         Vect.memset(zeroMemStart, entrySize, 0);
     }
 
@@ -225,17 +223,17 @@ public class Unordered16Map implements Map, Reopenable {
         if (srcSize == 0) {
             return;
         }
-        Unordered16Map src16Map = (Unordered16Map) srcMap;
+        Unordered4Map src4Map = (Unordered4Map) srcMap;
 
         // First, we handle zero key.
-        if (src16Map.hasZero) {
+        if (src4Map.hasZero) {
             if (hasZero) {
                 mergeFunc.merge(
                         valueAt(zeroMemStart),
-                        src16Map.valueAt(src16Map.zeroMemStart)
+                        src4Map.valueAt(src4Map.zeroMemStart)
                 );
             } else {
-                Vect.memcpy(zeroMemStart, src16Map.zeroMemStart, entrySize);
+                Vect.memcpy(zeroMemStart, src4Map.zeroMemStart, entrySize);
                 hasZero = true;
             }
             // Check if zero was the only element in the source map.
@@ -246,24 +244,22 @@ public class Unordered16Map implements Map, Reopenable {
 
         // Then we handle all non-zero keys.
         OUTER:
-        for (long srcAddr = src16Map.memStart; srcAddr < src16Map.memLimit; srcAddr += entrySize) {
-            long key1 = Unsafe.getUnsafe().getLong(srcAddr);
-            long key2 = Unsafe.getUnsafe().getLong(srcAddr + 8L);
-            if (key1 == 0 && key2 == 0) {
+        for (long srcAddr = src4Map.memStart; srcAddr < src4Map.memLimit; srcAddr += entrySize) {
+            int key = Unsafe.getUnsafe().getInt(srcAddr);
+            if (key == 0) {
                 continue;
             }
 
-            long destAddr = getStartAddress(Hash.hashLong128(key1, key2) & mask);
+            long destAddr = getStartAddress(Hash.hashInt(key) & mask);
             for (; ; ) {
-                long k1 = Unsafe.getUnsafe().getLong(destAddr);
-                long k2 = Unsafe.getUnsafe().getLong(destAddr + 8L);
-                if (k1 == 0 && k2 == 0) {
+                int k = Unsafe.getUnsafe().getInt(destAddr);
+                if (k == 0) {
                     break;
-                } else if (k1 == key1 && k2 == key2) {
+                } else if (k == key) {
                     // Match found, merge values.
                     mergeFunc.merge(
                             valueAt(destAddr),
-                            src16Map.valueAt(srcAddr)
+                            src4Map.valueAt(srcAddr)
                     );
                     continue OUTER;
                 }
@@ -343,17 +339,15 @@ public class Unordered16Map implements Map, Reopenable {
         return key.init();
     }
 
-    private Unordered16MapValue asNew(long startAddress, long key1, long key2, int hashCode, Unordered16MapValue value) {
-        Unsafe.getUnsafe().putLong(startAddress, key1);
-        Unsafe.getUnsafe().putLong(startAddress + 8L, key2);
+    private Unordered4MapValue asNew(long startAddress, int key, int hashCode, Unordered4MapValue value) {
+        Unsafe.getUnsafe().putInt(startAddress, key);
         if (--free == 0) {
             rehash();
             // Index may have changed after rehash, so we need to find the key.
             startAddress = getStartAddress(hashCode & mask);
             for (; ; ) {
-                long k1 = Unsafe.getUnsafe().getLong(startAddress);
-                long k2 = Unsafe.getUnsafe().getLong(startAddress + 8L);
-                if (k1 == key1 && k2 == key2) {
+                int k = Unsafe.getUnsafe().getInt(startAddress);
+                if (k == key) {
                     break;
                 }
                 startAddress = getNextAddress(startAddress);
@@ -381,27 +375,25 @@ public class Unordered16Map implements Map, Reopenable {
         return getStartAddress(memStart, index);
     }
 
-    private Unordered16MapValue probe0(long key1, long key2, long startAddress, int hashCode, Unordered16MapValue value) {
+    private Unordered4MapValue probe0(int key, long startAddress, int hashCode, Unordered4MapValue value) {
         for (; ; ) {
             startAddress = getNextAddress(startAddress);
-            long k1 = Unsafe.getUnsafe().getLong(startAddress);
-            long k2 = Unsafe.getUnsafe().getLong(startAddress + 8L);
-            if (k1 == 0 && k2 == 0) {
-                return asNew(startAddress, key1, key2, hashCode, value);
-            } else if (k1 == key1 && k2 == key2) {
+            int k = Unsafe.getUnsafe().getInt(startAddress);
+            if (k == 0) {
+                return asNew(startAddress, key, hashCode, value);
+            } else if (k == key) {
                 return valueOf(startAddress, false, value);
             }
         }
     }
 
-    private Unordered16MapValue probeReadOnly(long key1, long key2, long startAddress, Unordered16MapValue value) {
+    private Unordered4MapValue probeReadOnly(int key, long startAddress, Unordered4MapValue value) {
         for (; ; ) {
             startAddress = getNextAddress(startAddress);
-            long k1 = Unsafe.getUnsafe().getLong(startAddress);
-            long k2 = Unsafe.getUnsafe().getLong(startAddress + 8L);
-            if (k1 == 0 && k2 == 0) {
+            int k = Unsafe.getUnsafe().getInt(startAddress);
+            if (k == 0) {
                 return null;
-            } else if (k1 == key1 && k2 == key2) {
+            } else if (k == key) {
                 return valueOf(startAddress, false, value);
             }
         }
@@ -429,14 +421,13 @@ public class Unordered16Map implements Map, Reopenable {
         final int newMask = (int) newKeyCapacity - 1;
 
         for (long addr = memStart; addr < memLimit; addr += entrySize) {
-            long key1 = Unsafe.getUnsafe().getLong(addr);
-            long key2 = Unsafe.getUnsafe().getLong(addr + 8L);
-            if (key1 == 0 && key2 == 0) {
+            int key = Unsafe.getUnsafe().getInt(addr);
+            if (key == 0) {
                 continue;
             }
 
-            long newAddr = getStartAddress(newMemStart, Hash.hashLong128(key1, key2) & newMask);
-            while (Unsafe.getUnsafe().getLong(newAddr) != 0 || Unsafe.getUnsafe().getLong(newAddr + 8L) != 0) {
+            long newAddr = getStartAddress(newMemStart, Hash.hashInt(key) & newMask);
+            while (Unsafe.getUnsafe().getInt(newAddr) != 0) {
                 newAddr += entrySize;
                 if (newAddr >= newMemLimit) {
                     newAddr = newMemStart;
@@ -455,7 +446,7 @@ public class Unordered16Map implements Map, Reopenable {
         nResizes++;
     }
 
-    private Unordered16MapValue valueOf(long startAddress, boolean newValue, Unordered16MapValue value) {
+    private Unordered4MapValue valueOf(long startAddress, boolean newValue, Unordered4MapValue value) {
         return value.of(startAddress, memLimit, newValue);
     }
 
@@ -464,9 +455,7 @@ public class Unordered16Map implements Map, Reopenable {
     }
 
     boolean isZeroKey(long startAddress) {
-        long key1 = Unsafe.getUnsafe().getLong(startAddress);
-        long key2 = Unsafe.getUnsafe().getLong(startAddress + 8L);
-        return key1 == 0 && key2 == 0;
+        return Unsafe.getUnsafe().getInt(startAddress) == 0;
     }
 
     class Key implements MapKey {
@@ -486,22 +475,20 @@ public class Unordered16Map implements Map, Reopenable {
 
         @Override
         public MapValue createValue() {
-            long key1 = Unsafe.getUnsafe().getLong(keyMemStart);
-            long key2 = Unsafe.getUnsafe().getLong(keyMemStart + 8L);
-            if (key1 == 0 && key2 == 0) {
+            int key = Unsafe.getUnsafe().getInt(keyMemStart);
+            if (key == 0) {
                 return createZeroKeyValue();
             }
-            return createNonZeroKeyValue(key1, key2, Hash.hashLong128(key1, key2));
+            return createNonZeroKeyValue(key, Hash.hashInt(key));
         }
 
         @Override
         public MapValue createValue(int hashCode) {
-            long key1 = Unsafe.getUnsafe().getLong(keyMemStart);
-            long key2 = Unsafe.getUnsafe().getLong(keyMemStart + 8L);
-            if (key1 == 0 && key2 == 0) {
+            int key = Unsafe.getUnsafe().getInt(keyMemStart);
+            if (key == 0) {
                 return createZeroKeyValue();
             }
-            return createNonZeroKeyValue(key1, key2, hashCode);
+            return createNonZeroKeyValue(key, hashCode);
         }
 
         @Override
@@ -521,9 +508,7 @@ public class Unordered16Map implements Map, Reopenable {
 
         @Override
         public int hash() {
-            long key1 = Unsafe.getUnsafe().getLong(keyMemStart);
-            long key2 = Unsafe.getUnsafe().getLong(keyMemStart + 8L);
-            return Hash.hashLong128(key1, key2);
+            return Hash.hashInt(Unsafe.getUnsafe().getInt(keyMemStart));
         }
 
         public Key init() {
@@ -561,13 +546,12 @@ public class Unordered16Map implements Map, Reopenable {
 
         @Override
         public void putDate(long value) {
-            putLong(value);
+            throw new UnsupportedOperationException();
         }
 
         @Override
         public void putDouble(double value) {
-            Unsafe.getUnsafe().putDouble(appendAddress, value);
-            appendAddress += 8L;
+            throw new UnsupportedOperationException();
         }
 
         @Override
@@ -584,15 +568,12 @@ public class Unordered16Map implements Map, Reopenable {
 
         @Override
         public void putLong(long value) {
-            Unsafe.getUnsafe().putLong(appendAddress, value);
-            appendAddress += 8L;
+            throw new UnsupportedOperationException();
         }
 
         @Override
         public void putLong128(long lo, long hi) {
-            Unsafe.getUnsafe().putLong(appendAddress, lo);
-            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, hi);
-            appendAddress += 16L;
+            throw new UnsupportedOperationException();
         }
 
         @Override
@@ -628,7 +609,7 @@ public class Unordered16Map implements Map, Reopenable {
 
         @Override
         public void putTimestamp(long value) {
-            putLong(value);
+            throw new UnsupportedOperationException();
         }
 
         @Override
@@ -636,17 +617,16 @@ public class Unordered16Map implements Map, Reopenable {
             appendAddress += bytes;
         }
 
-        private MapValue createNonZeroKeyValue(long key1, long key2, int hashCode) {
+        private MapValue createNonZeroKeyValue(int key, int hashCode) {
             int index = hashCode & mask;
             long startAddress = getStartAddress(index);
-            long k1 = Unsafe.getUnsafe().getLong(startAddress);
-            long k2 = Unsafe.getUnsafe().getLong(startAddress + 8L);
-            if (k1 == 0 && k2 == 0) {
-                return asNew(startAddress, key1, key2, hashCode, value);
-            } else if (k1 == key1 && k2 == key2) {
+            int k = Unsafe.getUnsafe().getInt(startAddress);
+            if (k == 0) {
+                return asNew(startAddress, key, hashCode, value);
+            } else if (k == key) {
                 return valueOf(startAddress, false, value);
             }
-            return probe0(key1, key2, startAddress, hashCode, value);
+            return probe0(key, startAddress, hashCode, value);
         }
 
         private MapValue createZeroKeyValue() {
@@ -657,31 +637,27 @@ public class Unordered16Map implements Map, Reopenable {
             return valueOf(zeroMemStart, true, value);
         }
 
-        private MapValue findValue(Unordered16MapValue value) {
-            long key1 = Unsafe.getUnsafe().getLong(keyMemStart);
-            long key2 = Unsafe.getUnsafe().getLong(keyMemStart + 8L);
-            if (key1 == 0 && key2 == 0) {
+        private MapValue findValue(Unordered4MapValue value) {
+            int key = Unsafe.getUnsafe().getInt(keyMemStart);
+            if (key == 0) {
                 return hasZero ? valueOf(zeroMemStart, false, value) : null;
             }
 
-            int hashCode = Hash.hashLong128(key1, key2);
+            int hashCode = Hash.hashInt(key);
             int index = hashCode & mask;
             long startAddress = getStartAddress(index);
-            long k1 = Unsafe.getUnsafe().getLong(startAddress);
-            long k2 = Unsafe.getUnsafe().getLong(startAddress + 8L);
-            if (k1 == 0 && k2 == 0) {
+            int k = Unsafe.getUnsafe().getInt(startAddress);
+            if (k == 0) {
                 return null;
-            } else if (k1 == key1 && k2 == key2) {
+            } else if (k == key) {
                 return valueOf(startAddress, false, value);
             }
-            return probeReadOnly(key1, key2, startAddress, value);
+            return probeReadOnly(key, startAddress, value);
         }
 
         void copyFromRawKey(long srcPtr) {
-            long srcKey1 = Unsafe.getUnsafe().getLong(srcPtr);
-            long srcKey2 = Unsafe.getUnsafe().getLong(srcPtr + 8L);
-            Unsafe.getUnsafe().putLong(appendAddress, srcKey1);
-            Unsafe.getUnsafe().putLong(appendAddress + 8L, srcKey2);
+            int srcKey = Unsafe.getUnsafe().getInt(srcPtr);
+            Unsafe.getUnsafe().putInt(appendAddress, srcKey);
             appendAddress += KEY_SIZE;
         }
 

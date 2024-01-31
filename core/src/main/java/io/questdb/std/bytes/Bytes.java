@@ -1,7 +1,22 @@
 package io.questdb.std.bytes;
 
 public class Bytes {
+
     private Bytes() {
+    }
+
+    /**
+     * Aligns the given pointer to 2 bytes.
+     */
+    public static long align2b(long ptr) {
+        return (ptr + 1) & ~0x1;
+    }
+
+    /**
+     * Aligns the given pointer to 4 bytes.
+     */
+    public static long align4b(long ptr) {
+        return (ptr + 3) & ~0x3;
     }
 
     /**
