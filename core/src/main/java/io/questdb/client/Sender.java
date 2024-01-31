@@ -117,7 +117,11 @@ public interface Sender extends Closeable {
      * @see #fromString(CharSequence)
      */
     static Sender fromEnv() {
-        return builder().fromEnv().build();
+        String configString = System.getenv("QDB_CLIENT_CONF");
+        if (Chars.isBlank(configString)) {
+            throw new LineSenderException("QDB_CLIENT_CONF environment variable is not set");
+        }
+        return fromString(configString);
     }
 
     /**
@@ -630,14 +634,6 @@ public interface Sender extends Closeable {
             }
             tlsEnabled = true;
             return this;
-        }
-
-        public LineSenderBuilder fromEnv() {
-            String configString = System.getenv("QDB_CLIENT_CONF");
-            if (Chars.isBlank(configString)) {
-                throw new LineSenderException("QDB_CLIENT_CONF environment variable is not set");
-            }
-            return fromString(configString);
         }
 
         /**
