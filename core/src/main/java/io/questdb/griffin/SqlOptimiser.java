@@ -4012,6 +4012,8 @@ public class SqlOptimiser implements Mutable {
         QueryModel baseGroupBy = null;
         QueryModel baseOuter = null;
         QueryModel baseDistinct = null;
+        QueryModel nested = null;
+
         // while order by is initially kept in the base model (most inner one)
         // columns used in order by could be stored in one of many models : inner model, group by model, window or outer model
         // here we've to descend and keep track of all of those
@@ -4028,9 +4030,17 @@ public class SqlOptimiser implements Mutable {
                     baseGroupBy = base;
                     break;
                 case QueryModel.SELECT_MODEL_VIRTUAL:
+                    nested = base.getNestedModel();
+                    // if its of the form (select-virtual (select-choose (select-group-by)))
+                    if (nested != null && nested.getSelectModelType() == QueryModel.SELECT_MODEL_CHOOSE &&
+                        nested.getNestedModel() != null && nested.getNestedModel().getSelectModelType() == QueryModel.SELECT_MODEL_GROUP_BY) {
+                            baseOuter = base;
+                        }
+                    break;
                 case QueryModel.SELECT_MODEL_CHOOSE:
-                    QueryModel nested = base.getNestedModel();
-                    if (nested != null && nested.getSelectModelType() == QueryModel.SELECT_MODEL_GROUP_BY) {
+                    nested = base.getNestedModel();
+                    // only make it the outer if baseOuter has not already been set
+                    if (nested != null && nested.getSelectModelType() == QueryModel.SELECT_MODEL_GROUP_BY && baseOuter == null) {
                         baseOuter = base;
                     }
                     break;
@@ -4080,7 +4090,7 @@ public class SqlOptimiser implements Mutable {
             }
         }
 
-        QueryModel nested = base.getNestedModel();
+        nested = base.getNestedModel();
         if (nested != null) {
             rewriteOrderByPosition(nested);
         }
@@ -5178,7 +5188,7 @@ public class SqlOptimiser implements Mutable {
             resolveJoinColumns(rewrittenModel);
             optimiseBooleanNot(rewrittenModel);
             rewrittenModel = rewriteSelectClause(rewrittenModel, true, sqlExecutionContext, sqlParserCallback);
-            rewrittenModel = rewriteGroupByToExtractAliases(rewrittenModel);
+           rewrittenModel = rewriteGroupByToExtractAliases(rewrittenModel);
             optimiseJoins(rewrittenModel);
             rewriteCountDistinct(rewrittenModel);
             rewriteNegativeLimit(rewrittenModel, sqlExecutionContext);

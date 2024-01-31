@@ -6576,10 +6576,9 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "SampleBy\n" +
                         "  keys: [timestamp]\n" +
                         "  values: [min(x)]\n" +
-                        "    SelectedRecord\n" +
-                        "        DataFrame\n" +
-                        "            Row forward scan\n" +
-                        "            Frame forward scan on: test1\n");
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: test1\n");
 
         assertQuery(
                 "min\ttimestamp\ttimestamp0\n" +
