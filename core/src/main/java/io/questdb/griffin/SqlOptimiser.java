@@ -4806,9 +4806,15 @@ public class SqlOptimiser implements Mutable {
     // This function inverts the select-choose/select-group-by nodes
     // This increases the number of queries that can have the AsyncJitFilter optimised into a top-level Async Group By
     private QueryModel rewriteGroupByToExtractAliases(QueryModel model) throws SqlException {
+        // Handle recursion base case
+        if (model == null) {
+            return model;
+        }
+
         // Look for queries like (select-group-by (select-choose))
-        if (model.getSelectModelType() == QueryModel.SELECT_MODEL_GROUP_BY) {
-            if (model.getNestedModel().getSelectModelType() == QueryModel.SELECT_MODEL_CHOOSE) {
+        if ((model.getSelectModelType() == QueryModel.SELECT_MODEL_GROUP_BY)
+                && (model.getNestedModel().getSelectModelType() == QueryModel.SELECT_MODEL_CHOOSE)) {
+
                 final QueryModel groupBy = model;
                 final QueryModel selectChoose = groupBy.getNestedModel();
 
@@ -4872,11 +4878,16 @@ public class SqlOptimiser implements Mutable {
                 // nest it (select-choose (select-group-by)) (inverted from what was input originally)
                 newGroupByModel.setNestedModel(selectChoose.getNestedModel());
                 newSelectModel.setNestedModel(newGroupByModel);
-                return newSelectModel;
-            }
-        }
 
-        return model;
+                // now apply recursively
+                QueryModel recursiveResult = rewriteGroupByToExtractAliases(newGroupByModel.getNestedModel());
+                newGroupByModel.setNestedModel(recursiveResult);
+                return newSelectModel;
+        } else {
+            QueryModel recursiveResult = rewriteGroupByToExtractAliases(model.getNestedModel());
+            model.setNestedModel(recursiveResult);
+            return model;
+        }
     }
 
     // the intent is to either validate top-level columns in select columns or replace them with function calls
