@@ -38,11 +38,11 @@ import org.jetbrains.annotations.Nullable;
  * <p>
  * Uses an offsets array to speed up key and value column look-ups.
  */
-final class Unordered16MapRecord implements MapRecord {
+final class Unordered4MapRecord implements MapRecord {
     private final long[] columnOffsets;
     private final Long256Impl[] keyLong256A;
     private final Long256Impl[] keyLong256B;
-    private final Unordered16MapValue value;
+    private final Unordered4MapValue value;
     private final long[] valueOffsets;
     private final long valueSize;
     private long limit;
@@ -50,10 +50,10 @@ final class Unordered16MapRecord implements MapRecord {
     private IntList symbolTableIndex;
     private RecordCursor symbolTableResolver;
 
-    Unordered16MapRecord(
+    Unordered4MapRecord(
             long valueSize,
             long[] valueOffsets,
-            Unordered16MapValue value,
+            Unordered4MapValue value,
             @NotNull @Transient ColumnTypes keyTypes,
             @Nullable @Transient ColumnTypes valueTypes
     ) {
@@ -95,8 +95,8 @@ final class Unordered16MapRecord implements MapRecord {
             offset += size;
         }
 
-        assert offset <= Unordered16Map.KEY_SIZE;
-        offset = Unordered16Map.KEY_SIZE;
+        assert offset <= Unordered4Map.KEY_SIZE;
+        offset = Unordered4Map.KEY_SIZE;
         if (valueTypes != null) {
             for (int i = 0, n = valueTypes.getColumnCount(); i < n; i++) {
                 int columnType = valueTypes.getColumnType(i);
@@ -121,7 +121,7 @@ final class Unordered16MapRecord implements MapRecord {
         this.keyLong256B = long256B;
     }
 
-    private Unordered16MapRecord(
+    private Unordered4MapRecord(
             long valueSize,
             long[] valueOffsets,
             long[] columnOffsets,
@@ -131,14 +131,14 @@ final class Unordered16MapRecord implements MapRecord {
         this.valueSize = valueSize;
         this.valueOffsets = valueOffsets;
         this.columnOffsets = columnOffsets;
-        this.value = new Unordered16MapValue(valueSize, valueOffsets);
+        this.value = new Unordered4MapValue(valueSize, valueOffsets);
         this.keyLong256A = keyLong256A;
         this.keyLong256B = keyLong256B;
     }
 
     @SuppressWarnings("MethodDoesntCallSuperMethod")
     @Override
-    public Unordered16MapRecord clone() {
+    public Unordered4MapRecord clone() {
         final Long256Impl[] long256A;
         final Long256Impl[] long256B;
 
@@ -157,19 +157,19 @@ final class Unordered16MapRecord implements MapRecord {
             long256A = null;
             long256B = null;
         }
-        return new Unordered16MapRecord(valueSize, valueOffsets, columnOffsets, long256A, long256B);
+        return new Unordered4MapRecord(valueSize, valueOffsets, columnOffsets, long256A, long256B);
     }
 
     @Override
     public void copyToKey(MapKey destKey) {
-        Unordered16Map.Key destBaseKey = (Unordered16Map.Key) destKey;
+        Unordered4Map.Key destBaseKey = (Unordered4Map.Key) destKey;
         destBaseKey.copyFromRawKey(startAddress);
     }
 
     @Override
     public void copyValue(MapValue destValue) {
-        Unordered16MapValue destFastValue = (Unordered16MapValue) destValue;
-        destFastValue.copyRawValue(startAddress + Unordered16Map.KEY_SIZE);
+        Unordered4MapValue destFastValue = (Unordered4MapValue) destValue;
+        destFastValue.copyRawValue(startAddress + Unordered4Map.KEY_SIZE);
     }
 
     @Override
@@ -291,9 +291,7 @@ final class Unordered16MapRecord implements MapRecord {
 
     @Override
     public int keyHashCode() {
-        long key1 = Unsafe.getUnsafe().getLong(startAddress);
-        long key2 = Unsafe.getUnsafe().getLong(startAddress + 8L);
-        return Hash.hashLong128(key1, key2);
+        return Hash.hashInt(Unsafe.getUnsafe().getInt(startAddress));
     }
 
     public void of(long address) {
