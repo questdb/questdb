@@ -119,13 +119,6 @@ public interface SecurityContext {
     }
 
     /**
-     * Username displayed, i.e. in web console or as a response to current_user().
-     */
-    default CharSequence getDisplayPrincipal(CharSequence defaultPrincipal) {
-        return getPrincipal();
-    }
-
-    /**
      * User account used for permission checks, i.e. the session user account
      * or the service account defined by an executed ASSUME statement.
      */

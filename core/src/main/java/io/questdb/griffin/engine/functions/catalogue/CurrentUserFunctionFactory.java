@@ -67,12 +67,12 @@ public class CurrentUserFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence getStr(Record rec) {
-            return context.getDisplayPrincipal(context.getPrincipal());
+            return context.getPrincipal();
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
-            return context.getDisplayPrincipal(context.getPrincipal());
+            return context.getPrincipal();
         }
 
         @Override

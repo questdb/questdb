@@ -67,12 +67,12 @@ public class SessionUserFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence getStr(Record rec) {
-            return context.getDisplayPrincipal(context.getSessionPrincipal());
+            return context.getSessionPrincipal();
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
-            return context.getDisplayPrincipal(context.getSessionPrincipal());
+            return context.getSessionPrincipal();
         }
 
         @Override
