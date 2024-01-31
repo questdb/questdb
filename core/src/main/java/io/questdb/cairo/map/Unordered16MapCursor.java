@@ -28,7 +28,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 
 public final class Unordered16MapCursor implements MapRecordCursor {
-    // Set to -1 when key-value pair is var-size.
     private final long entrySize;
     private final Unordered16Map map;
     private final Unordered16MapRecord recordA;

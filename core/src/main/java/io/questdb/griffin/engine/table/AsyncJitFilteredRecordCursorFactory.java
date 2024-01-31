@@ -411,7 +411,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         Misc.freeObjList(bindVarFunctions);
     }
 
-    private static class AsyncJitFilterAtom extends AsyncFilterAtom {
+    public static class AsyncJitFilterAtom extends AsyncFilterAtom {
 
         final ObjList<Function> bindVarFunctions;
         final MemoryCARW bindVarMemory;
