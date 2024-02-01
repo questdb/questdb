@@ -93,11 +93,15 @@ public final class Hash {
     }
 
     public static long hash64Long128(long k1, long k2) {
-        return hash64Long(k1 ^ k2);
+        long h = k1 * M + k2;
+        return Long.rotateLeft(h * M, R_DIST);
     }
 
     public static long hash64Long256(long k1, long k2, long k3, long k4) {
-        return hash64Long(k1 ^ k2 ^ k3 ^ k4);
+        long h = k1 * M + k2;
+        h = (h * M) + k3;
+        h = (h * M) + k4;
+        return Long.rotateLeft(h * M, R_DIST);
     }
 
     /**

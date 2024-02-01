@@ -225,7 +225,7 @@ public class Unordered16MapTest extends AbstractCairoTest {
                 for (int i = 0; i < 40_000_000; i++) {
                     MapKey key = map.withKey();
                     key.putLong(i / 151);
-                    key.putLong((i + 41) / 171);
+                    key.putLong((i + 3) / 151);
 
                     MapValue value = key.createValue();
                     value.putLong(0, i);
