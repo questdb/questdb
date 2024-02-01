@@ -4902,9 +4902,29 @@ public class SqlOptimiser implements Mutable {
                     } else
                     if (groupByColumn.getAlias() != groupByColumn.getAst().token) {
                         // Aliased - so push it down.
-                        newGroupByModel.addBottomUpColumn(groupByColumn);
-                        // add the aliased name to the select-choose
-                        newSelectModel.addBottomUpColumn(nextColumn(groupByColumn.getAlias()));
+
+                        // catch cases where:
+                        // select-group-by k1, k1 k from (select-choose k k1 from (x timestamp (k)))
+                        // In this case, we want to move k1 k from lhs into rhs.
+                        // Moving it directly gives
+                        // select-choose k1, k from (select-group-by k k1, k1 k from (x timestamp (k))
+                        // Find the column we are depending on, which is k k1.
+                        // Since its an alias, we add the node for the raw value.
+                        QueryColumn dependentColumn = selectChoose.getAliasToColumnMap().get(groupByColumn.getAst().token);
+                        if (dependentColumn != null) {
+                            // now check if we've already added the raw column k k
+                            QueryColumn alreadyAdded = newGroupByModel.getAliasToColumnMap().get(dependentColumn.getAst().token);
+                            if (alreadyAdded == null) {
+                                // its not there, so add it
+                                newGroupByModel.addBottomUpColumn(nextColumn(dependentColumn.getAst().token, dependentColumn.getAst().token));
+                            }
+                            // add aliased column to select-choose
+                            newSelectModel.addBottomUpColumn(nextColumn(dependentColumn.getAst().token));
+                        } else {
+                            newGroupByModel.addBottomUpColumn(groupByColumn);
+                            // add the aliased name to the select-choose
+                            newSelectModel.addBottomUpColumn(nextColumn(groupByColumn.getAlias()));
+                        }
                     }
                     else {
                         // just add it straight to the select-choose

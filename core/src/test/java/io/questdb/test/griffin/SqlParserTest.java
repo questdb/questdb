@@ -7646,7 +7646,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select tab.x,sum(y) from (tab order by ts desc) tab join tab2 on (x) sample by 2m",
                 0,
-                "ASC order over TIMESTAMP column is required but not provided",
+                "base query does not provide ASC order over dedicated TIMESTAMP column",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT)
@@ -7686,7 +7686,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select tab.x,sum(y) from tab join tab2 on (x) sample by 2m",
                 0,
-                "ASC order over TIMESTAMP column is required but not provided",
+                "base query does not provide ASC order over dedicated TIMESTAMP column",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT),
