@@ -5436,37 +5436,35 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "VirtualRecord\n" +
                             "  functions: [sum,sum1,sum+COUNT*10,sum1+COUNT1*10]\n" +
                             "    GroupBy vectorized: false\n" +
-                            "      values: [sum(x),sum(x1),count(x),count(x1)]\n" +
-                            "        SelectedRecord\n" +
-                            "            Hash Join Light\n" +
-                            "              condition: tabb.id=taba.id\n" +
+                            "      values: [sum(taba.x),sum(tabb.x),count(taba.x),count(tabb.x)]\n" +
+                            "        Hash Join Light\n" +
+                            "          condition: tabb.id=taba.id\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: taba\n" +
+                            "            Hash\n" +
                             "                DataFrame\n" +
                             "                    Row forward scan\n" +
-                            "                    Frame forward scan on: taba\n" +
-                            "                Hash\n" +
-                            "                    DataFrame\n" +
-                            "                        Row forward scan\n" +
-                            "                        Frame forward scan on: tabb\n"
+                            "                    Frame forward scan on: tabb\n"
             );
 
             assertPlan(
-                    "SELECT sum(tabb.x),sum(taba.x),sum(10+taba.x), sum(10+tabb.x) " +
+                    "SELECT sum(taba.x),sum(tabb.x), sum(taba.x+10), sum(tabb.x+10) " +
                             "FROM taba " +
                             "join tabb on (id)",
                     "VirtualRecord\n" +
-                            "  functions: [sum,sum1,COUNT*10+sum1,COUNT1*10+sum]\n" +
+                            "  functions: [sum,sum1,sum+COUNT*10,sum1+COUNT1*10]\n" +
                             "    GroupBy vectorized: false\n" +
-                            "      values: [sum(x),sum(x1),count(x1),count(x)]\n" +
-                            "        SelectedRecord\n" +
-                            "            Hash Join Light\n" +
-                            "              condition: tabb.id=taba.id\n" +
+                            "      values: [sum(taba.x),sum(tabb.x),count(taba.x),count(tabb.x)]\n" +
+                            "        Hash Join Light\n" +
+                            "          condition: tabb.id=taba.id\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: taba\n" +
+                            "            Hash\n" +
                             "                DataFrame\n" +
                             "                    Row forward scan\n" +
-                            "                    Frame forward scan on: taba\n" +
-                            "                Hash\n" +
-                            "                    DataFrame\n" +
-                            "                        Row forward scan\n" +
-                            "                        Frame forward scan on: tabb\n"
+                            "                    Frame forward scan on: tabb\n"
             );
         });
     }
@@ -5712,37 +5710,35 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "VirtualRecord\n" +
                             "  functions: [sum,sum1,sum*10,sum1*10]\n" +
                             "    GroupBy vectorized: false\n" +
-                            "      values: [sum(x),sum(x1)]\n" +
-                            "        SelectedRecord\n" +
-                            "            Hash Join Light\n" +
-                            "              condition: tabb.id=taba.id\n" +
+                            "      values: [sum(taba.x),sum(tabb.x)]\n" +
+                            "        Hash Join Light\n" +
+                            "          condition: tabb.id=taba.id\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: taba\n" +
+                            "            Hash\n" +
                             "                DataFrame\n" +
                             "                    Row forward scan\n" +
-                            "                    Frame forward scan on: taba\n" +
-                            "                Hash\n" +
-                            "                    DataFrame\n" +
-                            "                        Row forward scan\n" +
-                            "                        Frame forward scan on: tabb\n"
+                            "                    Frame forward scan on: tabb\n"
             );
 
             assertPlan(
-                    "SELECT sum(taba.x),sum(tabb.x),sum(10*taba.x), sum(10*tabb.x) " +
+                    "SELECT sum(taba.x),sum(tabb.x),sum(taba.x*10), sum(tabb.x*10) " +
                             "FROM taba " +
                             "join tabb on (id)",
                     "VirtualRecord\n" +
-                            "  functions: [sum,sum1,10*sum,10*sum1]\n" +
+                            "  functions: [sum,sum1,sum*10,sum1*10]\n" +
                             "    GroupBy vectorized: false\n" +
-                            "      values: [sum(x),sum(x1)]\n" +
-                            "        SelectedRecord\n" +
-                            "            Hash Join Light\n" +
-                            "              condition: tabb.id=taba.id\n" +
+                            "      values: [sum(taba.x),sum(tabb.x)]\n" +
+                            "        Hash Join Light\n" +
+                            "          condition: tabb.id=taba.id\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: taba\n" +
+                            "            Hash\n" +
                             "                DataFrame\n" +
                             "                    Row forward scan\n" +
-                            "                    Frame forward scan on: taba\n" +
-                            "                Hash\n" +
-                            "                    DataFrame\n" +
-                            "                        Row forward scan\n" +
-                            "                        Frame forward scan on: tabb\n"
+                            "                    Frame forward scan on: tabb\n"
             );
         });
     }
@@ -5874,37 +5870,35 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "VirtualRecord\n" +
                             "  functions: [sum,sum1,sum-COUNT*10,sum1-COUNT1*10]\n" +
                             "    GroupBy vectorized: false\n" +
-                            "      values: [sum(x),sum(x1),count(x),count(x1)]\n" +
-                            "        SelectedRecord\n" +
-                            "            Hash Join Light\n" +
-                            "              condition: tabb.id=taba.id\n" +
+                            "      values: [sum(taba.x),sum(tabb.x),count(taba.x),count(tabb.x)]\n" +
+                            "        Hash Join Light\n" +
+                            "          condition: tabb.id=taba.id\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: taba\n" +
+                            "            Hash\n" +
                             "                DataFrame\n" +
                             "                    Row forward scan\n" +
-                            "                    Frame forward scan on: taba\n" +
-                            "                Hash\n" +
-                            "                    DataFrame\n" +
-                            "                        Row forward scan\n" +
-                            "                        Frame forward scan on: tabb\n"
+                            "                    Frame forward scan on: tabb\n"
             );
 
             assertPlan(
-                    "SELECT sum(taba.x),sum(tabb.x),sum(10-taba.x), sum(10-tabb.x) " +
+                    "SELECT sum(taba.x),sum(tabb.x),sum(taba.x-10), sum(tabb.x-10) " +
                             "FROM taba " +
                             "join tabb on (id)",
                     "VirtualRecord\n" +
-                            "  functions: [sum,sum1,COUNT*10-sum,COUNT1*10-sum1]\n" +
+                            "  functions: [sum,sum1,sum-COUNT*10,sum1-COUNT1*10]\n" +
                             "    GroupBy vectorized: false\n" +
-                            "      values: [sum(x),sum(x1),count(x),count(x1)]\n" +
-                            "        SelectedRecord\n" +
-                            "            Hash Join Light\n" +
-                            "              condition: tabb.id=taba.id\n" +
+                            "      values: [sum(taba.x),sum(tabb.x),count(taba.x),count(tabb.x)]\n" +
+                            "        Hash Join Light\n" +
+                            "          condition: tabb.id=taba.id\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: taba\n" +
+                            "            Hash\n" +
                             "                DataFrame\n" +
                             "                    Row forward scan\n" +
-                            "                    Frame forward scan on: taba\n" +
-                            "                Hash\n" +
-                            "                    DataFrame\n" +
-                            "                        Row forward scan\n" +
-                            "                        Frame forward scan on: tabb\n"
+                            "                    Frame forward scan on: tabb\n"
             );
         });
     }
@@ -5954,17 +5948,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "VirtualRecord\n" +
                             "  functions: [sum,count,SUM1,SUM1+count1,sum+count*1,SUM1*2,sum,count1]\n" +
                             "    GroupBy vectorized: false\n" +
-                            "      values: [sum(resolutIONWidth),count(resolutIONWidth),sum(ResolutionWidth1),count(*)]\n" +
-                            "        SelectedRecord\n" +
-                            "            Hash Join Light\n" +
-                            "              condition: h2.id=h1.id\n" +
+                            "      values: [sum(h1.resolutIONWidth),count(h1.resolutIONWidth),sum(h2.ResolutionWidth),count(*)]\n" +
+                            "        Hash Join Light\n" +
+                            "          condition: h2.id=h1.id\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: hits1\n" +
+                            "            Hash\n" +
                             "                DataFrame\n" +
                             "                    Row forward scan\n" +
-                            "                    Frame forward scan on: hits1\n" +
-                            "                Hash\n" +
-                            "                    DataFrame\n" +
-                            "                        Row forward scan\n" +
-                            "                        Frame forward scan on: hits2\n"
+                            "                    Frame forward scan on: hits2\n"
             );
         });
     }
@@ -8764,15 +8757,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "from a where l::short<i ) " +
                         "where mil + mini> 1 ",
                 "Filter filter: 1<mil+mini\n" +
-                        "    GroupBy vectorized: false\n" +
+                        "    Async Group By workers: 1\n" +
                         "      keys: [k]\n" +
                         "      values: [max(i*l),min(l),min(i)]\n" +
-                        "        SelectedRecord\n" +
-                        "            Async Filter workers: 1\n" +
-                        "              filter: l::short<i\n" +
-                        "                DataFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: a\n"
+                        "      filter: l::short<i\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: a\n"
         );
     }
 

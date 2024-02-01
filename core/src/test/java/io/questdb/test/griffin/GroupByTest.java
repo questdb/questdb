@@ -694,17 +694,16 @@ public class GroupByTest extends AbstractCairoTest {
                             "      functions: [date_report,to_str(date_report),dateadd('d',1,date_report),min,count,minminusday]\n" +
                             "        GroupBy vectorized: false\n" +
                             "          keys: [date_report]\n" +
-                            "          values: [min(x),count(*),min(dateadd('d',-1,date_report1))]\n" +
-                            "            SelectedRecord\n" +
-                            "                Hash Join Light\n" +
-                            "                  condition: details.x=ordr.x\n" +
+                            "          values: [min(details.x),count(*),min(dateadd('d',-1,ordr.date_report))]\n" +
+                            "            Hash Join Light\n" +
+                            "              condition: details.x=ordr.x\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: ord\n" +
+                            "                Hash\n" +
                             "                    DataFrame\n" +
                             "                        Row forward scan\n" +
-                            "                        Frame forward scan on: ord\n" +
-                            "                    Hash\n" +
-                            "                        DataFrame\n" +
-                            "                            Row forward scan\n" +
-                            "                            Frame forward scan on: det\n"
+                            "                        Frame forward scan on: det\n"
             );
 
             assertQuery(
@@ -1099,17 +1098,16 @@ public class GroupByTest extends AbstractCairoTest {
                             "          functions: [x,max,case([1<x,100*x,10*x1]),x1]\n" +
                             "            GroupBy vectorized: false\n" +
                             "              keys: [x,x1]\n" +
-                            "              values: [max(y)]\n" +
-                            "                SelectedRecord\n" +
-                            "                    Hash Join Light\n" +
-                            "                      condition: t2.y=t1.y\n" +
+                            "              values: [max(t2.y)]\n" +
+                            "                Hash Join Light\n" +
+                            "                  condition: t2.y=t1.y\n" +
+                            "                    DataFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: t1\n" +
+                            "                    Hash\n" +
                             "                        DataFrame\n" +
                             "                            Row forward scan\n" +
-                            "                            Frame forward scan on: t1\n" +
-                            "                        Hash\n" +
-                            "                            DataFrame\n" +
-                            "                                Row forward scan\n" +
-                            "                                Frame forward scan on: t2\n"
+                            "                            Frame forward scan on: t2\n"
             );
 
             assertQuery(

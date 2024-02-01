@@ -227,13 +227,12 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
                             "    SampleBy\n" +
                             "      keys: [candle_st,venue]\n" +
                             "      values: [count(*),sum(qty*price),sum(qty)]\n" +
-                            "        SelectedRecord\n" +
-                            "            Async Filter workers: 1\n" +
-                            "              filter: (instrument_key ~ ETH.USD.S..*? and venue in [CBS,FUS,LMX,BTS])\n" +
-                            "                DataFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Interval forward scan on: spot_trades\n" +
-                            "                      intervals: [(\"2022-01-01T00:00:00.000000Z\",\"MAX\")]\n"
+                            "        Async Filter workers: 1\n" +
+                            "          filter: (instrument_key ~ ETH.USD.S..*? and venue in [CBS,FUS,LMX,BTS])\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Interval forward scan on: spot_trades\n" +
+                            "                  intervals: [(\"2022-01-01T00:00:00.000000Z\",\"MAX\")]\n"
             );
         });
     }

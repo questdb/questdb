@@ -934,7 +934,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testAsOfJoinColumnAliasNull() throws SqlException {
         assertQuery(
-                "select-choose customerId, kk, count from (select-group-by [customerId, kk, count() count] customerId, kk, count() count from (select-choose [c.customerId customerId, o.customerId kk] c.customerId customerId, o.customerId kk from (select [customerId] from customers c asof join select [customerId] from orders o on o.customerId = c.customerId post-join-where o.customerId = null) c) c) limit 10",
+                "select-choose customerId, kk, count from (select-choose [customerId, kk, count] customerId, kk, count from (select-group-by [c.customerId customerId, o.customerId kk, count() count] c.customerId customerId, o.customerId kk, count() count from (select [customerId] from customers c asof join select [customerId] from orders o on o.customerId = c.customerId post-join-where o.customerId = null) c) c) limit 10",
                 "(select c.customerId, o.customerId kk, count() from customers c" +
                         " asof join orders o on c.customerId = o.customerId) " +
                         " where kk = null limit 10",
@@ -1486,7 +1486,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCount() throws Exception {
         assertQuery(
-                "select-group-by customerId, count() count from (select-choose [c.customerId customerId] c.customerId customerId from (select [customerId] from customers c left join select [customerId] from orders o on o.customerId = c.customerId post-join-where o.customerId = NaN) c) c",
+                "select-choose customerId, count from (select-group-by [c.customerId customerId, count() count] c.customerId customerId, count() count from (select [customerId] from customers c left join select [customerId] from orders o on o.customerId = c.customerId post-join-where o.customerId = NaN) c) c",
                 "select c.customerId, count() from customers c" +
                         " left join orders o on c.customerId = o.customerId " +
                         " where o.customerId = NaN",
@@ -3530,7 +3530,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testDuplicateColumnGroupBy() throws SqlException {
         assertQuery(
-                "select-group-by b, sum(a) sum, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1, timestamp from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h",
+                "select-choose b, sum, k1, k from (select-group-by [b, sum(a) sum, k k1, k] b, k k1, sum(a) sum, k from (select [b, a, k] from x y timestamp (timestamp)) y sample by 3h) y",
                 "select b, sum(a), k k1, k from x y sample by 3h",
                 modelOf("x").col("a", ColumnType.DOUBLE).col("b", ColumnType.SYMBOL).col("k", ColumnType.TIMESTAMP).timestamp()
         );
@@ -4031,7 +4031,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testFilter2() throws Exception {
         assertQuery(
-                "select-virtual customerId + 1 column, name, count from (select-group-by [customerId, name, count() count] customerId, name, count() count from (select-choose [customerId, customerName name] customerId, customerName name from (select [customerId, customerName] from customers where customerName = 'X')))",
+                "select-virtual customerId + 1 column, name, count from (select-choose [customerId, name, count] customerId, name, count from (select-group-by [customerId, customerName name, count() count] customerId, customerName name, count() count from (select [customerId, customerName] from customers where customerName = 'X')))",
                 "select customerId+1, name, count from (select customerId, customerName name, count() count from customers) where name = 'X'",
                 modelOf("customers").col("customerId", ColumnType.INT).col("customerName", ColumnType.STRING),
                 modelOf("orders").col("orderId", ColumnType.INT).col("customerId", ColumnType.INT)
@@ -4314,7 +4314,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testInnerJoinColumnAliasNull() throws SqlException {
         assertQuery(
-                "select-choose customerId, kk, count from (select-group-by [customerId, kk, count() count] customerId, kk, count() count from (select-choose [c.customerId customerId, o.customerId kk] c.customerId customerId, o.customerId kk from (select [customerId] from customers c join (select [customerId] from orders o where customerId = null) o on o.customerId = c.customerId) c) c) limit 10",
+                "select-choose customerId, kk, count from (select-choose [customerId, kk, count] customerId, kk, count from (select-group-by [c.customerId customerId, o.customerId kk, count() count] c.customerId customerId, o.customerId kk, count() count from (select [customerId] from customers c join (select [customerId] from orders o where customerId = null) o on o.customerId = c.customerId) c) c) limit 10",
                 "(select c.customerId, o.customerId kk, count() " +
                         "from customers c" +
                         " join orders o on c.customerId = o.customerId) " +
@@ -4964,7 +4964,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testJoinColumnPropagation() throws SqlException {
         assertQuery(
-                "select-group-by city, max(temp) max from (select-choose [city, readings.temp temp] city, readings.temp temp from (select [temp, sensorId] from readings timestamp (ts) join select [city, sensId] from (select-choose [city, ID sensId] ID sensId, city from (select [city, ID] from sensors)) _xQdbA1 on sensId = readings.sensorId))",
+                "select-choose city, max from (select-group-by [city, max(readings.temp) max] city, max(readings.temp) max from (select [temp, sensorId] from readings timestamp (ts) join select [city, sensId] from (select-choose [city, ID sensId] ID sensId, city from (select [city, ID] from sensors)) _xQdbA1 on sensId = readings.sensorId))",
                 "SELECT city, max(temp)\n" +
                         "FROM readings\n" +
                         "JOIN(\n" +
@@ -4986,7 +4986,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testJoinColumnResolutionOnSubQuery() throws SqlException {
         assertQuery(
-                "select-group-by sum(timestamp) sum from (select-choose [_xQdbA1.timestamp timestamp] _xQdbA1.timestamp timestamp from (select [timestamp] from (select-choose [timestamp] ccy, timestamp from (select [timestamp] from y)) _xQdbA1 cross join (select-choose ccy from (select [ccy] from x)) _xQdbA2))",
+                "select-choose sum from (select-group-by [sum(_xQdbA1.timestamp) sum] sum(_xQdbA1.timestamp) sum from (select [timestamp] from (select-choose [timestamp] ccy, timestamp from (select [timestamp] from y)) _xQdbA1 cross join (select-choose ccy from (select [ccy] from x)) _xQdbA2))",
                 "select sum(timestamp) from (select * from y) cross join (x)",
                 modelOf("x").col("ccy", ColumnType.SYMBOL),
                 modelOf("y").col("ccy", ColumnType.SYMBOL).col("timestamp", ColumnType.TIMESTAMP)
@@ -4996,7 +4996,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testJoinColumnResolutionOnSubQuery2() throws SqlException {
         assertQuery(
-                "select-group-by sum(timestamp) sum from (select-choose [_xQdbA1.timestamp timestamp] _xQdbA1.timestamp timestamp from (select [timestamp, ccy, sym] from (select-choose [timestamp, ccy, sym] ccy, timestamp, sym from (select [timestamp, ccy, sym] from y)) _xQdbA1 join select [ccy, sym] from (select-choose [ccy, sym] ccy, sym from (select [ccy, sym] from x)) _xQdbA2 on _xQdbA2.ccy = _xQdbA1.ccy and _xQdbA2.sym = _xQdbA1.sym))",
+                "select-choose sum from (select-group-by [sum(_xQdbA1.timestamp) sum] sum(_xQdbA1.timestamp) sum from (select [timestamp, ccy, sym] from (select-choose [timestamp, ccy, sym] ccy, timestamp, sym from (select [timestamp, ccy, sym] from y)) _xQdbA1 join select [ccy, sym] from (select-choose [ccy, sym] ccy, sym from (select [ccy, sym] from x)) _xQdbA2 on _xQdbA2.ccy = _xQdbA1.ccy and _xQdbA2.sym = _xQdbA1.sym))",
                 "select sum(timestamp) from (select * from y) join (select * from x) on (ccy, sym)",
                 modelOf("x").col("ccy", ColumnType.SYMBOL).col("sym", ColumnType.INT),
                 modelOf("y").col("ccy", ColumnType.SYMBOL).col("timestamp", ColumnType.TIMESTAMP).col("sym", ColumnType.INT)
@@ -5006,7 +5006,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testJoinColumnResolutionOnSubQuery3() throws SqlException {
         assertQuery(
-                "select-group-by sum(timestamp) sum from (select-choose [_xQdbA1.timestamp timestamp] _xQdbA1.timestamp timestamp from (select [timestamp] from (select-choose [timestamp] ccy, timestamp from (select [timestamp] from y)) _xQdbA1 cross join x))",
+                "select-choose sum from (select-group-by [sum(_xQdbA1.timestamp) sum] sum(_xQdbA1.timestamp) sum from (select [timestamp] from (select-choose [timestamp] ccy, timestamp from (select [timestamp] from y)) _xQdbA1 cross join x))",
                 "select sum(timestamp) from (select * from y) cross join x",
                 modelOf("x").col("ccy", ColumnType.SYMBOL),
                 modelOf("y").col("ccy", ColumnType.SYMBOL).col("timestamp", ColumnType.TIMESTAMP)
@@ -5088,7 +5088,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testJoinGroupBy() throws Exception {
         assertQuery(
-                "select-group-by country, sum(quantity) sum from (select-choose [country, d.quantity quantity] country, d.quantity quantity from (select [customerId, orderId] from orders o join (select [country, customerId] from customers c where country ~ '^Z') c on c.customerId = o.customerId join select [quantity, orderId] from orderDetails d on d.orderId = o.orderId) o) o",
+                "select-choose country, sum from (select-group-by [country, sum(d.quantity) sum] country, sum(d.quantity) sum from (select [customerId, orderId] from orders o join (select [country, customerId] from customers c where country ~ '^Z') c on c.customerId = o.customerId join select [quantity, orderId] from orderDetails d on d.orderId = o.orderId) o) o",
                 "select country, sum(quantity) from orders o " +
                         "join customers c on c.customerId = o.customerId " +
                         "join orderDetails d on o.orderId = d.orderId" +
@@ -5102,7 +5102,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testJoinGroupByFilter() throws Exception {
         assertQuery(
-                "select-choose country, sum from (select-group-by [country, sum(quantity) sum] country, sum(quantity) sum from (select-choose [country, o.quantity quantity] country, o.quantity quantity from (select [quantity, customerId, orderId] from orders o join (select [country, customerId] from customers c where country ~ '^Z') c on c.customerId = o.customerId join select [orderId] from orderDetails d on d.orderId = o.orderId) o) o where sum > 2)",
+                "select-choose country, sum from (select-choose [country, sum] country, sum from (select-group-by [country, sum(o.quantity) sum] country, sum(o.quantity) sum from (select [quantity, customerId, orderId] from orders o join (select [country, customerId] from customers c where country ~ '^Z') c on c.customerId = o.customerId join select [orderId] from orderDetails d on d.orderId = o.orderId) o where sum > 2) o)",
                 "(select country, sum(quantity) sum " +
                         "from orders o " +
                         "join customers c on c.customerId = o.customerId " +
@@ -6780,7 +6780,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testOrderByPositionWithColumnAliasesAndAggregateColumn() throws Exception {
         assertQuery(
-                "select-group-by c1, c2, count() c3 from (select-choose [x c1, y c2] x c1, y c2 from (select [x, y] from tab)) order by c3, c2, c1",
+                "select-choose c1, c2, c3 from (select-group-by [x c1, y c2, count() c3] x c1, y c2, count() c3 from (select [x, y] from tab)) order by c3, c2, c1",
                 "select x c1, y c2, count() c3 from tab order by 3,2,1",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
@@ -6876,7 +6876,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testOrderByWithColumnAliasesAndAggregateColumn() throws Exception {
         assertQuery(
-                "select-group-by c1, c2, count() c3 from (select-choose [x c1, y c2] x c1, y c2 from (select [x, y] from tab)) order by c3, c2, c1",
+                "select-choose c1, c2, c3 from (select-group-by [x c1, y c2, count() c3] x c1, y c2, count() c3 from (select [x, y] from tab)) order by c3, c2, c1",
                 "select x c1, y c2, count() c3 from tab order by c3,c2,c1",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
@@ -6985,7 +6985,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testOuterJoinColumnAlias() throws SqlException {
         assertQuery(
-                "select-choose customerId, kk, count from (select-group-by [customerId, kk, count() count] customerId, kk, count() count from (select-choose [c.customerId customerId, o.customerId kk] c.customerId customerId, o.customerId kk from (select [customerId] from customers c left join select [customerId] from orders o on o.customerId = c.customerId post-join-where o.customerId = NaN) c) c) limit 10",
+                "select-choose customerId, kk, count from (select-choose [customerId, kk, count] customerId, kk, count from (select-group-by [c.customerId customerId, o.customerId kk, count() count] c.customerId customerId, o.customerId kk, count() count from (select [customerId] from customers c left join select [customerId] from orders o on o.customerId = c.customerId post-join-where o.customerId = NaN) c) c) limit 10",
                 "(select c.customerId, o.customerId kk, count() from customers c" +
                         " left join orders o on c.customerId = o.customerId) " +
                         " where kk = NaN limit 10",
@@ -6997,8 +6997,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testOuterJoinColumnAliasConst() throws SqlException {
         assertQuery(
-                "select-choose customerId, kk, count from (select-group-by [customerId, kk, count() count] customerId, kk, count() count " +
-                        "from (select-choose [c.customerId customerId, o.customerId kk] c.customerId customerId, o.customerId kk " +
+                "select-choose customerId, kk, count from (select-choose [customerId, kk, count] customerId, kk, count " +
+                        "from (select-group-by [c.customerId customerId, o.customerId kk, count() count] c.customerId customerId, o.customerId kk, count() count " +
                         "from (select [customerId] " +
                         "from customers c " +
                         "left join select [customerId] from orders o on o.customerId = c.customerId post-join-where o.customerId = 10) c) c) limit 10",
@@ -7015,7 +7015,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testOuterJoinColumnAliasNull() throws SqlException {
         assertQuery(
-                "select-choose customerId, kk, count from (select-group-by [customerId, kk, count() count] customerId, kk, count() count from (select-choose [c.customerId customerId, o.customerId kk] c.customerId customerId, o.customerId kk from (select [customerId] from customers c left join select [customerId] from orders o on o.customerId = c.customerId post-join-where o.customerId = null) c) c) limit 10",
+                "select-choose customerId, kk, count from (select-choose [customerId, kk, count] customerId, kk, count from (select-group-by [c.customerId customerId, o.customerId kk, count() count] c.customerId customerId, o.customerId kk, count() count from (select [customerId] from customers c left join select [customerId] from orders o on o.customerId = c.customerId post-join-where o.customerId = null) c) c) limit 10",
                 "(select c.customerId, o.customerId kk, count() from customers c" +
                         " left join orders o on c.customerId = o.customerId) " +
                         " where kk = null limit 10",
@@ -7603,7 +7603,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSampleByTimestampAscOrderWithJoin() throws Exception {
         assertQuery(
-                "select-group-by x, sum(y) sum from (select-choose [tab.x x, tab.y y] tab.x x, tab.y y from (select [x, y] from (select-choose [x, y, ts] x, y, ts from (select [x, y, ts] from tab timestamp (ts)) order by ts) tab join select [x] from tab2 on tab2.x = tab.x) tab) tab sample by 2m",
+                "select-choose x, sum from (select-group-by [tab.x x, sum(tab.y) sum] tab.x x, sum(tab.y) sum from (select [x, y] from (select-choose [x, y, ts] x, y, ts from (select [x, y, ts] from tab timestamp (ts)) order by ts) tab join select [x] from tab2 on tab2.x = tab.x) tab sample by 2m) tab",
                 "select tab.x,sum(y) from (tab order by ts asc) tab join tab2 on (x) sample by 2m",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
@@ -7771,7 +7771,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSelectColumnsFromJoinSubQueries() throws SqlException {
         assertQuery(
-                "select-virtual addr, sum_out - sum_in total from (select-choose [a.addr addr, b.sum_in sum_in, a.sum_out sum_out] a.addr addr, a.count count, a.sum_out sum_out, b.toAddress toAddress, b.count count1, b.sum_in sum_in from (select [addr, sum_out] from (select-group-by [addr, sum(value) sum_out] addr, count() count, sum(value) sum_out from (select-choose [fromAddress addr, value] fromAddress addr, value from (select [fromAddress, value] from transactions.csv))) a join select [sum_in, toAddress] from (select-group-by [sum(value) sum_in, toAddress] toAddress, count() count, sum(value) sum_in from (select [value, toAddress] from transactions.csv)) b on b.toAddress = a.addr) a)",
+                "select-virtual addr, sum_out - sum_in total from (select-choose [a.addr addr, b.sum_in sum_in, a.sum_out sum_out] a.addr addr, a.count count, a.sum_out sum_out, b.toAddress toAddress, b.count count1, b.sum_in sum_in from (select [addr, sum_out] from (select-choose [addr, sum_out] addr, count, sum_out from (select-group-by [fromAddress addr, sum(value) sum_out] fromAddress addr, count() count, sum(value) sum_out from (select [fromAddress, value] from transactions.csv))) a join select [sum_in, toAddress] from (select-group-by [sum(value) sum_in, toAddress] toAddress, count() count, sum(value) sum_in from (select [value, toAddress] from transactions.csv)) b on b.toAddress = a.addr) a)",
                 "select addr, sum_out - sum_in total from (\n" +
                         "(select fromAddress addr, count(), sum(value) sum_out from 'transactions.csv') a join\n" +
                         "(select toAddress, count(), sum(value) sum_in from 'transactions.csv') b on a.addr = b.toAddress\n" +
@@ -7786,7 +7786,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSelectColumnsFromJoinSubQueries2() throws SqlException {
         assertQuery(
-                "select-choose addr, count, sum_out, toAddress, count1, sum_in from (select-choose [a.addr addr, a.count count, a.sum_out sum_out, b.toAddress toAddress, b.count count1, b.sum_in sum_in] a.addr addr, a.count count, a.sum_out sum_out, b.toAddress toAddress, b.count count1, b.sum_in sum_in from (select [addr, count, sum_out] from (select-group-by [addr, count() count, sum(value) sum_out] addr, count() count, sum(value) sum_out from (select-choose [fromAddress addr, value] fromAddress addr, value from (select [fromAddress, value] from transactions.csv))) a join select [toAddress, count, sum_in] from (select-group-by [toAddress, count() count, sum(value) sum_in] toAddress, count() count, sum(value) sum_in from (select [toAddress, value] from transactions.csv)) b on b.toAddress = a.addr) a)",
+                "select-choose addr, count, sum_out, toAddress, count1, sum_in from (select-choose [a.addr addr, a.count count, a.sum_out sum_out, b.toAddress toAddress, b.count count1, b.sum_in sum_in] a.addr addr, a.count count, a.sum_out sum_out, b.toAddress toAddress, b.count count1, b.sum_in sum_in from (select [addr, count, sum_out] from (select-choose [addr, count, sum_out] addr, count, sum_out from (select-group-by [fromAddress addr, count() count, sum(value) sum_out] fromAddress addr, count() count, sum(value) sum_out from (select [fromAddress, value] from transactions.csv))) a join select [toAddress, count, sum_in] from (select-group-by [toAddress, count() count, sum(value) sum_in] toAddress, count() count, sum(value) sum_in from (select [toAddress, value] from transactions.csv)) b on b.toAddress = a.addr) a)",
                 "(\n" +
                         "(select fromAddress addr, count(), sum(value) sum_out from 'transactions.csv') a join\n" +
                         "(select toAddress, count(), sum(value) sum_in from 'transactions.csv') b on a.addr = b.toAddress\n" +
@@ -7801,7 +7801,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSelectColumnsFromJoinSubQueries3() throws SqlException {
         assertQuery(
-                "select-choose a.addr addr, a.count count, a.sum_out sum_out, b.toAddress toAddress, b.count count1, b.sum_in sum_in from (select [addr, count, sum_out] from (select-group-by [addr, count() count, sum(value) sum_out] addr, count() count, sum(value) sum_out from (select-choose [fromAddress addr, value] fromAddress addr, value from (select [fromAddress, value] from transactions.csv))) a join select [toAddress, count, sum_in] from (select-group-by [toAddress, count() count, sum(value) sum_in] toAddress, count() count, sum(value) sum_in from (select [toAddress, value] from transactions.csv)) b on b.toAddress = a.addr) a",
+                "select-choose a.addr addr, a.count count, a.sum_out sum_out, b.toAddress toAddress, b.count count1, b.sum_in sum_in from (select [addr, count, sum_out] from (select-choose [addr, count, sum_out] addr, count, sum_out from (select-group-by [fromAddress addr, count() count, sum(value) sum_out] fromAddress addr, count() count, sum(value) sum_out from (select [fromAddress, value] from transactions.csv))) a join select [toAddress, count, sum_in] from (select-group-by [toAddress, count() count, sum(value) sum_in] toAddress, count() count, sum(value) sum_in from (select [toAddress, value] from transactions.csv)) b on b.toAddress = a.addr) a",
                 "(select fromAddress addr, count(), sum(value) sum_out from 'transactions.csv') a join\n" +
                         "(select toAddress, count(), sum(value) sum_in from 'transactions.csv') b on a.addr = b.toAddress\n",
                 modelOf("transactions.csv")
@@ -8463,7 +8463,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSpliceJoinColumnAliasNull() throws SqlException {
         assertQuery(
-                "select-choose customerId, kk, count from (select-group-by [customerId, kk, count() count] customerId, kk, count() count from (select-choose [c.customerId customerId, o.customerId kk] c.customerId customerId, o.customerId kk from (select [customerId] from customers c splice join select [customerId] from orders o on o.customerId = c.customerId post-join-where o.customerId = null) c) c) limit 10",
+                "select-choose customerId, kk, count from (select-choose [customerId, kk, count] customerId, kk, count from (select-group-by [c.customerId customerId, o.customerId kk, count() count] c.customerId customerId, o.customerId kk, count() count from (select [customerId] from customers c splice join select [customerId] from orders o on o.customerId = c.customerId post-join-where o.customerId = null) c) c) limit 10",
                 "(select c.customerId, o.customerId kk, count() from customers c" +
                         " splice join orders o on c.customerId = o.customerId) " +
                         " where kk = null limit 10",
