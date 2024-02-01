@@ -31,6 +31,7 @@ import io.questdb.std.Files;
 import io.questdb.test.cutlass.line.tcp.AbstractLineTcpReceiverTest;
 import io.questdb.test.tools.TestUtils;
 import io.questdb.test.tools.TlsProxyRule;
+import org.junit.Assert;
 import org.junit.ClassRule;
 import org.junit.Test;
 
@@ -117,7 +118,8 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
                 builder.build();
                 fail("tiny buffer should be be allowed as it wont fit auth challenge");
             } catch (LineSenderException e) {
-                TestUtils.assertContains(e.getMessage(), "capacity");
+                TestUtils.assertContains(e.getMessage(), "minimalCapacity");
+                TestUtils.assertContains(e.getMessage(), "requestedCapacity");
             }
         });
     }
@@ -340,6 +342,33 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testCustomTrustorePasswordCannotBeNull() {
+        try {
+            Sender.builder().advancedTls().customTrustStore(TRUSTSTORE_PATH, null);
+            fail("should not allow null trust store password");
+        } catch (LineSenderException e) {
+            TestUtils.assertContains(e.getMessage(), "trust store password cannot be null");
+        }
+    }
+
+    @Test
+    public void testCustomTrustorePathCannotBeBlank() {
+        try {
+            Sender.builder().advancedTls().customTrustStore("", TRUSTSTORE_PASSWORD);
+            fail("should not allow blank trust store path");
+        } catch (LineSenderException e) {
+            TestUtils.assertContains(e.getMessage(), "trust store path cannot be empty nor null");
+        }
+
+        try {
+            Sender.builder().advancedTls().customTrustStore(null, TRUSTSTORE_PASSWORD);
+            fail("should not allow null trust store path");
+        } catch (LineSenderException e) {
+            TestUtils.assertContains(e.getMessage(), "trust store path cannot be empty nor null");
+        }
+    }
+
+    @Test
     public void testCustomTruststoreButTlsNotEnabled() throws Exception {
         assertMemoryLeak(() -> {
             Sender.LineSenderBuilder builder = Sender.builder()
@@ -380,6 +409,17 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testFailFastWhenSetCustomTrustoreTwice() {
+        Sender.LineSenderBuilder builder = Sender.builder().advancedTls().customTrustStore(TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD);
+        try {
+            builder.advancedTls().customTrustStore(TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD);
+            fail("should not allow double custom trust store set");
+        } catch (LineSenderException e) {
+            TestUtils.assertContains(e.getMessage(), "already configured");
+        }
+    }
+
+    @Test
     public void testFirstTlsValidationDisabledThenCustomTruststore() throws Exception {
         assertMemoryLeak(() -> {
             Sender.LineSenderBuilder builder = Sender.builder()
@@ -407,6 +447,69 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testHttpTokenNotSupportedForTcp() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                Sender.builder().address(LOCALHOST).httpToken("foo").build();
+                fail("HTTP token should not be supported for TCP");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "HTTP token authentication is not supported for TCP protocol");
+            }
+        });
+    }
+
+    @Test
+    public void testInvalidHttpTimeout() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                Sender.builder().address("someurl").http().httpTimeoutMillis(0);
+                fail("should fail with bad http time");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "HTTP timeout must be positive [timeout=0]");
+            }
+
+            try {
+                Sender.builder().address("someurl").http().httpTimeoutMillis(-1);
+                fail("should fail with bad http time");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "HTTP timeout must be positive [timeout=-1]");
+            }
+
+            try {
+                Sender.builder().address("someurl").http().httpTimeoutMillis(100).httpTimeoutMillis(200);
+                fail("should fail with bad http time");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "HTTP timeout was already configured [timeout=100]");
+            }
+
+            try {
+                Sender.builder().address("localhost").httpTimeoutMillis(5000).build();
+                fail("should fail with bad http time");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "HTTP timeout is not supported for TCP protocol");
+            }
+        });
+    }
+
+    @Test
+    public void testInvalidRetryTimeout() {
+        try {
+            Sender.builder().retryTimeoutMillis(-1);
+            Assert.fail();
+        } catch (LineSenderException e) {
+            TestUtils.assertContains(e.getMessage(), "retry timeout cannot be negative [retryTimeoutMillis=-1]");
+        }
+
+        Sender.LineSenderBuilder builder = Sender.builder().retryTimeoutMillis(100);
+        try {
+            builder.retryTimeoutMillis(200);
+            Assert.fail();
+        } catch (LineSenderException e) {
+            TestUtils.assertContains(e.getMessage(), "retry timeout was already configured [retryTimeoutMillis=100]");
+        }
+    }
+
+    @Test
     public void testMalformedPortInAddress() throws Exception {
         assertMemoryLeak(() -> {
             Sender.LineSenderBuilder builder = Sender.builder();
@@ -415,6 +518,74 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
                 fail("should fail with malformated port");
             } catch (LineSenderException e) {
                 TestUtils.assertContains(e.getMessage(), "cannot parse port");
+            }
+        });
+    }
+
+    @Test
+    public void testMaxPendingRowsNotSupportedForTcp() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                Sender.builder().address(LOCALHOST).maxPendingRows(1).build();
+                fail("max pending rows should not be supported for TCP");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "max pending rows is not supported for TCP protocol");
+            }
+        });
+    }
+
+    @Test
+    public void testMaxPendingRows_doubleConfiguration() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                Sender.builder().maxPendingRows(1).maxPendingRows(1);
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "max pending rows was already configured [maxPendingRows=1]");
+            }
+        });
+    }
+
+    @Test
+    public void testMaxRequestBufferSizeCannotBeLessThanDefault() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Sender sender = Sender.builder()
+                    .address("localhost:1")
+                    .http()
+                    .maxBufferCapacity(65535)
+                    .build()
+            ) {
+                Assert.fail();
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "maximum buffer capacity cannot be less than initial buffer capacity [maximumBufferCapacity=65535, initialBufferCapacity=65536]");
+            }
+        });
+    }
+
+    @Test
+    public void testMaxRequestBufferSizeCannotBeLessThanInitialBufferSize() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Sender sender = Sender.builder()
+                    .address("localhost:1")
+                    .http()
+                    .maxBufferCapacity(100_000)
+                    .bufferCapacity(200_000)
+                    .build()
+            ) {
+                Assert.fail();
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "maximum buffer capacity cannot be less than initial buffer capacity [maximumBufferCapacity=100000, initialBufferCapacity=200000]");
+            }
+        });
+    }
+
+    @Test
+    public void testMaxRetriesNotSupportedForTcp() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                Sender.builder().address(LOCALHOST).retryTimeoutMillis(100).build();
+                fail("max retries should not be supported for TCP");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "retrying is not supported for TCP protocol");
             }
         });
     }
@@ -429,6 +600,18 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
                 fail("connection refused should fail fast");
             } catch (LineSenderException e) {
                 TestUtils.assertContains(e.getMessage(), "could not connect");
+            }
+        });
+    }
+
+    @Test
+    public void testPlainOldTokenNotSupportedForHttpProtocol() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                Sender.builder().address("localhost:9000").http().enableAuth("key").authToken(AUTH_TOKEN_KEY1).build();
+                fail("HTTP token should not be supported for TCP");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "old token authentication is not supported for HTTP protocol");
             }
         });
     }
@@ -536,6 +719,18 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
                 fail("connection refused should fail fast");
             } catch (LineSenderException e) {
                 TestUtils.assertContains(e.getMessage(), "could not connect");
+            }
+        });
+    }
+
+    @Test
+    public void testUsernamePasswordAuthNotSupportedForTcp() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                Sender.builder().address(LOCALHOST).httpUsernamePassword("foo", "bar").build();
+                fail("HTTP token should not be supported for TCP");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "username/password authentication is not supported for TCP protocol");
             }
         });
     }

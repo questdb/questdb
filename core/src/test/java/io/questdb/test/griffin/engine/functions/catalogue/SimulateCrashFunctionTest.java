@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.functions.catalogue;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.test.AbstractCairoTest;
@@ -57,7 +58,7 @@ public class SimulateCrashFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testCrashEnabled() throws Exception {
-        node1.getConfigurationOverrides().setSimulateCrashEnabled(true);
+        node1.setProperty(PropertyKey.CAIRO_SIMULATE_CRASH_ENABLED, true);
 
         // select simulate_crash('0'), This is total crash, don't simulate it
 

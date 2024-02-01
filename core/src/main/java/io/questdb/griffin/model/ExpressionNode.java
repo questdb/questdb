@@ -26,7 +26,7 @@ package io.questdb.griffin.model;
 
 import io.questdb.griffin.OperatorExpression;
 import io.questdb.std.*;
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 
@@ -194,7 +194,7 @@ public class ExpressionNode implements Mutable, Sinkable {
     }
 
     @Override
-    public void toSink(@NotNull CharSinkBase<?> sink) {
+    public void toSink(@NotNull CharSink<?> sink) {
         switch (paramCount) {
             case 0:
                 if (queryModel != null) {
@@ -304,7 +304,7 @@ public class ExpressionNode implements Mutable, Sinkable {
         return true;
     }
 
-    private static void toSink(CharSinkBase<?> sink, ExpressionNode e) {
+    private static void toSink(CharSink<?> sink, ExpressionNode e) {
         if (e == null) {
             sink.putAscii("null");
         } else {

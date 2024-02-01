@@ -34,7 +34,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.StringSink;
 
 public class CastDoubleToStrFunctionFactory implements FunctionFactory {
@@ -77,7 +77,7 @@ public class CastDoubleToStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getStr(Record rec, CharSink sink) {
+        public void getStr(Record rec, Utf16Sink sink) {
             final double value = arg.getDouble(rec);
             if (Double.isNaN(value)) {
                 return;

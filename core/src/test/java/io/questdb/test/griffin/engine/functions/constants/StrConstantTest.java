@@ -25,7 +25,7 @@
 package io.questdb.test.griffin.engine.functions.constants;
 
 import io.questdb.griffin.engine.functions.constants.StrConstant;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -41,7 +41,7 @@ public class StrConstantTest {
         TestUtils.assertEquals("abc", constant.getStrB(null));
         Assert.assertEquals(3, constant.getStrLen(null));
 
-        CharSink sink = new StringSink();
+        Utf16Sink sink = new StringSink();
         constant.getStr(null, sink);
         TestUtils.assertEquals("abc", (CharSequence) sink);
     }
@@ -54,7 +54,7 @@ public class StrConstantTest {
         TestUtils.assertEquals("abc", constant.getStrB(null));
         Assert.assertEquals(3, constant.getStrLen(null));
 
-        CharSink sink = new StringSink();
+        Utf16Sink sink = new StringSink();
         constant.getStr(null, sink);
         TestUtils.assertEquals("abc", (CharSequence) sink);
     }

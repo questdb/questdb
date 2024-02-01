@@ -26,6 +26,7 @@ package io.questdb.cairo.map;
 
 import io.questdb.cairo.Reopenable;
 import io.questdb.std.Mutable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -36,9 +37,34 @@ public interface Map extends Mutable, Closeable, Reopenable {
 
     MapRecordCursor getCursor();
 
+    @TestOnly
+    default long getHeapSize() {
+        return -1;
+    }
+
+    /**
+     * Returns full (physical) key capacity of the map ignoring the load factor.
+     */
+    @TestOnly
+    int getKeyCapacity();
+
     MapRecord getRecord();
 
+    /**
+     * Returns used heap size in bytes for maps that store keys and values separately like {@link OrderedMap}.
+     * Returns -1 if the map doesn't use heap.
+     */
+    default long getUsedHeapSize() {
+        return -1;
+    }
+
     void merge(Map srcMap, MapValueMergeFunction mergeFunc);
+
+    /**
+     * Reopens previously closed map with given key capacity and page size.
+     * Page size value is ignored if the map does not use heap to store keys and values.
+     */
+    void reopen(int keyCapacity, int pageSize);
 
     void restoreInitialCapacity();
 

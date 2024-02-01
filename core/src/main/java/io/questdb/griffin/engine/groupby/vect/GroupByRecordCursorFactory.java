@@ -39,8 +39,8 @@ import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Worker;
 import io.questdb.std.*;
+import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.CharSinkBase;
 import io.questdb.tasks.VectorAggregateTask;
 import org.jetbrains.annotations.Nullable;
 
@@ -611,7 +611,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             }
 
             @Override
-            public void getLong256(int col, CharSinkBase<?> sink) {
+            public void getLong256(int col, CharSink<?> sink) {
                 Long256Impl v = (Long256Impl) getLong256A(col);
                 v.toSink(sink);
             }
@@ -652,7 +652,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             }
 
             @Override
-            public void getStr(int col, CharSink sink) {
+            public void getStr(int col, Utf16Sink sink) {
             }
 
             @Override

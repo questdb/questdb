@@ -77,7 +77,7 @@ public class RankFunctionFactory implements FunctionFactory {
             arrayColumnTypes.add(ColumnType.LONG); // max index
             arrayColumnTypes.add(ColumnType.LONG); // current index
             arrayColumnTypes.add(ColumnType.LONG); // offset
-            Map map = MapFactory.createMap(configuration, windowContext.getPartitionByKeyTypes(), arrayColumnTypes);
+            Map map = MapFactory.createOrderedMap(configuration, windowContext.getPartitionByKeyTypes(), arrayColumnTypes);
             return new RankFunction(map, windowContext.getPartitionByRecord(), windowContext.getPartitionBySink());
         }
         if (windowContext.isOrdered()) {

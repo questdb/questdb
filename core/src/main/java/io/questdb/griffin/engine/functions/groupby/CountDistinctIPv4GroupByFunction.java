@@ -109,7 +109,7 @@ public class CountDistinctIPv4GroupByFunction extends LongFunction implements Un
 
     @Override
     public boolean isParallelismSupported() {
-        return true;
+        return UnaryFunction.super.isParallelismSupported();
     }
 
     @Override

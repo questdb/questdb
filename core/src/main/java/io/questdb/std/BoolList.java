@@ -24,7 +24,7 @@
 
 package io.questdb.std;
 
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 
 import java.util.Arrays;
 
@@ -43,7 +43,7 @@ public class BoolList implements Mutable {
     }
 
     public void add(boolean value) {
-        ensureCapacity(pos + 1);
+        checkCapactiy(pos + 1);
         buffer[pos++] = value;
     }
 
@@ -63,7 +63,7 @@ public class BoolList implements Mutable {
     }
 
     public void clear(int capacity) {
-        ensureCapacity(capacity);
+        checkCapactiy(capacity);
         pos = 0;
         Arrays.fill(buffer, NO_ENTRY_VALUE);
     }
@@ -124,7 +124,7 @@ public class BoolList implements Mutable {
     }
 
     public void insert(int index, boolean element) {
-        ensureCapacity(++pos);
+        checkCapactiy(++pos);
         System.arraycopy(buffer, index, buffer, index + 1, pos - index - 1);
         buffer[index] = element;
     }
@@ -163,7 +163,7 @@ public class BoolList implements Mutable {
     }
 
     public void setPos(int capacity) {
-        ensureCapacity(capacity);
+        checkCapactiy(capacity);
         pos = capacity;
     }
 
@@ -181,7 +181,7 @@ public class BoolList implements Mutable {
      */
     @Override
     public String toString() {
-        CharSink b = Misc.getThreadLocalSink();
+        Utf16Sink b = Misc.getThreadLocalSink();
 
         b.put('[');
         for (int i = 0, k = size(); i < k; i++) {
@@ -198,7 +198,7 @@ public class BoolList implements Mutable {
         Arrays.fill(buffer, 0, pos, value);
     }
 
-    private void ensureCapacity(int capacity) {
+    private void checkCapactiy(int capacity) {
         int l = buffer.length;
         if (capacity > l) {
             int newCap = Math.max(l << 1, capacity);
@@ -223,7 +223,7 @@ public class BoolList implements Mutable {
 
     private void extendCapacity(int newPos) {
         if (newPos > pos) {
-            ensureCapacity(newPos);
+            checkCapactiy(newPos);
             Arrays.fill(buffer, pos, newPos, NO_ENTRY_VALUE);
             pos = newPos;
         }

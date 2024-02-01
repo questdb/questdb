@@ -70,36 +70,36 @@ public class PGWireServer implements Closeable {
 
         for (int i = 0, n = workerPool.getWorkerCount(); i < n; i++) {
             workerPool.assign(i, new Job() {
-                private final IORequestProcessor<PGConnectionContext> processor = (operation, context) -> {
+                private final IORequestProcessor<PGConnectionContext> processor = (operation, context, dispatcher) -> {
                     try {
                         if (operation == IOOperation.HEARTBEAT) {
-                            context.getDispatcher().registerChannel(context, IOOperation.HEARTBEAT);
+                            dispatcher.registerChannel(context, IOOperation.HEARTBEAT);
                             return false;
                         }
                         context.handleClientOperation(operation);
-                        context.getDispatcher().registerChannel(context, IOOperation.READ);
+                        dispatcher.registerChannel(context, IOOperation.READ);
                         return true;
                     } catch (PeerIsSlowToWriteException e) {
-                        context.getDispatcher().registerChannel(context, IOOperation.READ);
+                        dispatcher.registerChannel(context, IOOperation.READ);
                     } catch (PeerIsSlowToReadException e) {
-                        context.getDispatcher().registerChannel(context, IOOperation.WRITE);
+                        dispatcher.registerChannel(context, IOOperation.WRITE);
                     } catch (QueryPausedException e) {
                         context.setSuspendEvent(e.getEvent());
-                        context.getDispatcher().registerChannel(context, IOOperation.WRITE);
+                        dispatcher.registerChannel(context, IOOperation.WRITE);
                     } catch (PeerDisconnectedException e) {
-                        context.getDispatcher().disconnect(
+                        dispatcher.disconnect(
                                 context,
                                 operation == IOOperation.READ
                                         ? DISCONNECT_REASON_PEER_DISCONNECT_AT_RECV
                                         : DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND
                         );
                     } catch (BadProtocolException e) {
-                        context.getDispatcher().disconnect(context, DISCONNECT_REASON_PROTOCOL_VIOLATION);
+                        dispatcher.disconnect(context, DISCONNECT_REASON_PROTOCOL_VIOLATION);
                     } catch (Throwable e) { // must remain last in catch list!
                         LOG.critical().$("internal error [ex=").$(e).$(']').$();
                         // This is a critical error, so we treat it as an unhandled one.
                         metrics.health().incrementUnhandledErrors();
-                        context.getDispatcher().disconnect(context, DISCONNECT_REASON_SERVER_ERROR);
+                        dispatcher.disconnect(context, DISCONNECT_REASON_SERVER_ERROR);
                     }
                     return false;
                 };

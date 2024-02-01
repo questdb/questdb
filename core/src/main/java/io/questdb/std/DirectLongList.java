@@ -24,12 +24,15 @@
 
 package io.questdb.std;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.Reopenable;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 
 import java.io.Closeable;
+
+import static io.questdb.std.Numbers.MAX_SAFE_INT_POW_2;
 
 public class DirectLongList implements Mutable, Closeable, Reopenable {
 
@@ -51,7 +54,7 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
     }
 
     public void add(long x) {
-        ensureCapacity();
+        checkCapacity();
         assert pos < limit;
         Unsafe.getUnsafe().putLong(pos, x);
         pos += Long.BYTES;
@@ -106,7 +109,7 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
 
     // capacity in LONGs
     public long getCapacity() {
-        return capacity / Long.BYTES;
+        return capacity >>> 3;
     }
 
     @Override
@@ -141,12 +144,12 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
     // desired capacity in LONGs (not count of bytes)
     public void setCapacity(long capacity) {
         assert capacity > 0;
-        setCapacityBytes(capacity * Long.BYTES);
+        setCapacityBytes(capacity << 3);
     }
 
     public void setPos(long p) {
         assert p * Long.BYTES <= capacity;
-        pos = address + p * Long.BYTES;
+        pos = address + (p << 3);
     }
 
     public void shrink(long newCapacity) {
@@ -157,7 +160,7 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
     }
 
     public long size() {
-        return (int) ((pos - address) / Long.BYTES);
+        return (int) ((pos - address) >>> 3);
     }
 
     public void sortAsUnsigned() {
@@ -166,7 +169,7 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
 
     @Override
     public String toString() {
-        CharSink sb = Misc.getThreadLocalSink();
+        Utf16Sink sb = Misc.getThreadLocalSink();
         sb.put('[');
         final int maxElementsToPrint = 1000; // Do not try to print too much, it can hang IntelliJ debugger.
         for (int i = 0, n = (int) Math.min(maxElementsToPrint, size()); i < n; i++) {
@@ -189,6 +192,9 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
     // desired capacity in bytes (not count of LONG values)
     private void setCapacityBytes(long capacity) {
         if (this.capacity != capacity) {
+            if ((capacity >>> 3) > MAX_SAFE_INT_POW_2) {
+                throw CairoException.nonCritical().put("long list capacity overflow");
+            }
             final long oldCapacity = this.capacity;
             final long oldSize = this.pos - this.address;
             this.capacity = capacity;
@@ -200,10 +206,10 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
         }
     }
 
-    void ensureCapacity() {
-        if (this.pos < limit) {
+    void checkCapacity() {
+        if (pos < limit) {
             return;
         }
-        setCapacityBytes(this.capacity * 2);
+        setCapacityBytes(capacity << 1);
     }
 }

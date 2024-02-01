@@ -257,12 +257,9 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         for (int i = 0; i < perWorkerMapCount; i++) {
             final Map srcMap = atom.getPerWorkerParticles().getQuick(i).getMap();
             destMap.merge(srcMap, atom.getFunctionUpdater(-1));
-        }
-
-        for (int i = 0; i < perWorkerMapCount; i++) {
-            final Map srcMap = atom.getPerWorkerParticles().getQuick(i).getMap();
             srcMap.close();
         }
+
         return destMap;
     }
 

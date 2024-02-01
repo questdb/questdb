@@ -28,4 +28,16 @@ public final class SqlJitMode {
     public static final int JIT_MODE_DISABLED = 2;
     public static final int JIT_MODE_ENABLED = 0;
     public static final int JIT_MODE_FORCE_SCALAR = 1;
+
+    public static String toString(int mode){
+        switch (mode) {
+            case JIT_MODE_ENABLED:
+                return "on";
+            case JIT_MODE_FORCE_SCALAR:
+                return "scalar";
+            case JIT_MODE_DISABLED:
+                return "off";
+        }
+        return "unknown";
+    }
 }

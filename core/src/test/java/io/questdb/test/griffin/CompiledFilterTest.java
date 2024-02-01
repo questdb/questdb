@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.Record;
@@ -58,24 +59,25 @@ public class CompiledFilterTest extends AbstractCairoTest {
     @Test
     public void testAllBindVariableTypes() throws Exception {
         assertMemoryLeak(() -> {
-
-            ddl("create table x as (select" +
-                    " rnd_boolean() aboolean," +
-                    " rnd_byte(2,50) abyte," +
-                    " rnd_geohash(4) ageobyte," +
-                    " rnd_short(10,1024) ashort," +
-                    " rnd_geohash(12) ageoshort," +
-                    " rnd_char() achar," +
-                    " rnd_int() anint," +
-                    " rnd_geohash(16) ageoint," +
-                    " rnd_symbol(4,4,4,2) asymbol," +
-                    " rnd_float(2) afloat," +
-                    " rnd_long() along," +
-                    " rnd_double(2) adouble," +
-                    " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) adate," +
-                    " rnd_geohash(32) ageolong," +
-                    " timestamp_sequence(400000000000, 500000000) atimestamp" +
-                    " from long_sequence(100)) timestamp(atimestamp)");
+            ddl(
+                    "create table x as (select" +
+                            " rnd_boolean() aboolean," +
+                            " rnd_byte(2,50) abyte," +
+                            " rnd_geohash(4) ageobyte," +
+                            " rnd_short(10,1024) ashort," +
+                            " rnd_geohash(12) ageoshort," +
+                            " rnd_char() achar," +
+                            " rnd_int() anint," +
+                            " rnd_geohash(16) ageoint," +
+                            " rnd_symbol(4,4,4,2) asymbol," +
+                            " rnd_float(2) afloat," +
+                            " rnd_long() along," +
+                            " rnd_double(2) adouble," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) adate," +
+                            " rnd_geohash(32) ageolong," +
+                            " timestamp_sequence(400000000000, 500000000) atimestamp" +
+                            " from long_sequence(100)) timestamp(atimestamp)"
+            );
 
             bindVariableService.clear();
             bindVariableService.setBoolean("aboolean", false);
@@ -197,7 +199,7 @@ public class CompiledFilterTest extends AbstractCairoTest {
     @Test
     public void testMixedSelectPreTouchEnabled() throws Exception {
         assertMemoryLeak(() -> {
-            configOverrideColumnPreTouchEnabled(true);
+            node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_ENABLED, true);
 
             ddl("create table t1 as (select " +
                     " x," +
@@ -264,7 +266,8 @@ public class CompiledFilterTest extends AbstractCairoTest {
 
     @Test
     public void testPageFrameMaxSize() throws Exception {
-        pageFrameMaxRows = 128;
+        int pageFrameMaxRows = 128;
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, pageFrameMaxRows);
         final long N = 8 * pageFrameMaxRows + 1;
         assertMemoryLeak(() -> {
             ddl("create table t1 as (select " +
@@ -598,7 +601,7 @@ public class CompiledFilterTest extends AbstractCairoTest {
     private void testFilterWithColTops(String query, String expected, int jitMode, boolean preTouch) throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.setJitMode(jitMode);
-            configOverrideColumnPreTouchEnabled(preTouch);
+            node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_ENABLED, preTouch);
 
             ddl("create table t1 as (select " +
                     " x," +
@@ -647,7 +650,7 @@ public class CompiledFilterTest extends AbstractCairoTest {
 
     private void testSelectAllTypesFromRecord(boolean preTouch) throws Exception {
         assertMemoryLeak(() -> {
-            configOverrideColumnPreTouchEnabled(preTouch);
+            node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_ENABLED, preTouch);
 
             final String query = "select * from x where b = true and kk < 10";
             final String expected = "kk\ta\tb\tc\td\te\tf\tg\ti\tj\tk\tl\tm\tn\tcc\tl2\thash1b\thash2b\thash3b\thash1c\thash2c\thash4c\thash8c\n" +

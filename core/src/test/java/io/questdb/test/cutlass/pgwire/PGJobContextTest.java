@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.pgwire;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
@@ -33,9 +34,7 @@ import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireServer;
-import io.questdb.griffin.QueryFutureUpdateListener;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -85,6 +84,8 @@ import java.util.stream.Collectors;
 import java.util.stream.LongStream;
 import java.util.stream.Stream;
 
+import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT;
+import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT;
 import static io.questdb.cairo.sql.SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK;
 import static io.questdb.test.tools.TestUtils.assertEquals;
 import static io.questdb.test.tools.TestUtils.*;
@@ -166,13 +167,12 @@ public class PGJobContextTest extends BasePGTest {
                 .$(", recvBufferSize=").$(recvBufferSize)
                 .$(", forceRecvFragmentationChunkSize=").$(forceRecvFragmentationChunkSize)
                 .I$();
-        configOverrideDefaultTableWriteMode(walEnabled ? SqlWalMode.WAL_ENABLED : SqlWalMode.WAL_DISABLED);
+        node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, walEnabled);
     }
 
     @After
     public void tearDown() throws Exception {
         super.tearDown();
-        configOverrideDefaultTableWriteMode(-1);
     }
 
     @Test
@@ -2942,8 +2942,8 @@ if __name__ == "__main__":
         ObjList<String> ddls = new ObjList<>(
                 baseTable,
                 baseTable + " timestamp(ts)",
-                baseTable + " timestamp(ts) partition by DAY BYPASS WAL",
-                walTable
+                baseTable + " timestamp(ts) partition by DAY BYPASS WAL"
+                // walTable //TODO: ban WAL update cancellation
         );
 
         String createAsSelect = "create table new_tab as (select * from tab where sleep(120000))";
@@ -2961,14 +2961,7 @@ if __name__ == "__main__":
         String update2 = "update tab set b=sleep(120000)";
         String updateWithJoin1 = "update tab t1 set b=true from tab t2 where sleep(120000) and t1.b = t2.b";
         String updateWithJoin2 = "update tab t1 set b=sleep(120000) from tab t2 where t1.b = t2.b";
-
-        // add many symbols to slow down operation enough so that other thread can detect it in registry and cancel it
-        StringSink addColumnsTmp = new StringSink();
-        addColumnsTmp.put("alter table tab add column s1 symbol index");
-        for (int i = 2; i < 20; i++) {
-            addColumnsTmp.put(", s").put(i).put(" symbol index");
-        }
-        final String addColumns = addColumnsTmp.toString();
+        String addColumns = "alter table tab add column s1 symbol index";
 
         ObjList<String> commands = new ObjList<>(
                 createAsSelect,
@@ -2989,179 +2982,194 @@ if __name__ == "__main__":
                 addColumns
         );
 
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            SOCountDownLatch started = new SOCountDownLatch(1);
-            SOCountDownLatch stopped = new SOCountDownLatch(1);
-            AtomicReference<Exception> queryError = new AtomicReference<>();
+        try {
+            DelayedListener registryListener = new DelayedListener();
+            engine.getQueryRegistry().setListener(registryListener);
 
-            for (int i = 0, n = ddls.size(); i < n; i++) {
-                final String ddl = ddls.getQuick(i);
-                boolean isWal = ddl.equals(walTable);
+            assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+                SOCountDownLatch started = new SOCountDownLatch(1);
+                SOCountDownLatch stopped = new SOCountDownLatch(1);
+                AtomicReference<Exception> queryError = new AtomicReference<>();
 
-                drop("drop table if exists tab");
-                ddl(ddl);
-                insert("insert into tab select true, (86400000000*x)::timestamp, null from long_sequence(1000)");
-                drop("drop table if exists new_tab");
-                if (isWal) {
-                    drainWalQueue();
-                }
+                for (int i = 0, n = ddls.size(); i < n; i++) {
+                    final String ddl = ddls.getQuick(i);
+                    boolean isWal = ddl.equals(walTable);
 
-                for (int j = 0, k = commands.size(); j < k; j++) {
-                    final String command = commands.getQuick(j);
-
-                    // skip pending wal changes in case wal table has been suspended by earlier command
+                    drop("drop table if exists tab");
+                    ddl(ddl);
+                    insert("insert into tab select true, (86400000000*x)::timestamp, null from long_sequence(1000)");
+                    drop("drop table if exists new_tab");
                     if (isWal) {
-                        try (RecordCursorFactory factory = select("select suspended, writerTxn, sequencerTxn from wal_tables() where name = 'tab'")) {
-                            boolean suspended;
-                            long sequencerTxn;
+                        drainWalQueue();
+                    }
 
-                            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                                cursor.hasNext();
-                                Record record = cursor.getRecord();
-                                suspended = record.getBool(0);
-                                sequencerTxn = record.getLong(2) + 1;
-                            }
+                    for (int j = 0, k = commands.size(); j < k; j++) {
+                        final String command = commands.getQuick(j);
 
-                            if (suspended) {
-                                ddl("alter table tab resume wal from txn " + sequencerTxn);
+                        // skip pending wal changes in case wal table has been suspended by earlier command
+                        if (isWal) {
+                            try (RecordCursorFactory factory = select("select suspended, writerTxn, sequencerTxn from wal_tables() where name = 'tab'")) {
+                                boolean suspended;
+                                long sequencerTxn;
 
                                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                                     cursor.hasNext();
                                     Record record = cursor.getRecord();
-                                    suspended = record.getBool(1);
-                                    Assert.assertFalse(suspended);
+                                    suspended = record.getBool(0);
+                                    sequencerTxn = record.getLong(2) + 1;
+                                }
+
+                                if (suspended) {
+                                    ddl("alter table tab resume wal from txn " + sequencerTxn);
+
+                                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                        cursor.hasNext();
+                                        Record record = cursor.getRecord();
+                                        suspended = record.getBool(1);
+                                        Assert.assertFalse(suspended);
+                                    }
                                 }
                             }
-                        }
-                        drainWalQueue();
-                    }
-
-                    // statements containing multiple transactions, such as 'alter table add column col1, col2' are currently not supported for WAL tables
-                    // UPDATE statements with join are not supported yet for WAL tables
-                    if ((isWal && (command.equals(updateWithJoin1) || command.equals(updateWithJoin2) || command.equals(addColumns)))) {
-                        continue;
-                    }
-
-                    try {
-                        if (isWal) {
                             drainWalQueue();
                         }
 
-                        started.setCount(isWal ? 2 : 1);
-                        stopped.setCount(isWal ? 2 : 1);
-                        queryError.set(null);
+                        // statements containing multiple transactions, such as 'alter table add column col1, col2' are currently not supported for WAL tables
+                        // UPDATE statements with join are not supported yet for WAL tables
+                        if ((isWal && (command.equals(updateWithJoin1) || command.equals(updateWithJoin2) || command.equals(addColumns)))) {
+                            continue;
+                        }
 
-                        new Thread(() -> {
-                            try {
-                                try (Connection conn = getConnection(mode, port, binary, 5)) {
-                                    started.countDown();
+                        try {
+                            if (isWal) {
+                                drainWalQueue();
+                            }
 
-                                    try (PreparedStatement stmt = conn.prepareStatement(command)) {
-                                        if (command.startsWith("select")) {
-                                            try (ResultSet result = stmt.executeQuery()) {
-                                                while (result.next()) {
-                                                    //ignore
+                            started.setCount(isWal ? 2 : 1);
+                            stopped.setCount(isWal ? 2 : 1);
+                            queryError.set(null);
+                            registryListener.queryFound.setCount(1);
+                            registryListener.queryText = command;
+
+                            new Thread(() -> {
+                                try {
+                                    try (Connection conn = getConnection(mode, port, binary, 5)) {
+                                        started.countDown();
+
+                                        try (PreparedStatement stmt = conn.prepareStatement(command)) {
+                                            if (command.startsWith("select")) {
+                                                try (ResultSet result = stmt.executeQuery()) {
+                                                    while (result.next()) {
+                                                        //ignore
+                                                    }
                                                 }
+                                            } else {
+                                                stmt.executeUpdate();
                                             }
-                                        } else {
-                                            stmt.executeUpdate();
                                         }
                                     }
-                                }
-                            } catch (SQLException e) {
-                                // ignore errors showing that statement has been cancelled
-                                if (!Chars.contains(e.getMessage(), "Could not create table") &&
-                                        !Chars.contains(e.getMessage(), "cancelled by user")) {
-                                    queryError.set(e);
-                                }
-                            } catch (Exception e) {
-                                queryError.set(e);
-                            } finally {
-                                stopped.countDown();
-                            }
-                        }, "command_thread").start();
-
-                        if (isWal) {
-                            Thread walJob = new Thread(() -> {
-                                started.countDown();
-
-                                try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
-                                    while (queryError.get() == null) {
-                                        drainWalQueue(walApplyJob);
+                                } catch (SQLException e) {
+                                    // ignore errors showing that statement has been cancelled
+                                    if (!Chars.contains(e.getMessage(), "Could not create table") &&
+                                            !Chars.contains(e.getMessage(), "cancelled by user")) {
+                                        queryError.set(e);
                                     }
+                                } catch (Exception e) {
+                                    queryError.set(e);
                                 } finally {
-                                    // release native path memory used by the job
-                                    Path.PATH.get().close();
                                     stopped.countDown();
                                 }
-                            }, "wal_job");
-                            walJob.start();
-                        }
+                            }, "command_thread").start();
 
-                        started.await();
+                            if (isWal) {
+                                Thread walJob = new Thread(() -> {
+                                    started.countDown();
 
-                        long queryId;
-                        long start = System.currentTimeMillis();
+                                    try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
+                                        while (queryError.get() == null) {
+                                            drainWalQueue(walApplyJob);
+                                        }
+                                    } finally {
+                                        // release native path memory used by the job
+                                        Path.PATH.get().close();
+                                        stopped.countDown();
+                                    }
+                                }, "wal_job");
+                                walJob.start();
+                            }
 
-                        try (PreparedStatement stmt = connection.prepareStatement("select query_id from query_activity() where query = ?")) {
-                            stmt.setString(1, command);
-                            while (true) {
-                                Os.sleep(1);
-                                try (ResultSet result = stmt.executeQuery()) {
-                                    if (result.next()) {
-                                        queryId = result.getLong(1);
-                                        break;
+                            started.await();
+
+                            long queryId;
+                            long start = System.currentTimeMillis();
+
+                            try (PreparedStatement stmt = connection.prepareStatement("select query_id from query_activity() where query = ?")) {
+                                stmt.setString(1, command);
+                                while (true) {
+                                    Os.sleep(1);
+                                    try (ResultSet result = stmt.executeQuery()) {
+                                        if (result.next()) {
+                                            queryId = result.getLong(1);
+                                            break;
+                                        }
+                                    }
+
+                                    if (System.currentTimeMillis() - start > TIMEOUT) {
+                                        throw new RuntimeException("Timed out waiting for command to appear in registry: " + command);
+                                    }
+                                    if (queryError.get() != null) {
+                                        throw new RuntimeException("Query to cancel failed!", queryError.get());
                                     }
                                 }
+                            } finally {
+                                registryListener.queryFound.countDown();
+                            }
 
-                                if (System.currentTimeMillis() - start > TIMEOUT) {
-                                    throw new RuntimeException("Timed out waiting for command to appear in registry: " + command);
-                                }
-                                if (queryError.get() != null) {
-                                    throw new RuntimeException("Query to cancel failed!", queryError.get());
+                            try (PreparedStatement stmt = connection.prepareStatement("cancel query " + queryId)) {
+                                stmt.executeUpdate();
+                            } catch (SQLException e) {
+                                // ignore errors showing that statement is completed
+                                if (!Chars.contains(e.getMessage(), "query to cancel not found in registry")) {
+                                    throw e;
                                 }
                             }
-                        }
+                            start = System.currentTimeMillis();
 
-                        try (PreparedStatement stmt = connection.prepareStatement("cancel query " + queryId)) {
-                            stmt.executeUpdate();
-                        }
-
-                        start = System.currentTimeMillis();
-
-                        try (PreparedStatement stmt = connection.prepareStatement("select * from query_activity() where query_id = ?")) {
-                            stmt.setLong(1, queryId);
-                            while (true) {
-                                Os.sleep(1);
-                                try (ResultSet result = stmt.executeQuery()) {
-                                    if (!result.next()) {
-                                        break;
+                            try (PreparedStatement stmt = connection.prepareStatement("select * from query_activity() where query_id = ?")) {
+                                stmt.setLong(1, queryId);
+                                while (true) {
+                                    Os.sleep(1);
+                                    try (ResultSet result = stmt.executeQuery()) {
+                                        if (!result.next()) {
+                                            break;
+                                        }
+                                    }
+                                    if (System.currentTimeMillis() - start > TIMEOUT) {
+                                        throw new RuntimeException("Timed out waiting for command to stop: " + command);
                                     }
                                 }
-                                if (System.currentTimeMillis() - start > TIMEOUT) {
-                                    throw new RuntimeException("Timed out waiting for command to stop: " + command);
+                            }
+
+                            // run simple query to test that previous query cancellation doesn't 'spill into' other queries
+                            try (PreparedStatement stmt = connection.prepareStatement("select sleep(1)")) {
+                                try (ResultSet result = stmt.executeQuery()) {
+                                    result.next();
+                                    Assert.assertTrue(result.getBoolean(1));
                                 }
                             }
+                        } catch (Throwable t) {
+                            throw new RuntimeException("Failed on\n ddl: " + ddl +
+                                    "\n query: " + command +
+                                    "\n exception: ", t);
+                        } finally {
+                            queryError.set(new Exception());//stop wal thread
+                            stopped.await();
                         }
-
-                        // run simple query to test that previous query cancellatio doesn't 'spill into' other queries
-                        try (PreparedStatement stmt = connection.prepareStatement("select sleep(1)")) {
-                            try (ResultSet result = stmt.executeQuery()) {
-                                result.next();
-                                Assert.assertTrue(result.getBoolean(1));
-                            }
-                        }
-                    } catch (Throwable t) {
-                        throw new RuntimeException("Failed on\n ddl: " + ddl +
-                                "\n query: " + command +
-                                "\n exception: ", t);
-                    } finally {
-                        queryError.set(new Exception());//stop wal thread
-                        stopped.await();
                     }
                 }
-            }
-        });
+            });
+        } finally {
+            engine.getQueryRegistry().setListener(null);
+        }
     }
 
     @Test
@@ -3182,7 +3190,7 @@ if __name__ == "__main__":
                 pstmt.setString(1, "SELECT symbol,approx_percentile(price, 50, 2) from trades");
                 ResultSet rs = pstmt.executeQuery();
                 sink.clear();
-                assertResultSet("query_id[BIGINT],worker_id[BIGINT],worker_pool[VARCHAR],username[VARCHAR],query_start[TIMESTAMP],state_change[TIMESTAMP],state[VARCHAR],query[VARCHAR]\n",
+                assertResultSet("query_id[BIGINT],worker_id[BIGINT],worker_pool[VARCHAR],username[VARCHAR],query_start[TIMESTAMP],state_change[TIMESTAMP],state[VARCHAR],is_wal[BIT],query[VARCHAR]\n",
                         sink, rs);
             }
         });
@@ -7442,15 +7450,15 @@ nodejs code:
     public void testRunAlterWhenTableLockedAndAlterTakesTooLong() throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
-            writerAsyncCommandBusyWaitTimeout = 1_000;
-            writerAsyncCommandMaxTimeout = 30_000;
+            node1.setProperty(CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 1000);
+            node1.setProperty(CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT, 30_000);
             SOCountDownLatch queryStartedCountDown = new SOCountDownLatch();
             ff = new TestFilesFacadeImpl() {
                 @Override
                 public int openRW(LPSZ name, long opts) {
                     if (Utf8s.endsWithAscii(name, "_meta.swp")) {
                         queryStartedCountDown.await();
-                        Os.sleep(configuration.getWriterAsyncCommandBusyWaitTimeout());
+                        Os.sleep(configuration.getWriterAsyncCommandBusyWaitTimeout() * 2);
                     }
                     return super.openRW(name, opts);
                 }
@@ -7464,7 +7472,10 @@ nodejs code:
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             skipOnWalRun(); // Alters do not wait for WAL tables
-            writerAsyncCommandMaxTimeout = configuration.getWriterAsyncCommandBusyWaitTimeout();
+            node1.setProperty(CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 1000);
+            long writerAsyncCommandMaxTimeout = configuration.getWriterAsyncCommandBusyWaitTimeout();
+            Assert.assertEquals(1000, writerAsyncCommandMaxTimeout);
+            node1.setProperty(CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT, writerAsyncCommandMaxTimeout);
             SOCountDownLatch queryStartedCountDown = new SOCountDownLatch();
             ff = new TestFilesFacadeImpl() {
                 @Override
@@ -7485,7 +7496,7 @@ nodejs code:
     public void testRunAlterWhenTableLockedAndAlterTimeoutsToStart() throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
-            writerAsyncCommandBusyWaitTimeout = 1;
+            node1.setProperty(CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 1);
             ff = new TestFilesFacadeImpl() {
                 @Override
                 public int openRW(LPSZ name, long opts) {
@@ -7502,7 +7513,7 @@ nodejs code:
     @Test
     public void testRunAlterWhenTableLockedWithInserts() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        writerAsyncCommandBusyWaitTimeout = 10_000;
+        node1.setProperty(CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 10_000);
         assertMemoryLeak(() -> testAddColumnBusyWriter(true, new SOCountDownLatch()));
     }
 
@@ -9289,10 +9300,6 @@ create table tab as (
         });
     }
 
-    //
-    // Tests for ResultSet.setFetchSize().
-    //
-
     @Test
     public void testUpdateAfterDroppingColumnNotUsedByTheUpdate() throws Exception {
         assertMemoryLeak(() -> {
@@ -9330,6 +9337,10 @@ create table tab as (
         });
     }
 
+    //
+    // Tests for ResultSet.setFetchSize().
+    //
+
     @Test
     public void testUpdateAfterDroppingColumnUsedByTheUpdate() throws Exception {
         assertMemoryLeak(() -> {
@@ -9364,10 +9375,6 @@ create table tab as (
             }
         });
     }
-
-    //
-    // Tests for ResultSet.setFetchSize().
-    //
 
     @Test
     public void testUpdateAsync() throws Exception {
@@ -9409,6 +9416,10 @@ create table tab as (
                         "9,3.0,2020-06-01 00:00:12.0,null\n"
         );
     }
+
+    //
+    // Tests for ResultSet.setFetchSize().
+    //
 
     @Test
     public void testUpdateBatch() throws Exception {
@@ -10263,10 +10274,10 @@ create table tab as (
              )
         ) {
             Assert.assertNotNull(server);
-            pool.start(LOG);
             int iteration = 0;
 
             do {
+                pool.start(LOG);
                 final String tableName = "xyz" + iteration++;
                 ddl("create table " + tableName + " (a int)");
 
@@ -11620,7 +11631,24 @@ create table tab as (
 
     @FunctionalInterface
     interface ResultProducer {
-        void produce(String[] paramVals, boolean[] isBindVals, String[] bindVals, CharSink output);
+        void produce(String[] paramVals, boolean[] isBindVals, String[] bindVals, Utf16Sink output);
+    }
+
+    private static class DelayedListener implements QueryRegistry.Listener {
+        private final SOCountDownLatch queryFound = new SOCountDownLatch(1);
+        private volatile CharSequence queryText;
+
+        @Override
+        public void onRegister(CharSequence query, long queryId, SqlExecutionContext context) {
+            if (queryText == null) {
+                return;
+            }
+
+            if (Chars.equalsNc(queryText, query)) {
+                queryFound.await();
+                queryText = null;
+            }
+        }
     }
 
     private static class DelayingNetworkFacade extends NetworkFacadeImpl {

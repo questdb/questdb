@@ -98,10 +98,16 @@ public class WalTxnDetails {
     ) {
         if (committedSeqTxn <= getLastSeqTxn()) {
             int shift = (int) (committedSeqTxn - startSeqTxn + 1);
-            transactionMeta.removeIndexBlock(0, shift * TXN_METADATA_LONGS_SIZE);
-            startSeqTxn = committedSeqTxn + 1;
-            if (transactionMeta.size() > 0) {
-                transactionMeta.set(0, -1);
+            if (shift < 0) {
+                // This can happen after a rollback. In this case we have to clear everything.
+                transactionMeta.clear();
+                startSeqTxn = -1;
+            } else {
+                transactionMeta.removeIndexBlock(0, shift * TXN_METADATA_LONGS_SIZE);
+                startSeqTxn = committedSeqTxn + 1;
+                if (transactionMeta.size() > 0) {
+                    transactionMeta.set(0, -1);
+                }
             }
         } else {
             transactionMeta.clear();

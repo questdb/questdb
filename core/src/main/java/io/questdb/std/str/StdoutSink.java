@@ -55,7 +55,7 @@ public final class StdoutSink implements Utf8Sink, Closeable {
     }
 
     @Override
-    public Utf8Sink put(long lo, long hi) {
+    public Utf8Sink putUtf8(long lo, long hi) {
         long remaining = hi - lo;
         while (remaining > 0) {
             final long avail = limit - ptr;

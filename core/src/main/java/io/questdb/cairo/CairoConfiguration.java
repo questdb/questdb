@@ -144,9 +144,6 @@ public interface CairoConfiguration {
     @NotNull
     DateLocale getDefaultDateLocale();
 
-    @NotNull
-    CharSequence getDefaultMapType();
-
     boolean getDefaultSymbolCacheFlag();
 
     int getDefaultSymbolCapacity();
@@ -209,6 +206,8 @@ public interface CairoConfiguration {
     int getMaxCrashFiles();
 
     int getMaxFileNameLength();
+
+    int getMaxSqlRecompileAttempts();
 
     int getMaxSwapFileCount();
 
@@ -441,6 +440,8 @@ public interface CairoConfiguration {
 
     int getSqlSortValuePageSize();
 
+    int getSqlUnorderedMapMaxEntrySize();
+
     int getSqlWindowInitialRangeBufferSize();
 
     int getSqlWindowMaxRecursion();
@@ -593,4 +594,7 @@ public interface CairoConfiguration {
      * @return true if mangling of directory names for non-WAL tables is enabled, false otherwise.
      */
     boolean mangleTableDirNames();
+
+    default void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
+    }
 }

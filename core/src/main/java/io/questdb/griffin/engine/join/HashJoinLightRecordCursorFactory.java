@@ -122,7 +122,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         public HashJoinRecordCursor(int columnSplit, CairoConfiguration configuration, ColumnTypes joinColumnTypes, ColumnTypes valueTypes) {
             super(columnSplit);
             record = new JoinRecord(columnSplit);
-            joinKeyMap = MapFactory.createMap(configuration, joinColumnTypes, valueTypes);
+            joinKeyMap = MapFactory.createUnorderedMap(configuration, joinColumnTypes, valueTypes);
             slaveChain = new LongChain(configuration.getSqlHashJoinLightValuePageSize(), configuration.getSqlHashJoinLightValueMaxPages());
             isOpen = true;
         }

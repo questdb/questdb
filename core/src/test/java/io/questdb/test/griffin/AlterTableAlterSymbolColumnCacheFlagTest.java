@@ -29,7 +29,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.RecordCursorPrinter;
 import io.questdb.test.tools.TestUtils;
@@ -256,13 +256,13 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractCairoTest 
         }
 
         @Override
-        public void print(Record r, RecordMetadata m, CharSink sink) {
+        public void print(Record r, RecordMetadata m, Utf16Sink sink) {
             TestUtils.printColumn(r, m, columnIndex, sink);
             sink.putAscii("\n");
         }
 
         @Override
-        public void printHeader(RecordMetadata metadata, CharSink sink) {
+        public void printHeader(RecordMetadata metadata, Utf16Sink sink) {
             sink.put(metadata.getColumnName(columnIndex));
             sink.putAscii('\n');
         }

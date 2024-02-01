@@ -27,11 +27,9 @@ package io.questdb.cutlass.http;
 import io.questdb.std.*;
 import io.questdb.std.str.*;
 
-import java.io.Closeable;
-
 import static io.questdb.cutlass.http.HttpConstants.*;
 
-public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
+public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHeader {
     private final BoundaryAugmenter boundaryAugmenter = new BoundaryAugmenter();
     // in theory, it is possible to send multiple cookies on separate lines in the header
     // if we used more cookies, the below map would need to hold a list of CharSequences
@@ -49,7 +47,7 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
     private DirectUtf8String contentDisposition;
     private DirectUtf8String contentDispositionFilename;
     private DirectUtf8String contentDispositionName;
-    private int contentLength;
+    private long contentLength;
     private DirectUtf8String contentType;
     private DirectUtf8String headerName;
     private long headerPtr;
@@ -70,10 +68,9 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
     private DirectUtf8String statusText;
 
     public HttpHeaderParser(int bufferLen, ObjectPool<DirectUtf8String> pool) {
-        final int sz = Numbers.ceilPow2(bufferLen);
-        this.headerPtr = Unsafe.malloc(sz, MemoryTag.NATIVE_HTTP_CONN);
-        this._wptr = headerPtr;
-        this.hi = this.headerPtr + sz;
+        int bufferSize = Numbers.ceilPow2(bufferLen);
+        this.headerPtr = this._wptr = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_HTTP_CONN);
+        this.hi = headerPtr + bufferSize;
         this.pool = pool;
         clear();
     }
@@ -104,15 +101,17 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
         this.isStatusCode = true;
         this.isStatusText = true;
         this.needProtocol = true;
+        this.contentLength = -1;
         // do not clear the pool
         // this.pool.clear();
     }
 
     @Override
     public void close() {
-        if (this.headerPtr != 0) {
-            this.headerPtr = Unsafe.free(this.headerPtr, this.hi - this.headerPtr, MemoryTag.NATIVE_HTTP_CONN);
-            this.boundaryAugmenter.close();
+        clear();
+        if (headerPtr != 0) {
+            headerPtr = _wptr = Unsafe.free(headerPtr, hi - headerPtr, MemoryTag.NATIVE_HTTP_CONN);
+            boundaryAugmenter.close();
         }
     }
 
@@ -142,7 +141,7 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
     }
 
     @Override
-    public int getContentLength() {
+    public long getContentLength() {
         return contentLength;
     }
 
@@ -360,7 +359,7 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
         }
 
         try {
-            contentLength = Numbers.parseInt(seq);
+            contentLength = Numbers.parseLong(seq);
         } catch (NumericException ignore) {
             throw HttpException.instance("Malformed ").put(HEADER_CONTENT_LENGTH).put(" header");
         }
@@ -593,7 +592,7 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
         return offset;
     }
 
-    public static class BoundaryAugmenter implements Closeable {
+    public static class BoundaryAugmenter implements QuietCloseable {
         private static final Utf8String BOUNDARY_PREFIX = new Utf8String("\r\n--");
         private final DirectUtf8String export = new DirectUtf8String();
         private long _wptr;
@@ -609,7 +608,7 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
         @Override
         public void close() {
             if (lo > 0) {
-                this.lo = this._wptr = Unsafe.free(this.lo, this.lim, MemoryTag.NATIVE_HTTP_CONN);
+                lo = _wptr = Unsafe.free(lo, lim, MemoryTag.NATIVE_HTTP_CONN);
             }
         }
 

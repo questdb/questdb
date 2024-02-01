@@ -24,7 +24,10 @@
 
 package io.questdb.griffin.engine.join;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
@@ -127,7 +130,7 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
                 CairoConfiguration configuration
         ) {
             super(columnSplit);
-            joinKeyMap = MapFactory.createMap(configuration, joinColumnTypes, valueTypes);
+            joinKeyMap = MapFactory.createUnorderedMap(configuration, joinColumnTypes, valueTypes);
             slaveChain = new LongChain(configuration.getSqlHashJoinLightValuePageSize(), configuration.getSqlHashJoinLightValueMaxPages());
             record = new OuterJoinRecord(columnSplit, nullRecord);
             isOpen = true;

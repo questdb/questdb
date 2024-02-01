@@ -24,7 +24,7 @@
 
 package io.questdb.std;
 
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
@@ -50,6 +50,10 @@ public class Long256Impl implements Long256, Sinkable {
 
     public static boolean isNull(Long256 value) {
         return Long256Impl.NULL_LONG256.equals(value);
+    }
+
+    public static boolean isNull(long l0, long l1, long l2, long l3) {
+        return l0 == Numbers.LONG_NaN && l1 == Numbers.LONG_NaN && l2 == Numbers.LONG_NaN && l3 == Numbers.LONG_NaN;
     }
 
     public static void putNull(long appendPointer) {
@@ -82,6 +86,15 @@ public class Long256Impl implements Long256, Sinkable {
         );
     }
 
+    public void fromRnd(Rnd rnd, long N) {
+        setAll(
+                rnd.nextLong(N),
+                rnd.nextLong(N),
+                rnd.nextLong(N),
+                rnd.nextLong(N)
+        );
+    }
+
     @Override
     public long getLong0() {
         return l0;
@@ -111,7 +124,7 @@ public class Long256Impl implements Long256, Sinkable {
     }
 
     @Override
-    public void toSink(@NotNull CharSinkBase<?> sink) {
+    public void toSink(@NotNull CharSink<?> sink) {
         Numbers.appendLong256(l0, l1, l2, l3, sink);
     }
 

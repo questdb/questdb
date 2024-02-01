@@ -30,7 +30,7 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.*;
 import io.questdb.std.str.DirectUtf8Sequence;
-import io.questdb.std.str.FlyweightDirectCharSink;
+import io.questdb.std.str.FlyweightDirectUtf16Sink;
 import io.questdb.std.str.Utf8s;
 
 import static io.questdb.cutlass.line.tcp.LineTcpParser.ENTITY_TYPE_NULL;
@@ -38,8 +38,8 @@ import static io.questdb.cutlass.line.tcp.LineTcpParser.ENTITY_TYPE_NULL;
 public class LineTcpEventBuffer {
     private final long bufLo;
     private final long bufSize;
-    private final FlyweightDirectCharSink tempSink = new FlyweightDirectCharSink();
-    private final FlyweightDirectCharSink tempSinkB = new FlyweightDirectCharSink();
+    private final FlyweightDirectUtf16Sink tempSink = new FlyweightDirectUtf16Sink();
+    private final FlyweightDirectUtf16Sink tempSinkB = new FlyweightDirectUtf16Sink();
 
     public LineTcpEventBuffer(long bufLo, long bufSize) {
         this.bufLo = bufLo;

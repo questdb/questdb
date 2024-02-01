@@ -74,8 +74,8 @@ public class Utf8StringSink implements MutableUtf8Sink {
     }
 
     @Override
-    public Utf8StringSink put(long lo, long hi) {
-        checkSize(Bytes.checkedLoHiSize(lo, hi, pos));
+    public Utf8StringSink putUtf8(long lo, long hi) {
+        checkCapacity(Bytes.checkedLoHiSize(lo, hi, pos));
         for (long p = lo; p < hi; p++) {
             buffer[pos++] = Unsafe.getUnsafe().getByte(p);
         }
@@ -86,7 +86,7 @@ public class Utf8StringSink implements MutableUtf8Sink {
     public Utf8StringSink put(@Nullable Utf8Sequence us) {
         if (us != null) {
             int s = us.size();
-            checkSize(s);
+            checkCapacity(s);
             for (int i = 0; i < s; i++) {
                 buffer[pos + i] = us.byteAt(i);
             }
@@ -97,7 +97,7 @@ public class Utf8StringSink implements MutableUtf8Sink {
 
     @Override
     public Utf8StringSink put(byte b) {
-        checkSize(1);
+        checkCapacity(1);
         buffer[pos++] = b;
         return this;
     }
@@ -124,7 +124,7 @@ public class Utf8StringSink implements MutableUtf8Sink {
         return Utf8s.stringFromUtf8Bytes(this);
     }
 
-    private void checkSize(int extra) {
+    private void checkCapacity(int extra) {
         assert extra >= 0;
         int size = pos + extra;
         if (buffer.length > size) {

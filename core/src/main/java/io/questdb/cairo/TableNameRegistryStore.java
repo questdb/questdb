@@ -487,7 +487,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                     tableNameToTableTokenMap.put(tableName, token);
                     if (!Chars.startsWith(token.getDirName(), token.getTableName())) {
                         // This table is renamed, log system to real table name mapping
-                        LOG.info().$("table dir name does not match logical name [table=").utf8(tableName).$(", dirName=").utf8(dirName).I$();
+                        LOG.debug().$("table dir name does not match logical name [table=").utf8(tableName).$(", dirName=").utf8(dirName).I$();
                     }
                     dirNameToTableTokenMap.put(token.getDirName(), ReverseTableMapItem.of(token));
                 }

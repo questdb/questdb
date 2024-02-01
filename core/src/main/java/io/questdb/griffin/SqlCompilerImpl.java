@@ -91,6 +91,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final FilesFacade ff;
     private final FunctionParser functionParser;
     private final ListColumnFilter listColumnFilter = new ListColumnFilter();
+    private final int maxRecompileAttempts;
     private final MemoryMARW mem = Vm.getMARWInstance();
     private final MessageBus messageBus;
     private final SqlParser parser;
@@ -123,6 +124,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     public SqlCompilerImpl(CairoEngine engine) {
         this.engine = engine;
         queryLogger = engine.getConfiguration().getQueryLogger();
+        this.maxRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
         this.queryBuilder = new QueryBuilder(this);
         this.configuration = engine.getConfiguration();
         this.ff = configuration.getFilesFacade();
@@ -297,7 +299,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     batchCallback.postCompile(this, compiledQuery, currentQuery);
                     recompileStale = false;
                 } catch (TableReferenceOutOfDateException e) {
-                    if (retries == TableReferenceOutOfDateException.MAX_RETRY_ATTEMPTS) {
+                    if (retries == maxRecompileAttempts) {
                         throw e;
                     }
                     LOG.info().$(e.getFlyweightMessage()).$();
@@ -1276,20 +1278,23 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
 
         tok = SqlUtil.fetchNext(lexer);
+        int position = lexer.lastTokenPosition();
         try {
             long queryId = Numbers.parseLong(tok);
-
             tok = SqlUtil.fetchNext(lexer);
             if (tok != null && !isSemicolon(tok)) {
                 throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
             }
-
-            if (!executionContext.getCairoEngine().getQueryRegistry().cancel(queryId, executionContext)) {
-                throw SqlException.$(lexer.lastTokenPosition(), "query to cancel not found in registry [id=").put(queryId).put(']');
+            try {
+                if (!executionContext.getCairoEngine().getQueryRegistry().cancel(queryId, executionContext)) {
+                    throw SqlException.$(position, "query to cancel not found in registry [id=").put(queryId).put(']');
+                }
+            } catch (CairoException e) {
+                throw SqlException.$(position, e.getFlyweightMessage());
             }
             compiledQuery.ofCancelQuery();
         } catch (NumericException e) {
-            throw SqlException.$(lexer.lastTokenPosition(), "non-negative integer literal expected as query id");
+            throw SqlException.$(position, "non-negative integer literal expected as query id");
         }
     }
 
@@ -2363,7 +2368,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                     factory.getMetadata(),
                                     cursor,
                                     copier,
-                                    writerTimestampIndex,
+                                    timestampIndexFound,
                                     model.getBatchSize(),
                                     model.getO3MaxLag(),
                                     circuitBreaker
@@ -2852,7 +2857,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             boolean isSelect
     ) throws SqlException {
         QueryModel queryModel = initialQueryModel;
-        int remainingRetries = TableReferenceOutOfDateException.MAX_RETRY_ATTEMPTS;
+        int remainingRetries = maxRecompileAttempts;
         for (; ; ) {
             try {
                 return generateFactory(queryModel, executionContext, isSelect);

@@ -27,8 +27,8 @@ package org.questdb;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.SingleColumnType;
-import io.questdb.cairo.map.FastMap;
 import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.map.OrderedMap;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByLongHashSet;
 import io.questdb.std.Rnd;
@@ -42,20 +42,27 @@ import java.util.concurrent.TimeUnit;
 
 @State(Scope.Thread)
 @BenchmarkMode(Mode.AverageTime)
-@OutputTimeUnit(TimeUnit.MICROSECONDS)
+@OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class GroupByLongHashSetBenchmark {
 
-    private static final long N = 1_000_000;
+    private static final double loadFactor = 0.7;
+    private static final int orderedMapPageSize = 1024 * 1024;
+    private static final long groupByAllocatorDefaultChunkSize = 128 * 1024;
+    private static final Rnd rnd = new Rnd();
+
+    @Param({"5000", "50000", "500000", "5000000"})
+    public int size;
+
     private static final GroupByAllocator allocator = new GroupByAllocator(new DefaultCairoConfiguration(null) {
         @Override
         public long getGroupByAllocatorDefaultChunkSize() {
-            return 128 * 1024;
+            return groupByAllocatorDefaultChunkSize;
         }
     });
-    private static final FastMap fmap = new FastMap(1024 * 1024, new SingleColumnType(ColumnType.LONG), null, 16, 0.7f, Integer.MAX_VALUE);
-    private static final GroupByLongHashSet gbset = new GroupByLongHashSet(16, 0.7, 0);
+
+    private static final OrderedMap orderedMap = new OrderedMap(orderedMapPageSize, new SingleColumnType(ColumnType.LONG), null, 64, loadFactor, Integer.MAX_VALUE);
+    private static final GroupByLongHashSet groupByLongHashSet = new GroupByLongHashSet(64, loadFactor, 0);
     private static long ptr = 0;
-    private final Rnd rnd = new Rnd();
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
@@ -68,35 +75,29 @@ public class GroupByLongHashSetBenchmark {
         new Runner(opt).run();
     }
 
-    @Benchmark
-    public long baseline() {
-        return rnd.nextLong(N);
-    }
-
     @Setup(Level.Iteration)
     public void reset() {
-        fmap.close();
-        fmap.reopen();
+        orderedMap.clear();
         allocator.close();
-        gbset.setAllocator(allocator);
+        groupByLongHashSet.setAllocator(allocator);
         ptr = 0;
         rnd.reset();
     }
 
     @Benchmark
-    public void testFastMap() {
-        MapKey key = fmap.withKey();
-        key.putLong(rnd.nextLong(N));
+    public void testOrderedMap() {
+        MapKey key = orderedMap.withKey();
+        key.putLong(rnd.nextLong(size));
         key.createValue();
     }
 
     @Benchmark
     public void testGroupByLongHashSet() {
-        long value = rnd.nextLong(N);
-        int index = gbset.of(ptr).keyIndex(value);
+        long value = rnd.nextLong(size);
+        int index = groupByLongHashSet.of(ptr).keyIndex(value);
         if (index >= 0) {
-            gbset.addAt(index, value);
-            ptr = gbset.ptr();
+            groupByLongHashSet.addAt(index, value);
+            ptr = groupByLongHashSet.ptr();
         }
     }
 }

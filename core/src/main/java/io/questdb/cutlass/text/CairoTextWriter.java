@@ -269,7 +269,7 @@ public class CairoTextWriter implements Closeable, Mutable {
         this.types = detectedTypes;
 
         // Overwrite detected types with actual table column types.
-        remapIndex.ensureCapacity(types.size());
+        remapIndex.setPos(types.size());
         for (int i = 0, n = types.size(); i < n; i++) {
             final int columnIndex = metadata.getColumnIndexQuiet(names.getQuick(i));
             final int idx = columnIndex > -1 ? columnIndex : i; // check for strict match ?

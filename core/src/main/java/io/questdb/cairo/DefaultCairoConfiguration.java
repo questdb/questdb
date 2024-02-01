@@ -234,11 +234,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public @NotNull CharSequence getDefaultMapType() {
-        return "fast";
-    }
-
-    @Override
     public boolean getDefaultSymbolCacheFlag() {
         return true;
     }
@@ -366,6 +361,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getMaxFileNameLength() {
         return 127;
+    }
+
+    @Override
+    public int getMaxSqlRecompileAttempts() {
+        return 10;
     }
 
     @Override
@@ -764,6 +764,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSqlSortValuePageSize() {
         return Numbers.SIZE_1MB * 16;
+    }
+
+    @Override
+    public int getSqlUnorderedMapMaxEntrySize() {
+        return 16;
     }
 
     @Override

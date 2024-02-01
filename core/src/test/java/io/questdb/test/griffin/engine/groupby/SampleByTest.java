@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.groupby;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -169,12 +170,12 @@ public class SampleByTest extends AbstractCairoTest {
     public void testGroupByAllTypes() throws Exception {
         assertQuery(
                 "b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\n" +
-                        "HYRX\t108.4198\t129.3991122184773\t2127224767\t95\t57207\t1696566079386694074\n" +
                         "\t680.7651\t771.0922622028395\t15020424080\t333\t197423\t-5259855777509188759\n" +
                         "CPSW\t101.2276\t111.11358403739061\t2567523370\t33\t43254\t7594916031131877487\n" +
+                        "HYRX\t108.4198\t129.3991122184773\t2127224767\t95\t57207\t1696566079386694074\n" +
                         "PEHN\t104.2904\t100.8772613783025\t3354324129\t18\t17565\t-4882690809235649274\n" +
                         "RXGZ\t96.4029\t42.02044253932608\t712702244\t46\t22661\t2762535352290012031\n",
-                "select b, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g) from x",
+                "select b, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g) from x order by b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -204,15 +205,15 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(5)" +
                         ") timestamp(k)",
                 "b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\n" +
-                        "HYRX\t108.4198\t129.3991122184773\t2127224767\t95\t57207\t1696566079386694074\n" +
                         "\t779.3558\t869.932373151714\t16932485166\t363\t215247\t3597805051091659961\n" +
                         "CPSW\t101.2276\t111.11358403739061\t2567523370\t33\t43254\t7594916031131877487\n" +
+                        "HYRX\t108.4198\t129.3991122184773\t2127224767\t95\t57207\t1696566079386694074\n" +
+                        "LOPJ\t76.6815\t5.158459929273784\t1920398380\t38\t16628\t3527911398466283309\n" +
+                        "OXPK\t45.9207\t76.06252634124596\t2043541236\t21\t19278\t1832315370633201942\n" +
                         "PEHN\t104.2904\t100.8772613783025\t3354324129\t18\t17565\t-4882690809235649274\n" +
                         "RXGZ\t96.4029\t42.02044253932608\t712702244\t46\t22661\t2762535352290012031\n" +
-                        "ZGHW\t50.2589\t38.42254384471547\t597366062\t21\t23702\t7037372650941669660\n" +
-                        "LOPJ\t76.6815\t5.158459929273784\t1920398380\t38\t16628\t3527911398466283309\n" +
                         "VDKF\t4.3606\t35.68111021227658\t503883303\t38\t10895\t7202923278768687325\n" +
-                        "OXPK\t45.9207\t76.06252634124596\t2043541236\t21\t19278\t1832315370633201942\n",
+                        "ZGHW\t50.2589\t38.42254384471547\t597366062\t21\t23702\t7037372650941669660\n",
                 true,
                 true,
                 false
@@ -335,7 +336,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "1970-01-03T17:00:00.000000Z\t58.9340\t56.99444693578853\t1311366306\t9\t27078\t8755128364143858197\n" +
                         "1970-01-03T18:00:00.000000Z\t65.4048\t86.7718184863495\t593242882\t6\t23251\t5292387498953709416\n" +
                         "1970-01-03T19:00:00.000000Z\t85.9313\t33.74707565497281\t2105201404\t34\t14733\t8994301462266164776\n",
-                "(select k, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g) from x) timestamp(k)",
+                "(select k, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g) from x order by k) timestamp(k)",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -426,52 +427,72 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByCountFromSubQuery() throws Exception {
-        assertQuery("c\tcount\n" +
-                "UU\t1\n" +
-                "XY\t1\n" +
-                "ZP\t1\n" +
-                "\t1\n", "select c, count() from (x latest on ts partition by c)", "create table x as " +
-                "(" +
-                "select" +
-                " cast(x as timestamp) ts," +
-                " rnd_symbol('XY','ZP', null, 'UU') c" +
-                " from" +
-                " long_sequence(20)" +
-                ") timestamp(ts)", null, "insert into x select * from (" +
-                "select" +
-                " cast(x+20 as timestamp) ts," +
-                " rnd_symbol('KK', 'PL') c" +
-                " from" +
-                " long_sequence(5)" +
-                ")", "c\tcount\n" +
-                "UU\t1\n" +
-                "XY\t1\n" +
-                "ZP\t1\n" +
-                "\t1\n" +
-                "KK\t1\n" +
-                "PL\t1\n", true, true, false);
+        assertQuery(
+                "c\tcount\n" +
+                        "\t1\n" +
+                        "UU\t1\n" +
+                        "XY\t1\n" +
+                        "ZP\t1\n",
+                "select c, count() from (x latest on ts partition by c) order by c",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " cast(x as timestamp) ts," +
+                        " rnd_symbol('XY','ZP', null, 'UU') c" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(ts)",
+                null,
+                "insert into x select * from (" +
+                        "select" +
+                        " cast(x+20 as timestamp) ts," +
+                        " rnd_symbol('KK', 'PL') c" +
+                        " from" +
+                        " long_sequence(5)" +
+                        ")",
+                "c\tcount\n" +
+                        "\t1\n" +
+                        "KK\t1\n" +
+                        "PL\t1\n" +
+                        "UU\t1\n" +
+                        "XY\t1\n" +
+                        "ZP\t1\n",
+                true,
+                true,
+                false
+        );
     }
 
     @Test
     public void testGroupByEmpty() throws Exception {
-        assertQuery("c\tsum_t\n", "select c, sum_t(d) from x", "create table x as " +
-                "(" +
-                "select" +
-                " x," +
-                " rnd_double(0) d," +
-                " rnd_symbol('XY','ZP', null, 'UU') c" +
-                " from" +
-                " long_sequence(0)" +
-                ")", null, "insert into x select * from (" +
-                "select" +
-                " x," +
-                " rnd_double(0) d," +
-                " rnd_symbol('KK', 'PL') c" +
-                " from" +
-                " long_sequence(5)" +
-                ")", "c\tsum_t\n" +
-                "PL\t1.088880189118224\n" +
-                "KK\t2.614956708935964\n", true, true, false);
+        assertQuery(
+                "c\tsum_t\n",
+                "select c, sum_t(d) from x order by c",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " x," +
+                        " rnd_double(0) d," +
+                        " rnd_symbol('XY','ZP', null, 'UU') c" +
+                        " from" +
+                        " long_sequence(0)" +
+                        ")",
+                null,
+                "insert into x select * from (" +
+                        "select" +
+                        " x," +
+                        " rnd_double(0) d," +
+                        " rnd_symbol('KK', 'PL') c" +
+                        " from" +
+                        " long_sequence(5)" +
+                        ")",
+                "c\tsum_t\n" +
+                        "KK\t2.614956708935964\n" +
+                        "PL\t1.088880189118224\n",
+                true,
+                true,
+                false
+        );
     }
 
     @Test
@@ -531,32 +552,42 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByFreesFunctions() throws Exception {
-        assertQuery("c\tsum_t\n" +
-                "UU\t4.192763851971972\n" +
-                "XY\t5.326379743132296\n" +
-                "\t1.8586710189229834\n" +
-                "ZP\t0.7836635625207334\n", "select c, sum_t(d) from x", "create table x as " +
-                "(" +
-                "select" +
-                " x," +
-                " rnd_double(0) d," +
-                " rnd_symbol('XY','ZP', null, 'UU') c" +
-                " from" +
-                " long_sequence(20)" +
-                ")", null, "insert into x select * from (" +
-                "select" +
-                " x," +
-                " rnd_double(0) d," +
-                " rnd_symbol('KK', 'PL') c" +
-                " from" +
-                " long_sequence(5)" +
-                ")", "c\tsum_t\n" +
-                "UU\t4.192763851971972\n" +
-                "XY\t5.326379743132296\n" +
-                "\t1.8586710189229834\n" +
-                "ZP\t0.7836635625207334\n" +
-                "KK\t1.6435699091508287\n" +
-                "PL\t1.1627169669458202\n", true, true, false);
+        assertQuery(
+                "c\tsum_t\n" +
+                        "\t1.8586710189229834\n" +
+                        "UU\t4.192763851971972\n" +
+                        "XY\t5.326379743132296\n" +
+                        "ZP\t0.7836635625207334\n",
+                "select c, sum_t(d) from x order by c",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " x," +
+                        " rnd_double(0) d," +
+                        " rnd_symbol('XY','ZP', null, 'UU') c" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ")",
+                null,
+                "insert into x select * from (" +
+                        "select" +
+                        " x," +
+                        " rnd_double(0) d," +
+                        " rnd_symbol('KK', 'PL') c" +
+                        " from" +
+                        " long_sequence(5)" +
+                        ")",
+                "c\tsum_t\n" +
+                        "\t1.8586710189229834\n" +
+                        "KK\t1.6435699091508287\n" +
+                        "PL\t1.1627169669458202\n" +
+                        "UU\t4.192763851971972\n" +
+                        "XY\t5.326379743132296\n" +
+                        "ZP\t0.7836635625207334\n",
+                true,
+                true,
+                false
+        );
     }
 
     @Test
@@ -1307,7 +1338,7 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIndexSampleByBufferExceeded() throws Exception {
-        configOverrideSampleByIndexSearchPageSize(16);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SAMPLEBY_PAGE_SIZE, 16);
 
         assertQuery(
                 "k\ts\tlat\tlon\n",
@@ -1690,7 +1721,7 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIndexSampleByMicro() throws Exception {
-        configOverrideSampleByIndexSearchPageSize(256);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SAMPLEBY_PAGE_SIZE, 256);
 
         assertSampleByIndexQuery(
                 "k\tfirst\n" +
@@ -2660,7 +2691,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "  values: [first(val),avg(val),last(val),max(val)]\n" +
                             "    SelectedRecord\n" +
                             "        Async Filter workers: 1\n" +
-                            "          filter: ((ts2>=1669852800000000 and sym='B') and 0<length(sym)*ts2::long)\n" +
+                            "          filter: (ts2>=1669852800000000 and sym='B' and 0<length(sym)*ts2::long)\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: x\n"
@@ -2798,7 +2829,7 @@ public class SampleByTest extends AbstractCairoTest {
                     continue;
                 }
 
-                String plan = "Filter filter: ((tstmp>=1669852800000000 and sym='B') and 0<length(sym)*tstmp::long)\n" +
+                String plan = "Filter filter: (tstmp>=1669852800000000 and sym='B' and 0<length(sym)*tstmp::long)\n" +
                         "    SampleBy\n" +
                         (isNone(fill) ? "" : "      fill: " + fill + "\n") +
                         "      keys: [tstmp,sym]\n" +

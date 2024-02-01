@@ -26,8 +26,8 @@ package io.questdb.test.tools;
 
 import io.questdb.*;
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
@@ -37,8 +37,10 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.Net;
@@ -68,6 +70,7 @@ import java.sql.Timestamp;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -132,7 +135,7 @@ public final class TestUtils {
         assertContains(null, actual, expected);
     }
 
-    public static void assertCursor(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header, MutableCharSink sink) {
+    public static void assertCursor(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header, MutableUtf16Sink sink) {
         printCursor(cursor, metadata, header, sink, printer);
         assertEquals(expected, sink);
     }
@@ -654,7 +657,7 @@ public final class TestUtils {
         }
     }
 
-    public static void assertReader(CharSequence expected, TableReader reader, MutableCharSink sink) {
+    public static void assertReader(CharSequence expected, TableReader reader, MutableUtf16Sink sink) {
         assertCursor(
                 expected,
                 reader.getCursor(),
@@ -668,7 +671,7 @@ public final class TestUtils {
             CairoEngine engine,
             SqlExecutionContext sqlExecutionContext,
             CharSequence sql,
-            MutableCharSink sink,
+            MutableUtf16Sink sink,
             CharSequence expected
     ) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
@@ -680,7 +683,7 @@ public final class TestUtils {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             CharSequence sql,
-            MutableCharSink sink,
+            MutableUtf16Sink sink,
             CharSequence expected
     ) throws SqlException {
         printSql(
@@ -787,7 +790,7 @@ public final class TestUtils {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             CharSequence sql,
-            MutableCharSink sink,
+            MutableUtf16Sink sink,
             CharSequence expected
     ) throws SqlException {
         printSqlWithTypes(
@@ -802,6 +805,13 @@ public final class TestUtils {
     public static void await(CyclicBarrier barrier) {
         try {
             barrier.await();
+        } catch (Throwable ignore) {
+        }
+    }
+
+    public static void await(CountDownLatch latch) {
+        try {
+            latch.await();
         } catch (Throwable ignore) {
         }
     }
@@ -1008,6 +1018,10 @@ public final class TestUtils {
         return new SqlExecutionContextImpl(engine, workerCount).with(engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(), null);
     }
 
+    public static SqlExecutionContextImpl createSqlExecutionCtx(CairoEngine engine, BindVariableService bindVariableService, int workerCount) {
+        return new SqlExecutionContextImpl(engine, workerCount).with(engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(), bindVariableService);
+    }
+
     public static void createTestPath(CharSequence root) {
         try (Path path = new Path().of(root).$()) {
             if (Files.exists(path)) {
@@ -1085,10 +1099,11 @@ public final class TestUtils {
             Log log
     ) throws Exception {
         final int workerCount = pool != null ? pool.getWorkerCount() : 1;
+        final BindVariableServiceImpl bindVariableService = new BindVariableServiceImpl(configuration);
         try (
                 final CairoEngine engine = new CairoEngine(configuration, metrics);
                 final SqlCompiler compiler = engine.getSqlCompiler();
-                final SqlExecutionContext sqlExecutionContext = createSqlExecutionCtx(engine, workerCount)
+                final SqlExecutionContext sqlExecutionContext = createSqlExecutionCtx(engine, bindVariableService, workerCount)
         ) {
             try {
                 if (pool != null) {
@@ -1204,6 +1219,8 @@ public final class TestUtils {
                 Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION
         };
     }
+
+    static final Log LOG = LogFactory.getLog(TestUtils.class);
 
     public static String getTestResourcePath(String resourceName) {
         URL resource = TestUtils.class.getResource(resourceName);
@@ -1383,19 +1400,19 @@ public final class TestUtils {
         );
     }
 
-    public static void printColumn(Record r, RecordMetadata m, int i, CharSink sink) {
+    public static void printColumn(Record r, RecordMetadata m, int i, Utf16Sink sink) {
         printColumn(r, m, i, sink, false, false);
     }
 
-    public static void printColumn(Record r, RecordMetadata m, int i, CharSink sink, boolean printTypes) {
+    public static void printColumn(Record r, RecordMetadata m, int i, Utf16Sink sink, boolean printTypes) {
         printColumn(r, m, i, sink, false, printTypes);
     }
 
-    public static void printColumn(Record r, RecordMetadata m, int i, CharSink sink, boolean symbolAsString, boolean printTypes) {
+    public static void printColumn(Record r, RecordMetadata m, int i, Utf16Sink sink, boolean symbolAsString, boolean printTypes) {
         printColumn(r, m, i, sink, symbolAsString, printTypes, null);
     }
 
-    public static void printColumn(Record r, RecordMetadata m, int i, CharSink sink, boolean symbolAsString, boolean printTypes, String nullStringValue) {
+    public static void printColumn(Record r, RecordMetadata m, int i, Utf16Sink sink, boolean symbolAsString, boolean printTypes, String nullStringValue) {
         final int columnType = m.getColumnType(i);
         switch (ColumnType.tagOf(columnType)) {
             case ColumnType.DATE:
@@ -1450,6 +1467,7 @@ public final class TestUtils {
                 putGeoHash(r.getGeoLong(i), ColumnType.getGeoHashBits(columnType), sink);
                 break;
             case ColumnType.BYTE:
+                // as int
                 sink.put(r.getByte(i));
                 break;
             case ColumnType.BOOLEAN:
@@ -1487,7 +1505,7 @@ public final class TestUtils {
         }
     }
 
-    public static void printCursor(RecordCursor cursor, RecordMetadata metadata, boolean header, MutableCharSink sink, RecordCursorPrinter printer) {
+    public static void printCursor(RecordCursor cursor, RecordMetadata metadata, boolean header, MutableUtf16Sink sink, RecordCursorPrinter printer) {
         sink.clear();
         printer.print(cursor, metadata, header, sink);
     }
@@ -1496,7 +1514,7 @@ public final class TestUtils {
             CairoEngine engine,
             SqlExecutionContext sqlExecutionContext,
             CharSequence sql,
-            MutableCharSink sink
+            MutableUtf16Sink sink
     ) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             printSql(compiler, sqlExecutionContext, sql, sink);
@@ -1507,7 +1525,7 @@ public final class TestUtils {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             CharSequence sql,
-            MutableCharSink sink
+            MutableUtf16Sink sink
     ) throws SqlException {
         try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -1520,7 +1538,7 @@ public final class TestUtils {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             CharSequence sql,
-            MutableCharSink sink
+            MutableUtf16Sink sink
     ) throws SqlException {
         try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -1798,7 +1816,7 @@ public final class TestUtils {
         return increment;
     }
 
-    private static void putGeoHash(long hash, int bits, CharSink sink) {
+    private static void putGeoHash(long hash, int bits, Utf16Sink sink) {
         if (hash == GeoHashes.NULL) {
             return;
         }

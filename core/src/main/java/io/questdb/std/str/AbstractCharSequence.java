@@ -31,7 +31,7 @@ import org.jetbrains.annotations.NotNull;
 public abstract class AbstractCharSequence implements CharSequence, CloneableMutable {
 
     public static String getString(CharSequence cs) {
-        final CharSink b = Misc.getThreadLocalSink();
+        final Utf16Sink b = Misc.getThreadLocalSink();
         b.put(cs);
         return b.toString();
     }

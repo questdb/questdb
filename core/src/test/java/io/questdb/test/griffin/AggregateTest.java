@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -75,9 +76,9 @@ public class AggregateTest extends AbstractCairoTest {
     @Override
     @Before
     public void setUp() {
-        pageFrameMaxRows = PAGE_FRAME_MAX_ROWS;
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, PAGE_FRAME_MAX_ROWS);
         super.setUp();
-        configOverrideParallelGroupByEnabled(enableParallelGroupBy);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUP_BY_ENABLED, enableParallelGroupBy);
     }
 
     @Test
@@ -171,7 +172,7 @@ public class AggregateTest extends AbstractCairoTest {
                 "2020-01-01T00:28:47.990000Z:TIMESTAMP\t1:LONG\n" +
                 "2020-01-01T00:57:35.980000Z:TIMESTAMP\t1:LONG\n";
 
-        String sql = "select ts, count() from tt1 WHERE id > 0 LIMIT 2";
+        String sql = "select ts, count() from tt1 WHERE id > 0 ORDER BY ts LIMIT 2";
 
         assertSqlWithTypes(sql, expected);
     }
@@ -425,7 +426,7 @@ public class AggregateTest extends AbstractCairoTest {
                         "0\t17902\n" +
                         "1\t17892\n" +
                         "2\t14056\n",
-                "select hour(ts), count() from tab where val < 0.5",
+                "select hour(ts), count() from tab where val < 0.5 order by 1",
                 "create table tab as (select timestamp_sequence(0, 100000) ts, rnd_double() val from long_sequence(100000))",
                 null,
                 true,
@@ -1373,7 +1374,7 @@ public class AggregateTest extends AbstractCairoTest {
     @Test
     public void testOOMInRostiMergeResetsAllocatedNativeMemoryToMinSizes() throws Exception {
         final int WORKER_COUNT = 2;
-        pageFrameMaxRows = 1000; // if it's default (1mil) then rosti could create single task for whole table data
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1000); // if it's default (1mil) then rosti could create single task for whole table data
 
         RostiAllocFacade rostiAllocFacade = new RostiAllocFacadeImpl() {
             final long[] pRostis = new long[WORKER_COUNT];

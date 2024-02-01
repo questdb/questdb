@@ -1654,7 +1654,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         int walRootPathLen = walPath.size();
         long maxTimestamp = txWriter.getMaxTimestamp();
         if (isLastPartitionClosed()) {
-            if (txWriter.getPartitionCount() == 0 && txWriter.getLagRowCount() == 0) {
+            if (isEmptyTable()) {
                 // The table is empty, last partition does not exist
                 // WAL processing needs last partition to store LAG data
                 // Create artificial partition at the point of o3TimestampMin.
@@ -1917,6 +1917,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (seq > -1) {
                 TableWriterTask task = commandQueue.get(seq);
                 asyncWriterCommand.serialize(task);
+                assert task.getInstance() == asyncWriterCommand.getCorrelationId();
                 commandPubSeq.done(seq);
                 return;
             } else if (seq == -1) {
@@ -2248,6 +2249,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Do not cache txWriter.getPartitionCount() as it changes during the squashing
         for (int i = 0; i < txWriter.getPartitionCount(); i++) {
             squashPartitionForce(i);
+        }
+        // Reopen last partition if we've closed it.
+        if (isLastPartitionClosed() && !isEmptyTable()) {
+            openLastPartition();
         }
     }
 
@@ -4079,6 +4084,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.initLastPartition(ts);
     }
 
+    private boolean isEmptyTable() {
+        return txWriter.getPartitionCount() == 0 && txWriter.getLagRowCount() == 0;
+    }
+
     private boolean isLastPartitionClosed() {
         for (int i = 0; i < columnCount; i++) {
             if (metadata.getColumnType(i) > 0) {
@@ -5856,9 +5865,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             try {
                 processingQueue = true;
                 long cursor;
-                while ((cursor = commandSubSeq.next()) > -1) {
-                    TableWriterTask cmd = commandQueue.get(cursor);
-                    processCommandQueue(cmd, commandSubSeq, cursor, contextAllowsAnyStructureChanges);
+                while ((cursor = commandSubSeq.next()) != -1) {
+                    if (cursor > -1) {
+                        TableWriterTask cmd = commandQueue.get(cursor);
+                        processCommandQueue(cmd, commandSubSeq, cursor, contextAllowsAnyStructureChanges);
+                    } else {
+                        Os.pause();
+                    }
                 }
             } finally {
                 processingQueue = false;
@@ -5996,7 +6009,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                     o3PartitionUpdRemaining.incrementAndGet();
                     final O3Basket o3Basket = o3BasketPool.next();
-                    o3Basket.ensureCapacity(configuration, columnCount, indexCount);
+                    o3Basket.checkCapacity(configuration, columnCount, indexCount);
 
                     AtomicInteger columnCounter = o3ColumnCounters.next();
 
@@ -7232,7 +7245,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void squashSplitPartitions(long timestampMin, long timestampMax, int maxLastSubPartitionCount) {
-
         if (timestampMin > txWriter.getMaxTimestamp() || txWriter.getPartitionCount() < 2) {
             return;
         }

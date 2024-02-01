@@ -35,7 +35,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -739,7 +739,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         this.bitmapIndexes = toIndexReaders;
     }
 
-    private void formatErrorPartitionDirName(int partitionIndex, CharSink sink) {
+    private void formatErrorPartitionDirName(int partitionIndex, Utf16Sink sink) {
         TableUtils.setSinkForPartition(
                 sink,
                 partitionBy,
@@ -1250,20 +1250,6 @@ public class TableReader implements Closeable, SymbolTableSource {
                 continue;
             }
             symbolMapReaders.getQuick(i).updateSymbolCount(txFile.getSymbolValueCount(symbolMapIndex++));
-        }
-    }
-
-    private SymbolMapReader reloadSymbolMapReader(int columnIndex, SymbolMapReader reader) {
-        if (ColumnType.isSymbol(metadata.getColumnType(columnIndex))) {
-            final int writerColumnIndex = metadata.getWriterIndex(columnIndex);
-            final long columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(writerColumnIndex);
-            if (reader instanceof SymbolMapReaderImpl) {
-                ((SymbolMapReaderImpl) reader).of(configuration, path, metadata.getColumnName(columnIndex), columnNameTxn, 0);
-                return reader;
-            }
-            return new SymbolMapReaderImpl(configuration, path, metadata.getColumnName(columnIndex), columnNameTxn, 0);
-        } else {
-            return reader;
         }
     }
 

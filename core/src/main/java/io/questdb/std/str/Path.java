@@ -306,7 +306,7 @@ public class Path implements Utf8Sink, LPSZ, Closeable {
     }
 
     @Override
-    public Path put(long lo, long hi) {
+    public Path putUtf8(long lo, long hi) {
         final int size = Bytes.checkedLoHiSize(lo, hi, this.size());
         checkExtend(size);
         Vect.memcpy(tailPtr, lo, size);
@@ -386,7 +386,7 @@ public class Path implements Utf8Sink, LPSZ, Closeable {
         return $();
     }
 
-    public void toSink(CharSink sink) {
+    public void toSink(Utf16Sink sink) {
         Utf8s.utf8ToUtf16(headPtr, tailPtr, sink);
     }
 

@@ -28,7 +28,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 
@@ -89,7 +89,7 @@ public interface DataFrameCursorFactory extends Sinkable, Closeable, Plannable {
     /**
      * @param sink to print data frame cursor to
      */
-    default void toSink(@NotNull CharSinkBase<?> sink) {
+    default void toSink(@NotNull CharSink<?> sink) {
         throw new UnsupportedOperationException();
     }
 }

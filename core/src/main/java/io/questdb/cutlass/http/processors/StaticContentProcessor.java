@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.http.processors;
 
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.http.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -50,7 +51,7 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
     private final MimeTypesCache mimeTypes;
     private final PrefixedPath prefixedPath;
     private final HttpRangeParser rangeParser = new HttpRangeParser();
-    private final boolean requiresAuthentication;
+    private final byte requiredAuthType;
 
     public StaticContentProcessor(HttpServerConfiguration configuration) {
         this.mimeTypes = configuration.getStaticContentProcessorConfiguration().getMimeTypesCache();
@@ -59,12 +60,17 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
         this.ff = configuration.getStaticContentProcessorConfiguration().getFilesFacade();
         this.keepAliveHeader = configuration.getStaticContentProcessorConfiguration().getKeepAliveHeader();
         this.httpProtocolVersion = configuration.getHttpContextConfiguration().getHttpVersion();
-        this.requiresAuthentication = configuration.getStaticContentProcessorConfiguration().isAuthenticationRequired();
+        this.requiredAuthType = configuration.getStaticContentProcessorConfiguration().getRequiredAuthType();
     }
 
     @Override
     public void close() {
         Misc.free(prefixedPath);
+    }
+
+    @Override
+    public byte getRequiredAuthType() {
+        return requiredAuthType;
     }
 
     public LogRecord logInfoWithFd(HttpConnectionContext context) {
@@ -78,7 +84,7 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
         logInfoWithFd(context).$("incoming [url=").$(url).$(']').$();
         if (Utf8s.containsAscii(url, "..")) {
             logInfoWithFd(context).$("URL abuse: ").$(url).$();
-            sendStatusWithDefaultMessage(context, 404);
+            sendStatusTextContent(context, 404);
         } else {
             PrefixedPath path = prefixedPath.rewind();
 
@@ -94,14 +100,14 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
                 send(context, path, headers.getUrlParam(URL_PARAM_ATTACHMENT) != null);
             } else {
                 logInfoWithFd(context).$("not found [path=").$(path).$(']').$();
-                sendStatusWithDefaultMessage(context, 404);
+                sendStatusTextContent(context, 404);
             }
         }
     }
 
     @Override
     public boolean requiresAuthentication() {
-        return requiresAuthentication;
+        return requiredAuthType == SecurityContext.AUTH_TYPE_CREDENTIALS;
     }
 
     @Override
@@ -130,15 +136,15 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
         }
     }
 
-    private static void sendStatusWithDefaultMessage(HttpConnectionContext context, int code) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        context.simpleResponse().sendStatusWithDefaultMessage(code);
+    private static void sendStatusTextContent(HttpConnectionContext context, int code) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        context.simpleResponse().sendStatusTextContent(code);
     }
 
     private void send(HttpConnectionContext context, LPSZ path, boolean asAttachment) throws PeerDisconnectedException, PeerIsSlowToReadException {
         int n = Utf8s.lastIndexOfAscii(path, '.');
         if (n == -1) {
             logInfoWithFd(context).$("missing extension [file=").$(path).$(']').$();
-            sendStatusWithDefaultMessage(context, 404);
+            sendStatusTextContent(context, 404);
             return;
         }
 
@@ -162,12 +168,12 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
             try {
                 long that = Numbers.parseLong(val, 1, l - 1);
                 if (that == ff.getLastModified(path)) {
-                    context.simpleResponse().sendStatus(304);
+                    context.simpleResponse().sendStatusNoContent(304);
                     return;
                 }
             } catch (NumericException e) {
                 LOG.info().$("bad 'If-None-Match' [value=").$(val).$(']').$();
-                sendStatusWithDefaultMessage(context, 400);
+                sendStatusTextContent(context, 400);
                 return;
             }
         }
@@ -191,7 +197,7 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
             state.fd = ff.openRO(path);
             if (state.fd == -1) {
                 LOG.info().$("Cannot open file: ").$(path).$();
-                sendStatusWithDefaultMessage(context, 404);
+                sendStatusTextContent(context, 404);
                 return;
             }
 
@@ -201,7 +207,7 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
             final long lo = rangeParser.getLo();
             final long hi = rangeParser.getHi();
             if (lo > length || (hi != Long.MAX_VALUE && hi > length) || lo > hi) {
-                sendStatusWithDefaultMessage(context, 416);
+                sendStatusTextContent(context, 416);
             } else {
                 state.bytesSent = lo;
                 state.sendMax = hi == Long.MAX_VALUE ? length : hi;
@@ -221,7 +227,7 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
                 resumeSend(context);
             }
         } else {
-            sendStatusWithDefaultMessage(context, 416);
+            sendStatusTextContent(context, 416);
         }
     }
 
@@ -234,7 +240,7 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
         int fd = ff.openRO(path);
         if (fd == -1) {
             LOG.info().$("Cannot open file: ").$(path).$('(').$(ff.errno()).$(')').$();
-            sendStatusWithDefaultMessage(context, 404);
+            sendStatusTextContent(context, 404);
         } else {
             StaticContentProcessorState h = LV.get(context);
             if (h == null) {

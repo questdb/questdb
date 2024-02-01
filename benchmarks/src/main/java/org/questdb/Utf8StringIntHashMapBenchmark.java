@@ -28,7 +28,7 @@ import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Utf8StringIntHashMap;
-import io.questdb.std.str.FlyweightDirectCharSink;
+import io.questdb.std.str.FlyweightDirectUtf16Sink;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8String;
 import org.openjdk.jmh.annotations.*;
@@ -44,7 +44,7 @@ import java.util.concurrent.TimeUnit;
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class Utf8StringIntHashMapBenchmark {
 
-    private final FlyweightDirectCharSink dcs = new FlyweightDirectCharSink();
+    private final FlyweightDirectUtf16Sink dcs = new FlyweightDirectUtf16Sink();
     private final DirectUtf8String dus = new DirectUtf8String();
     private Utf8StringIntHashMap directMap = new Utf8StringIntHashMap();
     @Param({"7", "15", "31", "63"})
