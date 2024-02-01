@@ -68,7 +68,7 @@ public class VirtualMemoryBenchmark {
         return rnd.nextChars(rnd.nextInt() % 4);
     }
 
-    //    @Benchmark
+    @Benchmark
     public void testExternalSequenceStr() {
         long o = 0;
         for (int i = 0; i < 10000; i++) {
@@ -78,12 +78,12 @@ public class VirtualMemoryBenchmark {
         }
     }
 
-    //    @Benchmark
+    @Benchmark
     public void testHashAsLong256() {
         mem2.putLong256("0xea674fdde714fd979de3edf0f56aa9716b898ec8");
     }
 
-    //    @Benchmark
+    @Benchmark
     public void testHashAsStr() {
         mem2.putStr("0xea674fdde714fd979de3edf0f56aa9716b898ec8");
     }

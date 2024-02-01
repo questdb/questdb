@@ -51,7 +51,7 @@ public class LongHashFunctionBenchmark {
         new Runner(opt).run();
     }
 
-    //    @Benchmark
+    @Benchmark
     public long baseline() {
         return rnd.nextLong();
     }
@@ -61,7 +61,7 @@ public class LongHashFunctionBenchmark {
         return Hash.hash64Long(rnd.nextLong());
     }
 
-    //    @Benchmark
+    @Benchmark
     public int testStdlib() {
         return Long.hashCode(rnd.nextLong());
     }

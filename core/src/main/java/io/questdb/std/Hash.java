@@ -65,16 +65,16 @@ public final class Hash {
         long h = 0;
         int i = 0;
         for (; i + 7 < len; i += 8) {
-            h = Long.rotateLeft(h * M, R_DIST);
+            h = h * M;
             h ^= us.longAt(i);
         }
         if (i + 3 < len) {
-            h = Long.rotateLeft(h * M, R_DIST);
+            h = h * M;
             h ^= us.intAt(i);
             i += 4;
         }
         for (; i < len; i++) {
-            h = Long.rotateLeft(h * M, R_DIST);
+            h = h * M;
             h ^= us.byteAt(i);
         }
         return Numbers.decodeLowInt(Long.rotateLeft(h * M, R_DIST));
@@ -93,19 +93,11 @@ public final class Hash {
     }
 
     public static long hash64Long128(long k1, long k2) {
-        long h = Long.rotateLeft(k1 * M, R_DIST);
-        h ^= k2;
-        return Long.rotateLeft(h * M, R_DIST);
+        return hash64Long(k1 ^ k2);
     }
 
     public static long hash64Long256(long k1, long k2, long k3, long k4) {
-        long h = Long.rotateLeft(k1 * M, R_DIST);
-        h ^= k2;
-        h = Long.rotateLeft(h * M, R_DIST);
-        h ^= k3;
-        h = Long.rotateLeft(h * M, R_DIST);
-        h ^= k4;
-        return Long.rotateLeft(h, R_DIST);
+        return hash64Long(k1 ^ k2 ^ k3 ^ k4);
     }
 
     /**
@@ -124,16 +116,16 @@ public final class Hash {
         long h = 0;
         int i = 0;
         for (; i + 7 < len; i += 8) {
-            h = Long.rotateLeft(h * M, R_DIST);
+            h = h * M;
             h ^= Unsafe.getUnsafe().getLong(p + i);
         }
         if (i + 3 < len) {
-            h = Long.rotateLeft(h * M, R_DIST);
+            h = h * M;
             h ^= Unsafe.getUnsafe().getInt(p + i);
             i += 4;
         }
         for (; i < len; i++) {
-            h = Long.rotateLeft(h * M, R_DIST);
+            h = h * M;
             h ^= Unsafe.getUnsafe().getByte(p + i);
         }
         return Long.rotateLeft(h * M, R_DIST);
