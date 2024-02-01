@@ -62,7 +62,7 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
         this.masterSink = masterSink;
         this.slaveKeySink = slaveKeySink;
 
-        Map joinKeyMap = MapFactory.createOrderedMap(configuration, joinColumnTypes, valueTypes);
+        Map joinKeyMap = MapFactory.createUnorderedMap(configuration, joinColumnTypes, valueTypes);
         cursor = new HashOuterJoinRecordCursor(
                 columnSplit,
                 joinKeyMap,
