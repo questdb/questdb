@@ -62,7 +62,6 @@ import org.junit.*;
 import org.junit.rules.TestWatcher;
 import org.junit.rules.Timeout;
 import org.junit.runner.Description;
-import org.junit.runner.OrderWith;
 
 import java.io.File;
 import java.io.IOException;
@@ -72,7 +71,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 
-@OrderWith(RandomOrder.class)
 public abstract class AbstractCairoTest extends AbstractTest {
 
     protected static final Log LOG = LogFactory.getLog(AbstractCairoTest.class);
