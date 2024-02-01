@@ -77,7 +77,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
                 builder.address("foo:");
                 fail("should fail when address ends with colon");
             } catch (LineSenderException e) {
-                TestUtils.assertContains(e.getMessage(), "address cannot ends");
+                TestUtils.assertContains(e.getMessage(), "invalid address");
             }
         });
     }
@@ -240,6 +240,8 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
             assertConfStrOk("http::addr=localhost:8080;token=foo;retry_timeout=1000;max_buf_size=1000000;");
             assertConfStrOk("https::addr=localhost:8080;tls_verify=unsafe_off;auto_flush_rows=100;");
             assertConfStrOk("https::addr=localhost:8080;tls_verify=on;");
+            assertConfStrError("https::addr=2001:0db8:85a3:0000:0000:8a2e:0370:7334;tls_verify=on;", "cannot parse a port from the address. use IPv4 IP address or a domain name [address=2001:0db8:85a3:0000:0000:8a2e:0370:7334]");
+            assertConfStrError("https::addr=[2001:0db8:85a3:0000:0000:8a2e:0370:7334]:9000;tls_verify=on;", "cannot parse a port from the address. use IPv4 IP address or a domain name [address=[2001:0db8:85a3:0000:0000:8a2e:0370:7334]:9000]");
         });
     }
 
@@ -632,7 +634,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
                 builder.address("foo:nonsense12334");
                 fail("should fail with malformated port");
             } catch (LineSenderException e) {
-                TestUtils.assertContains(e.getMessage(), "cannot parse port");
+                TestUtils.assertContains(e.getMessage(), "cannot parse a port from the address");
             }
         });
     }
