@@ -191,9 +191,9 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testConfString() throws Exception {
         assertMemoryLeak(() -> {
-            assertConfStrError("foo", "invalid configuration string: schema name must start with schema type, e.g. http::");
+            assertConfStrError("foo", "invalid schema [schema=foo, supported-schemas=[http, https, tcp, tcps]]");
             assertConfStrError("http::addr=bar", "invalid address [error=missing trailing semicolon at position 14]");
-            assertConfStrError("badschema::addr=bar;", "invalid schema: badschema");
+            assertConfStrError("badschema::addr=bar;", "invalid schema [schema=badschema, supported-schemas=[http, https, tcp, tcps]]");
             assertConfStrError("http::addr=localhost:-1;", "invalid port [port=-1]");
             assertConfStrError("http::auto_flush=on;", "addr is missing");
             assertConfStrError("http::addr=localhost;tls_roots=/some/path;", "tls_roots was configured, but tls_roots_password is missing");

@@ -690,7 +690,7 @@ public interface Sender extends Closeable {
                 tcp();
                 tlsEnabled = true;
             } else {
-                throw new LineSenderException("invalid schema: ").put(sink);
+                throw new LineSenderException("invalid schema [schema=").put(sink).put(", supported-schemas=[http, https, tcp, tcps]]");
             }
 
             String tcpToken = null;

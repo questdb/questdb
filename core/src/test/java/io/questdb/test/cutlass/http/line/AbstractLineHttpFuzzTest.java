@@ -63,6 +63,7 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
     private static final int SEND_SYMBOLS_WITH_SPACE_RANDOMIZE_FACTOR = 2;
     private static final StringSink sink = new StringSink();
     protected final short[] colTypes = new short[]{STRING, DOUBLE, DOUBLE, DOUBLE, STRING, DOUBLE};
+    private final int batchSize = 10;
     private final String[][] colNameBases = new String[][]{
             {"terület", "TERÜLet", "tERülET", "TERÜLET"},
             {"temperature", "TEMPERATURE", "Temperature", "TempeRaTuRe"},
@@ -87,7 +88,6 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
     protected Rnd random;
     protected LowerCaseCharSequenceObjHashMap<TableData> tables;
     protected long waitBetweenIterationsMillis;
-    private final int batchSize = 10;
     private int columnReorderingFactor = -1;
     private int columnSkipFactor = -1;
     private boolean diffCasesInColNames = false;
@@ -193,6 +193,8 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
     public void setUp2() {
         long s0 = System.currentTimeMillis();
         long s1 = System.nanoTime();
+        s0 = 1706810999286L;
+        s1 = 1057592012839L;
         random = new Rnd(s0, s1);
         getLog().info().$("random seed : ").$(random.getSeed0()).$("L, ").$(random.getSeed1()).$('L').$();
     }
