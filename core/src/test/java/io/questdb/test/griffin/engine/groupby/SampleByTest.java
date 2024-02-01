@@ -2664,12 +2664,11 @@ public class SampleByTest extends AbstractCairoTest {
                 "    SampleBy\n" +
                 "      keys: [tstmp,sym]\n" +
                 "      values: [first(val),avg(val),last(val),max(val)]\n" +
-                "        SelectedRecord\n" +
-                "            Async JIT Filter workers: 1\n" +
-                "              filter: sym='B'\n" +
-                "                DataFrame\n" +
-                "                    Row forward scan\n" +
-                "                    Frame forward scan on: #TABLE#\n";
+                "        Async JIT Filter workers: 1\n" +
+                "          filter: sym='B'\n" +
+                "            DataFrame\n" +
+                "                Row forward scan\n" +
+                "                Frame forward scan on: #TABLE#\n";
 
         testSampleByPushdown("", "align to calendar", plan);
         testSampleByPushdown("none", "align to calendar", plan);
@@ -2688,12 +2687,11 @@ public class SampleByTest extends AbstractCairoTest {
                     "SampleBy\n" +
                             "  keys: [tstmp,sym]\n" +
                             "  values: [first(val),avg(val),last(val),max(val)]\n" +
-                            "    SelectedRecord\n" +
-                            "        Async Filter workers: 1\n" +
-                            "          filter: (ts2>=1669852800000000 and sym='B' and 0<length(sym)*ts2::long)\n" +
-                            "            DataFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: x\n"
+                            "    Async Filter workers: 1\n" +
+                            "      filter: (ts2>=1669852800000000 and sym='B' and 0<length(sym)*ts2::long)\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: x\n"
             );
         });
     }
@@ -2833,10 +2831,9 @@ public class SampleByTest extends AbstractCairoTest {
                         (isNone(fill) ? "" : "      fill: " + fill + "\n") +
                         "      keys: [tstmp,sym]\n" +
                         "      values: [first(val),avg(val),last(val),max(val)]\n" +
-                        "        SelectedRecord\n" +
-                        "            DataFrame\n" +
-                        "                Row forward scan\n" +
-                        "                Frame forward scan on: #TABLE#\n";
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: #TABLE#\n";
 
                 testSampleByPushdown(fill, align, plan);
             }
