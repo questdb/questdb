@@ -576,16 +576,18 @@ public interface Sender extends Closeable {
         /**
          * Disables automatic flushing of buffered data.
          * <p>
-         * Sender buffers data locally before sending it to a server. This method disables automatic flushing and
-         * you must explicitly call {@link #flush()} to send buffered data to a server. It also disables auto-flushing
-         * on close. This gives you a fine control over batching behaviour. QuestDB server processes a batch
-         * of data as a single transaction as long as it fits into a single buffer.
-         * <p>
-         * You must ensure maximum buffer capacity is large enough to accommodate all locally buffered data.
-         * <p>
-         * This method is only used when communicating over HTTP protocol. It's illegal to call this method when
-         * communicating over TCP protocol.
+         * The Sender buffers data locally before flushing it to a server. This method disables automatic flushing, requiring
+         * explicit invocation of {@link #flush()} to send buffered data to the server. It also disables automatic flushing
+         * upon closing. This grants fine control over batching behavior.
          * <br>
+         * The QuestDB server processes a batch as a single transaction, provided all rows in the batch target the same table.
+         * Therefore, you can use this method to explicitly control transaction boundaries and ensure atomic processing of all
+         * data in a batch. To maintain atomicity, ensure that all data in a batch is sent to the same table.
+         * <p>
+         * It is essential to ensure the maximum buffer capacity is sufficient to accommodate all locally buffered data.
+         * <p>
+         * This method should only be used when communicating via the HTTP protocol. Calling this method is illegal when
+         * communicating over the TCP protocol.
          *
          * @return this instance for method chaining
          * @see #autoFlushRows(int)
