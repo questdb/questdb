@@ -30,7 +30,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
-import io.questdb.test.cutlass.http.line.LineHttpUtils;
 import io.questdb.test.tools.TestUtils;
 import org.influxdb.BatchOptions;
 import org.influxdb.InfluxDB;
@@ -130,7 +129,7 @@ public class InfluxDBClientStreamingTest extends AbstractBootstrapTest {
         new Thread(() -> {
             int points = 0;
             try {
-                try (final InfluxDB influxDB = LineHttpUtils.getConnection(serverMain)) {
+                try (final InfluxDB influxDB = InfluxDBUtils.getConnection(serverMain)) {
                     influxDB.setLogLevel(InfluxDB.LogLevel.BASIC);
 
                     countDownLatch.countDown();
