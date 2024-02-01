@@ -30,6 +30,7 @@ import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.map.OrderedMap;
 import io.questdb.cairo.map.Unordered16Map;
+import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
@@ -44,15 +45,17 @@ import java.util.concurrent.TimeUnit;
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class MapReadLong128Benchmark {
 
-    private static final int N = 1_000;
     private static final double loadFactor = 0.7;
-    private static final OrderedMap orderedMap = new OrderedMap(1024 * 1024, new SingleColumnType(ColumnType.LONG128), new SingleColumnType(ColumnType.LONG), N, loadFactor, 1024);
     private static final Rnd rnd = new Rnd();
-    private static final Unordered16Map u16map = new Unordered16Map(new SingleColumnType(ColumnType.LONG128), new SingleColumnType(ColumnType.LONG), N, loadFactor, 1024);
+    // aim for L1, L2, L3, RAM
+    @Param({"50", "500", "5000"})
+    public int size;
+    private OrderedMap orderedMap;
+    private Unordered16Map unordered16map;
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
-                .include(MapReadLong128Benchmark.class.getSimpleName())
+                .include(MapReadIntBenchmark.class.getSimpleName())
                 .warmupIterations(3)
                 .measurementIterations(3)
                 .forks(1)
@@ -61,38 +64,44 @@ public class MapReadLong128Benchmark {
         new Runner(opt).run();
     }
 
-    @Benchmark
-    public long baseline() {
-        return rnd.nextLong(N) + rnd.nextLong(N);
-    }
+    @Setup
+    public void setup() {
+        rnd.reset();
 
-    @Benchmark
-    public MapValue testOrderedMap() {
-        MapKey key = orderedMap.withKey();
-        key.putLong128(rnd.nextLong(N), rnd.nextLong(N));
-        return key.findValue();
-    }
+        Misc.free(orderedMap);
+        Misc.free(unordered16map);
 
-    @Benchmark
-    public MapValue testUnordered16Map() {
-        MapKey key = u16map.withKey();
-        key.putLong128(rnd.nextLong(N), rnd.nextLong(N));
-        return key.findValue();
-    }
+        orderedMap = new OrderedMap(1024 * 1024, new SingleColumnType(ColumnType.LONG128), new SingleColumnType(ColumnType.LONG), size, loadFactor, Integer.MAX_VALUE);
+        unordered16map = new Unordered16Map(new SingleColumnType(ColumnType.LONG128), new SingleColumnType(ColumnType.LONG), size, loadFactor, Integer.MAX_VALUE);
 
-    static {
-        for (int i = 0; i < N; i++) {
-            for (int j = 0; j < N; j++) {
+        for (int i = 0; i < size; i++) {
+            for (int j = 0; j < size; j++) {
                 MapKey key = orderedMap.withKey();
                 key.putLong128(i, j);
                 MapValue value = key.createValue();
-                value.putLong(0, i);
+                value.putLong(0, 42);
 
-                key = u16map.withKey();
+                key = unordered16map.withKey();
                 key.putLong128(i, j);
                 value = key.createValue();
-                value.putLong(0, i);
+                value.putLong(0, 42);
             }
         }
+    }
+
+    @Benchmark
+    public long testOrderedMap() {
+        MapKey key = orderedMap.withKey();
+        key.putLong128(rnd.nextLong(size), rnd.nextLong(size));
+        MapValue value = key.findValue();
+        return value != null ? value.getLong(0) : 0;
+    }
+
+    @Benchmark
+    public long testUnordered16Map() {
+        MapKey key = unordered16map.withKey();
+        key.putLong128(rnd.nextLong(size), rnd.nextLong(size));
+        MapValue value = key.findValue();
+        return value != null ? value.getLong(0) : 0;
     }
 }

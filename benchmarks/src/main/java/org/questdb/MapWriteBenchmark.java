@@ -30,6 +30,7 @@ import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.map.OrderedMap;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.StringSink;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
@@ -44,11 +45,14 @@ import java.util.concurrent.TimeUnit;
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class MapWriteBenchmark {
 
-    private static final int M = 25;
     private static final double loadFactor = 0.7;
     private static final HashMap<String, Long> hmap = new HashMap<>(64, (float) loadFactor);
-    private static final OrderedMap orderedMap = new OrderedMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), 64, loadFactor, 1024);
+    private static final OrderedMap orderedMap = new OrderedMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), 64, loadFactor, Integer.MAX_VALUE);
+    private static final StringSink sink = new StringSink();
     private final Rnd rnd = new Rnd();
+    // aim for L1, L2, L3, RAM
+    @Param({"5000", "50000", "500000", "5000000"})
+    public int size;
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
@@ -61,28 +65,26 @@ public class MapWriteBenchmark {
         new Runner(opt).run();
     }
 
-    @Benchmark
-    public CharSequence baseline() {
-        return rnd.nextChars(M);
-    }
-
     @Setup(Level.Iteration)
     public void reset() {
-        orderedMap.clear();
-        hmap.clear();
         rnd.reset();
+
+        hmap.clear();
+        orderedMap.clear();
     }
 
     @Benchmark
     public void testHashMap() {
-        hmap.put(rnd.nextChars(M).toString(), 20L);
+        hmap.put(String.valueOf(rnd.nextInt(size)), 42L);
     }
 
     @Benchmark
     public void testOrderedMap() {
         MapKey key = orderedMap.withKey();
-        key.putStr(rnd.nextChars(M));
-        MapValue values = key.createValue();
-        values.putLong(0, 20);
+        sink.clear();
+        sink.put(rnd.nextInt(size));
+        key.putStr(sink);
+        MapValue value = key.createValue();
+        value.putLong(0, 42);
     }
 }

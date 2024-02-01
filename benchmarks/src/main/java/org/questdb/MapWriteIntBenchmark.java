@@ -29,7 +29,7 @@ import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.map.OrderedMap;
-import io.questdb.cairo.map.Unordered16Map;
+import io.questdb.cairo.map.Unordered4Map;
 import io.questdb.std.Rnd;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
@@ -42,19 +42,19 @@ import java.util.concurrent.TimeUnit;
 @State(Scope.Thread)
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
-public class MapWriteLong128Benchmark {
+public class MapWriteIntBenchmark {
 
     private static final double loadFactor = 0.7;
-    private static final OrderedMap orderedMap = new OrderedMap(1024 * 1024, new SingleColumnType(ColumnType.LONG128), new SingleColumnType(ColumnType.LONG), 64, loadFactor, Integer.MAX_VALUE);
-    private static final Unordered16Map unordered16map = new Unordered16Map(new SingleColumnType(ColumnType.LONG128), new SingleColumnType(ColumnType.LONG), 64, loadFactor, Integer.MAX_VALUE);
+    private static final OrderedMap orderedMap = new OrderedMap(1024 * 1024, new SingleColumnType(ColumnType.INT), new SingleColumnType(ColumnType.LONG), 64, loadFactor, Integer.MAX_VALUE);
+    private static final Unordered4Map unordered4map = new Unordered4Map(new SingleColumnType(ColumnType.INT), new SingleColumnType(ColumnType.LONG), 64, loadFactor, Integer.MAX_VALUE);
     private final Rnd rnd = new Rnd();
     // aim for L1, L2, L3, RAM
-    @Param({"50", "500", "5000"})
+    @Param({"5000", "50000", "500000", "5000000"})
     public int size;
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
-                .include(MapWriteLong128Benchmark.class.getSimpleName())
+                .include(MapWriteIntBenchmark.class.getSimpleName())
                 .warmupIterations(3)
                 .measurementIterations(3)
                 .forks(1)
@@ -68,21 +68,21 @@ public class MapWriteLong128Benchmark {
         rnd.reset();
 
         orderedMap.clear();
-        unordered16map.clear();
+        unordered4map.clear();
     }
 
     @Benchmark
     public void testOrderedMap() {
         MapKey key = orderedMap.withKey();
-        key.putLong128(rnd.nextLong(size), rnd.nextLong(size));
+        key.putInt(rnd.nextInt(size));
         MapValue values = key.createValue();
         values.putLong(0, 42);
     }
 
     @Benchmark
-    public void testUnordered16Map() {
-        MapKey key = unordered16map.withKey();
-        key.putLong128(rnd.nextLong(size), rnd.nextLong(size));
+    public void testUnordered4Map() {
+        MapKey key = unordered4map.withKey();
+        key.putInt(rnd.nextInt(size));
         MapValue values = key.createValue();
         values.putLong(0, 42);
     }

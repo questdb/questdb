@@ -62,7 +62,7 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         this.masterKeySink = masterKeySink;
         this.slaveKeySink = slaveKeySink;
 
-        Map joinKeyMap = MapFactory.createOrderedMap(configuration, joinColumnTypes, valueTypes);
+        Map joinKeyMap = MapFactory.createUnorderedMap(configuration, joinColumnTypes, valueTypes);
         this.cursor = new AsOfLightJoinRecordCursor(
                 columnSplit,
                 joinKeyMap,

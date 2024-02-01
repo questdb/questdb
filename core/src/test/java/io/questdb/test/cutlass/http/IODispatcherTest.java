@@ -27,9 +27,9 @@ package io.questdb.test.cutlass.http;
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.*;
+import io.questdb.cairo.wal.ApplyWal2TableJob;
+import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cutlass.Services;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.http.processors.HealthCheckProcessor;
@@ -7719,6 +7719,296 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testUpdateCommandRunningInWALCantBeCancelled() throws Exception {
+        final String url = "/query";
+        final long TIMEOUT = 240_000;
+
+        SOCountDownLatch started = new SOCountDownLatch(1);
+        SOCountDownLatch stopped = new SOCountDownLatch(1);
+        AtomicReference<Throwable> queryError = new AtomicReference<>();
+
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(2)
+                .withHttpServerConfigBuilder(
+                        new HttpServerConfigurationBuilder()
+                                .withNetwork(NetworkFacadeImpl.INSTANCE)
+                                .withDumpingTraffic(false)
+                                .withAllowDeflateBeforeSend(false)
+                                .withHttpProtocolVersion("HTTP/1.1 ")
+                                .withServerKeepAlive(true)
+                )
+                .run((engine) -> {
+                    DelayedWALListener registryListener = new DelayedWALListener();
+                    try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                        engine.getQueryRegistry().setListener(registryListener);
+
+                        engine.ddl("create table tab (b boolean, ts timestamp, sym symbol) timestamp(ts) partition by DAY WAL", executionContext);
+                        engine.insert("insert into tab select true, (86400000000*x)::timestamp, null from long_sequence(1000)", executionContext);
+                        drainWalQueue(engine);
+
+                        final String command = "update tab set b=false";
+
+                        started.setCount(2);
+                        stopped.setCount(2);
+                        queryError.set(null);
+
+                        registryListener.queryText = command;
+                        registryListener.queryFound.setCount(1);
+
+                        new Thread(() -> {
+                            try (TestHttpClient testHttpClient = new TestHttpClient()) {
+                                started.countDown();
+                                try {
+                                    testHttpClient.assertGetRegexp(url, ".*(\"ddl\":\"OK\").*", command, null, null, null);
+                                } catch (Throwable e) {
+                                    queryError.set(e);
+                                }
+                            } finally {
+                                stopped.countDown();
+                            }
+                        }, "command_thread").start();
+
+                        Thread walJob = new Thread(() -> {
+                            started.countDown();
+
+                            try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1)) {
+                                while (queryError.get() == null) {
+                                    walApplyJob.drain(0);
+                                    new CheckWalTransactionsJob(engine).run(0);
+                                    // run once again as there might be notifications to handle now
+                                    walApplyJob.drain(0);
+                                }
+                            } finally {
+                                // release native path memory used by the job
+                                Path.PATH.get().close();
+                                stopped.countDown();
+                            }
+                        }, "wal_job");
+                        walJob.start();
+
+                        started.await();
+
+                        long queryId;
+                        long start = System.currentTimeMillis();
+
+                        //wait until query appears in registry and get query id
+                        try (RecordCursorFactory factory = engine.select("select query_id from query_activity() where is_wal = true and query = '" + command + "'", executionContext)) {
+                            while (true) {
+                                try (RecordCursor cursor = factory.getCursor(executionContext)) {
+                                    if (cursor.hasNext()) {
+                                        queryId = cursor.getRecord().getLong(0);
+                                        break;
+                                    }
+                                }
+                                Os.sleep(1);
+                                if (System.currentTimeMillis() - start > TIMEOUT) {
+                                    throw new RuntimeException("Timed out waiting for command to appear in registry: " + command);
+                                }
+                                if (queryError.get() != null) {
+                                    throw new RuntimeException("Query failed!", queryError.get());
+                                }
+                            }
+                        }
+
+                        testHttpClient.assertGetRegexp(
+                                "/query",
+                                ".*(query applied in WAL job can't be cancelled).*",
+                                "cancel query " + queryId,
+                                null, null,
+                                "200"
+                        );
+
+                        registryListener.queryFound.countDown();
+                        queryError.set(new Exception());//stop wal thread
+                        stopped.await();
+
+                        StringSink sink = new StringSink();
+                        TestUtils.assertSql(
+                                engine,
+                                executionContext,
+                                "select count(*) from tab where b=false",
+                                sink,
+                                "count\n1000\n");
+
+                    } finally {
+                        engine.getQueryRegistry().setListener(null);
+                    }
+                });
+    }
+
+    @Test
+    public void testUpdateCommandRunningInWALDoesntTimeOut() throws Exception {
+        assertMemoryLeak(() -> {
+            final long TIMEOUT = 240_000;
+
+            SOCountDownLatch started = new SOCountDownLatch(1);
+            SOCountDownLatch stopped = new SOCountDownLatch(1);
+            AtomicReference<Throwable> queryError = new AtomicReference<>();
+
+            DefaultHttpServerConfiguration httpConfiguration = new HttpServerConfigurationBuilder()
+                    .withNetwork(NetworkFacadeImpl.INSTANCE)
+                    .withBaseDir(root)
+                    .withSendBufferSize(256)
+                    .withDumpingTraffic(false)
+                    .withAllowDeflateBeforeSend(false)
+                    .withServerKeepAlive(true)
+                    .withHttpProtocolVersion("HTTP/1.1 ")
+                    .build();
+
+            WorkerPool workerPool = new TestWorkerPool(1);
+
+            try (CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(root) {
+                @Override
+                public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
+                    return new DefaultSqlExecutionCircuitBreakerConfiguration() {
+                        @Override
+                        public long getQueryTimeout() {
+                            return 1;
+                        }
+                    };
+                }
+            }, metrics);
+                 HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, PlainSocketFactory.INSTANCE);
+                 SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
+            ) {
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                    }
+
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new StaticContentProcessor(httpConfiguration);
+                    }
+                });
+
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return "/query";
+                    }
+
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new JsonQueryProcessor(
+                                httpConfiguration.getJsonQueryProcessorConfiguration(),
+                                engine,
+                                workerPool.getWorkerCount()
+                        );
+                    }
+                });
+
+                O3Utils.setupWorkerPool(workerPool, engine, engine.getConfiguration().getCircuitBreakerConfiguration());
+
+                workerPool.start(LOG);
+
+                try {
+                    DelayedWALListener registryListener = new DelayedWALListener();
+                    engine.getQueryRegistry().setListener(registryListener);
+
+                    String ddl = "create table tab (b boolean, ts timestamp, sym symbol) timestamp(ts) partition by DAY WAL";
+                    final String command = "update tab set b=false where b=true and sleep(1)";
+
+                    engine.ddl(ddl, executionContext);
+                    engine.insert("insert into tab select true, (864000000*x)::timestamp, null from long_sequence(3000)", executionContext);
+                    drainWalQueue(engine);
+
+                    started.setCount(2);
+                    stopped.setCount(2);
+                    queryError.set(null);
+
+                    registryListener.queryText = command;
+                    registryListener.queryFound.setCount(1);
+
+                    new Thread(() -> {
+                        try (TestHttpClient testHttpClient = new TestHttpClient()) {
+                            started.countDown();
+                            try {
+                                testHttpClient.assertGetRegexp("/query", ".*(\"ddl\":\"OK\").*", command, null, null, null);
+                            } catch (Throwable e) {
+                                queryError.set(e);
+                            }
+                        } finally {
+                            stopped.countDown();
+                        }
+                    }, "command_thread").start();
+
+                    Thread walJob = new Thread(() -> {
+                        started.countDown();
+
+                        try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1)) {
+                            while (queryError.get() == null) {
+                                walApplyJob.drain(0);
+                                new CheckWalTransactionsJob(engine).run(0);
+                                // run once again as there might be notifications to handle now
+                                walApplyJob.drain(0);
+                            }
+                        } finally {
+                            // release native path memory used by the job
+                            Path.PATH.get().close();
+                            stopped.countDown();
+                        }
+                    }, "wal_job");
+                    walJob.start();
+
+                    started.await();
+
+                    long queryId;
+                    long start = System.currentTimeMillis();
+
+                    //wait until query appears in registry and get query id
+                    try {
+                        try (RecordCursorFactory factory = engine.select("select query_id from query_activity() where is_wal = true and query = '" + command.replace("'", "''") + "'", executionContext)) {
+                            while (true) {
+                                try (RecordCursor cursor = factory.getCursor(executionContext)) {
+                                    if (cursor.hasNext()) {
+                                        queryId = cursor.getRecord().getLong(0);
+                                        break;
+                                    }
+                                }
+                                Os.sleep(1);
+                                if (System.currentTimeMillis() - start > TIMEOUT) {
+                                    throw new RuntimeException("Timed out waiting for command to appear in registry: " + command);
+                                }
+                                if (queryError.get() != null) {
+                                    throw new RuntimeException("Query failed!", queryError.get());
+                                }
+                            }
+                        }
+                    } finally {
+                        registryListener.queryFound.countDown();
+                    }
+
+                    //wait until query finishes
+                    while (engine.getQueryRegistry().getEntry(queryId) != null) {
+                        Os.sleep(1);
+                    }
+                } finally {
+                    queryError.set(new Exception());//stop wal thread
+                    stopped.await();
+                    workerPool.halt();
+                }
+            }
+
+            // run query in separate engine so it doesn't time out
+            try (CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(root));
+                 SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                StringSink sink = new StringSink();
+                TestUtils.assertSql(
+                        engine,
+                        executionContext,
+                        "select count(*) from tab where b=false",
+                        sink,
+                        "count\n3000\n"
+                );
+            }
+
+        });
+    }
+
+    @Test
     public void testUpdateO3MaxLagAndMaxUncommittedRowsIsIgnoredIfPartitionByIsNONE() throws Exception {
         importWithO3MaxLagAndMaxUncommittedRowsTableExists(
                 true,
@@ -9011,8 +9301,29 @@ public class IODispatcherTest extends AbstractTest {
         private volatile CharSequence queryText;
 
         @Override
-        public void onRegister(CharSequence query, long queryId) {
+        public void onRegister(CharSequence query, long queryId, SqlExecutionContext executionContext) {
             if (queryText == null) {
+                return;
+            }
+
+            if (Chars.equalsNc(queryText, query)) {
+                queryFound.await();
+                queryText = null;
+            }
+        }
+    }
+
+    private static class DelayedWALListener implements QueryRegistry.Listener {
+        private final SOCountDownLatch queryFound = new SOCountDownLatch(1);
+        private volatile CharSequence queryText;
+
+        @Override
+        public void onRegister(CharSequence query, long queryId, SqlExecutionContext executionContext) {
+            if (queryText == null) {
+                return;
+            }
+
+            if (!executionContext.isWalApplication()) {
                 return;
             }
 

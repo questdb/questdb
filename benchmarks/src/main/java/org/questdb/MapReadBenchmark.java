@@ -29,6 +29,7 @@ import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.map.OrderedMap;
+import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import org.openjdk.jmh.annotations.*;
@@ -45,12 +46,14 @@ import java.util.concurrent.TimeUnit;
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class MapReadBenchmark {
 
-    private static final int N = 5_000_000;
     private static final double loadFactor = 0.7;
-    private static final HashMap<String, Long> hmap = new HashMap<>(N, (float) loadFactor);
-    private static final OrderedMap orderedMap = new OrderedMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), N, loadFactor, 1024);
     private static final Rnd rnd = new Rnd();
     private static final StringSink sink = new StringSink();
+    // aim for L1, L2, L3, RAM
+    @Param({"1000", "10000", "100000", "1000000"})
+    public int size;
+    private HashMap<String, Long> hmap;
+    private OrderedMap orderedMap;
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
@@ -63,27 +66,16 @@ public class MapReadBenchmark {
         new Runner(opt).run();
     }
 
-    @Benchmark
-    public int baseline() {
-        return rnd.nextInt(N);
-    }
+    @Setup
+    public void setup() {
+        rnd.reset();
 
-    @Benchmark
-    public Long testHashMap() {
-        return hmap.get(String.valueOf(rnd.nextInt(N)));
-    }
+        Misc.free(orderedMap);
 
-    @Benchmark
-    public MapValue testOrderedMap() {
-        MapKey key = orderedMap.withKey();
-        sink.clear();
-        sink.put(rnd.nextInt(N));
-        key.putStr(sink);
-        return key.findValue();
-    }
+        hmap = new HashMap<>(size, (float) loadFactor);
+        orderedMap = new OrderedMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), size, loadFactor, Integer.MAX_VALUE);
 
-    static {
-        for (int i = 0; i < N; i++) {
+        for (int i = 0; i < size; i++) {
             MapKey key = orderedMap.withKey();
             key.putStr(String.valueOf(i));
             MapValue values = key.createValue();
@@ -91,5 +83,20 @@ public class MapReadBenchmark {
 
             hmap.put(String.valueOf(i), (long) i);
         }
+    }
+
+    @Benchmark
+    public Long testHashMap() {
+        return hmap.get(String.valueOf(rnd.nextInt(size)));
+    }
+
+    @Benchmark
+    public long testOrderedMap() {
+        MapKey key = orderedMap.withKey();
+        sink.clear();
+        sink.put(rnd.nextInt(size));
+        key.putStr(sink);
+        MapValue value = key.findValue();
+        return value != null ? value.getLong(0) : 0;
     }
 }
