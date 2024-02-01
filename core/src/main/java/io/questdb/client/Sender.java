@@ -107,7 +107,8 @@ public interface Sender extends Closeable {
      * This example creates a Sender instance that connects to a QuestDB server over TCP transport.
      * <code>tcp::addr=localhost:9009;</code>
      * <p>
-     * Refer to <a href="https://questdb.io/docs/">QuestDB documentation</a> for a full list of configuration options.
+     * Refer to <a href="https://questdb.io/docs/reference/clients/overview/">QuestDB documentation</a> for a full list
+     * of configuration options.
      *
      * @param configurationString configuration string
      * @return Sender instance
