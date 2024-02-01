@@ -90,7 +90,7 @@ stages:
     jobs:
       - template: templates/hosted-cover-jobs.yml
 
-  - stage: HostedRunTestsBranches
+  - stage: HostedRunCompatTestsBranches
     displayName: "Hosted Running Compat tests"
     dependsOn:
       - CheckChanges
