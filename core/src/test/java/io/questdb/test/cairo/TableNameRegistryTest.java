@@ -96,7 +96,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                     } catch (Throwable e) {
                         ref.set(e);
                     } finally {
-                        Path.clearThreadLocals();
+                        TableUtils.clearThreadLocals();
                     }
                 }));
                 threads.get(2 * i).start();
@@ -137,7 +137,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                     } catch (Throwable e) {
                         ref.set(e);
                     } finally {
-                        Path.clearThreadLocals();
+                        TableUtils.clearThreadLocals();
                     }
                 }));
                 threads.get(2 * i + 1).start();
@@ -167,7 +167,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                 } catch (Throwable e) {
                     ref.set(e);
                 } finally {
-                    Path.clearThreadLocals();
+                    TableUtils.clearThreadLocals();
                 }
             }));
             threads.getLast().start();
@@ -183,7 +183,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                 } catch (Throwable e) {
                     ref.set(e);
                 } finally {
-                    Path.clearThreadLocals();
+                    TableUtils.clearThreadLocals();
                 }
             }));
             threads.getLast().start();
@@ -243,7 +243,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                     } catch (Throwable e) {
                         ref.set(e);
                     } finally {
-                        Path.clearThreadLocals();
+                        TableUtils.clearThreadLocals();
                         halted.countDown();
                     }
                 }));
@@ -307,7 +307,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                 } finally {
                     done.set(true);
                     halted.await(TimeUnit.SECONDS.toNanos(4L));
-                    Path.clearThreadLocals();
+                    TableUtils.clearThreadLocals();
                 }
             }
 
@@ -355,7 +355,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                     } catch (Throwable e) {
                         ref.set(e);
                     } finally {
-                        Path.clearThreadLocals();
+                        TableUtils.clearThreadLocals();
                     }
                 }));
                 threads.getLast().start();
@@ -612,7 +612,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                         LOG.error().$(e).I$();
                         errorCounter.incrementAndGet();
                     } finally {
-                        Path.clearThreadLocals();
+                        TableUtils.clearThreadLocals();
                     }
                 });
                 th.start();

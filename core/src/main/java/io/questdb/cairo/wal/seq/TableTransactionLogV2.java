@@ -64,7 +64,9 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
 
     public static void clearThreadLocals() {
         TransactionLogCursorImpl cursor = tlTransactionLogCursor.get();
-        cursor.closePath();
+        if (cursor != null) {
+            cursor.closePath();
+        }
     }
 
     public long addEntry(long structureVersion, int walId, int segmentId, int segmentTxn, long timestamp) {
@@ -109,7 +111,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
 
     public void create(Path path, long tableCreateTimestamp) {
         createTxnFile(path, tableCreateTimestamp);
-        createChunksDir(path, mkDirMode);
+        createChunksDir(mkDirMode);
     }
 
     @Override
@@ -158,23 +160,31 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         long lastTxn = txnMem.getLong(MAX_TXN_OFFSET_64);
         maxTxn.set(lastTxn);
         chunkTransactionCount = txnMem.getInt(SEQ_CHUNK_SIZE_32);
+        if (chunkTransactionCount < 1) {
+            throw new CairoException().put("invalid sequencer file chunk size [size=").put(chunkTransactionCount).put(", path=").put(path).put(']');
+        }
 
+        long maxStructureVersion = 0L;
+        if (lastTxn > 0L) {
+            long prevTxn = lastTxn - 1;
+            openTxnChunk(prevTxn);
+            long lastChunkTxn = (prevTxn) % chunkTransactionCount;
+            maxStructureVersion = txnChunkMem.getLong(lastChunkTxn * RECORD_SIZE + TX_LOG_STRUCTURE_VERSION_OFFSET);
+        }
         openTxnChunk();
-        long lastChunkTxn = lastTxn % chunkTransactionCount;
-
-        return txnChunkMem.getLong(lastChunkTxn * RECORD_SIZE + TX_LOG_STRUCTURE_VERSION_OFFSET);
+        return maxStructureVersion;
     }
 
     public void sync() {
         txnMem.sync(false);
     }
 
-    private void createChunksDir(Path path, int mkDirMode) {
+    private void createChunksDir(int mkDirMode) {
         int rootLen = rootPath.size();
-        path.concat(TXNLOG_CHUNK_DIR).$();
+        rootPath.concat(TXNLOG_CHUNK_DIR).$();
         try {
-            if (!ff.exists(path) && ff.mkdir(path, mkDirMode) != 0) {
-                throw CairoException.critical(ff.errno()).put("could not create directory [path='").put(path).put("']");
+            if (!ff.exists(rootPath) && ff.mkdir(rootPath, mkDirMode) != 0) {
+                throw CairoException.critical(ff.errno()).put("could not create directory [path='").put(rootPath).put("']");
             }
         } finally {
             rootPath.trimTo(rootLen);
@@ -185,15 +195,19 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         openTxnMem(path);
 
         txnMem.jumpTo(0L);
-        txnMem.putInt(WAL_FORMAT_VERSION_V1);
+        txnMem.putInt(WAL_FORMAT_VERSION_V2);
         txnMem.putLong(0L);
         txnMem.putLong(tableCreateTimestamp);
-        txnMem.putInt(0);
+        txnMem.putInt(chunkTransactionCount);
         txnMem.sync(false);
     }
 
     private void openTxnChunk() {
         long txn = this.maxTxn.get();
+        openTxnChunk(txn);
+    }
+
+    private void openTxnChunk(long txn) {
         long chunk = txn / chunkTransactionCount;
         if (chunkId != chunk) {
             int size = rootPath.size();
@@ -207,6 +221,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
                 rootPath.trimTo(size);
             }
         }
+        txnChunkMem.jumpTo((txn % chunkTransactionCount) * RECORD_SIZE);
     }
 
     private void openTxnMem(Path path) {

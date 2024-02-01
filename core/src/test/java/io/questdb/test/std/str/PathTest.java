@@ -25,6 +25,7 @@
 package io.questdb.test.std.str;
 
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
 import io.questdb.std.str.*;
@@ -285,7 +286,7 @@ public class PathTest {
     @Test
     public void testPathThreadLocalDoesNotAllocateOnRelease() {
         final long count = Unsafe.getMallocCount();
-        Path.clearThreadLocals();
+        TableUtils.clearThreadLocals();
         Assert.assertEquals(count, Unsafe.getMallocCount());
     }
 
@@ -425,7 +426,7 @@ public class PathTest {
                     Assert.fail(err.getMessage());
                 } finally {
                     completed.countDown();
-                    Path.clearThreadLocals();
+                    TableUtils.clearThreadLocals();
                 }
             });
         }

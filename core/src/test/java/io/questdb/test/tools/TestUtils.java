@@ -40,7 +40,6 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.Net;
@@ -599,7 +598,7 @@ public final class TestUtils {
     }
 
     public static void assertMemoryLeak(LeakProneCode runnable) throws Exception {
-        Path.clearThreadLocals();
+        clearThreadLocals();
         long mem = Unsafe.getMemUsed();
         long[] memoryUsageByTag = new long[MemoryTag.SIZE];
         for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
@@ -618,7 +617,7 @@ public final class TestUtils {
         Assert.assertTrue("Initial allocated sockaddr count should be >= 0", sockAddrCount >= 0);
 
         runnable.run();
-        Path.clearThreadLocals();
+        clearThreadLocals();
         if (fileCount != Files.getOpenFileCount()) {
             Assert.assertEquals("file descriptors, expected: " + fileDebugInfo + ", actual: " + Files.getOpenFdDebugInfo(), fileCount, Files.getOpenFileCount());
         }
@@ -1219,8 +1218,6 @@ public final class TestUtils {
                 Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION
         };
     }
-
-    static final Log LOG = LogFactory.getLog(TestUtils.class);
 
     public static String getTestResourcePath(String resourceName) {
         URL resource = TestUtils.class.getResource(resourceName);

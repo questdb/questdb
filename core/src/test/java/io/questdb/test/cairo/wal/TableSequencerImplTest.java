@@ -25,14 +25,10 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GenericTableRecordMetadata;
-import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableToken;
+import io.questdb.cairo.*;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
@@ -73,7 +69,7 @@ public class TableSequencerImplTest extends AbstractCairoTest {
                     } catch (Throwable e) {
                         exception.set(e);
                     } finally {
-                        Path.clearThreadLocals();
+                        TableUtils.clearThreadLocals();
                     }
                 });
     }
@@ -117,7 +113,7 @@ public class TableSequencerImplTest extends AbstractCairoTest {
                     } catch (Throwable e) {
                         exception.set(e);
                     } finally {
-                        Path.clearThreadLocals();
+                        TableUtils.clearThreadLocals();
                     }
                 });
     }
@@ -141,7 +137,7 @@ public class TableSequencerImplTest extends AbstractCairoTest {
                     } catch (Throwable e) {
                         exception.set(e);
                     } finally {
-                        Path.clearThreadLocals();
+                        TableUtils.clearThreadLocals();
                     }
                 });
     }
@@ -171,7 +167,7 @@ public class TableSequencerImplTest extends AbstractCairoTest {
                     } catch (Throwable e) {
                         exception.set(e);
                     } finally {
-                        Path.clearThreadLocals();
+                        TableUtils.clearThreadLocals();
                     }
                 });
     }

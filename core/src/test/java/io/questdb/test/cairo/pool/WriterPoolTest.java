@@ -33,7 +33,6 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
@@ -510,7 +509,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                         exceptionCount.incrementAndGet();
                         e.printStackTrace();
                     } finally {
-                        Path.clearThreadLocals();
+                        TableUtils.clearThreadLocals();
                         stopLatch.countDown();
                     }
                 }).start();
@@ -563,7 +562,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                             e.printStackTrace();
                             errors.incrementAndGet();
                         } finally {
-                            Path.clearThreadLocals();
+                            TableUtils.clearThreadLocals();
                             halt.countDown();
                         }
                     }).start();
@@ -776,7 +775,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                             e.printStackTrace();
                             errors.incrementAndGet();
                         } finally {
-                            Path.clearThreadLocals();
+                            TableUtils.clearThreadLocals();
                             halt.countDown();
                         }
                     }).start();

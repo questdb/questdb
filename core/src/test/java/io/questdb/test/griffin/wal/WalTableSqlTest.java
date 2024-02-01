@@ -260,6 +260,27 @@ public class WalTableSqlTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAddWalTxnsExceedingSequencerChunks() throws Exception {
+        int txnChunk = 64;
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_WAL_SEQ_CHUNK_TXN_COUNT, txnChunk);
+        String tableName = testName.getMethodName() + "Â";
+        ddl("create table " + tableName + " as (" +
+                "select x, " +
+                " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                " from long_sequence(1)" +
+                ") timestamp(ts) partition by DAY WAL"
+        );
+
+        int n = (int) (2.5 * txnChunk);
+        for (int i = 0; i < n; i++) {
+            insert("insert into " + tableName + " values (" + i + ", '2022-02-24T01')");
+        }
+        drainWalQueue();
+        assertSql("count\n" +
+                (n + 1) + "\n", "select count(*) from " + tableName);
+    }
+
+    @Test
     public void testApplyFromLag() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();

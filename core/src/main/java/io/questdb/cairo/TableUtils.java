@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
+import io.questdb.cairo.wal.seq.TableTransactionLogV2;
 import io.questdb.griffin.AnyRecordMetadata;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
@@ -222,6 +223,11 @@ public final class TableUtils {
             throw CairoException.critical(0).put("File is too small, size=").put(memSize).put(", required=").put(minSize);
         }
         return memSize;
+    }
+
+    public static void clearThreadLocals() {
+        Path.clearThreadLocals();
+        TableTransactionLogV2.clearThreadLocals();
     }
 
     public static int compressColumnCount(RecordMetadata metadata) {

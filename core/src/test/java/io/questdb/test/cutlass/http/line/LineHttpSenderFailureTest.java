@@ -24,11 +24,10 @@
 
 package io.questdb.test.cutlass.http.line;
 
+import io.questdb.cairo.TableUtils;
 import io.questdb.client.Sender;
-import io.questdb.griffin.SqlException;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
-import io.questdb.std.str.Path;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
@@ -133,14 +132,14 @@ public class LineHttpSenderFailureTest extends AbstractBootstrapTest {
             serverMain.start();
         }
 
-        public void startAndExecute(String sqlText) throws SqlException {
+        public void startAndExecute(String sqlText) {
             start();
             serverMain.compile(sqlText);
         }
 
         public void stop() {
             serverMain = Misc.free(serverMain);
-            Path.clearThreadLocals();
+            TableUtils.clearThreadLocals();
         }
     }
 }

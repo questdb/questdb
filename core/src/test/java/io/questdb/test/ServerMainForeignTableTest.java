@@ -589,7 +589,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                     throw new RuntimeException(unexpected);
                 }
             } finally {
-                Path.clearThreadLocals();
+                TableUtils.clearThreadLocals();
                 haltLatch.countDown();
             }
         }, threadName);

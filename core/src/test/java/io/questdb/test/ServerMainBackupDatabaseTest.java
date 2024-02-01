@@ -30,6 +30,7 @@ import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.CompiledQuery;
@@ -37,19 +38,18 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.std.Files;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
-import io.questdb.std.Os;
-import io.questdb.std.str.Path;
+import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.BeforeClass;
+import org.junit.Test;
 
 import java.io.File;
-import java.util.*;
+import java.util.Comparator;
+import java.util.Objects;
+import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ThreadLocalRandom;
@@ -62,8 +62,6 @@ import static io.questdb.test.griffin.TableBackupTest.executeCreateTableStmt;
 import static io.questdb.test.griffin.TableBackupTest.executeInsertGeneratorStmt;
 import static io.questdb.test.tools.TestUtils.*;
 
-@RunWith(Parameterized.class)
-@Ignore
 public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
 
     private static final int N = 7;
@@ -71,30 +69,9 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
     private static final int pgPort = PG_PORT + pgPortDelta;
     private static final StringSink sink = new StringSink();
     private static String backupRoot;
-    private final boolean isWal;
-    private final int partitionBy;
-
-    public ServerMainBackupDatabaseTest(AbstractCairoTest.WalMode walMode, int partitionBy) {
-        isWal = (AbstractCairoTest.WalMode.WITH_WAL == walMode);
-        this.partitionBy = partitionBy;
-    }
-
-    @Parameterized.Parameters(name = "{0}-{1}")
-    public static Collection<Object[]> data() {
-        return Arrays.asList(new Object[][]{
-                {AbstractCairoTest.WalMode.WITH_WAL, PartitionBy.HOUR},
-                {AbstractCairoTest.WalMode.WITH_WAL, PartitionBy.DAY},
-                {AbstractCairoTest.WalMode.WITH_WAL, PartitionBy.WEEK},
-                {AbstractCairoTest.WalMode.WITH_WAL, PartitionBy.MONTH},
-                {AbstractCairoTest.WalMode.WITH_WAL, PartitionBy.YEAR},
-
-                {AbstractCairoTest.WalMode.NO_WAL, PartitionBy.HOUR},
-                {AbstractCairoTest.WalMode.NO_WAL, PartitionBy.DAY},
-                {AbstractCairoTest.WalMode.NO_WAL, PartitionBy.WEEK},
-                {AbstractCairoTest.WalMode.NO_WAL, PartitionBy.MONTH},
-                {AbstractCairoTest.WalMode.NO_WAL, PartitionBy.YEAR}
-        });
-    }
+    private final Rnd rnd = TestUtils.generateRandom(LOG);
+    private boolean isWal;
+    private int partitionBy;
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
@@ -106,9 +83,16 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
         }
     }
 
-    @Override
+    @Before
     public void setUp() {
         super.setUp();
+
+        isWal = rnd.nextBoolean();
+        this.partitionBy = rnd.nextInt(PartitionBy.WEEK + 1);
+        if (this.partitionBy == PartitionBy.NONE) {
+            this.partitionBy = PartitionBy.DAY;
+        }
+
         TestUtils.unchecked(() -> createDummyConfiguration(
                 HTTP_PORT + pgPortDelta,
                 HTTP_MIN_PORT + pgPortDelta,
@@ -207,7 +191,7 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
                 }
                 Assert.assertTrue(totalRows > (expectedTotalRows.get() * 0.5));
             } finally {
-                Assert.assertEquals(0, Files.rmdir(dbPath.of(newRoot).$(), true));
+                Assert.assertTrue(Files.rmdir(dbPath.of(newRoot).$(), true));
             }
         });
     }
@@ -221,9 +205,9 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
     ) throws Exception {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             CompiledQuery cc = compiler.compile(
-                    "SELECT name, designatedTimestamp, partitionBy, walEnabled, directoryName " +
+                    "SELECT table_name, designatedTimestamp, partitionBy, walEnabled, directoryName " +
                             "FROM tables() " +
-                            "WHERE name='" + tableToken.getTableName() + '\'',
+                            "WHERE table_name='" + tableToken.getTableName() + '\'',
                     context
             );
             try (RecordCursorFactory factory = cc.getRecordCursorFactory(); RecordCursor cursor = factory.getCursor(context)) {
@@ -253,7 +237,7 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
                 if (!f.getName().equals("tmp")) {
                     roots.add(f);
                 } else {
-                    Assert.assertEquals(0, Files.rmdir(auxPath.of(f.getAbsolutePath()).$(), true));
+                    Assert.assertTrue(Files.rmdir(auxPath.of(f.getAbsolutePath()).$(), true));
                 }
             }
         }
@@ -262,7 +246,7 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
         roots.sort(Comparator.comparing(File::lastModified));
         String newRoot = roots.get(len - 1).getAbsolutePath();
         for (int i = 0; i < len - 1; i++) {
-            Assert.assertEquals(0, Files.rmdir(auxPath.of(roots.get(i).getAbsolutePath()).$(), true));
+            Assert.assertTrue(Files.rmdir(auxPath.of(roots.get(i).getAbsolutePath()).$(), true));
         }
         return newRoot;
     }
@@ -349,7 +333,7 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
             } catch (Throwable err) {
                 errors.get().add(err);
             } finally {
-                Path.clearThreadLocals();
+                TableUtils.clearThreadLocals();
                 completedLatch.countDown();
             }
         }).start();
