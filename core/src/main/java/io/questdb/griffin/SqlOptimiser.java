@@ -4926,8 +4926,12 @@ public class SqlOptimiser implements Mutable {
             newSelectModel.setNestedModel(newGroupByModel);
 
             // Now apply recursively
-            QueryModel recursiveResult = rewriteGroupByToExtractAliases(newGroupByModel.getNestedModel());
-            newGroupByModel.setNestedModel(recursiveResult);
+            // We may have started with (select-group-by (select-choose (select-choose))
+            // In this case, we want to first make (select-choose (select-group-by (select-choose))
+            // Then still bubble that select-choose up to get (select-choose (select-choose (select-group-by)))
+            // So we only want to recurse down one step, not two
+            QueryModel recursiveResult = rewriteGroupByToExtractAliases(newSelectModel.getNestedModel());
+            newSelectModel.setNestedModel(recursiveResult);
             return newSelectModel;
         } else {
             // Recurse down the tree looking for appropriate nodes.
