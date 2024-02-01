@@ -360,17 +360,17 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     @Test
     public void testStringNullConstant() throws Exception {
         serialize("astring <> null");
-        assertIR("(i32 -1L)(varlen_header astring)(<>)(ret)");
+        assertIR("(i32 -1L)(string_header astring)(<>)(ret)");
         serialize("astring = null");
-        assertIR("(i32 -1L)(varlen_header astring)(=)(ret)");
+        assertIR("(i32 -1L)(string_header astring)(=)(ret)");
     }
 
     @Test
     public void testBinaryNullConstant() throws Exception {
         serialize("abinary <> null");
-        assertIR("(i32 -1L)(varlen_header abinary)(<>)(ret)");
+        assertIR("(i64 -1L)(binary_header abinary)(<>)(ret)");
         serialize("abinary = null");
-        assertIR("(i32 -1L)(varlen_header abinary)(=)(ret)");
+        assertIR("(i64 -1L)(binary_header abinary)(=)(ret)");
     }
 
     @Test(expected = SqlException.class)
@@ -455,12 +455,13 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         filterToOptions.put("anint = 0 or abyte = 0", 4);
         filterToOptions.put("afloat = 0 or abyte = 0", 4);
         filterToOptions.put("afloat / abyte = 0", 4);
-        filterToOptions.put("astring = null", 4);
         // 8B
         filterToOptions.put("along = 0 or ashort = 0", 8);
         filterToOptions.put("adouble = 0 or ashort = 0", 8);
         filterToOptions.put("afloat = 0 or adouble = 0", 8);
         filterToOptions.put("anint * along = 0", 8);
+        filterToOptions.put("astring = null", 8);
+        filterToOptions.put("abinary = null", 8);
 
         for (Map.Entry<String, Integer> entry : filterToOptions.entrySet()) {
             int options = serialize(entry.getKey(), false, false, false);
@@ -933,8 +934,10 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                     return "f64";
                 case I16_TYPE:
                     return "i128";
-                case VARLEN_HEADER_TYPE:
-                    return "varlen_header";
+                case STRING_HEADER_TYPE:
+                    return "string_header";
+                case BINARY_HEADER_TYPE:
+                    return "binary_header";
                 default:
                     return "unknown: " + type;
             }

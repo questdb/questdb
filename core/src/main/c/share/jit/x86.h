@@ -42,9 +42,19 @@ namespace questdb::x86 {
     read_mem(Compiler &c, data_type_t type, int32_t column_idx, const Gp &cols_ptr, const Gp &varlen_indexes_ptr, const Gp &input_index) {
         Gp column_address = c.newInt64("column_address");
         c.mov(column_address, ptr(cols_ptr, 8 * column_idx, 8));
-        if (type == data_type_t::varlen_header) {
-            Label l_nonzero = c.newLabel();
-
+        uint32_t header_size;
+        switch (type) {
+            case data_type_t::string_header:
+                header_size = 4;
+                break;
+            case data_type_t::binary_header:
+                header_size = 8;
+                break;
+            default:
+                header_size = 0;
+        }
+        if (header_size != 0) {
+            Label l_nonzero = c.newNamedLabel("length_is_nonzero");
             // For strings, the JIT-compiled filter only supports length checking.
             // This includes a NULL check because it's encoded as string length -1.
             // We reach the string by looking up its offset in the varlen column index.
@@ -56,18 +66,25 @@ namespace questdb::x86 {
             auto offset_size = 1 << offset_shift;
             c.mov(varlen_index_ptr, ptr(varlen_indexes_ptr, 8 * column_idx, 8));
             c.mov(offset, ptr(varlen_index_ptr, input_index, offset_shift, 0, offset_size));
+            // First try avoiding the data-dependent load of the header. Load the next
+            // entry in the varlen index and subtract from it 4 + the value of current one.
+            // If that's non-zero, it corresponds to the actual length of the string.
             c.mov(next_input_index, input_index);
             c.inc(next_input_index);
             c.mov(length, ptr(varlen_index_ptr, next_input_index, offset_shift, 0, offset_size));
             c.sub(length, offset);
             // length now contains the length of the varlen item. It can be zero for two reasons:
             // empty string or NULL string.
-            c.sub(length, 4);
+            c.sub(length, header_size);
             c.jnz(l_nonzero);
-            // If it's zero, load the actual header value instead
-            c.mov(length, ptr(column_address, offset, 0, 0, 4));
+            // If it's zero, we have to load the actual header value, which can be 0 or -1.
+            c.mov(length, ptr(column_address, offset, 0, 0, header_size));
             c.bind(l_nonzero);
-            return {length.r32(), data_type_t::i32, data_kind_t::kMemory};
+            if (header_size == 4) {
+                return {length.r32(), data_type_t::i32, data_kind_t::kMemory};
+            } else {
+                return {length, data_type_t::i64, data_kind_t::kMemory};
+            }
         }
         auto shift = type_shift(type);
         auto type_size = 1 << shift;
@@ -278,9 +295,10 @@ namespace questdb::x86 {
             case data_type_t::i8:
             case data_type_t::i16:
             case data_type_t::i32:
-            case data_type_t::varlen_header:
+            case data_type_t::string_header:
                 return {int32_eq(c, lhs.gp().r32(), rhs.gp().r32()), data_type_t::i32, dk};
             case data_type_t::i64:
+            case data_type_t::binary_header:
                 return {int64_eq(c, lhs.gp(), rhs.gp()), data_type_t::i32, dk};
             case data_type_t::i128:
                 return {int128_eq(c, lhs.xmm(), rhs.xmm()), data_type_t::i32, dk};
@@ -300,9 +318,10 @@ namespace questdb::x86 {
             case data_type_t::i8:
             case data_type_t::i16:
             case data_type_t::i32:
-            case data_type_t::varlen_header:
+            case data_type_t::string_header:
                 return {int32_ne(c, lhs.gp().r32(), rhs.gp().r32()), data_type_t::i32, dk};
             case data_type_t::i64:
+            case data_type_t::binary_header:
                 return {int64_ne(c, lhs.gp(), rhs.gp()), data_type_t::i32, dk};
             case data_type_t::i128:
                 return {int128_ne(c, lhs.xmm(), rhs.xmm()), data_type_t::i32, dk};
@@ -578,7 +597,8 @@ namespace questdb::x86 {
                 }
                 break;
             case data_type_t::i128:
-            case data_type_t::varlen_header:
+            case data_type_t::string_header:
+            case data_type_t::binary_header:
                 return std::make_pair(lhs, rhs);
             default:
                 __builtin_unreachable();
