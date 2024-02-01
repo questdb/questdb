@@ -34,7 +34,7 @@ import org.junit.Assert;
 
 import java.util.List;
 
-public class IlpHttpUtils {
+public class LineHttpUtils {
     public static void assertRequestErrorContains(InfluxDB influxDB, List<String> points, String line, String... errors) {
         points.add(line);
         try {

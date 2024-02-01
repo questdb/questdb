@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.cutlass.http.line;
+package io.questdb.compat;
 
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
@@ -32,6 +32,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
+import io.questdb.test.cutlass.http.line.LineHttpUtils;
 import io.questdb.test.tools.TestUtils;
 import org.influxdb.InfluxDB;
 import org.influxdb.dto.BatchPoints;
@@ -46,9 +47,10 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
-import static io.questdb.test.cutlass.http.line.IlpHttpUtils.assertRequestErrorContains;
+import static io.questdb.test.cutlass.http.line.LineHttpUtils.assertRequestErrorContains;
 
-public class InfluxClientTest extends AbstractBootstrapTest {
+public class InfluxDBClientTest extends AbstractBootstrapTest {
+
     @Before
     public void setUp() {
         super.setUp();
@@ -66,7 +68,7 @@ public class InfluxClientTest extends AbstractBootstrapTest {
                 serverMain.compile("create table ex_tbl(b byte, s short, f float, d double, str string, sym symbol, tss timestamp, " +
                         "i int, l long, ip ipv4, g geohash(4c), ts timestamp) timestamp(ts) partition by DAY WAL");
 
-                try (final InfluxDB influxDB = IlpHttpUtils.getConnection(serverMain)) {
+                try (final InfluxDB influxDB = LineHttpUtils.getConnection(serverMain)) {
                     List<String> points = new ArrayList<>();
 
                     assertRequestErrorContains(influxDB, points, "ex_tbl b\\\"c=1024 1233456\n", "{" +
@@ -117,7 +119,7 @@ public class InfluxClientTest extends AbstractBootstrapTest {
 
                 // New column added
                 lines.add("wal_low_max_uncomitted i=123i\n");
-                try (final InfluxDB influxDB = IlpHttpUtils.getConnection(serverMain)) {
+                try (final InfluxDB influxDB = LineHttpUtils.getConnection(serverMain)) {
                     // Bad line which should roll back the transaction
                     assertRequestErrorContains(influxDB, lines, "ailed to parse line protocol:errors encountered on line(s):" +
                             "\\nerror in line 10002: Could not parse entire line. Symbol value is missing: bla");
@@ -139,7 +141,7 @@ public class InfluxClientTest extends AbstractBootstrapTest {
                 serverMain.compile("create table wal_not_here(b byte, s short, f float, d double, str string, sym symbol, tss timestamp, " +
                         "i int, l long, ip ipv4, g geohash(4c), ts timestamp)");
 
-                try (final InfluxDB influxDB = IlpHttpUtils.getConnection(serverMain)) {
+                try (final InfluxDB influxDB = LineHttpUtils.getConnection(serverMain)) {
 
                     List<String> points = new ArrayList<>();
                     assertRequestErrorContains(influxDB, points, "badPo\"int,a3=2 1233456\n", "{" +
@@ -193,7 +195,7 @@ public class InfluxClientTest extends AbstractBootstrapTest {
                 serverMain.compile("create table wal_not_here(b byte, s short, f float, d double, str string, sym symbol, tss timestamp, " +
                         "i int, l long, ip ipv4, g geohash(4c), ts timestamp)");
 
-                try (final InfluxDB influxDB = IlpHttpUtils.getConnection(serverMain)) {
+                try (final InfluxDB influxDB = LineHttpUtils.getConnection(serverMain)) {
 
                     List<String> points = new ArrayList<>();
 
@@ -358,7 +360,7 @@ public class InfluxClientTest extends AbstractBootstrapTest {
                 serverMain.compile("create table wal_not_here(b byte, s short, f float, d double, str string, sym symbol, tss timestamp, " +
                         "i int, l long, ip ipv4, g geohash(4c), ts timestamp)");
 
-                try (final InfluxDB influxDB = IlpHttpUtils.getConnection(serverMain)) {
+                try (final InfluxDB influxDB = LineHttpUtils.getConnection(serverMain)) {
 
                     List<String> points = new ArrayList<>();
 
@@ -409,7 +411,7 @@ public class InfluxClientTest extends AbstractBootstrapTest {
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
             )) {
                 serverMain.start();
-                try (final InfluxDB influxDB = IlpHttpUtils.getConnection(serverMain)) {
+                try (final InfluxDB influxDB = LineHttpUtils.getConnection(serverMain)) {
 
                     List<String> points = new ArrayList<>();
                     points.add("good_point,sym=a str=\"abdc\",num=1 1233456\n");
@@ -485,7 +487,7 @@ public class InfluxClientTest extends AbstractBootstrapTest {
                 serverMain.compile("create table wal_not_here(b byte, s short, f float, d double, str string, sym symbol, tss timestamp, " +
                         "i int, l long, ip ipv4, g geohash(4c), ts timestamp)");
 
-                try (final InfluxDB influxDB = IlpHttpUtils.getConnection(serverMain)) {
+                try (final InfluxDB influxDB = LineHttpUtils.getConnection(serverMain)) {
 
                     List<String> points = new ArrayList<>();
                     points.add("m1,tag1=value1 f1=1i,y=12i");
@@ -506,7 +508,7 @@ public class InfluxClientTest extends AbstractBootstrapTest {
             )) {
                 serverMain.start();
 
-                try (final InfluxDB influxDB = IlpHttpUtils.getConnection(serverMain)) {
+                try (final InfluxDB influxDB = LineHttpUtils.getConnection(serverMain)) {
                     influxDB.setLogLevel(InfluxDB.LogLevel.FULL);
                     Pong pong = influxDB.ping();
                     Assert.assertTrue(pong.isGood());
@@ -533,7 +535,7 @@ public class InfluxClientTest extends AbstractBootstrapTest {
                     lines.add(goodLine);
                 }
 
-                try (final InfluxDB influxDB = IlpHttpUtils.getConnection(serverMain)) {
+                try (final InfluxDB influxDB = LineHttpUtils.getConnection(serverMain)) {
                     // Bad line which should roll back the transaction
                     int totalCount = count + 1;
                     assertRequestErrorContains(influxDB, lines, "wal_low_max_uncomitted,bla i=aaa\n",
@@ -571,7 +573,7 @@ public class InfluxClientTest extends AbstractBootstrapTest {
                     lines.add(addColumnLine);
                 }
 
-                try (final InfluxDB influxDB = IlpHttpUtils.getConnection(serverMain)) {
+                try (final InfluxDB influxDB = LineHttpUtils.getConnection(serverMain)) {
                     // Column is added
                     influxDB.write(lines);
                 }
@@ -593,7 +595,7 @@ public class InfluxClientTest extends AbstractBootstrapTest {
                 serverMain.compile("create table ex_tbl(b byte, s short, f float, d double, str string, sym symbol, tss timestamp, " +
                         "i int, l long, ip ipv4, g geohash(4c), ts timestamp) timestamp(ts) partition by DAY WAL");
 
-                try (final InfluxDB influxDB = IlpHttpUtils.getConnection(serverMain)) {
+                try (final InfluxDB influxDB = LineHttpUtils.getConnection(serverMain)) {
 
                     List<String> points = new ArrayList<>();
                     assertRequestErrorContains(influxDB, points, "ex_tbl,a3=2 1222233456\n", "{" +
@@ -623,7 +625,7 @@ public class InfluxClientTest extends AbstractBootstrapTest {
                 serverMain.compile("create table ex_tbl(b byte, s short, f float, d double, str string, sym symbol, tss timestamp, " +
                         "i int, l long, ip ipv4, g geohash(4c), ts timestamp) timestamp(ts) partition by DAY WAL");
 
-                try (final InfluxDB influxDB = IlpHttpUtils.getConnection(serverMain)) {
+                try (final InfluxDB influxDB = LineHttpUtils.getConnection(serverMain)) {
 
                     List<String> points = new ArrayList<>();
                     assertRequestErrorContains(influxDB, points, "ex_tbl,a3=2 1222233456\n", "{" +
@@ -649,7 +651,7 @@ public class InfluxClientTest extends AbstractBootstrapTest {
             )) {
                 serverMain.start();
 
-                try (final InfluxDB influxDB = IlpHttpUtils.getConnection(serverMain)) {
+                try (final InfluxDB influxDB = LineHttpUtils.getConnection(serverMain)) {
                     influxDB.setLogLevel(InfluxDB.LogLevel.BASIC);
 
                     long microTime = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T04:00:00.000001Z");
@@ -702,7 +704,7 @@ public class InfluxClientTest extends AbstractBootstrapTest {
         long timestamp = IntervalUtils.parseFloorPartialTimestamp("2023-11-27T18:53:24.834Z");
         int i = 0;
 
-        try (final InfluxDB influxDB = IlpHttpUtils.getConnection(serverMain)) {
+        try (final InfluxDB influxDB = LineHttpUtils.getConnection(serverMain)) {
 
             BatchPoints batchPoints = BatchPoints
                     .database("test_db")

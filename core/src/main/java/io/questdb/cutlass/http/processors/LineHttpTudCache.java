@@ -36,7 +36,7 @@ import io.questdb.std.str.*;
 import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.NotNull;
 
-public class IlpTudCache implements QuietCloseable {
+public class LineHttpTudCache implements QuietCloseable {
     private final boolean autoCreateNewColumns;
     private final boolean autoCreateNewTables;
     private final MemoryMARW ddlMem = Vm.getMARWInstance();
@@ -50,7 +50,7 @@ public class IlpTudCache implements QuietCloseable {
     private final Telemetry<TelemetryTask> telemetry;
     private boolean distressed = false;
 
-    public IlpTudCache(
+    public LineHttpTudCache(
             CairoEngine engine,
             boolean autoCreateNewColumns,
             boolean autoCreateNewTables,

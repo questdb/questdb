@@ -35,19 +35,19 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8s;
 
-import static io.questdb.cutlass.line.tcp.IlpException.*;
+import static io.questdb.cutlass.line.tcp.LineProtocolException.*;
 import static io.questdb.cutlass.line.tcp.TableUpdateDetails.ThreadLocalDetails.COLUMN_NOT_FOUND;
 import static io.questdb.cutlass.line.tcp.TableUpdateDetails.ThreadLocalDetails.DUPLICATED_COLUMN;
 
-public class IlpWalAppender {
-    private static final Log LOG = LogFactory.getLog(IlpWalAppender.class);
+public class LineWalAppender {
+    private static final Log LOG = LogFactory.getLog(LineWalAppender.class);
     private final boolean autoCreateNewColumns;
     private final int maxFileNameLength;
     private final MicrosecondClock microsecondClock;
     private final boolean stringToCharCastAllowed;
     private LineTcpTimestampAdapter timestampAdapter;
 
-    public IlpWalAppender(boolean autoCreateNewColumns, boolean stringToCharCastAllowed, LineTcpTimestampAdapter timestampAdapter, int maxFileNameLength, MicrosecondClock microsecondClock) {
+    public LineWalAppender(boolean autoCreateNewColumns, boolean stringToCharCastAllowed, LineTcpTimestampAdapter timestampAdapter, int maxFileNameLength, MicrosecondClock microsecondClock) {
         this.autoCreateNewColumns = autoCreateNewColumns;
         this.stringToCharCastAllowed = stringToCharCastAllowed;
         this.timestampAdapter = timestampAdapter;

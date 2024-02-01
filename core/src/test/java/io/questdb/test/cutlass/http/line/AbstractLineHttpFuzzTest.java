@@ -63,6 +63,7 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
     private static final int SEND_SYMBOLS_WITH_SPACE_RANDOMIZE_FACTOR = 2;
     private static final StringSink sink = new StringSink();
     protected final short[] colTypes = new short[]{STRING, DOUBLE, DOUBLE, DOUBLE, STRING, DOUBLE};
+    private final int batchSize = 10;
     private final String[][] colNameBases = new String[][]{
             {"terület", "TERÜLet", "tERülET", "TERÜLET"},
             {"temperature", "TEMPERATURE", "Temperature", "TempeRaTuRe"},
@@ -87,7 +88,6 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
     protected Rnd random;
     protected LowerCaseCharSequenceObjHashMap<TableData> tables;
     protected long waitBetweenIterationsMillis;
-    private final int batchSize = 10;
     private int columnReorderingFactor = -1;
     private int columnSkipFactor = -1;
     private boolean diffCasesInColNames = false;
@@ -160,7 +160,7 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
                 }
 
                 try {
-                    ingest(IlpHttpUtils.getHttpPort(serverMain));
+                    ingest(LineHttpUtils.getHttpPort(serverMain));
 
                     for (int i = 0; i < numOfTables; i++) {
                         final String tableName = getTableName(i);

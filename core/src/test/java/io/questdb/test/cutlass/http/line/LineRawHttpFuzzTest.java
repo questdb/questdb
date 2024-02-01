@@ -45,7 +45,7 @@ import org.junit.Test;
 import java.io.IOException;
 
 import static io.questdb.PropertyKey.*;
-import static io.questdb.test.cutlass.http.line.IlpHttpUtils.getHttpPort;
+import static io.questdb.test.cutlass.http.line.LineHttpUtils.getHttpPort;
 
 public class LineRawHttpFuzzTest extends AbstractBootstrapTest {
     @Before

@@ -58,7 +58,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.PropertyKey.DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE;
 import static io.questdb.cairo.wal.WalUtils.EVENT_INDEX_FILE_NAME;
-import static io.questdb.test.cutlass.http.line.IlpHttpUtils.*;
+import static io.questdb.test.cutlass.http.line.LineHttpUtils.*;
 import static io.questdb.test.tools.TestUtils.assertEventually;
 
 public class LineHttpFailureTests extends AbstractBootstrapTest {
@@ -96,7 +96,7 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
                 serverMain.start();
 
                 final List<String> points = new ArrayList<>();
-                try (final InfluxDB influxDB = IlpHttpUtils.getConnection(serverMain)) {
+                try (final InfluxDB influxDB = LineHttpUtils.getConnection(serverMain)) {
                     assertRequestOk(influxDB, points, "m1,tag1=value1 f1=1i,y=12i");
 
                     assertRequestErrorContains(influxDB, points, "m1,tag1=value1 f1=1i,x=12i",
@@ -138,7 +138,7 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
                 serverMain.start();
 
                 final List<String> points = new ArrayList<>();
-                try (final InfluxDB influxDB = IlpHttpUtils.getConnection(serverMain)) {
+                try (final InfluxDB influxDB = LineHttpUtils.getConnection(serverMain)) {
                     assertRequestOk(influxDB, points, "m1,tag1=value1 f1=1i,y=12i");
 
                     assertRequestErrorContains(influxDB, points, "m1,tag1=value1 f1=1i,x=12i",
@@ -480,7 +480,7 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
                 serverMain.start();
 
                 final List<String> points = new ArrayList<>();
-                try (final InfluxDB influxDB = IlpHttpUtils.getConnection(serverMain)) {
+                try (final InfluxDB influxDB = LineHttpUtils.getConnection(serverMain)) {
                     points.add("first_table,ok=true allgood=true\n");
                     points.add("second_table,ok=true allgood=true\n");
                     assertRequestErrorContains(influxDB, points, "failed_table,tag1=value1 f1=1i,y=12i",
@@ -522,7 +522,7 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
                 server.set(serverMain);
 
                 final List<String> points = new ArrayList<>();
-                try (final InfluxDB influxDB = IlpHttpUtils.getConnection(serverMain)) {
+                try (final InfluxDB influxDB = LineHttpUtils.getConnection(serverMain)) {
                     assertRequestOk(influxDB, points, "m1,tag1=value1 f1=1i,y=12i");
                     assertRequestOk(influxDB, points, "m1,tag1=value1 f1=1i,y=12i,x=12i");
                 }
@@ -561,7 +561,7 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
                 server.set(serverMain);
 
                 final List<String> points = new ArrayList<>();
-                try (final InfluxDB influxDB = IlpHttpUtils.getConnection(serverMain)) {
+                try (final InfluxDB influxDB = LineHttpUtils.getConnection(serverMain)) {
                     assertRequestOk(influxDB, points, "m1,tag1=value1 f1=1i,y=12i");
 
                     points.add("ok_point m1=1i " + timestamp + "000\n");
@@ -585,7 +585,7 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
                 serverMain.start();
 
                 final List<String> points = new ArrayList<>();
-                try (final InfluxDB influxDB = IlpHttpUtils.getConnection(serverMain)) {
+                try (final InfluxDB influxDB = LineHttpUtils.getConnection(serverMain)) {
                     influxDB.setLogLevel(InfluxDB.LogLevel.BASIC);
                     influxDB.enableGzip();
                     assertRequestErrorContains(influxDB, points, "m1,tag1=value1 f1=1i,x=12i",
@@ -692,7 +692,7 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
                 serverMain.start();
 
                 final List<String> points = new ArrayList<>();
-                try (final InfluxDB influxDB = IlpHttpUtils.getConnection(serverMain)) {
+                try (final InfluxDB influxDB = LineHttpUtils.getConnection(serverMain)) {
                     points.add("good,tag1=value1 f1=1i");
 
                     // This will trigger commit and the commit will fail
@@ -744,7 +744,7 @@ public class LineHttpFailureTests extends AbstractBootstrapTest {
                 server.set(serverMain);
 
                 final List<String> points = new ArrayList<>();
-                try (final InfluxDB influxDB = IlpHttpUtils.getConnection(serverMain)) {
+                try (final InfluxDB influxDB = LineHttpUtils.getConnection(serverMain)) {
                     points.add("good,tag1=value1 f1=1i");
                     points.add("drop,tag1=value1 f1=1i,y=12i");
                     // This will trigger dropping table "drop"
