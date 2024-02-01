@@ -139,6 +139,20 @@ public final class ConfStringParserTest {
     }
 
     @Test
+    public void testNoParamsWithColons() {
+        String config = "http::";
+        int pos = assertSchemaOk(config, "http");
+        assertNoNext(config, pos);
+    }
+
+    @Test
+    public void testNoParamsWithoutColons() {
+        String config = "http";
+        int pos = assertSchemaOk(config, "http");
+        assertNoNext(config, pos);
+    }
+
+    @Test
     public void testSchemaCaseInsensitive() {
         assertSchemaOk("http::addr=localhost;USER=joe;pAsS=bloggs;", "http");
         assertSchemaOk("HTTP::addr=localhost;USER=joe;pAsS=bloggs;", "http");
@@ -147,10 +161,10 @@ public final class ConfStringParserTest {
 
     @Test
     public void testSchemaParser() {
+        assertSchemaError("::host=localhost;", "empty schema at position 0");
         assertSchemaError("ht tp::", "bad separator, expected ':' got ' ' at position 2");
-        assertSchemaError("http::", "missing trailing semicolon at position 5");
-        assertSchemaError("::", "schema is empty");
-        assertSchemaError("", "schema name must start with schema type, e.g. http::");
+        assertSchemaError("::", "empty schema at position 0");
+        assertSchemaError("", "expected schema identifier, not an empty string at position 0");
         assertSchemaError("httpaddr=localhost;user=joe;pass=bloggs;auto_flush_rows=1000;", "bad separator, expected ':' got '=' at position 8");
         assertSchemaError("http:a::addr=localhost;user=joe;pass=bloggs;auto_flush_rows=1000;", "bad separator, expected '::' got ':a' at position 4");
         assertSchemaError("x;/host=localhost;", "bad separator, expected ':' got ';' at position 1");

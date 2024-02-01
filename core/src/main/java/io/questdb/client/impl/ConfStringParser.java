@@ -95,17 +95,17 @@ public final class ConfStringParser {
      */
     public static int of(CharSequence input, StringSink output) {
         output.clear();
+        if (input.length() == 0) {
+            output.put("expected schema identifier, not an empty string at position 0");
+            return -1;
+        }
         char lastChar = 0;
         for (int i = 0, n = input.length(); i < n; i++) {
             char c = input.charAt(i);
             if (lastChar == ':') {
                 if (c == ':') {
                     if (i == 1) {
-                        output.put("schema is empty");
-                        return -1;
-                    }
-                    if (i == n - 1) {
-                        output.put("missing trailing semicolon at position ").put(i);
+                        output.put("empty schema at position 0");
                         return -1;
                     }
                     Chars.toLowerCase(input, 0, i - 1, output);
@@ -123,8 +123,8 @@ public final class ConfStringParser {
                 lastChar = c;
             }
         }
-        output.put("schema name must start with schema type, e.g. http::");
-        return -1;
+        output.put(input);
+        return input.length();
     }
 
     /**
