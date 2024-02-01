@@ -43,16 +43,31 @@ namespace questdb::x86 {
         Gp column_address = c.newInt64("column_address");
         c.mov(column_address, ptr(cols_ptr, 8 * column_idx, 8));
         if (type == data_type_t::varlen_header) {
+            Label l_nonzero = c.newLabel();
+
             // For strings, the JIT-compiled filter only supports length checking.
             // This includes a NULL check because it's encoded as string length -1.
             // We reach the string by looking up its offset in the varlen column index.
             Gp offset = c.newInt64("offset");
+            Gp length = c.newInt64("next_offset");
+            Gp varlen_index_ptr = c.newInt64("varlen_index_ptr");
+            Gp next_input_index = c.newInt64("next_input_index");
             auto offset_shift = type_shift(data_type_t::i64);
             auto offset_size = 1 << offset_shift;
-            // Reuse offset register to first dereference the varlen indexes array, then access its slot
-            c.mov(offset, ptr(varlen_indexes_ptr, 8 * column_idx, 8));
-            c.mov(offset, ptr(offset, input_index, offset_shift, 0, offset_size));
-            return {Mem(column_address, offset, 0, 0, 4), data_type_t::i32, data_kind_t::kMemory};
+            c.mov(varlen_index_ptr, ptr(varlen_indexes_ptr, 8 * column_idx, 8));
+            c.mov(offset, ptr(varlen_index_ptr, input_index, offset_shift, 0, offset_size));
+            c.mov(next_input_index, input_index);
+            c.inc(next_input_index);
+            c.mov(length, ptr(varlen_index_ptr, next_input_index, offset_shift, 0, offset_size));
+            c.sub(length, offset);
+            // length now contains the length of the varlen item. It can be zero for two reasons:
+            // empty string or NULL string.
+            c.sub(length, 4);
+            c.jnz(l_nonzero);
+            // If it's zero, load the actual header value instead
+            c.mov(length, ptr(column_address, offset, 0, 0, 4));
+            c.bind(l_nonzero);
+            return {length.r32(), data_type_t::i32, data_kind_t::kMemory};
         }
         auto shift = type_shift(type);
         auto type_size = 1 << shift;
