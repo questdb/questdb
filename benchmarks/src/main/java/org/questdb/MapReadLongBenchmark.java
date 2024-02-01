@@ -98,6 +98,19 @@ public class MapReadLongBenchmark {
     }
 
     @Benchmark
+    public Long testHashMap() {
+        return hmap.get(rnd.nextLong(size));
+    }
+
+    @Benchmark
+    public long testOrderedMap() {
+        MapKey key = orderedMap.withKey();
+        key.putLong(rnd.nextLong(size));
+        MapValue value = key.findValue();
+        return value != null ? value.getLong(0) : 0;
+    }
+
+    @Benchmark
     public long testUnordered16Map() {
         MapKey key = unordered16map.withKey();
         key.putLong(rnd.nextLong(size));
