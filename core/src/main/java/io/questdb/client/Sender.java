@@ -452,7 +452,7 @@ public interface Sender extends Closeable {
         }
 
         /**
-         * Set the maximum number of rows that can be buffered locally before they are automatically sent to a server.
+         * Set the maximum number of rows that are buffered locally before they are automatically sent to a server.
          * <br>
          * This is only used when communicating over HTTP transport, and it's illegal to call this method when
          * communicating over TCP transport.
