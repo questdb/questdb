@@ -26,6 +26,16 @@ public final class ConfStringParserTest {
     }
 
     @Test
+    public void testEqualsCharInValue() {
+        String conf = "http::addr===localhost==;user==j=o=e=;pass==blo==ggs==;";
+        int pos = assertSchemaOk(conf, "http");
+        pos = assertNextKeyValueOk(conf, pos, "addr", "==localhost==");
+        pos = assertNextKeyValueOk(conf, pos, "user", "=j=o=e=");
+        pos = assertNextKeyValueOk(conf, pos, "pass", "=blo==ggs==");
+        assertNoNext(conf, pos);
+    }
+
+    @Test
     public void testIncompleteKeyNoValue() {
         String config = "http::host";
         int pos = assertSchemaOk(config, "http");
