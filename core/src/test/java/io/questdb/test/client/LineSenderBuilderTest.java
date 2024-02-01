@@ -237,7 +237,9 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
             assertConfStrOk("http::addr=localhost;");
             assertConfStrOk("http::addr=localhost:8080;");
             assertConfStrOk("http::addr=localhost:8080;token=foo;");
+            assertConfStrOk("http::addr=token=foo;localhost:8080;");
             assertConfStrOk("http::addr=localhost:8080;token=foo;retry_timeout=1000;max_buf_size=1000000;");
+            assertConfStrOk("http::addr=localhost:8080;token=foo;max_buf_size=1000000;retry_timeout=1000;");
             assertConfStrOk("https::addr=localhost:8080;tls_verify=unsafe_off;auto_flush_rows=100;");
             assertConfStrOk("https::addr=localhost:8080;tls_verify=on;");
             assertConfStrError("https::addr=2001:0db8:85a3:0000:0000:8a2e:0370:7334;tls_verify=on;", "cannot parse a port from the address. use IPv4 IP address or a domain name [address=2001:0db8:85a3:0000:0000:8a2e:0370:7334]");
