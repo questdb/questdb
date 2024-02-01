@@ -413,7 +413,7 @@ public interface Sender extends Closeable {
             }
             int portIndex = Chars.indexOf(address, ':');
             if (portIndex + 1 == address.length()) {
-                throw new LineSenderException("invalid address. use IPv4 IP address or a domain name [address=").put(address).put("]");
+                throw new LineSenderException("invalid address. Use IPv4 address or a domain name [address=").put(address).put("]");
             }
             if (portIndex != -1) {
                 if (port != 0) {
@@ -426,7 +426,7 @@ public interface Sender extends Closeable {
                 try {
                     port(Numbers.parseInt(address, portIndex + 1, address.length()));
                 } catch (NumericException e) {
-                    throw new LineSenderException("cannot parse a port from the address. use IPv4 IP address or a domain name")
+                    throw new LineSenderException("cannot parse a port from the address. Use IPv4 address or a domain name")
                             .put(" [address=").put(address).put("]");
                 }
             } else {
