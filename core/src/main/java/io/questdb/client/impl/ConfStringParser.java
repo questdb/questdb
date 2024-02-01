@@ -152,6 +152,10 @@ public final class ConfStringParser {
                     return pos;
                 }
                 output.put(';');
+            } else if (c <= 0x1F || (c >= 0x7F && c <= 0x9F)) { // control characters
+                output.put("invalid character '").putAsPrintable(c);
+                output.put("' at position ").put(pos);
+                return -1;
             } else {
                 output.put(c);
             }
