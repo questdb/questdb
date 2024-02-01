@@ -195,7 +195,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
             assertConfStrError("http::addr=bar", "invalid address [error=missing trailing semicolon at position 14]");
             assertConfStrError("badschema::addr=bar;", "invalid schema: badschema");
             assertConfStrError("http::addr=localhost:-1;", "invalid port [port=-1]");
-            assertConfStrError("http::auto_flush=on;", "address is missing");
+            assertConfStrError("http::auto_flush=on;", "addr is missing");
             assertConfStrError("http::addr=localhost;tls_roots=/some/path;", "tls_roots was configured, but tls_roots_password is missing");
             assertConfStrError("http::addr=localhost;tls_roots_password=hunter123;", "tls_roots_password was configured, but tls_roots is missing");
             assertConfStrError("tcp::addr=localhost;user=foo;", "token cannot be empty nor null");

@@ -336,8 +336,6 @@ public interface Sender extends Closeable {
      */
     final class LineSenderBuilder {
         private static final int AUTO_FLUSH_DISABLED = 0;
-        private static final int AUTO_FLUSH_ROWS_NOT_SET = -1;
-        private static final byte BUFFER_CAPACITY_NOT_SET = 0;
         private static final int DEFAULT_AUTO_FLUSH_ROWS = 600;
         private static final int DEFAULT_BUFFER_CAPACITY = 64 * 1024;
         private static final int DEFAULT_HTTP_PORT = 9000;
@@ -345,41 +343,42 @@ public interface Sender extends Closeable {
         private static final int DEFAULT_MAXIMUM_BUFFER_CAPACITY = 100 * 1024 * 1024;
         private static final long DEFAULT_MAX_RETRY_NANOS = TimeUnit.SECONDS.toNanos(10); // keep sync with the contract of the configuration method
         private static final int DEFAULT_TCP_PORT = 9009;
-        private static final int HTTP_TIMEOUT_NOT_SET = -1;
-        private static final int MAX_RETRY_MILLIS_NOT_SET = -1;
         private static final int MIN_BUFFER_SIZE = 512 + 1; // challenge size + 1;
-        private static final byte PORT_NOT_SET = 0;
+        // The PARAMETER_NOT_SET_EXPLICITLY constant is used to detect if a parameter was set explicitly in configuration parameters
+        // where it matters. This is needed to detect invalid combinations of parameters. Why?
+        // We want to fail-fast even when an explicitly configured options happens to be same value as the default value,
+        // because this still indicates a user error and silently ignoring it could lead to hard to debug issues.
+        private static final int PARAMETER_NOT_SET_EXPLICITLY = -1;
         private static final int PROTOCOL_HTTP = 1;
-        private static final int PROTOCOL_NOT_SET = -1;
         private static final int PROTOCOL_TCP = 0;
-        private int autoFlushRows = AUTO_FLUSH_ROWS_NOT_SET;
-        private int bufferCapacity = BUFFER_CAPACITY_NOT_SET;
+        private int autoFlushRows = PARAMETER_NOT_SET_EXPLICITLY;
+        private int bufferCapacity = PARAMETER_NOT_SET_EXPLICITLY;
         private String host;
-        private int httpTimeout = HTTP_TIMEOUT_NOT_SET;
+        private int httpTimeout = PARAMETER_NOT_SET_EXPLICITLY;
         private String httpToken;
         private String keyId;
-        private int maximumBufferCapacity = BUFFER_CAPACITY_NOT_SET;
+        private int maximumBufferCapacity = PARAMETER_NOT_SET_EXPLICITLY;
         private final HttpClientConfiguration httpClientConfiguration = new DefaultHttpClientConfiguration() {
             @Override
             public int getInitialRequestBufferSize() {
-                return bufferCapacity == BUFFER_CAPACITY_NOT_SET ? DEFAULT_BUFFER_CAPACITY : bufferCapacity;
+                return bufferCapacity == PARAMETER_NOT_SET_EXPLICITLY ? DEFAULT_BUFFER_CAPACITY : bufferCapacity;
             }
 
             @Override
             public int getMaximumRequestBufferSize() {
-                return maximumBufferCapacity == BUFFER_CAPACITY_NOT_SET ? DEFAULT_MAXIMUM_BUFFER_CAPACITY : maximumBufferCapacity;
+                return maximumBufferCapacity == PARAMETER_NOT_SET_EXPLICITLY ? DEFAULT_MAXIMUM_BUFFER_CAPACITY : maximumBufferCapacity;
             }
 
             @Override
             public int getTimeout() {
-                return httpTimeout == HTTP_TIMEOUT_NOT_SET ? DEFAULT_HTTP_TIMEOUT : httpTimeout;
+                return httpTimeout == PARAMETER_NOT_SET_EXPLICITLY ? DEFAULT_HTTP_TIMEOUT : httpTimeout;
             }
         };
         private String password;
-        private int port = PORT_NOT_SET;
+        private int port = PARAMETER_NOT_SET_EXPLICITLY;
         private PrivateKey privateKey;
-        private int protocol = PROTOCOL_NOT_SET;
-        private int retryTimeoutMillis = MAX_RETRY_MILLIS_NOT_SET;
+        private int protocol = PARAMETER_NOT_SET_EXPLICITLY;
+        private int retryTimeoutMillis = PARAMETER_NOT_SET_EXPLICITLY;
         private boolean shouldDestroyPrivKey;
         private boolean tlsEnabled;
         private TlsValidationMode tlsValidationMode;
@@ -416,7 +415,7 @@ public interface Sender extends Closeable {
                 throw new LineSenderException("invalid address, use IPv4 address or a domain name [address=").put(address).put("]");
             }
             if (portIndex != -1) {
-                if (port != 0) {
+                if (port != PARAMETER_NOT_SET_EXPLICITLY) {
                     throw new LineSenderException("address contains a port, but a port was already configured ")
                             .put("[address=").put(address)
                             .put(", port=").put(port)
@@ -458,8 +457,8 @@ public interface Sender extends Closeable {
          * communicating over TCP transport.
          * <br>
          * The Sender will automatically flush the buffer when it reaches this limit. You must make sure that
-         * the buffer is flushed before it reaches the maximum capacity. Otherwise, the Sender will throw an exception
-         * when you try to add more data to the buffer.
+         * the buffer has sufficient capacity to accommodate for all locally buffered data. Otherwise, the Sender
+         * will throw an exception.
          * <br>
          * Setting this to 1 means that the Sender will send each row to a server immediately after it is added. This
          * effectively disables batching and may lead to a significant performance degradation.
@@ -470,6 +469,7 @@ public interface Sender extends Closeable {
          * @return this instance for method chaining
          * @see #flush()
          * @see #disableAutoFlush()
+         * @see #maxBufferCapacity(int)
          */
         public LineSenderBuilder autoFlushRows(int autoFlushRows) {
             if (this.autoFlushRows > 0) {
@@ -501,7 +501,7 @@ public interface Sender extends Closeable {
          * @see Sender#flush()
          */
         public LineSenderBuilder bufferCapacity(int bufferCapacity) {
-            if (this.bufferCapacity != BUFFER_CAPACITY_NOT_SET) {
+            if (this.bufferCapacity != PARAMETER_NOT_SET_EXPLICITLY) {
                 throw new LineSenderException("buffer capacity was already configured ")
                         .put("[capacity=").put(this.bufferCapacity).put("]");
             }
@@ -526,8 +526,8 @@ public interface Sender extends Closeable {
 
             NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             if (protocol == PROTOCOL_HTTP) {
-                int actualAutoFlushRows = autoFlushRows == AUTO_FLUSH_ROWS_NOT_SET ? DEFAULT_AUTO_FLUSH_ROWS : autoFlushRows;
-                long actualMaxRetriesNanos = retryTimeoutMillis == MAX_RETRY_MILLIS_NOT_SET ? DEFAULT_MAX_RETRY_NANOS : retryTimeoutMillis * 1_000_000L;
+                int actualAutoFlushRows = autoFlushRows == PARAMETER_NOT_SET_EXPLICITLY ? DEFAULT_AUTO_FLUSH_ROWS : autoFlushRows;
+                long actualMaxRetriesNanos = retryTimeoutMillis == PARAMETER_NOT_SET_EXPLICITLY ? DEFAULT_MAX_RETRY_NANOS : retryTimeoutMillis * 1_000_000L;
                 ClientTlsConfiguration tlsConfig = null;
                 if (tlsEnabled) {
                     assert (trustStorePath == null) == (trustStorePassword == null); //either both null or both non-null
@@ -578,7 +578,8 @@ public interface Sender extends Closeable {
          * <p>
          * Sender buffers data locally before sending it to a server. This method disables automatic flushing and
          * you must explicitly call {@link #flush()} to send buffered data to a server. It also disables auto-flushing
-         * on close. This gives you a fine control over batching behaviour.
+         * on close. This gives you a fine control over batching behaviour. QuestDB server processes a batch
+         * of data as a single transaction as long as it fits into a single buffer.
          * <p>
          * You must ensure maximum buffer capacity is large enough to accommodate all locally buffered data.
          * <p>
@@ -656,7 +657,7 @@ public interface Sender extends Closeable {
             if (pos < 0) {
                 throw new LineSenderException("invalid configuration string: ").put(sink);
             }
-            if (protocol != PROTOCOL_NOT_SET) {
+            if (protocol != PARAMETER_NOT_SET_EXPLICITLY) {
                 throw new LineSenderException("protocol was already configured ")
                         .put("[protocol=")
                         .put(protocol == PROTOCOL_HTTP ? "http" : "tcp").put("]");
@@ -665,7 +666,7 @@ public interface Sender extends Closeable {
                 throw new LineSenderException("server address was already configured ")
                         .put("[address=").put(host).put("]");
             }
-            if (port != PORT_NOT_SET) {
+            if (port != PARAMETER_NOT_SET_EXPLICITLY) {
                 throw new LineSenderException("server port was already configured ")
                         .put("[port=").put(port).put("]");
             }
@@ -700,7 +701,7 @@ public interface Sender extends Closeable {
                 if (Chars.equals("addr", sink)) {
                     pos = getValue(configurationString, pos, sink, "address");
                     address(sink);
-                    if (port == PORT_NOT_SET) {
+                    if (port == PARAMETER_NOT_SET_EXPLICITLY) {
                         port(protocol == PROTOCOL_TCP ? DEFAULT_TCP_PORT : DEFAULT_HTTP_PORT);
                     }
                 } else if (Chars.equals("user", sink)) {
@@ -783,7 +784,7 @@ public interface Sender extends Closeable {
                 }
             }
             if (host == null) {
-                throw new LineSenderException("address is missing");
+                throw new LineSenderException("addr is missing");
             }
             if (trustStorePath != null) {
                 if (trustStorePassword == null) {
@@ -816,7 +817,7 @@ public interface Sender extends Closeable {
          * @return an instance of {@link LineSenderBuilder} for further configuration
          */
         public LineSenderBuilder http() {
-            if (protocol != PROTOCOL_NOT_SET) {
+            if (protocol != PARAMETER_NOT_SET_EXPLICITLY) {
                 throw new LineSenderException("protocol was already configured ")
                         .put("[protocol=").put(protocol).put("]");
             }
@@ -834,7 +835,7 @@ public interface Sender extends Closeable {
          * @return this instance for method chaining
          */
         public LineSenderBuilder httpTimeoutMillis(int httpTimeoutMillis) {
-            if (this.httpTimeout != HTTP_TIMEOUT_NOT_SET) {
+            if (this.httpTimeout != PARAMETER_NOT_SET_EXPLICITLY) {
                 throw new LineSenderException("HTTP timeout was already configured ")
                         .put("[timeout=").put(this.httpTimeout).put("]");
             }
@@ -934,7 +935,7 @@ public interface Sender extends Closeable {
          * @return this instance for method chaining
          */
         public LineSenderBuilder port(int port) {
-            if (this.port != 0) {
+            if (this.port != PARAMETER_NOT_SET_EXPLICITLY) {
                 throw new LineSenderException("post is already configured ")
                         .put("[port=").put(port).put("]");
             }
@@ -969,7 +970,7 @@ public interface Sender extends Closeable {
          * @return this instance, enabling method chaining.
          */
         public LineSenderBuilder retryTimeoutMillis(int retryTimeoutMillis) {
-            if (this.retryTimeoutMillis != MAX_RETRY_MILLIS_NOT_SET) {
+            if (this.retryTimeoutMillis != PARAMETER_NOT_SET_EXPLICITLY) {
                 throw new LineSenderException("retry timeout was already configured ")
                         .put("[retryTimeoutMillis=").put(this.retryTimeoutMillis).put("]");
             }
@@ -992,7 +993,7 @@ public interface Sender extends Closeable {
          * @return an instance of {@link LineSenderBuilder} for further configuration
          */
         public LineSenderBuilder tcp() {
-            if (protocol != PROTOCOL_NOT_SET) {
+            if (protocol != PARAMETER_NOT_SET_EXPLICITLY) {
                 throw new LineSenderException("protocol was already configured ")
                         .put("[protocol=").put(protocol).put("]");
             }
@@ -1026,16 +1027,16 @@ public interface Sender extends Closeable {
         }
 
         private void configureDefaults() {
-            if (protocol == PROTOCOL_NOT_SET) {
+            if (protocol == PARAMETER_NOT_SET_EXPLICITLY) {
                 protocol = PROTOCOL_TCP;
             }
-            if (bufferCapacity == BUFFER_CAPACITY_NOT_SET) {
+            if (bufferCapacity == PARAMETER_NOT_SET_EXPLICITLY) {
                 bufferCapacity = DEFAULT_BUFFER_CAPACITY;
             }
-            if (maximumBufferCapacity == BUFFER_CAPACITY_NOT_SET) {
+            if (maximumBufferCapacity == PARAMETER_NOT_SET_EXPLICITLY) {
                 maximumBufferCapacity = protocol == PROTOCOL_HTTP ? DEFAULT_MAXIMUM_BUFFER_CAPACITY : bufferCapacity;
             }
-            if (port == PORT_NOT_SET) {
+            if (port == PARAMETER_NOT_SET_EXPLICITLY) {
                 port = protocol == PROTOCOL_HTTP ? DEFAULT_HTTP_PORT : DEFAULT_TCP_PORT;
             }
             if (tlsValidationMode == null) {
@@ -1076,16 +1077,16 @@ public interface Sender extends Closeable {
                 }
                 if (autoFlushRows == AUTO_FLUSH_DISABLED) {
                     throw new LineSenderException("disabling auto-flush is not supported for TCP protocol");
-                } else if (autoFlushRows != AUTO_FLUSH_ROWS_NOT_SET) {
+                } else if (autoFlushRows != PARAMETER_NOT_SET_EXPLICITLY) {
                     throw new LineSenderException("auto flush rows is not supported for TCP protocol");
                 }
                 if (httpToken != null) {
                     throw new LineSenderException("HTTP token authentication is not supported for TCP protocol");
                 }
-                if (retryTimeoutMillis != MAX_RETRY_MILLIS_NOT_SET) {
+                if (retryTimeoutMillis != PARAMETER_NOT_SET_EXPLICITLY) {
                     throw new LineSenderException("retrying is not supported for TCP protocol");
                 }
-                if (httpTimeout != HTTP_TIMEOUT_NOT_SET) {
+                if (httpTimeout != PARAMETER_NOT_SET_EXPLICITLY) {
                     throw new LineSenderException("HTTP timeout is not supported for TCP protocol");
                 }
                 if (maximumBufferCapacity != bufferCapacity) {
