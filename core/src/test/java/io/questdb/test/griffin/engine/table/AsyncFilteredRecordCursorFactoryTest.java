@@ -76,6 +76,14 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         AbstractCairoTest.setUpStatic();
     }
 
+    public void setUp() {
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED, "true");
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUP_BY_ENABLED, "true");
+        node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE,
+                JitUtil.isJitSupported() ? SqlJitMode.toString(SqlJitMode.JIT_MODE_ENABLED) :  SqlJitMode.toString(SqlJitMode.JIT_MODE_FORCE_SCALAR));
+        super.setUp();
+    }
+
     @Test
     public void testDeferredSymbolInFilter() throws Exception {
         withPool((engine, compiler, sqlExecutionContext) -> {
@@ -339,6 +347,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
     @Test
     public void testLimitBinVariable() throws Exception {
         withPool((engine, compiler, sqlExecutionContext) -> {
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
             compiler.compile("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour", sqlExecutionContext);
             final String sql = "x where a > 0.345747032 and a < 0.34575 limit $1";
             try (RecordCursorFactory f = (compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory())) {
@@ -406,6 +415,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
     @Test
     public void testNegativeLimit() throws Exception {
         withPool((engine, compiler, sqlExecutionContext) -> {
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
             compiler.compile("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour", sqlExecutionContext);
             final String sql = "x where a > 0.345747032 and a < 0.34575 limit -5";
             try (RecordCursorFactory f = (compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory())) {
@@ -696,28 +706,32 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
 
     private void testNoLimit(boolean parallelFilterEnabled, int jitMode, Class<?> expectedFactoryClass) throws Exception {
         sqlExecutionContext.setParallelFilterEnabled(parallelFilterEnabled);
-        withPool((engine, compiler, sqlExecutionContext) -> {
-            sqlExecutionContext.setJitMode(jitMode);
-            compiler.compile("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour", sqlExecutionContext);
-            final String sql = "x where a > 0.345747032 and a < 0.34575";
-            try (RecordCursorFactory f = (compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory())) {
-                Assert.assertEquals(expectedFactoryClass, f.getBaseFactory().getClass());
-            }
+        try {
+            withPool((engine, compiler, sqlExecutionContext) -> {
+                sqlExecutionContext.setJitMode(jitMode);
+                compiler.compile("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour", sqlExecutionContext);
+                final String sql = "x where a > 0.345747032 and a < 0.34575";
+                try (RecordCursorFactory f = (compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory())) {
+                    Assert.assertEquals(expectedFactoryClass, f.getBaseFactory().getClass());
+                }
 
-            assertQuery(
-                    compiler,
-                    "a\tt\n" +
-                            "0.34574819315105954\t1970-01-01T15:03:20.500000Z\n" +
-                            "0.34574734261660356\t1970-01-02T02:14:37.600000Z\n" +
-                            "0.34574784156471083\t1970-01-02T08:17:06.600000Z\n" +
-                            "0.34574958643398823\t1970-01-02T20:31:57.900000Z\n",
-                    sql,
-                    "t",
-                    true,
-                    sqlExecutionContext,
-                    false
-            );
-        });
+                assertQuery(
+                        compiler,
+                        "a\tt\n" +
+                                "0.34574819315105954\t1970-01-01T15:03:20.500000Z\n" +
+                                "0.34574734261660356\t1970-01-02T02:14:37.600000Z\n" +
+                                "0.34574784156471083\t1970-01-02T08:17:06.600000Z\n" +
+                                "0.34574958643398823\t1970-01-02T20:31:57.900000Z\n",
+                        sql,
+                        "t",
+                        true,
+                        sqlExecutionContext,
+                        false
+                );
+            });
+        } finally {
+            sqlExecutionContext.setParallelFilterEnabled(true);
+        }
     }
 
     private void testPageFrameSequence(int jitMode, Class<?> expectedFactoryClass) throws Exception {
