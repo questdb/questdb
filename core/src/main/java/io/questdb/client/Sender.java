@@ -456,9 +456,9 @@ public interface Sender extends Closeable {
          * This is only used when communicating over HTTP transport, and it's illegal to call this method when
          * communicating over TCP transport.
          * <br>
-         * The Sender will automatically flush the buffer when it reaches this limit. You must make sure that
-         * the buffer has sufficient capacity to accommodate for all locally buffered data. Otherwise, the Sender
-         * will throw an exception.
+         * The Sender automatically flushes its buffer when the number of accumulated rows reaches the configured value.
+         * You must make sure that the buffer has sufficient capacity to accommodate all locally buffered data.
+         * Otherwise, the Sender will throw an exception.
          * <br>
          * Setting this to 1 means that the Sender will send each row to a server immediately after it is added. This
          * effectively disables batching and may lead to a significant performance degradation.
