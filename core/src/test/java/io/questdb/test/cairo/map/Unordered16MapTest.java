@@ -211,6 +211,38 @@ public class Unordered16MapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCollisionPerformance() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            ArrayColumnTypes keyTypes = new ArrayColumnTypes();
+            ArrayColumnTypes valueTypes = new ArrayColumnTypes();
+
+            keyTypes.add(ColumnType.LONG);
+            keyTypes.add(ColumnType.LONG);
+
+            valueTypes.add(ColumnType.LONG);
+
+            try (Unordered16Map map = new Unordered16Map(keyTypes, valueTypes, 1024, 0.5, Integer.MAX_VALUE)) {
+                for (int i = 0; i < 40_000_000; i++) {
+                    MapKey key = map.withKey();
+                    key.putLong(i / 151);
+                    key.putLong((i + 41) / 171);
+
+                    MapValue value = key.createValue();
+                    value.putLong(0, i);
+                }
+
+                final long keyCapacityBefore = map.getKeyCapacity();
+                final long memUsedBefore = Unsafe.getMemUsed();
+
+                map.restoreInitialCapacity();
+
+                Assert.assertTrue(keyCapacityBefore > map.getKeyCapacity());
+                Assert.assertTrue(memUsedBefore > Unsafe.getMemUsed());
+            }
+        });
+    }
+
+    @Test
     public void testFuzz() throws Exception {
         final Rnd rnd = TestUtils.generateRandom(LOG);
         TestUtils.assertMemoryLeak(() -> {

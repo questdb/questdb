@@ -66,16 +66,16 @@ public final class Hash {
         int i = 0;
         for (; i + 7 < len; i += 8) {
             h = h * M;
-            h ^= us.longAt(i);
+            h += us.longAt(i);
         }
         if (i + 3 < len) {
             h = h * M;
-            h ^= us.intAt(i);
+            h += us.intAt(i);
             i += 4;
         }
         for (; i < len; i++) {
             h = h * M;
-            h ^= us.byteAt(i);
+            h += us.byteAt(i);
         }
         return Numbers.decodeLowInt(Long.rotateLeft(h * M, R_DIST));
     }
@@ -117,16 +117,16 @@ public final class Hash {
         int i = 0;
         for (; i + 7 < len; i += 8) {
             h = h * M;
-            h ^= Unsafe.getUnsafe().getLong(p + i);
+            h += Unsafe.getUnsafe().getLong(p + i);
         }
         if (i + 3 < len) {
             h = h * M;
-            h ^= Unsafe.getUnsafe().getInt(p + i);
+            h += Unsafe.getUnsafe().getInt(p + i);
             i += 4;
         }
         for (; i < len; i++) {
             h = h * M;
-            h ^= Unsafe.getUnsafe().getByte(p + i);
+            h += Unsafe.getUnsafe().getByte(p + i);
         }
         return Long.rotateLeft(h * M, R_DIST);
     }

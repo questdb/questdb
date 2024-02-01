@@ -519,7 +519,7 @@ public class OrderedMapTest extends AbstractCairoTest {
             valueTypes.add(ColumnType.LONG);
 
             // These used to be default FastMap configuration for a join
-            try (OrderedMap map = new OrderedMap(4194304, keyTypes, valueTypes, 2097152 / 4, 0.5, 2147483647)) {
+            try (OrderedMap map = new OrderedMap(4194304, keyTypes, valueTypes, 2097152 / 4, 0.5, Integer.MAX_VALUE)) {
                 for (int i = 0; i < 40_000_000; i++) {
                     MapKey key = map.withKey();
                     key.putStr(Integer.toString(i / 151));
