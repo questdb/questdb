@@ -230,15 +230,17 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
             assertConfStrError(Sender.builder().enableTls(), "tcp::addr=localhost:8080;", "cannot use tcp protocol when TLS is enabled. use tcps instead");
 
             assertConfStrOk(Sender.builder().enableTls(), "https::addr=localhost:8080;");
-            assertConfStrOk("http::addr=localhost:8080;auto_flush=on;auto_flush_rows=100;");
-            assertConfStrOk("http::addr=localhost:8080;auto_flush_rows=100;auto_flush=on;");
-            assertConfStrOk("http::addr=localhost;auto_flush=on;");
+            assertConfStrOk("http", "addr=localhost:8080", "auto_flush_rows=100");
+            assertConfStrOk("http", "addr=localhost:8080", "auto_flush=on", "auto_flush_rows=100");
+            assertConfStrOk("http", "addr=localhost:8080", "auto_flush_rows=100", "auto_flush=on");
+            assertConfStrOk("http", "addr=localhost", "auto_flush=on");
             assertConfStrOk("http::addr=localhost;auto_flush=off;");
             assertConfStrOk("http::addr=localhost;");
             assertConfStrOk("http::addr=localhost:8080;");
             assertConfStrOk("http::addr=localhost:8080;token=foo;");
-            assertConfStrOk("http::addr=token=foo;localhost:8080;");
-            assertConfStrOk("http::addr=localhost:8080;token=foo;retry_timeout=1000;max_buf_size=1000000;");
+            assertConfStrOk("http::addr=localhost:8080;token=foo=bar;");
+            assertConfStrOk("http", "addr=localhost:8080", "token=foo", "retry_timeout=1000", "max_buf_size=1000000");
+            assertConfStrOk("http", "addr=localhost:8080", "token=foo", "retry_timeout=1000", "max_buf_size=1000000");
             assertConfStrOk("http::addr=localhost:8080;token=foo;max_buf_size=1000000;retry_timeout=1000;");
             assertConfStrOk("https::addr=localhost:8080;tls_verify=unsafe_off;auto_flush_rows=100;");
             assertConfStrOk("https::addr=localhost:8080;tls_verify=on;");
@@ -845,6 +847,16 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
         }
     }
 
+    private static void assertConfStrOk(String schema, String... params) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(schema).append("::");
+        shuffle(params);
+        for (int i = 0; i < params.length; i++) {
+            sb.append(params[i]).append(";");
+        }
+        assertConfStrOk(Sender.builder(), sb.toString());
+    }
+
     private static void assertConfStrOk(String conf) {
         assertConfStrOk(Sender.builder(), conf);
     }
@@ -852,6 +864,15 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     private static void assertConfStrOk(Sender.LineSenderBuilder sb, String conf) {
         try (Sender s = sb.fromConfig(conf).build()) {
 
+        }
+    }
+
+    private static void shuffle(String[] input) {
+        for (int i = 0; i < input.length; i++) {
+            int j = (int) (Math.random() * input.length);
+            String tmp = input[i];
+            input[i] = input[j];
+            input[j] = tmp;
         }
     }
 }
