@@ -27,7 +27,7 @@ jobs:
           os: macOS
           jdk: "1.11"
           testset: "all"
-          excludeTests: "**/griffin/**,**/cairo/**,**/compat/**"
+          excludeTests: "**/griffin/**,**/cairo/**,**/compat/**,**/cliutil/**"
           javadoc_step: ""
           javadoc_profile: ""
         windows-griffin-noO3-noFuzz:
@@ -64,7 +64,7 @@ jobs:
           os: Windows
           jdk: "1.11"
           testset: "all"
-          excludeTests: "**/griffin/**,**/cairo/**,**/compat/**"
+          excludeTests: "**/griffin/**,**/cairo/**,**/compat/**,**/cliutil/**"
           javadoc_step: ""
           javadoc_profile: ""
         linux-jdk8:
