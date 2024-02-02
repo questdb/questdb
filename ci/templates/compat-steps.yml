@@ -52,9 +52,8 @@ steps:
       mavenOptions: "$(MAVEN_OPTS)"
       goals: "clean test"
       options:
-        "--batch-mode --quiet -Dtest.include=$(includeTests)
-        -Dtest.exclude=$(excludeTests)
-        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf 
+        "--batch-mode --quiet -Dtest.include=**/compat/**
+        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf
         -DfailIfNoTests=false
         -Dsurefire.failIfNoSpecifiedTests=false
          $(MAVEN_RUN_OPTS)"
