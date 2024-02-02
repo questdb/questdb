@@ -36,7 +36,6 @@
 
 struct file_watcher {
     uintptr_t fd;
-    bool changed;
     uintptr_t wd;
     char *name;
 };
@@ -51,10 +50,17 @@ struct file_watcher {
    the address of the initialized file_watcher struct. If value is 0, then an error has occurred
 
 */
-static uintptr_t filewatcher_setup(char filepath[]) {
+static uintptr_t filewatcher_setup(char *filepath) {
     int fd;
     int *wd;
     struct file_watcher *fw;
+    
+    
+    /* make copy of filepath for dirname/basename usage, otherwise they segfault*/
+    char *filepath_copy[strlen(filepath)];
+    strcpy(filepath_copy, filepath);
+
+
 
     /* Create the file descriptor for accessing the inotify API. */
     fd = inotify_init1(IN_NONBLOCK);
@@ -73,9 +79,10 @@ static uintptr_t filewatcher_setup(char filepath[]) {
     /* Mark file's directory for events. We will filter them down
        to only changes related to the specific file later. Return 0
        if inotify_add_watch fails. */
+    char *d = dirname(filepath_copy);
     wd[0] = inotify_add_watch(
         fd, 
-        dirname(filepath),
+        d,
         IN_ALL_EVENTS
     );
     if (wd[0] == -1) {
@@ -84,13 +91,11 @@ static uintptr_t filewatcher_setup(char filepath[]) {
     
     /* Set up file_watcher struct */
     fw = malloc(sizeof(struct file_watcher));
-    fw->changed = false;
     fw->fd = fd;
     fw->wd = (uintptr_t)wd[0];
-    fw->name = basename(filepath);
+    fw->name = basename(filepath_copy);
     
     return (uintptr_t)fw;
-    
 
 }
 
@@ -104,180 +109,65 @@ static int filewatcher_changed(uintptr_t wp) {
     struct pollfd fds[1];
 
     struct file_watcher *fw = (struct file_watcher *)wp;
+    fds[0].fd = fw->fd;
+    fds[0].events = POLLIN;
 
     poll_num = poll(fds, 1, -1);
     if (poll_num == -1) {
         if (errno == EINTR)
-                return 0;
+                return -1;
         }
 
     if (poll_num > 0) {
         if (fds[0].revents & POLLIN) {
-            handle_events(wp->fd, wp->wd);
-        }
-    }
-}
+            /* From inotify man page: align the buffer used for reading from the
+            inotify file descriptor to the inotify_event struct*/
+            char buf[4096]   
+                __attribute__ ((aligned(__alignof__(struct inotify_event))));
+            const struct inotify_event *event;
+            ssize_t len;
 
-/* Read all available inotify events from the file descriptor 'fd'.
-    wd is the table of watch descriptors for the directories in argv.
-    Entry 0 of wd and argv is unused. */
-static void
-handle_events(int fd, int *wd) {
-    /* From inotify man page: align the buffer used for reading from the
-    inotify file descriptor to the inotify_event struct*/
-    char buf[4096]   
-        __attribute__ ((aligned(__alignof__(struct inotify_event))));
-    const struct inotify_event *event;
-    ssize_t len;
 
-    /* Loop while events can be read from inotify file descriptor. */
-    for (;;) {
-        /* Read some events. */
+            /* Loop while events can be read from inotify file descriptor. */
+            for (;;) {
+                /* Read some events. */
 
-        len = read(fd, buf, sizeof(buf));
-        if (len == -1 && errno != EAGAIN) {
-            perror("read");
-            exit(EXIT_FAILURE);
-        }
-
-        /* If the nonblocking read() found no events to read, then
-        it returns -1 with errno set to EAGAIN. In that case, we exit loop */
-
-        if (len <= 0)
-            break;
-
-        /* Loop over all events in the buffer */
-        for (char *ptr = buf; ptr < buf + len;
-                ptr += sizeof(struct inotify_event) + event->len) {
-                    event = (const struct inotify_event *) ptr; 
-
-                    /* Print event type. */
-                    if (event->mask & IN_ACCESS) {
-                        printf("IN_ACCESS: ");
-                    }
-                    if (event->mask & IN_MODIFY) {
-                        printf("IN_MODIFY: ");
-                    }
-                    if (event->mask & IN_ATTRIB) {
-                        printf("IN_ATTRIB: ");
-                    }
-                    if (event->mask & IN_CLOSE_WRITE) {
-                        printf("IN_CLOSE_WRITE: ");
-                    }
-                    if (event->mask & IN_CLOSE_NOWRITE) {
-                        printf("IN_CLOSE_NOWRITE: ");
-                    }
-                    if (event->mask & IN_OPEN) {
-                        printf("IN_OPEN: ");
-                    }
-                    if (event->mask & IN_MOVED_FROM) {
-                        printf("IN_MOVED_FROM: ");
-                    }
-                    if (event->mask & IN_MOVED_TO) {
-                        printf("IN_MOVED_TO: ");
-                    }
-                    if (event->mask & IN_CREATE) {
-                        printf("IN_CREATE: ");
-                    }
-                    if (event->mask & IN_DELETE) {
-                        printf("IN_DELETE: ");
-                    }
-                    if (event->mask & IN_DELETE_SELF) {
-                        printf("IN_DELETE_SELF: ");
-                    }
-                    if (event->mask & IN_MOVE_SELF) {
-                        printf("IN_MOVE_SELF: ");
-                    }
-
-                    if (event->len) {
-                        printf("%s", event->name);
-                    }
-
-                    printf("\n");
-
+                len = read(fw->fd, buf, sizeof(buf));
+                if (len == -1 && errno != EAGAIN) {
+                    return -1;
                 }
-    
+
+                /* If the nonblocking read() found no events to read, then
+                it returns -1 with errno set to EAGAIN. In that case, we exit loop */
+                if (len <= 0)
+                    return 0;
+
+                /* Loop over all events in the buffer */
+                for (char *ptr = buf; ptr < buf + len;
+                        ptr += sizeof(struct inotify_event) + event->len) {
+                            event = (const struct inotify_event *) ptr; 
+
+                            if (event->len && strcmp(event->name, fw->name)) {
+                                return 1;
+                            }
+                        }
+            }
+        }
     }
+
+    return 0;
 }
+
 
 int
 main(int argc, char* argv[]) {
-
-    char buf;
-    int fd, i, poll_num;
-    int *wd;
-    nfds_t nfds;
-    struct pollfd fds[2];
-
-    const char dirPath[] = "/home/steven/tmp/qdbdev/conf";
-
-
-    /* Create the file descriptor for accessing the inotify API. */
-    fd = inotify_init1(IN_NONBLOCK);
-    if (fd == -1) {
-        perror("inotify_init1");
-        exit(EXIT_FAILURE);
+    intptr_t fw_ptr = filewatcher_setup("/home/steven/tmp/qdbdev/conf/server.conf");
+    int a; 
+    for(;;) {
+        a = filewatcher_changed(fw_ptr);
+        printf("%d\n", a);
+        sleep(4);
     }
-
-    /* Allocate memory for watch descriptors. */
-    wd = calloc(1, sizeof(int));
-    if (wd == NULL) {
-        perror("calloc");
-        exit(EXIT_FAILURE);
-    }
-
-    /* Mark file for events */
-    wd[0] = inotify_add_watch(
-        fd, 
-        dirPath, 
-        IN_ALL_EVENTS
-    );
-
-    if (wd[0] == -1) {
-        fprintf(stderr, "Cannot watch %s: %s\n",
-        dirPath, strerror(errno));
-    }
-
-    /* Prepare for polling */
-    
-    nfds = 2;
-
-    fds[0].fd = STDIN_FILENO; /* Console input */
-    fds[0].events = POLLIN;
-
-    fds[1].fd = fd; /* Inotify input */
-    fds[1].events = POLLIN;
-
-    /* Wait for events and/or terminal input */
-
-    printf("Listening for events in %s\n", dirPath);
-
-    while(1) {
-        poll_num = poll(fds, nfds, -1);
-        if (poll_num == -1) {
-            if (errno == EINTR)
-                continue;
-            perror("poll");
-            exit(EXIT_FAILURE);
-        }
-
-        if (poll_num > 0) {
-            if (fds[0].revents & POLLIN) {
-                /* Console input is available. Empty stdin and quit.*/
-                while (read(STDIN_FILENO, &buf, 1) > 0 && buf != '\n')
-                    continue;
-                break;
-            }
-
-            if (fds[1].revents & POLLIN) {
-                /* Inotify events are available */
-                handle_events(fd, wd);
-            }
-        }
-
-    }
-
-
-    free(wd);
-    exit(EXIT_SUCCESS);
+   
+    filewatcher_teardown(fw_ptr);
 }
