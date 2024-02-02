@@ -19,19 +19,24 @@ English | [简体中文](./i18n/README.zh-cn.md) | [繁體中文](./i18n/README.
 
 # QuestDB
 
-QuestDB is an open-source [time-series database](https://questdb.io/glossary/time-series-database/) for high throughput
+QuestDB is an open-source time-series database for high throughput
 ingestion and fast SQL queries with operational simplicity.
 
-QuestDB is well-suited for financial market data, IoT sensor data, application metrics, ad-tech, real-time dashboards, and fast analytics.
+QuestDB is well-suited for financial market data, IoT sensor data, ad-tech and real-time dashboards. It shines for datasets with [high cardinality](https://questdb.io/glossary/high-cardinality/)
+and is a drop in replacement of InfluxDB Line Protocol.
 
 QuestDB implements ANSI SQL with native time-series SQL extensions. These SQL extensions make it simple to filter and downsample data, 
-or correlate data from multiple sources using relational and time-series joins. We achieve high performance by adopting a
-column-oriented storage model, parallelized vector execution, SIMD instructions, and low-latency techniques. The entire
-codebase is built from the ground up in Java and C++, with no dependencies and zero garbage collection.
+or correlate data from multiple sources using relational and time-series joins. 
+
+We achieve high performance by adopting a column-oriented storage model, parallelized vector execution, SIMD instructions, and low-latency techniques. 
+The entire codebase is built from the ground up in Java, C++ and Rust (Enterprise) with no dependencies and zero garbage collection.
 
 QuestDB supports schema-agnostic streaming ingestion using the InfluxDB line protocol and a REST API for bulk imports and exports. 
 The QuestDB SQL Web Console is an interactive SQL editor facilitating CSV import. Finally, QuestDB also includes the Postgres Wire Protocol
-for programmatic queries and interoperability with various tools such as Grafana.
+for programmatic queries. 
+
+Popular tools that integrate with QuestDB include [Apache Kafka](https://questdb.io/docs/third-party-tools/kafka/questdb-kafka/), [Grafana](https://questdb.io/docs/third-party-tools/grafana/),
+[Superset](https://questdb.io/docs/third-party-tools/superset/), [Telegraf](https://questdb.io/docs/third-party-tools/telegraf/) and [Apache Flink](https://questdb.io/docs/third-party-tools/flink/).
 
 <div align="center">
   <a href="https://demo.questdb.io">
