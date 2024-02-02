@@ -62,7 +62,7 @@
         <dependency>
             <groupId>org.eclipse.jetty</groupId>
             <artifactId>jetty-server</artifactId>
-            <version>11.0.15</version>
+            <version>9.4.51.v20230217</version>
             <scope>test</scope>
         </dependency>
         <dependency>
@@ -127,4 +127,38 @@
             </plugins>
         </pluginManagement>
     </build>
+
+    <profiles>
+        <profile>
+            <id>java8</id>
+            <properties>
+                <jdk.version>8</jdk.version>
+                <java.enforce.version>1.8.0_242</java.enforce.version>
+                <questdb.artifactid>questdb-jdk8</questdb.artifactid>
+                <javac.compile.source>1.8</javac.compile.source>
+                <javac.compile.target>1.8</javac.compile.target>
+            </properties>
+            <activation>
+                <jdk>(,1.8]</jdk>
+            </activation>
+
+            <dependencies>
+                <dependency>
+                    <groupId>org.jetbrains</groupId>
+                    <artifactId>annotations</artifactId>
+                    <version>16.0.2</version>
+                    <scope>provided</scope>
+                </dependency>
+            </dependencies>
+        </profile>
+        <profile>
+            <id>java11+</id>
+            <properties>
+                <questdb.artifactid>questdb</questdb.artifactid>
+            </properties>
+            <activation>
+                <jdk>(1.8,)</jdk>
+            </activation>
+        </profile>
+    </profiles>
 </project>

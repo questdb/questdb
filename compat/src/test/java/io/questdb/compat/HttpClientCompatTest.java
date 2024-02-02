@@ -29,8 +29,6 @@ import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.cutlass.http.client.Response;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletResponse;
 import org.eclipse.jetty.http.HttpMethod;
 import org.eclipse.jetty.http.HttpStatus;
 import org.eclipse.jetty.http.MimeTypes;
@@ -40,6 +38,8 @@ import org.eclipse.jetty.server.handler.AbstractHandler;
 import org.junit.Assert;
 import org.junit.Test;
 
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
