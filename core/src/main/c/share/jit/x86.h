@@ -59,7 +59,7 @@ namespace questdb::x86 {
             // This includes a NULL check because it's encoded as length -1 in the value
             // header. We reach the header by looking up its offset in the varlen index.
             Gp offset = c.newInt64("offset");
-            Gp length = c.newInt64("next_offset");
+            Gp length = c.newInt64("length");
             Gp varlen_index_ptr = c.newInt64("varlen_index_ptr");
             Gp next_input_index = c.newInt64("next_input_index");
             auto offset_shift = type_shift(data_type_t::i64);
