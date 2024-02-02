@@ -23,7 +23,7 @@ QuestDB is an open-source time-series database for high throughput
 ingestion and fast SQL queries with operational simplicity.
 
 QuestDB is well-suited for financial market data, IoT sensor data, ad-tech and real-time dashboards. It shines for datasets with [high cardinality](https://questdb.io/glossary/high-cardinality/)
-and is a drop in replacement of InfluxDB Line Protocol.
+and is a drop in replacement for InfluxDB via support for the InfluxDB Line Protocol.
 
 QuestDB implements ANSI SQL with native time-series SQL extensions. These SQL extensions make it simple to filter and downsample data, 
 or correlate data from multiple sources using relational and time-series joins. 
