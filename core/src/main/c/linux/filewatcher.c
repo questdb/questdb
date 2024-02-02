@@ -112,7 +112,7 @@ static int filewatcher_changed(uintptr_t wp) {
     fds[0].fd = fw->fd;
     fds[0].events = POLLIN;
 
-    poll_num = poll(fds, 1, -1);
+    poll_num = poll(fds, 1, 1);
     if (poll_num == -1) {
         if (errno == EINTR)
                 return -1;
