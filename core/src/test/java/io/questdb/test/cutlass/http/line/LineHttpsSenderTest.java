@@ -124,6 +124,36 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testConfigString() throws Exception {
+        String tableName = "testConfigString";
+
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
+            )) {
+                serverMain.start();
+                int port = tlsProxy.getListeningPort();
+                String address = "localhost:" + port;
+                long count = 10_000;
+                try (Sender sender = Sender.fromConfig("https::addr=" + address + ";tls_verify=unsafe_off;")) {
+                    for (long i = 1; i <= count; i++) {
+                        sender.table(tableName).longColumn("value", i).atNow();
+                    }
+                }
+                long expectedSum = (count / 2) * (count + 1);
+                double expectedAvg = expectedSum / (double) count;
+                TestUtils.assertEventually(() -> {
+                    serverMain.assertSql(
+                            "select sum(value), max(value), min(value), avg(value) from " + tableName,
+                            "sum\tmax\tmin\tavg\n"
+                                    + expectedSum + "\t" + count + "\t1\t" + expectedAvg + "\n"
+                    );
+                });
+            }
+        });
+    }
+
+    @Test
     public void testCustomTrustStore() throws Exception {
         String tableName = UUID.randomUUID().toString();
         String truststore = TestUtils.getTestResourcePath(TRUSTSTORE_PATH);

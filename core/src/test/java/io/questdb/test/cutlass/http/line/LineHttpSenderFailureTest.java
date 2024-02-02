@@ -118,7 +118,7 @@ public class LineHttpSenderFailureTest extends AbstractBootstrapTest {
             return Sender.builder()
                     .address(address)
                     .http()
-                    .maxPendingRows(5000)
+                    .autoFlushRows(5000)
                     .retryTimeoutMillis(15_000)
                     .build();
         }

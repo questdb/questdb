@@ -128,10 +128,10 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 int httpPort = getHttpPort(serverMain);
 
                 int totalCount = 100_000;
-                int maxPendingRows = 1000;
-                try (LineHttpSender sender = new LineHttpSender("localhost", httpPort, DefaultHttpClientConfiguration.INSTANCE, null, maxPendingRows, null, null, null, 0)) {
+                int autoFlushRows = 1000;
+                try (LineHttpSender sender = new LineHttpSender("localhost", httpPort, DefaultHttpClientConfiguration.INSTANCE, null, autoFlushRows, null, null, null, 0)) {
                     for (int i = 0; i < totalCount; i++) {
-                        if (i != 0 && i % maxPendingRows == 0) {
+                        if (i != 0 && i % autoFlushRows == 0) {
                             serverMain.waitWalTxnApplied("table with space");
                             serverMain.assertSql("select count() from 'table with space'", "count\n" +
                                     i + "\n");
@@ -359,6 +359,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
         try (Sender sender = Sender.builder()
                 .address("localhost:" + port)
                 .http()
+                .autoFlushRows(Integer.MAX_VALUE) // we want to flush manually
                 .build()
         ) {
             if (count / 2 > 0) {
