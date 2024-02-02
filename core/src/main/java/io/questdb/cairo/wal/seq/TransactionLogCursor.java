@@ -51,4 +51,6 @@ public interface TransactionLogCursor extends Closeable {
     void setPosition(long txn);
 
     void toTop();
+
+    long getPartNo();
 }

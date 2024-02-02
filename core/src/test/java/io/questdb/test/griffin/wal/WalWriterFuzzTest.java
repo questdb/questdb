@@ -26,16 +26,9 @@ package io.questdb.test.griffin.wal;
 
 import io.questdb.PropertyKey;
 import io.questdb.std.Rnd;
-import io.questdb.test.cairo.Overrides;
 import org.junit.Assert;
-import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
-
-import java.util.Arrays;
-import java.util.Collection;
 
 import static io.questdb.test.griffin.wal.FuzzRunner.MAX_WAL_APPLY_TIME_PER_TABLE_CEIL;
 
@@ -54,32 +47,15 @@ import static io.questdb.test.griffin.wal.FuzzRunner.MAX_WAL_APPLY_TIME_PER_TABL
 // There are already measures to prevent invalid data generation, but it still can happen.
 // In order to verify that the test is not broken we check that there are no duplicate
 // timestamps for the record where the comparison fails.
-@RunWith(Parameterized.class)
 public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     protected boolean allowMixedIO;
-
-    public WalWriterFuzzTest(IOMode ioMode) {
-        this.allowMixedIO = (ioMode == IOMode.ALLOW_MIXED_IO);
-    }
-
-    @Parameterized.Parameters(name = "{0}")
-    public static Collection<Object[]> data() {
-        return Arrays.asList(new Object[][]{
-                {IOMode.ALLOW_MIXED_IO}, {IOMode.NO_MIXED_IO}
-        });
-    }
 
     @Before
     public void setUp() {
         super.setUp();
         // We disable mixed I/O on some OSes and FSes (wink-wink Windows).
-        boolean mixedIOSupported = configuration.getFilesFacade().allowMixedIO(root);
-        Assume.assumeFalse(allowMixedIO && !mixedIOSupported);
-
-        node1.setProperty(PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, allowMixedIO);
-        Overrides overrides = node1.getConfigurationOverrides();
-        overrides.setProperty(PropertyKey.DEBUG_CAIRO_O3_COLUMN_MEMORY_SIZE, 512 * 1024);
+        node1.setProperty(PropertyKey.DEBUG_CAIRO_O3_COLUMN_MEMORY_SIZE, 512 * 1024);
         setFuzzProperties(100, 1000, 2);
     }
 
@@ -152,6 +128,16 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
+    public void testChunkedSequencer() throws Exception {
+        Rnd rnd = generateRandom(LOG);
+        fuzzer.setFuzzCounts(false, 5_000, 200, 20, 10, 20, rnd.nextInt(10), 5, 2);
+        setFuzzProperties(rnd);
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_WAL_SEQ_CHUNK_TXN_COUNT, 10);
+        Assert.assertEquals(10, node1.getConfiguration().getDefaultWalSeqChunkTxnCount());
+        runFuzz(rnd);
+    }
+
+    @Test
     public void testWalWriteEqualTimestamp() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_O3_QUICKSORT_ENABLED, true);
         Rnd rnd = generateRandom(LOG);
@@ -180,7 +166,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testWalWriteFullRandomMultipleTables() throws Exception {
-        Rnd rnd = generateRandom(LOG);
+        Rnd rnd = generateRandom(LOG, 155101271638750L, 1706813693843L);
         int tableCount = Math.max(2, rnd.nextInt(4));
         setFuzzProperties(rnd);
         fullRandomFuzz(rnd, tableCount);

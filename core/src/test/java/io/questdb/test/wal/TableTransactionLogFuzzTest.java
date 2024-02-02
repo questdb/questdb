@@ -60,7 +60,7 @@ public class TableTransactionLogFuzzTest extends AbstractCairoTest {
         Rnd rnd = TestUtils.generateRandom(LOG);
 
         assertMemoryLeak(() -> {
-            int chunkTransactionCount = 1 + rnd.nextInt(50000);
+            int chunkTransactionCount = 1 + (1 << rnd.nextInt(12)) + rnd.nextInt(10);
 
             try (Path path = new Path()) {
                 path.of(root);
@@ -77,7 +77,7 @@ public class TableTransactionLogFuzzTest extends AbstractCairoTest {
                 v2.create(path, 65897);
                 v2.open(path);
 
-                int txnCount = 1 + (int) (rnd.nextDouble() * 3.0 * chunkTransactionCount);
+                int txnCount = 2 + (int) (rnd.nextDouble() * 3.0 * chunkTransactionCount);
 
                 int lastStrVersion = 0;
                 IntList transactionIds = new IntList();
@@ -123,9 +123,32 @@ public class TableTransactionLogFuzzTest extends AbstractCairoTest {
         });
     }
 
+    private static void compareCursor(IntList transactionIds, int txnLo, TransactionLogCursor cursor) {
+        int size = transactionIds.size() / 2;
+        for (int i = txnLo - 1; i < size; i++) {
+            int txnId = transactionIds.getQuick(2 * i);
+            int sv = transactionIds.getQuick(2 * i + 1);
+            if (txnId == 0) {
+                assertEquals(sv, cursor.getStructureVersion());
+                assertEquals(i, cursor.getWalId());
+                assertEquals(i + 1, cursor.getSegmentId());
+                assertEquals(i + 2, cursor.getSegmentTxn());
+                assertEquals(i + 123, cursor.getCommitTimestamp());
+            } else {
+                assertEquals(sv, cursor.getStructureVersion());
+                assertEquals(STRUCTURAL_CHANGE_WAL_ID, cursor.getWalId());
+                assertEquals(-1, cursor.getSegmentId());
+                assertEquals(-1, cursor.getSegmentTxn());
+                assertEquals(i + 125, cursor.getCommitTimestamp());
+            }
+            assertEquals(i < size - 1, cursor.hasNext());
+        }
+    }
+
     private void assertTxns(
             IntList transactionIds,
-            int txnLo, Path path,
+            int txnLo,
+            Path path,
             TableTransactionLogFile logFile
     ) {
 
@@ -133,25 +156,13 @@ public class TableTransactionLogFuzzTest extends AbstractCairoTest {
                 .$(" with in ").$(path).$();
 
         try (TransactionLogCursor cursor = logFile.getCursor(txnLo, path)) {
+            compareCursor(transactionIds, txnLo, cursor);
+            cursor.toTop();
+            compareCursor(transactionIds, txnLo, cursor);
             int size = transactionIds.size() / 2;
-            for (int i = txnLo - 1; i < size; i++) {
-                int txnId = transactionIds.getQuick(2 * i);
-                int sv = transactionIds.getQuick(2 * i + 1);
-                if (txnId == 0) {
-                    assertEquals(sv, cursor.getStructureVersion());
-                    assertEquals(i, cursor.getWalId());
-                    assertEquals(i + 1, cursor.getSegmentId());
-                    assertEquals(i + 2, cursor.getSegmentTxn());
-                    assertEquals(i + 123, cursor.getCommitTimestamp());
-                } else {
-                    assertEquals(sv, cursor.getStructureVersion());
-                    assertEquals(STRUCTURAL_CHANGE_WAL_ID, cursor.getWalId());
-                    assertEquals(-1, cursor.getSegmentId());
-                    assertEquals(-1, cursor.getSegmentTxn());
-                    assertEquals(i + 125, cursor.getCommitTimestamp());
-                }
-                assertEquals(i < size - 1, cursor.hasNext());
-            }
+            int mid = (size + txnLo) / 2;
+            cursor.setPosition(mid);
+            compareCursor(transactionIds, mid, cursor);
         }
     }
 

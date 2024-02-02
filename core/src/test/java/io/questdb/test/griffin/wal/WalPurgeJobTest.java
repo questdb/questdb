@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.wal;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
@@ -73,6 +74,57 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                     }
                 }
         );
+    }
+
+    @Test
+    public void testChunkedSequencerPartsRemoved() throws Exception {
+        assertMemoryLeak(() -> {
+            int txnChunkSize = 10;
+            node1.setProperty(PropertyKey.CAIRO_DEFAULT_WAL_SEQ_CHUNK_TXN_COUNT, 10);
+
+            String tableName = testName.getMethodName();
+            compile("create table " + tableName + " as (" +
+                    "select x, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(5)" +
+                    ") timestamp(ts) partition by DAY WAL");
+
+            TableToken tableToken = engine.verifyTableName(tableName);
+
+            assertWalExistence(true, tableName, 1);
+            assertSegmentExistence(true, tableName, 1, 0);
+
+            int txns = (int) (2.5 * txnChunkSize);
+            for (int i = 0; i < txns; i++) {
+                insert("insert into " + tableName + " values (" + i + ", '2022-02-24')");
+            }
+
+            assertSeqPartExistence(true, tableToken, 0);
+            assertSeqPartExistence(true, tableToken, 1);
+            assertSeqPartExistence(true, tableToken, 2);
+            assertWalExistence(true, tableToken, 1);
+
+            runWalPurgeJob();
+
+            assertSeqPartExistence(true, tableToken, 0);
+            assertSeqPartExistence(true, tableToken, 1);
+            assertSeqPartExistence(true, tableToken, 2);
+            assertWalExistence(true, tableToken, 1);
+
+            drainWalQueue();
+            runWalPurgeJob();
+
+            assertExistence(true, tableToken, SEQ_DIR);
+            assertSeqPartExistence(false, tableToken, 0);
+            assertSeqPartExistence(false, tableToken, 1);
+            assertSeqPartExistence(true, tableToken, 2);
+            assertWalExistence(true, tableToken, 1);
+
+            engine.releaseAllWalWriters();
+            runWalPurgeJob();
+
+            assertWalExistence(false, tableToken, 1);
+        });
     }
 
     @Test
@@ -278,7 +330,6 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             assertExistence(true, tableToken, SEQ_DIR);
 
             engine.releaseAllWalWriters();
-
 
             runWalPurgeJob();
             assertExistence(true, tableToken, SEQ_DIR);
@@ -1119,6 +1170,12 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         }
     }
 
+    private void assertSeqPartExistence(boolean exists, TableToken tableToken, int partNo) {
+        Path path = Path.getThreadLocal(engine.getConfiguration().getRoot());
+        path.of(root).concat(tableToken).concat(SEQ_DIR).concat(WalUtils.TXNLOG_CHUNK_DIR).concat(String.valueOf(partNo)).$();
+        Assert.assertEquals(Utf8s.toString(path), exists, TestFilesFacadeImpl.INSTANCE.exists(path));
+    }
+
     private void createPendingFile(TableToken tableToken, String dir) {
         final CharSequence root = engine.getConfiguration().getRoot();
         try (Path path = new Path()) {
@@ -1194,6 +1251,11 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             if (lockFd > -1) {
                 closedFds.add(lockFd);
             }
+        }
+
+        @Override
+        public void deleteSequencerPart(int seqPart) {
+            assert false;
         }
     }
 }

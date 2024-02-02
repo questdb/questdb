@@ -389,6 +389,10 @@ public class FuzzRunner {
         }
     }
 
+    public int getTransactionCount() {
+        return transactionCount;
+    }
+
     public void setFuzzCounts(boolean isO3, int fuzzRowCount, int transactionCount, int strLen, int symbolStrLenMax, int symbolCountMax, int initialRowCount, int partitionCount) {
         setFuzzCounts(isO3, fuzzRowCount, transactionCount, strLen, symbolStrLenMax, symbolCountMax, initialRowCount, partitionCount, -1);
     }

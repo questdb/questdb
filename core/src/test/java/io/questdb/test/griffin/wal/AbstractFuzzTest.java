@@ -227,10 +227,16 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, getRndO3PartitionSplitMaxCount(rnd));
         node1.setProperty(PropertyKey.CAIRO_WAL_MAX_LAG_SIZE, getMaxWalSize(rnd));
         node1.setProperty(PropertyKey.CAIRO_WAL_MAX_SEGMENT_FILE_DESCRIPTORS_CACHE, getMaxWalFdCache(rnd));
-        long walChunk = Math.max(0, (1L << (rnd.nextInt(18))) - 1024);
-        node1.setProperty(PropertyKey.CAIRO_DEFAULT_WAL_SEQ_CHUNK_TXN_COUNT, walChunk);
-    }
 
+        int txnCount = Math.max(10, fuzzer.getTransactionCount());
+        long walChunk = Math.max(0, rnd.nextInt((int) (3.5 * txnCount)) - txnCount);
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_WAL_SEQ_CHUNK_TXN_COUNT, walChunk);
+
+        boolean mixedIOSupported = configuration.getFilesFacade().allowMixedIO(root);
+        if (mixedIOSupported) {
+            node1.setProperty(PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, rnd.nextBoolean());
+        }
+    }
 
     protected void setRandomAppendPageSize(Rnd rnd) {
         int minPage = 18;

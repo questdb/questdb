@@ -172,6 +172,8 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             maxStructureVersion = txnChunkMem.getLong(lastChunkTxn * RECORD_SIZE + TX_LOG_STRUCTURE_VERSION_OFFSET);
         }
         openTxnChunk();
+        // Open chunk can leave prev txn append position when chunk is the same
+        setAppendPosition();
         return maxStructureVersion;
     }
 
@@ -203,8 +205,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     }
 
     private void openTxnChunk() {
-        long txn = this.maxTxn.get();
-        openTxnChunk(txn);
+        openTxnChunk(this.maxTxn.get());
     }
 
     private void openTxnChunk(long txn) {
@@ -214,6 +215,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             try {
                 rootPath.concat(TXNLOG_CHUNK_DIR).slash().put(chunk).$();
                 long chunkSize = chunkTransactionCount * RECORD_SIZE;
+                txnChunkMem.close(false);
                 txnChunkMem.of(ff, rootPath, chunkSize, chunkSize, MemoryTag.MMAP_TX_LOG);
                 txnChunkMem.jumpTo((txn % chunkTransactionCount) * RECORD_SIZE);
                 chunkId = chunk;
@@ -221,7 +223,10 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
                 rootPath.trimTo(size);
             }
         }
-        txnChunkMem.jumpTo((txn % chunkTransactionCount) * RECORD_SIZE);
+    }
+
+    private void setAppendPosition() {
+        txnChunkMem.jumpTo((this.maxTxn.get() % chunkTransactionCount) * RECORD_SIZE);
     }
 
     private void openTxnMem(Path path) {
@@ -350,6 +355,11 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             if (txnCount > -1L) {
                 setPosition(txnLo);
             }
+        }
+
+        @Override
+        public long getPartNo() {
+            return chunkId;
         }
 
         private static int openFileRO(final FilesFacade ff, final Path path, final String fileName) {
