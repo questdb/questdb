@@ -170,7 +170,7 @@ public final class LineHttpSender implements Sender {
     public Sender putRawMessage(CharSequence msg) {
         request.put(msg); // message must include trailing \n
         state = RequestState.EMPTY;
-        if (++pendingRows == maxPendingRows) {
+        if (++pendingRows == autoFlushRows) {
             flush();
         }
         return this;
