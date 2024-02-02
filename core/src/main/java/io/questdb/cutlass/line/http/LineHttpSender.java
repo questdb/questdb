@@ -41,6 +41,7 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.time.Instant;
@@ -159,6 +160,16 @@ public final class LineHttpSender implements Sender {
         writeFieldName(name);
         request.put(value);
         request.put('i');
+        return this;
+    }
+
+    @TestOnly
+    public Sender putRawMessage(CharSequence msg) {
+        request.put(msg); // message must include trailing \n
+        state = RequestState.EMPTY;
+        if (++pendingRows == maxPendingRows) {
+            flush();
+        }
         return this;
     }
 
