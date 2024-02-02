@@ -28,15 +28,13 @@ import io.questdb.cairo.Reopenable;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.*;
+import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
 import io.questdb.std.bytes.Bytes;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.ex.ZLibException;
-import io.questdb.std.str.StdoutSink;
-import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8Sink;
-import io.questdb.std.str.Utf8s;
+import io.questdb.std.str.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -48,6 +46,7 @@ import static io.questdb.std.Chars.isBlank;
 public class HttpResponseSink implements Closeable, Mutable {
     private final static Log LOG = LogFactory.getLog(HttpResponseSink.class);
     private static final IntObjHashMap<String> httpStatusMap = new IntObjHashMap<>();
+    private static final ThreadLocal<Utf8StringSink> tlSink = new ThreadLocal<>(Utf8StringSink::new);
     private final ChunkUtf8Sink buffer;
     private final ChunkedResponseImpl chunkedResponse = new ChunkedResponseImpl();
     private final ChunkUtf8Sink compressOutBuffer;
@@ -339,21 +338,21 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
 
         @Override
-        public Utf8Sink putUtf8(long lo, long hi) {
-            final int size = Bytes.checkedLoHiSize(lo, hi, 0);
-            final long dest = getWriteAddress(size);
-            Vect.memcpy(dest, lo, size);
-            onWrite(size);
-            return this;
-        }
-
-        @Override
         public Utf8Sink put(@Nullable Utf8Sequence us) {
             if (us != null) {
                 int size = us.size();
                 Utf8s.strCpy(us, size, getWriteAddress(size));
                 onWrite(size);
             }
+            return this;
+        }
+
+        @Override
+        public Utf8Sink putUtf8(long lo, long hi) {
+            final int size = Bytes.checkedLoHiSize(lo, hi, 0);
+            final long dest = getWriteAddress(size);
+            Vect.memcpy(dest, lo, size);
+            onWrite(size);
             return this;
         }
 
@@ -539,9 +538,14 @@ public class HttpResponseSink implements Closeable, Mutable {
             return code;
         }
 
+        public boolean isChunky() {
+            return chunky;
+        }
+
         @Override
-        public Utf8Sink putUtf8(long lo, long hi) {
-            buffer.putUtf8(lo, hi);
+        public Utf8Sink put(byte b) {
+            Unsafe.getUnsafe().putByte(buffer.getWriteAddress(1), b);
+            buffer.onWrite(1);
             return this;
         }
 
@@ -556,9 +560,8 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
 
         @Override
-        public Utf8Sink put(byte b) {
-            Unsafe.getUnsafe().putByte(buffer.getWriteAddress(1), b);
-            buffer.onWrite(1);
+        public Utf8Sink putUtf8(long lo, long hi) {
+            buffer.putUtf8(lo, hi);
             return this;
         }
 
@@ -669,12 +672,6 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
 
         @Override
-        public Utf8Sink putUtf8(long lo, long hi) {
-            buffer.putUtf8(lo, hi);
-            return this;
-        }
-
-        @Override
         public Utf8Sink put(@Nullable CharSequence cs) {
             if (cs != null) {
                 put(cs, 0, cs.length());
@@ -697,6 +694,12 @@ public class HttpResponseSink implements Closeable, Mutable {
                         break;
                 }
             }
+            return this;
+        }
+
+        @Override
+        public Utf8Sink putUtf8(long lo, long hi) {
+            buffer.putUtf8(lo, hi);
             return this;
         }
 
@@ -745,8 +748,27 @@ public class HttpResponseSink implements Closeable, Mutable {
     }
 
     public class SimpleResponseImpl {
-        public void sendStatusNoContent(int code) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            sendStatusNoContent(code, null);
+        public void sendStatusJsonContent(
+                int code
+        ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            sendStatusJsonContent(code, null, null, null, null);
+        }
+
+        public void sendStatusJsonContent(
+                int code,
+                @Nullable CharSequence message
+        ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            sendStatusJsonContent(code, message, null, null, null);
+        }
+
+        public void sendStatusJsonContent(
+                int code,
+                @Nullable CharSequence message,
+                @Nullable CharSequence header,
+                @Nullable CharSequence cookieName,
+                @Nullable CharSequence cookieValue
+        ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            sendStatusWithContent(CONTENT_TYPE_JSON, code, message, header, cookieName, cookieValue, message != null ? message.length() : -1);
         }
 
         public void sendStatusNoContent(int code, @Nullable CharSequence header) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -757,6 +779,10 @@ public class HttpResponseSink implements Closeable, Mutable {
             }
             prepareHeaderSink();
             flushSingle();
+        }
+
+        public void sendStatusNoContent(int code) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            sendStatusNoContent(code, null);
         }
 
         /**
@@ -778,20 +804,7 @@ public class HttpResponseSink implements Closeable, Mutable {
                 @Nullable CharSequence cookieName,
                 @Nullable CharSequence cookieValue
         ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            buffer.clearAndPrepareToWriteToBuffer();
-            final String std = headerImpl.status(httpVersion, code, CONTENT_TYPE_TEXT, -1L);
-            if (header != null) {
-                headerImpl.put(header).put(Misc.EOL);
-            }
-            if (cookieName != null) {
-                setCookie(cookieName, cookieValue);
-            }
-            prepareHeaderSink();
-            flushSingle();
-            buffer.clearAndPrepareToWriteToBuffer();
-            sink.put(message == null ? std : message).putEOL();
-            buffer.prepareToReadFromBuffer(true, true);
-            resumeSend();
+            sendStatusWithContent(CONTENT_TYPE_TEXT, code, message, header, cookieName, cookieValue, -1);
         }
 
         public void sendStatusTextContent(
@@ -802,16 +815,50 @@ public class HttpResponseSink implements Closeable, Mutable {
             sendStatusTextContent(code, message, header, null, null);
         }
 
-        public void sendStatusWithCookie(int code, CharSequence message, CharSequence cookieName, CharSequence cookieValue) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            sendStatusTextContent(code, message, null, cookieName, cookieValue);
-        }
-
         public void sendStatusTextContent(int code) throws PeerDisconnectedException, PeerIsSlowToReadException {
             sendStatusTextContent(code, null, null);
         }
 
         public void sendStatusTextContent(int code, CharSequence header) throws PeerDisconnectedException, PeerIsSlowToReadException {
             sendStatusTextContent(code, null, header);
+        }
+
+        public void sendStatusWithCookie(int code, CharSequence message, CharSequence cookieName, CharSequence cookieValue) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            sendStatusTextContent(code, message, null, cookieName, cookieValue);
+        }
+
+        private void sendStatusWithContent(
+                String contentType,
+                int code,
+                @Nullable CharSequence message,
+                @Nullable CharSequence header,
+                @Nullable CharSequence cookieName,
+                @Nullable CharSequence cookieValue,
+                long contentLength
+        ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            buffer.clearAndPrepareToWriteToBuffer();
+            final String std = headerImpl.status(httpVersion, code, contentType, contentLength);
+            if (header != null) {
+                headerImpl.put(header).put(Misc.EOL);
+            }
+            if (cookieName != null) {
+                setCookie(cookieName, cookieValue);
+            }
+            prepareHeaderSink();
+            flushSingle();
+            buffer.clearAndPrepareToWriteToBuffer();
+            if (message == null) {
+                sink.put(std).putEOL();
+            } else {
+                // this is ugly, add a putUtf16() method to the response sink?
+                final Utf8StringSink utf8Sink = tlSink.get();
+                utf8Sink.clear();
+                utf8Sink.put(message);
+                sink.put(utf8Sink).putEOL();
+            }
+            final boolean chunky = headerImpl.isChunky();
+            buffer.prepareToReadFromBuffer(chunky, chunky);
+            resumeSend();
         }
 
         private void setCookie(CharSequence name, CharSequence value) {
