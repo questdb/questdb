@@ -52,6 +52,7 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     private ExpressionNode timestamp;
     private CharSequence volumeAlias;
     private boolean walEnabled;
+    private long batchSize = -1;
 
     private CreateTableModel() {
     }
@@ -100,6 +101,7 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
         columnNames.clear();
         columnNameIndexMap.clear();
         ignoreIfExists = false;
+        batchSize = -1;
     }
 
     public CharSequenceObjHashMap<ColumnCastModel> getColumnCastModels() {
@@ -281,12 +283,24 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
         columnBits.setQuick(pos, Numbers.encodeLowHighInts(type, capacity));
     }
 
+    public long getBatchSize() {
+        return batchSize;
+    }
+
+    public void setBatchSize(long batchSize) {
+        this.batchSize = batchSize;
+    }
+
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
         sink.putAscii("create table ");
         sink.put(getName().token);
         if (getQueryModel() != null) {
-            sink.putAscii(" as (");
+            sink.putAscii(" as ");
+            if (batchSize != -1) {
+                sink.putAscii("batch ").put(batchSize);
+            }
+            sink.putAscii('(');
             getQueryModel().toSink(sink);
             sink.putAscii(')');
             for (int i = 0, n = getColumnCount(); i < n; i++) {

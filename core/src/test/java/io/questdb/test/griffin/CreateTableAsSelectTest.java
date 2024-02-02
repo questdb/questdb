@@ -45,17 +45,32 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
 
     @Test
     public void testCreatePartitionedTableAsSelectTimestampAscOrder() throws Exception {
-        testCreatePartitionedTableAsSelectWithOrderBy("order by ts asc");
+        testCreatePartitionedTableAsSelectWithOrderBy("order by ts asc", -1);
+    }
+
+    @Test
+    public void testCreatePartitionedTableAsSelectTimestampAscOrderBatched() throws Exception {
+        testCreatePartitionedTableAsSelectWithOrderBy("order by ts asc", 1);
     }
 
     @Test
     public void testCreatePartitionedTableAsSelectTimestampDescOrder() throws Exception {
-        testCreatePartitionedTableAsSelectWithOrderBy("order by ts desc");
+        testCreatePartitionedTableAsSelectWithOrderBy("order by ts desc", -1);
+    }
+
+    @Test
+    public void testCreatePartitionedTableAsSelectTimestampDescOrderBatched() throws Exception {
+        testCreatePartitionedTableAsSelectWithOrderBy("order by ts desc", 1);
     }
 
     @Test
     public void testCreatePartitionedTableAsSelectTimestampNoOrder() throws Exception {
-        testCreatePartitionedTableAsSelectWithOrderBy("");
+        testCreatePartitionedTableAsSelectWithOrderBy("", -1);
+    }
+
+    @Test
+    public void testCreatePartitionedTableAsSelectTimestampNoOrderBatched() throws Exception {
+        testCreatePartitionedTableAsSelectWithOrderBy("", 1);
     }
 
     private void createSrcTable() throws SqlException {
@@ -67,11 +82,15 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
         insert("insert into src values (40000, 4);");
     }
 
-    private void testCreatePartitionedTableAsSelectWithOrderBy(String orderByClause) throws Exception {
+    private void testCreatePartitionedTableAsSelectWithOrderBy(String orderByClause, int batchSize) throws Exception {
         assertMemoryLeak(() -> {
             createSrcTable();
-
-            ddl("create table dest as (select * from src where v % 2 = 0 " + orderByClause + ") timestamp(ts) partition by day;");
+            String sql = "create table dest as ";
+            if (batchSize != -1) {
+                sql += "batch " + batchSize;
+            }
+            sql += "(select * from src where v % 2 = 0 " + orderByClause + ") timestamp(ts) partition by day;";
+            ddl(sql);
 
             String expected = "ts\tv\n" +
                     "1970-01-01T00:00:00.000000Z\t0\n" +

@@ -735,7 +735,20 @@ public class SqlParser {
     }
 
     private void parseCreateTableAsSelect(GenericLexer lexer, CreateTableModel model, SqlExecutionContext executionContext, SqlParserCallback sqlParserCallback) throws SqlException {
-        expectTok(lexer, '(');
+        CharSequence tok = tok(lexer, "batch or (");
+        if (SqlKeywords.isBatchKeyword(tok)) {
+            long val = expectLong(lexer);
+            if (val > 0) {
+                model.setBatchSize(val);
+            } else {
+                throw SqlException.$(lexer.lastTokenPosition(), "batch size must be positive integer");
+            }
+            expectTok(lexer, '(');
+        } else {
+            if (!Chars.equals(tok, '(')) {
+                throw SqlException.$(lexer.lastTokenPosition(), "'batch or (' expected");
+            }
+        }
         QueryModel queryModel = optimiser.optimise(
                 parseDml(lexer, null, lexer.getPosition(), true, sqlParserCallback),
                 executionContext,
