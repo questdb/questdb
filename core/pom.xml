@@ -206,6 +206,12 @@
                             <value>io.questdb.test.TestListener</value>
                         </property>
                     </properties>
+                    <environmentVariables>
+                        <!-- needed for testing Sender.fromEnv() -->
+                        <QDB_CLIENT_CONF>
+                            tcp::addr=localhost:9002;user=testUser1;token=UvuVb1USHGRRT08gEnwN2zGZrvM4MsLQ5brgF6SVkAw=;
+                        </QDB_CLIENT_CONF>
+                    </environmentVariables>
                 </configuration>
             </plugin>
         </plugins>

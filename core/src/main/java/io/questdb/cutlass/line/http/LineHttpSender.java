@@ -54,8 +54,8 @@ public final class LineHttpSender implements Sender {
     private static final int RETRY_MAX_BACKOFF_MS = 1000;
     private static final int RETRY_MAX_JITTER_MS = 10;
     private final String authToken;
+    private final int autoFlushRows;
     private final String host;
-    private final int maxPendingRows;
     private final long maxRetriesNanos;
     private final String password;
     private final int port;
@@ -71,12 +71,12 @@ public final class LineHttpSender implements Sender {
     private HttpClient.Request request;
     private RequestState state = RequestState.EMPTY;
 
-    public LineHttpSender(String host, int port, HttpClientConfiguration clientConfiguration, ClientTlsConfiguration tlsConfig, int maxPendingRows, String authToken, String username, String password, long maxRetriesNanos) {
+    public LineHttpSender(String host, int port, HttpClientConfiguration clientConfiguration, ClientTlsConfiguration tlsConfig, int autoFlushRows, String authToken, String username, String password, long maxRetriesNanos) {
         assert authToken == null || (username == null && password == null);
         this.maxRetriesNanos = maxRetriesNanos;
         this.host = host;
         this.port = port;
-        this.maxPendingRows = maxPendingRows;
+        this.autoFlushRows = autoFlushRows;
         this.authToken = authToken;
         this.username = username;
         this.password = password;
@@ -117,7 +117,7 @@ public final class LineHttpSender implements Sender {
                 state = RequestState.EMPTY;
                 break;
         }
-        if (++pendingRows == maxPendingRows) {
+        if (++pendingRows == autoFlushRows) {
             flush();
         }
     }
@@ -135,7 +135,10 @@ public final class LineHttpSender implements Sender {
             return;
         }
         try {
-            flush0(true);
+            if (autoFlushRows != 0) {
+                // autoFlushRows == 0 means that auto-flush is disabled
+                flush0(true);
+            }
         } finally {
             Misc.free(jsonErrorParser);
             closed = true;
