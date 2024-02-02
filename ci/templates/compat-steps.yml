@@ -42,8 +42,7 @@ steps:
         "compile $(javadoc_step) -DskipTests -P build-web-console$(javadoc_profile) $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
     condition:
-      or(eq(variables['SOURCE_CODE_CHANGED'], 'false'), eq(variables['testset'],
-      'none'))
+      eq(variables['SOURCE_CODE_CHANGED'], 'false')
   - task: Maven@3
     displayName: "Run tests"
     inputs:
@@ -62,10 +61,7 @@ steps:
       jdkVersionOption: $(jdk)
     timeoutInMinutes: 55
     condition: |
-      and(
-        eq(variables['testset'], 'all'),
-        eq(variables['SOURCE_CODE_CHANGED'], 'true')
-      )
+      eq(variables['SOURCE_CODE_CHANGED'], 'true')
   - bash: |
       find . -type f -name 'hs_*.log' -exec sh -c 'x="{}"; mv "$x" "$(ARCHIVED_CRASH_LOG)"' \;
     displayName: "Tests failed -- rename crash dump"

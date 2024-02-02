@@ -8,7 +8,6 @@ jobs:
           poolName: "Azure Pipelines"
           os: Linux
           jdk: "1.17"
-          testset: "none"
           javadoc_step: "javadoc:javadoc"
           javadoc_profile: ",javadoc"
     pool:
