@@ -4809,136 +4809,156 @@ public class SqlOptimiser implements Mutable {
         return root;
     }
 
-    // Queries of the form: select a, b, c as z, count(*) as views from quest where a = 1 group by a,b,z
-    // produce a SelectedRecord node that prevents optimisation of the filter.
-    // Queries of the form: select a, b, c , count(*) as views from quest where a = 1 group by a,b,c
-    // optimise as expected.
-    // This function inverts the select-choose/select-group-by nodes
-    // This increases the number of queries that can have the AsyncJitFilter optimised into a top-level Async Group By
+
+    /**
+     * Rewrites plans of the form (select-group-by (select-choose)) to (select-choose (select-group-by))
+     * <p>
+     * Queries of the form: select a, b, c as z, count(*) as views from quest where a = 1 group by a,b,z
+     * produce a SelectedRecord node that prevents optimisation of the filter.
+     * Queries of the form: select a, b, c, count(*) as views from quest where a = 1 group by a,b,c
+     * optimise as expected.
+     * Inverting the forms increases the number of queries that will have:
+     * @see io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory
+     * converted into a:
+     * @see io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory
+     *
+     * @param model inbound model
+     * @return outbound model
+     * @throws SqlException
+     */
     private QueryModel rewriteGroupByToExtractAliases(QueryModel model) throws SqlException {
-        // Handle recursion base case
+        // 1. Hit base case of recursion, so return.
         if (model == null) {
             return model;
         }
 
-        // Look for queries like (select-group-by (select-choose))
-        if ((model.getSelectModelType() == QueryModel.SELECT_MODEL_GROUP_BY)
-                && (model.getNestedModel().getSelectModelType() == QueryModel.SELECT_MODEL_CHOOSE)) {
+        QueryModel recursiveResult = null;
 
-            final QueryModel groupBy = model;
-            final QueryModel selectChoose = groupBy.getNestedModel();
+        // 2. Guard against this not being a query of form (select-group-by (select-choose))
+        if (!((model.getSelectModelType() == QueryModel.SELECT_MODEL_GROUP_BY)
+                && (model.getNestedModel().getSelectModelType() == QueryModel.SELECT_MODEL_CHOOSE))) {
 
-            final QueryModel newGroupByModel = queryModelPool.next();
-            newGroupByModel.setSelectModelType(QueryModel.SELECT_MODEL_GROUP_BY);
-            newGroupByModel.moveGroupByFrom(selectChoose);
-            newGroupByModel.moveLimitFrom(selectChoose);
-            newGroupByModel.moveJoinAliasFrom(selectChoose);
-            newGroupByModel.moveSampleByFrom(groupBy);
-
-            final QueryModel newSelectModel = queryModelPool.next();
-            newSelectModel.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
-            newSelectModel.moveGroupByFrom(groupBy);
-            newSelectModel.moveLimitFrom(groupBy);
-            newSelectModel.moveJoinAliasFrom(groupBy);
-            newSelectModel.moveSampleByFrom(selectChoose);
-
-            ObjList<QueryColumn> selectChooseColumns = selectChoose.getColumns();
-            ObjList<QueryColumn> groupByColumns = groupBy.getColumns();
-
-            QueryColumn selectColumn;
-            QueryColumn groupByColumn;
-
-            // add columns from the select-choose to the new select-group-by
-            for (int i = 0; i < selectChooseColumns.size(); i++) {
-                selectColumn = selectChooseColumns.getQuick(i);
-                // if the column appears in the group by, then keep it i.e so we can pass through columns
-                // check for cases like
-                // select-group-by max(ts) ts from (select-choose data.ts ts)
-                // in this case, moving max(ts) ts inside breaks because there's already a ts
-                // but we don't need the other ts
-                if (groupBy.getAliasToColumnMap().get(selectColumn.getAlias()) != null
-                        && groupBy.getAliasToColumnMap().get(selectColumn.getAlias()).getAst().type == selectColumn.getAst().type) {
-                    newGroupByModel.addBottomUpColumn(selectColumn);
-                }
-            }
-            // look for any aliases in the old select-group-by that also need to be retained
-            for (int i = 0; i < groupByColumns.size(); i++) {
-                groupByColumn = groupByColumns.getQuick(i);
-                if (groupByColumn.getAst().type == 8) {
-                    // transform "select-group-by sum(val) sum from (select-choose a.val val from (a))
-                    // to        "select-choose sum from (select-group-by sum(a.val) from (a))
-                    // therefore, check if we need to "un-alias" the name before we move it down.
-                    ExpressionNode rhs = groupByColumn.getAst().rhs;
-                    while (rhs != null) {
-                        // If there are args
-                        if (rhs.args != null && rhs.args.size() > 0) {
-                            ExpressionNode argNode = null;
-                            // Check the args for aliases
-                            for (int j = 0; j < rhs.args.size(); j++) {
-                                argNode = rhs.args.getQuick(j);
-                                if (argNode != null) {
-                                    QueryColumn possibleAlias = selectChoose.getAliasToColumnMap().get(argNode.token);
-                                    if (possibleAlias != null && possibleAlias.getAlias() == argNode.token) {
-                                        // It was aliased, so copy the name
-                                        argNode.token = possibleAlias.getAst().token;
-                                    }
-                                }
-                            }
-                        }
-                        selectColumn = selectChoose.getAliasToColumnMap().get(rhs.token);
-                        if (selectColumn != null && selectColumn.getAlias() != selectColumn.getAst().token) {
-                            groupByColumn.getAst().rhs = selectColumn.getAst();
-                        }
-                        rhs = rhs.rhs;
-                    }
-                    newGroupByModel.addBottomUpColumn(groupByColumn);
-                    newSelectModel.addBottomUpColumn(nextColumn(groupByColumn.getAlias()));
-                } else if (groupByColumn.getAlias() != groupByColumn.getAst().token) {
-                    // Aliased - so push it down.
-                    // Catch cases where:
-                    // select-group-by k1, k1 k from (select-choose k k1 from (x timestamp (k)))
-                    // In this case, we want to move k1 k from lhs into rhs.
-                    // Moving it directly gives:
-                    // select-choose k1, k from (select-group-by k k1, k1 k from (x timestamp (k))
-                    // Find the column it depends on, which is k k1.
-                    // Since it's an alias, we add the node for the raw value.
-                    QueryColumn dependentColumn = selectChoose.getAliasToColumnMap().get(groupByColumn.getAst().token);
-                    if (dependentColumn != null) {
-                        // Check if we've already added the raw column k k
-                        QueryColumn alreadyAdded = newGroupByModel.getAliasToColumnMap().get(dependentColumn.getAst().token);
-                        if (alreadyAdded == null) {
-                            newGroupByModel.addBottomUpColumn(nextColumn(dependentColumn.getAst().token, dependentColumn.getAst().token));
-                        }
-                        // Add aliased column to select-choose
-                        newSelectModel.addBottomUpColumn(nextColumn(dependentColumn.getAst().token));
-                    } else {
-                        // No dependency - so just add the column as is and an aliased version to select-choose
-                        newGroupByModel.addBottomUpColumn(groupByColumn);
-                        newSelectModel.addBottomUpColumn(nextColumn(groupByColumn.getAlias()));
-                    }
-                } else {
-                    // No alias, so just add it straight to the select-choose
-                    newSelectModel.addBottomUpColumn(groupByColumn);
-                }
-            }
-            // Nest it as (select-choose (select-group-by)) (inverted from what was input originally)
-            newGroupByModel.setNestedModel(selectChoose.getNestedModel());
-            newSelectModel.setNestedModel(newGroupByModel);
-
-            // Now apply recursively
-            // We may have started with (select-group-by (select-choose (select-choose))
-            // In this case, we want to first make (select-choose (select-group-by (select-choose))
-            // Then still bubble that select-choose up to get (select-choose (select-choose (select-group-by)))
-            // So we only want to recurse down one step, not two
-            QueryModel recursiveResult = rewriteGroupByToExtractAliases(newSelectModel.getNestedModel());
-            newSelectModel.setNestedModel(recursiveResult);
-            return newSelectModel;
-        } else {
-            // Recurse down the tree looking for appropriate nodes.
-            QueryModel recursiveResult = rewriteGroupByToExtractAliases(model.getNestedModel());
+            recursiveResult = rewriteGroupByToExtractAliases(model.getNestedModel());
             model.setNestedModel(recursiveResult);
             return model;
         }
+
+        // 3. Otherwise, this is a query like (select-group-by (select-choose))
+        // But use an assert to guarantee it in case condition (2) is refactored.
+        assert (model.getSelectModelType() == QueryModel.SELECT_MODEL_GROUP_BY)
+                && (model.getNestedModel().getSelectModelType() == QueryModel.SELECT_MODEL_CHOOSE);
+
+        // 4. Create new models and shift relevant fields across.
+        final QueryModel groupBy = model;
+        final QueryModel selectChoose = groupBy.getNestedModel();
+
+        final QueryModel newGroupByModel = queryModelPool.next();
+        newGroupByModel.setSelectModelType(QueryModel.SELECT_MODEL_GROUP_BY);
+        newGroupByModel.moveGroupByFrom(selectChoose);
+        newGroupByModel.moveLimitFrom(selectChoose);
+        newGroupByModel.moveJoinAliasFrom(selectChoose);
+        newGroupByModel.moveSampleByFrom(groupBy);
+
+        final QueryModel newSelectModel = queryModelPool.next();
+        newSelectModel.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
+        newSelectModel.moveGroupByFrom(groupBy);
+        newSelectModel.moveLimitFrom(groupBy);
+        newSelectModel.moveJoinAliasFrom(groupBy);
+        newSelectModel.moveSampleByFrom(selectChoose);
+
+        ObjList<QueryColumn> selectChooseColumns = selectChoose.getColumns();
+        ObjList<QueryColumn> groupByColumns = groupBy.getColumns();
+
+        QueryColumn selectColumn;
+        QueryColumn groupByColumn;
+
+        // 5. Move simple columns from the old select-choose to the new select-group-by
+        for (int i = 0; i < selectChooseColumns.size(); i++) {
+            selectColumn = selectChooseColumns.getQuick(i);
+            // if the column appears in the group by, then keep it i.e so we can pass through columns
+            // check for cases like
+            // select-group-by max(ts) ts from (select-choose data.ts ts)
+            // in this case, moving max(ts) ts inside breaks because there's already a ts
+            if (groupBy.getAliasToColumnMap().get(selectColumn.getAlias()) != null
+                    && groupBy.getAliasToColumnMap().get(selectColumn.getAlias()).getAst().type == selectColumn.getAst().type) {
+                newGroupByModel.addBottomUpColumn(selectColumn);
+            }
+        }
+        // 6. Look for any aliases in the old select-group-by that need to be retained
+        for (int i = 0; i < groupByColumns.size(); i++) {
+            groupByColumn = groupByColumns.getQuick(i);
+            // Check if it's a function and needs special casing.
+            if (groupByColumn.getAst().type == 8) {
+                // transform  select-group-by sum(val) sum from (select-choose a.val val from (a))
+                // to         select-choose sum from (select-group-by sum(a.val) from (a))
+                // therefore, check if we need to "un-alias" the name before we move it down.
+                ExpressionNode rhs = groupByColumn.getAst().rhs;
+                while (rhs != null) {
+                    // If there are args
+                    if (rhs.args.size() > 0) {
+                        ExpressionNode argNode = null;
+                        // Check the args for aliases
+                        for (int j = 0; j < rhs.args.size(); j++) {
+                            argNode = rhs.args.getQuick(j);
+                            if (argNode != null) {
+                                QueryColumn possibleAlias = selectChoose.getAliasToColumnMap().get(argNode.token);
+                                if (possibleAlias != null && possibleAlias.getAlias() == argNode.token) {
+                                    // It was aliased, so copy the name
+                                    argNode.token = possibleAlias.getAst().token;
+                                }
+                            }
+                        }
+                    }
+                    // Now that the arg aliases have been handled, we need to push the columns to each of the new models
+                    selectColumn = selectChoose.getAliasToColumnMap().get(rhs.token);
+                    if (selectColumn != null && selectColumn.getAlias() != selectColumn.getAst().token) {
+                        groupByColumn.getAst().rhs = selectColumn.getAst();
+                    }
+                    // Recurse down the nested functions to handle their aliased args in turn.
+                    rhs = rhs.rhs;
+                }
+                // Add the column to the new models.
+                newGroupByModel.addBottomUpColumn(groupByColumn);
+                newSelectModel.addBottomUpColumn(nextColumn(groupByColumn.getAlias()));
+            } else if (groupByColumn.getAlias() != groupByColumn.getAst().token) {
+                // 7. Not a function, and is an aliased column, so we need to move it to the rhs.
+                // Catch cases where:
+                // select-group-by k1, k1 k from (select-choose k k1 from (x timestamp (k)))
+                // In this case, we want to move k1 k from lhs into rhs.
+                // Moving it directly gives:
+                // select-choose k1, k from (select-group-by k k1, k1 k from (x timestamp (k))
+                // Find the column it depends on, which is k k1.
+                // Since it's an alias, we add the node for the raw value.
+                QueryColumn dependentColumn = selectChoose.getAliasToColumnMap().get(groupByColumn.getAst().token);
+                if (dependentColumn != null) {
+                    // Check if we've already added the raw column k k
+                    QueryColumn alreadyAdded = newGroupByModel.getAliasToColumnMap().get(dependentColumn.getAst().token);
+                    if (alreadyAdded == null) {
+                        newGroupByModel.addBottomUpColumn(nextColumn(dependentColumn.getAst().token, dependentColumn.getAst().token));
+                    }
+                    // Add aliased column to new select-choose
+                    newSelectModel.addBottomUpColumn(nextColumn(dependentColumn.getAst().token));
+                } else {
+                    // No dependency, so just add the column as is and an aliased version to new select-choose
+                    newGroupByModel.addBottomUpColumn(groupByColumn);
+                    newSelectModel.addBottomUpColumn(nextColumn(groupByColumn.getAlias()));
+                }
+            } else {
+                // No alias, so just add it straight to the new select-choose
+                newSelectModel.addBottomUpColumn(groupByColumn);
+            }
+        }
+        // 8. Nest the new models together, inverted from their starting order.
+        newGroupByModel.setNestedModel(selectChoose.getNestedModel());
+        newSelectModel.setNestedModel(newGroupByModel);
+
+        // Now apply recursively
+        // We may have started with (select-group-by (select-choose (select-choose))
+        // In this case, we want to first make (select-choose (select-group-by (select-choose))
+        // Then still bubble that select-choose (if appropriate) up to get (select-choose (select-choose (select-group-by)))
+        recursiveResult = rewriteGroupByToExtractAliases(newSelectModel.getNestedModel());
+        newSelectModel.setNestedModel(recursiveResult);
+        return newSelectModel;
     }
 
     // the intent is to either validate top-level columns in select columns or replace them with function calls
