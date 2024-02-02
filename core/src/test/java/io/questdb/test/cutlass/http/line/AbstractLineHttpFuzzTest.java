@@ -193,8 +193,6 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
     public void setUp2() {
         long s0 = System.currentTimeMillis();
         long s1 = System.nanoTime();
-        s0 = 1706810999286L;
-        s1 = 1057592012839L;
         random = new Rnd(s0, s1);
         getLog().info().$("random seed : ").$(random.getSeed0()).$("L, ").$(random.getSeed1()).$('L').$();
     }
