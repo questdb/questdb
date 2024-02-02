@@ -3479,6 +3479,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         );
                     }
 
+                    ExpressionNode nestedWhereClause = nested.getWhereClause();
+
+                    // In the case of (select-group-by (select-choose (select)))
+                    // The SelectedRecord factory from the select-choose may be elided.
+                    // However, the model is not updated correspondingly.
+                    // This patch allows the where clause to be recovered from the correct node.
+                    if (nestedWhereClause == null) {
+                        // see if it was nested and this node was elided
+                        QueryModel nestedNestedModel = nested.getNestedModel();
+                        if (nestedNestedModel != null) {
+                            if (nestedNestedModel.getWhereClause() == null)
+                            {
+                                throw new SqlException().put("Mismatch between factory and model. Could not locate WHERE clause");
+                            }
+                            else {
+                                nestedWhereClause = nestedNestedModel.getWhereClause();
+                            }
+                        }
+                    }
+
                     return new AsyncGroupByRecordCursorFactory(
                             asm,
                             configuration,
@@ -3513,7 +3533,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             compileWorkerFilterConditionally(
                                     filter,
                                     executionContext.getSharedWorkerCount(),
-                                    nested.getWhereClause(),
+                                    nestedWhereClause,
                                     factory.getMetadata(),
                                     executionContext
                             ),

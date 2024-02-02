@@ -1676,13 +1676,578 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void testStarIsNotAllowedInGroupBy() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table tab as (select x, x%2 as y from long_sequence(2))");
+            ddl("create table tab as (select x, x%2 as y from long_sequence(2))");
             assertError(
                     "select * from tab group by tab.*",
                     "[27] '*' is not allowed in GROUP BY"
             );
         });
     }
+
+    @Test
+    public void testRewriteGroupByToExtractAliases1() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x ( a int, b int, c symbol, ts timestamp ) timestamp(ts) partition by DAY WAL;");
+            insert("insert into x values (1,2,'3', now()), (2,3, '3', now()), (5,6,'4', now())");
+            drainWalQueue();
+            String query =
+            "select a, b, c as z, count(*) as views\n" +
+            "from x\n" +
+            "where a = 1\n" +
+            "group by a,b,z\n";
+            assertPlan(query, "" +
+                    "Async JIT Group By workers: 1\n" +
+                    "  keys: [a,b,z]\n" +
+                    "  values: [count(*)]\n" +
+                    "  filter: a=1\n" +
+                    "    DataFrame\n" +
+                    "        Row forward scan\n" +
+                    "        Frame forward scan on: x\n");
+            assertQuery("" +
+                            "a\tb\tz\tviews\n" +
+                            "1\t2\t3\t1\n",
+                    query,
+                    null,
+                    true,
+                    true);
+        });
+    }
+
+    @Test
+    public void testRewriteGroupByToExtractAliases2() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x ( a int, b int, c symbol, ts timestamp ) timestamp(ts) partition by DAY WAL;");
+            insert("insert into x values (1,2,'3', now()), (2,3, '3', now()), (5,6,'4', now())");
+            drainWalQueue();
+            String query =
+                    "select a, b, c as z, count(*) as views\n" +
+                            "from x\n" +
+                            "where a = 1\n" +
+                            "group by a,b,c\n";
+            assertPlan(query, "" +
+                    "VirtualRecord\n" +
+                    "  functions: [a,b,c,views]\n" +
+                    "    Async JIT Group By workers: 1\n" +
+                    "      keys: [a,b,c]\n" +
+                    "      values: [count(*)]\n" +
+                    "      filter: a=1\n" +
+                    "        DataFrame\n" +
+                    "            Row forward scan\n" +
+                    "            Frame forward scan on: x\n");
+            assertQuery("a\tb\tz\tviews\n"
+                            + "1\t2\t3\t1\n",
+                    query,
+                    null,
+                    true,
+                    true);
+        });
+    }
+
+    @Test
+    public void testRewriteGroupByToExtractAliases3() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x ( a int, b int, c symbol, ts timestamp ) timestamp(ts) partition by DAY WAL;");
+            insert("insert into x values (1,2,'3', now()), (2,3, '3', now()), (5,6,'4', now())");
+            drainWalQueue();
+            String query =
+                    "select a, b, c, count(*) as views\n" +
+                            "from x\n" +
+                            "where a = 1\n" +
+                            "group by a,b,c\n";
+            assertPlan(query, "" +
+                    "Async JIT Group By workers: 1\n" +
+                    "  keys: [a,b,c]\n" +
+                    "  values: [count(*)]\n" +
+                    "  filter: a=1\n" +
+                    "    DataFrame\n" +
+                    "        Row forward scan\n" +
+                    "        Frame forward scan on: x\n");
+            assertQuery("" +
+                            "a\tb\tc\tviews\n" +
+                            "1\t2\t3\t1\n",
+                    query,
+                    null,
+                    true,
+                    true);
+        });
+    }
+
+    @Test
+    public void testRewriteGroupByToExtractAliases4() throws Exception {
+        // Check that if a select-choose node is elided by the factory, the WHERE condition can
+        // be retrieved from the inner DataFrame.
+        assertMemoryLeak(() -> {
+            ddl("create table trades as (" +
+                    "select" +
+                    " timestamp_sequence(0, 15*60*1000000L) delivery_start_utc," +
+                    " rnd_symbol('sf', null) seller," +
+                    " rnd_symbol('sf', null) buyer," +
+                    " rnd_double() volume_mw" +
+                    " from long_sequence(100)" +
+                    "), index(seller), index(buyer) timestamp(delivery_start_utc)");
+            String expected = "y_utc_15m\ty_sf_position_mw\n" +
+                    "1970-01-01T00:00:00.000000Z\t-0.2246301342497259\n" +
+                    "1970-01-01T00:30:00.000000Z\t-0.6508594025855301\n" +
+                    "1970-01-01T00:45:00.000000Z\t-0.9856290845874263\n" +
+                    "1970-01-01T01:00:00.000000Z\t-0.5093827001617407\n" +
+                    "1970-01-01T01:30:00.000000Z\t0.5599161804800813\n" +
+                    "1970-01-01T01:45:00.000000Z\t0.2390529010846525\n" +
+                    "1970-01-01T02:00:00.000000Z\t-0.6778564558839208\n" +
+                    "1970-01-01T02:15:00.000000Z\t0.38539947865244994\n" +
+                    "1970-01-01T02:30:00.000000Z\t-0.33608255572515877\n" +
+                    "1970-01-01T02:45:00.000000Z\t0.7675673070796104\n" +
+                    "1970-01-01T03:00:00.000000Z\t0.6217326707853098\n" +
+                    "1970-01-01T03:15:00.000000Z\t0.6381607531178513\n" +
+                    "1970-01-01T03:45:00.000000Z\t0.12026122412833129\n" +
+                    "1970-01-01T04:00:00.000000Z\t-0.8912587536603974\n" +
+                    "1970-01-01T04:15:00.000000Z\t-0.42281342727402726\n" +
+                    "1970-01-01T04:30:00.000000Z\t-0.7664256753596138\n" +
+                    "1970-01-01T05:15:00.000000Z\t-0.8847591603509142\n" +
+                    "1970-01-01T05:30:00.000000Z\t0.931192737286751\n" +
+                    "1970-01-01T05:45:00.000000Z\t0.8001121139739173\n" +
+                    "1970-01-01T06:00:00.000000Z\t0.92050039469858\n" +
+                    "1970-01-01T06:15:00.000000Z\t0.456344569609078\n" +
+                    "1970-01-01T06:30:00.000000Z\t0.40455469747939254\n" +
+                    "1970-01-01T06:45:00.000000Z\t0.5659429139861241\n" +
+                    "1970-01-01T07:00:00.000000Z\t-0.6821660861001273\n" +
+                    "1970-01-01T07:30:00.000000Z\t-0.11585982949541473\n" +
+                    "1970-01-01T07:45:00.000000Z\t0.8164182592467494\n" +
+                    "1970-01-01T08:00:00.000000Z\t0.5449155021518948\n" +
+                    "1970-01-01T08:30:00.000000Z\t0.49428905119584543\n" +
+                    "1970-01-01T08:45:00.000000Z\t-0.6551335839796312\n" +
+                    "1970-01-01T09:15:00.000000Z\t0.9540069089049732\n" +
+                    "1970-01-01T09:30:00.000000Z\t-0.03167026265669903\n" +
+                    "1970-01-01T09:45:00.000000Z\t-0.19751370382305056\n" +
+                    "1970-01-01T10:00:00.000000Z\t0.6806873134626418\n" +
+                    "1970-01-01T10:15:00.000000Z\t-0.24008362859107102\n" +
+                    "1970-01-01T10:30:00.000000Z\t-0.9455893004802433\n" +
+                    "1970-01-01T10:45:00.000000Z\t-0.6247427794126656\n" +
+                    "1970-01-01T11:00:00.000000Z\t-0.3901731258748704\n" +
+                    "1970-01-01T11:15:00.000000Z\t-0.10643046345788132\n" +
+                    "1970-01-01T11:30:00.000000Z\t0.07246172621937097\n" +
+                    "1970-01-01T11:45:00.000000Z\t-0.3679848625908545\n" +
+                    "1970-01-01T12:00:00.000000Z\t0.6697969295620055\n" +
+                    "1970-01-01T12:15:00.000000Z\t-0.26369335635512836\n" +
+                    "1970-01-01T12:45:00.000000Z\t-0.19846258365662472\n" +
+                    "1970-01-01T13:00:00.000000Z\t-0.8595900073631431\n" +
+                    "1970-01-01T13:15:00.000000Z\t0.7458169804091256\n" +
+                    "1970-01-01T13:30:00.000000Z\t0.4274704286353759\n" +
+                    "1970-01-01T14:00:00.000000Z\t-0.8291193369353376\n" +
+                    "1970-01-01T14:30:00.000000Z\t0.2711532808184136\n" +
+                    "1970-01-01T15:00:00.000000Z\t-0.8189713915910615\n" +
+                    "1970-01-01T15:15:00.000000Z\t0.7365115215570027\n" +
+                    "1970-01-01T15:30:00.000000Z\t-0.9418719455092096\n" +
+                    "1970-01-01T16:00:00.000000Z\t-0.05024615679069011\n" +
+                    "1970-01-01T16:15:00.000000Z\t-0.8952510116133903\n" +
+                    "1970-01-01T16:30:00.000000Z\t-0.029227696942726644\n" +
+                    "1970-01-01T16:45:00.000000Z\t-0.7668146556860689\n" +
+                    "1970-01-01T17:00:00.000000Z\t-0.05158459929273784\n" +
+                    "1970-01-01T17:15:00.000000Z\t-0.06846631555382798\n" +
+                    "1970-01-01T17:30:00.000000Z\t-0.5708643723875381\n" +
+                    "1970-01-01T17:45:00.000000Z\t0.7260468106076399\n" +
+                    "1970-01-01T18:15:00.000000Z\t-0.1010501916946902\n" +
+                    "1970-01-01T18:30:00.000000Z\t-0.05094182589333662\n" +
+                    "1970-01-01T18:45:00.000000Z\t-0.38402128906440336\n" +
+                    "1970-01-01T19:15:00.000000Z\t0.7694744648762927\n" +
+                    "1970-01-01T19:45:00.000000Z\t0.6901976778065181\n" +
+                    "1970-01-01T20:00:00.000000Z\t-0.5913874468544745\n" +
+                    "1970-01-01T20:30:00.000000Z\t-0.14261321308606745\n" +
+                    "1970-01-01T20:45:00.000000Z\t0.4440250924606578\n" +
+                    "1970-01-01T21:00:00.000000Z\t-0.09618589590900506\n" +
+                    "1970-01-01T21:15:00.000000Z\t-0.08675950660182763\n" +
+                    "1970-01-01T21:30:00.000000Z\t-0.741970173888595\n" +
+                    "1970-01-01T21:45:00.000000Z\t0.4167781163798937\n" +
+                    "1970-01-01T22:00:00.000000Z\t-0.05514933756198426\n" +
+                    "1970-01-01T22:30:00.000000Z\t-0.2093569947644236\n" +
+                    "1970-01-01T22:45:00.000000Z\t-0.8439276969435359\n" +
+                    "1970-01-01T23:00:00.000000Z\t-0.03973283003449557\n" +
+                    "1970-01-01T23:15:00.000000Z\t-0.8551850405049611\n" +
+                    "1970-01-01T23:45:00.000000Z\t0.6226001464598434\n" +
+                    "1970-01-02T00:00:00.000000Z\t-0.7195457109208119\n" +
+                    "1970-01-02T00:15:00.000000Z\t-0.23493793601747937\n" +
+                    "1970-01-02T00:30:00.000000Z\t-0.6334964081687151\n";
+                String query = "SELECT\n" +
+                        "    delivery_start_utc as y_utc_15m,\n" +
+                        "    sum(case\n" +
+                        "            when seller='sf' then -1.0*volume_mw\n" +
+                        "            when buyer='sf' then 1.0*volume_mw\n" +
+                        "            else 0.0\n" +
+                        "        end)\n" +
+                        "    as y_sf_position_mw\n" +
+                        "FROM (\n" +
+                        "    SELECT delivery_start_utc, seller, buyer, volume_mw FROM trades\n" +
+                        "    WHERE\n" +
+                        "        (seller = 'sf' OR buyer = 'sf')\n" +
+                        "    )\n" +
+                        "group by y_utc_15m " +
+                        "order by y_utc_15m";
+
+            assertQuery(expected,
+                    query,
+                    null,
+                    true,
+                    true
+            );
+
+            assertPlan(query, "" +
+                    "Sort light\n" +
+                    "  keys: [y_utc_15m]\n" +
+                    "    Async JIT Group By workers: 1\n" +
+                    "      keys: [y_utc_15m]\n" +
+                    "      values: [sum(case([seller='sf',-1.0*volume_mw,buyer='sf',1.0*volume_mw,0.0]))]\n" +
+                    "      filter: (seller='sf' or buyer='sf')\n" +
+                    "        DataFrame\n" +
+                    "            Row forward scan\n" +
+                    "            Frame forward scan on: trades\n");
+        });
+
+
+    }
+
+    @Test
+    public void testRewriteGroupByToExtractAliases5() throws Exception {
+        // Test aliasing a function name
+        assertMemoryLeak(() -> {
+            ddl("create table x ( a int, b int, c symbol, ts timestamp ) timestamp(ts) partition by DAY WAL;");
+            insert("insert into x values (1,2,'3', now()), (2,3, '3', now()), (5,6,'4', now())");
+            insert("insert into x values (1, 5, '4', now()), (1, 3, '1', now())");
+            drainWalQueue();
+            String query =
+                    "select a, sum(b) sum, c as z, count(*) views\n" +
+                            "from x\n" +
+                            "where a = 1\n" +
+                            "group by a,b,z\n" +
+                            "order by a,b,z\n";
+            assertPlan(query,""+
+                    "SelectedRecord\n" +
+                    "    Sort light\n" +
+                    "      keys: [a, b, z]\n" +
+                    "        VirtualRecord\n" +
+                    "          functions: [a,sum,z,views,b]\n" +
+                    "            Async JIT Group By workers: 1\n" +
+                    "              keys: [a,z,b]\n" +
+                    "              values: [sum(b),count(*)]\n" +
+                    "              filter: a=1\n" +
+                    "                DataFrame\n" +
+                    "                    Row forward scan\n" +
+                    "                    Frame forward scan on: x\n");
+            assertQuery("" +
+                            "a\tsum\tz\tviews\n" +
+                            "1\t2\t3\t1\n" +
+                            "1\t3\t1\t1\n" +
+                            "1\t5\t4\t1\n",
+                    query,
+                    null,
+                    true,
+                    true);
+        });
+    }
+
+    @Test
+    public void testRewriteGroupByToExtractAliases6() throws Exception {
+        // Test clickhouse plan
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE hits\n" +
+                    "(\n" +
+                    "    WatchID long,\n" +
+                    "    JavaEnable short,\n" +
+                    "    Title string,\n" +
+                    "    GoodEvent short,\n" +
+                    "    EventTime timestamp,\n" +
+                    "    Eventdate timestamp,\n" +
+                    "    CounterID int,\n" +
+                    "    ClientIP int,\n" +
+                    "    RegionID int,\n" +
+                    "    UserID long,\n" +
+                    "    CounterClass short,\n" +
+                    "    OS short,\n" +
+                    "    UserAgent short,\n" +
+                    "    URL string,\n" +
+                    "    Referer string,\n" +
+                    "    IsRefresh short,\n" +
+                    "    RefererCategoryID short,\n" +
+                    "    RefererRegionID int,\n" +
+                    "    URLCategoryID short,\n" +
+                    "    URLRegionID int,\n" +
+                    "    ResolutionWidth short,\n" +
+                    "    ResolutionHeight short,\n" +
+                    "    ResolutionDepth short,\n" +
+                    "    FlashMajor short,\n" +
+                    "    FlashMinor short,\n" +
+                    "    FlashMinor2 symbol,\n" +
+                    "    NetMajor short,\n" +
+                    "    NetMinor short,\n" +
+                    "    UserAgentMajor short,\n" +
+                    "    UserAgentMinor symbol,\n" +
+                    "    CookieEnable short,\n" +
+                    "    JavascriptEnable short,\n" +
+                    "    IsMobile short,\n" +
+                    "    MobilePhone short,\n" +
+                    "    MobilePhoneModel symbol,\n" +
+                    "    Params string,\n" +
+                    "    IPNetworkID int,\n" +
+                    "    TraficSourceID int,\n" +
+                    "    SearchEngineID short,\n" +
+                    "    SearchPhrase string,\n" +
+                    "    AdvEngineID short,\n" +
+                    "    IsArtifical short,\n" +
+                    "    WindowClientWidth short,\n" +
+                    "    WindowClientHeight short,\n" +
+                    "    ClientTimeZone short,\n" +
+                    "    ClientEventTime timestamp,\n" +
+                    "    SilverlightVersion1 short,\n" +
+                    "    SilverlightVersion2 short,\n" +
+                    "    SilverlightVersion3 int,\n" +
+                    "    SilverlightVersion4 short,\n" +
+                    "    PageCharset symbol,\n" +
+                    "    CodeVersion int,\n" +
+                    "    IsLink short,\n" +
+                    "    IsDownload short,\n" +
+                    "    IsNotBounce short,\n" +
+                    "    FUniqID long,\n" +
+                    "    OriginalURL string,\n" +
+                    "    HID int,\n" +
+                    "    IsOldCounter short,\n" +
+                    "    IsEvent short,\n" +
+                    "    IsParameter short,\n" +
+                    "    DontCountHits short,\n" +
+                    "    WithHash short,\n" +
+                    "    HitColor char,\n" +
+                    "    LocalEventTime timestamp,\n" +
+                    "    Age short,\n" +
+                    "    Sex short,\n" +
+                    "    Income short,\n" +
+                    "    Interests short,\n" +
+                    "    Robotness short,\n" +
+                    "    RemoteIP int,\n" +
+                    "    WindowName int,\n" +
+                    "    OpenerName int,\n" +
+                    "    HistoryLength short,\n" +
+                    "    BrowserLanguage symbol,\n" +
+                    "    BrowserCountry symbol,\n" +
+                    "    SocialNetwork symbol,\n" +
+                    "    SocialAction symbol,\n" +
+                    "    HTTPError short,\n" +
+                    "    SendTiming int,\n" +
+                    "    DNSTiming int,\n" +
+                    "    ConnectTiming int,\n" +
+                    "    ResponseStartTiming int,\n" +
+                    "    ResponseEndTiming int,\n" +
+                    "    FetchTiming int,\n" +
+                    "    SocialSourceNetworkID short,\n" +
+                    "    SocialSourcePage string,\n" +
+                    "    ParamPrice long,\n" +
+                    "    ParamOrderID symbol,\n" +
+                    "    ParamCurrency symbol,\n" +
+                    "    ParamCurrencyID short,\n" +
+                    "    OpenstatServiceName symbol,\n" +
+                    "    OpenstatCampaignID symbol,\n" +
+                    "    OpenstatAdID string,\n" +
+                    "    OpenstatSourceID symbol,\n" +
+                    "    UTMSource symbol,\n" +
+                    "    UTMMedium symbol,\n" +
+                    "    UTMCampaign symbol,\n" +
+                    "    UTMContent symbol,\n" +
+                    "    UTMTerm symbol,\n" +
+                    "    FromTag symbol,\n" +
+                    "    HasGCLID short,\n" +
+                    "    RefererHash long,\n" +
+                    "    URLHash long,\n" +
+                    "    CLID int\n" +
+                    ") TIMESTAMP(EventTime) PARTITION BY DAY;");
+            String query1 =
+                    "SELECT TraficSourceID, SearchEngineID, AdvEngineID, CASE WHEN (SearchEngineID = 0 AND AdvEngineID = 0) THEN Referer ELSE '' END AS Src, URL AS Dst, COUNT(*) AS PageViews\n" +
+                            "FROM hits\n" +
+                            "WHERE CounterID = 62 AND EventTime >= '2013-07-01T00:00:00Z' AND EventTime <= '2013-07-31T23:59:59Z' AND IsRefresh = 0\n" +
+                            "GROUP BY TraficSourceID, SearchEngineID, AdvEngineID, Src, Dst\n" +
+                            "ORDER BY PageViews DESC\n" +
+                            "LIMIT 1000, 1010;";
+            assertPlan(query1, "" +
+                    "Sort light lo: 1000 hi: 1010\n" +
+                    "  keys: [PageViews desc]\n" +
+                    "    VirtualRecord\n" +
+                    "      functions: [TraficSourceID,SearchEngineID,AdvEngineID,Src,Dst,PageViews]\n" +
+                    "        Async JIT Group By workers: 1\n" +
+                    "          keys: [TraficSourceID,SearchEngineID,AdvEngineID,Src,Dst]\n" +
+                    "          values: [count(*)]\n" +
+                    "          filter: (CounterID=62 and IsRefresh=0)\n" +
+                    "            DataFrame\n" +
+                    "                Row forward scan\n" +
+                    "                Interval forward scan on: hits\n" +
+                    "                  intervals: [(\"2013-07-01T00:00:00.000000Z\",\"2013-07-31T23:59:59.000000Z\")]\n");
+            String query2 =
+                    "SELECT TraficSourceID, SearchEngineID, AdvEngineID, CASE WHEN (SearchEngineID = 0 AND AdvEngineID = 0) THEN Referer ELSE '' END AS Src, URL, COUNT(*) AS PageViews\n" +
+                            "FROM hits\n" +
+                            "WHERE CounterID = 62 AND EventTime >= '2013-07-01T00:00:00Z' AND EventTime <= '2013-07-31T23:59:59Z' AND IsRefresh = 0\n" +
+                            "GROUP BY TraficSourceID, SearchEngineID, AdvEngineID, Src, URL\n" +
+                            "ORDER BY PageViews DESC\n" +
+                            "LIMIT 1000, 1010;";
+            assertPlan(query2, "" +
+                    "Sort light lo: 1000 hi: 1010\n" +
+                    "  keys: [PageViews desc]\n" +
+                    "    VirtualRecord\n" +
+                    "      functions: [TraficSourceID,SearchEngineID,AdvEngineID,Src,URL,PageViews]\n" +
+                    "        Async JIT Group By workers: 1\n" +
+                    "          keys: [TraficSourceID,SearchEngineID,AdvEngineID,Src,URL]\n" +
+                    "          values: [count(*)]\n" +
+                    "          filter: (CounterID=62 and IsRefresh=0)\n" +
+                    "            DataFrame\n" +
+                    "                Row forward scan\n" +
+                    "                Interval forward scan on: hits\n" +
+                    "                  intervals: [(\"2013-07-01T00:00:00.000000Z\",\"2013-07-31T23:59:59.000000Z\")]\n");
+        });
+    }
+
+    @Test
+    public void testRewriteGroupByToExtractAliases7() throws Exception {
+        // test duplicate key ordering
+        assertQuery(
+                "k1\tkey2\tkey21\tcount\n" +
+                        "0\t0\t0\t2\n" +
+                        "0\t2\t2\t3\n" +
+                        "1\t1\t1\t3\n" +
+                        "1\t3\t3\t2\n",
+                "select key1 as k1, key2, key2, count(*) from t group by key2, k1 order by 1, 2",
+                "create table t as ( select x%2 key1, x%4 key2, x as value from long_sequence(10));",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testRewriteGroupByToExtractAliases8() throws Exception {
+        // test ordering by number
+        assertQuery(
+                "column\tkey\tkey1\tcount\n" +
+                        "1\t0\t0\t50\n" +
+                        "2\t1\t1\t50\n",
+                "select key+1, key, key, count(*) from t group by key order by 1,2,3 desc",
+                "create table t as ( select x%2 as key, x as value from long_sequence(100));",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testRewriteGroupByToExtractAliases9() throws Exception {
+        // test args requiring de-aliasing when moved to rhs
+        assertMemoryLeak(() -> {
+            compile("create table t1 as (select x::int as x, x%2 as y from long_sequence(2))");
+            compile("create table t2 as (select x::int as x, x%2 as y from long_sequence(2))");
+
+            String query = "select t1.x, max(t2.y), dateadd('s', max(t2.y)::int, dateadd('d', t1.x, '2023-03-01T00:00:00') ) " +
+                    "from t1 " +
+                    "join t2 on t1.y = t2.y  " +
+                    "group by t1.x, t2.x, dateadd('d', t1.x, '2023-03-01T00:00:00') " +
+                    "order by 1, 2, 3";
+
+            assertPlan(
+                    query,
+                    "Sort light\n" +
+                            "  keys: [x, max, dateadd]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [x,max,dateadd('s',dateadd,max::int)]\n" +
+                            "        GroupBy vectorized: false\n" +
+                            "          keys: [x,dateadd,x1]\n" +
+                            "          values: [max(y)]\n" +
+                            "            VirtualRecord\n" +
+                            "              functions: [x,y,dateadd('d',1677628800000000,x),x1]\n" +
+                            "                SelectedRecord\n" +
+                            "                    Hash Join Light\n" +
+                            "                      condition: t2.y=t1.y\n" +
+                            "                        DataFrame\n" +
+                            "                            Row forward scan\n" +
+                            "                            Frame forward scan on: t1\n" +
+                            "                        Hash\n" +
+                            "                            DataFrame\n" +
+                            "                                Row forward scan\n" +
+                            "                                Frame forward scan on: t2\n"
+            );
+
+            assertQuery(
+                    "x\tmax\tdateadd\n" +
+                            "1\t1\t2023-03-02T00:00:01.000000Z\n" +
+                            "2\t0\t2023-03-03T00:00:00.000000Z\n",
+                    query,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+
+    @Test
+    public void testRewriteGroupByToExtractAliases10() throws Exception {
+        // test that it properly handles max(ts) ts on lhs and data.ts ts on rhs
+        assertMemoryLeak(() -> {
+            ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
+            insert("insert into tab " +
+                    "select (100000+x)::timestamp, " +
+                    "rnd_long(1,20,10), " +
+                    "rnd_long(1,1000,5) " +
+                    "from long_sequence(1000000)");
+
+            String expected = "ts\ti\tavg\tsum\tfirst_value\n" +
+                    "1970-01-01T00:00:01.099967Z\tNaN\t495.40261282660333\t1668516.0\t481.0\n" +
+                    "1970-01-01T00:00:01.099995Z\t1\t495.08707124010556\t1688742.0\tNaN\n" +
+                    "1970-01-01T00:00:01.099973Z\t2\t506.5011448196909\t1769715.0\t697.0\n" +
+                    "1970-01-01T00:00:01.099908Z\t3\t505.95267958950967\t1774882.0\t16.0\n" +
+                    "1970-01-01T00:00:01.099977Z\t4\t501.16155593412833\t1765091.0\t994.0\n" +
+                    "1970-01-01T00:00:01.099994Z\t5\t494.87667161961366\t1665260.0\t701.0\n" +
+                    "1970-01-01T00:00:01.099991Z\t6\t500.67453098351336\t1761373.0\t830.0\n" +
+                    "1970-01-01T00:00:01.099998Z\t7\t497.7231450719823\t1797776.0\t293.0\n" +
+                    "1970-01-01T00:00:01.099997Z\t8\t498.6340425531915\t1757685.0\t868.0\n" +
+                    "1970-01-01T00:00:01.099992Z\t9\t499.1758750361585\t1725651.0\t528.0\n" +
+                    "1970-01-01T00:00:01.099989Z\t10\t500.3242937853107\t1771148.0\t936.0\n" +
+                    "1970-01-01T00:00:01.099976Z\t11\t501.4019192774485\t1776467.0\t720.0\n" +
+                    "1970-01-01T00:00:01.099984Z\t12\t489.8953058321479\t1721982.0\t949.0\n" +
+                    "1970-01-01T00:00:01.099952Z\t13\t500.65723270440253\t1751299.0\t518.0\n" +
+                    "1970-01-01T00:00:01.099996Z\t14\t506.8769141866513\t1754301.0\tNaN\n" +
+                    "1970-01-01T00:00:01.100000Z\t15\t497.0794058840331\t1740275.0\t824.0\n" +
+                    "1970-01-01T00:00:01.099979Z\t16\t499.3338209479228\t1706723.0\t38.0\n" +
+                    "1970-01-01T00:00:01.099951Z\t17\t492.7804469273743\t1764154.0\t698.0\n" +
+                    "1970-01-01T00:00:01.099999Z\t18\t501.4806333050608\t1773737.0\t204.0\n" +
+                    "1970-01-01T00:00:01.099957Z\t19\t501.01901034386356\t1792145.0\t712.0\n" +
+                    "1970-01-01T00:00:01.099987Z\t20\t498.1350566366541\t1715079.0\t188.0\n";
+
+            // cross-check with re-write using aggregate functions
+            assertSql(
+                    expected,
+                    " select max(data.ts) as ts, data.i as i, avg(data.j) as avg, sum(data.j::double) as sum, first(data.j::double) as first_value " +
+                            "from " +
+                            "( select i, max(ts) as max from tab group by i) cnt " +
+                            "join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000) " +
+                            "group by data.i " +
+                            "order by data.i "
+            );
+
+            assertQuery(
+                    expected,
+                    "select last(ts) as ts, " +
+                            "i, " +
+                            "last(avg) as avg, " +
+                            "last(sum) as sum, " +
+                            "last(first_value) as first_value " +
+                            "from (  " +
+                            "  select * from (" +
+                            "    select ts, i, " +
+                            "    avg(j) over (partition by i order by ts range between 80000 preceding and current row) avg, " +
+                            "    sum(j) over (partition by i order by ts range between 80000 preceding and current row) sum, " +
+                            "    first_value(j) over (partition by i order by ts range between 80000 preceding and current row) first_value, " +
+                            "    from tab ) " +
+                            "  limit -100 )" +
+                            "order by i",
+                    null,
+                    true,
+                    true,
+                    false
+            );
+        });
+    }
+
 
     private void assertError(String query, String errorMessage) {
         try {
