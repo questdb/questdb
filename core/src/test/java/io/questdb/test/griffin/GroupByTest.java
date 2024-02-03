@@ -1686,7 +1686,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "from x\n" +
                             "where a = 1\n" +
                             "group by a,b,z\n";
-            assertPlan(query, "Async Group By workers: 1\n" +
+            assertPlan(query, "Async JIT Group By workers: 1\n" +
                     "  keys: [a,b,z]\n" +
                     "  values: [count(*)]\n" +
                     "  filter: a=1\n" +
@@ -1716,7 +1716,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "group by a,b,c\n";
             assertPlan(query, "VirtualRecord\n" +
                     "  functions: [a,b,c,views]\n" +
-                    "    Async Group By workers: 1\n" +
+                    "    Async JIT Group By workers: 1\n" +
                     "      keys: [a,b,c]\n" +
                     "      values: [count(*)]\n" +
                     "      filter: a=1\n" +
@@ -1743,7 +1743,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "from x\n" +
                             "where a = 1\n" +
                             "group by a,b,c\n";
-            assertPlan(query, "Async Group By workers: 1\n" +
+            assertPlan(query, "Async JIT Group By workers: 1\n" +
                     "  keys: [a,b,c]\n" +
                     "  values: [count(*)]\n" +
                     "  filter: a=1\n" +
@@ -2056,7 +2056,7 @@ public class GroupByTest extends AbstractCairoTest {
                     "  keys: [PageViews desc]\n" +
                     "    VirtualRecord\n" +
                     "      functions: [TraficSourceID,SearchEngineID,AdvEngineID,Src,Dst,PageViews]\n" +
-                    "        Async Group By workers: 1\n" +
+                    "        Async JIT Group By workers: 1\n" +
                     "          keys: [TraficSourceID,SearchEngineID,AdvEngineID,Src,Dst]\n" +
                     "          values: [count(*)]\n" +
                     "          filter: (CounterID=62 and IsRefresh=0)\n" +
@@ -2075,7 +2075,7 @@ public class GroupByTest extends AbstractCairoTest {
                     "  keys: [PageViews desc]\n" +
                     "    VirtualRecord\n" +
                     "      functions: [TraficSourceID,SearchEngineID,AdvEngineID,Src,URL,PageViews]\n" +
-                    "        Async Group By workers: 1\n" +
+                    "        Async JIT Group By workers: 1\n" +
                     "          keys: [TraficSourceID,SearchEngineID,AdvEngineID,Src,URL]\n" +
                     "          values: [count(*)]\n" +
                     "          filter: (CounterID=62 and IsRefresh=0)\n" +
