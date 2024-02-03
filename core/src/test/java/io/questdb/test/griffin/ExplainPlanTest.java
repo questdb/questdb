@@ -2462,12 +2462,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a (s symbol, ts timestamp) timestamp(ts) partition by year;",
                 "select s as symbol, count() from a",
                 "GroupBy vectorized: true workers: 1\n" +
-                        "  keys: [symbol]\n" +
+                        "  keys: [s]\n" +
                         "  values: [count(*)]\n" +
-                        "    SelectedRecord\n" +
-                        "        DataFrame\n" +
-                        "            Row forward scan\n" +
-                        "            Frame forward scan on: a\n"
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
         );
     }
 
@@ -8765,15 +8764,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "from a where l::short<i ) " +
                         "where mil + mini> 1 ",
                 "Filter filter: 1<mil+mini\n" +
-                        "    GroupBy vectorized: false\n" +
+                        "    Async Group By workers: 1\n" +
                         "      keys: [k]\n" +
                         "      values: [max(i*l),min(l),min(i)]\n" +
-                        "        SelectedRecord\n" +
-                        "            Async Filter workers: 1\n" +
-                        "              filter: l::short<i\n" +
-                        "                DataFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: a\n"
+                        "      filter: l::short<i\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: a\n"
         );
     }
 

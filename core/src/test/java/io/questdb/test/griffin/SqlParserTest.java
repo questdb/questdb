@@ -4031,7 +4031,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testFilter2() throws Exception {
         assertQuery(
-                "select-virtual customerId + 1 column, name, count from (select-group-by [customerId, name, count() count] customerId, name, count() count from (select-choose [customerId, customerName name] customerId, customerName name from (select [customerId, customerName] from customers where customerName = 'X')))",
+                "select-virtual customerId + 1 column, name, count from (select-group-by [customerId, customerName name, count() count] customerId, customerName name, count() count from (select [customerId, customerName] from customers where customerName = 'X'))",
                 "select customerId+1, name, count from (select customerId, customerName name, count() count from customers) where name = 'X'",
                 modelOf("customers").col("customerId", ColumnType.INT).col("customerName", ColumnType.STRING),
                 modelOf("orders").col("orderId", ColumnType.INT).col("customerId", ColumnType.INT)
@@ -6780,7 +6780,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testOrderByPositionWithColumnAliasesAndAggregateColumn() throws Exception {
         assertQuery(
-                "select-group-by c1, c2, count() c3 from (select-choose [x c1, y c2] x c1, y c2 from (select [x, y] from tab)) order by c3, c2, c1",
+                "select-group-by x c1, y c2, count() c3 from (select [x, y] from tab) order by c3, c2, c1",
                 "select x c1, y c2, count() c3 from tab order by 3,2,1",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
@@ -6876,7 +6876,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testOrderByWithColumnAliasesAndAggregateColumn() throws Exception {
         assertQuery(
-                "select-group-by c1, c2, count() c3 from (select-choose [x c1, y c2] x c1, y c2 from (select [x, y] from tab)) order by c3, c2, c1",
+                "select-group-by x c1, y c2, count() c3 from (select [x, y] from tab) order by c3, c2, c1",
                 "select x c1, y c2, count() c3 from tab order by c3,c2,c1",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
@@ -7771,7 +7771,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSelectColumnsFromJoinSubQueries() throws SqlException {
         assertQuery(
-                "select-virtual addr, sum_out - sum_in total from (select-choose [a.addr addr, b.sum_in sum_in, a.sum_out sum_out] a.addr addr, a.count count, a.sum_out sum_out, b.toAddress toAddress, b.count count1, b.sum_in sum_in from (select [addr, sum_out] from (select-group-by [addr, sum(value) sum_out] addr, count() count, sum(value) sum_out from (select-choose [fromAddress addr, value] fromAddress addr, value from (select [fromAddress, value] from transactions.csv))) a join select [sum_in, toAddress] from (select-group-by [sum(value) sum_in, toAddress] toAddress, count() count, sum(value) sum_in from (select [value, toAddress] from transactions.csv)) b on b.toAddress = a.addr) a)",
+                "select-virtual addr, sum_out - sum_in total from (select-choose [a.addr addr, b.sum_in sum_in, a.sum_out sum_out] a.addr addr, a.count count, a.sum_out sum_out, b.toAddress toAddress, b.count count1, b.sum_in sum_in from (select [addr, sum_out] from (select-group-by [fromAddress addr, sum(value) sum_out] fromAddress addr, count() count, sum(value) sum_out from (select [fromAddress, value] from transactions.csv)) a join select [sum_in, toAddress] from (select-group-by [sum(value) sum_in, toAddress] toAddress, count() count, sum(value) sum_in from (select [value, toAddress] from transactions.csv)) b on b.toAddress = a.addr) a)",
                 "select addr, sum_out - sum_in total from (\n" +
                         "(select fromAddress addr, count(), sum(value) sum_out from 'transactions.csv') a join\n" +
                         "(select toAddress, count(), sum(value) sum_in from 'transactions.csv') b on a.addr = b.toAddress\n" +
@@ -7786,7 +7786,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSelectColumnsFromJoinSubQueries2() throws SqlException {
         assertQuery(
-                "select-choose addr, count, sum_out, toAddress, count1, sum_in from (select-choose [a.addr addr, a.count count, a.sum_out sum_out, b.toAddress toAddress, b.count count1, b.sum_in sum_in] a.addr addr, a.count count, a.sum_out sum_out, b.toAddress toAddress, b.count count1, b.sum_in sum_in from (select [addr, count, sum_out] from (select-group-by [addr, count() count, sum(value) sum_out] addr, count() count, sum(value) sum_out from (select-choose [fromAddress addr, value] fromAddress addr, value from (select [fromAddress, value] from transactions.csv))) a join select [toAddress, count, sum_in] from (select-group-by [toAddress, count() count, sum(value) sum_in] toAddress, count() count, sum(value) sum_in from (select [toAddress, value] from transactions.csv)) b on b.toAddress = a.addr) a)",
+                "select-choose addr, count, sum_out, toAddress, count1, sum_in from (select-choose [a.addr addr, a.count count, a.sum_out sum_out, b.toAddress toAddress, b.count count1, b.sum_in sum_in] a.addr addr, a.count count, a.sum_out sum_out, b.toAddress toAddress, b.count count1, b.sum_in sum_in from (select [addr, count, sum_out] from (select-group-by [fromAddress addr, count() count, sum(value) sum_out] fromAddress addr, count() count, sum(value) sum_out from (select [fromAddress, value] from transactions.csv)) a join select [toAddress, count, sum_in] from (select-group-by [toAddress, count() count, sum(value) sum_in] toAddress, count() count, sum(value) sum_in from (select [toAddress, value] from transactions.csv)) b on b.toAddress = a.addr) a)",
                 "(\n" +
                         "(select fromAddress addr, count(), sum(value) sum_out from 'transactions.csv') a join\n" +
                         "(select toAddress, count(), sum(value) sum_in from 'transactions.csv') b on a.addr = b.toAddress\n" +
@@ -7801,7 +7801,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSelectColumnsFromJoinSubQueries3() throws SqlException {
         assertQuery(
-                "select-choose a.addr addr, a.count count, a.sum_out sum_out, b.toAddress toAddress, b.count count1, b.sum_in sum_in from (select [addr, count, sum_out] from (select-group-by [addr, count() count, sum(value) sum_out] addr, count() count, sum(value) sum_out from (select-choose [fromAddress addr, value] fromAddress addr, value from (select [fromAddress, value] from transactions.csv))) a join select [toAddress, count, sum_in] from (select-group-by [toAddress, count() count, sum(value) sum_in] toAddress, count() count, sum(value) sum_in from (select [toAddress, value] from transactions.csv)) b on b.toAddress = a.addr) a",
+                "select-choose a.addr addr, a.count count, a.sum_out sum_out, b.toAddress toAddress, b.count count1, b.sum_in sum_in from (select [addr, count, sum_out] from (select-group-by [fromAddress addr, count() count, sum(value) sum_out] fromAddress addr, count() count, sum(value) sum_out from (select [fromAddress, value] from transactions.csv)) a join select [toAddress, count, sum_in] from (select-group-by [toAddress, count() count, sum(value) sum_in] toAddress, count() count, sum(value) sum_in from (select [toAddress, value] from transactions.csv)) b on b.toAddress = a.addr) a",
                 "(select fromAddress addr, count(), sum(value) sum_out from 'transactions.csv') a join\n" +
                         "(select toAddress, count(), sum(value) sum_in from 'transactions.csv') b on a.addr = b.toAddress\n",
                 modelOf("transactions.csv")

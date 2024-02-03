@@ -4668,16 +4668,23 @@ public class SqlOptimiser implements Mutable {
             }
         }
 
-        // check if translating model is redundant, e.g.
-        // that it neither chooses between tables nor renames columns
-        boolean translationIsRedundant = (useInnerModel || useGroupByModel || useWindowModel) && !forceTranslatingModel;
-        if (translationIsRedundant) {
-            for (int i = 0, n = translatingModel.getBottomUpColumns().size(); i < n; i++) {
-                QueryColumn column = translatingModel.getBottomUpColumns().getQuick(i);
-                if (!column.getAst().token.equals(column.getAlias())) {
-                    translationIsRedundant = false;
-                    break;
-                }
+
+        boolean overrideTranslation = false;
+        boolean translationIsRedundant = checkIfTranslatingModelIsRedundant(useInnerModel, useGroupByModel, useWindowModel, forceTranslatingModel, overrideTranslation, translatingModel);
+        // if it wasn't redundant, we might be able to make it redundant
+        // but only if its a simple select
+        if (useGroupByModel && sampleBy == null && !translationIsRedundant && !model.containsJoin() && !useWindowModel && SqlUtil.isPlainSelect(model.getNestedModel())) {
+            QueryModel selectedModel = useInnerModel ? innerVirtualModel : groupByModel;
+            ObjList<QueryColumn> translationColumns = translatingModel.getColumns();
+            boolean appears = false;
+            for (int i = 0; i < translationColumns.size(); i++) {
+                QueryColumn col = translationColumns.getQuick(i);
+                appears ^= aliasAppearsInColsAndColArgs(selectedModel, col.getAlias());
+            }
+            if (!appears) {
+                mergeInnerVirtualModel(translatingModel, selectedModel);
+                overrideTranslation = true;
+                translationIsRedundant = checkIfTranslatingModelIsRedundant(useInnerModel, useGroupByModel, useWindowModel, forceTranslatingModel, overrideTranslation, translatingModel);
             }
         }
 
@@ -4797,6 +4804,57 @@ public class SqlOptimiser implements Mutable {
             }
         }
         return root;
+    }
+
+
+    private boolean aliasAppearsInColsAndColArgs(QueryModel model, CharSequence alias) {
+        boolean appearsInCols = false;
+        boolean appearsInArgs = false;
+        ObjList<QueryColumn> modelColumns = model.getColumns();
+        for (int i = 0; i < modelColumns.size(); i++) {
+            QueryColumn col = modelColumns.get(i);
+            if (col.getAst().type == 8) {
+                // function
+                ExpressionNode rhs = col.getAst().rhs;
+                ExpressionNode argNode = null;
+                while (rhs != null) {
+                    for (int j = 0; j < rhs.args.size(); j++) {
+                       argNode = rhs.args.getQuick(j);
+                       if (argNode == null) {
+                           continue;
+                       }
+                       if (argNode.token == alias) {
+                            appearsInArgs = true;
+                        }
+                    }
+                    if (rhs.token == alias) {
+                        appearsInArgs = true;
+                    }
+                    rhs = rhs.rhs;
+                }
+            }
+            if (col.getAst().token == alias) {
+                appearsInCols = true;
+            }
+        }
+        return appearsInCols && appearsInArgs;
+    }
+
+
+    private boolean checkIfTranslatingModelIsRedundant(boolean useInnerModel, boolean useGroupByModel, boolean useWindowModel, boolean forceTranslatingModel, boolean overrideTranslation, QueryModel translatingModel) {
+        // check if translating model is redundant, e.g.
+        // that it neither chooses between tables nor renames columns
+        boolean translationIsRedundant = (useInnerModel || useGroupByModel || useWindowModel) && !forceTranslatingModel;
+        if (translationIsRedundant && overrideTranslation == false) {
+            for (int i = 0, n = translatingModel.getBottomUpColumns().size(); i < n; i++) {
+                QueryColumn column = translatingModel.getBottomUpColumns().getQuick(i);
+                if (!column.getAst().token.equals(column.getAlias())) {
+                    translationIsRedundant = false;
+                    break;
+                }
+            }
+        }
+        return translationIsRedundant;
     }
 
     // the intent is to either validate top-level columns in select columns or replace them with function calls
