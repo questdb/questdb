@@ -460,8 +460,6 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         filterToOptions.put("adouble = 0 or ashort = 0", 8);
         filterToOptions.put("afloat = 0 or adouble = 0", 8);
         filterToOptions.put("anint * along = 0", 8);
-        filterToOptions.put("astring = null", 8);
-        filterToOptions.put("abinary = null", 8);
 
         for (Map.Entry<String, Integer> entry : filterToOptions.entrySet()) {
             int options = serialize(entry.getKey(), false, false, false);
@@ -510,6 +508,8 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         filterToOptions.put("atimestamp <> null", 8);
         filterToOptions.put("adouble = 0", 8);
         filterToOptions.put("adouble = 0 and along = 0", 8);
+        filterToOptions.put("astring = null", 8);
+        filterToOptions.put("abinary = null", 8);
         // 16B
         filterToOptions.put("auuid = '11111111-1111-1111-1111-111111111111'", 16);
         filterToOptions.put("auuid = null", 16);

@@ -1029,9 +1029,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         public boolean hasMixedSizes() {
-            if (sizes[STRING_HEADER_INDEX] != 0 || sizes[BINARY_HEADER_INDEX] != 0) {
-                return true;
-            }
             byte prevSize = 0;
             for (byte size : sizes) {
                 prevSize = prevSize == 0 ? size : prevSize;

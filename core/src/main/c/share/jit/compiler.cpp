@@ -162,7 +162,7 @@ struct Function {
         c.bind(l_loop);
 
         for (int i = 0; i < unroll_factor; ++i) {
-            questdb::avx2::emit_code(c, istream, size, values, null_check, cols_ptr, vars_ptr, input_index);
+            questdb::avx2::emit_code(c, istream, size, values, null_check, cols_ptr, varlen_indexes_ptr, vars_ptr, input_index);
 
             auto mask = values.pop();
 
