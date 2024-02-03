@@ -188,7 +188,6 @@ public class ChunkedResponseTest {
                         "0123456789\r\n" +
                         "00\r\n" +
                         "\r\n"
-
         };
         assertResponse("abcdefghjklzxnmd0123456789", fragments);
     }

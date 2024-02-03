@@ -91,6 +91,7 @@ public class ColumnPurgeOperator implements Closeable {
     }
 
     public boolean purge(ColumnPurgeTask task) {
+        assert task.getTableName() != null;
         try {
             boolean done = purge0(task, ScoreboardUseMode.INTERNAL);
             setCompletionTimestamp(completedRowIds, microClock.getTicks());
@@ -103,6 +104,7 @@ public class ColumnPurgeOperator implements Closeable {
     }
 
     public boolean purge(ColumnPurgeTask task, TableReader tableReader) {
+        assert task.getTableName() != null;
         try {
             txReader = tableReader.getTxFile();
             txnScoreboard = tableReader.getTxnScoreboard();
@@ -115,6 +117,7 @@ public class ColumnPurgeOperator implements Closeable {
     }
 
     public void purgeExclusive(ColumnPurgeTask task) {
+        assert task.getTableName() != null;
         try {
             purge0(task, ScoreboardUseMode.EXCLUSIVE);
         } catch (Throwable ex) {

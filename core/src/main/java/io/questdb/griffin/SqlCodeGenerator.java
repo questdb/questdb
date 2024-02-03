@@ -1469,7 +1469,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     && (!model.isUpdate() || executionContext.isWalApplication());
             final boolean canCompile = factory.supportPageFrameCursor() && JitUtil.isJitSupported();
             if (useJit && canCompile) {
-                CompiledFilter jitFilter = null;
+                CompiledFilter compiledFilter = null;
                 try {
                     int jitOptions;
                     final ObjList<Function> bindVarFunctions = new ObjList<>();
@@ -1479,8 +1479,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         jitOptions = jitIRSerializer.serialize(filterExpr, forceScalar, enableJitDebug, enableJitNullChecks);
                     }
 
-                    jitFilter = new CompiledFilter();
-                    jitFilter.compile(jitIRMem, jitOptions);
+                    compiledFilter = new CompiledFilter();
+                    compiledFilter.compile(jitIRMem, jitOptions);
 
                     final Function limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
                     final int limitLoPos = model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
@@ -1494,6 +1494,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             executionContext.getMessageBus(),
                             factory,
                             bindVarFunctions,
+                            compiledFilter,
                             filter,
                             reduceTaskFactory,
                             compileWorkerFilterConditionally(
@@ -1503,14 +1504,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     factory.getMetadata(),
                                     executionContext
                             ),
-                            jitFilter,
                             limitLoFunction,
                             limitLoPos,
                             preTouchColumns,
                             executionContext.getSharedWorkerCount()
                     );
                 } catch (SqlException | LimitOverflowException ex) {
-                    Misc.free(jitFilter);
+                    Misc.free(compiledFilter);
                     LOG.debug()
                             .$("JIT cannot be applied to (sub)query [tableName=").utf8(model.getName())
                             .$(", ex=").$(ex.getFlyweightMessage())
@@ -3417,6 +3417,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     && SqlUtil.isParallelismSupported(keyFunctions)
                     && GroupByUtils.isParallelismSupported(groupByFunctions)) {
                 boolean supportsParallelism = factory.supportPageFrameCursor();
+                CompiledFilter compiledFilter = null;
+                MemoryCARW bindVarMemory = null;
+                ObjList<Function> bindVarFunctions = null;
                 Function filter = null;
                 // Try to steal the filter from the nested factory, if possible.
                 // We aim for simple cases such as select key, avg(value) from t where value > 0
@@ -3425,6 +3428,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     if (filterFactory.supportsFilterStealing()) {
                         factory = factory.getBaseFactory();
                         assert factory.supportPageFrameCursor();
+                        compiledFilter = filterFactory.getCompiledFilter();
+                        bindVarMemory = filterFactory.getBindVarMemory();
+                        bindVarFunctions = filterFactory.getBindVarFunctions();
                         filter = filterFactory.getFilter();
                         supportsParallelism = true;
                         filterFactory.halfClose();
@@ -3457,6 +3463,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         executionContext
                                 ),
                                 valueTypesCopy.getColumnCount(),
+                                compiledFilter,
+                                bindVarMemory,
+                                bindVarFunctions,
                                 filter,
                                 reduceTaskFactory,
                                 compileWorkerFilterConditionally(
@@ -3496,6 +3505,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     executionContext
                             ),
                             recordFunctions,
+                            compiledFilter,
+                            bindVarMemory,
+                            bindVarFunctions,
                             filter,
                             reduceTaskFactory,
                             compileWorkerFilterConditionally(

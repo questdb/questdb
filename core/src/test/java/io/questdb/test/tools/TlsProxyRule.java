@@ -37,6 +37,7 @@ public final class TlsProxyRule implements TestRule {
     private final String keystore;
     private final char[] keystorePassword;
     private int srcPort = -1;
+    private TlsProxy tlsProxy;
 
     private TlsProxyRule(String dstHost, int dstPort, String keystore, char[] keystorePassword) {
         this.dstHost = dstHost;
@@ -54,7 +55,7 @@ public final class TlsProxyRule implements TestRule {
         return new Statement() {
             @Override
             public void evaluate() throws Throwable {
-                TlsProxy tlsProxy = new TlsProxy(dstHost, dstPort, keystore, keystorePassword);
+                tlsProxy = new TlsProxy(dstHost, dstPort, keystore, keystorePassword);
                 srcPort = tlsProxy.start();
                 try {
                     base.evaluate();
@@ -70,5 +71,17 @@ public final class TlsProxyRule implements TestRule {
             throw new IllegalStateException("test is not running yet!");
         }
         return srcPort;
+    }
+
+    public void killAfterAccepting() {
+        if (tlsProxy != null) {
+            tlsProxy.killAfterAccepting();
+        }
+    }
+
+    public void killConnections() {
+        if (tlsProxy != null) {
+            tlsProxy.killConnections();
+        }
     }
 }

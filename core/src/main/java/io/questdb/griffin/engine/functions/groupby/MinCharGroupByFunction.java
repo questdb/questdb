@@ -77,8 +77,27 @@ public class MinCharGroupByFunction extends CharFunction implements GroupByFunct
     }
 
     @Override
-    public boolean isParallelismSupported() {
+    public boolean isConstant() {
         return false;
+    }
+
+    @Override
+    public boolean isParallelismSupported() {
+        return UnaryFunction.super.isParallelismSupported();
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return UnaryFunction.super.isReadThreadSafe();
+    }
+
+    @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        char srcMin = srcValue.getChar(valueIndex);
+        char destMin = destValue.getChar(valueIndex);
+        if (srcMin != 0 && (srcMin < destMin || destMin == 0)) {
+            destValue.putInt(valueIndex, srcMin);
+        }
     }
 
     @Override

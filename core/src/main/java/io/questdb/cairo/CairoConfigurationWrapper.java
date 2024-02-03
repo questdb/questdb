@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.*;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
+import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.datetime.DateFormat;
@@ -343,6 +344,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getMaxFileNameLength() {
         return delegate.getMaxFileNameLength();
+    }
+
+    @Override
+    public int getMaxSqlRecompileAttempts() {
+        return delegate.getMaxSqlRecompileAttempts();
     }
 
     @Override
@@ -1057,5 +1063,10 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean mangleTableDirNames() {
         return delegate.mangleTableDirNames();
+    }
+
+    @Override
+    public void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
+        delegate.populateSettings(settings);
     }
 }
