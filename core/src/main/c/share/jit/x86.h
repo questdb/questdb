@@ -42,6 +42,7 @@ namespace questdb::x86 {
     read_mem(Compiler &c, data_type_t type, int32_t column_idx, const Gp &cols_ptr, const Gp &varlen_indexes_ptr, const Gp &input_index) {
         Gp column_address = c.newInt64("column_address");
         c.mov(column_address, ptr(cols_ptr, 8 * column_idx, 8));
+
         uint32_t header_size;
         switch (type) {
             case data_type_t::string_header:
@@ -53,48 +54,50 @@ namespace questdb::x86 {
             default:
                 header_size = 0;
         }
-        if (header_size != 0) {
-            Label l_nonzero = c.newNamedLabel("length_is_nonzero");
-            // For varlen columns, the JIT-compiled filter only supports length checking.
-            // This includes a NULL check because it's encoded as length -1 in the value
-            // header. We reach the header by looking up its offset in the varlen index.
-            Gp offset = c.newInt64("offset");
-            Gp length = c.newInt64("length");
-            Gp varlen_index_ptr = c.newInt64("varlen_index_ptr");
-            Gp next_input_index = c.newInt64("next_input_index");
-            auto offset_shift = type_shift(data_type_t::i64);
-            auto offset_size = 1 << offset_shift;
-            c.mov(varlen_index_ptr, ptr(varlen_indexes_ptr, 8 * column_idx, 8));
-            c.mov(offset, ptr(varlen_index_ptr, input_index, offset_shift, 0, offset_size));
-            // First try avoiding the data-dependent load of the header. Load the next
-            // entry from the varlen index and subtract from it header_size + the value of the
-            // current one. If that's non-zero, it corresponds to the actual length of the value.
-            c.mov(next_input_index, input_index);
-            c.inc(next_input_index);
-            c.mov(length, ptr(varlen_index_ptr, next_input_index, offset_shift, 0, offset_size));
-            c.sub(length, offset);
-            // length now contains the length of the value. It can be zero for two reasons:
-            // empty value or NULL value.
-            c.sub(length, header_size);
-            c.jnz(l_nonzero);
-            // If it's zero, we have to load the actual header value, which can be 0 or -1.
-            c.mov(length, ptr(column_address, offset, 0, 0, header_size));
-            c.bind(l_nonzero);
-            if (header_size == 4) {
-                return {length.r32(), data_type_t::i32, data_kind_t::kMemory};
+        if (header_size == 0) {
+            // Simple case: column has fixed-length data.
+            auto shift = type_shift(type);
+            auto type_size = 1 << shift;
+            if (type_size <= 8) {
+                return {Mem(column_address, input_index, shift, 0, type_size), type, data_kind_t::kMemory};
             } else {
-                return {length, data_type_t::i64, data_kind_t::kMemory};
+                Gp offset = c.newInt64("row_offset");
+                c.mov(offset, input_index);
+                c.sal(offset, shift);
+                return {Mem(column_address, offset, 0, 0, type_size), type, data_kind_t::kMemory};
             }
         }
-        auto shift = type_shift(type);
-        auto type_size = 1 << shift;
-        if (type_size <= 8) {
-            return {Mem(column_address, input_index, shift, 0, type_size), type, data_kind_t::kMemory};
+
+        // Difficult case: column has variable-length data. Load the value of its header
+        // (i.e., data length). This includes a NULL value, which is encoded as length -1.
+        // We reach the header by looking up its offset in the varlen index.
+        Label l_nonzero = c.newLabel();
+        Gp offset = c.newInt64("offset");
+        Gp length = c.newInt64("length");
+        Gp varlen_index_address = c.newInt64("varlen_index_address");
+        Gp next_input_index = c.newInt64("next_input_index");
+        c.mov(next_input_index, input_index);
+        c.inc(next_input_index);
+        auto offset_shift = type_shift(data_type_t::i64);
+        auto offset_size = 1 << offset_shift;
+        c.mov(varlen_index_address, ptr(varlen_indexes_ptr, 8 * column_idx, 8));
+        c.mov(offset, ptr(varlen_index_address, input_index, offset_shift, 0, offset_size));
+        // First try avoiding the data-dependent load of the header. Load the next entry
+        // from the varlen index and subtract from it header_size + the value of the
+        // current one. This is equal to the length of the value.
+        c.mov(length, ptr(varlen_index_address, next_input_index, offset_shift, 0, offset_size));
+        c.sub(length, offset);
+        c.sub(length, header_size);
+        // length now contains the length of the value. It can be zero for two reasons:
+        // empty value or NULL value.
+        c.jnz(l_nonzero);
+        // If it's zero, we have to load the actual header value, which can be 0 or -1.
+        c.mov(length, ptr(column_address, offset, 0, 0, header_size));
+        c.bind(l_nonzero);
+        if (header_size == 4) {
+            return {length.r32(), data_type_t::i32, data_kind_t::kMemory};
         } else {
-            Gp offset = c.newInt64("row_offset");
-            c.mov(offset, input_index);
-            c.sal(offset, shift);
-            return {Mem(column_address, offset, 0, 0, type_size), type, data_kind_t::kMemory};
+            return {length, data_type_t::i64, data_kind_t::kMemory};
         }
     }
 
