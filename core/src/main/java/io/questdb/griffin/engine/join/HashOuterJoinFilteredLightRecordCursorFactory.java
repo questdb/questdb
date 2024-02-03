@@ -140,7 +140,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
                 CairoConfiguration configuration
         ) {
             super(columnSplit);
-            joinKeyMap = MapFactory.createOrderedMap(configuration, joinColumnTypes, valueTypes);
+            joinKeyMap = MapFactory.createUnorderedMap(configuration, joinColumnTypes, valueTypes);
             slaveChain = new LongChain(configuration.getSqlHashJoinLightValuePageSize(), configuration.getSqlHashJoinLightValueMaxPages());
             record = new OuterJoinRecord(columnSplit, nullRecord);
             isOpen = true;

@@ -28,22 +28,30 @@ import io.questdb.cutlass.http.client.HttpClientCookieHandlerFactory;
 import io.questdb.network.*;
 
 public interface HttpClientConfiguration {
-    default int getBufferSize() {
-        return 64 * 1024;
-    }
-
     HttpClientCookieHandlerFactory getCookieHandlerFactory();
 
     default EpollFacade getEpollFacade() {
         return EpollFacadeImpl.INSTANCE;
     }
 
+    default int getInitialRequestBufferSize() {
+        return Math.min(64 * 1024, getMaximumRequestBufferSize());
+    }
+
     default KqueueFacade getKQueueFacade() {
         return KqueueFacadeImpl.INSTANCE;
     }
 
+    default int getMaximumRequestBufferSize() {
+        return Integer.MAX_VALUE;
+    }
+
     default NetworkFacade getNetworkFacade() {
         return NetworkFacadeImpl.INSTANCE;
+    }
+
+    default int getResponseBufferSize() {
+        return 64 * 1024;
     }
 
     default SelectFacade getSelectFacade() {

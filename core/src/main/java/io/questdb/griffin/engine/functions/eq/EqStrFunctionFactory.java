@@ -165,7 +165,7 @@ public class EqStrFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val(arg);
             if (negated) {
-                sink.val(" is not null ");
+                sink.val(" is not null");
             } else {
                 sink.val(" is null");
             }

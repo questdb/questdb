@@ -54,6 +54,7 @@ public final class Numbers {
     public static final int SIZE_1MB = 1024 * 1024;
     public static final long SIZE_1GB = 1024 * SIZE_1MB;
     public static final long SIZE_1TB = 1024L * SIZE_1GB;
+    public static final long MAX_SAFE_INT_POW_2 = 1L << 31;
     public static final double TOLERANCE = 1E-15d;
     public static final char[] hexDigits = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
     public final static int[] hexNumbers;

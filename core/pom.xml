@@ -206,6 +206,12 @@
                             <value>io.questdb.test.TestListener</value>
                         </property>
                     </properties>
+                    <environmentVariables>
+                        <!-- needed for testing Sender.fromEnv() -->
+                        <QDB_CLIENT_CONF>
+                            tcp::addr=localhost:9002;user=testUser1;token=UvuVb1USHGRRT08gEnwN2zGZrvM4MsLQ5brgF6SVkAw=;
+                        </QDB_CLIENT_CONF>
+                    </environmentVariables>
                 </configuration>
             </plugin>
         </plugins>
@@ -643,13 +649,7 @@
         <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>
-            <version>42.5.1</version>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.influxdb</groupId>
-            <artifactId>influxdb-java</artifactId>
-            <version>2.23</version>
+            <version>42.5.4</version>
             <scope>test</scope>
         </dependency>
     </dependencies>

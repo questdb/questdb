@@ -1537,7 +1537,7 @@ public class GroupByTest extends AbstractCairoTest {
                         "      keys: ref0\n" +
                         "        VirtualRecord\n" +
                         "          functions: [created]\n" +
-                        "            Async Group By workers: 1\n" +
+                        "            Async JIT Group By workers: 1\n" +
                         "              keys: [created]\n" +
                         "              filter: created!=null\n" +
                         "                DataFrame\n" +
@@ -1577,7 +1577,7 @@ public class GroupByTest extends AbstractCairoTest {
                         "      keys: ref0\n" +
                         "        VirtualRecord\n" +
                         "          functions: [dateadd('h',1,created)]\n" +
-                        "            Async Group By workers: 1\n" +
+                        "            Async JIT Group By workers: 1\n" +
                         "              keys: [created]\n" +
                         "              filter: created!=null\n" +
                         "                DataFrame\n" +
@@ -1615,7 +1615,7 @@ public class GroupByTest extends AbstractCairoTest {
                         "  keys: [created]\n" +
                         "    Distinct\n" +
                         "      keys: created\n" +
-                        "        Async Group By workers: 1\n" +
+                        "        Async JIT Group By workers: 1\n" +
                         "          keys: [created]\n" +
                         "          filter: created!=null\n" +
                         "            DataFrame\n" +

@@ -47,6 +47,7 @@ open module io.questdb {
     exports io.questdb.cutlass.line;
     exports io.questdb.cutlass.line.udp;
     exports io.questdb.cutlass.line.tcp;
+    exports io.questdb.cutlass.line.http;
     exports io.questdb.cutlass.pgwire;
     exports io.questdb.cutlass.text;
     exports io.questdb.cutlass.text.types;
@@ -111,6 +112,7 @@ open module io.questdb {
     exports io.questdb.client;
     exports io.questdb.std.bytes;
     exports io.questdb.std.histogram.org.HdrHistogram.packedarray;
+    exports io.questdb.client.impl;
 
     provides FunctionFactory with
             // query activity functions

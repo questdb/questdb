@@ -26,6 +26,7 @@ package io.questdb.cutlass.http;
 
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
@@ -77,8 +78,8 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
         }
 
         @Override
-        public boolean isAuthenticationRequired() {
-            return true;
+        public byte getRequiredAuthType() {
+            return SecurityContext.AUTH_TYPE_CREDENTIALS;
         }
     };
 
@@ -144,6 +145,11 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     }
 
     @Override
+    public byte getRequiredAuthType() {
+        return SecurityContext.AUTH_TYPE_NONE;
+    }
+
+    @Override
     public StaticContentProcessorConfiguration getStaticContentProcessorConfiguration() {
         return staticContentProcessorConfiguration;
     }
@@ -181,11 +187,6 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     @Override
     public int getWorkerCount() {
         return 2;
-    }
-
-    @Override
-    public boolean isHealthCheckAuthenticationRequired() {
-        return true;
     }
 
     @Override

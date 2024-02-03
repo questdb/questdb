@@ -1047,6 +1047,14 @@ public class MemoryCARWImplTest {
         }
     }
 
+    @Test
+    public void testTruncateDoesNotAllocate() {
+        try (MemoryARW mem = new MemoryCARWImpl(11, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+            mem.truncate();
+            Assert.assertEquals(0, mem.getPageAddress(0));
+        }
+    }
+
     private void testStrRnd(long offset, long pageSize) {
         Rnd rnd = new Rnd();
         int N = 1000;

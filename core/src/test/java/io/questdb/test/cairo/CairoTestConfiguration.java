@@ -95,6 +95,12 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
+    public int getMaxSqlRecompileAttempts() {
+        return overrides.getMaxSqlRecompileAttempts() > 0 ? overrides.getMaxSqlRecompileAttempts() : super.getMaxSqlRecompileAttempts();
+    }
+
+
+    @Override
     public int getCopyPoolCapacity() {
         return overrides.getCapacity() == -1 ? super.getCopyPoolCapacity() : overrides.getCapacity();
     }

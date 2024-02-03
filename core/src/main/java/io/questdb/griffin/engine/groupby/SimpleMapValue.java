@@ -28,6 +28,7 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Long256Util;
+import io.questdb.std.Numbers;
 
 public class SimpleMapValue implements MapValue {
 
@@ -195,8 +196,29 @@ public class SimpleMapValue implements MapValue {
     }
 
     @Override
+    public void maxInt(int index, int value) {
+        values[4 * index] = Math.max(value, values[4 * index]);
+    }
+
+    @Override
     public void maxLong(int index, long value) {
         values[4 * index] = Math.max(value, values[4 * index]);
+    }
+
+    @Override
+    public void minInt(int index, int value) {
+        if (value != Numbers.INT_NaN) {
+            final int current = (int) values[4 * index];
+            values[4 * index] = (current != Numbers.INT_NaN) ? Math.min(value, current) : value;
+        }
+    }
+
+    @Override
+    public void minLong(int index, long value) {
+        if (value != Numbers.LONG_NaN) {
+            final long current = values[4 * index];
+            values[4 * index] = (current != Numbers.LONG_NaN) ? Math.min(value, current) : value;
+        }
     }
 
     @Override
