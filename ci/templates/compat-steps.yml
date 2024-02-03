@@ -8,9 +8,9 @@ steps:
     condition: eq(variables['os'], 'Linux')
   - task: Cache@2
     inputs:
-      key: '"questdb_main" | "$(Agent.OS)" | "$(jdk)" | "maven"'
+      key: '"questdb_compat" | "$(Agent.OS)" | "$(jdk)" | "maven"'
       restoreKeys: |
-        "questdb_main" | "$(Agent.OS)" | "$(jdk)" | "maven"
+        "questdb_compat" | "$(Agent.OS)" | "$(jdk)" | "maven"
       path: $(MAVEN_CACHE_FOLDER)
 
   - task: Cache@2
@@ -42,8 +42,7 @@ steps:
         "compile $(javadoc_step) -DskipTests -P build-web-console$(javadoc_profile) $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
     condition:
-      or(eq(variables['SOURCE_CODE_CHANGED'], 'false'), eq(variables['testset'],
-      'none'))
+      eq(variables['SOURCE_CODE_CHANGED'], 'false')
   - task: Maven@3
     displayName: "Run tests"
     inputs:
@@ -53,45 +52,19 @@ steps:
       mavenOptions: "$(MAVEN_OPTS)"
       goals: "clean test"
       options:
-        "--batch-mode --quiet -Dtest.include=$(includeTests)
-        -Dtest.exclude=$(excludeTests)
-        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf 
+        "--batch-mode --quiet -Dtest.include=**/compat/**,**/cliutil/**
+        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf
         -DfailIfNoTests=false
         -Dsurefire.failIfNoSpecifiedTests=false
          $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
     timeoutInMinutes: 55
     condition: |
-      and(
-        eq(variables['testset'], 'all'),
-        eq(variables['SOURCE_CODE_CHANGED'], 'true')
-      )
-  - task: Maven@3
-    displayName: "Run tests with Coverage"
-    inputs:
-      mavenVersionOption: "$(MAVEN_VERSION_OPTION)"
-      mavenDirectory: '$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)'
-      mavenPomFile: "core/pom.xml"
-      mavenOptions: "$(MAVEN_OPTS)"
-      goals: "test"
-      options:
-        "--batch-mode --quiet -Dtest.include=$(includeTests)
-        -Dtest.exclude=$(excludeTests)
-        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf 
-        $(MAVEN_RUN_OPTS)"
-      jdkVersionOption: $(jdk)
-      codeCoverageToolOption: "$(CODE_COVERAGE_TOOL_OPTION)"
-      codeCoverageClassFilter: "$(COVERAGE_DIFF)"
-    timeoutInMinutes: 55
-    condition: |
-      and(
-        eq(variables['testset'], 'coverage'),
-        eq(variables['SOURCE_CODE_CHANGED'], 'true')
-      )
+      eq(variables['SOURCE_CODE_CHANGED'], 'true')
   - bash: |
       find . -type f -name 'hs_*.log' -exec sh -c 'x="{}"; mv "$x" "$(ARCHIVED_CRASH_LOG)"' \;
     displayName: "Tests failed -- rename crash dump"
-    workingDirectory: $(Build.SourcesDirectory)/core/
+    workingDirectory: $(Build.SourcesDirectory)/compat/
     condition: failed()
   - task: PublishBuildArtifacts@1
     displayName: "Tests failed -- Upload crash logs"
@@ -113,22 +86,3 @@ steps:
     inputs:
       pathToPublish: $(ARCHIVED_LOGS)
       artifactName: MavenFailedTestsLogs
-  - bash: |
-      mv $(Build.SourcesDirectory)/core/CCReport43F6D5EF/jacoco.exec $(Build.SourcesDirectory)/core/CCReport43F6D5EF/jacoco-$(System.JobId).exec
-    displayName: "Rename jacoco cover report"
-    workingDirectory: $(Build.SourcesDirectory)/core/
-    condition: |
-      and(and(
-        eq(variables['testset'], 'coverage'),
-        eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo')
-      ), succeeded())
-  - task: PublishBuildArtifacts@1
-    displayName: "Publish jacoco report"
-    condition: |
-      and(and(
-        eq(variables['testset'], 'coverage'),
-        eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo')
-      ), succeeded())
-    inputs:
-      pathToPublish: "$(Build.SourcesDirectory)/core/CCReport43F6D5EF/jacoco-$(system.JobId).exec"
-      artifactName: jacoco-coverage
