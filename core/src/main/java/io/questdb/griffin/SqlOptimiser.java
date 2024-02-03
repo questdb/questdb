@@ -4673,13 +4673,15 @@ public class SqlOptimiser implements Mutable {
         boolean translationIsRedundant = checkIfTranslatingModelIsRedundant(useInnerModel, useGroupByModel, useWindowModel, forceTranslatingModel, overrideTranslation, translatingModel);
         // if it wasn't redundant, we might be able to make it redundant
         // but only if its a simple select
+        // Try to merge the fields into the inner model or group by model.
+        // Does not handle multiple aliases, aliases in args etc.
         if (useGroupByModel && sampleBy == null && !translationIsRedundant && !model.containsJoin() && !useWindowModel && SqlUtil.isPlainSelect(model.getNestedModel())) {
             QueryModel selectedModel = useInnerModel ? innerVirtualModel : groupByModel;
             ObjList<QueryColumn> translationColumns = translatingModel.getColumns();
             boolean appears = false;
             for (int i = 0; i < translationColumns.size(); i++) {
                 QueryColumn col = translationColumns.getQuick(i);
-                appears ^= aliasAppearsInColsAndColArgs(selectedModel, col.getAlias());
+                appears |= aliasAppearsInColsAndColArgs(selectedModel, col.getAlias());
             }
             if (!appears) {
                 mergeInnerVirtualModel(translatingModel, selectedModel);
