@@ -193,4 +193,58 @@ public class DistinctSymbolTest extends AbstractCairoTest {
                 true
         );
     }
+
+    @Test
+    public void testOrderByIsAppliedAfterDistinctSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab (x symbol index)");
+
+            assertPlan(
+                    "select DISTINCT x from tab order by x DESC",
+                    "Sort light\n" +
+                            "  keys: [x desc]\n" +
+                            "    DistinctSymbol\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+
+            assertPlan(
+                    "select DISTINCT x from tab order by x ASC",
+                    "Sort light\n" +
+                            "  keys: [x]\n" +
+                            "    DistinctSymbol\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+        });
+    }
+
+    @Test
+    public void testOrderByIsAppliedAfterDistinctSymbolNonIndexed() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab (x symbol)");
+
+            assertPlan(
+                    "select DISTINCT x from tab order by x DESC",
+                    "Sort light\n" +
+                            "  keys: [x desc]\n" +
+                            "    DistinctSymbol\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+
+            assertPlan(
+                    "select DISTINCT x from tab order by x ASC",
+                    "Sort light\n" +
+                            "  keys: [x]\n" +
+                            "    DistinctSymbol\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+        });
+    }
 }

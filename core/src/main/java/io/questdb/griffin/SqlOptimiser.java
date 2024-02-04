@@ -2877,7 +2877,7 @@ public class SqlOptimiser implements Mutable {
         for (int i = 0, k = jm.size(); i < k; i++) {
             QueryModel qm = jm.getQuick(i).getNestedModel();
             if (qm != null) {
-                if (model.getGroupBy().size() == 0 && model.getSampleBy() == null) { // order by should not copy through group by and sample by
+                if (canPushDownOrderByAdvice(model, orderByAdvice)) {
                     qm.setOrderByAdviceMnemonic(orderByMnemonic);
                     qm.copyOrderByAdvice(orderByAdvice);
                     qm.copyOrderByDirectionAdvice(orderByDirectionAdvice);
@@ -2893,6 +2893,31 @@ public class SqlOptimiser implements Mutable {
             union.setOrderByAdviceMnemonic(orderByMnemonic);
             optimiseOrderBy(union, orderByMnemonic);
         }
+    }
+
+    private boolean canPushDownOrderByAdvice(QueryModel model, ObjList<ExpressionNode> orderByAdvice) {
+        if (model.getGroupBy().size() > 0) {
+            return false;
+        }
+        if (model.getSampleBy() != null) {
+            // The ORDER BY advice cannot be pushed down through SAMPLE BY, because SAMPLE BY
+            // requires designated timestamps to be sorted by their natural (ascending) order.
+            return false;
+        }
+        if (model.getSelectModelType() == QueryModel.SELECT_MODEL_DISTINCT) {
+            // According to the logical order, the ORDER BY clause should always be applied after DISTINCT.
+            // However, here, we specifically address the case where the ORDER BY advice contains only
+            // the designated timestamp. This case is handled by the DistinctTimeSeriesRecordCursorFactory,
+            // which does not expose information about following the advice to the factories relying on it
+            // (so it's up to them to handle the ORDER BY clause). It only exposes the scanning direction,
+            // controlled by the advice. If the scanning direction aligns with the ORDER BY clause and the
+            // clause includes only the designated timestamp, the factories skip unnecessary sorting.
+            CharSequence timestampAlias = findTimestamp(model);
+            return timestampAlias != null
+                    && orderByAdvice.size() == 1
+                    && Chars.equalsIgnoreCase(orderByAdvice.getQuick(0).token, timestampAlias);
+        }
+        return true;
     }
 
     private void parseFunctionAndEnumerateColumns(

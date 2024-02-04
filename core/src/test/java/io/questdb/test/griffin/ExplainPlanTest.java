@@ -795,20 +795,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDistinctMultipleColumnsAndOrderByTsWithLimit() throws Exception {
-        assertPlan(
-                "create table di (x int, y long, ts timestamp) timestamp(ts)",
-                "select distinct ts, x, y from di order by 1 desc limit 10",
-                "Limit lo: 10\n" +
-                        "    DistinctTimeSeries\n" +
-                        "      keys: ts,x,y\n" +
-                        "        DataFrame\n" +
-                        "            Row backward scan\n" +
-                        "            Frame backward scan on: di\n"
-        );
-    }
-
-    @Test
     public void testDistinctTsWithLimit3() throws Exception {
         assertPlan(
                 "create table di (x int, y long, ts timestamp) timestamp(ts)",
@@ -918,6 +904,34 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "                DataFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: di\n"
+        );
+    }
+
+    @Test
+    public void testDistinctMultipleColumnsAndOrderByTsDescWithLimit() throws Exception {
+        assertPlan(
+                "create table di (x int, y long, ts timestamp) timestamp(ts)",
+                "select distinct ts, x, y from di order by 1 desc limit 10",
+                "Limit lo: 10\n" +
+                        "    DistinctTimeSeries\n" +
+                        "      keys: ts,x,y\n" +
+                        "        DataFrame\n" +
+                        "            Row backward scan\n" +
+                        "            Frame backward scan on: di\n"
+        );
+    }
+
+    @Test
+    public void testDistinctMultipleColumnsAndOrderByTsAscWithLimit() throws Exception {
+        assertPlan(
+                "create table di (x int, y long, ts timestamp) timestamp(ts)",
+                "select distinct ts, x, y from di order by 1 asc limit 10",
+                "Limit lo: 10\n" +
+                        "    DistinctTimeSeries\n" +
+                        "      keys: ts,x,y\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n"
         );
     }
 

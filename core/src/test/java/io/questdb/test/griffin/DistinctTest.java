@@ -154,4 +154,47 @@ public class DistinctTest extends AbstractCairoTest {
                 false
         );
     }
+
+    @Test
+    public void testOrderByIsAppliedAfterDistinct() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(
+                    "create table tab (" +
+                            "x0 boolean, " +
+                            "x1 byte, " +
+                            "x2 geohash(12b), " +
+                            "x3 char, " +
+                            "x4 long, " +
+                            "x5 timestamp, " +
+                            "x6 float, " +
+                            "x7 double, " +
+                            "x8 string, " +
+                            "x9 date)"
+            );
+
+            for (int i = 0; i < 10; i++) {
+                assertPlan(
+                        "select DISTINCT x" + i + " from tab order by x" + i + " DESC",
+                        "Sort light\n" +
+                                "  keys: [x" + i + " desc]\n" +
+                                "    Distinct\n" +
+                                "      keys: x" + i + "\n" +
+                                "        DataFrame\n" +
+                                "            Row forward scan\n" +
+                                "            Frame forward scan on: tab\n"
+                );
+
+                assertPlan(
+                        "select DISTINCT x" + i + " from tab order by x" + i + " ASC",
+                        "Sort light\n" +
+                                "  keys: [x" + i + "]\n" +
+                                "    Distinct\n" +
+                                "      keys: x" + i + "\n" +
+                                "        DataFrame\n" +
+                                "            Row forward scan\n" +
+                                "            Frame forward scan on: tab\n"
+                );
+            }
+        });
+    }
 }
