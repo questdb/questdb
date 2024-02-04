@@ -108,15 +108,11 @@ questdb stop  // To stop questdb
 - [Rust](https://docs.rs/crate/questdb-rs/latest)
 
 ## QuestDB अन्य ओपन सोर्स TSDBs से कैसे तुलना करता है
-
-[यह](https://questdb.io/blog/2021/07/05/comparing-questdb-timescaledb-influxdb/) आलेख कार्यक्षमता, परिपक्वता और प्रदर्शन
-के
-बारे में क्वेस्टडीबी की तुलना अन्य ओपन सोर्स टाइम सीरीज़ डेटाबेस से करता है
-
-32 सीपीयू और 64 जीबी रैम पर 6 से 16 कर्मचारियों के साथ `केवल सीपीयू` उपयोग के मामले का उपयोग
-करते हुए
-उच्च-कार्डिनैलिटी [टाइम सीरीज़ बेंचमार्क सूट](https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/)
-परिणाम यहां दिए गए हैं:
+[इस लेख](https://questdb.io/blog/2021/07/05/comparing-questdb-timescaledb-influxdb/) 
+में क्वेस्टडीबी को अन्य ओपन सोर्स टाइम सीरीज डेटाबेस के साथ तुलना किया जाता है जो कार्यक्षमता, परिपक्वता और प्रदर्शन क्षेत्र में है।
+यहाँ 32 सीपीयूज और 64जीबी रैम के साथ 6 से 16 कर्मचारियों के साथ सीपीयू केवल यूज केस का उपयोग करके हाई-कार्डिनैलिटी 
+[टाइम सीरीज बेंचमार्क स्यूट](https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/) 
+के परिणाम हैं:
 
 <div align="center">
     <img alt="A chart comparing the ingestion rate of QuestDB, InfluxDB and TimescaleDB." src=".github/readme-benchmark.png" width="600"/>
