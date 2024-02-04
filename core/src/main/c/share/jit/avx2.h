@@ -157,17 +157,19 @@ namespace questdb::avx2 {
         Ymm length_data = c.newYmm();
         Ymm auxiliary_data = c.newYmm();
         Gp auxiliary_scalar = c.newInt64("auxiliary_scalar");
-
-        // Load input_index + 1 into auxiliary_scalar
-        c.mov(auxiliary_scalar, input_index);
-        c.inc(auxiliary_scalar);
-
         auto offset_shift = type_shift(data_type_t::i64);
         auto offset_size = 1 << offset_shift;
+
         // Load data from the varlen index at input_index to index_data
         c.vmovdqu(index_data, ymmword_ptr(varlen_index_address, input_index, offset_shift, 0));
-        // Load data from the varlen index at input_index + 1 to auxiliary_data
-        c.vmovdqu(auxiliary_data, ymmword_ptr(varlen_index_address, auxiliary_scalar, offset_shift, 0));
+
+        // Load data from the varlen index at input_index + 1 to auxiliary_data.
+        // Achieve it by reusing the three qwords already loaded into index_data.
+        c.mov(auxiliary_scalar, qword_ptr(varlen_index_address, input_index, offset_shift, 32));
+        c.vmovdqa(auxiliary_data, index_data);
+        c.pinsrq(auxiliary_data.xmm(), auxiliary_scalar, 0);
+        c.vpermq(auxiliary_data, auxiliary_data, 0b00111001);
+
         // Store the difference between data at input_index + 1 and input_index to length_data
         c.vpsubq(length_data, auxiliary_data, index_data);
 
@@ -201,14 +203,14 @@ namespace questdb::avx2 {
         Gp header_2 = c.newInt64("header_2");
         Gp header_3 = c.newInt64("header_3");
 
-        c.vmovq(header_3, index_data.xmm());
+        c.vmovq(header_0, index_data.xmm());
         // Rotate right the qwords in index_data
-        c.vpermq(index_data, index_data, 0b00111001);
-        c.vmovq(header_2, index_data.xmm());
         c.vpermq(index_data, index_data, 0b00111001);
         c.vmovq(header_1, index_data.xmm());
         c.vpermq(index_data, index_data, 0b00111001);
-        c.vmovq(header_0, index_data.xmm());
+        c.vmovq(header_2, index_data.xmm());
+        c.vpermq(index_data, index_data, 0b00111001);
+        c.vmovq(header_3, index_data.xmm());
 
         // Now perform all the data-dependent loads. Hopefully there'll be some
         // parallelism because the four loads are independent from each other.
@@ -225,10 +227,10 @@ namespace questdb::avx2 {
         }
 
         // Combine the four header values into length_data
-        c.pinsrq(length_data.xmm(), header_3, 0);
-        c.pinsrq(length_data.xmm(), header_2, 1);
-        c.pinsrq(auxiliary_data.xmm(), header_1, 0);
-        c.pinsrq(auxiliary_data.xmm(), header_0, 1);
+        c.pinsrq(length_data.xmm(), header_0, 0);
+        c.pinsrq(length_data.xmm(), header_1, 1);
+        c.pinsrq(auxiliary_data.xmm(), header_2, 0);
+        c.pinsrq(auxiliary_data.xmm(), header_3, 1);
         c.vinserti128(length_data, length_data, auxiliary_data.xmm(), 1);
 
         c.bind(l_nonzero);
