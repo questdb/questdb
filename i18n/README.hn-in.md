@@ -115,7 +115,12 @@ questdb stop  // To stop questdb
 के परिणाम हैं:
 
 <div align="center">
-    <img alt="A chart comparing the ingestion rate of QuestDB, InfluxDB and TimescaleDB." src=".github/readme-benchmark.png" width="600"/>
+  <a href="https://questdb.io/time-series-benchmark-suite/">
+    <img
+      alt="A chart comparing the maximum throughput of QuestDB, ClickHouse, TimescaleDB and InfluxDB."
+      src="../.github/readme-benchmark.png"
+      width="600"
+    />
   </a>
 </div>
 
