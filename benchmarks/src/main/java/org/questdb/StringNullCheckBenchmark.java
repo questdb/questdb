@@ -89,7 +89,7 @@ public class StringNullCheckBenchmark {
                             null
                     );
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
-                compiler.compile("drop table x", sqlExecutionContext);
+                compiler.compile("drop table if exists x", sqlExecutionContext);
                 compiler.compile("create table x as (select" +
                         " rnd_str(100, 70, 140, " + a_nullFreq + ") string_value," +
                         " timestamp_sequence(to_timestamp('2024-02-04', 'yyyy-MM-dd'), 100000L) ts" +
