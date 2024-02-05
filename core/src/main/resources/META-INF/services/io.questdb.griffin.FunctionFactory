@@ -195,7 +195,9 @@ io.questdb.griffin.engine.functions.rnd.RndIPv4FunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndIPv4CCFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndIntCCFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndStrFunctionFactory
-io.questdb.griffin.engine.functions.rnd.RndStringRndListFunctionFactory
+io.questdb.griffin.engine.functions.rnd.RndStrRndListFunctionFactory
+io.questdb.griffin.engine.functions.rnd.RndVarcharFunctionFactory
+io.questdb.griffin.engine.functions.rnd.RndVarcharListFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndDoubleCCFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndDoubleFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndFloatCFunctionFactory

@@ -112,7 +112,7 @@ public class PrometheusMetricsProcessor implements HttpRequestProcessor {
      * State for processing a single request across multiple response chunks.
      * Each object is used for the lifetime of one request, then returned the pool.
      */
-    private static class RequestState implements QuietCloseable, Mutable {
+    public static class RequestState implements QuietCloseable, Mutable {
         /**
          * Metrics serialization destination, sent into one or more chunks later.
          */

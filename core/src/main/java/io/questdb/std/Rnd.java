@@ -46,7 +46,7 @@ public class Rnd {
     public static void main(String[] args) {
         Rnd rnd = new Rnd();
         Utf8StringSink utf8sink = new Utf8StringSink();
-        rnd.nextUtf8Str(255, utf8sink);
+        rnd.nextUtf8Str(512, utf8sink);
 
         StringSink utf16sink = new StringSink();
         if (!Utf8s.utf8ToUtf16(utf8sink, utf16sink)) {
@@ -191,9 +191,10 @@ public class Rnd {
     }
 
     // https://stackoverflow.com/questions/1319022/really-good-bad-utf-8-example-test-data
-    public void nextUtf8Str(int len, Utf8StringSink sink) {
+    public void nextUtf8Str(int len, Utf8Sink sink) {
         for (int i = 0; i < len; i++) {
-            int byteCount = Math.max(1, nextInt(4));
+            // 5 is the exclusive upper limit for up to how many UTF8 bytes per character we generate
+            int byteCount = Math.max(1, nextInt(5));
             switch (byteCount) {
                 case 1:
                     sink.put((byte) ((32 + nextInt(128 - 32)) & 0x7f));
@@ -208,9 +209,10 @@ public class Rnd {
                     while (true) {
                         // first byte of 3-byte character, it has to start with 1110xxxx
                         final byte b1 = nextUtf8Byte(0xf0, 0xe0);
-                        final byte b2= nextUtf8Byte(0xc0, 0x80);
-                        final byte b3 = nextUtf8Byte(0xc0, 0x80);
-                        final char c = (char) (b1 << 12 ^ b2 << 6 ^ b3 ^ -123008);
+                        final byte b2 = nextUtf8ContinuationByte();
+                        final byte b3 = nextUtf8ContinuationByte();
+                        final char c = Utf8s.utf8ToChar(b1, b2, b3);
+
                         // we might end up with surrogate, which we have to re-generate
                         if (Character.isSurrogate(c)) {
                             continue;
@@ -221,11 +223,17 @@ public class Rnd {
                     break;
                 case 4:
                     // first byte of 4-byte character, it has to start with 11110xxx
-                    sink.put(nextUtf8Byte(0xf8, 0xf0));
-                    // remaining bytes start with continuation 10xxxxxx
-                    nextUtf8ContByte(sink);
-                    nextUtf8ContByte(sink);
-                    nextUtf8ContByte(sink);
+                    while (true) {
+                        final byte b1 = nextUtf8Byte(0xf8, 0xf0);
+                        // remaining bytes start with continuation 10xxxxxx
+                        final byte b2 = nextUtf8ContinuationByte();
+                        final byte b3 = nextUtf8ContinuationByte();
+                        final byte b4 = nextUtf8ContinuationByte();
+                        if (Character.isSupplementaryCodePoint(Utf8s.getUtf8Codepoint(b1, b2, b3, b4))) {
+                            sink.put(b1).put(b2).put(b3).put(b4);
+                            break;
+                        }
+                    }
                     break;
                 default:
                     assert false;
@@ -265,6 +273,10 @@ public class Rnd {
     }
 
     private void nextUtf8ContByte(Utf8Sink sink) {
-        sink.put(nextUtf8Byte(0xc0, 0x80));
+        sink.put(nextUtf8ContinuationByte());
+    }
+
+    private byte nextUtf8ContinuationByte() {
+        return nextUtf8Byte(0xc0, 0x80);
     }
 }

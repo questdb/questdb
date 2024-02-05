@@ -37,7 +37,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 
-public class RndStringRndListFunctionFactory implements FunctionFactory {
+public class RndStrRndListFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "rnd_str(iiii)";

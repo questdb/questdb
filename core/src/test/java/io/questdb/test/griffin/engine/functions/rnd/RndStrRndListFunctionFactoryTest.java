@@ -26,10 +26,10 @@ package io.questdb.test.griffin.engine.functions.rnd;
 
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
-import io.questdb.griffin.engine.functions.rnd.RndStringRndListFunctionFactory;
+import io.questdb.griffin.engine.functions.rnd.RndStrRndListFunctionFactory;
 import org.junit.Test;
 
-public class RndStringRndListFunctionFactoryTest extends AbstractFunctionFactoryTest {
+public class RndStrRndListFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testAllNulls() throws Exception {
@@ -236,6 +236,6 @@ public class RndStringRndListFunctionFactoryTest extends AbstractFunctionFactory
 
     @Override
     protected FunctionFactory getFunctionFactory() {
-        return new RndStringRndListFunctionFactory();
+        return new RndStrRndListFunctionFactory();
     }
 }

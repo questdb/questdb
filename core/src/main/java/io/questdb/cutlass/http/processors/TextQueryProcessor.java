@@ -275,7 +275,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
 
     private static void putStringOrNull(HttpChunkedResponse r, CharSequence str) {
         if (str != null) {
-            r.putQuoted(str);
+            r.putQuote().escapeJsonStr(str).putQuote();
         }
     }
 
@@ -331,7 +331,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                             if (state.columnIndex > 0) {
                                 response.putAscii(state.delimiter);
                             }
-                            response.putQuoted(state.metadata.getColumnName(state.columnIndex));
+                            response.putQuote().escapeJsonStr(state.metadata.getColumnName(state.columnIndex)).putQuote();
                             state.columnIndex++;
                             response.bookmark();
                         }
