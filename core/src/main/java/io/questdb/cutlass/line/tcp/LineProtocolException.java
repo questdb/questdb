@@ -31,10 +31,10 @@ import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.Nullable;
 
-public class IlpException extends CairoException {
-    private static final ThreadLocal<IlpException> tlException = new ThreadLocal<>(IlpException::new);
+public class LineProtocolException extends CairoException {
+    private static final ThreadLocal<LineProtocolException> tlException = new ThreadLocal<>(LineProtocolException::new);
 
-    public static IlpException boundsError(long entityValue, int colType, CharSequence tableNameUtf16, CharSequence columnName) {
+    public static LineProtocolException boundsError(long entityValue, int colType, CharSequence tableNameUtf16, CharSequence columnName) {
         return instance()
                 .put("table: ").put(tableNameUtf16)
                 .put(", column: ").put(columnName)
@@ -42,7 +42,7 @@ public class IlpException extends CairoException {
                 .put(" is out bounds of column type: ").put(ColumnType.nameOf(colType));
     }
 
-    public static IlpException boundsError(long entityValue, int colType, CharSequence tableNameUtf16, int columnIndex) {
+    public static LineProtocolException boundsError(long entityValue, int colType, CharSequence tableNameUtf16, int columnIndex) {
         return instance()
                 .put("table: ").put(tableNameUtf16)
                 .put(", column: ").put(columnIndex)
@@ -50,8 +50,8 @@ public class IlpException extends CairoException {
                 .put(" is out bounds of column type: ").put(ColumnType.nameOf(colType));
     }
 
-    public static IlpException castError(String tableNameUtf16, String ilpType, int colType, DirectUtf8Sequence columnName) {
-        IlpException instance = instance();
+    public static LineProtocolException castError(String tableNameUtf16, String ilpType, int colType, DirectUtf8Sequence columnName) {
+        LineProtocolException instance = instance();
         instance
                 .put("table: ").put(tableNameUtf16)
                 .put(", column: ").put(columnName)
@@ -63,43 +63,43 @@ public class IlpException extends CairoException {
         return instance;
     }
 
-    public static IlpException invalidColNameError(CharSequence columnName, String tableNameUtf16) {
+    public static LineProtocolException invalidColNameError(CharSequence columnName, String tableNameUtf16) {
         return instance()
                 .put("table: ").put(tableNameUtf16)
                 .put("; invalid column name: ").put(columnName);
     }
 
-    public static IlpException newColumnsNotAllowed(String columnName, String tableNameUtf16) {
+    public static LineProtocolException newColumnsNotAllowed(String columnName, String tableNameUtf16) {
         return instance()
                 .put("table: ").put(tableNameUtf16)
                 .put(", column: ").put(columnName)
                 .put(" does not exist, creating new columns is disabled");
     }
 
-    public IlpException put(@Nullable Utf8Sequence us) {
+    public LineProtocolException put(@Nullable Utf8Sequence us) {
         message.put(us);
         return this;
     }
 
-    public IlpException put(@Nullable CharSequence cs) {
+    public LineProtocolException put(@Nullable CharSequence cs) {
         message.put(cs);
         return this;
     }
 
-    public IlpException put(long value) {
+    public LineProtocolException put(long value) {
         message.put(value);
         return this;
     }
 
-    public IlpException put(char c) {
+    public LineProtocolException put(char c) {
         message.put(c);
         return this;
     }
 
-    private static IlpException instance() {
-        IlpException ex = tlException.get();
+    private static LineProtocolException instance() {
+        LineProtocolException ex = tlException.get();
         // This is to have correct stack trace in local debugging with -ea option
-        assert (ex = new IlpException()) != null;
+        assert (ex = new LineProtocolException()) != null;
         ex.clear(NON_CRITICAL);
         return ex;
     }

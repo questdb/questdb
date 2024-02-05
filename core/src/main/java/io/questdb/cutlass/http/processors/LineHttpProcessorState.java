@@ -44,9 +44,9 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
     private static final AtomicLong ERROR_COUNT = new AtomicLong();
     private static final String ERROR_ID = generateErrorId();
     private static final Log LOG = LogFactory.getLog(LineHttpProcessorState.class);
-    private final IlpWalAppender appender;
+    private final LineWalAppender appender;
     private final StringSink error = new StringSink();
-    private final IlpTudCache ilpTudCache;
+    private final LineHttpTudCache ilpTudCache;
     private final int maxResponseErrorMessageLength;
     private final LineTcpParser parser;
     private final int recvBufSize;
@@ -74,7 +74,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         this.recvBufEnd = this.recvBufPos + recvBufSize;
         this.parser = new LineTcpParser(configuration.isStringAsTagSupported(), configuration.isSymbolAsFieldSupported());
         this.parser.of(buffer);
-        this.appender = new IlpWalAppender(
+        this.appender = new LineWalAppender(
                 configuration.autoCreateNewColumns(),
                 configuration.isStringToCharCastAllowed(),
                 configuration.getTimestampAdapter(),
@@ -82,7 +82,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
                 configuration.getMicrosecondClock()
         );
         DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(configuration.getDefaultColumnTypeForFloat(), configuration.getDefaultColumnTypeForInteger());
-        this.ilpTudCache = new IlpTudCache(
+        this.ilpTudCache = new LineHttpTudCache(
                 engine,
                 configuration.autoCreateNewColumns(),
                 configuration.autoCreateNewTables(),
@@ -204,12 +204,12 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         return UUID.randomUUID().toString().substring(24, 36);
     }
 
-    private Status appendMeasurement() throws IlpTudCache.TableCreateException {
+    private Status appendMeasurement() throws LineHttpTudCache.TableCreateException {
         WalTableUpdateDetails tud = this.ilpTudCache.getTableUpdateDetails(securityContext, parser, symbolCachePool);
         try {
             appender.appendToWal(securityContext, parser, tud);
             return Status.OK;
-        } catch (IlpException e) {
+        } catch (LineProtocolException e) {
             errorLine = ++line;
             int errorStartPos = error.length();
             error.put("\nerror in line ").put(errorLine).put(": ");
@@ -318,7 +318,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         return Status.PARSE_ERROR;
     }
 
-    private Status handleLineError(LineTcpParser parser, IlpTudCache.TableCreateException ex) {
+    private Status handleLineError(LineTcpParser parser, LineHttpTudCache.TableCreateException ex) {
         errorLine = ++line;
         int errorPos = error.length();
         error.put("\nerror in line ").put(errorLine);
@@ -413,7 +413,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
                         return Status.NEEDS_READ;
                     }
                 }
-            } catch (IlpTudCache.TableCreateException parseException) {
+            } catch (LineHttpTudCache.TableCreateException parseException) {
                 return handleLineError(parser, parseException);
             } catch (CairoException parseException) {
                 return handleLineError(parser, parseException);
