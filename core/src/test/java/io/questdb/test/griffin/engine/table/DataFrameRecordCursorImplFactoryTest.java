@@ -258,7 +258,7 @@ public class DataFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                             true
                     );
 
-                    Assert.assertTrue(factory.supportPageFrameCursor());
+                    Assert.assertTrue(factory.supportsPageFrameCursor());
 
                     long ts = (rowCount + 1) * increment;
                     int rowIndex = rowCount - 1;
@@ -368,7 +368,7 @@ public class DataFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                             true
                     );
 
-                    Assert.assertTrue(factory.supportPageFrameCursor());
+                    Assert.assertTrue(factory.supportsPageFrameCursor());
 
                     rnd.reset();
                     long ts = 0;

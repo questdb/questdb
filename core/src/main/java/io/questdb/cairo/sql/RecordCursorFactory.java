@@ -90,12 +90,17 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         return false;
     }
 
-    // Factories, such as union all do not conform to the assumption
-    // that key read from symbol column map to symbol values unambiguously.
-    // In that if you read key 1 at row 10, it might map to 'AAA' and if you read
-    // key 1 at row 100 it might map to 'BBB'.
-    // Such factories cannot be used in multi-threaded execution and cannot be tested
-    // via `testSymbolAPI()` call.
+    /**
+     * Factories, such as union all do not conform to the assumption
+     * that key read from symbol column map to symbol values unambiguously.
+     * In that if you read key 1 at row 10, it might map to 'AAA' and if you read
+     * key 1 at row 100 it might map to 'BBB'.
+     * Such factories cannot be used in multi-threaded execution and cannot be tested
+     * via `testSymbolAPI()` call.
+     *
+     * @return true if the factory uses fragmented symbol tables and can't be used
+     * in multi-threaded execution
+     */
     default boolean fragmentedSymbolTables() {
         return false;
     }
@@ -105,7 +110,8 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     }
 
     /**
-     * Method is necessary for cases where row cursor uses index from table reader while record cursor can reorder columns (e.g. DataFrameRecordCursorFactory)
+     * Method is necessary for cases where row cursor uses index from table reader while record cursor
+     * can reorder columns (e.g. DataFrameRecordCursorFactory)
      *
      * @param idx idx of column
      * @return name of base column (no remapping)
@@ -166,9 +172,14 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         return null;
     }
 
+    default TimeFrameRecordCursor getTimeFrameCursor(SqlExecutionContext executionContext) throws SqlException {
+        return null;
+    }
+
     /**
      * Returns true if this factory handles limit M , N clause already and false otherwise .
-     * If true then separate limit cursor factory is not needed (and could actually cause problem by re-applying limit logic).
+     * If true then separate limit cursor factory is not needed (and could actually cause problem
+     * by re-applying limit logic).
      */
     default boolean implementsLimit() {
         return false;
@@ -179,7 +190,17 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     default void revertFromSampleByIndexDataFrameCursorFactory() {
     }
 
-    default boolean supportPageFrameCursor() {
+    default boolean supportsPageFrameCursor() {
+        return false;
+    }
+
+    /**
+     * Time frames are supported only for full table scan cursors, i.e. "x" queries.
+     *
+     * @return true if the factory supports time frames
+     * and {@link #getTimeFrameCursor(SqlExecutionContext)} can be safely called.
+     */
+    default boolean supportsTimeFrameCursor() {
         return false;
     }
 
@@ -200,7 +221,7 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     }
 
     /**
-     * Returns true if the factory uses a {@link io.questdb.jit.CompiledFilter}.
+     * @return true if the factory uses a {@link io.questdb.jit.CompiledFilter}.
      */
     default boolean usesCompiledFilter() {
         return false;

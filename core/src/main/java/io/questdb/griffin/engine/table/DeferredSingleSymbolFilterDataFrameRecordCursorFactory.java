@@ -113,7 +113,7 @@ public class DeferredSingleSymbolFilterDataFrameRecordCursorFactory extends Data
     }
 
     @Override
-    public boolean supportPageFrameCursor() {
+    public boolean supportsPageFrameCursor() {
         return convertedToFrame;
     }
 

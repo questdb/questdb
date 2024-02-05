@@ -24,14 +24,9 @@
 
 package io.questdb.cairo.sql;
 
-import io.questdb.cairo.BitmapIndexReader;
+import io.questdb.std.Rows;
 
-/**
- * Interface for retrieving information about a data frame.
- */
-public interface DataFrame {
-
-    BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction);
+public interface TimeFrame {
 
     /**
      * @return numeric index of the current partition
@@ -39,12 +34,34 @@ public interface DataFrame {
     int getPartitionIndex();
 
     /**
-     * @return upper boundary for last row of a data frame, i.e. last row + 1
+     * @return timestamp of the current partition
+     */
+    long getPartitionTimestamp();
+
+    /**
+     * Make sure to call {@link TimeFrameRecordCursor#open()} prior to this method.
+     * <p>
+     * Note: it's allowed to jump with the {@link TimeFrameRecordCursor} record
+     * to any row id in the [rowLo, rowHi) range. {@link Rows#toRowID(int, long)}
+     * method should be used to obtain final row id.
+     *
+     * @return upper boundary for the last row of a data frame, i.e. last row + 1
      */
     long getRowHi();
 
     /**
+     * Make sure to call {@link TimeFrameRecordCursor#open()} prior to this method.
+     * <p>
+     * Note: it's allowed to jump with the {@link TimeFrameRecordCursor} record
+     * to any row id in the [rowLo, rowHi) range. {@link Rows#toRowID(int, long)}
+     * method should be used to obtain final row id.
+     *
      * @return first row of a data frame
      */
     long getRowLo();
+
+    /**
+     * @return whether the partition was previously open
+     */
+    boolean isOpen();
 }

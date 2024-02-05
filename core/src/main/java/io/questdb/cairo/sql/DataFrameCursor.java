@@ -25,10 +25,9 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.TableReader;
+import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
-
-import java.io.Closeable;
 
 /**
  * A cursor for managing position of operations within data frames
@@ -36,16 +35,10 @@ import java.io.Closeable;
  * Interfaces which extend Closeable are not optionally-closeable.
  * close() method must be called after other calls are complete.
  */
-public interface DataFrameCursor extends Closeable, SymbolTableSource {
+public interface DataFrameCursor extends QuietCloseable, SymbolTableSource {
 
     default void calculateSize(RecordCursor.Counter counter) {
     }
-
-    /**
-     * Must be closed after other calls are complete
-     */
-    @Override
-    void close();
 
     StaticSymbolTable getSymbolTable(int columnIndex);
 

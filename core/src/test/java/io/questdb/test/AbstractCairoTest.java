@@ -51,10 +51,7 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.str.AbstractCharSequence;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8s;
+import io.questdb.std.str.*;
 import io.questdb.test.cairo.*;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -1435,6 +1432,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected static void printSql(CharSequence sql) throws SqlException {
+        printSql(sql, sink);
+    }
+
+    protected static void printSql(CharSequence sql, MutableUtf16Sink sink) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             TestUtils.printSql(compiler, sqlExecutionContext, sql, sink);
         }

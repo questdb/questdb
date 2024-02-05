@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -1219,7 +1220,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                 String query = "select sym_a, sym_b from tab_a a " + joinType + " tab_b b on sym_a = sym_b";
                 try (RecordCursorFactory factory = select(query)) {
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                        io.questdb.cairo.sql.Record record = cursor.getRecord();
+                        Record record = cursor.getRecord();
                         RecordMetadata metadata = factory.getMetadata();
                         Assert.assertTrue(cursor.hasNext());
                         Assert.assertEquals(ColumnType.SYMBOL, metadata.getColumnType(0));
