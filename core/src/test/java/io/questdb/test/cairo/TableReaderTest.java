@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -1862,7 +1863,7 @@ public class TableReaderTest extends AbstractCairoTest {
     public void testMetadataFileDoesNotExist() throws Exception {
         String tableName = "testMetadataFileDoesNotExist";
         TableToken tableToken = createTable(tableName, PartitionBy.HOUR);
-        spinLockTimeout = 10;
+        node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 10);
         AtomicInteger openCount = new AtomicInteger(1000);
 
         assertMemoryLeak(() -> {
@@ -1899,7 +1900,7 @@ public class TableReaderTest extends AbstractCairoTest {
     public void testMetadataFileDoesNotExist2() throws Exception {
         String tableName = "testMetadataFileDoesNotExist";
         TableToken tableToken = createTable(tableName, PartitionBy.HOUR);
-        spinLockTimeout = 10;
+        node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 10);
         AtomicInteger openCount = new AtomicInteger(1000);
 
         assertMemoryLeak(() -> {
@@ -1953,7 +1954,7 @@ public class TableReaderTest extends AbstractCairoTest {
     public void testMetadataVersionDoesNotMatch() throws Exception {
         String tableName = "testMetadataVersionDoesNotMatch";
         TableToken tableToken = createTable(tableName, PartitionBy.HOUR);
-        spinLockTimeout = 10;
+        node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 10);
 
         assertMemoryLeak(() -> {
             try (TableReader reader = getReader(tableToken)) {
@@ -2390,7 +2391,7 @@ public class TableReaderTest extends AbstractCairoTest {
         final long tsStep = Timestamps.SECOND_MICROS;
         final int rows = expectedPartitions * 60 * 60;
 
-        maxOpenPartitions = openPartitionsLimit;
+        node1.setProperty(PropertyKey.CAIRO_INACTIVE_READER_MAX_OPEN_PARTITIONS, openPartitionsLimit);
 
         try (TableModel model = new TableModel(configuration, "x", PartitionBy.HOUR).col("i", ColumnType.INT).timestamp()) {
             TestUtils.create(model, engine);

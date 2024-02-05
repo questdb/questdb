@@ -31,11 +31,13 @@ import io.questdb.test.AbstractCairoTest;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import static io.questdb.PropertyKey.CAIRO_WAL_TXN_NOTIFICATION_QUEUE_CAPACITY;
+
 @SuppressWarnings("SameParameterValue")
 public class WalTelemetryTest extends AbstractCairoTest {
     @BeforeClass
     public static void setUpStatic() throws Exception {
-        walTxnNotificationQueueCapacity = 8;
+        setProperty(CAIRO_WAL_TXN_NOTIFICATION_QUEUE_CAPACITY, 8);
         AbstractCairoTest.setUpStatic();
     }
 

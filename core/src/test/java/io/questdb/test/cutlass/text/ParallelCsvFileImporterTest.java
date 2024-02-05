@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.text;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
@@ -436,7 +437,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testImportCsvSmallerFileBuffer() throws Exception {
         // the buffer is enough to fit only a few lines
-        sqlCopyBufferSize = 256;
+        setProperty(PropertyKey.CAIRO_SQL_COPY_BUFFER_SIZE, 256);
         testImportCsvIntoNewTable0("tab26");
     }
 
@@ -2818,7 +2819,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     }
 
     private void testImportTooSmallFileBuffer0(String tableName) throws Exception {
-        sqlCopyBufferSize = 50;
+        setProperty(PropertyKey.CAIRO_SQL_COPY_BUFFER_SIZE, 50);
         executeWithPool(
                 2,
                 2,
@@ -2854,7 +2855,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                     " long_sequence(5)" +
                     ") timestamp(ts) partition by DAY", sqlExecutionContext);
 
-            configOverrideParallelImportStatusLogKeepNDays(daysToKeep);
+            node1.setProperty(PropertyKey.CAIRO_SQL_COPY_LOG_RETENTION_DAYS, daysToKeep);
             new CopyRequestJob(engine, 1).close();
             assertQuery(
                     "count\n" + daysToKeep + "\n",
@@ -2993,7 +2994,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
 
                     @Override
                     public int getSqlCopyBufferSize() {
-                        return sqlCopyBufferSize;
+                        return configuration.getSqlCopyBufferSize();
                     }
 
                     @Override
@@ -3028,7 +3029,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
 
                     @Override
                     public int getSqlCopyBufferSize() {
-                        return sqlCopyBufferSize;
+                        return configuration.getSqlCopyBufferSize();
                     }
 
                     @Override

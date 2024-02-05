@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
@@ -265,7 +266,7 @@ public class GroupByFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testKeyedKSumDoubleSomeNaN() throws Exception {
-        pageFrameMaxRows = 1_000_000;
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1_000_000);
         assertQuery("s\tksum\n" +
                         "aa\t416262.4729439181\n" +
                         "bb\t416933.3416598129\n",
@@ -286,7 +287,7 @@ public class GroupByFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testKeyedKSumKSumDoubleSomeNaN() throws Exception {
-        pageFrameMaxRows = 1_000_000;
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1_000_000);
         assertQueryExpectSize("s\tksum\tksum1\n" +
                         "aa\t416262.47294392\t416262.47294392\n" +
                         "bb\t416933.34165981\t416933.34165981\n",
@@ -304,7 +305,7 @@ public class GroupByFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testKeyedKSumSumDoubleSomeNaN() throws Exception {
-        pageFrameMaxRows = 1_000_000;
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1_000_000);
         assertQuery("s\tksum\tsum\n" +
                         "aa\t416262.4729439\t416262.4729439\n" +
                         "bb\t416933.3416598\t416933.3416598\n",

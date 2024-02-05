@@ -111,8 +111,9 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                 long partitionTs = partitionByFormat.parse(fileNameSink.asAsciiCharSequence(), 0, index, DateFormatUtils.EN_LOCALE);
                 partitionList.add(partitionTs);
             } catch (NumericException e) {
-                if (!Utf8s.startsWithAscii(fileNameSink, WalUtils.WAL_NAME_BASE) && !Utf8s.equalsAscii(WalUtils.SEQ_DIR, fileNameSink)) {
-                    LOG.error().$("unknown directory [table=").utf8(tableName).$(", dir=").$(fileNameSink).I$();
+                if (!Utf8s.startsWithAscii(fileNameSink, WalUtils.WAL_NAME_BASE) && !Utf8s.equalsAscii(WalUtils.SEQ_DIR, fileNameSink)
+                        && !Utf8s.equalsAscii("seq", fileNameSink)) {
+                    LOG.info().$("unknown directory [table=").utf8(tableName).$(", dir=").$(fileNameSink).I$();
                 }
                 partitionList.setPos(partitionList.size() - 1); // remove partition version record
             }

@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.groupby;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.std.Chars;
 import io.questdb.std.str.StringSink;
@@ -44,7 +45,7 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
     @Override
     public void setUp() {
         super.setUp();
-        configOverrideParallelGroupByEnabled(false);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUP_BY_ENABLED, false);
     }
 
     @Test

@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.wal;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
@@ -42,6 +43,7 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.Overrides;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -51,6 +53,7 @@ import org.junit.Test;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static io.questdb.PropertyKey.CAIRO_WAL_TXN_NOTIFICATION_QUEUE_CAPACITY;
 import static io.questdb.cairo.TableUtils.COLUMN_VERSION_FILE_NAME;
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
@@ -59,7 +62,7 @@ import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
 public class WalTableSqlTest extends AbstractCairoTest {
     @BeforeClass
     public static void setUpStatic() throws Exception {
-        walTxnNotificationQueueCapacity = 8;
+        setProperty(CAIRO_WAL_TXN_NOTIFICATION_QUEUE_CAPACITY, 8);
         AbstractCairoTest.setUpStatic();
     }
 
@@ -277,7 +280,8 @@ public class WalTableSqlTest extends AbstractCairoTest {
             }
 
             // Eject after every transaction
-            node1.getConfigurationOverrides().setWalApplyTableTimeQuota(1);
+            Overrides overrides1 = node1.getConfigurationOverrides();
+            overrides1.setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 1);
 
             try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
                 for (int i = 0; i < count; i++) {
@@ -289,7 +293,8 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     rowCount += rows;
                 }
             }
-            node1.getConfigurationOverrides().setWalApplyTableTimeQuota(Timestamps.MINUTE_MICROS);
+            Overrides overrides = node1.getConfigurationOverrides();
+            overrides.setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, Timestamps.MINUTE_MICROS);
             drainWalQueue();
 
             assertSql("count\n" + rowCount + "\n", "select count(*) from " + tableName);
@@ -549,7 +554,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
     @Test
     public void testCreateDropRestartRestartNoRegistryCompaction() throws Exception {
-        node1.getConfigurationOverrides().setRegistryCompactionThreshold(100);
+        node1.setProperty(PropertyKey.CAIRO_TABLE_REGISTRY_COMPACTION_THRESHOLD, 100);
         testCreateDropRestartRestart0();
     }
 
@@ -1071,7 +1076,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
             try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
                 drainWalQueue(walApplyJob);
 
-                for (int i = 0; i < walTxnNotificationQueueCapacity; i++) {
+                for (int i = 0; i < configuration.getWalTxnNotificationQueueCapacity(); i++) {
                     insert("insert into " + tableName + "1 values (101, 'a1a1', '2022-02-24T01')");
                 }
 
@@ -1251,7 +1256,8 @@ public class WalTableSqlTest extends AbstractCairoTest {
             insert("insert into " + tableName + " values (101, 'a1a1', 'str-1', '2022-02-24T02', 'a2a2')");
 
 
-            node1.getConfigurationOverrides().setWalApplyTableTimeQuota(0);
+            Overrides overrides = node1.getConfigurationOverrides();
+            overrides.setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 0);
             runApplyOnce();
 
             TableToken token = engine.verifyTableName(tableName);
@@ -1624,7 +1630,8 @@ public class WalTableSqlTest extends AbstractCairoTest {
             // In order
             insert("insert into " + tableName + " values (101, 'a1a1', 'str-1', '2022-02-24T02', 'a2a2')");
 
-            node1.getConfigurationOverrides().setWalApplyTableTimeQuota(0);
+            Overrides overrides = node1.getConfigurationOverrides();
+            overrides.setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 0);
             runApplyOnce();
 
             TableToken token = engine.verifyTableName(tableName);
