@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -300,7 +301,7 @@ public class CairoEngineTest extends AbstractCairoTest {
     @Test
     public void testRemoveExisting() throws Exception {
         assertMemoryLeak(() -> {
-            spinLockTimeout = 1;
+            node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 1);
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 TableToken x = createX(engine);
                 assertReader(engine, x);

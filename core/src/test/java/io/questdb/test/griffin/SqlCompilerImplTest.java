@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
@@ -42,6 +43,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.Overrides;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
@@ -65,7 +67,12 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     public static void setUpStatic() throws Exception {
         path = new Path();
         AbstractCairoTest.setUpStatic();
-        configOverrideSqlWindowMaxRecursion(512);
+    }
+
+    @Before
+    public void setUp() {
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_MAX_RECURSION, 512);
+        super.setUp();
     }
 
     @AfterClass
@@ -5230,7 +5237,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     public void testSelectConcurrentDDL() throws Exception {
 
         // On Windows CI this test can fail with Metadata read timeout with small timeout.
-        node1.getConfigurationOverrides().setSpinLockTimeout(30000);
+        Overrides overrides = node1.getConfigurationOverrides();
+        overrides.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 30000);
         ddl("create table x (a int, b int, c int)");
 
         final AtomicBoolean ddlError = new AtomicBoolean(false);

@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.line.tcp;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ex.EntryLockedException;
@@ -129,7 +130,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Override
     public void setUp() {
         super.setUp();
-        configOverrideDefaultTableWriteMode(walEnabled ? SqlWalMode.WAL_ENABLED : SqlWalMode.WAL_DISABLED);
+        node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, walEnabled);
         path = new Path();
     }
 
@@ -339,8 +340,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testDropTable() throws Exception {
         Assume.assumeTrue(walEnabled);
-        configOverrideMaxUncommittedRows(2);
-        configOverrideWalSegmentRolloverRowCount(2);
+        node1.setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 2);
+        node1.setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 2);
         String weather = "weather";
         FilesFacade filesFacade = new TestFilesFacadeImpl() {
             private int count = 1;
@@ -678,8 +679,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testRenameTable() throws Exception {
         Assume.assumeTrue(walEnabled);
-        configOverrideMaxUncommittedRows(2);
-        configOverrideWalSegmentRolloverRowCount(2);
+        node1.setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 2);
+        node1.setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 2);
         String weather = "weather";
         String meteorology = "meteorology";
         FilesFacade filesFacade = new TestFilesFacadeImpl() {
@@ -734,8 +735,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testRenameTableSameMeta() throws Exception {
         Assume.assumeTrue(walEnabled);
-        configOverrideMaxUncommittedRows(2);
-        configOverrideWalSegmentRolloverRowCount(2);
+        node1.setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 2);
+        node1.setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 2);
         String weather = "weather";
         String meteorology = "meteorology";
         FilesFacade filesFacade = new TestFilesFacadeImpl() {
