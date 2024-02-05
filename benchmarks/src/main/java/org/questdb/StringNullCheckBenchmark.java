@@ -57,7 +57,7 @@ public class StringNullCheckBenchmark {
     private static final CairoConfiguration configuration =
             new DefaultCairoConfiguration(System.getProperty("java.io.tmpdir"));
 
-    @Param({"1", "3", "100"})
+    @Param({"0", "1", "3", "100"})
     public int a_nullFreq;
     @Param({"SIMD", "SCALAR", "DISABLED"})
     public JitMode b_jitMode;
@@ -91,7 +91,9 @@ public class StringNullCheckBenchmark {
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                 compiler.compile("drop table if exists x", sqlExecutionContext);
                 compiler.compile("create table x as (select" +
-                        " rnd_str(100, 70, 140, " + a_nullFreq + ") string_value," +
+                        (a_nullFreq != 0
+                                ? " rnd_str(100, 70, 140, " + a_nullFreq + ") string_value,"
+                                : " rnd_str('', 'a', 'aa') string_value,") +
                         " timestamp_sequence(to_timestamp('2024-02-04', 'yyyy-MM-dd'), 100000L) ts" +
                         " from long_sequence(" + NUM_ROWS + ")) timestamp(ts)", sqlExecutionContext);
             }
