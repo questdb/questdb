@@ -110,7 +110,6 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
     }
 
     private class DataFrameRecordCursorWrapper implements DataFrameRecordCursor {
-
         private final DataFrameRecordCursor delegate;
         private RecordCursor baseCursor;
 
@@ -204,7 +203,6 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
                 buildSymbolKeys();
                 baseCursor = Misc.free(baseCursor);
             }
-
             delegate.skipRows(rowCount);
         }
 
@@ -219,7 +217,7 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
         }
 
         private void buildSymbolKeys() {
-            StaticSymbolTable symbolTable = getDataFrameCursor().getSymbolTable(columnIndex);
+            final StaticSymbolTable symbolTable = delegate.getSymbolTable(columnIndex);
             final Record record = baseCursor.getRecord();
             while (baseCursor.hasNext()) {
                 int symbolKey = symbolTable.keyOf(func.get(record, 0));
