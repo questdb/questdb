@@ -40,7 +40,7 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testColumnKeysAllSupportedTypes() {
-        testColumnKeysAllSupportedTypes(true);
+        testColumnKeysAllSupportedTypes(false);
     }
 
     @Test

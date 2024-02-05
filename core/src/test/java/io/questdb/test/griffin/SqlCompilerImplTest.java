@@ -1347,6 +1347,24 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCastLongString() throws SqlException {
+        assertSql(
+                "typeOf\tcast\n" +
+                        "STRING\t1\n",
+                "select typeOf(1L::string), 1L::string"
+        );
+    }
+
+    @Test
+    public void testCastLongVarchar() throws SqlException {
+        assertSql(
+                "typeOf\tcast\n" +
+                        "STRING\t1\n",
+                "select typeOf(1L::varchar), 1L::varchar"
+        );
+    }
+
+    @Test
     public void testCastLongFloat() throws SqlException {
         assertCastLong(
                 "a\n" +

@@ -453,9 +453,16 @@ io.questdb.griffin.engine.functions.cast.CastStrToDateFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastStrToTimestampFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastStrToBinaryFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory
-io.questdb.griffin.engine.functions.cast.CastGeoHashToGeoHashFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastStrToUuidFunctionFactory
+
+# cast varchar to ...
+io.questdb.griffin.engine.functions.cast.CastVarcharToLongFunctionFactory
+
+# cast UUID to ...
 io.questdb.griffin.engine.functions.cast.CastUuidToStrFunctionFactory
+
+# cast GROHASH to ...
+io.questdb.griffin.engine.functions.cast.CastGeoHashToGeoHashFunctionFactory
 
 # cast symbol to ...
 io.questdb.griffin.engine.functions.cast.CastSymbolToIntFunctionFactory
