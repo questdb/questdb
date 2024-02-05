@@ -94,6 +94,7 @@ public class OsTest {
         TestUtils.await(barrier);
         t.interrupt();
         Assert.assertTrue(doneLatch.await(10_000_000_000L));
-        Assert.assertTrue(System.currentTimeMillis() - time >= 1000);
+        long sleepTime = System.currentTimeMillis() - time;
+        Assert.assertTrue(String.valueOf(sleepTime), sleepTime >= 1000);
     }
 }

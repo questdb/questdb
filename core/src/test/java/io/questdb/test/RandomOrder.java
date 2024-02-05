@@ -22,22 +22,17 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.test;
 
-public final class SqlJitMode {
-    public static final int JIT_MODE_DISABLED = 2;
-    public static final int JIT_MODE_ENABLED = 0;
-    public static final int JIT_MODE_FORCE_SCALAR = 1;
+import org.junit.runner.manipulation.Ordering;
 
-    public static String toString(int mode){
-        switch (mode) {
-            case JIT_MODE_ENABLED:
-                return "on";
-            case JIT_MODE_FORCE_SCALAR:
-                return "scalar";
-            case JIT_MODE_DISABLED:
-                return "off";
-        }
-        return "unknown";
+import java.util.Random;
+
+public class RandomOrder implements Ordering.Factory {
+    @Override
+    public Ordering create(Ordering.Context context) {
+        long seed = new Random().nextLong();
+        System.out.println("RandomOrder: seed = " + seed);
+        return Ordering.shuffledBy(new Random(seed));
     }
 }

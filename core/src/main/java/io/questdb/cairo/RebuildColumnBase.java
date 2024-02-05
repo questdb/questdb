@@ -46,7 +46,6 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
     protected final String unsupportedTableMessage = "Table does not have any indexes";
     private final MillisecondClock clock;
     private final StringSink tempStringSink = new StringSink();
-    protected FilesFacade ff;
     protected Path path = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
     protected int rootLen;
     protected String unsupportedColumnMessage = "Wrong column type";
@@ -54,7 +53,6 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
 
     public RebuildColumnBase(CairoConfiguration configuration) {
         this.configuration = configuration;
-        this.ff = configuration.getFilesFacade();
         this.clock = configuration.getMillisecondClock();
     }
 
@@ -76,14 +74,14 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
     }
 
     public void rebuildAll() {
-        reindex(ff, null, null);
+        reindex(configuration.getFilesFacade(), null, null);
     }
 
     public void reindex(
             @Nullable CharSequence partitionName,
             @Nullable CharSequence columnName
     ) {
-        reindex(ff, partitionName, columnName);
+        reindex(configuration.getFilesFacade(), partitionName, columnName);
     }
 
     public void reindex(
