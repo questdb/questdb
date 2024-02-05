@@ -40,7 +40,6 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.Net;
@@ -1220,7 +1219,18 @@ public final class TestUtils {
         };
     }
 
-    static final Log LOG = LogFactory.getLog(TestUtils.class);
+    public static int getSystemTablesCount(CairoEngine engine) {
+        final ObjHashSet<TableToken> tableBucket = new ObjHashSet<>();
+        engine.getTableTokens(tableBucket, false);
+        int systemTableCount = 0;
+        for (int i = 0, n = tableBucket.size(); i < n; i++) {
+            final TableToken tt = tableBucket.get(i);
+            if (tt.isSystem()) {
+                systemTableCount++;
+            }
+        }
+        return systemTableCount;
+    }
 
     public static String getTestResourcePath(String resourceName) {
         URL resource = TestUtils.class.getResource(resourceName);

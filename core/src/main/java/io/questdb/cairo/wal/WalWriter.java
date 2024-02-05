@@ -206,10 +206,14 @@ public class WalWriter implements TableWriterAPI {
 
     @Override
     public long apply(AlterOperation alterOp, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
-        if (alterOp.isStructural()) {
-            return applyStructural(alterOp);
-        } else {
-            return applyNonStructural(alterOp, false);
+        try {
+            if (alterOp.isStructural()) {
+                return applyStructural(alterOp);
+            } else {
+                return applyNonStructural(alterOp, false);
+            }
+        } finally {
+            alterOp.clearSecurityContext();
         }
     }
 
