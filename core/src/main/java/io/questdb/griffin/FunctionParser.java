@@ -144,6 +144,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
     @Override
     public void clear() {
+        this.positionStack.clear();
+        this.functionStack.clear();
         this.sqlExecutionContext = null;
     }
 

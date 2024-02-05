@@ -56,7 +56,17 @@ public class IndexBuilderTest extends AbstractCairoTest {
 
     @Test
     public void testCannotRemoveOldFiles() throws Exception {
-        assertMemoryLeak(() -> {
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean removeQuiet(LPSZ path) {
+                if (Utf8s.endsWithAscii(path, ".v") || Utf8s.endsWithAscii(path, ".k")) {
+                    return false;
+                }
+                return super.removeQuiet(path);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
             String createTableSql = "create table xxx as (" +
                     "select " +
                     "rnd_symbol('A', 'B', 'C') as sym1," +
@@ -66,16 +76,6 @@ public class IndexBuilderTest extends AbstractCairoTest {
                     "timestamp_sequence(0, 100000000) ts " +
                     "from long_sequence(10000)" +
                     "), index(sym1), index(sym2) timestamp(ts) PARTITION BY DAY";
-
-            ff = new TestFilesFacadeImpl() {
-                @Override
-                public boolean removeQuiet(LPSZ path) {
-                    if (Utf8s.endsWithAscii(path, ".v") || Utf8s.endsWithAscii(path, ".k")) {
-                        return false;
-                    }
-                    return super.removeQuiet(path);
-                }
-            };
 
             try {
                 checkRebuildIndexes(
@@ -404,7 +404,20 @@ public class IndexBuilderTest extends AbstractCairoTest {
 
     @Test
     public void testRebuildFailsWriteKFile() throws Exception {
-        assertMemoryLeak(() -> {
+        AtomicInteger count = new AtomicInteger();
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int openRW(LPSZ name, long opts) {
+                if (Utf8s.containsAscii(name, "sym2.k")) {
+                    if (count.incrementAndGet() == 29) {
+                        return -1;
+                    }
+                }
+                return super.openRW(name, opts);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
             String createTableSql = "create table xxx as (" +
                     "select " +
                     "rnd_symbol('A', 'B', 'C') as sym1," +
@@ -414,19 +427,6 @@ public class IndexBuilderTest extends AbstractCairoTest {
                     "timestamp_sequence(0, 100000000) ts " +
                     "from long_sequence(10000)" +
                     "), index(sym1), index(sym2) timestamp(ts) PARTITION BY DAY";
-
-            AtomicInteger count = new AtomicInteger();
-            ff = new TestFilesFacadeImpl() {
-                @Override
-                public int openRW(LPSZ name, long opts) {
-                    if (Utf8s.containsAscii(name, "sym2.k")) {
-                        if (count.incrementAndGet() == 29) {
-                            return -1;
-                        }
-                    }
-                    return super.openRW(name, opts);
-                }
-            };
 
             try {
                 checkRebuildIndexes(
@@ -444,7 +444,19 @@ public class IndexBuilderTest extends AbstractCairoTest {
 
     @Test
     public void testRebuildFailsWriteVFile() throws Exception {
-        assertMemoryLeak(() -> {
+
+        AtomicInteger count = new AtomicInteger();
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean touch(LPSZ path) {
+                if (Utf8s.containsAscii(path, "sym2.v") && count.incrementAndGet() == 17) {
+                    return false;
+                }
+                return Files.touch(path);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
             String createTableSql = "create table xxx as (" +
                     "select " +
                     "rnd_symbol('A', 'B', 'C') as sym1," +
@@ -454,17 +466,6 @@ public class IndexBuilderTest extends AbstractCairoTest {
                     "timestamp_sequence(0, 100000000) ts " +
                     "from long_sequence(10000)" +
                     "), index(sym1), index(sym2) timestamp(ts) PARTITION BY DAY";
-
-            AtomicInteger count = new AtomicInteger();
-            ff = new TestFilesFacadeImpl() {
-                @Override
-                public boolean touch(LPSZ path) {
-                    if (Utf8s.containsAscii(path, "sym2.v") && count.incrementAndGet() == 17) {
-                        return false;
-                    }
-                    return Files.touch(path);
-                }
-            };
 
             try {
                 checkRebuildIndexes(

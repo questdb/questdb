@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.functions.rnd;
 
+import io.questdb.PropertyKey;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.rnd.RndStrRndListFunctionFactory;
@@ -193,8 +194,8 @@ public class RndStrRndListFunctionFactoryTest extends AbstractFunctionFactoryTes
 
     @Test
     public void testRndFunctionsMemoryConfiguration() {
-        configOverrideRndFunctionMemoryPageSize(1024);
-        configOverrideRndFunctionMemoryMaxPages(16);
+        node1.setProperty(PropertyKey.CAIRO_RND_MEMORY_PAGE_SIZE, 1024);
+        node1.setProperty(PropertyKey.CAIRO_RND_MEMORY_MAX_PAGES, 16);
 
         assertFailure("[15] breached memory limit set for rnd_str(iiii) [pageSize=1024, maxPages=16, memLimit=16384, requiredMem=78000]",
                 "select rnd_str(1000,30,33,0) as testCol from long_sequence(20)");

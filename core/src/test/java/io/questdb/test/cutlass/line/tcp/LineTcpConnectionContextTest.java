@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.line.tcp;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.std.Files;
 import io.questdb.std.Os;
@@ -67,7 +68,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     @Before
     public void setUp() {
         super.setUp();
-        configOverrideDefaultTableWriteMode(walEnabled ? SqlWalMode.WAL_ENABLED : SqlWalMode.WAL_DISABLED);
+        node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, walEnabled);
     }
 
     @Test
@@ -480,7 +481,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         assumeFalse(walEnabled);
 
         String table = "commitException";
-        configOverrideMaxUncommittedRows(1);
+        node1.setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 1);
         netMsgBufferSize.set(60);
         runInContext(
                 new TestFilesFacadeImpl() {

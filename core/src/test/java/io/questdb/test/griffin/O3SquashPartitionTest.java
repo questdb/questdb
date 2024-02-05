@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.Metrics;
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
@@ -34,6 +35,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.Overrides;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -47,15 +49,18 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
 
     @Before
     public void setUp() {
-        node1.getConfigurationOverrides().setPartitionO3SplitThreshold(4 << 10);
+        Overrides overrides = node1.getConfigurationOverrides();
+        overrides.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4 << 10);
         super.setUp();
     }
 
     @Test
     public void testCannotSplitPartitionAllRowsSameTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            node1.getConfigurationOverrides().setPartitionO3SplitThreshold(1);
-            node1.getConfigurationOverrides().setO3PartitionSplitMaxCount(2);
+            Overrides overrides1 = node1.getConfigurationOverrides();
+            overrides1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            Overrides overrides = node1.getConfigurationOverrides();
+            overrides.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
             long start = TimestampFormatUtils.parseTimestamp("2020-02-03");
 
             Metrics metrics = engine.getMetrics();
@@ -117,8 +122,8 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     public void testSplitLastPartition() throws Exception {
         assertMemoryLeak(() -> {
             // 4kb prefix split threshold
-            node1.getConfigurationOverrides().setPartitionO3SplitThreshold(4 * (1 << 10));
-            node1.getConfigurationOverrides().setO3PartitionSplitMaxCount(2);
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4 * (1 << 10));
+            node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
             int rowCount = (int) metrics.tableWriter().getPhysicallyWrittenRows();
 
             ddl(
@@ -219,8 +224,10 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     public void testSplitLastPartitionAppend() throws Exception {
         assertMemoryLeak(() -> {
             // 4kb prefix split threshold
-            node1.getConfigurationOverrides().setPartitionO3SplitThreshold(4 * (1 << 10));
-            node1.getConfigurationOverrides().setO3PartitionSplitMaxCount(1);
+            Overrides overrides1 = node1.getConfigurationOverrides();
+            overrides1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4 * (1 << 10));
+            Overrides overrides = node1.getConfigurationOverrides();
+            overrides.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 1);
 
             int rowCount = (int) metrics.tableWriter().getPhysicallyWrittenRows();
             compile(
@@ -275,8 +282,10 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // create table with 2 points every hour for 1 day of 2020-02-03
 
-            node1.getConfigurationOverrides().setPartitionO3SplitThreshold(1);
-            node1.getConfigurationOverrides().setO3PartitionSplitMaxCount(2);
+            Overrides overrides1 = node1.getConfigurationOverrides();
+            overrides1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            Overrides overrides = node1.getConfigurationOverrides();
+            overrides.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
             long start = TimestampFormatUtils.parseTimestamp("2020-02-03");
             ddl(
                     "create table x as (" +
@@ -354,8 +363,10 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // create table with 2 points every hour for 1 day of 2020-02-03
 
-            node1.getConfigurationOverrides().setPartitionO3SplitThreshold(1);
-            node1.getConfigurationOverrides().setO3PartitionSplitMaxCount(2);
+            Overrides overrides1 = node1.getConfigurationOverrides();
+            overrides1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            Overrides overrides = node1.getConfigurationOverrides();
+            overrides.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
             long start = TimestampFormatUtils.parseTimestamp("2020-02-03");
             ddl(
                     "create table x as (" +
@@ -490,8 +501,8 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
 
         assertMemoryLeak(ff, () -> {
             // 4kb prefix split threshold
-            node1.getConfigurationOverrides().setPartitionO3SplitThreshold(4 * (1 << 10));
-            node1.getConfigurationOverrides().setO3PartitionSplitMaxCount(2);
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4 * (1 << 10));
+            node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
 
             compile(
                     "create table x as (" +
@@ -642,8 +653,10 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     public void testSplitPartitionChangesColTop() throws Exception {
         assertMemoryLeak(() -> {
             // 4kb prefix split threshold
-            node1.getConfigurationOverrides().setPartitionO3SplitThreshold(4 * (1 << 10));
-            node1.getConfigurationOverrides().setO3PartitionSplitMaxCount(1);
+            Overrides overrides1 = node1.getConfigurationOverrides();
+            overrides1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4 * (1 << 10));
+            Overrides overrides = node1.getConfigurationOverrides();
+            overrides.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 1);
 
             compile(
                     "create table x as (" +
@@ -729,8 +742,8 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     private void testSquashPartitionsOnEmptyTable(String wal) throws Exception {
         assertMemoryLeak(() -> {
             // 4kb prefix split threshold
-            node1.getConfigurationOverrides().setPartitionO3SplitThreshold(4 * (1 << 10));
-            node1.getConfigurationOverrides().setO3PartitionSplitMaxCount(2);
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE,  4 * (1 << 10));
+            node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
 
             ddl(
                     "create table x (" +
@@ -786,8 +799,8 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     private void testSquashPartitionsOnNonEmptyTable(String wal) throws Exception {
         assertMemoryLeak(() -> {
             // 4kb prefix split threshold
-            node1.getConfigurationOverrides().setPartitionO3SplitThreshold(4 * (1 << 10));
-            node1.getConfigurationOverrides().setO3PartitionSplitMaxCount(2);
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4 * (1 << 10));
+            node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
 
             ddl(
                     "create table x as (" +

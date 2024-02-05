@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
@@ -53,6 +54,8 @@ import org.junit.Test;
 
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
+
+import static io.questdb.PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT;
 
 public class ParallelFilterTest extends AbstractCairoTest {
 
@@ -113,37 +116,37 @@ public class ParallelFilterTest extends AbstractCairoTest {
 
     @Before
     public void setUp() {
-        pageFrameMaxRows = PAGE_FRAME_MAX_ROWS;
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, PAGE_FRAME_MAX_ROWS);
         // We intentionally use small values for shard count and reduce
         // queue capacity to exhibit various edge cases.
-        pageFrameReduceShardCount = 2;
-        pageFrameReduceQueueCapacity = PAGE_FRAME_COUNT;
+        setProperty(CAIRO_PAGE_FRAME_SHARD_COUNT, 2);
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, PAGE_FRAME_COUNT);
         super.setUp();
     }
 
     @Test
     public void testAsyncOffloadNegativeLimitTimeoutWithJitEnabled() throws Exception {
         Assume.assumeTrue(JitUtil.isJitSupported());
-        configOverrideJitMode(SqlJitMode.JIT_MODE_ENABLED);
+        node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(SqlJitMode.JIT_MODE_ENABLED));
         testAsyncOffloadNegativeLimitTimeout();
     }
 
     @Test
     public void testAsyncOffloadNegativeLimitTimeoutWithoutJit() throws Exception {
-        configOverrideJitMode(SqlJitMode.JIT_MODE_DISABLED);
+        node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(SqlJitMode.JIT_MODE_DISABLED));
         testAsyncOffloadNegativeLimitTimeout();
     }
 
     @Test
     public void testAsyncOffloadTimeoutWithJitEnabled() throws Exception {
         Assume.assumeTrue(JitUtil.isJitSupported());
-        configOverrideJitMode(SqlJitMode.JIT_MODE_ENABLED);
+        node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(SqlJitMode.JIT_MODE_ENABLED));
         testAsyncOffloadTimeout();
     }
 
     @Test
     public void testAsyncOffloadTimeoutWithoutJit() throws Exception {
-        configOverrideJitMode(SqlJitMode.JIT_MODE_DISABLED);
+        node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(SqlJitMode.JIT_MODE_DISABLED));
         testAsyncOffloadTimeout();
     }
 
@@ -536,7 +539,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
     }
 
     private void testParallelStress(String query, String expected, int workerCount, int threadCount, int jitMode) throws Exception {
-        configOverrideJitMode(jitMode);
+        node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(jitMode));
 
         WorkerPool pool = new WorkerPool(() -> workerCount);
 

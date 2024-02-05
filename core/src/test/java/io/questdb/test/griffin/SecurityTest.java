@@ -294,6 +294,8 @@ public class SecurityTest extends AbstractCairoTest {
                 Assert.fail();
             } catch (Exception ex) {
                 Assert.assertTrue(ex.toString().contains("Interrupting SQL processing"));
+            } finally {
+                circuitBreakerTimeoutDeadline = Long.MAX_VALUE;
             }
         });
     }
