@@ -225,10 +225,6 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         }
     }
 
-    private void setAppendPosition() {
-        txnChunkMem.jumpTo((this.maxTxn.get() % chunkTransactionCount) * RECORD_SIZE);
-    }
-
     private void openTxnMem(Path path) {
         rootPath.of(path);
         int rootLen = rootPath.size();
@@ -238,6 +234,10 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         } finally {
             rootPath.trimTo(rootLen);
         }
+    }
+
+    private void setAppendPosition() {
+        txnChunkMem.jumpTo((this.maxTxn.get() % chunkTransactionCount) * RECORD_SIZE);
     }
 
     private static class TransactionLogCursorImpl implements TransactionLogCursor {
@@ -296,6 +296,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
 
         @Override
         public long getCommitTimestamp() {
+            assert address != 0;
             return Unsafe.getUnsafe().getLong(address + txnOffset + TX_LOG_COMMIT_TIMESTAMP_OFFSET);
         }
 
@@ -305,18 +306,32 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         }
 
         @Override
+        public long getPartNo() {
+            return (txn - 1) / chunkTransactionCount;
+        }
+
+        @Override
         public int getSegmentId() {
+            assert address != 0;
             return Unsafe.getUnsafe().getInt(address + txnOffset + TX_LOG_SEGMENT_OFFSET);
         }
 
         @Override
         public int getSegmentTxn() {
+            assert address != 0;
             return Unsafe.getUnsafe().getInt(address + txnOffset + TX_LOG_SEGMENT_TXN_OFFSET);
         }
 
         @Override
         public long getStructureVersion() {
+            assert address != 0;
             return Unsafe.getUnsafe().getLong(address + txnOffset + TX_LOG_STRUCTURE_VERSION_OFFSET);
+        }
+
+        @Override
+        public int getWalId() {
+            assert address != 0;
+            return Unsafe.getUnsafe().getInt(address + txnOffset + TX_LOG_WAL_ID_OFFSET);
         }
 
         @Override
@@ -325,8 +340,28 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         }
 
         @Override
-        public int getWalId() {
-            return Unsafe.getUnsafe().getInt(address + txnOffset + TX_LOG_WAL_ID_OFFSET);
+        public void toMin() {
+            int rootLen = rootPath.size();
+            rootPath.concat(TXNLOG_CHUNK_DIR).slash();
+            long chunkId = txnLo / chunkTransactionCount;
+            long minTxn = chunkId * chunkTransactionCount;
+
+            int rootPathLen = rootPath.size();
+            try {
+                for (long chunk = chunkId - 1; chunk > -1L; chunk--) {
+                    rootPath.trimTo(rootPathLen).put(chunk).$();
+                    if (ff.exists(rootPath)) {
+                        minTxn = chunk * chunkTransactionCount;
+                    } else {
+                        break;
+                    }
+                }
+
+            } finally {
+                rootPath.trimTo(rootLen);
+            }
+            openChunk(minTxn);
+            txn = txnLo = minTxn;
         }
 
         @Override
@@ -345,21 +380,14 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
 
         @Override
         public void setPosition(long txn) {
-            long zeroBasedTxn = txn - 1;
-            openChunk(zeroBasedTxn);
             this.txn = txn;
         }
 
         @Override
         public void toTop() {
             if (txnCount > -1L) {
-                setPosition(txnLo);
+                this.txn = txnLo;
             }
-        }
-
-        @Override
-        public long getPartNo() {
-            return chunkId;
         }
 
         private static int openFileRO(final FilesFacade ff, final Path path, final String fileName) {
@@ -393,7 +421,8 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
 
             if (newTxnCount > -1L) {
                 this.txnCount = newTxnCount;
-                setPosition(txnLo);
+                assert txnLo > -1;
+                this.txn = txnLo;
             } else {
                 throw CairoException.critical(ff.errno()).put("cannot read sequencer transactions [path=").put(path).put(']');
             }

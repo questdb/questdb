@@ -26,6 +26,7 @@ package io.questdb.test.griffin.wal;
 
 import io.questdb.PropertyKey;
 import io.questdb.std.Rnd;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -49,14 +50,54 @@ import static io.questdb.test.griffin.wal.FuzzRunner.MAX_WAL_APPLY_TIME_PER_TABL
 // timestamps for the record where the comparison fails.
 public class WalWriterFuzzTest extends AbstractFuzzTest {
 
-    protected boolean allowMixedIO;
-
     @Before
     public void setUp() {
         super.setUp();
         // We disable mixed I/O on some OSes and FSes (wink-wink Windows).
         node1.setProperty(PropertyKey.DEBUG_CAIRO_O3_COLUMN_MEMORY_SIZE, 512 * 1024);
         setFuzzProperties(100, 1000, 2);
+    }
+
+    @Test
+    public void testChunkedSequencerWalTransactionQueries() throws Exception {
+        int chunkSize = TestUtils.generateRandom(LOG).nextInt(100) + 1;
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_WAL_SEQ_CHUNK_TXN_COUNT, chunkSize);
+        chunkSize = node1.getConfiguration().getDefaultWalSeqChunkTxnCount();
+
+        ddl("create table chunk_seq (\n" +
+                "  x long,\n" +
+                "  ts timestamp\n" +
+                ") timestamp(ts) PARTITION by day WAL");
+        insert("insert batch 2 into chunk_seq \n" +
+                "  select x, timestamp_sequence('2024-01-01', 312312) from long_sequence(1000)");
+
+
+        runWalPurgeJob();
+
+        int expectedTxnCount = 334;
+        assertSql("count\n" +
+                expectedTxnCount + "\n", "select count(*) from wal_transactions('chunk_seq')");
+
+        drainWalQueue();
+
+        assertSql("count\n" +
+                expectedTxnCount + "\n", "select count(*) from wal_transactions('chunk_seq')");
+
+
+        runWalPurgeJob();
+
+        assertSql("count\n" +
+                (expectedTxnCount - (expectedTxnCount - 1) / chunkSize * chunkSize) + "\n", "select count(*) from wal_transactions('chunk_seq')");
+    }
+
+    @Test
+    public void testChunkedSequencerWriting() throws Exception {
+        Rnd rnd = generateRandom(LOG);
+        fuzzer.setFuzzCounts(false, 5_000, 200, 20, 10, 20, rnd.nextInt(10), 5, 2);
+        setFuzzProperties(rnd);
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_WAL_SEQ_CHUNK_TXN_COUNT, 10);
+        Assert.assertEquals(10, node1.getConfiguration().getDefaultWalSeqChunkTxnCount());
+        runFuzz(rnd);
     }
 
     @Test
@@ -102,7 +143,6 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         fullRandomFuzz(rnd, tableCount);
     }
 
-
     @Test
     public void testWalMetadataChangeHeavy() throws Exception {
         Rnd rnd = generateRandom(LOG);
@@ -125,16 +165,6 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         Rnd rnd = generateRandom(LOG);
         setFuzzProperties(rnd);
         fullRandomFuzz(rnd);
-    }
-
-    @Test
-    public void testChunkedSequencer() throws Exception {
-        Rnd rnd = generateRandom(LOG);
-        fuzzer.setFuzzCounts(false, 5_000, 200, 20, 10, 20, rnd.nextInt(10), 5, 2);
-        setFuzzProperties(rnd);
-        node1.setProperty(PropertyKey.CAIRO_DEFAULT_WAL_SEQ_CHUNK_TXN_COUNT, 10);
-        Assert.assertEquals(10, node1.getConfiguration().getDefaultWalSeqChunkTxnCount());
-        runFuzz(rnd);
     }
 
     @Test
@@ -192,15 +222,6 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
-    public void testWriteO3DataOnlyBig() throws Exception {
-        Rnd rnd = generateRandom(LOG);
-        setFuzzProbabilities(0, 0, 0, 0, 0, 0, 0, 1.0, 0.01, 0.01, 0.0);
-        setFuzzCounts(true, 1_000_000, 500, 20, 1000, 1000, 100, 20);
-        setFuzzProperties(rnd);
-        runFuzz(rnd);
-    }
-
-    @Test
     public void testWalWriteManyTablesInOrder() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_O3_QUICKSORT_ENABLED, true);
         Rnd rnd = generateRandom(LOG);
@@ -239,7 +260,12 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         runFuzz(rnd, getTestName(), 1);
     }
 
-    public enum IOMode {
-        ALLOW_MIXED_IO, NO_MIXED_IO
+    @Test
+    public void testWriteO3DataOnlyBig() throws Exception {
+        Rnd rnd = generateRandom(LOG);
+        setFuzzProbabilities(0, 0, 0, 0, 0, 0, 0, 1.0, 0.01, 0.01, 0.0);
+        setFuzzCounts(true, 1_000_000, 500, 20, 1000, 1000, 100, 20);
+        setFuzzProperties(rnd);
+        runFuzz(rnd);
     }
 }

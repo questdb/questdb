@@ -53,4 +53,8 @@ public interface TransactionLogCursor extends Closeable {
     void toTop();
 
     long getPartNo();
+
+    // Sets cursor to minimum available position.
+    // In case of chunked sequencer it will search for the min available position prior to the current position.
+    void toMin();
 }

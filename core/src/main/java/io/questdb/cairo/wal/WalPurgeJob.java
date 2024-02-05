@@ -360,10 +360,6 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         // No need to do anything, all discovered segments / wals will be deleted
     }
 
-    private boolean matchesPartNamePattern(DirectUtf8StringZ of) {
-        return false;
-    }
-
     private boolean recursiveDelete(Path path) {
         if (!ff.rmdir(path, false) && !CairoException.errnoRemovePathDoesNotExist(ff.errno())) {
             LOG.debug()
@@ -677,7 +673,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                     .$(", part=").$(seqPart).$(']').$();
             Path path = setSeqPartPath(tableToken).put(Files.SEPARATOR).put(seqPart).$();
             // If error removing, will be retried on next run.
-            LOG.debug().$("could not delete sequencer part [path=").$(path).$(", errno=").$(ff.errno()).I$();
+            ff.removeQuiet(path);
         }
 
         @Override

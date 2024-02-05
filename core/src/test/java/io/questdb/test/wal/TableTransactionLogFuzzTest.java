@@ -42,6 +42,7 @@ import org.junit.Test;
 
 import static io.questdb.cairo.wal.seq.TableTransactionLogFile.STRUCTURAL_CHANGE_WAL_ID;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
 public class TableTransactionLogFuzzTest extends AbstractCairoTest {
     private final MemorySerializer voidSerializer = new MemorySerializer() {
@@ -125,9 +126,11 @@ public class TableTransactionLogFuzzTest extends AbstractCairoTest {
 
     private static void compareCursor(IntList transactionIds, int txnLo, TransactionLogCursor cursor) {
         int size = transactionIds.size() / 2;
-        for (int i = txnLo - 1; i < size; i++) {
+        for (int i = txnLo; i < size; i++) {
             int txnId = transactionIds.getQuick(2 * i);
             int sv = transactionIds.getQuick(2 * i + 1);
+            assertTrue(cursor.hasNext());
+
             if (txnId == 0) {
                 assertEquals(sv, cursor.getStructureVersion());
                 assertEquals(i, cursor.getWalId());
@@ -141,7 +144,6 @@ public class TableTransactionLogFuzzTest extends AbstractCairoTest {
                 assertEquals(-1, cursor.getSegmentTxn());
                 assertEquals(i + 125, cursor.getCommitTimestamp());
             }
-            assertEquals(i < size - 1, cursor.hasNext());
         }
     }
 

@@ -92,7 +92,28 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
             cursor.close();
-            cursor.logCursor = executionContext.getCairoEngine().getTableSequencerAPI().getCursor(tableToken, 0);
+            long txnLo = 0;
+            while (true) {
+                try {
+                    TransactionLogCursor cursor = executionContext.getCairoEngine().getTableSequencerAPI().getCursor(tableToken, txnLo);
+                    cursor.toMin();
+                    this.cursor.logCursor = cursor;
+                    break;
+                } catch (CairoException e) {
+                    if (e.errnoReadPathDoesNotExist()) {
+                        // Txn sequencer can have it's parts deleted due to housekeeping
+                        // Need to keep scanning until we find a valid part
+                        if (txnLo == 0) {
+                            long writerTxn = executionContext.getCairoEngine().getTableSequencerAPI().getTxnTracker(tableToken).getWriterTxn();
+                            if (writerTxn > 0) {
+                                txnLo = writerTxn;
+                                continue;
+                            }
+                        }
+                        throw e;
+                    }
+                }
+            }
             return cursor;
         }
 

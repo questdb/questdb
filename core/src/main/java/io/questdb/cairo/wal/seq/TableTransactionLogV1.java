@@ -274,6 +274,11 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
             return -1;
         }
 
+        @Override
+        public void toMin() {
+            toTop();
+        }
+
         private static int openFileRO(final FilesFacade ff, final Path path, final String fileName) {
             final int rootLen = path.size();
             path.concat(fileName).$();
