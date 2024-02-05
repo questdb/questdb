@@ -22,6 +22,7 @@
  *
  ******************************************************************************/
 
+#include <jni.h>
 #include <asm-generic/errno-base.h>
 #include <errno.h>
 #include <stdint.h>
@@ -59,7 +60,7 @@ struct file_watcher {
    the address of the initialized file_watcher struct. If value is 0, then an error has occurred
 
 */
-static uintptr_t filewatcher_setup(const char *filepath) {
+static uintptr_t setup(const char *filepath) {
     struct file_watcher *fw;
     
     
@@ -105,7 +106,12 @@ static uintptr_t filewatcher_setup(const char *filepath) {
 
 }
 
-static void filewatcher_teardown(uintptr_t wp) {
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Filewatcher_setup
+    (JNIEnv *e, jclass cl, jlong lpszName) {
+        return setup((const char *)lpszName);
+    }
+
+static void teardown(uintptr_t wp) {
     struct file_watcher *fw = (struct file_watcher *)wp;
 
     // Clean up the inotify watch descriptor first
@@ -114,7 +120,12 @@ static void filewatcher_teardown(uintptr_t wp) {
     free(fw);
 }
 
-static int filewatcher_changed(uintptr_t wp) {
+JNIEXPORT void JNICALL Java_io_questdb_std_Filewatcher_teardown
+    (JNIEnv *e, jclass cl, jlong address) {
+        teardown(address);
+}
+
+static int changed(uintptr_t wp) {
     int poll_num;
     struct pollfd fds[1];
 
@@ -164,16 +175,21 @@ static int filewatcher_changed(uintptr_t wp) {
     return 0;
 }
 
+JNIEXPORT jboolean JNICALL Java_io_questdb_std_Filewatcher_changed
+    (JNIEnv *e, jclass cl, jlong address) {
+        return changed(address);
+}
+
 
 int
 main(int argc, char* argv[]) {
-    intptr_t fw_ptr = filewatcher_setup("/home/steven/tmp/qdbdev/conf/server.conf");
+    intptr_t fw_ptr = setup("/home/steven/tmp/qdbdev/conf/server.conf");
     int a; 
     for(;;) {
-        a = filewatcher_changed(fw_ptr);
+        a = changed(fw_ptr);
         printf("%d\n", a);
         sleep(4);
     }
    
-    filewatcher_teardown(fw_ptr);
+    teardown(fw_ptr);
 }

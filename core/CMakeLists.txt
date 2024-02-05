@@ -112,6 +112,7 @@ elseif (UNIX)
                 src/main/c/linux/accept.c
                 src/main/c/linux/files.c
                 src/main/c/linux/io_uring.c
+                src/main/c/linux/filewatcher.c
         )
 
     endif (CMAKE_SYSTEM_NAME MATCHES "FreeBSD")
