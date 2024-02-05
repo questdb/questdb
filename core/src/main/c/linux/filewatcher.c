@@ -35,8 +35,17 @@
 #include <libgen.h>
 
 struct file_watcher {
+    // fd is the inotify api file descriptor
     uintptr_t fd;
+    // wd is the watch descriptor for poll calls
     uintptr_t wd;
+    /* buf is used to hold inotify events for processing. We align the buffer 
+       used for reading from the inotify file descriptor to the inotify_event struct 
+       as per the inotify man page
+    */
+    char buf[4096]   
+        __attribute__ ((aligned(__alignof__(struct inotify_event))));
+    
     char *name;
 };
 
@@ -50,8 +59,7 @@ struct file_watcher {
    the address of the initialized file_watcher struct. If value is 0, then an error has occurred
 
 */
-static uintptr_t filewatcher_setup(char *filepath) {
-    int fd;
+static uintptr_t filewatcher_setup(const char *filepath) {
     int *wd;
     struct file_watcher *fw;
     
@@ -61,16 +69,15 @@ static uintptr_t filewatcher_setup(char *filepath) {
     strcpy(filepath_copy, filepath);
 
 
-
     /* Create the file descriptor for accessing the inotify API. */
-    fd = inotify_init1(IN_NONBLOCK);
+    const int fd = inotify_init1(IN_NONBLOCK);
     if (fd == -1) {
         return 0;
     }
 
     
-    /* Allocate memory for watch descriptors. Return 0 if
-       there is a calloc error. */
+    /* Allocate memory for watch descriptor. Return 0 if
+       there is a malloc error. */
     wd = calloc(1, sizeof(int));
     if (wd == NULL) {
         return 0;
@@ -90,7 +97,7 @@ static uintptr_t filewatcher_setup(char *filepath) {
     }
     
     /* Set up file_watcher struct */
-    fw = malloc(sizeof(struct file_watcher));
+    fw = calloc(1, sizeof(struct file_watcher));
     fw->fd = fd;
     fw->wd = (uintptr_t)wd[0];
     fw->name = basename(filepath_copy);
@@ -101,6 +108,7 @@ static uintptr_t filewatcher_setup(char *filepath) {
 
 static void filewatcher_teardown(uintptr_t wp) {
     struct file_watcher *fw = (struct file_watcher *)wp;
+    free(fw->wd);
     free(fw);
 }
 
@@ -120,10 +128,6 @@ static int filewatcher_changed(uintptr_t wp) {
 
     if (poll_num > 0) {
         if (fds[0].revents & POLLIN) {
-            /* From inotify man page: align the buffer used for reading from the
-            inotify file descriptor to the inotify_event struct*/
-            char buf[4096]   
-                __attribute__ ((aligned(__alignof__(struct inotify_event))));
             const struct inotify_event *event;
             ssize_t len;
 
@@ -132,7 +136,7 @@ static int filewatcher_changed(uintptr_t wp) {
             for (;;) {
                 /* Read some events. */
 
-                len = read(fw->fd, buf, sizeof(buf));
+                len = read(fw->fd, fw->buf, sizeof(fw->buf));
                 if (len == -1 && errno != EAGAIN) {
                     return -1;
                 }
@@ -143,7 +147,7 @@ static int filewatcher_changed(uintptr_t wp) {
                     return 0;
 
                 /* Loop over all events in the buffer */
-                for (char *ptr = buf; ptr < buf + len;
+                for (char *ptr = fw->buf; ptr < fw->buf + len;
                         ptr += sizeof(struct inotify_event) + event->len) {
                             event = (const struct inotify_event *) ptr; 
 
