@@ -24,11 +24,40 @@
 
 package io.questdb.test;
 
+import io.questdb.BuildInformationHolder;
+import io.questdb.ReloadingPropServerConfiguration;
+import io.questdb.ServerConfigurationChangeWatcherJob;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.mp.SynchronizedJob;
+import io.questdb.mp.WorkerPool;
+import io.questdb.test.mp.TestWorkerPool;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
+
+import java.io.PrintWriter;
+import java.nio.charset.Charset;
+import java.util.Properties;
 
 public class ServerConfigurationChangeWatcherJobTest {
+    @Rule
+    public TemporaryFolder temp = new TemporaryFolder();
+    protected static final Log LOG = LogFactory.getLog(ReloadingPropServerConfigurationTest.class);
     @Test
     public void testConfigReload() throws Exception {
+
+        temp.newFolder("conf");
+        try (PrintWriter writer = new PrintWriter(temp.newFile("conf/mime.types"), Charset.defaultCharset())) {
+            writer.println("");
+        }
+
+        ReloadingPropServerConfiguration config = new ReloadingPropServerConfiguration(
+            temp.getRoot().getAbsolutePath(), new Properties(), null, ServerConfigurationChangeWatcherJobTest.LOG, new BuildInformationHolder()
+        );
+
+
+
 
     }
 

@@ -4,7 +4,8 @@ import io.questdb.*;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Rnd;
+import io.questdb.mp.SOCountDownLatch;
+import io.questdb.std.Os;
 import io.questdb.test.tools.TestUtils;
 
 import org.jetbrains.annotations.NotNull;
@@ -14,13 +15,9 @@ import org.junit.rules.TemporaryFolder;
 
 import java.io.File;
 import java.io.IOException;
-import java.time.Duration;
-import java.time.LocalDate;
-import java.time.LocalTime;
 import java.util.Map;
 import java.util.Properties;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class ReloadingPropServerConfigurationTest {
@@ -57,42 +54,45 @@ public class ReloadingPropServerConfigurationTest {
     @Test
     public void testConcurrentReload() throws Exception {
         Properties properties = new Properties();
+        properties.setProperty(String.valueOf(PropertyKey.HTTP_CONNECTION_POOL_INITIAL_CAPACITY), "99");
         ReloadingPropServerConfiguration configuration = newReloadingPropServerConfiguration(root, properties, null, new BuildInformationHolder());
 
-        int concurrencyLevel = 128;
-        String newValueStr = "99";
-        int newValue = Integer.parseInt(newValueStr);
-        Duration timeout =  Duration.ofSeconds(5);
-        LocalTime start = LocalTime.now();
-        AtomicInteger threadsFinished = new AtomicInteger();
+        int concurrencyLevel = 4;
+        AtomicInteger values = new AtomicInteger(10);
 
-        Assert.assertNotEquals(newValue, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getConnectionPoolInitialCapacity());
+        CyclicBarrier startBarrier = new CyclicBarrier(concurrencyLevel + 1);
+        CyclicBarrier valueBarrier = new CyclicBarrier(concurrencyLevel + 1);
+        SOCountDownLatch endLatch = new SOCountDownLatch(concurrencyLevel);
+
+        new Thread(() -> {
+            TestUtils.await(startBarrier);
+            while (values.get() >= 0) {
+                properties.setProperty(String.valueOf(PropertyKey.HTTP_CONNECTION_POOL_INITIAL_CAPACITY), Integer.toString(values.decrementAndGet()));
+                configuration.reload(properties, null);
+                TestUtils.await(valueBarrier);
+            }
+        }).start();
 
         for (int i = 0; i < concurrencyLevel; i++) {
-
             new Thread(() -> {
-                while (true) {
-                    if (configuration.getHttpServerConfiguration().getHttpContextConfiguration().getConnectionPoolInitialCapacity() == newValue) {
-                        threadsFinished.incrementAndGet();
-                        return;
+                TestUtils.await(startBarrier);
+                try {
+                    while (true) {
+                        if (configuration.getHttpServerConfiguration().getHttpContextConfiguration().getConnectionPoolInitialCapacity() == values.get()) {
+                            TestUtils.await(valueBarrier);
+                        }
+                        Os.pause();
+                        if (values.get() == -1) {
+                            break;
+                        }
                     }
-                    try {
-                        Thread.sleep(ThreadLocalRandom.current().nextInt(0, 500));
-                    } catch (InterruptedException e) {
-                        throw new RuntimeException(e);
-                    }
+                }
+                finally {
+                    endLatch.countDown();
                 }
             }).start();
         }
-
-        properties.setProperty(String.valueOf(PropertyKey.HTTP_CONNECTION_POOL_INITIAL_CAPACITY), newValueStr);
-        configuration.reload(properties, null);
-
-        while (threadsFinished.get() < concurrencyLevel) {
-            Thread.sleep(50);
-            Assert.assertTrue(LocalTime.now().isBefore(start.plus(timeout)));
-        }
-
+        endLatch.await();
     }
 
     @NotNull

@@ -24,6 +24,9 @@
 
 package io.questdb;
 
+import io.questdb.cairo.O3OpenColumnJob;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.Filewatcher;
 import io.questdb.std.str.Path;
 import io.questdb.mp.SynchronizedJob;
@@ -33,12 +36,15 @@ import java.nio.file.Paths;
 public class ServerConfigurationChangeWatcherJob extends SynchronizedJob implements Closeable {
     private final long watcherAddress;
     private final ReloadingPropServerConfiguration config;
+    private final String configFilePath;
+    private final static Log LOG = LogFactory.getLog(ServerConfigurationChangeWatcherJob.class);
 
     public ServerConfigurationChangeWatcherJob(ReloadingPropServerConfiguration config) {
         this.config = config;
+        this.configFilePath =config.getCairoConfiguration().getConfRoot() + Bootstrap.CONFIG_FILE;
 
         try (Path path = new Path()) {
-            path.of(config.getCairoConfiguration().getConfRoot() + Bootstrap.CONFIG_FILE).$();
+            path.of(configFilePath).$();
             this.watcherAddress = Filewatcher.setup(path.ptr());
         }
     }
@@ -50,7 +56,10 @@ public class ServerConfigurationChangeWatcherJob extends SynchronizedJob impleme
     @Override
     protected boolean runSerially() {
         if (Filewatcher.changed(this.watcherAddress)) {
-            this.config.reload();
+            LOG.info().$("config file changed. path=").$(this.configFilePath).$();
+            if (this.config.reload()) {
+                LOG.info().$("config successfully reloaded").$();
+            }
         }
         return true;
     }

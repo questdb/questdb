@@ -174,7 +174,7 @@ public class ReloadingPropServerConfiguration implements ServerConfiguration {
         try (InputStream is = java.nio.file.Files.newInputStream(configFile)) {
             properties.load(is);
         } catch (IOException exc) {
-            this.log.error().$(exc);
+            this.log.error().$("unable to reload config. exception=").$(exc).$();
             return false;
         }
 
