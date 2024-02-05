@@ -24,10 +24,7 @@
 
 package io.questdb.test;
 
-import io.questdb.FactoryProvider;
-import io.questdb.MessageBus;
-import io.questdb.MessageBusImpl;
-import io.questdb.Metrics;
+import io.questdb.*;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
@@ -46,16 +43,17 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
-import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
-import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
-import io.questdb.test.cairo.*;
+import io.questdb.test.cairo.CairoTestConfiguration;
+import io.questdb.test.cairo.Overrides;
+import io.questdb.test.cairo.RecordCursorPrinter;
+import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -74,6 +72,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 
 public abstract class AbstractCairoTest extends AbstractTest {
+
     protected static final Log LOG = LogFactory.getLog(AbstractCairoTest.class);
     protected static final PlanSink planSink = new TextPlanSink();
     protected static final RecordCursorPrinter printer = new RecordCursorPrinter();
@@ -81,21 +80,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
     private final static double EPSILON = 0.000001;
     private static final long[] SNAPSHOT = new long[MemoryTag.SIZE];
     private static final LongList rows = new LongList();
-    public static long dataAppendPageSize = -1;
-    public static int recreateDistressedSequencerAttempts = 3;
-    public static long spinLockTimeout = -1;
-    public static int walTxnNotificationQueueCapacity = -1;
-    public static long writerAsyncCommandBusyWaitTimeout = -1;
-    public static long writerAsyncCommandMaxTimeout = -1;
-    protected static String attachableDirSuffix = null;
-    protected static CharSequence backupDir;
-    protected static DateFormat backupDirTimestampFormat;
-    protected static int binaryEncodingMaxLength = -1;
+    public static StaticOverrides staticOverrides = new StaticOverrides();
     protected static BindVariableService bindVariableService;
     protected static NetworkSqlExecutionCircuitBreaker circuitBreaker;
     protected static SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration;
-    protected static long columnPurgeRetryDelay = -1;
-    protected static int columnVersionPurgeQueueCapacity = -1;
     protected static CairoConfiguration configuration;
     protected static TestCairoConfigurationFactory configurationFactory;
     protected static long currentMicros = -1;
@@ -105,25 +93,15 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static TestCairoEngineFactory engineFactory;
     protected static FactoryProvider factoryProvider;
     protected static FilesFacade ff;
-    protected static int groupByShardingThreshold = -1;
     protected static String inputRoot = null;
     protected static String inputWorkRoot = null;
     protected static IOURingFacade ioURingFacade = IOURingFacadeImpl.INSTANCE;
-    protected static int maxOpenPartitions = -1;
     protected static MessageBus messageBus;
     protected static Metrics metrics;
     protected static QuestDBTestNode node1;
     protected static ObjList<QuestDBTestNode> nodes = new ObjList<>();
-    protected static int pageFrameMaxRows = -1;
-    protected static int pageFrameReduceQueueCapacity = -1;
-    protected static int pageFrameReduceShardCount = -1;
     protected static SecurityContext securityContext;
-    protected static String snapshotInstanceId = null;
-    protected static Boolean snapshotRecoveryEnabled = null;
-    protected static int sqlCopyBufferSize = 1024 * 1024;
     protected static SqlExecutionContext sqlExecutionContext;
-    protected static int writerCommandQueueCapacity = 4;
-    protected static long writerCommandQueueSlotSize = 2048L;
     static boolean[] FACTORY_TAGS = new boolean[MemoryTag.SIZE];
     private static long memoryUsage = -1;
     @Rule
@@ -327,10 +305,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         assertFactoryMemoryUsage();
     }
 
-    public static void configOverrideGroupByAllocatorDefaultChunkSize(long groupByAllocatorDefaultChunkSize) {
-        node1.getConfigurationOverrides().setGroupByAllocatorDefaultChunkSize(groupByAllocatorDefaultChunkSize);
-    }
-
     public static void configOverrideMangleTableDirNames(boolean mangle) {
         node1.getConfigurationOverrides().setMangleTableDirNames(mangle);
     }
@@ -413,7 +387,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         // created mid-test
         AbstractTest.setUpStatic();
         nodes.clear();
-        node1 = newNode(Chars.toString(root), false, 1, new StaticOverrides(), getEngineFactory(), getConfigurationFactory());
+        node1 = newNode(Chars.toString(root), false, 1, staticOverrides, getEngineFactory(), getConfigurationFactory());
         configuration = node1.getConfiguration();
         securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getRootContext();
         metrics = node1.getMetrics();
@@ -435,11 +409,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     @AfterClass
     public static void tearDownStatic() {
+        staticOverrides.reset();
         forEachNode(QuestDBTestNode::closeCairo);
         circuitBreaker = Misc.free(circuitBreaker);
         nodes.clear();
-        backupDir = null;
-        backupDirTimestampFormat = null;
         factoryProvider = null;
         engineFactory = null;
         configurationFactory = null;
@@ -1143,134 +1116,17 @@ public abstract class AbstractCairoTest extends AbstractTest {
         CairoEngine.compile(compiler, sql, sqlExecutionContext);
     }
 
-    protected static void configOverrideColumnPreTouchEnabled(Boolean columnPreTouchEnabled) {
-        node1.getConfigurationOverrides().setColumnPreTouchEnabled(columnPreTouchEnabled);
-    }
-
-    @SuppressWarnings("SameParameterValue")
-    protected static void configOverrideColumnVersionTaskPoolCapacity(int columnVersionTaskPoolCapacity) {
-        node1.getConfigurationOverrides().setColumnVersionTaskPoolCapacity(columnVersionTaskPoolCapacity);
-    }
-
-    @SuppressWarnings("SameParameterValue")
-    protected static void configOverrideCopyPartitionOnAttach(Boolean copyPartitionOnAttach) {
-        node1.getConfigurationOverrides().setCopyPartitionOnAttach(copyPartitionOnAttach);
-    }
-
-    protected static void configOverrideDefaultTableWriteMode(int defaultTableWriteMode) {
-        node1.getConfigurationOverrides().setDefaultTableWriteMode(defaultTableWriteMode);
-    }
-
     protected static void configOverrideEnv(Map<String, String> env) {
         node1.getConfigurationOverrides().setEnv(env);
-    }
-
-    @SuppressWarnings("SameParameterValue")
-    protected static void configOverrideHideTelemetryTable(boolean hideTelemetryTable) {
-        node1.getConfigurationOverrides().setHideTelemetryTable(hideTelemetryTable);
-    }
-
-    @SuppressWarnings("SameParameterValue")
-    protected static void configOverrideIoURingEnabled(Boolean ioURingEnabled) {
-        node1.getConfigurationOverrides().setIoURingEnabled(ioURingEnabled);
-    }
-
-    protected static void configOverrideJitMode(int jitMode) {
-        node1.getConfigurationOverrides().setJitMode(jitMode);
-    }
-
-    protected static void configOverrideMaxUncommittedRows(int maxUncommittedRows) {
-        node1.getConfigurationOverrides().setMaxUncommittedRows(maxUncommittedRows);
-    }
-
-    protected static void configOverrideO3ColumnMemorySize(int size) {
-        node1.getConfigurationOverrides().setO3ColumnMemorySize(size);
-    }
-
-    protected static void configOverrideO3MaxLag() {
-        node1.getConfigurationOverrides().setO3MaxLag(28291);
-    }
-
-    protected static void configOverrideO3MinLag(long minLag) {
-        node1.getConfigurationOverrides().setO3MinLag(minLag);
-    }
-
-    @SuppressWarnings("SameParameterValue")
-    protected static void configOverrideO3QuickSortEnabled(boolean o3QuickSortEnabled) {
-        node1.getConfigurationOverrides().setO3QuickSortEnabled(o3QuickSortEnabled);
-    }
-
-    protected static void configOverrideParallelGroupByEnabled(boolean parallelGroupByEnabled) {
-        node1.getConfigurationOverrides().setParallelGroupByEnabled(parallelGroupByEnabled);
-    }
-
-    protected static void configOverrideParallelImportStatusLogKeepNDays(int parallelImportStatusLogKeepNDays) {
-        node1.getConfigurationOverrides().setParallelImportStatusLogKeepNDays(parallelImportStatusLogKeepNDays);
-    }
-
-    protected static void configOverrideRndFunctionMemoryMaxPages(int rndFunctionMemoryMaxPages) {
-        node1.getConfigurationOverrides().setRndFunctionMemoryMaxPages(rndFunctionMemoryMaxPages);
-    }
-
-    @SuppressWarnings("SameParameterValue")
-    protected static void configOverrideRndFunctionMemoryPageSize(int rndFunctionMemoryPageSize) {
-        node1.getConfigurationOverrides().setRndFunctionMemoryPageSize(rndFunctionMemoryPageSize);
     }
 
     protected static void configOverrideRostiAllocFacade(RostiAllocFacade rostiAllocFacade) {
         node1.getConfigurationOverrides().setRostiAllocFacade(rostiAllocFacade);
     }
 
-    protected static void configOverrideSampleByIndexSearchPageSize(int sampleByIndexSearchPageSize) {
-        node1.getConfigurationOverrides().setSampleByIndexSearchPageSize(sampleByIndexSearchPageSize);
-    }
-
-    @SuppressWarnings("SameParameterValue")
-    protected static void configOverrideSqlJoinMetadataMaxResizes(int sqlJoinMetadataMaxResizes) {
-        node1.getConfigurationOverrides().setSqlJoinMetadataMaxResizes(sqlJoinMetadataMaxResizes);
-    }
-
-    @SuppressWarnings("SameParameterValue")
-    protected static void configOverrideSqlJoinMetadataPageSize(int sqlJoinMetadataPageSize) {
-        node1.getConfigurationOverrides().setSqlJoinMetadataPageSize(sqlJoinMetadataPageSize);
-    }
-
-    protected static void configOverrideSqlWindowMaxRecursion(int maxRecursion) {
-        node1.getConfigurationOverrides().setSqlWindowMaxRecursion(maxRecursion);
-    }
-
-    protected static void configOverrideSqlWindowStoreMaxPages(int windowStoreMaxPages) {
-        node1.getConfigurationOverrides().setSqlWindowStoreMaxPages(windowStoreMaxPages);
-    }
-
-    protected static void configOverrideSqlWindowStorePageSize(int windowStorePageSize) {
-        node1.getConfigurationOverrides().setSqlWindowStorePageSize(windowStorePageSize);
-    }
-
-    protected static void configOverrideWalApplyTableTimeQuota(long walApplyTableTimeQuota) {
-        node1.getConfigurationOverrides().setWalApplyTableTimeQuota(walApplyTableTimeQuota);
-    }
-
     protected static void configOverrideWalMaxLagTxnCount() {
-        node1.getConfigurationOverrides().setWalMaxLagTxnCount(1);
-    }
-
-    @SuppressWarnings("SameParameterValue")
-    protected static void configOverrideWalSegmentRolloverRowCount(long walSegmentRolloverRowCount) {
-        node1.getConfigurationOverrides().setWalSegmentRolloverRowCount(walSegmentRolloverRowCount);
-    }
-
-    protected static void configOverrideWalSegmentRolloverSize(long walSegmentRolloverSize) {
-        node1.getConfigurationOverrides().setWalSegmentRolloverSize(walSegmentRolloverSize);
-    }
-
-    protected static void configOverrideWriterMixedIOEnabled(boolean enableMixedIO) {
-        node1.getConfigurationOverrides().setWriterMixedIOEnabled(enableMixedIO);
-    }
-
-    protected static void configureForBackups() throws IOException {
-        backupDir = temp.newFolder().getAbsolutePath();
-        backupDirTimestampFormat = new TimestampFormatCompiler().compile("ddMMMyyyy");
+        Overrides overrides = node1.getConfigurationOverrides();
+        overrides.setProperty(PropertyKey.CAIRO_WAL_MAX_LAG_TXN_COUNT, 1);
     }
 
     protected static boolean couldObtainLock(Path path) {
@@ -1408,7 +1264,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
             String root,
             boolean ownRoot,
             int nodeId,
-            ConfigurationOverrides overrides,
+            Overrides overrides,
             TestCairoEngineFactory engineFactory,
             TestCairoConfigurationFactory configurationFactory
     ) {
@@ -1565,6 +1421,14 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected static RecordCursorFactory select(CharSequence selectSql) throws SqlException {
         return select(selectSql, sqlExecutionContext);
+    }
+
+    protected static void setProperty(PropertyKey propertyKey, long maxValue) {
+        staticOverrides.setProperty(propertyKey, maxValue);
+    }
+
+    protected static void setProperty(PropertyKey propertyKey, String value) {
+        staticOverrides.setProperty(propertyKey, value);
     }
 
     protected static void tickWalQueue(int ticks) {
@@ -1853,6 +1717,12 @@ public abstract class AbstractCairoTest extends AbstractTest {
             path.of(root).concat(tableToken).concat("wal").put(walId).put(".lock").$();
             Assert.assertEquals(Utf8s.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path));
         }
+    }
+
+    protected void configureForBackups() throws IOException {
+        String backupDir = temp.newFolder().getAbsolutePath();
+        node1.setProperty(PropertyKey.CAIRO_SQL_BACKUP_ROOT, backupDir);
+        node1.setProperty(PropertyKey.CAIRO_SQL_BACKUP_DIR_DATETIME_FORMAT, "ddMMMyyyy");
     }
 
     protected void createPopulateTable(TableModel tableModel, int totalRows, String startDate, int partitionCount) throws NumericException, SqlException {

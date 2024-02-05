@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -7182,7 +7183,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testTableReaderRemainsUsableAfterClosingAllButNLatestOpenPartitions() throws Exception {
-        maxOpenPartitions = 2;
+        node1.setProperty(PropertyKey.CAIRO_INACTIVE_READER_MAX_OPEN_PARTITIONS, 2);
 
         assertMemoryLeak(() -> {
             ddl("create table x as (" +
@@ -7221,7 +7222,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 // verify that the reader doesn't keep all partitions open once it's returned back to the pool
                 try (TableReader reader = engine.getReader("x")) {
                     Assert.assertEquals(6, reader.getPartitionCount());
-                    Assert.assertEquals(maxOpenPartitions, reader.getOpenPartitionCount());
+                    Assert.assertEquals(configuration.getInactiveReaderMaxOpenPartitions(), reader.getOpenPartitionCount());
+                    Assert.assertEquals(2, configuration.getInactiveReaderMaxOpenPartitions());
                 }
             }
         });

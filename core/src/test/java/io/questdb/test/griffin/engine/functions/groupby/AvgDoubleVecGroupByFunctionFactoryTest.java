@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
+import io.questdb.PropertyKey;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -32,7 +33,7 @@ public class AvgDoubleVecGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testAddColumn() throws Exception {
         // fix page frame size, because it affects AVG accuracy
-        pageFrameMaxRows = 10_000;
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 10_000);
 
         assertQuery("avg\n" +
                         "0.511848387\n", "select round(avg(f),9) avg from tab", "create table tab as (select rnd_double(2) f from long_sequence(131))", null, "alter table tab add column b double", "avg\n" +
@@ -59,8 +60,7 @@ public class AvgDoubleVecGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSimple() throws Exception {
         // fix page frame size, because it affects AVG accuracy
-
-        pageFrameMaxRows = 10_000;
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 10_000);
 
         assertQuery(
                 "avg\n" +

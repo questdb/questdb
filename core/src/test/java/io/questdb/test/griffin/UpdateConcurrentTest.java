@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
@@ -52,20 +53,23 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT;
+import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT;
+
 public class UpdateConcurrentTest extends AbstractCairoTest {
     private static final ThreadLocal<SCSequence> eventSubSequence = new ThreadLocal<>(SCSequence::new);
     private static final ThreadLocal<StringSink> readerSink = new ThreadLocal<>(StringSink::new);
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
-        writerCommandQueueCapacity = 128;
+        setProperty(PropertyKey.CAIRO_WRITER_COMMAND_QUEUE_CAPACITY, 128);
         AbstractCairoTest.setUpStatic();
     }
 
     @Override
     @Before
     public void setUp() {
-        writerCommandQueueCapacity = 128;
+        setProperty(PropertyKey.CAIRO_WRITER_COMMAND_QUEUE_CAPACITY, 128);
         super.setUp();
     }
 
@@ -141,9 +145,9 @@ public class UpdateConcurrentTest extends AbstractCairoTest {
     }
 
     private void testConcurrency(int numOfWriters, int numOfReaders, int numOfUpdates, PartitionMode partitionMode) throws Exception {
-        writerAsyncCommandBusyWaitTimeout = 20_000L; // On in CI Windows updates are particularly slow
-        writerAsyncCommandMaxTimeout = 30_000L;
-        spinLockTimeout = 20_000L;
+        setProperty(CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 20000); // On in CI Windows updates are particularly slow
+        setProperty(CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT, 30_000L);
+        node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 20_000L);
         assertMemoryLeak(() -> {
             CyclicBarrier barrier = new CyclicBarrier(numOfWriters + numOfReaders);
             ConcurrentLinkedQueue<Throwable> exceptions = new ConcurrentLinkedQueue<>();
