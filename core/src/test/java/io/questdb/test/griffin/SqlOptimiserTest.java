@@ -26,15 +26,9 @@ package io.questdb.test.griffin;
 
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlOptimiser;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.model.ExecutionModel;
-import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
-import io.questdb.std.str.Sinkable;
-import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -59,8 +53,6 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: y\n");
-
-
         });
     }
 
@@ -111,7 +103,6 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         });
     }
 
-
     protected QueryModel compileModel(String query, int modelType) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             ExecutionModel model = compiler.testCompileModel(query, sqlExecutionContext);
@@ -121,6 +112,4 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 }
 
-// * (select x1, sum(x1) from (select x as x1 from y))
-//     * If you were to move lift the column from the RHS to the LHS, you might get:
-//     * (select x x1, sum(x1) from y)
+
