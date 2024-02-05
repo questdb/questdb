@@ -520,7 +520,7 @@ public class HttpResponseSink implements Closeable, Mutable {
 
     public class HttpResponseHeaderImpl implements Utf8Sink, HttpResponseHeader, Mutable {
         private final MillisecondClock clock;
-        private boolean chunky;
+        private boolean chunked;
         private int code;
 
         public HttpResponseHeaderImpl(MillisecondClock clock) {
@@ -530,7 +530,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         @Override
         public void clear() {
             buffer.clearAndPrepareToWriteToBuffer();
-            chunky = false;
+            chunked = false;
         }
 
         // this is used for HTTP access logging
@@ -538,8 +538,8 @@ public class HttpResponseSink implements Closeable, Mutable {
             return code;
         }
 
-        public boolean isChunky() {
-            return chunky;
+        public boolean isChunked() {
+            return chunked;
         }
 
         @Override
@@ -592,8 +592,8 @@ public class HttpResponseSink implements Closeable, Mutable {
             DateFormatUtils.formatHTTP(this, clock.getTicks());
             putEOL();
             if (contentLength > -2) {
-                this.chunky = (contentLength == -1);
-                if (this.chunky) {
+                chunked = (contentLength == -1);
+                if (chunked) {
                     putAscii("Transfer-Encoding: chunked").putEOL();
                 } else {
                     putAscii("Content-Length: ").put(contentLength).putEOL();
@@ -609,7 +609,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
 
         private void prepareToSend() {
-            if (!chunky) {
+            if (!chunked) {
                 putEOL();
             }
         }
@@ -856,8 +856,8 @@ public class HttpResponseSink implements Closeable, Mutable {
                 utf8Sink.put(message);
                 sink.put(utf8Sink).putEOL();
             }
-            final boolean chunky = headerImpl.isChunky();
-            buffer.prepareToReadFromBuffer(chunky, chunky);
+            final boolean chunked = headerImpl.isChunked();
+            buffer.prepareToReadFromBuffer(chunked, chunked);
             resumeSend();
         }
 

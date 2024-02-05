@@ -53,6 +53,7 @@ public abstract class HttpClient implements QuietCloseable {
     private final int defaultTimeout;
     private final int maxBufferSize;
     private final Request request = new Request();
+    private final ResponseHeaders responseHeaders;
     private final int responseParserBufSize;
     private long bufLo;
     private int bufferSize;
@@ -60,7 +61,6 @@ public abstract class HttpClient implements QuietCloseable {
     private CharSequence host;
     private int port;
     private long ptr = bufLo;
-    private ResponseHeaders responseHeaders;
     private long responseParserBufLo;
 
     public HttpClient(HttpClientConfiguration configuration, SocketFactory socketFactory) {
