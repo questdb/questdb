@@ -30,9 +30,12 @@ import org.jetbrains.annotations.Nullable;
 
 public interface Utf8Sink extends CharSink<Utf8Sink> {
 
-    default Utf8Sink escapeJsonStr(CharSequence cs) {
-        int i = 0;
-        final int hi = cs.length();
+    default Utf8Sink escapeJsonStr(@NotNull CharSequence cs) {
+        return escapeJsonStr(cs, 0, cs.length());
+    }
+
+    default Utf8Sink escapeJsonStr(@NotNull CharSequence cs, int lo, int hi) {
+        int i = lo;
         while (i < hi) {
             char c = cs.charAt(i++);
             if (c < 32) {

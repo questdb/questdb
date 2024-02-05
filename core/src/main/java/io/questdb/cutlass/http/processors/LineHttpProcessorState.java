@@ -130,11 +130,11 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
             sink.putAscii("failed to parse line protocol:");
             sink.putAscii("errors encountered on line(s):");
         }
-        sink.put(error, 0, Math.min(error.length(), maxResponseErrorMessageLength));
+        sink.escapeJsonStr(error, 0, Math.min(error.length(), maxResponseErrorMessageLength));
         if (errorLine > -1) {
             sink.putAscii("\",\"line\":").put(errorLine);
         } else {
-            sink.putAscii('\"');
+            sink.putQuote();
         }
         sink.putAscii(",\"errorId\":\"").putAscii(ERROR_ID).put('-').put(errorId).putAscii("\"").putAscii('}');
     }
