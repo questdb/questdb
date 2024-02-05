@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.std.Hash;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -97,7 +98,7 @@ public class GroupByIntHashSet {
     }
 
     public int keyIndex(int key) {
-        int hashCode = Integer.hashCode(key);
+        int hashCode = Hash.hashInt(key);
         int index = hashCode & mask;
         int k = keyAt(index);
         if (k == noKeyValue) {
