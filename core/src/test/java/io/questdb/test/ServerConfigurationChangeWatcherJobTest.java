@@ -85,7 +85,7 @@ public class ServerConfigurationChangeWatcherJobTest {
                     try (PrintWriter writer = new PrintWriter(Paths.get(temp.getRoot().getAbsolutePath(), "conf/server.conf").toString())) {
                         writer.print(PropertyKey.HTTP_CONNECTION_POOL_INITIAL_CAPACITY);
                         writer.print("=");
-                        writer.print(values.decrementAndGet());
+                        writer.print(values.get());
                     } catch (IOException e) {
                         // If there is an error in writing the file, end the test
                         endLatch.setCount(0);
@@ -93,6 +93,7 @@ public class ServerConfigurationChangeWatcherJobTest {
                     }
 
                     Assert.assertTrue(job.run(1));
+                    values.decrementAndGet();
                     TestUtils.await(valueBarrier);
                 }
             }).start();
@@ -102,12 +103,11 @@ public class ServerConfigurationChangeWatcherJobTest {
                     TestUtils.await(startBarrier);
                     try {
                         while (true) {
-                            if (config.getHttpServerConfiguration().getHttpContextConfiguration().getConnectionPoolInitialCapacity() == values.get()) {
-                                TestUtils.await(valueBarrier);
-                            }
-                            Os.pause();
                             if (values.get() == -1) {
                                 break;
+                            }
+                            if (config.getHttpServerConfiguration().getHttpContextConfiguration().getConnectionPoolInitialCapacity() == values.get()) {
+                                TestUtils.await(valueBarrier);
                             }
                         }
                     }
