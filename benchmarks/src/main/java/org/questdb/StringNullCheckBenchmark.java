@@ -59,8 +59,10 @@ public class StringNullCheckBenchmark {
 
     @Param({"0", "1", "3", "100"})
     public int a_nullFreq;
+    @Param({"false", "true"})
+    public boolean b_useComplexFilter;
     @Param({"SIMD", "SCALAR", "DISABLED"})
-    public JitMode b_jitMode;
+    public JitMode c_jitMode;
 
     private Blackhole blackHole;
     private SqlCompilerImpl compiler;
@@ -94,6 +96,8 @@ public class StringNullCheckBenchmark {
                         (a_nullFreq != 0
                                 ? " rnd_str(100, 70, 140, " + a_nullFreq + ") string_value,"
                                 : " rnd_str('', 'a', 'aa') string_value,") +
+                        " rnd_long(1, 10, 0) long_value1," +
+                        " rnd_long(1, 10, 0) long_value2," +
                         " timestamp_sequence(to_timestamp('2024-02-04', 'yyyy-MM-dd'), 100000L) ts" +
                         " from long_sequence(" + NUM_ROWS + ")) timestamp(ts)", sqlExecutionContext);
             }
@@ -108,7 +112,7 @@ public class StringNullCheckBenchmark {
         compiler = new SqlCompilerImpl(engine);
 
         boolean shouldBeJitCompiled;
-        switch (b_jitMode) {
+        switch (c_jitMode) {
             case SIMD:
                 ctx.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
                 shouldBeJitCompiled = true;
@@ -125,7 +129,9 @@ public class StringNullCheckBenchmark {
                 throw new RuntimeException("unreachable");
         }
         compiler = new SqlCompilerImpl(engine);
-        factory = compiler.compile("select count(*) from x where string_value is null", ctx).getRecordCursorFactory();
+        factory = compiler.compile("select count(*) from x where " +
+                (b_useComplexFilter ? "long_value1 > 0 and long_value2 > 0 and" : "") +
+                " string_value is null", ctx).getRecordCursorFactory();
         if (factory.usesCompiledFilter() != shouldBeJitCompiled) {
             throw new IllegalStateException("Unexpected JIT usage reported by factory: " +
                     "expected=" + shouldBeJitCompiled +
