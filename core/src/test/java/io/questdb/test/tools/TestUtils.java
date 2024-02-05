@@ -1430,6 +1430,9 @@ public final class TestUtils {
             case ColumnType.NULL:
                 sink.put("null");
                 break;
+            case ColumnType.VARCHAR:
+                r.getVarchar(i, sink);
+                break;
             case ColumnType.STRING:
                 if (!symbolAsString | m.getColumnType(i) != ColumnType.SYMBOL) {
                     sink.put(r.getStr(i));

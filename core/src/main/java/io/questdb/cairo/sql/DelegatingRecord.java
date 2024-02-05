@@ -138,8 +138,8 @@ public class DelegatingRecord implements Record {
     }
 
     @Override
-    public void getStr(int col, Utf16Sink sink) {
-        base.getStr(col, sink);
+    public void getStr(int col, Utf16Sink utf16Sink) {
+        base.getStr(col, utf16Sink);
     }
 
     @Override

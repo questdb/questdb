@@ -254,8 +254,8 @@ public class ShardedMapCursor implements MapRecordCursor {
         }
 
         @Override
-        public void getStr(int columnIndex, Utf16Sink sink) {
-            baseRecord.getStr(columnIndex, sink);
+        public void getStr(int columnIndex, Utf16Sink utf16Sink) {
+            baseRecord.getStr(columnIndex, utf16Sink);
         }
 
         @Override

@@ -29,6 +29,8 @@ import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.NotNull;
 
 public class NullMemoryMR implements MemoryMR {
 
@@ -162,6 +164,20 @@ public class NullMemoryMR implements MemoryMR {
     @Override
     public int getStrLen(long offset) {
         return TableUtils.NULL_LEN;
+    }
+
+    @Override
+    public @NotNull Utf8Sequence getUtf8(long offset, int size) {
+        // memory on its own does not have concept of null
+        // for null values the outer code must not be making trips here
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public @NotNull Utf8Sequence getUtf8B(long offset, int size) {
+        // memory on its own does not have concept of null
+        // for null values the outer code must not be making trips here
+        throw new UnsupportedOperationException();
     }
 
     @Override

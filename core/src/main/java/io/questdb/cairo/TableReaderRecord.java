@@ -25,12 +25,14 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long128;
 import io.questdb.std.Long256;
 import io.questdb.std.Rows;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 
 public class TableReaderRecord implements Record, Sinkable {
@@ -293,6 +295,42 @@ public class TableReaderRecord implements Record, Sinkable {
     @Override
     public long getUpdateRowId() {
         return getRowId();
+    }
+
+    @Override
+    public Utf8Sequence getVarcharA(int col) {
+        final long offset = getAdjustedRecordIndex(col) * Long.BYTES;
+        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(
+                offset,
+                TableReader.getPrimaryColumnIndex(columnBase, col)
+        );
+
+        MemoryR memA = reader.getColumn(absoluteColumnIndex);
+        MemoryR memB = reader.getColumn(absoluteColumnIndex + 1);
+        long offsetIsh = memB.getLong(offset);
+        int size = (int) (offsetIsh >>> 44);
+        if (size > 0) {
+            return memA.getUtf8(offsetIsh & (1L << 44), size - 1);
+        }
+        return null;
+    }
+
+    @Override
+    public Utf8Sequence getVarcharB(int col) {
+        final long offset = getAdjustedRecordIndex(col) * Long.BYTES;
+        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(
+                offset,
+                TableReader.getPrimaryColumnIndex(columnBase, col)
+        );
+
+        MemoryR memA = reader.getColumn(absoluteColumnIndex);
+        MemoryR memB = reader.getColumn(absoluteColumnIndex + 1);
+        long offsetIsh = memB.getLong(offset);
+        int size = (int) (offsetIsh >>> 44);
+        if (size > 0) {
+            return memA.getUtf8B(offsetIsh & (1L << 44), size - 1);
+        }
+        return null;
     }
 
     public void incrementRecordIndex() {

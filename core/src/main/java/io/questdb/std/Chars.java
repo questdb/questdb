@@ -604,19 +604,6 @@ public final class Chars {
         return true;
     }
 
-    public static boolean isDoubleQuote(char c) {
-        return c == '"';
-    }
-
-    public static boolean isDoubleQuoted(CharSequence s) {
-        if (s == null || s.length() < 2) {
-            return false;
-        }
-
-        char open = s.charAt(0);
-        return isDoubleQuote(open) && open == s.charAt(s.length() - 1);
-    }
-
     public static boolean isOnlyDecimals(CharSequence s) {
         int len = s.length();
         for (int i = len - 1; i > -1; i--) {
@@ -646,15 +633,6 @@ public final class Chars {
 
         char open = s.charAt(0);
         return isQuote(open) && open == s.charAt(s.length() - 1);
-    }
-
-    public static int lastIndexOf(CharSequence sequence, char term) {
-        for (int i = sequence.length() - 1; i > -1; i--) {
-            if (sequence.charAt(i) == term) {
-                return i;
-            }
-        }
-        return -1;
     }
 
     public static int lastIndexOf(CharSequence sequence, int sequenceLo, int sequenceHi, CharSequence term) {

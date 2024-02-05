@@ -113,12 +113,12 @@ public class ToStrDateFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getStr(Record rec, Utf16Sink sink) {
+        public void getStr(Record rec, Utf16Sink utf16Sink) {
             long value = arg.getDate(rec);
             if (value == Numbers.LONG_NaN) {
                 return;
             }
-            toSink(value, sink);
+            toSink(value, utf16Sink);
         }
 
         @Override

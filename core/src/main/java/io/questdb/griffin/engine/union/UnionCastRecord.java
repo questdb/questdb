@@ -235,11 +235,11 @@ public class UnionCastRecord extends AbstractUnionRecord {
     }
 
     @Override
-    public void getStr(int col, Utf16Sink sink) {
+    public void getStr(int col, Utf16Sink utf16Sink) {
         if (useA) {
-            castFunctionsA.getQuick(col).getStr(recordA, sink);
+            castFunctionsA.getQuick(col).getStr(recordA, utf16Sink);
         } else {
-            castFunctionsB.getQuick(col).getStr(recordB, sink);
+            castFunctionsB.getQuick(col).getStr(recordB, utf16Sink);
         }
     }
 

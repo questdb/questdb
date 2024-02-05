@@ -211,11 +211,11 @@ public class UnionRecord extends AbstractUnionRecord {
     }
 
     @Override
-    public void getStr(int col, Utf16Sink sink) {
+    public void getStr(int col, Utf16Sink utf16Sink) {
         if (useA) {
-            recordA.getStr(col, sink);
+            recordA.getStr(col, utf16Sink);
         } else {
-            recordB.getStr(col, sink);
+            recordB.getStr(col, utf16Sink);
         }
     }
 

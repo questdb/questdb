@@ -28,6 +28,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.BinFunction;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.str.Utf16Sink;
 import org.junit.Test;
 
 public class BinFunctionTest {
@@ -132,7 +133,7 @@ public class BinFunctionTest {
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetStr2() {
-        function.getStr(null, null);
+        function.getStr(null, (Utf16Sink) null);
     }
 
     @Test(expected = UnsupportedOperationException.class)

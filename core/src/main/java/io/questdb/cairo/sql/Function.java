@@ -34,6 +34,8 @@ import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
 
 import java.io.Closeable;
 
@@ -139,7 +141,9 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     CharSequence getStr(Record rec, int arrayIndex);
 
-    void getStr(Record rec, Utf16Sink sink);
+    void getStr(Record rec, Utf16Sink utf16Sink);
+
+    void getStr(Record rec, Utf8Sink utf8Sink);
 
     void getStr(Record rec, Utf16Sink sink, int arrayIndex);
 
@@ -150,6 +154,14 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     int getStrLen(Record rec);
 
     int getStrLen(Record rec, int arrayIndex);
+
+    Utf8Sequence getVarcharA(Record rec);
+
+    void getVarchar(Record rec, Utf8Sink utf8Sink);
+
+    void getVarchar(Record rec, Utf16Sink utf16Sink);
+
+    Utf8Sequence getVarcharB(Record rec);
 
     CharSequence getSymbol(Record rec);
 

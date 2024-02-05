@@ -70,8 +70,8 @@ public class CastShortToStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getStr(Record rec, Utf16Sink sink) {
-            sink.put(arg.getShort(rec));
+        public void getStr(Record rec, Utf16Sink utf16Sink) {
+            utf16Sink.put(arg.getShort(rec));
         }
 
         @Override

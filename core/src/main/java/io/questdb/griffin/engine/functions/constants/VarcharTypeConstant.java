@@ -22,45 +22,37 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.conditional;
+package io.questdb.griffin.engine.functions.constants;
 
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.StrFunction;
-import io.questdb.std.ObjList;
+import io.questdb.griffin.TypeConstant;
+import io.questdb.griffin.engine.functions.VarcharFunction;
 import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
 
-class StrCaseFunction extends StrFunction implements CaseFunction {
-    private final ObjList<Function> args;
-    private final CaseFunctionPicker picker;
+public class VarcharTypeConstant extends VarcharFunction implements TypeConstant {
+    public static final VarcharTypeConstant INSTANCE = new VarcharTypeConstant();
 
-    public StrCaseFunction(CaseFunctionPicker picker, ObjList<Function> args) {
-        this.picker = picker;
-        this.args = args;
+    private VarcharTypeConstant() {
+        super();
     }
 
     @Override
-    public ObjList<Function> getArgs() {
-        return args;
+    public void getVarchar(Record rec, Utf8Sink utf8Sink) {
     }
 
     @Override
-    public void getStr(Record rec, Utf16Sink utf16Sink) {
-        picker.pick(rec).getStr(rec, utf16Sink);
+    public void getVarchar(Record rec, Utf16Sink utf16Sink) {
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
-        return picker.pick(rec).getStr(rec);
+    public Utf8Sequence getVarcharA(Record rec) {
+        return null;
     }
 
     @Override
-    public CharSequence getStrB(Record rec) {
-        return picker.pick(rec).getStrB(rec);
-    }
-
-    @Override
-    public int getStrLen(Record rec) {
-        return picker.pick(rec).getStrLen(rec);
+    public Utf8Sequence getVarcharB(Record rec) {
+        return null;
     }
 }

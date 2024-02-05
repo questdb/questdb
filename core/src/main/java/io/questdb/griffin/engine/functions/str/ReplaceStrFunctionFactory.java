@@ -120,10 +120,10 @@ public class ReplaceStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getStr(Record rec, Utf16Sink sink) {
+        public void getStr(Record rec, Utf16Sink utf16Sink) {
             final CharSequence value = this.value.getStrB(rec);
             if (value != null) {
-                replace(value, oldSubStr.getStr(rec), newSubStr.getStr(rec), sink);
+                replace(value, oldSubStr.getStr(rec), newSubStr.getStr(rec), utf16Sink);
             }
         }
 

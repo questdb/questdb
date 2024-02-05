@@ -31,13 +31,14 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
-import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf16Sink;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.*;
 
 public abstract class CharFunction implements ScalarFunction {
-    private final StringSink sinkA = new StringSink();
-    private final StringSink sinkB = new StringSink();
+    private final StringSink utf16SinkA = new StringSink();
+    private final StringSink utf16SinkB = new StringSink();
+
+    private final Utf8StringSink utf8SinkA = new Utf8StringSink();
+    private final Utf8StringSink utf8SinkB = new Utf8StringSink();
 
     @Override
     public final BinarySequence getBin(Record rec) {
@@ -145,21 +146,26 @@ public abstract class CharFunction implements ScalarFunction {
     }
 
     @Override
+    public void getStr(Record rec, Utf8Sink utf8Sink) {
+        utf8Sink.put(getChar(rec));
+    }
+
+    @Override
     public final CharSequence getStr(Record rec) {
         final char value = getChar(rec);
         if (value == 0) {
             return null;
         }
-        sinkA.clear();
-        sinkA.put(value);
-        return sinkA;
+        utf16SinkA.clear();
+        utf16SinkA.put(value);
+        return utf16SinkA;
     }
 
     @Override
-    public final void getStr(Record rec, Utf16Sink sink) {
+    public final void getStr(Record rec, Utf16Sink utf16Sink) {
         final char value = getChar(rec);
         if (value > 0) {
-            sink.put(value);
+            utf16Sink.put(value);
         }
     }
 
@@ -169,9 +175,9 @@ public abstract class CharFunction implements ScalarFunction {
         if (value == 0) {
             return null;
         }
-        sinkB.clear();
-        sinkB.put(value);
-        return sinkB;
+        utf16SinkB.clear();
+        utf16SinkB.put(value);
+        return utf16SinkB;
     }
 
     @Override
@@ -201,5 +207,29 @@ public abstract class CharFunction implements ScalarFunction {
     @Override
     public final int getType() {
         return ColumnType.CHAR;
+    }
+
+    @Override
+    public void getVarchar(Record rec, Utf8Sink utf8Sink) {
+        utf8Sink.put(getChar(rec));
+    }
+
+    @Override
+    public void getVarchar(Record rec, Utf16Sink utf16Sink) {
+        utf16Sink.put(getChar(rec));
+    }
+
+    @Override
+    public Utf8Sequence getVarcharA(Record rec) {
+        utf8SinkA.clear();
+        utf8SinkA.put(getChar(rec));
+        return utf8SinkA;
+    }
+
+    @Override
+    public Utf8Sequence getVarcharB(Record rec) {
+        utf16SinkB.clear();
+        utf16SinkB.put(getChar(rec));
+        return utf8SinkB;
     }
 }

@@ -24,8 +24,12 @@
 
 package io.questdb.cairo.vm;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.std.*;
+import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.NotNull;
 
 // contiguous readable
 public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
@@ -35,6 +39,8 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
     private final MemoryCR.CharSequenceView csview2 = new MemoryCR.CharSequenceView();
     private final Long256Impl long256 = new Long256Impl();
     private final Long256Impl long256B = new Long256Impl();
+    private final DirectUtf8String u8view1 = new DirectUtf8String();
+    private final DirectUtf8String u8view2 = new DirectUtf8String();
     protected int fd = -1;
     protected FilesFacade ff;
     protected long lim;
@@ -96,6 +102,17 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
     }
 
     @Override
+    @NotNull
+    public Utf8Sequence getUtf8(long offset, int size) {
+        return getU8(offset, size, u8view1);
+    }
+
+    @Override
+    public @NotNull Utf8Sequence getUtf8B(long offset, int size) {
+        return getU8(offset, size, u8view2);
+    }
+
+    @Override
     public long offsetInPage(long offset) {
         return offset;
     }
@@ -118,5 +135,21 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
     @Override
     public long size() {
         return size;
+    }
+
+    private DirectUtf8String getU8(long offset, int size, DirectUtf8String u8view) {
+        long addr = addressOf(offset);
+        assert addr > 0;
+        if (size + offset <= size()) {
+            return u8view.of(addr, addr + size);
+        }
+        throw CairoException.critical(0)
+                .put("String is outside of file boundary [offset=")
+                .put(offset)
+                .put(", size=")
+                .put(size)
+                .put(", size()=")
+                .put(size())
+                .put(']');
     }
 }

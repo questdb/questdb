@@ -33,8 +33,10 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.groupby.InterpolationUtil;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
 
 public class InterpolationGroupByFunction implements GroupByFunction {
     private final GroupByFunction wrappedFunction;
@@ -217,13 +219,18 @@ public class InterpolationGroupByFunction implements GroupByFunction {
     }
 
     @Override
+    public void getStr(Record rec, Utf8Sink utf8Sink) {
+        wrappedFunction.getStr(rec, utf8Sink);
+    }
+
+    @Override
     public CharSequence getStr(Record rec, int arrayIndex) {
         return wrappedFunction.getStr(rec, arrayIndex);
     }
 
     @Override
-    public void getStr(Record rec, Utf16Sink sink) {
-        wrappedFunction.getStr(rec, sink);
+    public void getStr(Record rec, Utf16Sink utf16Sink) {
+        wrappedFunction.getStr(rec, utf16Sink);
     }
 
     @Override
@@ -274,6 +281,26 @@ public class InterpolationGroupByFunction implements GroupByFunction {
     @Override
     public int getValueIndex() {
         return wrappedFunction.getValueIndex();
+    }
+
+    @Override
+    public void getVarchar(Record rec, Utf16Sink utf16Sink) {
+        wrappedFunction.getVarchar(rec, utf16Sink);
+    }
+
+    @Override
+    public void getVarchar(Record rec, Utf8Sink utf8Sink) {
+        wrappedFunction.getVarchar(rec, utf8Sink);
+    }
+
+    @Override
+    public Utf8Sequence getVarcharA(Record rec) {
+        return wrappedFunction.getVarcharA(rec);
+    }
+
+    @Override
+    public Utf8Sequence getVarcharB(Record rec) {
+        return wrappedFunction.getVarcharB(rec);
     }
 
     @Override

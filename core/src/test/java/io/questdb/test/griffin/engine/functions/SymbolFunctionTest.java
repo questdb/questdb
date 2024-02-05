@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.std.str.Utf16Sink;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -161,7 +162,7 @@ public class SymbolFunctionTest {
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetStrSink() {
-        function.getStr(null, null);
+        function.getStr(null, (Utf16Sink) null);
     }
 
     @Test(expected = UnsupportedOperationException.class)

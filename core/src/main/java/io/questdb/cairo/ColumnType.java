@@ -86,10 +86,12 @@ public final class ColumnType {
     public static final short GEOHASH = RECORD + 1;             // = 23
     public static final short LONG128 = GEOHASH + 1;            // = 24  Limited support, few tests only
     public static final short IPv4 = LONG128 + 1;               // = 25
+    public static final short VARCHAR = IPv4 + 1;               // = 26
+
     // PG specific types to work with 3rd party software
     // with canned catalogue queries:
     // REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER
-    public static final short REGCLASS = IPv4 + 1;              // = 26;
+    public static final short REGCLASS = VARCHAR + 1;              // = 26;
     public static final short REGPROCEDURE = REGCLASS + 1;      // = 27;
     public static final short ARRAY_STRING = REGPROCEDURE + 1;  // = 28;
     public static final short PARAMETER = ARRAY_STRING + 1;     // = 29;
@@ -295,26 +297,28 @@ public final class ColumnType {
         assert MIGRATION_VERSION >= VERSION;
         // For function overload the priority is taken from left to right
         OVERLOAD_PRIORITY = new short[][]{
-                /* 0 UNDEFINED  */  {DOUBLE, FLOAT, STRING, LONG, TIMESTAMP, DATE, INT, CHAR, SHORT, BYTE, BOOLEAN}
+                /* 0 UNDEFINED  */  {DOUBLE, FLOAT, STRING, VARCHAR, LONG, TIMESTAMP, DATE, INT, CHAR, SHORT, BYTE, BOOLEAN}
                 /* 1  BOOLEAN   */, {BOOLEAN}
                 /* 2  BYTE      */, {BYTE, SHORT, INT, LONG, FLOAT, DOUBLE}
                 /* 3  SHORT     */, {SHORT, INT, LONG, FLOAT, DOUBLE}
-                /* 4  CHAR      */, {CHAR, STRING}
+                /* 4  CHAR      */, {CHAR, STRING, VARCHAR}
                 /* 5  INT       */, {INT, LONG, FLOAT, DOUBLE, TIMESTAMP, DATE}
                 /* 6  LONG      */, {LONG, DOUBLE, TIMESTAMP, DATE}
                 /* 7  DATE      */, {DATE, TIMESTAMP, LONG}
                 /* 8  TIMESTAMP */, {TIMESTAMP, LONG, DATE}
                 /* 9  FLOAT     */, {FLOAT, DOUBLE}
                 /* 10 DOUBLE    */, {DOUBLE}
-                /* 11 STRING    */, {STRING, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE}
-                /* 12 SYMBOL    */, {SYMBOL, STRING}
+                /* 11 STRING    */, {STRING, VARCHAR, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE}
+                /* 12 SYMBOL    */, {SYMBOL, STRING, VARCHAR}
                 /* 13 LONG256   */, {LONG256}
                 /* 14 GEOBYTE   */, {GEOBYTE, GEOSHORT, GEOINT, GEOLONG, GEOHASH}
                 /* 15 GEOSHORT  */, {GEOSHORT, GEOINT, GEOLONG, GEOHASH}
                 /* 16 GEOINT    */, {GEOINT, GEOLONG, GEOHASH}
                 /* 17 GEOLONG   */, {GEOLONG, GEOHASH}
                 /* 18 BINARY    */, {BINARY}
-                /* 19 UUID      */, {UUID, STRING}};
+                /* 19 UUID      */, {UUID, STRING, VARCHAR}
+                /* 20 VARCHAR    */, {VARCHAR, STRING, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE}
+        };
         for (short fromTag = UNDEFINED; fromTag < NULL; fromTag++) {
             for (short toTag = BOOLEAN; toTag <= NULL; toTag++) {
                 short value = OVERLOAD_NONE;
@@ -350,6 +354,7 @@ public final class ColumnType {
         typeNameMap.put(SHORT, "SHORT");
         typeNameMap.put(CHAR, "CHAR");
         typeNameMap.put(STRING, "STRING");
+        typeNameMap.put(VARCHAR, "VARCHAR");
         typeNameMap.put(SYMBOL, "SYMBOL");
         typeNameMap.put(BINARY, "BINARY");
         typeNameMap.put(DATE, "DATE");
@@ -376,6 +381,7 @@ public final class ColumnType {
         nameTypeMap.put("short", SHORT);
         nameTypeMap.put("char", CHAR);
         nameTypeMap.put("string", STRING);
+        nameTypeMap.put("varchar", VARCHAR);
         nameTypeMap.put("symbol", SYMBOL);
         nameTypeMap.put("binary", BINARY);
         nameTypeMap.put("date", DATE);
@@ -391,7 +397,6 @@ public final class ColumnType {
         nameTypeMap.put("bigint", LONG);
         nameTypeMap.put("real", FLOAT);
         nameTypeMap.put("bytea", STRING);
-        nameTypeMap.put("varchar", STRING);
         nameTypeMap.put("regclass", REGCLASS);
         nameTypeMap.put("regprocedure", REGPROCEDURE);
         nameTypeMap.put("text[]", ARRAY_STRING);
@@ -422,6 +427,7 @@ public final class ColumnType {
         TYPE_SIZE_POW2[SYMBOL] = 2;
         TYPE_SIZE_POW2[DOUBLE] = 3;
         TYPE_SIZE_POW2[STRING] = -1;
+        TYPE_SIZE_POW2[VARCHAR] = -1;
         TYPE_SIZE_POW2[LONG] = 3;
         TYPE_SIZE_POW2[DATE] = 3;
         TYPE_SIZE_POW2[TIMESTAMP] = 3;
@@ -449,6 +455,7 @@ public final class ColumnType {
         TYPE_SIZE[IPv4] = Integer.BYTES;
         TYPE_SIZE[SYMBOL] = Integer.BYTES;
         TYPE_SIZE[STRING] = 0;
+        TYPE_SIZE[VARCHAR] = 0;
         TYPE_SIZE[DOUBLE] = Double.BYTES;
         TYPE_SIZE[LONG] = Long.BYTES;
         TYPE_SIZE[DATE] = Long.BYTES;

@@ -90,12 +90,12 @@ public class RightFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getStr(Record rec, Utf16Sink sink) {
+        public void getStr(Record rec, Utf16Sink utf16Sink) {
             CharSequence str = strFunc.getStr(rec);
             if (str != null) {
                 final int len = str.length();
                 final int pos = getPos(len);
-                sink.put(str, pos, len);
+                utf16Sink.put(str, pos, len);
             }
         }
 
@@ -162,13 +162,13 @@ public class RightFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getStr(Record rec, Utf16Sink sink) {
+        public void getStr(Record rec, Utf16Sink utf16Sink) {
             final CharSequence str = strFunc.getStr(rec);
             final int count = this.countFunc.getInt(rec);
             if (str != null && count != Numbers.INT_NaN) {
                 final int len = str.length();
                 final int pos = getPos(len, count);
-                sink.put(str, pos, len);
+                utf16Sink.put(str, pos, len);
             }
         }
 

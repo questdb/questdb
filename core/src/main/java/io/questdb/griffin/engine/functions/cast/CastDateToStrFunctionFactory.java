@@ -71,13 +71,13 @@ public class CastDateToStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getStr(Record rec, Utf16Sink sink) {
+        public void getStr(Record rec, Utf16Sink utf16Sink) {
             final long value = arg.getDate(rec);
             if (value == Numbers.LONG_NaN) {
                 return;
             }
 
-            sink.putISODateMillis(value);
+            utf16Sink.putISODateMillis(value);
         }
 
         @Override

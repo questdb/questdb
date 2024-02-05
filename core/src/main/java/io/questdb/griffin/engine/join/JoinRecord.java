@@ -230,11 +230,11 @@ public class JoinRecord implements Record {
     }
 
     @Override
-    public void getStr(int col, Utf16Sink sink) {
+    public void getStr(int col, Utf16Sink utf16Sink) {
         if (col < split) {
-            master.getStr(col, sink);
+            master.getStr(col, utf16Sink);
         } else {
-            slave.getStr(col - split, sink);
+            slave.getStr(col - split, utf16Sink);
         }
     }
 

@@ -652,7 +652,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             }
 
             @Override
-            public void getStr(int col, Utf16Sink sink) {
+            public void getStr(int col, Utf16Sink utf16Sink) {
             }
 
             @Override

@@ -30,12 +30,12 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
-import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf16Sink;
-import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8Sink;
+import io.questdb.std.str.*;
 
-public abstract class ShortFunction implements ScalarFunction {
+public abstract class VarcharFunction implements ScalarFunction {
+    private final StringSink utf16sinkA = new StringSink();
+    private final StringSink utf16sinkB = new StringSink();
+
     @Override
     public final BinarySequence getBin(Record rec) {
         throw new UnsupportedOperationException();
@@ -58,22 +58,22 @@ public abstract class ShortFunction implements ScalarFunction {
 
     @Override
     public char getChar(Record rec) {
-        return (char) getShort(rec);
+        throw new UnsupportedOperationException();
     }
 
     @Override
-    public final long getDate(Record rec) {
+    public long getDate(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
     public double getDouble(Record rec) {
-        return getShort(rec);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public float getFloat(Record rec) {
-        return getShort(rec);
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -97,18 +97,18 @@ public abstract class ShortFunction implements ScalarFunction {
     }
 
     @Override
-    public final int getIPv4(Record rec) {
+    public int getIPv4(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
     public int getInt(Record rec) {
-        return getShort(rec);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public long getLong(Record rec) {
-        return getShort(rec);
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -142,23 +142,30 @@ public abstract class ShortFunction implements ScalarFunction {
     }
 
     @Override
-    public void getStr(Record rec, Utf8Sink utf8Sink) {
+    public final short getShort(Record rec) {
         throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void getStr(Record rec, Utf8Sink utf8Sink) {
+        utf8Sink.put(getVarcharA(rec));
     }
 
     @Override
     public final CharSequence getStr(Record rec) {
-        throw new UnsupportedOperationException();
+        Utf8s.utf8ToUtf16(getVarcharA(rec), utf16sinkA);
+        return utf16sinkA;
     }
 
     @Override
     public final void getStr(Record rec, Utf16Sink utf16Sink) {
-        throw new UnsupportedOperationException();
+        Utf8s.utf8ToUtf16(getVarcharA(rec), utf16Sink);
     }
 
     @Override
     public final CharSequence getStrB(Record rec) {
-        throw new UnsupportedOperationException();
+        Utf8s.utf8ToUtf16(getVarcharA(rec), utf16sinkB);
+        return utf16sinkB;
     }
 
     @Override
@@ -183,26 +190,6 @@ public abstract class ShortFunction implements ScalarFunction {
 
     @Override
     public final int getType() {
-        return ColumnType.SHORT;
-    }
-
-    @Override
-    public void getVarchar(Record rec, Utf16Sink utf16Sink) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public Utf8Sequence getVarcharA(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public Utf8Sequence getVarcharB(Record rec) {
-        throw new UnsupportedOperationException();
+        return ColumnType.VARCHAR;
     }
 }

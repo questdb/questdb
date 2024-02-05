@@ -89,9 +89,9 @@ public class Base64FunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getStr(Record rec, Utf16Sink sink) {
+        public void getStr(Record rec, Utf16Sink utf16Sink) {
             final BinarySequence sequence = getArg().getBin(rec);
-            Chars.base64Encode(sequence, this.maxLength, sink);
+            Chars.base64Encode(sequence, this.maxLength, utf16Sink);
         }
 
         @Override

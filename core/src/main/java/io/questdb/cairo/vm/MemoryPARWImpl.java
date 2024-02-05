@@ -48,6 +48,8 @@ public class MemoryPARWImpl implements MemoryARW {
     private final Long256Impl long256B = new Long256Impl();
     private final int maxPages;
     private final StraddlingPageLong256FromCharSequenceDecoder straddlingPageLong256Decoder = new StraddlingPageLong256FromCharSequenceDecoder();
+    private final Utf8SequenceView u8view1 = new Utf8SequenceView();
+    private final Utf8SequenceView u8view2 = new Utf8SequenceView();
     private final StringSink utf16Sink = new StringSink();
     private final FlyweightDirectUtf16Sink utf8FloatingSink = new FlyweightDirectUtf16Sink();
     protected int memoryTag;
@@ -358,6 +360,16 @@ public class MemoryPARWImpl implements MemoryARW {
 
     public final int getStrLen(long offset) {
         return getInt(offset);
+    }
+
+    @Override
+    public @NotNull Utf8Sequence getUtf8(long offset, int size) {
+        return u8view1.of(offset, size);
+    }
+
+    @Override
+    public @NotNull Utf8Sequence getUtf8B(long offset, int size) {
+        return u8view2.of(offset, size);
     }
 
     public boolean isMapped(long offset, long len) {
@@ -695,7 +707,7 @@ public class MemoryPARWImpl implements MemoryARW {
     }
 
     @Override
-    public void putLong256Utf8(@Nullable DirectUtf8Sequence hexString) {
+    public void putLong256Utf8(@Nullable Utf8Sequence hexString) {
         if (pageHi - appendPointer < 4 * Long.BYTES) {
             straddlingPageLong256Decoder.putLong256(hexString);
         } else {
@@ -828,6 +840,26 @@ public class MemoryPARWImpl implements MemoryARW {
             return putNullStr();
         }
         return putStr(value.asAsciiCharSequence());
+    }
+
+    @Override
+    public long putUtf8(@Nullable Utf8Sequence value) {
+        final int n;
+        if (value != null && (n = value.size()) != 0) {
+            if (pageHi - appendPointer < n) {
+                for (int i = 0; i < n; i++) {
+                    putByte(value.byteAt(i));
+                }
+            } else {
+                long p = appendPointer;
+                for (int i = 0; i < n; i++) {
+                    Unsafe.getUnsafe().putByte(p++, value.byteAt(i));
+                }
+                appendPointer = p;
+
+            }
+        }
+        return getAppendOffset();
     }
 
     @Override
@@ -1257,7 +1289,7 @@ public class MemoryPARWImpl implements MemoryARW {
             }
         }
 
-        private void putLong256(@Nullable DirectUtf8Sequence hexString) {
+        private void putLong256(@Nullable Utf8Sequence hexString) {
             final int size;
             if (hexString == null || (size = hexString.size()) == 0) {
                 putLong256Null();
@@ -1298,7 +1330,7 @@ public class MemoryPARWImpl implements MemoryARW {
             decode(hexString, start, end, this);
         }
 
-        private void putLong256(@Nullable DirectUtf8Sequence hexString) {
+        private void putLong256(@Nullable Utf8Sequence hexString) {
             final int size;
             if (hexString == null || (size = hexString.size()) == 0) {
                 putLong(Long256Impl.NULL_LONG256.getLong0());
@@ -1308,6 +1340,33 @@ public class MemoryPARWImpl implements MemoryARW {
             } else {
                 putLong256(hexString.asAsciiCharSequence(), 2, size);
             }
+        }
+    }
+
+    public class Utf8SequenceView implements Utf8Sequence {
+        private final AsciiCharSequence asciiCharSequence = new AsciiCharSequence();
+        private long offset;
+        private int size;
+
+        @Override
+        public @NotNull CharSequence asAsciiCharSequence() {
+            return asciiCharSequence.of(this);
+        }
+
+        @Override
+        public byte byteAt(int index) {
+            return getByte(offset + index);
+        }
+
+        @Override
+        public int size() {
+            return size;
+        }
+
+        Utf8SequenceView of(long offset, int size) {
+            this.offset = offset;
+            this.size = size;
+            return this;
         }
     }
 }

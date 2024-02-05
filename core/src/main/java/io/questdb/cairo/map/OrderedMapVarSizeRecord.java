@@ -362,12 +362,12 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
     }
 
     @Override
-    public void getStr(int columnIndex, Utf16Sink sink) {
+    public void getStr(int columnIndex, Utf16Sink utf16Sink) {
         long address = addressOfColumn(columnIndex);
         int len = Unsafe.getUnsafe().getInt(address);
         address += Integer.BYTES;
         for (int i = 0; i < len; i++) {
-            sink.put(Unsafe.getUnsafe().getChar(address));
+            utf16Sink.put(Unsafe.getUnsafe().getChar(address));
             address += Character.BYTES;
         }
     }

@@ -54,8 +54,8 @@ public class StrColumn extends StrFunction implements ScalarFunction {
     }
 
     @Override
-    public void getStr(Record rec, Utf16Sink sink) {
-        rec.getStr(columnIndex, sink);
+    public void getStr(Record rec, Utf16Sink utf16Sink) {
+        rec.getStr(columnIndex, utf16Sink);
     }
 
     @Override

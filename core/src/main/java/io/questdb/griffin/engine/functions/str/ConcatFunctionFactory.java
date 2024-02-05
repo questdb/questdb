@@ -155,9 +155,9 @@ public class ConcatFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getStr(Record rec, Utf16Sink sink) {
+        public void getStr(Record rec, Utf16Sink utf16Sink) {
             for (int i = 0; i < functionCount; i++) {
-                adaptors.getQuick(i).sink(sink, functions.getQuick(i), rec);
+                adaptors.getQuick(i).sink(utf16Sink, functions.getQuick(i), rec);
             }
         }
 

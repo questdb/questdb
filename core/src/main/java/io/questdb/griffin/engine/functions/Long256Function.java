@@ -30,9 +30,10 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
 
 public abstract class Long256Function implements ScalarFunction {
-
     @Override
     public final BinarySequence getBin(Record rec) {
         throw new UnsupportedOperationException();
@@ -129,12 +130,17 @@ public abstract class Long256Function implements ScalarFunction {
     }
 
     @Override
+    public void getStr(Record rec, Utf8Sink utf8Sink) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public final CharSequence getStr(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final void getStr(Record rec, Utf16Sink sink) {
+    public final void getStr(Record rec, Utf16Sink utf16Sink) {
         throw new UnsupportedOperationException();
     }
 
@@ -166,6 +172,26 @@ public abstract class Long256Function implements ScalarFunction {
     @Override
     public final int getType() {
         return ColumnType.LONG256;
+    }
+
+    @Override
+    public void getVarchar(Record rec, Utf16Sink utf16Sink) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void getVarchar(Record rec, Utf8Sink utf8Sink) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public Utf8Sequence getVarcharA(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public Utf8Sequence getVarcharB(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
 }

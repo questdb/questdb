@@ -61,8 +61,8 @@ public class CastSymbolToStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getStr(Record rec, Utf16Sink sink) {
-            sink.put(arg.getSymbol(rec));
+        public void getStr(Record rec, Utf16Sink utf16Sink) {
+            utf16Sink.put(arg.getSymbol(rec));
         }
 
         @Override

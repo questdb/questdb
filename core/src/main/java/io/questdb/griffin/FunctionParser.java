@@ -482,6 +482,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         || columnType == ColumnType.ARRAY_STRING
                         || columnType == ColumnType.UUID
                         || columnType == ColumnType.IPv4
+                        || columnType == ColumnType.VARCHAR
         ) {
             return Constants.getTypeConstant(columnType);
         }
@@ -532,6 +533,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         final ObjList<FunctionFactoryDescriptor> overload = functionFactoryCache.getOverloadList(node.token);
         if (overload == null) {
             throw invalidFunction(node, args);
+        }
+
+        if (Chars.equalsNc("nullif", node.token)) {
+            System.out.println("ok");
         }
 
         final int argCount = args == null ? 0 : args.size();

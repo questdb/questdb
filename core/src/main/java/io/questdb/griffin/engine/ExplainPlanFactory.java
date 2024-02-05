@@ -90,8 +90,8 @@ public class ExplainPlanFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public void getStr(int col, Utf16Sink sink) {
-            sink.put(planSink.getLine(cursor.row));
+        public void getStr(int col, Utf16Sink utf16Sink) {
+            utf16Sink.put(planSink.getLine(cursor.row));
         }
 
         @Override

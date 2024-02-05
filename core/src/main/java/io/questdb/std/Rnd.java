@@ -25,8 +25,7 @@
 package io.questdb.std;
 
 import io.questdb.cairo.GeoHashes;
-import io.questdb.std.str.Utf16Sink;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.*;
 
 public class Rnd {
     private static final double DOUBLE_UNIT = 0x1.0p-53; // 1.0 / (1L << 53)
@@ -42,6 +41,18 @@ public class Rnd {
 
     public Rnd() {
         reset();
+    }
+
+    public static void main(String[] args) {
+        Rnd rnd = new Rnd();
+        Utf8StringSink utf8sink = new Utf8StringSink();
+        rnd.nextUtf8Str(255, utf8sink);
+
+        StringSink utf16sink = new StringSink();
+        if (!Utf8s.utf8ToUtf16(utf8sink, utf16sink)) {
+            throw new RuntimeException();
+        }
+        System.out.println(utf16sink);
     }
 
     public long getSeed0() {
@@ -179,6 +190,50 @@ public class Rnd {
         return new String(chars);
     }
 
+    // https://stackoverflow.com/questions/1319022/really-good-bad-utf-8-example-test-data
+    public void nextUtf8Str(int len, Utf8StringSink sink) {
+        for (int i = 0; i < len; i++) {
+            int byteCount = Math.max(1, nextInt(4));
+            switch (byteCount) {
+                case 1:
+                    sink.put((byte) ((32 + nextInt(128 - 32)) & 0x7f));
+                    break;
+                case 2:
+                    // first byte of two-byte character, it has to start with 110xxxxx
+                    sink.put(nextUtf8Byte(0xe0, 0xc0));
+                    // second byte starts with continuation 10xxxxxx
+                    nextUtf8ContByte(sink);
+                    break;
+                case 3:
+                    while (true) {
+                        // first byte of 3-byte character, it has to start with 1110xxxx
+                        final byte b1 = nextUtf8Byte(0xf0, 0xe0);
+                        final byte b2= nextUtf8Byte(0xc0, 0x80);
+                        final byte b3 = nextUtf8Byte(0xc0, 0x80);
+                        final char c = (char) (b1 << 12 ^ b2 << 6 ^ b3 ^ -123008);
+                        // we might end up with surrogate, which we have to re-generate
+                        if (Character.isSurrogate(c)) {
+                            continue;
+                        }
+                        sink.put(b1).put(b2).put(b3);
+                        break;
+                    }
+                    break;
+                case 4:
+                    // first byte of 4-byte character, it has to start with 11110xxx
+                    sink.put(nextUtf8Byte(0xf8, 0xf0));
+                    // remaining bytes start with continuation 10xxxxxx
+                    nextUtf8ContByte(sink);
+                    nextUtf8ContByte(sink);
+                    nextUtf8ContByte(sink);
+                    break;
+                default:
+                    assert false;
+                    break;
+            }
+        }
+    }
+
     public final void reset(long s0, long s1) {
         this.s0 = s0;
         this.s1 = s1;
@@ -195,5 +250,21 @@ public class Rnd {
 
     private int nextIntForDouble(int bits) {
         return (int) ((nextLong() & mask) >>> (48 - bits));
+    }
+
+    private byte nextUtf8Byte(int wipe, int set) {
+        while (true) {
+            int k = nextInt();
+            k &= ~wipe;
+            k &= 0xff;
+            if (k != 0) {
+                k |= set;
+                return (byte) k;
+            }
+        }
+    }
+
+    private void nextUtf8ContByte(Utf8Sink sink) {
+        sink.put(nextUtf8Byte(0xc0, 0x80));
     }
 }

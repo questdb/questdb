@@ -915,7 +915,8 @@ public final class Utf8s {
     }
 
     private static int utf8DecodeMultiByte(Utf8Sequence seq, int index, int b, @NotNull Utf16Sink sink) {
-        if (b >> 5 == -2 && (b & 30) != 0) {
+        if (b >> 5 == -2 /*&& (b & 30) != 0*/) {
+            // we should allow 11000001, as it is a valid UTF8 byte?
             return utf8Decode2Bytes(seq, index, b, sink);
         }
         if (b >> 4 == -2) {

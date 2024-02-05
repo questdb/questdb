@@ -160,8 +160,8 @@ class SelectedRecord implements Record {
     }
 
     @Override
-    public void getStr(int col, Utf16Sink sink) {
-        base.getStr(getColumnIndex(col), sink);
+    public void getStr(int col, Utf16Sink utf16Sink) {
+        base.getStr(getColumnIndex(col), utf16Sink);
     }
 
     @Override

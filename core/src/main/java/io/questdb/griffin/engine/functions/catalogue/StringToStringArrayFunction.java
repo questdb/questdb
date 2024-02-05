@@ -162,8 +162,8 @@ public class StringToStringArrayFunction extends StrArrayFunction {
     }
 
     @Override
-    public void getStr(Record rec, Utf16Sink sink) {
-        sink.put(initSink());
+    public void getStr(Record rec, Utf16Sink utf16Sink) {
+        utf16Sink.put(initSink());
     }
 
     @Override

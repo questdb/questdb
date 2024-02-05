@@ -156,8 +156,8 @@ public class SplitVirtualRecord implements Record {
     }
 
     @Override
-    public void getStr(int col, Utf16Sink sink) {
-        getFunction(col).getStr(base, sink);
+    public void getStr(int col, Utf16Sink utf16Sink) {
+        getFunction(col).getStr(base, utf16Sink);
     }
 
     @Override

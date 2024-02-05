@@ -31,9 +31,7 @@ import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.Numbers;
-import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf16Sink;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.*;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.std.Numbers.IPv4_NULL;
@@ -148,15 +146,20 @@ public abstract class IPv4Function implements ScalarFunction {
     }
 
     @Override
+    public void getStr(Record rec, Utf8Sink utf8Sink) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public final CharSequence getStr(Record rec) {
         return getStringSink(rec, sinkA);
     }
 
     @Override
-    public final void getStr(Record rec, Utf16Sink sink) {
+    public final void getStr(Record rec, Utf16Sink utf16Sink) {
         int value = getIPv4(rec);
         if (value != IPv4_NULL) {
-            Numbers.intToIPv4Sink(sink, value);
+            Numbers.intToIPv4Sink(utf16Sink, value);
         }
     }
 
@@ -188,6 +191,26 @@ public abstract class IPv4Function implements ScalarFunction {
     @Override
     public final int getType() {
         return ColumnType.IPv4;
+    }
+
+    @Override
+    public void getVarchar(Record rec, Utf16Sink utf16Sink) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void getVarchar(Record rec, Utf8Sink utf8Sink) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public Utf8Sequence getVarcharA(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public Utf8Sequence getVarcharB(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Nullable

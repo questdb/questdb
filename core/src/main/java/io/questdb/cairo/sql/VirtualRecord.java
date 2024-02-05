@@ -31,6 +31,8 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
 
 public class VirtualRecord implements ColumnTypes, Record {
     private final int columnCount;
@@ -181,13 +183,38 @@ public class VirtualRecord implements ColumnTypes, Record {
     }
 
     @Override
+    public void getStr(int col, Utf8Sink utf8Sink) {
+        getFunction(col).getStr(base, utf8Sink);
+    }
+
+    @Override
+    public void getVarchar(int col, Utf8Sink utf8Sink) {
+        getFunction(col).getVarchar(base, utf8Sink);
+    }
+
+    @Override
+    public void getVarchar(int col, Utf16Sink utf16sink) {
+        getFunction(col).getVarchar(base, utf16sink);
+    }
+
+    @Override
+    public Utf8Sequence getVarcharA(int col) {
+        return getFunction(col).getVarcharA(base);
+    }
+
+    @Override
+    public Utf8Sequence getVarcharB(int col) {
+        return getFunction(col).getVarcharB(base);
+    }
+
+    @Override
     public CharSequence getStr(int col) {
         return getFunction(col).getStr(base);
     }
 
     @Override
-    public void getStr(int col, Utf16Sink sink) {
-        getFunction(col).getStr(base, sink);
+    public void getStr(int col, Utf16Sink utf16Sink) {
+        getFunction(col).getStr(base, utf16Sink);
     }
 
     @Override

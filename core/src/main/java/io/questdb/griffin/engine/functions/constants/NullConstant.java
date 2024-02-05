@@ -36,6 +36,8 @@ import io.questdb.std.Long256;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
 
 public final class NullConstant implements ConstantFunction, ScalarFunction {
 
@@ -173,8 +175,13 @@ public final class NullConstant implements ConstantFunction, ScalarFunction {
     }
 
     @Override
-    public void getStr(Record rec, Utf16Sink sink) {
+    public void getStr(Record rec, Utf16Sink utf16Sink) {
         // intentionally left empty
+    }
+
+    @Override
+    public void getStr(Record rec, Utf8Sink utf8Sink) {
+        // empty
     }
 
     @Override
@@ -225,6 +232,26 @@ public final class NullConstant implements ConstantFunction, ScalarFunction {
     @Override
     public int getType() {
         return type;
+    }
+
+    @Override
+    public void getVarchar(Record rec, Utf16Sink utf16Sink) {
+        // empty
+    }
+
+    @Override
+    public void getVarchar(Record rec, Utf8Sink utf8Sink) {
+        // empty
+    }
+
+    @Override
+    public Utf8Sequence getVarcharA(Record rec) {
+        return null;
+    }
+
+    @Override
+    public Utf8Sequence getVarcharB(Record rec) {
+        return null;
     }
 
     @Override

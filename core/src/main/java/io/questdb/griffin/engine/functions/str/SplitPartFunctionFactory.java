@@ -103,8 +103,8 @@ public class SplitPartFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getStr(Record rec, Utf16Sink sink) {
-            getStr0(rec, sink, false);
+        public void getStr(Record rec, Utf16Sink utf16Sink) {
+            getStr0(rec, utf16Sink, false);
         }
 
         @Override

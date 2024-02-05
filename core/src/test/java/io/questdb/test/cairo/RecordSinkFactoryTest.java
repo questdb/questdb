@@ -29,8 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.*;
-import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.*;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.griffin.engine.TestBinarySequence;
 import org.jetbrains.annotations.NotNull;
@@ -41,7 +40,7 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testColumnKeysAllSupportedTypes() {
-        testColumnKeysAllSupportedTypes(false);
+        testColumnKeysAllSupportedTypes(true);
     }
 
     @Test
@@ -454,8 +453,15 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         }
 
         @Override
-        public void getStr(Record rec, Utf16Sink sink) {
-            throw new UnsupportedOperationException();
+        public void getStr(Record rec, Utf16Sink utf16Sink) {
+            Assert.assertEquals(ColumnType.STRING, type);
+            callCount++;
+        }
+
+        @Override
+        public void getStr(Record rec, Utf8Sink utf8Sink) {
+            Assert.assertEquals(ColumnType.STRING, type);
+            callCount++;
         }
 
         @Override
@@ -505,6 +511,32 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         @Override
         public int getType() {
             return type;
+        }
+
+        @Override
+        public void getVarchar(Record rec, Utf8Sink utf8Sink) {
+            Assert.assertEquals(ColumnType.VARCHAR, type);
+            callCount++;
+        }
+
+        @Override
+        public void getVarchar(Record rec, Utf16Sink utf16Sink) {
+            Assert.assertEquals(ColumnType.VARCHAR, type);
+            callCount++;
+        }
+
+        @Override
+        public Utf8Sequence getVarcharA(Record rec) {
+            Assert.assertEquals(ColumnType.VARCHAR, type);
+            callCount++;
+            return new Utf8String("abc");
+        }
+
+        @Override
+        public Utf8Sequence getVarcharB(Record rec) {
+            Assert.assertEquals(ColumnType.VARCHAR, type);
+            callCount++;
+            return new Utf8String("abc");
         }
     }
 

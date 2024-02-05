@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.Numbers;
+import io.questdb.std.str.Utf16Sink;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -159,7 +160,7 @@ public class TimestampFunctionTest {
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetStr2() {
-        function.getStr(null, null);
+        function.getStr(null, (Utf16Sink) null);
     }
 
     @Test(expected = UnsupportedOperationException.class)

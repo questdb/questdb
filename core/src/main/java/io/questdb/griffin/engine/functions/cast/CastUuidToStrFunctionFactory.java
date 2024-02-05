@@ -72,8 +72,8 @@ public final class CastUuidToStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getStr(Record rec, Utf16Sink sink) {
-            SqlUtil.implicitCastUuidAsStr(arg.getLong128Lo(rec), arg.getLong128Hi(rec), sink);
+        public void getStr(Record rec, Utf16Sink utf16Sink) {
+            SqlUtil.implicitCastUuidAsStr(arg.getLong128Lo(rec), arg.getLong128Hi(rec), utf16Sink);
         }
 
         @Override

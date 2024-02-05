@@ -70,10 +70,10 @@ public class CastIPv4ToStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getStr(Record rec, Utf16Sink sink) {
+        public void getStr(Record rec, Utf16Sink utf16Sink) {
             final int value = arg.getIPv4(rec);
             if (value != IPv4_NULL) {
-                Numbers.intToIPv4Sink(sink, value);
+                Numbers.intToIPv4Sink(utf16Sink, value);
             }
         }
 

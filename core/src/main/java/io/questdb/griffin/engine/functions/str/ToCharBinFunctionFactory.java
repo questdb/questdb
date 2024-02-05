@@ -70,8 +70,8 @@ public class ToCharBinFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getStr(Record rec, Utf16Sink sink) {
-            Chars.toSink(arg.getBin(rec), sink);
+        public void getStr(Record rec, Utf16Sink utf16Sink) {
+            Chars.toSink(arg.getBin(rec), utf16Sink);
         }
 
         @Override

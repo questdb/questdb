@@ -29,6 +29,8 @@ import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
@@ -87,6 +89,10 @@ public interface MemoryR extends Closeable {
     short getShort(long offset);
 
     CharSequence getStr(long offset);
+
+    @NotNull Utf8Sequence getUtf8(long offset, int size);
+
+    @NotNull Utf8Sequence getUtf8B(long offset, int size);
 
     CharSequence getStr2(long offset);
 

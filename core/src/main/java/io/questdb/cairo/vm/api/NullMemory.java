@@ -29,7 +29,9 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public class NullMemory implements MemoryMAR, MemoryCARW {
 
@@ -109,6 +111,16 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
 
     @Override
     public CharSequence getStr(long offset) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public @NotNull Utf8Sequence getUtf8(long offset, int size) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public @NotNull Utf8Sequence getUtf8B(long offset, int size) {
         throw new UnsupportedOperationException();
     }
 
@@ -318,6 +330,11 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
 
     @Override
     public long putStrUnsafe(CharSequence value, int pos, int len) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long putUtf8(@Nullable Utf8Sequence value) {
         throw new UnsupportedOperationException();
     }
 

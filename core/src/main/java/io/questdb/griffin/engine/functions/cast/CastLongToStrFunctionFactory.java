@@ -71,13 +71,13 @@ public class CastLongToStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getStr(Record rec, Utf16Sink sink) {
+        public void getStr(Record rec, Utf16Sink utf16Sink) {
             final long value = arg.getLong(rec);
             if (value == Numbers.LONG_NaN) {
                 return;
             }
 
-            sink.put(value);
+            utf16Sink.put(value);
         }
 
         @Override

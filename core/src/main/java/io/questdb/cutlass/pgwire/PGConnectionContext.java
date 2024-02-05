@@ -914,6 +914,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 case ColumnType.IPv4:
                     appendIPv4Col(record, i);
                     break;
+                case ColumnType.VARCHAR:
+                    appendVarcharColumn(record, i);
+                    break;
                 case ColumnType.STRING:
                 case BINARY_TYPE_STRING:
                     appendStrColumn(record, i);
@@ -1009,6 +1012,16 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
         responseUtf8Sink.putLen(offset);
         rowCount++;
+    }
+
+    private void appendVarcharColumn(Record record, int i) {
+        final Utf8Sequence strValue = record.getVarcharA(i);
+        if (strValue == null) {
+            responseUtf8Sink.setNullValue();
+        } else {
+            responseUtf8Sink.put(strValue.size());
+            responseUtf8Sink.put(strValue);
+        }
     }
 
     private void appendShortColumn(Record record, int columnIndex) {

@@ -51,11 +51,11 @@ public class StrBindVariable extends StrFunction implements ScalarFunction, Muta
     }
 
     @Override
-    public void getStr(Record rec, Utf16Sink sink) {
+    public void getStr(Record rec, Utf16Sink utf16Sink) {
         if (isNull) {
-            sink.put((CharSequence) null);
+            utf16Sink.put((CharSequence) null);
         } else {
-            sink.put(this.sink);
+            utf16Sink.put(this.sink);
         }
     }
 

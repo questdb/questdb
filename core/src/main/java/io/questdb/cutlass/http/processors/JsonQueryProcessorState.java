@@ -44,6 +44,7 @@ import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.*;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 
 import java.io.Closeable;
@@ -584,6 +585,9 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 case ColumnType.STRING:
                     putStrValue(response, record, columnIdx);
                     break;
+                case ColumnType.VARCHAR:
+                    putVarcharValue(response, columnIdx);
+                    break;
                 case ColumnType.SYMBOL:
                     putSymValue(response, record, columnIdx);
                     break;
@@ -624,6 +628,15 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     response.putAscii("null"); // To make JSON valid
                     break;
             }
+        }
+    }
+
+    private void putVarcharValue(HttpChunkedResponse response, int columnIdx) {
+        Utf8Sequence str = record.getVarcharA(columnIdx);
+        if (str == null) {
+            response.putAscii("null");
+        } else {
+            response.putQuoted(str);
         }
     }
 
@@ -833,6 +846,19 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         cursorHasRows = true;
     }
 
+    static void prepareBadRequestResponse(
+            HttpChunkedResponse response,
+            CharSequence message,
+            DirectUtf8Sequence query
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        response.putAscii('{')
+                .putAsciiQuoted("query").putAscii(':').putQuoted(query == null ? "" : query.asAsciiCharSequence()).putAscii(',')
+                .putAsciiQuoted("error").putAscii(':').putQuoted(message).putAscii(',')
+                .putAsciiQuoted("position").putAscii(':').put(0)
+                .putAscii('}');
+        response.sendChunk(true);
+    }
+
     static void prepareExceptionJson(
             HttpChunkedResponse response,
             int position,
@@ -843,19 +869,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 .putAsciiQuoted("query").putAscii(':').putQuoted(query == null ? "" : query).putAscii(',')
                 .putAsciiQuoted("error").putAscii(':').putQuoted(message).putAscii(',')
                 .putAsciiQuoted("position").putAscii(':').put(position)
-                .putAscii('}');
-        response.sendChunk(true);
-    }
-
-    static void prepareBadRequestResponse(
-            HttpChunkedResponse response,
-            CharSequence message,
-            DirectUtf8Sequence query
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        response.putAscii('{')
-                .putAsciiQuoted("query").putAscii(':').putQuoted(query == null ? "" : query.asAsciiCharSequence()).putAscii(',')
-                .putAsciiQuoted("error").putAscii(':').putQuoted(message).putAscii(',')
-                .putAsciiQuoted("position").putAscii(':').put(0)
                 .putAscii('}');
         response.sendChunk(true);
     }

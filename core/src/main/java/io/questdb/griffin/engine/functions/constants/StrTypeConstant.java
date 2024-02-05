@@ -39,7 +39,7 @@ public class StrTypeConstant extends StrFunction implements TypeConstant {
     }
 
     @Override
-    public void getStr(Record rec, Utf16Sink sink) {
+    public void getStr(Record rec, Utf16Sink utf16Sink) {
     }
 
     @Override

@@ -30,74 +30,64 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
-import io.questdb.std.Chars;
-import io.questdb.std.IntList;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
-import io.questdb.std.str.Utf16Sink;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.*;
+import io.questdb.std.str.*;
 
-public class CastCharToStrFunctionFactory implements FunctionFactory {
+public class CastLongToVarcharFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "cast(As)";
+        return "cast(Lø)";
     }
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         Function func = args.getQuick(0);
-        return newInstance(func);
-    }
-
-    public Function newInstance(Function func) {
         if (func.isConstant()) {
-            final char value = func.getChar(null);
-            if (value == 0) {
-                return new StrConstant(null);
-            }
-            final StringSink sink = Misc.getThreadLocalSink();
-            sink.put(value);
+            StringSink sink = Misc.getThreadLocalSink();
+            sink.put(func.getLong(null));
             return new StrConstant(Chars.toString(sink));
         }
-        return new Func(func);
+        return new CastLongToStrFunction(args.getQuick(0));
     }
 
-    private static class Func extends AbstractCastToStrFunction {
-        private final StringSink sinkA = new StringSink();
-        private final StringSink sinkB = new StringSink();
+    public static class CastLongToStrFunction extends AbstractCastToVarcharFunction {
+        private final Utf8StringSink sinkA = new Utf8StringSink();
+        private final Utf8StringSink sinkB = new Utf8StringSink();
 
-        public Func(Function arg) {
+        public CastLongToStrFunction(Function arg) {
             super(arg);
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
-            final char value = arg.getChar(rec);
-            if (value == 0) {
-                return null;
-            }
+        public void getVarchar(Record rec, Utf8Sink utf8Sink) {
+            sinkArg(rec, utf8Sink);
+        }
+
+        @Override
+        public void getVarchar(Record rec, Utf16Sink utf16Sink) {
+            sinkArg(rec, utf16Sink);
+        }
+
+        @Override
+        public Utf8Sequence getVarcharA(Record rec) {
             sinkA.clear();
-            sinkA.put(value);
+            sinkArg(rec, sinkA);
             return sinkA;
         }
 
         @Override
-        public void getStr(Record rec, Utf16Sink utf16Sink) {
-            final char value = arg.getChar(rec);
-            if (value != 0) {
-                utf16Sink.put(value);
-            }
+        public Utf8Sequence getVarcharB(Record rec) {
+            sinkB.clear();
+            sinkArg(rec, sinkB);
+            return sinkB;
         }
 
-        @Override
-        public CharSequence getStrB(Record rec) {
-            final char value = arg.getChar(rec);
-            if (value == 0) {
-                return null;
+        private void sinkArg(Record rec, CharSink<?> sink) {
+            final long value = arg.getLong(rec);
+            if (value == Numbers.LONG_NaN) {
+                return;
             }
-            sinkB.clear();
-            sinkB.put(value);
-            return sinkB;
+            sink.put(value);
         }
     }
 }

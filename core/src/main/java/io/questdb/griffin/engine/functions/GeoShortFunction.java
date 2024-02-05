@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.functions;
 import io.questdb.cairo.sql.Record;
 
 public abstract class GeoShortFunction extends AbstractGeoHashFunction {
-
     protected GeoShortFunction(int type) {
         super(type);
     }

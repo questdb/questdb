@@ -60,8 +60,8 @@ public class CastBooleanToStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getStr(Record rec, Utf16Sink sink) {
-            arg.getStr(rec, sink);
+        public void getStr(Record rec, Utf16Sink utf16Sink) {
+            arg.getStr(rec, utf16Sink);
         }
 
         @Override

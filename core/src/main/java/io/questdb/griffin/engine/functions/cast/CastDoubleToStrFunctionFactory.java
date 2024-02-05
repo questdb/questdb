@@ -77,12 +77,12 @@ public class CastDoubleToStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getStr(Record rec, Utf16Sink sink) {
+        public void getStr(Record rec, Utf16Sink utf16Sink) {
             final double value = arg.getDouble(rec);
             if (Double.isNaN(value)) {
                 return;
             }
-            sink.put(value, scale);
+            utf16Sink.put(value, scale);
         }
 
         @Override

@@ -22,45 +22,27 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.conditional;
+package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.StrFunction;
-import io.questdb.std.ObjList;
-import io.questdb.std.str.Utf16Sink;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.VarcharFunction;
 
-class StrCaseFunction extends StrFunction implements CaseFunction {
-    private final ObjList<Function> args;
-    private final CaseFunctionPicker picker;
+public abstract class AbstractCastToVarcharFunction extends VarcharFunction implements UnaryFunction {
+    protected final Function arg;
 
-    public StrCaseFunction(CaseFunctionPicker picker, ObjList<Function> args) {
-        this.picker = picker;
-        this.args = args;
+    protected AbstractCastToVarcharFunction(Function arg) {
+        this.arg = arg;
     }
 
     @Override
-    public ObjList<Function> getArgs() {
-        return args;
+    public Function getArg() {
+        return arg;
     }
 
     @Override
-    public void getStr(Record rec, Utf16Sink utf16Sink) {
-        picker.pick(rec).getStr(rec, utf16Sink);
-    }
-
-    @Override
-    public CharSequence getStr(Record rec) {
-        return picker.pick(rec).getStr(rec);
-    }
-
-    @Override
-    public CharSequence getStrB(Record rec) {
-        return picker.pick(rec).getStrB(rec);
-    }
-
-    @Override
-    public int getStrLen(Record rec) {
-        return picker.pick(rec).getStrLen(rec);
+    public void toPlan(PlanSink sink) {
+        sink.val(getArg()).val("::varchar");
     }
 }

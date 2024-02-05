@@ -26,8 +26,10 @@ package io.questdb.cairo.sql;
 
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
 
 /**
  * Access the value of columns of a table record by column index.
@@ -287,11 +289,15 @@ public interface Record {
     /**
      * Gets the value of a string column by index
      *
-     * @param col  numeric index of the column
-     * @param sink a character sink
+     * @param col       numeric index of the column
+     * @param utf16Sink a character utf16Sink
      */
-    default void getStr(int col, Utf16Sink sink) {
-        sink.put(getStr(col));
+    default void getStr(int col, Utf16Sink utf16Sink) {
+        utf16Sink.put(getStr(col));
+    }
+
+    default void getStr(int col, Utf8Sink utf8Sink) {
+        utf8Sink.put(getStr(col));
     }
 
     /**
@@ -352,6 +358,22 @@ public interface Record {
      * @return numeric ID of the current row
      */
     default long getUpdateRowId() {
+        throw new UnsupportedOperationException();
+    }
+
+    default void getVarchar(int col, Utf8Sink utf8Sink) {
+        throw new UnsupportedOperationException();
+    }
+
+    default void getVarchar(int col, Utf16Sink utf16sink) {
+        throw new UnsupportedOperationException();
+    }
+
+    default Utf8Sequence getVarcharA(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    default Utf8Sequence getVarcharB(int col) {
         throw new UnsupportedOperationException();
     }
 

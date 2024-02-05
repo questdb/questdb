@@ -72,13 +72,13 @@ public class CastTimestampToStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getStr(Record rec, Utf16Sink sink) {
+        public void getStr(Record rec, Utf16Sink utf16Sink) {
             final long value = arg.getTimestamp(rec);
             if (value == Numbers.LONG_NaN) {
                 return;
             }
 
-            TimestampFormatUtils.appendDateTimeUSec(sink, value);
+            TimestampFormatUtils.appendDateTimeUSec(utf16Sink, value);
         }
 
         @Override
