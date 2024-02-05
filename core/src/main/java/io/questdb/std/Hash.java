@@ -47,7 +47,7 @@ public final class Hash {
     }
 
     public static int hashInt(int k) {
-        long h = k * M2;
+        long h = Integer.toUnsignedLong(k) * M2;
         return (int) (h ^ h >>> 32);
     }
 
@@ -106,7 +106,7 @@ public final class Hash {
      */
     public static int hashMem32(long p, long len) {
         long h = 0;
-        int i = 0;
+        long i = 0;
         for (; i + 7 < len; i += 8) {
             h = h * M2 + Unsafe.getUnsafe().getLong(p + i);
         }
