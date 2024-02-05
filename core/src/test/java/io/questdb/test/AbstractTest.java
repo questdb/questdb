@@ -30,7 +30,9 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 import org.junit.rules.TestName;
+import org.junit.runner.OrderWith;
 
+@OrderWith(RandomOrder.class)
 public class AbstractTest {
     @ClassRule
     public static final TemporaryFolder temp = new TemporaryFolder();

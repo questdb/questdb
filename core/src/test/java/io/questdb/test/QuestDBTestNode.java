@@ -24,10 +24,7 @@
 
 package io.questdb.test;
 
-import io.questdb.DefaultTelemetryConfiguration;
-import io.questdb.MessageBus;
-import io.questdb.Metrics;
-import io.questdb.TelemetryConfiguration;
+import io.questdb.*;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.BindVariableService;
@@ -36,8 +33,9 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.std.Misc;
-import io.questdb.test.cairo.ConfigurationOverrides;
+import io.questdb.test.cairo.Overrides;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 
 public class QuestDBTestNode {
     private final int nodeId;
@@ -61,7 +59,7 @@ public class QuestDBTestNode {
         return cairo.configuration;
     }
 
-    public ConfigurationOverrides getConfigurationOverrides() {
+    public Overrides getConfigurationOverrides() {
         return cairo.overrides;
     }
 
@@ -92,7 +90,7 @@ public class QuestDBTestNode {
     public void initCairo(
             String root,
             boolean ownRoot,
-            ConfigurationOverrides overrides,
+            Overrides overrides,
             TestCairoEngineFactory engineFactory,
             TestCairoConfigurationFactory configurationFactory
     ) {
@@ -111,6 +109,18 @@ public class QuestDBTestNode {
             throw new IllegalStateException("Cairo is not initialised yet");
         }
         griffin = new Griffin(cairo, circuitBreaker);
+    }
+
+    public void setProperty(PropertyKey propertyKey, long value) {
+        getConfigurationOverrides().setProperty(propertyKey, value);
+    }
+
+    public void setProperty(PropertyKey propertyKey, String value) {
+        getConfigurationOverrides().setProperty(propertyKey, value);
+    }
+
+    public void setProperty(PropertyKey propertyKey, boolean value) {
+        getConfigurationOverrides().setProperty(propertyKey, value);
     }
 
     public void setUpCairo() {
@@ -138,7 +148,7 @@ public class QuestDBTestNode {
         private final CairoConfiguration configuration;
         private final MessageBus messageBus;
         private final Metrics metrics;
-        private final ConfigurationOverrides overrides;
+        private final Overrides overrides;
         private final boolean ownRoot;
         private final CharSequence root;
         private CairoEngine engine;
@@ -146,7 +156,7 @@ public class QuestDBTestNode {
         private Cairo(
                 String root,
                 boolean ownRoot,
-                ConfigurationOverrides overrides,
+                Overrides overrides,
                 TestCairoEngineFactory engineFactory,
                 TestCairoConfigurationFactory configurationFactory
         ) {

@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.SqlWalMode;
 import io.questdb.cairo.TableReader;
 import io.questdb.griffin.SqlException;
@@ -39,14 +40,14 @@ public class AlterTableWalEnabledTest extends AbstractCairoTest {
     @Test
     public void testDefaultWalEnabledMode() throws Exception {
         assertMemoryLeak(() -> {
-            configOverrideDefaultTableWriteMode(SqlWalMode.WAL_ENABLED);
+            node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, true);
             createTableWrite("my_table_wal", null, "HOUR");
             assertWalEnabled("my_table_wal", true);
 
             createTableWrite("my_table_wal_none", null, "NONE");
             assertWalEnabled("my_table_wal_none", false);
 
-            configOverrideDefaultTableWriteMode(SqlWalMode.WAL_DISABLED);
+            node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, false);
             createTableWrite("my_table_dir", null, "HOUR");
             assertWalEnabled("my_table_dir", false);
         });

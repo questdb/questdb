@@ -24,10 +24,13 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
+
+import static io.questdb.PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT;
 
 public class OrderByWithAsyncFilterTest extends AbstractCairoTest {
 
@@ -40,11 +43,11 @@ public class OrderByWithAsyncFilterTest extends AbstractCairoTest {
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
-        pageFrameMaxRows = PAGE_FRAME_MAX_ROWS;
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, PAGE_FRAME_MAX_ROWS);
         // We intentionally use small values for shard count and reduce
         // queue capacity to exhibit various edge cases.
-        pageFrameReduceShardCount = 2;
-        pageFrameReduceQueueCapacity = PAGE_FRAME_COUNT;
+        setProperty(CAIRO_PAGE_FRAME_SHARD_COUNT, 2);
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, PAGE_FRAME_COUNT);
 
         AbstractCairoTest.setUpStatic();
     }
@@ -52,9 +55,9 @@ public class OrderByWithAsyncFilterTest extends AbstractCairoTest {
     // tearDown() overrides settings set in setUpStatic()
     @Before
     public void setUp() {
-        pageFrameMaxRows = PAGE_FRAME_MAX_ROWS;
-        pageFrameReduceShardCount = 2;
-        pageFrameReduceQueueCapacity = PAGE_FRAME_COUNT;
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, PAGE_FRAME_MAX_ROWS);
+        setProperty(CAIRO_PAGE_FRAME_SHARD_COUNT, 2);
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, PAGE_FRAME_COUNT);
         super.setUp();
     }
 
