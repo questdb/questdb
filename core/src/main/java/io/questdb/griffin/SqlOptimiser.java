@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.catalogue.*;
 import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.griffin.engine.functions.table.AllTablesFunctionFactory;
+import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
 import io.questdb.griffin.model.*;
@@ -4668,25 +4669,27 @@ public class SqlOptimiser implements Mutable {
             }
         }
 
-
-        boolean overrideTranslation = false;
-        boolean translationIsRedundant = checkIfTranslatingModelIsRedundant(useInnerModel, useGroupByModel, useWindowModel, forceTranslatingModel, overrideTranslation, translatingModel);
-        // if it wasn't redundant, we might be able to make it redundant
-        // but only if its a simple select
-        // Try to merge the fields into the inner model or group by model.
-        // Does not handle multiple aliases, aliases in args etc.
+        boolean translationIsRedundant = checkIfTranslatingModelIsRedundant(useInnerModel, useGroupByModel, useWindowModel, forceTranslatingModel, false, translatingModel);
+        // If it wasn't redundant, we might be able to make it redundant. The redundancy check requires the translation model to be akin to:
+        // (select x x from y)
+        // Taking a query such as:
+        // (select x1 from (select x x1 from y)
+        // In this simple case, the nested select need not exist, since the alias can be applied directly to the enclosing node.
+        // Merging this child model into one of the parent models can elide the node:
+        // (select x x1 from y)
         if (useGroupByModel && sampleBy == null && !translationIsRedundant && !model.containsJoin() && !useWindowModel && SqlUtil.isPlainSelect(model.getNestedModel())) {
             QueryModel selectedModel = useInnerModel ? innerVirtualModel : groupByModel;
             ObjList<QueryColumn> translationColumns = translatingModel.getColumns();
             boolean appears = false;
             for (int i = 0; i < translationColumns.size(); i++) {
                 QueryColumn col = translationColumns.getQuick(i);
-                appears |= aliasAppearsInColsAndColArgs(selectedModel, col.getAlias());
+                if (!col.getAst().token.equals(col.getAlias())) {
+                    appears |= GroupByUtils.aliasAppearsInColsAndFuncArgs(selectedModel, col.getAlias());
+                }
             }
             if (!appears) {
                 mergeInnerVirtualModel(translatingModel, selectedModel);
-                overrideTranslation = true;
-                translationIsRedundant = checkIfTranslatingModelIsRedundant(useInnerModel, useGroupByModel, useWindowModel, forceTranslatingModel, overrideTranslation, translatingModel);
+                translationIsRedundant = checkIfTranslatingModelIsRedundant(useInnerModel, useGroupByModel, useWindowModel, forceTranslatingModel, true, translatingModel);
             }
         }
 
@@ -4809,45 +4812,11 @@ public class SqlOptimiser implements Mutable {
     }
 
 
-    private boolean aliasAppearsInColsAndColArgs(QueryModel model, CharSequence alias) {
-        boolean appearsInCols = false;
-        boolean appearsInArgs = false;
-        ObjList<QueryColumn> modelColumns = model.getColumns();
-        for (int i = 0; i < modelColumns.size(); i++) {
-            QueryColumn col = modelColumns.get(i);
-            if (col.getAst().type == 8) {
-                // function
-                ExpressionNode rhs = col.getAst().rhs;
-                ExpressionNode argNode = null;
-                while (rhs != null) {
-                    for (int j = 0; j < rhs.args.size(); j++) {
-                       argNode = rhs.args.getQuick(j);
-                       if (argNode == null) {
-                           continue;
-                       }
-                       if (argNode.token == alias) {
-                            appearsInArgs = true;
-                        }
-                    }
-                    if (rhs.token == alias) {
-                        appearsInArgs = true;
-                    }
-                    rhs = rhs.rhs;
-                }
-            }
-            if (col.getAst().token == alias) {
-                appearsInCols = true;
-            }
-        }
-        return appearsInCols && appearsInArgs;
-    }
-
-
-    private boolean checkIfTranslatingModelIsRedundant(boolean useInnerModel, boolean useGroupByModel, boolean useWindowModel, boolean forceTranslatingModel, boolean overrideTranslation, QueryModel translatingModel) {
+    private boolean checkIfTranslatingModelIsRedundant(boolean useInnerModel, boolean useGroupByModel, boolean useWindowModel, boolean forceTranslatingModel, boolean checkTranslatingFunction, QueryModel translatingModel) {
         // check if translating model is redundant, e.g.
         // that it neither chooses between tables nor renames columns
         boolean translationIsRedundant = (useInnerModel || useGroupByModel || useWindowModel) && !forceTranslatingModel;
-        if (translationIsRedundant && overrideTranslation == false) {
+        if (translationIsRedundant && !checkTranslatingFunction) {
             for (int i = 0, n = translatingModel.getBottomUpColumns().size(); i < n; i++) {
                 QueryColumn column = translatingModel.getBottomUpColumns().getQuick(i);
                 if (!column.getAst().token.equals(column.getAlias())) {

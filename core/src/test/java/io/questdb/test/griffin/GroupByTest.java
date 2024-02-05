@@ -1907,20 +1907,19 @@ public class GroupByTest extends AbstractCairoTest {
                             "where a = 1\n" +
                             "group by a,b,z\n" +
                             "order by a,b,z\n";
-            assertPlan(query,"SelectedRecord\n" +
+            assertPlan(query,"" +
+                    "SelectedRecord\n" +
                     "    Sort light\n" +
                     "      keys: [a, b, z]\n" +
                     "        VirtualRecord\n" +
                     "          functions: [a,sum,z,views,b]\n" +
-                    "            GroupBy vectorized: false\n" +
+                    "            Async JIT Group By workers: 1\n" +
                     "              keys: [a,z,b]\n" +
                     "              values: [sum(b),count(*)]\n" +
-                    "                SelectedRecord\n" +
-                    "                    Async JIT Filter workers: 1\n" +
-                    "                      filter: a=1\n" +
-                    "                        DataFrame\n" +
-                    "                            Row forward scan\n" +
-                    "                            Frame forward scan on: x\n");
+                    "              filter: a=1\n" +
+                    "                DataFrame\n" +
+                    "                    Row forward scan\n" +
+                    "                    Frame forward scan on: x\n");
             assertQuery("" +
                             "a\tsum\tz\tviews\n" +
                             "1\t2\t3\t1\n" +
@@ -1935,115 +1934,18 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void testLiftAliasesFromInnerSelect6() throws Exception {
-        // Test clickhouse plan
+        // Test ClickBench Q39 plan
         assertMemoryLeak(() -> {
             ddl("CREATE TABLE hits\n" +
                     "(\n" +
-                    "    WatchID long,\n" +
-                    "    JavaEnable short,\n" +
-                    "    Title string,\n" +
-                    "    GoodEvent short,\n" +
-                    "    EventTime timestamp,\n" +
-                    "    Eventdate timestamp,\n" +
-                    "    CounterID int,\n" +
-                    "    ClientIP int,\n" +
-                    "    RegionID int,\n" +
-                    "    UserID long,\n" +
-                    "    CounterClass short,\n" +
-                    "    OS short,\n" +
-                    "    UserAgent short,\n" +
                     "    URL string,\n" +
                     "    Referer string,\n" +
-                    "    IsRefresh short,\n" +
-                    "    RefererCategoryID short,\n" +
-                    "    RefererRegionID int,\n" +
-                    "    URLCategoryID short,\n" +
-                    "    URLRegionID int,\n" +
-                    "    ResolutionWidth short,\n" +
-                    "    ResolutionHeight short,\n" +
-                    "    ResolutionDepth short,\n" +
-                    "    FlashMajor short,\n" +
-                    "    FlashMinor short,\n" +
-                    "    FlashMinor2 symbol,\n" +
-                    "    NetMajor short,\n" +
-                    "    NetMinor short,\n" +
-                    "    UserAgentMajor short,\n" +
-                    "    UserAgentMinor symbol,\n" +
-                    "    CookieEnable short,\n" +
-                    "    JavascriptEnable short,\n" +
-                    "    IsMobile short,\n" +
-                    "    MobilePhone short,\n" +
-                    "    MobilePhoneModel symbol,\n" +
-                    "    Params string,\n" +
-                    "    IPNetworkID int,\n" +
                     "    TraficSourceID int,\n" +
                     "    SearchEngineID short,\n" +
-                    "    SearchPhrase string,\n" +
                     "    AdvEngineID short,\n" +
-                    "    IsArtifical short,\n" +
-                    "    WindowClientWidth short,\n" +
-                    "    WindowClientHeight short,\n" +
-                    "    ClientTimeZone short,\n" +
-                    "    ClientEventTime timestamp,\n" +
-                    "    SilverlightVersion1 short,\n" +
-                    "    SilverlightVersion2 short,\n" +
-                    "    SilverlightVersion3 int,\n" +
-                    "    SilverlightVersion4 short,\n" +
-                    "    PageCharset symbol,\n" +
-                    "    CodeVersion int,\n" +
-                    "    IsLink short,\n" +
-                    "    IsDownload short,\n" +
-                    "    IsNotBounce short,\n" +
-                    "    FUniqID long,\n" +
-                    "    OriginalURL string,\n" +
-                    "    HID int,\n" +
-                    "    IsOldCounter short,\n" +
-                    "    IsEvent short,\n" +
-                    "    IsParameter short,\n" +
-                    "    DontCountHits short,\n" +
-                    "    WithHash short,\n" +
-                    "    HitColor char,\n" +
-                    "    LocalEventTime timestamp,\n" +
-                    "    Age short,\n" +
-                    "    Sex short,\n" +
-                    "    Income short,\n" +
-                    "    Interests short,\n" +
-                    "    Robotness short,\n" +
-                    "    RemoteIP int,\n" +
-                    "    WindowName int,\n" +
-                    "    OpenerName int,\n" +
-                    "    HistoryLength short,\n" +
-                    "    BrowserLanguage symbol,\n" +
-                    "    BrowserCountry symbol,\n" +
-                    "    SocialNetwork symbol,\n" +
-                    "    SocialAction symbol,\n" +
-                    "    HTTPError short,\n" +
-                    "    SendTiming int,\n" +
-                    "    DNSTiming int,\n" +
-                    "    ConnectTiming int,\n" +
-                    "    ResponseStartTiming int,\n" +
-                    "    ResponseEndTiming int,\n" +
-                    "    FetchTiming int,\n" +
-                    "    SocialSourceNetworkID short,\n" +
-                    "    SocialSourcePage string,\n" +
-                    "    ParamPrice long,\n" +
-                    "    ParamOrderID symbol,\n" +
-                    "    ParamCurrency symbol,\n" +
-                    "    ParamCurrencyID short,\n" +
-                    "    OpenstatServiceName symbol,\n" +
-                    "    OpenstatCampaignID symbol,\n" +
-                    "    OpenstatAdID string,\n" +
-                    "    OpenstatSourceID symbol,\n" +
-                    "    UTMSource symbol,\n" +
-                    "    UTMMedium symbol,\n" +
-                    "    UTMCampaign symbol,\n" +
-                    "    UTMContent symbol,\n" +
-                    "    UTMTerm symbol,\n" +
-                    "    FromTag symbol,\n" +
-                    "    HasGCLID short,\n" +
-                    "    RefererHash long,\n" +
-                    "    URLHash long,\n" +
-                    "    CLID int\n" +
+                    "    EventTime timestamp,\n" +
+                    "    CounterID int,\n" +
+                    "    IsRefresh short\n" +
                     ") TIMESTAMP(EventTime) PARTITION BY DAY;");
             String query1 =
                     "SELECT TraficSourceID, SearchEngineID, AdvEngineID, CASE WHEN (SearchEngineID = 0 AND AdvEngineID = 0) THEN Referer ELSE '' END AS Src, URL AS Dst, COUNT(*) AS PageViews\n" +
@@ -2052,7 +1954,8 @@ public class GroupByTest extends AbstractCairoTest {
                             "GROUP BY TraficSourceID, SearchEngineID, AdvEngineID, Src, Dst\n" +
                             "ORDER BY PageViews DESC\n" +
                             "LIMIT 1000, 1010;";
-            assertPlan(query1, "Sort light lo: 1000 hi: 1010\n" +
+            assertPlan(query1, "" +
+                    "Sort light lo: 1000 hi: 1010\n" +
                     "  keys: [PageViews desc]\n" +
                     "    VirtualRecord\n" +
                     "      functions: [TraficSourceID,SearchEngineID,AdvEngineID,Src,Dst,PageViews]\n" +
@@ -2071,12 +1974,32 @@ public class GroupByTest extends AbstractCairoTest {
                             "GROUP BY TraficSourceID, SearchEngineID, AdvEngineID, Src, URL\n" +
                             "ORDER BY PageViews DESC\n" +
                             "LIMIT 1000, 1010;";
-            assertPlan(query2, "Sort light lo: 1000 hi: 1010\n" +
+            assertPlan(query2, "" +
+                    "Sort light lo: 1000 hi: 1010\n" +
                     "  keys: [PageViews desc]\n" +
                     "    VirtualRecord\n" +
                     "      functions: [TraficSourceID,SearchEngineID,AdvEngineID,Src,URL,PageViews]\n" +
                     "        Async JIT Group By workers: 1\n" +
                     "          keys: [TraficSourceID,SearchEngineID,AdvEngineID,Src,URL]\n" +
+                    "          values: [count(*)]\n" +
+                    "          filter: (CounterID=62 and IsRefresh=0)\n" +
+                    "            DataFrame\n" +
+                    "                Row forward scan\n" +
+                    "                Interval forward scan on: hits\n" +
+                    "                  intervals: [(\"2013-07-01T00:00:00.000000Z\",\"2013-07-31T23:59:59.000000Z\")]\n");
+            String query3 = "SELECT TraficSourceID, SearchEngineID, AdvEngineID, CASE WHEN (SearchEngineID = 0 AND AdvEngineID = 0) THEN Referer ELSE '' END AS Src, URL, COUNT(*) AS PageViews, concat(lpad(cast(TraficSourceId as string), 10, '0'), lpad(cast(Referer as string), 32, '0')) as cat\n" +
+                    "FROM hits\n" +
+                    "WHERE CounterID = 62 AND EventTime >= '2013-07-01T00:00:00Z' AND EventTime <= '2013-07-31T23:59:59Z' AND IsRefresh = 0\n" +
+                    "GROUP BY TraficSourceID, SearchEngineID, AdvEngineID, Src, URL, cat\n" +
+                    "ORDER BY PageViews DESC\n" +
+                    "LIMIT 1000, 1010;";
+            assertPlan(query3, "" +
+                    "Sort light lo: 1000 hi: 1010\n" +
+                    "  keys: [PageViews desc]\n" +
+                    "    VirtualRecord\n" +
+                    "      functions: [TraficSourceID,SearchEngineID,AdvEngineID,Src,URL,PageViews,cat]\n" +
+                    "        Async JIT Group By workers: 1\n" +
+                    "          keys: [TraficSourceID,SearchEngineID,AdvEngineID,Src,URL,cat]\n" +
                     "          values: [count(*)]\n" +
                     "          filter: (CounterID=62 and IsRefresh=0)\n" +
                     "            DataFrame\n" +
@@ -2089,33 +2012,61 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void testLiftAliasesFromInnerSelect7() throws Exception {
         // test duplicate key ordering
-        assertQuery(
-                "k1\tkey2\tkey21\tcount\n" +
-                        "0\t0\t0\t2\n" +
-                        "0\t2\t2\t3\n" +
-                        "1\t1\t1\t3\n" +
-                        "1\t3\t3\t2\n",
-                "select key1 as k1, key2, key2, count(*) from t group by key2, k1 order by 1, 2",
-                "create table t as ( select x%2 key1, x%4 key2, x as value from long_sequence(10));",
-                null,
-                true,
-                true
-        );
+        assertMemoryLeak(() -> {
+            ddl("create table t as ( select x%2 key1, x%4 key2, x as value from long_sequence(10));");
+            String query = "select key1 as k1, key2, key2, count(*) from t group by key2, k1 order by 1, 2";
+            assertQuery("k1\tkey2\tkey21\tcount\n" +
+                    "0\t0\t0\t2\n" +
+                    "0\t2\t2\t3\n" +
+                    "1\t1\t1\t3\n" +
+                    "1\t3\t3\t2\n",
+                    query,
+                    null,
+                    true,
+                    true);
+            assertPlan(query,
+                    "" +
+                    "Sort light\n" +
+                    "  keys: [k1, key2]\n" +
+                    "    VirtualRecord\n" +
+                    "      functions: [k1,key2,key2,count]\n" +
+                    "        Async Group By workers: 1\n" +
+                    "          keys: [k1,key2]\n" +
+                    "          values: [count(*)]\n" +
+                    "          filter: null\n" +
+                    "            DataFrame\n" +
+                    "                Row forward scan\n" +
+                    "                Frame forward scan on: t\n");
+        });
     }
 
     @Test
     public void testLiftAliasesFromInnerSelect8() throws Exception {
         // test ordering by number
-        assertQuery(
-                "column\tkey\tkey1\tcount\n" +
-                        "1\t0\t0\t50\n" +
-                        "2\t1\t1\t50\n",
-                "select key+1, key, key, count(*) from t group by key order by 1,2,3 desc",
-                "create table t as ( select x%2 as key, x as value from long_sequence(100));",
-                null,
-                true,
-                true
-        );
+        assertMemoryLeak(() -> {
+            ddl("create table t as ( select x%2 as key, x as value from long_sequence(100));");
+            String query = "select key+1, key, key, count(*) from t group by key order by 1,2,3 desc";
+            assertQuery("column\tkey\tkey1\tcount\n" +
+                            "1\t0\t0\t50\n" +
+                            "2\t1\t1\t50\n",
+                    query,
+                    null,
+                    true,
+                    true);
+            assertPlan(query,
+                    "" +
+                            "Sort light\n" +
+                            "  keys: [column, key, key1 desc]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [key+1,key,key,count]\n" +
+                            "        Async Group By workers: 1\n" +
+                            "          keys: [key]\n" +
+                            "          values: [count(*)]\n" +
+                            "          filter: null\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: t\n");
+        });
     }
 
     @Test
@@ -2201,37 +2152,81 @@ public class GroupByTest extends AbstractCairoTest {
                     "1970-01-01T00:00:01.099957Z\t19\t501.01901034386356\t1792145.0\t712.0\n" +
                     "1970-01-01T00:00:01.099987Z\t20\t498.1350566366541\t1715079.0\t188.0\n";
 
+            String query1 = " select max(data.ts) as ts, data.i as i, avg(data.j) as avg, sum(data.j::double) as sum, first(data.j::double) as first_value " +
+                    "from " +
+                    "( select i, max(ts) as max from tab group by i) cnt " +
+                    "join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000) " +
+                    "group by data.i " +
+                    "order by data.i ";
+
             // cross-check with re-write using aggregate functions
             assertSql(
                     expected,
-                    " select max(data.ts) as ts, data.i as i, avg(data.j) as avg, sum(data.j::double) as sum, first(data.j::double) as first_value " +
-                            "from " +
-                            "( select i, max(ts) as max from tab group by i) cnt " +
-                            "join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000) " +
-                            "group by data.i " +
-                            "order by data.i "
+                    query1
             );
+
+            assertPlan(query1, "" +
+                    "Sort light\n" +
+                    "  keys: [i]\n" +
+                    "    VirtualRecord\n" +
+                    "      functions: [ts,i,avg,sum,first_value]\n" +
+                    "        GroupBy vectorized: false\n" +
+                    "          keys: [i]\n" +
+                    "          values: [max(ts),avg(j),sum(j::double),first(j::double)]\n" +
+                    "            SelectedRecord\n" +
+                    "                Filter filter: data.ts>=cnt.max-80000\n" +
+                    "                    Hash Join Light\n" +
+                    "                      condition: data.i=cnt.i\n" +
+                    "                        Async Group By workers: 1\n" +
+                    "                          keys: [i]\n" +
+                    "                          values: [max(ts)]\n" +
+                    "                          filter: null\n" +
+                    "                            DataFrame\n" +
+                    "                                Row forward scan\n" +
+                    "                                Frame forward scan on: tab\n" +
+                    "                        Hash\n" +
+                    "                            DataFrame\n" +
+                    "                                Row forward scan\n" +
+                    "                                Frame forward scan on: tab\n"
+            );
+
+            String query2 = "select last(ts) as ts, " +
+                    "i, " +
+                    "last(avg) as avg, " +
+                    "last(sum) as sum, " +
+                    "last(first_value) as first_value " +
+                    "from (  " +
+                    "  select * from (" +
+                    "    select ts, i, " +
+                    "    avg(j) over (partition by i order by ts range between 80000 preceding and current row) avg, " +
+                    "    sum(j) over (partition by i order by ts range between 80000 preceding and current row) sum, " +
+                    "    first_value(j) over (partition by i order by ts range between 80000 preceding and current row) first_value, " +
+                    "    from tab ) " +
+                    "  limit -100 )" +
+                    "order by i";
 
             assertQuery(
                     expected,
-                    "select last(ts) as ts, " +
-                            "i, " +
-                            "last(avg) as avg, " +
-                            "last(sum) as sum, " +
-                            "last(first_value) as first_value " +
-                            "from (  " +
-                            "  select * from (" +
-                            "    select ts, i, " +
-                            "    avg(j) over (partition by i order by ts range between 80000 preceding and current row) avg, " +
-                            "    sum(j) over (partition by i order by ts range between 80000 preceding and current row) sum, " +
-                            "    first_value(j) over (partition by i order by ts range between 80000 preceding and current row) first_value, " +
-                            "    from tab ) " +
-                            "  limit -100 )" +
-                            "order by i",
+                    query2,
                     null,
                     true,
                     true,
                     false
+            );
+
+            assertPlan(query2,
+                    "" +
+                            "Sort light\n" +
+                            "  keys: [i]\n" +
+                            "    GroupBy vectorized: false\n" +
+                            "      keys: [i]\n" +
+                            "      values: [last(ts),last(avg),last(sum),last(first_value)]\n" +
+                            "        Limit lo: -100\n" +
+                            "            Window\n" +
+                            "              functions: [avg(j) over (partition by [i] range between 80000 preceding and current row),sum(j) over (partition by [i] range between 80000 preceding and current row),first_value(j) over (partition by [i] range between 80000 preceding and current row)]\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: tab\n"
             );
         });
     }

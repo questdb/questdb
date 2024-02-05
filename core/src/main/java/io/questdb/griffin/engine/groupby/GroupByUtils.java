@@ -43,6 +43,8 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayDeque;
 
+
+
 public class GroupByUtils {
 
     public static boolean isParallelismSupported(ObjList<GroupByFunction> functions) {
@@ -537,5 +539,81 @@ public class GroupByUtils {
                 break;
         }
         return func;
+    }
+
+    /**
+     * Checks if an alias appears in the columns and function args of a model.
+     * <p>
+     * Consider a query:<br>
+     * (select x1, sum(x1) from (select x as x1 from y))<br>
+     * If you were to move lift the column from the RHS to the LHS, you might get:<br>
+     * (select x x1, sum(x1) from y)<br>
+     * Now x1 is invalid.
+     * @param model
+     * @param alias
+     * @return
+     */
+    public static boolean aliasAppearsInColsAndFuncArgs(QueryModel model, CharSequence alias) {
+        boolean appearsInCols = false;
+        boolean appearsInArgs = false;
+        ObjList<QueryColumn> modelColumns = model.getColumns();
+        for (int i = 0; i < modelColumns.size(); i++) {
+            QueryColumn col = modelColumns.get(i);
+            if (col.getAst().type == ExpressionNode.FUNCTION) {
+                // function
+                if (searchExpressionNodeForAlias(col.getAst(), alias)) {
+                    appearsInArgs = true;
+                }
+            }
+            if (Chars.equals(col.getAst().token,alias)) {
+                appearsInCols = true;
+            }
+        }
+        return appearsInCols && appearsInArgs;
+    }
+
+    /**
+     * Recurse down expression node tree looking for an alias.
+     * @param node
+     * @param alias
+     * @return
+     */
+    private static boolean searchExpressionNodeForAlias(ExpressionNode node, CharSequence alias) {
+        if (node == null) {
+            return false;
+        }
+
+        if (Chars.equals(node.token, alias)) {
+            return true;
+        }
+
+        ExpressionNode current;
+
+        if (node.args.size() > 0) {
+            for (int i = 0; i < node.args.size(); i++) {
+                current = node.args.getQuick(i);
+                if (searchExpressionNodeForAlias(current, alias)) {
+                    return true;
+                }
+            }
+        }
+
+        current = node.lhs;
+        while (current != null) {
+            if (searchExpressionNodeForAlias(current, alias)) {
+                return true;
+            }
+            current = current.lhs;
+        }
+
+        current = node.rhs;
+        while (current != null) {
+            if (searchExpressionNodeForAlias(current, alias)) {
+                return true;
+            }
+            current = current.rhs;
+        }
+
+        return false;
     }
 }
