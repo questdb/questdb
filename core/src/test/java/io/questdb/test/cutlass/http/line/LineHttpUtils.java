@@ -25,41 +25,8 @@
 package io.questdb.test.cutlass.http.line;
 
 import io.questdb.ServerMain;
-import io.questdb.test.tools.TestUtils;
-import org.influxdb.InfluxDB;
-import org.influxdb.InfluxDBException;
-import org.influxdb.InfluxDBFactory;
-import org.jetbrains.annotations.NotNull;
-import org.junit.Assert;
 
-import java.util.List;
-
-public class IlpHttpUtils {
-    public static void assertRequestErrorContains(InfluxDB influxDB, List<String> points, String line, String... errors) {
-        points.add(line);
-        try {
-            influxDB.write(points);
-            Assert.fail();
-        } catch (InfluxDBException e) {
-            for (String error : errors) {
-                TestUtils.assertContains(e.getMessage(), error);
-            }
-        }
-        points.clear();
-    }
-
-    public static void assertRequestOk(InfluxDB influxDB, List<String> points, String line) {
-        points.add(line);
-        influxDB.write(points);
-        points.clear();
-    }
-
-    @NotNull
-    public static InfluxDB getConnection(ServerMain serverMain) {
-        int httpPort = getHttpPort(serverMain);
-        final String serverURL = "http://127.0.0.1:" + httpPort, username = "root", password = "root";
-        return InfluxDBFactory.connect(serverURL, username, password);
-    }
+public class LineHttpUtils {
 
     public static int getHttpPort(ServerMain serverMain) {
         return serverMain.getConfiguration().getHttpServerConfiguration().getDispatcherConfiguration().getBindPort();

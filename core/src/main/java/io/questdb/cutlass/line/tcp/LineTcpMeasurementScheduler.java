@@ -59,7 +59,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
     private final DefaultColumnTypes defaultColumnTypes;
     private final CairoEngine engine;
     private final LowerCaseCharSequenceObjHashMap<TableUpdateDetails> idleTableUpdateDetailsUtf16;
-    private final IlpWalAppender ilpWalAppender;
+    private final LineWalAppender lineWalAppender;
     private final long[] loadByWriterThread;
     private final NetworkIOJob[] netIoJobs;
     private final Path path = new Path();
@@ -157,7 +157,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                 cairoConfiguration.getWalEnabledDefault()
         );
         writerIdleTimeout = lineConfiguration.getWriterIdleTimeout();
-        ilpWalAppender = new IlpWalAppender(
+        lineWalAppender = new LineWalAppender(
                 autoCreateNewColumns,
                 configuration.isStringToCharCastAllowed(),
                 configuration.getTimestampAdapter(),
@@ -305,7 +305,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
 
         if (tud.isWal()) {
             try {
-                ilpWalAppender.appendToWal(securityContext, parser, tud);
+                lineWalAppender.appendToWal(securityContext, parser, tud);
             } catch (CommitFailedException ex) {
                 if (ex.isTableDropped()) {
                     // table dropped, nothing to worry about

@@ -30,6 +30,8 @@ import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableReaderRecordCursor;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.client.Sender;
+import io.questdb.cutlass.line.http.LineHttpSender;
 import io.questdb.log.Log;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
@@ -41,8 +43,6 @@ import io.questdb.test.TestServerMain;
 import io.questdb.test.cutlass.line.tcp.load.LineData;
 import io.questdb.test.cutlass.line.tcp.load.TableData;
 import io.questdb.test.tools.TestUtils;
-import org.influxdb.InfluxDB;
-import org.influxdb.InfluxDBFactory;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Before;
@@ -63,6 +63,7 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
     private static final int SEND_SYMBOLS_WITH_SPACE_RANDOMIZE_FACTOR = 2;
     private static final StringSink sink = new StringSink();
     protected final short[] colTypes = new short[]{STRING, DOUBLE, DOUBLE, DOUBLE, STRING, DOUBLE};
+    private final int batchSize = 10;
     private final String[][] colNameBases = new String[][]{
             {"terület", "TERÜLet", "tERülET", "TERÜLET"},
             {"temperature", "TEMPERATURE", "Temperature", "TempeRaTuRe"},
@@ -87,7 +88,6 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
     protected Rnd random;
     protected LowerCaseCharSequenceObjHashMap<TableData> tables;
     protected long waitBetweenIterationsMillis;
-    private final int batchSize = 10;
     private int columnReorderingFactor = -1;
     private int columnSkipFactor = -1;
     private boolean diffCasesInColNames = false;
@@ -160,7 +160,7 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
                 }
 
                 try {
-                    ingest(IlpHttpUtils.getHttpPort(serverMain));
+                    ingest(LineHttpUtils.getHttpPort(serverMain));
 
                     for (int i = 0; i < numOfTables; i++) {
                         final String tableName = getTableName(i);
@@ -419,37 +419,47 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
 
     protected void startThread(int threadId, int port, SOCountDownLatch threadPushFinished, AtomicInteger failureCounter) {
         new Thread(() -> {
-            final String serverURL = "http://127.0.0.1:" + port, username = "root", password = "root";
-            try (InfluxDB client = InfluxDBFactory.connect(serverURL, username, password)) {
-                client.setLogLevel(InfluxDB.LogLevel.BASIC);
-
-                try {
-                    List<String> points = new ArrayList<>();
-                    for (int n = 0; n < numOfIterations; n++) {
-                        for (int j = 0; j < numOfLines; j++) {
-                            final LineData line = generateLine();
-                            final CharSequence tableName = pickTableName(threadId);
-                            final TableData table = tables.get(tableName);
-                            table.addLine(line);
-                            points.add(line.toLine(tableName));
-                            if (points.size() % batchSize == 0) {
-                                client.write(points);
-                                points.clear();
+            final String username = "root";
+            final String password = "root";
+            try (
+                    Sender sender = Sender.builder()
+                            .address("localhost:" + port)
+                            .http()
+                            .httpUsernamePassword(username, password)
+                            .build()
+            ) {
+                LineHttpSender httpSender = (LineHttpSender) sender;
+                List<String> points = new ArrayList<>();
+                for (int n = 0; n < numOfIterations; n++) {
+                    for (int j = 0; j < numOfLines; j++) {
+                        final LineData line = generateLine();
+                        final CharSequence tableName = pickTableName(threadId);
+                        final TableData table = tables.get(tableName);
+                        table.addLine(line);
+                        points.add(line.toLine(tableName));
+                        if (points.size() % batchSize == 0) {
+                            for (String point : points) {
+                                httpSender.putRawMessage(point);
                             }
-                        }
-                        if (points.size() > 0) {
-                            client.write(points);
+                            httpSender.flush();
                             points.clear();
                         }
-
-                        Os.sleep(waitBetweenIterationsMillis);
                     }
-                } catch (Exception e) {
-                    failureCounter.incrementAndGet();
-                    Assert.fail("Data sending failed [e=" + e + "]");
-                } finally {
-                    threadPushFinished.countDown();
+                    if (!points.isEmpty()) {
+                        for (String point : points) {
+                            httpSender.putRawMessage(point);
+                        }
+                        httpSender.flush();
+                        points.clear();
+                    }
+
+                    Os.sleep(waitBetweenIterationsMillis);
                 }
+            } catch (Exception e) {
+                failureCounter.incrementAndGet();
+                Assert.fail("Data sending failed [e=" + e + "]");
+            } finally {
+                threadPushFinished.countDown();
             }
         }).start();
     }

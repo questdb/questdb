@@ -90,6 +90,13 @@ stages:
     jobs:
       - template: templates/hosted-cover-jobs.yml
 
+  - stage: HostedRunCompatTestsBranches
+    displayName: "Hosted Running CLI util and compat tests"
+    dependsOn:
+      - CheckChanges
+    jobs:
+      - template: templates/hosted-compat-jobs.yml
+
   - stage: CoverageReports
     displayName: "Coverage Report"
     dependsOn:

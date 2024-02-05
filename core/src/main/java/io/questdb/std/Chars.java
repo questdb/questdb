@@ -736,7 +736,8 @@ public final class Chars {
             }
 
             @Override
-            @NotNull public CharSequence subSequence(int start, int end) {
+            @NotNull
+            public CharSequence subSequence(int start, int end) {
                 throw new UnsupportedOperationException();
             }
         };
@@ -839,12 +840,16 @@ public final class Chars {
 
     public static void toLowerCase(@Nullable CharSequence str, @NotNull CharSink<?> sink) {
         if (str != null) {
-            final int len = str.length();
-            for (int i = 0; i < len; i++) {
-                sink.put(Character.toLowerCase(str.charAt(i)));
-            }
+            toLowerCase(str, 0, str.length(), sink);
         }
     }
+
+    public static void toLowerCase(@NotNull CharSequence str, int lo, int hi, @NotNull CharSink<?> sink) {
+        for (int i = lo; i < hi; i++) {
+            sink.put(Character.toLowerCase(str.charAt(i)));
+        }
+    }
+
 
     public static String toLowerCaseAscii(@Nullable CharSequence value) {
         if (value == null) {

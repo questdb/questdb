@@ -122,10 +122,8 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     public void testSplitLastPartition() throws Exception {
         assertMemoryLeak(() -> {
             // 4kb prefix split threshold
-            Overrides overrides1 = node1.getConfigurationOverrides();
-            overrides1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4 * (1 << 10));
-            Overrides overrides = node1.getConfigurationOverrides();
-            overrides.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4 * (1 << 10));
+            node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
             int rowCount = (int) metrics.tableWriter().getPhysicallyWrittenRows();
 
             ddl(
@@ -503,10 +501,8 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
 
         assertMemoryLeak(ff, () -> {
             // 4kb prefix split threshold
-            Overrides overrides1 = node1.getConfigurationOverrides();
-            overrides1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4 * (1 << 10));
-            Overrides overrides = node1.getConfigurationOverrides();
-            overrides.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4 * (1 << 10));
+            node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
 
             compile(
                     "create table x as (" +
@@ -803,10 +799,8 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     private void testSquashPartitionsOnNonEmptyTable(String wal) throws Exception {
         assertMemoryLeak(() -> {
             // 4kb prefix split threshold
-            Overrides overrides1 = node1.getConfigurationOverrides();
-            overrides1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4 * (1 << 10));
-            Overrides overrides = node1.getConfigurationOverrides();
-            overrides.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4 * (1 << 10));
+            node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
 
             ddl(
                     "create table x as (" +

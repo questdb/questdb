@@ -376,11 +376,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     protected HttpServerConfiguration httpServerConfiguration = new PropHttpServerConfiguration();
     protected JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new PropJsonQueryProcessorConfiguration();
     protected StaticContentProcessorConfiguration staticContentProcessorConfiguration;
-    private boolean allowTableRegistrySharedWrite;
+    private final boolean allowTableRegistrySharedWrite;
     protected long walSegmentRolloverSize;
     private long cairoSqlCopyMaxIndexChunkSize;
-    private int defaultWalSeqChunkTxnCount;
-    private boolean enableTestFactories;
+    private final int defaultWalSeqChunkTxnCount;
+    private final boolean enableTestFactories;
     private FactoryProvider factoryProvider;
     private short floatDefaultColumnType;
     private int forceRecvFragmentationChunkSize;
