@@ -38,7 +38,7 @@ struct file_watcher {
     // fd is the inotify api file descriptor
     uintptr_t fd;
     // wd is the watch descriptor for poll calls
-    uintptr_t wd;
+    int* wd;
     /* buf is used to hold inotify events for processing. We align the buffer 
        used for reading from the inotify file descriptor to the inotify_event struct 
        as per the inotify man page
@@ -60,12 +60,11 @@ struct file_watcher {
 
 */
 static uintptr_t filewatcher_setup(const char *filepath) {
-    int *wd;
     struct file_watcher *fw;
     
     
     /* make copy of filepath for dirname/basename usage, otherwise they segfault*/
-    char *filepath_copy[strlen(filepath)];
+    char filepath_copy[strlen(filepath)];
     strcpy(filepath_copy, filepath);
 
 
@@ -78,7 +77,7 @@ static uintptr_t filewatcher_setup(const char *filepath) {
     
     /* Allocate memory for watch descriptor. Return 0 if
        there is a malloc error. */
-    wd = calloc(1, sizeof(int));
+    int *wd = calloc(1, sizeof(int));
     if (wd == NULL) {
         return 0;
     }
@@ -87,19 +86,19 @@ static uintptr_t filewatcher_setup(const char *filepath) {
        to only changes related to the specific file later. Return 0
        if inotify_add_watch fails. */
     char *d = dirname(filepath_copy);
-    wd[0] = inotify_add_watch(
+    *wd = inotify_add_watch(
         fd, 
         d,
         IN_ALL_EVENTS
     );
-    if (wd[0] == -1) {
+    if (wd == NULL) {
         return 0;
     }
     
     /* Set up file_watcher struct */
     fw = calloc(1, sizeof(struct file_watcher));
     fw->fd = fd;
-    fw->wd = (uintptr_t)wd[0];
+    fw->wd = wd;
     fw->name = basename(filepath_copy);
     
     return (uintptr_t)fw;
@@ -108,7 +107,10 @@ static uintptr_t filewatcher_setup(const char *filepath) {
 
 static void filewatcher_teardown(uintptr_t wp) {
     struct file_watcher *fw = (struct file_watcher *)wp;
+
+    // Clean up the inotify watch descriptor first
     free(fw->wd);
+    // Then clean up the filewatcher struct itself
     free(fw);
 }
 
