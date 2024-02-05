@@ -537,10 +537,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             throw invalidFunction(node, args);
         }
 
-        if (Chars.equalsNc("nullif", node.token)) {
-            System.out.println("ok");
-        }
-
         final int argCount = args == null ? 0 : args.size();
         FunctionFactory candidate = null;
         FunctionFactoryDescriptor candidateDescriptor = null;
