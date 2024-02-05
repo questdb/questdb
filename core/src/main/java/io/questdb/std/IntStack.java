@@ -104,6 +104,7 @@ public class IntStack implements Mutable {
         capacity = capacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(capacity);
         elements = new int[capacity];
         mask = capacity - 1;
+        Arrays.fill(elements, noEntryValue);
     }
 
     private int dec(int i) {
