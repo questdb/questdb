@@ -40,7 +40,6 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.Net;
@@ -1220,8 +1219,6 @@ public final class TestUtils {
         };
     }
 
-    static final Log LOG = LogFactory.getLog(TestUtils.class);
-
     public static String getTestResourcePath(String resourceName) {
         URL resource = TestUtils.class.getResource(resourceName);
         assertNotNull("Someone accidentally deleted test resource " + resourceName + "?", resource);
@@ -1598,7 +1595,7 @@ public final class TestUtils {
         final Path path = Path.getThreadLocal(root);
         FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
         path.slash$();
-        Assert.assertTrue("Test dir cleanup error", !ff.exists(path) || ff.rmdir(path.slash$()));
+        Assert.assertTrue("Test dir cleanup error: " + ff.errno(), !ff.exists(path) || ff.rmdir(path.slash$()));
     }
 
     public static void setupWorkerPool(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {
