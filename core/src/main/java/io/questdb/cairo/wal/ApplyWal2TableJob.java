@@ -383,7 +383,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             long commitTimestamp
     ) {
         try (WalEventReader eventReader = walEventReader) {
-            final WalEventCursor walEventCursor = eventReader.of(walPath, WAL_FORMAT_VERSION_V1, segmentTxn);
+            final WalEventCursor walEventCursor = eventReader.of(walPath, WAL_FORMAT_VERSION, segmentTxn);
             final byte walTxnType = walEventCursor.getType();
             switch (walTxnType) {
                 case DATA:

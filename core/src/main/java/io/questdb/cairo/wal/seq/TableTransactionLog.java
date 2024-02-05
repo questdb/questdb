@@ -111,9 +111,9 @@ public class TableTransactionLog implements Closeable {
         }
 
         switch (formatVersion) {
-            case WAL_FORMAT_VERSION_V1:
+            case WAL_SEQUENCER_FORMAT_VERSION_V1:
                 return new TableTransactionLogV1(ff);
-            case WAL_FORMAT_VERSION_V2:
+            case WAL_SEQUENCER_FORMAT_VERSION_V2:
                 return new TableTransactionLogV2(ff, -1, mkDirMode);
             default:
                 throw new UnsupportedOperationException("Unsupported transaction log version: " + formatVersion);

@@ -32,7 +32,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.str.Path;
 
 import static io.questdb.cairo.wal.WalTxnType.DATA;
-import static io.questdb.cairo.wal.WalUtils.WAL_FORMAT_VERSION_V1;
+import static io.questdb.cairo.wal.WalUtils.WAL_FORMAT_VERSION;
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 
 public class WalTxnDetails {
@@ -137,14 +137,14 @@ public class WalTxnDetails {
                     tempPath.trimTo(rootLen).concat(WAL_NAME_BASE).put(walId).slash().put(segmentId);
 
                     if (prevWalId != walId || prevSegmentId != segmentId || prevSegmentTxn + 1 != segmentTxn) {
-                        walEventCursor = eventReader.of(tempPath, WAL_FORMAT_VERSION_V1, segmentTxn);
+                        walEventCursor = eventReader.of(tempPath, WAL_FORMAT_VERSION, segmentTxn);
                         prevWalId = walId;
                         prevSegmentId = segmentId;
                         prevSegmentTxn = segmentTxn;
                     } else {
                         // This is same WALE file, just read next txn transaction.
                         if (!walEventCursor.hasNext()) {
-                            walEventCursor = eventReader.of(tempPath, WAL_FORMAT_VERSION_V1, segmentTxn);
+                            walEventCursor = eventReader.of(tempPath, WAL_FORMAT_VERSION, segmentTxn);
                         }
                     }
 

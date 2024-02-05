@@ -83,7 +83,7 @@ class WalWriterEvents implements Closeable {
 
     private void init() {
         eventMem.putInt(0);
-        eventMem.putInt(WAL_FORMAT_VERSION_V1);
+        eventMem.putInt(WAL_FORMAT_VERSION);
         eventMem.putInt(-1);
 
         appendIndex(WALE_HEADER_SIZE);

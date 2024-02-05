@@ -43,7 +43,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cairo.TableUtils.openSmallFile;
 import static io.questdb.cairo.wal.WalUtils.TXNLOG_FILE_NAME;
-import static io.questdb.cairo.wal.WalUtils.WAL_FORMAT_VERSION_V1;
+import static io.questdb.cairo.wal.WalUtils.WAL_SEQUENCER_FORMAT_VERSION_V1;
 
 public class TableTransactionLogV1 implements TableTransactionLogFile {
     private static final Log LOG = LogFactory.getLog(TableTransactionLogV1.class);
@@ -91,7 +91,17 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
     }
 
     public void create(Path path, long tableCreateTimestamp) {
-        createTxnFile(path, tableCreateTimestamp);
+        final int pathLength = path.size();
+        openSmallFile(ff, path, pathLength, txnMem, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);
+
+        txnMem.jumpTo(0L);
+        txnMem.putInt(WAL_SEQUENCER_FORMAT_VERSION_V1);
+        txnMem.putLong(0L);
+        txnMem.putLong(tableCreateTimestamp);
+        txnMem.putInt(0);
+        txnMem.sync(false);
+
+        txnMem.jumpTo(HEADER_SIZE);
     }
 
     @Override
@@ -147,20 +157,6 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
 
     public void sync() {
         txnMem.sync(false);
-    }
-
-    private void createTxnFile(Path path, long tableCreateTimestamp) {
-        final int pathLength = path.size();
-        openSmallFile(ff, path, pathLength, txnMem, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);
-
-        txnMem.jumpTo(0L);
-        txnMem.putInt(WAL_FORMAT_VERSION_V1);
-        txnMem.putLong(0L);
-        txnMem.putLong(tableCreateTimestamp);
-        txnMem.putInt(0);
-        txnMem.sync(false);
-
-        txnMem.jumpTo(HEADER_SIZE);
     }
 
     private static class TransactionLogCursorImpl implements TransactionLogCursor {

@@ -42,7 +42,7 @@ import io.questdb.std.str.Path;
 
 import static io.questdb.cairo.TableUtils.META_FILE_NAME;
 import static io.questdb.cairo.TableUtils.openSmallFile;
-import static io.questdb.cairo.wal.WalUtils.WAL_FORMAT_VERSION_V1;
+import static io.questdb.cairo.wal.WalUtils.WAL_FORMAT_VERSION;
 
 public class WalWriterMetadata extends AbstractRecordMetadata implements TableRecordMetadata, TableRecordMetadataSink {
     private final FilesFacade ff;
@@ -79,7 +79,7 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
         metaMem.jumpTo(0);
         // Size of metadata
         metaMem.putInt(0);
-        metaMem.putInt(WAL_FORMAT_VERSION_V1);
+        metaMem.putInt(WAL_FORMAT_VERSION);
         metaMem.putLong(structureVersion);
         metaMem.putInt(columnCount);
         metaMem.putInt(timestampIndex);

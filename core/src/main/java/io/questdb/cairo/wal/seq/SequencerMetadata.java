@@ -235,7 +235,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
 
         try {
             final long memSize = checkMemSize(metaMem, SEQ_META_OFFSET_COLUMNS);
-            validateMetaVersion(metaMem, SEQ_META_OFFSET_WAL_VERSION, WAL_FORMAT_VERSION_V1);
+            validateMetaVersion(metaMem, SEQ_META_OFFSET_WAL_VERSION, WAL_FORMAT_VERSION);
             final int columnCount = TableUtils.getColumnCount(metaMem, SEQ_META_OFFSET_COLUMN_COUNT);
             final int timestampIndex = TableUtils.getTimestampIndex(metaMem, SEQ_META_OFFSET_TIMESTAMP_INDEX, columnCount);
 
@@ -306,7 +306,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         metaMem.jumpTo(0);
         // Size of metadata
         metaMem.putInt(0);
-        metaMem.putInt(WAL_FORMAT_VERSION_V1);
+        metaMem.putInt(WAL_FORMAT_VERSION);
         metaMem.putLong(structureVersion.get());
         metaMem.putInt(columnCount);
         metaMem.putInt(timestampIndex);

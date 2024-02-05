@@ -197,7 +197,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         openTxnMem(path);
 
         txnMem.jumpTo(0L);
-        txnMem.putInt(WAL_FORMAT_VERSION_V2);
+        txnMem.putInt(WAL_SEQUENCER_FORMAT_VERSION_V2);
         txnMem.putLong(0L);
         txnMem.putLong(tableCreateTimestamp);
         txnMem.putInt(chunkTransactionCount);
