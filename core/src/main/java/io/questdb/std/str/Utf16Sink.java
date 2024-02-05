@@ -75,18 +75,22 @@ public interface Utf16Sink extends CharSink<Utf16Sink> {
     default void putAsPrintable(CharSequence nonPrintable) {
         for (int i = 0, n = nonPrintable.length(); i < n; i++) {
             char c = nonPrintable.charAt(i);
-            if (c > 0x1F && c != 0x7F) {
-                put(c);
-            } else {
-                put('\\');
-                put('u');
+            putAsPrintable(c);
+        }
+    }
 
-                final int s = (int) c & 0xFF;
-                put('0');
-                put('0');
-                put(hexDigits[s / 0x10]);
-                put(hexDigits[s % 0x10]);
-            }
+    default void putAsPrintable(char c) {
+        if (c > 0x1F && c != 0x7F) {
+            put(c);
+        } else {
+            put('\\');
+            put('u');
+
+            final int s = (int) c & 0xFF;
+            put('0');
+            put('0');
+            put(hexDigits[s / 0x10]);
+            put(hexDigits[s % 0x10]);
         }
     }
 

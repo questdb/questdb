@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -32,6 +33,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.Overrides;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -889,7 +891,8 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
     }
 
     private void createXSplit(String partitionBy, long increment, int splitRecord) throws SqlException {
-        node1.getConfigurationOverrides().setPartitionO3SplitThreshold(splitRecord / 2);
+        Overrides overrides = node1.getConfigurationOverrides();
+        overrides.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, splitRecord / 2);
         createX(partitionBy, increment);
 
         try {

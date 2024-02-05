@@ -34,7 +34,7 @@ public class InformationSchemaTablesFunctionFactoryTest extends AbstractCairoTes
     @Test
     public void testSelectWhenTelemetryTablesAreHidden() throws Exception {
         assertMemoryLeak(() -> {
-            configOverrideHideTelemetryTable(true);
+            node1.getConfigurationOverrides().setIsHidingTelemetryTable(true);
             ddl("create table " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME + " (i int)");
             ddl("create table " + TelemetryTask.TABLE_NAME + " (i int)");
 

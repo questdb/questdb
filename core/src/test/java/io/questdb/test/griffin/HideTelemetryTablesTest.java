@@ -33,7 +33,7 @@ public class HideTelemetryTablesTest extends AbstractCairoTest {
 
     @Test
     public void testHide() throws Exception {
-        configOverrideHideTelemetryTable(true);
+        node1.getConfigurationOverrides().setIsHidingTelemetryTable(true);
 
         assertMemoryLeak(() -> {
             ddl("create table test(a int)");
@@ -48,6 +48,8 @@ public class HideTelemetryTablesTest extends AbstractCairoTest {
 
     @Test
     public void testShow() throws Exception {
+        node1.getConfigurationOverrides().setIsHidingTelemetryTable(false);
+
         assertMemoryLeak(() -> {
             ddl("create table test(a int)");
             ddl("create table " + TelemetryTask.TABLE_NAME + "(a int)");

@@ -385,8 +385,8 @@ public enum PropertyKey implements ConfigPropertyKey {
     PG_NAMED_STATEMENT_POOL_CAPACITY("pg.named.statement.pool.capacity"),
     PG_PENDING_WRITERS_CACHE_CAPACITY("pg.pending.writers.cache.capacity"),
     PG_NET_CONNECTION_SNDBUF("pg.net.connection.sndbuf"),
-    DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE("debug.force.send.fragmentation.chunk.size"),
-    DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE("debug.force.recv.fragmentation.chunk.size"),
+    DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE("debug.force.send.fragmentation.chunk.size", false, true),
+    DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE("debug.force.recv.fragmentation.chunk.size", false, true),
     QUERY_TIMEOUT_SEC("query.timeout.sec"),
     SHARED_WORKER_COUNT("shared.worker.count"),
     SHARED_WORKER_AFFINITY("shared.worker.affinity"),
@@ -443,10 +443,15 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_REPEAT_MIGRATION_FROM_VERSION("cairo.repeat.migration.from.version"),
     CAIRO_O3_LAST_PARTITION_MAX_SPLITS("cairo.o3.last.partition.max.splits"),
     CAIRO_O3_PARTITION_SPLIT_MIN_SIZE("cairo.o3.partition.split.min.size"),
-    DEBUG_WAL_PURGE_WAIT_BEFORE_DELETE("debug.wal.purge.wait.before.delete"),
-    WRITER_MEMORY_LIMIT("cairo.writer.memory.limit");
+    DEBUG_WAL_PURGE_WAIT_BEFORE_DELETE("debug.wal.purge.wait.before.delete", false, true),
+    WRITER_MEMORY_LIMIT("cairo.writer.memory.limit"),
+    DEBUG_ALLOW_TABLE_REGISTRY_SHARED_WRITE("debug.allow.table.registry.shared.write", false, true),
+    DEBUG_ENABLE_TEST_FACTORIES("debug.enable.test.factories", false, true),
+    DEBUG_CAIRO_ALLOW_MIXED_IO("debug.cairo.allow.mixed.io", false, true),
+    DEBUG_CAIRO_O3_COLUMN_MEMORY_SIZE("debug.cairo.o3.column.memory.size", false, true);
 
     private static final Map<String, PropertyKey> nameMapping;
+    private final boolean debug;
     private final String envVarName;
     private final String propertyPath;
     private final boolean sensitive;
@@ -459,6 +464,14 @@ public enum PropertyKey implements ConfigPropertyKey {
         this.propertyPath = propertyPath;
         this.envVarName = ServerMain.propertyPathToEnvVarName(propertyPath);
         this.sensitive = sensitive;
+        this.debug = false;
+    }
+
+    PropertyKey(String propertyPath, boolean sensitive, boolean debug) {
+        this.propertyPath = propertyPath;
+        this.envVarName = ServerMain.propertyPathToEnvVarName(propertyPath);
+        this.sensitive = sensitive;
+        this.debug = debug;
     }
 
     public static Optional<PropertyKey> getByString(String name) {
@@ -478,6 +491,11 @@ public enum PropertyKey implements ConfigPropertyKey {
     @Override
     public boolean isSensitive() {
         return sensitive;
+    }
+
+    @Override
+    public boolean isDebug() {
+        return debug;
     }
 
     @Override

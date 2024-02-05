@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.pgwire;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.griffin.SqlException;
@@ -59,8 +60,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     @Test
     public void testRestartDueToStaleCompilationDoesNotDuplicate() throws Exception {
         assertMemoryLeak(() -> {
-            node1.getConfigurationOverrides().setMaxSqlRecompileAttempts(Integer.MAX_VALUE - 1);
-
+            node1.setProperty(PropertyKey.CAIRO_SQL_MAX_RECOMPILE_ATTEMPTS, Integer.MAX_VALUE - 1);
             engine.ddl("create table x (ts timestamp, i int) timestamp(ts) partition by day wal", sqlExecutionContext);
 
             CyclicBarrier barrier = new CyclicBarrier(2);

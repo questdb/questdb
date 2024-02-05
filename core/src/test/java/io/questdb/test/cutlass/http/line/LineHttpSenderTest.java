@@ -45,7 +45,7 @@ import java.time.temporal.ChronoUnit;
 
 import static io.questdb.PropertyKey.DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE;
 import static io.questdb.PropertyKey.LINE_HTTP_ENABLED;
-import static io.questdb.test.cutlass.http.line.IlpHttpUtils.getHttpPort;
+import static io.questdb.test.cutlass.http.line.LineHttpUtils.getHttpPort;
 
 public class LineHttpSenderTest extends AbstractBootstrapTest {
 
@@ -66,7 +66,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 serverMain.compile("create table ex_tbl(b byte, s short, f float, d double, str string, sym symbol, tss timestamp, " +
                         "i int, l long, ip ipv4, g geohash(4c), ts timestamp) timestamp(ts) partition by DAY WAL");
 
-                int port = IlpHttpUtils.getHttpPort(serverMain);
+                int port = LineHttpUtils.getHttpPort(serverMain);
                 try (Sender sender = Sender.builder()
                         .address("localhost:" + port)
                         .http()
@@ -128,10 +128,10 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 int httpPort = getHttpPort(serverMain);
 
                 int totalCount = 100_000;
-                int maxPendingRows = 1000;
-                try (LineHttpSender sender = new LineHttpSender("localhost", httpPort, DefaultHttpClientConfiguration.INSTANCE, null, maxPendingRows, null, null, null, 0)) {
+                int autoFlushRows = 1000;
+                try (LineHttpSender sender = new LineHttpSender("localhost", httpPort, DefaultHttpClientConfiguration.INSTANCE, null, autoFlushRows, null, null, null, 0)) {
                     for (int i = 0; i < totalCount; i++) {
-                        if (i != 0 && i % maxPendingRows == 0) {
+                        if (i != 0 && i % autoFlushRows == 0) {
                             serverMain.waitWalTxnApplied("table with space");
                             serverMain.assertSql("select count() from 'table with space'", "count\n" +
                                     i + "\n");
@@ -228,7 +228,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 serverMain.compile("create table ex_tbl(b byte, s short, f float, d double, str string, sym symbol, tss timestamp, " +
                         "i int, l long, ip ipv4, g geohash(4c), ts timestamp) timestamp(ts) partition by DAY WAL");
 
-                int port = IlpHttpUtils.getHttpPort(serverMain);
+                int port = LineHttpUtils.getHttpPort(serverMain);
                 try (Sender sender = Sender.builder()
                         .address("localhost:" + port)
                         .http()
@@ -270,7 +270,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 serverMain.compile("create table ex_tbl(b byte, s short, f float, d double, str string, sym symbol, tss timestamp, " +
                         "i int, l long, ip ipv4, g geohash(4c), ts timestamp) timestamp(ts) partition by DAY WAL");
 
-                int port = IlpHttpUtils.getHttpPort(serverMain);
+                int port = LineHttpUtils.getHttpPort(serverMain);
                 try (Sender sender = Sender.builder()
                         .address("localhost:" + port)
                         .http()
@@ -355,10 +355,11 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
         long timestamp = IntervalUtils.parseFloorPartialTimestamp("2023-11-27T18:53:24.834Z");
         int i = 0;
 
-        int port = IlpHttpUtils.getHttpPort(serverMain);
+        int port = LineHttpUtils.getHttpPort(serverMain);
         try (Sender sender = Sender.builder()
                 .address("localhost:" + port)
                 .http()
+                .autoFlushRows(Integer.MAX_VALUE) // we want to flush manually
                 .build()
         ) {
             if (count / 2 > 0) {
