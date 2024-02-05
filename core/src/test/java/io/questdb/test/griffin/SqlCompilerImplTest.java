@@ -33,6 +33,8 @@ import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
+import io.questdb.griffin.model.CreateTableModel;
+import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.log.Log;
@@ -5691,7 +5693,6 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testUseExtensionPoints() {
         try (SqlCompilerWrapper compiler = new SqlCompilerWrapper(engine)) {
-
             try {
                 compiler.compile("alter altar", sqlExecutionContext);
                 Assert.fail();
@@ -5736,11 +5737,26 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             Assert.assertTrue(compiler.dropTableCalled);
 
             try {
-                compiler.compile("create table tab ( i int)", sqlExecutionContext);
+                compiler.compile("create table tab (i int)", sqlExecutionContext);
                 compiler.compile("alter table tab drop column i boom zoom", sqlExecutionContext);
                 Assert.fail();
             } catch (Exception e) {
                 Assert.assertTrue(compiler.unknownDropColumnSuffixCalled);
+            }
+
+            try {
+                compiler.compile("create table tab2 (i int)", sqlExecutionContext);
+                compiler.compile("alter table tab add column i2 int zoom boom", sqlExecutionContext);
+                Assert.fail();
+            } catch (Exception e) {
+                Assert.assertTrue(compiler.addColumnSuffixCalled);
+            }
+
+            try {
+                compiler.compile("create table tab3 (i int) foobar", sqlExecutionContext);
+                Assert.fail();
+            } catch (Exception e) {
+                Assert.assertTrue(compiler.createTableSuffixCalled);
             }
         }
     }
@@ -6072,6 +6088,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     static class SqlCompilerWrapper extends SqlCompilerImpl {
+        boolean addColumnSuffixCalled;
+        boolean createTableSuffixCalled;
         boolean dropTableCalled;
         boolean parseShowSqlCalled;
         boolean unknownAlterStatementCalled;
@@ -6084,9 +6102,21 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         }
 
         @Override
+        public ExecutionModel createTableSuffix(GenericLexer lexer, SecurityContext securityContext, CreateTableModel model, CharSequence tok) throws SqlException {
+            createTableSuffixCalled = true;
+            return super.createTableSuffix(lexer, securityContext, model, tok);
+        }
+
+        @Override
         public int parseShowSql(GenericLexer lexer, QueryModel model, CharSequence tok, ObjectPool<ExpressionNode> expressionNodePool) throws SqlException {
             parseShowSqlCalled = true;
             return super.parseShowSql(lexer, model, tok, expressionNodePool);
+        }
+
+        @Override
+        protected void addColumnSuffix(SecurityContext securityContext, CharSequence tok, TableToken tableToken, AlterOperationBuilder dropColumnStatement) throws SqlException {
+            addColumnSuffixCalled = true;
+            super.addColumnSuffix(securityContext, tok, tableToken, dropColumnStatement);
         }
 
         @Override

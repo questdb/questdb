@@ -28,6 +28,7 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
 import io.questdb.tasks.TableWriterTask;
 import org.jetbrains.annotations.NotNull;
@@ -48,6 +49,10 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
 
     public void clearCommandCorrelationId() {
         setCommandCorrelationId(NO_CORRELATION_ID);
+    }
+
+    public void clearSecurityContext() {
+        Misc.clear(securityContext);
     }
 
     @Override
