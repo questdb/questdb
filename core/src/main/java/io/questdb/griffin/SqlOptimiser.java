@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.catalogue.*;
 import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.griffin.engine.functions.table.AllTablesFunctionFactory;
-import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
 import io.questdb.griffin.model.*;
@@ -4681,14 +4680,14 @@ public class SqlOptimiser implements Mutable {
         if (useGroupByModel && sampleBy == null && !translationIsRedundant && !model.containsJoin() && !useWindowModel && SqlUtil.isPlainSelect(model.getNestedModel())) {
             QueryModel selectedModel = useInnerModel ? innerVirtualModel : groupByModel;
             ObjList<QueryColumn> translationColumns = translatingModel.getColumns();
-            boolean appears = false;
+            boolean appearsInFuncArgs = false;
             for (int i = 0, n = translationColumns.size(); i < n; i++) {
                 QueryColumn col = translationColumns.getQuick(i);
                 if (!Chars.equalsIgnoreCase(col.getAst().token, col.getAlias())) {
-                    appears |= aliasAppearsInColsAndFuncArgs(selectedModel, col.getAlias(), sqlNodeStack);
+                    appearsInFuncArgs |= aliasAppearsInFuncArgs(selectedModel, col.getAlias(), sqlNodeStack);
                 }
             }
-            if (!appears) {
+            if (!appearsInFuncArgs) {
                 mergeInnerVirtualModel(translatingModel, selectedModel);
                 translationIsRedundant = checkIfTranslatingModelIsRedundant(useInnerModel, useGroupByModel, useWindowModel, forceTranslatingModel, false, translatingModel);
             }
@@ -4836,16 +4835,11 @@ public class SqlOptimiser implements Mutable {
      * If you were to move lift the column from the RHS to the LHS, you might get:<br>
      * (select x x1, sum(x1) from y)<br>
      * Now x1 is invalid.
-     * @param model
-     * @param alias
-     * @param sqlNodeStack
-     * @return
      */
-    public static boolean aliasAppearsInColsAndFuncArgs(QueryModel model, CharSequence alias, ArrayDeque<ExpressionNode> sqlNodeStack) {
+    public static boolean aliasAppearsInFuncArgs(QueryModel model, CharSequence alias, ArrayDeque<ExpressionNode> sqlNodeStack) {
         if (model == null) {
             return false;
         }
-        boolean appearsInCols = false;
         boolean appearsInArgs = false;
         ObjList<QueryColumn> modelColumns = model.getColumns();
         for (int i = 0, n = modelColumns.size(); i < n; i++) {
@@ -4855,20 +4849,13 @@ public class SqlOptimiser implements Mutable {
                 case OPERATION:
                     appearsInArgs |= searchExpressionNodeForAlias(col.getAst(), alias, sqlNodeStack);
                     break;
-                case LITERAL:
-                    appearsInCols |= Chars.equalsIgnoreCase(col.getAst().token,alias);
-                    break;
             }
         }
-        return appearsInCols && appearsInArgs;
+        return appearsInArgs;
     }
 
     /**
      * Recurse down expression node tree looking for an alias.
-     * @param node
-     * @param alias
-     * @param sqlNodeStack
-     * @return
      */
     private static boolean searchExpressionNodeForAlias(ExpressionNode node, CharSequence alias, ArrayDeque<ExpressionNode> sqlNodeStack) {
         sqlNodeStack.clear();
@@ -4894,7 +4881,6 @@ public class SqlOptimiser implements Mutable {
         }
         return false;
     }
-
 
     // the intent is to either validate top-level columns in select columns or replace them with function calls
     // if columns do not exist

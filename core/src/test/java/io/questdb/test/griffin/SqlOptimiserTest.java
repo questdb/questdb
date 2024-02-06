@@ -35,7 +35,7 @@ import org.junit.Test;
 
 import java.util.ArrayDeque;
 
-import static io.questdb.griffin.SqlOptimiser.aliasAppearsInColsAndFuncArgs;
+import static io.questdb.griffin.SqlOptimiser.aliasAppearsInFuncArgs;
 
 public class SqlOptimiserTest extends AbstractSqlParserTest {
 
@@ -47,7 +47,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final QueryModel model = compileModel(query, ExecutionModel.QUERY);
             TestUtils.assertEquals("select-group-by x1, sum(x1) sum from (select-choose [x x1] x x1 from (select [x] from y))", model.toString0());
             ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<ExpressionNode>();
-            assert aliasAppearsInColsAndFuncArgs(model, "x1", sqlNodeStack);
+            assert aliasAppearsInFuncArgs(model, "x1", sqlNodeStack);
             assertPlan(query,
                     "" +
                             "GroupBy vectorized: true workers: 1\n" +
@@ -68,9 +68,9 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final QueryModel model = compileModel(query, ExecutionModel.QUERY);
             TestUtils.assertEquals("select-group-by concat, x1, sum(x1) sum from (select-virtual [concat(lpad(cast(x1,string),5)) concat, x1] concat(lpad(cast(x1,string),5)) concat, x1 from (select-choose [x x1] x x1 from (select [x] from y)))", model.toString0());
             ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
-            assert aliasAppearsInColsAndFuncArgs(model, "x1", sqlNodeStack);
-            assert aliasAppearsInColsAndFuncArgs(model.getNestedModel(), "x1", sqlNodeStack);
-            assert !aliasAppearsInColsAndFuncArgs(model.getNestedModel().getNestedModel(), "x1", sqlNodeStack);
+            assert aliasAppearsInFuncArgs(model, "x1", sqlNodeStack);
+            assert aliasAppearsInFuncArgs(model.getNestedModel(), "x1", sqlNodeStack);
+            assert !aliasAppearsInFuncArgs(model.getNestedModel().getNestedModel(), "x1", sqlNodeStack);
             assertPlan(query,
                     "" +
                             "GroupBy vectorized: false\n" +
@@ -93,7 +93,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final QueryModel model = compileModel(query, ExecutionModel.QUERY);
             TestUtils.assertEquals("select-virtual concat(lpad(cast(x1,string),5)) concat, x1 from (select-group-by [x1] x1 from (select-choose [x x1] x x1 from (select [x] from y)))", model.toString0());
             ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<ExpressionNode>();
-            assert aliasAppearsInColsAndFuncArgs(model, "x1", sqlNodeStack);
+            assert aliasAppearsInFuncArgs(model, "x1", sqlNodeStack);
             assertPlan(query,
                     "" +
                            "VirtualRecord\n" +
@@ -117,7 +117,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final QueryModel model = compileModel(query, ExecutionModel.QUERY);
             TestUtils.assertEquals("select-group-by x1, sum(x1) sum, max(x1) max from (select-choose [x X1] x X1 from (select [x] from y))", model.toString0());
             ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<ExpressionNode>();
-            assert aliasAppearsInColsAndFuncArgs(model, "x1", sqlNodeStack);
+            assert aliasAppearsInFuncArgs(model, "x1", sqlNodeStack);
             assertPlan(query,
                     "" +
                             "GroupBy vectorized: true workers: 1\n" +
