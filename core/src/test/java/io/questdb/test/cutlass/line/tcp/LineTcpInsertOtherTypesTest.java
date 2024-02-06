@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.line.tcp;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SqlWalMode;
@@ -62,7 +63,7 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
     @Override
     public void setUp() {
         super.setUp();
-        configOverrideDefaultTableWriteMode(walEnabled ? SqlWalMode.WAL_ENABLED : SqlWalMode.WAL_DISABLED);
+        node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, walEnabled);
     }
 
     @Test

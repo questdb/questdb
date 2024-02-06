@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableReader;
@@ -38,6 +39,7 @@ import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.mp.FanOut;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
@@ -159,18 +161,19 @@ public class TableWriterAsyncCmdTest extends AbstractCairoTest {
 
     @Test
     public void testAsyncAlterCommandsFailsToDropColumn() throws Exception {
-        assertMemoryLeak(() -> {
-            ff = new TestFilesFacadeImpl() {
-                int attempt = 0;
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            int attempt = 0;
 
-                @Override
-                public int rename(LPSZ from, LPSZ to) {
-                    if (Utf8s.endsWithAscii(from, "_meta") && attempt++ < configuration.getFileOperationRetryCount()) {
-                        return Files.FILES_RENAME_ERR_OTHER;
-                    }
-                    return super.rename(from, to);
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                if (Utf8s.endsWithAscii(from, "_meta") && attempt++ < configuration.getFileOperationRetryCount()) {
+                    return Files.FILES_RENAME_ERR_OTHER;
                 }
-            };
+                return super.rename(from, to);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+
             ddl("create table product as (select x, x as to_remove from long_sequence(100))", sqlExecutionContext);
 
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
@@ -195,16 +198,17 @@ public class TableWriterAsyncCmdTest extends AbstractCairoTest {
 
     @Test
     public void testAsyncAlterCommandsFailsToDropPartition() throws Exception {
-        assertMemoryLeak(() -> {
-            ff = new TestFilesFacadeImpl() {
-                @Override
-                public boolean rmdir(Path name, boolean lazy) {
-                    if (Utf8s.containsAscii(name, "2020-01-01")) {
-                        throw CairoException.critical(11).put("could not remove [path=").put(name).put(']');
-                    }
-                    return super.rmdir(name, lazy);
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean rmdir(Path name, boolean lazy) {
+                if (Utf8s.containsAscii(name, "2020-01-01")) {
+                    throw CairoException.critical(11).put("could not remove [path=").put(name).put(']');
                 }
-            };
+                return super.rmdir(name, lazy);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+
             ddl("create table product as (select x, timestamp_sequence('2020-01-01', 1000000000) ts from long_sequence(100))" +
                     " timestamp(ts) partition by DAY", sqlExecutionContext);
 
@@ -228,18 +232,20 @@ public class TableWriterAsyncCmdTest extends AbstractCairoTest {
 
     @Test
     public void testAsyncAlterCommandsFailsToRemoveColumn() throws Exception {
-        assertMemoryLeak(() -> {
-            ff = new TestFilesFacadeImpl() {
-                int attempt = -1;
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            int attempt = -1;
 
-                @Override
-                public int rename(LPSZ from, LPSZ to) {
-                    if (Utf8s.endsWithAscii(from, "_meta") && attempt++ < configuration.getFileOperationRetryCount()) {
-                        return Files.FILES_RENAME_ERR_OTHER;
-                    }
-                    return super.rename(from, to);
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                if (Utf8s.endsWithAscii(from, "_meta") && attempt++ < configuration.getFileOperationRetryCount()) {
+                    return Files.FILES_RENAME_ERR_OTHER;
                 }
-            };
+                return super.rename(from, to);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+
             ddl("create table product as (select x, x as to_remove from long_sequence(100))", sqlExecutionContext);
 
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
@@ -283,6 +289,7 @@ public class TableWriterAsyncCmdTest extends AbstractCairoTest {
                         event.putShort(command);
                         event.putInt(-1);
                         event.putInt(1000);
+                        event.setInstance(this.getCorrelationId());
                     }
                 };
                 creepyAlterOp.of(command, writer.getTableToken(), tableId, 100);
@@ -296,8 +303,9 @@ public class TableWriterAsyncCmdTest extends AbstractCairoTest {
                 Assert.fail();
             } catch (SqlException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "invalid alter statement serialized to writer queue [2]");
+            } finally {
+                fut.close();
             }
-            fut.close();
         });
     }
 
@@ -414,8 +422,7 @@ public class TableWriterAsyncCmdTest extends AbstractCairoTest {
 
     @Test
     public void testCommandQueueBufferOverflow() throws Exception {
-        long tmpWriterCommandQueueSlotSize = writerCommandQueueSlotSize;
-        writerCommandQueueSlotSize = 4L;
+        node1.setProperty(PropertyKey.CAIRO_WRITER_COMMAND_QUEUE_SLOT_SIZE, 4);
         assertMemoryLeak(() -> {
             ddl("create table product (timestamp timestamp)", sqlExecutionContext);
 
@@ -433,7 +440,6 @@ public class TableWriterAsyncCmdTest extends AbstractCairoTest {
                 }
             }
         });
-        writerCommandQueueSlotSize = tmpWriterCommandQueueSlotSize;
     }
 
     @Test

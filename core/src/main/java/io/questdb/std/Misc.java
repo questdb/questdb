@@ -43,6 +43,13 @@ public final class Misc {
     private Misc() {
     }
 
+    public static <T extends Mutable> T clear(T object) {
+        if (object != null) {
+            object.clear();
+        }
+        return null;
+    }
+
     public static void clearObjList(ObjList<? extends Mutable> args) {
         for (int i = 0, n = args.size(); i < n; i++) {
             Mutable m = args.getQuick(i);
@@ -71,7 +78,7 @@ public final class Misc {
         }
     }
 
-    //same as free() but can be used when input object type is not guaranteed to be Closeable
+    // same as free() but can be used when input object type is not guaranteed to be Closeable
     public static <T> T freeIfCloseable(T object) {
         if (object instanceof Closeable) {
             try {

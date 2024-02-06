@@ -25,6 +25,7 @@
 package io.questdb.test.cairo;
 
 import io.questdb.Metrics;
+import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -204,10 +205,10 @@ public class TableWriterTest extends AbstractCairoTest {
             AtomicInteger columnsAdded = new AtomicInteger();
             AtomicInteger insertCount = new AtomicInteger();
             int totalColAddCount = 1000;
-            writerCommandQueueCapacity = Numbers.ceilPow2(2 * totalColAddCount);
+            setProperty(PropertyKey.CAIRO_WRITER_COMMAND_QUEUE_CAPACITY, Numbers.ceilPow2(2 * totalColAddCount));
             int tableId = 11;
             // Reduce disk space by for the test run.
-            dataAppendPageSize = 1 << 20; // 1MB
+            setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, 1<< 20); // 1MB
 
             TableToken tableToken;
             try (Path path = new Path()) {

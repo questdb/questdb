@@ -58,19 +58,6 @@ public class TestFilesFacadeImpl extends FilesFacadeImpl {
     }
 
     @Override
-    public boolean closeRemove(int fd, LPSZ path) {
-        if (fd > -1) {
-            if (untrack(fd) != 0) {
-                // Make sure only 1 usage found so that it's safe to remove after close
-                return false;
-            }
-            super.close(fd);
-        }
-        // Remove without checking that is open using call to super.
-        return super.removeQuiet(path);
-    }
-
-    @Override
     public int openAppend(LPSZ name) {
         int fd = super.openAppend(name);
         track(name, fd);
