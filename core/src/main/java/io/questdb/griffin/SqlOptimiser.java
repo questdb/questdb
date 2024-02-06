@@ -300,7 +300,7 @@ public class SqlOptimiser implements Mutable {
 
         } else {
             final CharSequence al = translatingModel.getColumnNameToAliasMap().get(qc.getAlias());
-            if (alias != null && !Chars.equals(al, alias)) {
+            if (alias != null && !Chars.equalsIgnoreCase(al, alias)) {
                 QueryColumn existing = translatingModel.getAliasToColumnMap().get(alias);
                 if (existing == null) {
                     // create new column
@@ -4530,7 +4530,7 @@ public class SqlOptimiser implements Mutable {
                     if (qc.getAst() == en) {
                         useOuterModel = true;
                     } else {
-                        if (Chars.equals(qc.getAst().token, qc.getAlias())) {
+                        if (Chars.equalsIgnoreCase(qc.getAst().token, qc.getAlias())) {
                             int idx = groupByAliases.indexOf(qc.getAst().token);
                             if (i != idx) {
                                 useOuterModel = true;

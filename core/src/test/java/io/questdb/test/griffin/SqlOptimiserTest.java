@@ -109,20 +109,20 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testAliasAppearsInColsAndFuncArgs5() throws Exception {
+    public void testAliasAppearsInColsAndFuncArgs4() throws Exception {
         // check aliases are case insensitive
         assertMemoryLeak(() -> {
             ddl("create table y ( x int );");
             final String query = "select x1, sum(x1), max(X1) from (select x X1 from y)";
             final QueryModel model = compileModel(query, ExecutionModel.QUERY);
-            TestUtils.assertEquals("select-group-by x1, sum(x1), max(x1) max from (select-choose [x X1] x X1 from (select [x] from y))", model.toString0());
+            TestUtils.assertEquals("select-group-by x1, sum(x1) sum, max(x1) max from (select-choose [x X1] x X1 from (select [x] from y))", model.toString0());
             ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<ExpressionNode>();
             assert aliasAppearsInColsAndFuncArgs(model, "x1", sqlNodeStack);
             assertPlan(query,
                     "" +
                             "GroupBy vectorized: true workers: 1\n" +
                             "  keys: [X1]\n" +
-                            "  values: [sum(X1)]\n" +
+                            "  values: [sum(X1),max(X1)]\n" +
                             "    SelectedRecord\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
