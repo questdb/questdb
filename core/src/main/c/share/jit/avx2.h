@@ -100,6 +100,115 @@ namespace questdb::avx2 {
         return {val, type, data_kind_t::kConst};
     }
 
+    inline Mem vec_broadcast_long(Compiler &c, uint32_t value) {
+        uint64_t broadcast_value[4] = {value, value, value, value};
+        return c.newConst(ConstPool::kScopeLocal, &broadcast_value, 32);
+    }
+
+    jit_value_t read_mem_varlen(Compiler &c,
+                                uint32_t header_size,
+                                int32_t column_idx,
+                                const Gp &column_address,
+                                const Gp &varlen_indexes_ptr,
+                                const Gp &input_index) {
+        Label l_nonzero = c.newLabel();
+        auto offset_shift = type_shift(data_type_t::i64);
+        auto offset_size = 1 << offset_shift;
+
+        Gp varlen_index_address = c.newInt64("varlen_index_address");
+        c.mov(varlen_index_address, ptr(varlen_indexes_ptr, 8 * column_idx, 8));
+        Ymm index_data = c.newYmm();
+        Ymm length_data = c.newYmm();
+
+        // Load data from the varlen index at input_index to index_data
+        c.vmovdqu(index_data, ymmword_ptr(varlen_index_address, input_index, offset_shift, 0));
+
+        // Load data from the varlen index at input_index + 1 to next_index_data.
+        // Achieve it by reusing the three qwords already loaded into index_data.
+        Gp next_index_qword = c.newInt64("next_index_qword");
+        c.mov(next_index_qword, qword_ptr(varlen_index_address, input_index, offset_shift, 32));
+        Ymm next_index_data = c.newYmm();
+        c.vmovdqa(next_index_data, index_data);
+        c.pinsrq(next_index_data.xmm(), next_index_qword, 0);
+        c.vpermq(next_index_data, next_index_data, 0b00111001);
+
+        // Store the difference between data at input_index + 1 and input_index to length_data
+        c.vpsubq(length_data, next_index_data, index_data);
+
+        // Subtract header_size from length_data
+        Gp gp_header_size = c.newInt64("gp_header_size");
+        c.mov(gp_header_size, header_size);
+        Ymm broadcast_header_size = c.newYmm();
+        c.movq(broadcast_header_size.xmm(), gp_header_size);
+        c.vpbroadcastq(broadcast_header_size, broadcast_header_size.xmm());
+        c.vpsubq(length_data, length_data, broadcast_header_size);
+
+        // Compare the entire length_data with zero
+        Ymm zero = c.newYmm("zero");
+        c.vpxor(zero, zero, zero);
+        Ymm eq_result = c.newYmm("eq_result");
+        c.vpcmpeqq(eq_result, length_data, zero);
+        Gp eq_result_compressed = c.newInt32("eq_result_compressed");
+        c.vpmovmskb(eq_result_compressed, eq_result);
+
+        // Each byte in eq_result_compressed tells if the corresponding qword of auxiliary_data
+        // is zero. A zero byte means "the qword is non-zero". Check whether all the qwords
+        // are non-zero.
+        c.test(eq_result_compressed, eq_result_compressed);
+        c.jz(l_nonzero);
+
+        // Slow path: some value lengths are zero, load all the headers. The value in the header
+        // may be either 0 (empty value) or -1 (NULL value) and we must distinguish the two.
+        // index_data contains four items of the varlen_index column. The items are offsets into
+        // the data column (based at column_address). For each offset:
+        // 1: move the offset into a Gp register
+        // 2: load the header at column_address + offset
+        // 3: put the loaded header into the matching position in length_data
+
+        Gp offset_0 = c.newInt64("offset_0");
+        Gp offset_1 = c.newInt64("offset_1");
+        Gp offset_2 = c.newInt64("offset_2");
+        Gp offset_3 = c.newInt64("offset_3");
+
+        c.vmovq(offset_0, index_data.xmm());
+        // Rotate right the qwords in index_data
+        c.vpermq(index_data, index_data, 0b00111001);
+        c.vmovq(offset_1, index_data.xmm());
+        c.vpermq(index_data, index_data, 0b00111001);
+        c.vmovq(offset_2, index_data.xmm());
+        c.vpermq(index_data, index_data, 0b00111001);
+        c.vmovq(offset_3, index_data.xmm());
+
+        Gp header_0 = c.newInt64("header_0");
+        Gp header_1 = c.newInt64("header_1");
+        Gp header_2 = c.newInt64("header_2");
+        Gp header_3 = c.newInt64("header_3");
+
+        // Now perform all the data-dependent loads. Hopefully there'll be some
+        // parallelism because the four loads are independent from each other.
+        if (header_size == 4) {
+            c.movsxd(header_0, ptr(column_address, offset_0, 0, 0, header_size));
+            c.movsxd(header_1, ptr(column_address, offset_1, 0, 0, header_size));
+            c.movsxd(header_2, ptr(column_address, offset_2, 0, 0, header_size));
+            c.movsxd(header_3, ptr(column_address, offset_3, 0, 0, header_size));
+        } else {
+            c.mov(header_0, ptr(column_address, offset_0, 0, 0, header_size));
+            c.mov(header_1, ptr(column_address, offset_1, 0, 0, header_size));
+            c.mov(header_2, ptr(column_address, offset_2, 0, 0, header_size));
+            c.mov(header_3, ptr(column_address, offset_3, 0, 0, header_size));
+        }
+
+        // Combine the four header values into length_data
+        c.pinsrq(length_data.xmm(), header_0, 0);
+        c.pinsrq(length_data.xmm(), header_1, 1);
+        c.pinsrq(next_index_data.xmm(), header_2, 0);
+        c.pinsrq(next_index_data.xmm(), header_3, 1);
+        c.vinserti128(length_data, length_data, next_index_data.xmm(), 1);
+
+        c.bind(l_nonzero);
+        return {length_data, data_type_t::i64, data_kind_t::kMemory};
+    }
+
     jit_value_t
     read_mem(Compiler &c, data_type_t type, int32_t column_idx, const Gp &cols_ptr, const Gp &varlen_indexes_ptr, const Gp &input_index) {
         Gp column_address = c.newInt64("column_address");
@@ -116,126 +225,40 @@ namespace questdb::avx2 {
             default:
                 header_size = 0;
         }
-        if (header_size == 0) {
-            // Simple case: a fixed-width column
-            Mem m;
-            uint32_t shift = type_shift(type);
-            if (shift < 4) {
-                m = ymmword_ptr(column_address, input_index, shift);
-            } else {
-                Gp offset = c.newInt64("row_offset");
-                c.mov(offset, input_index);
-                c.sal(offset, shift);
-                m = ymmword_ptr(column_address, offset, 0);
-            }
-            Ymm row_data = c.newYmm();
-            switch (type) {
-                case data_type_t::i8:
-                case data_type_t::i16:
-                case data_type_t::i32:
-                case data_type_t::i64:
-                case data_type_t::i128:
-                    c.vmovdqu(row_data, m);
-                    break;
-                case data_type_t::f32:
-                    c.vmovups(row_data, m);
-                    break;
-                case data_type_t::f64:
-                    c.vmovupd(row_data, m);
-                    break;
-                default:
-                    __builtin_unreachable();
-            }
-            return {row_data, type, data_kind_t::kMemory};
+        if (header_size != 0) {
+            return read_mem_varlen(c, header_size, column_idx, column_address, varlen_indexes_ptr, input_index);
         }
 
-        // Difficult case: column is variable-length
-        Label l_nonzero = c.newLabel();
-        Gp varlen_index_address = c.newInt64("varlen_index_address");
-        c.mov(varlen_index_address, ptr(varlen_indexes_ptr, 8 * column_idx, 8));
-        Ymm index_data = c.newYmm();
-        Ymm length_data = c.newYmm();
-        Ymm auxiliary_data = c.newYmm();
-        Gp auxiliary_scalar = c.newInt64("auxiliary_scalar");
-        auto offset_shift = type_shift(data_type_t::i64);
-        auto offset_size = 1 << offset_shift;
-
-        // Load data from the varlen index at input_index to index_data
-        c.vmovdqu(index_data, ymmword_ptr(varlen_index_address, input_index, offset_shift, 0));
-
-        // Load data from the varlen index at input_index + 1 to auxiliary_data.
-        // Achieve it by reusing the three qwords already loaded into index_data.
-        c.mov(auxiliary_scalar, qword_ptr(varlen_index_address, input_index, offset_shift, 32));
-        c.vmovdqa(auxiliary_data, index_data);
-        c.pinsrq(auxiliary_data.xmm(), auxiliary_scalar, 0);
-        c.vpermq(auxiliary_data, auxiliary_data, 0b00111001);
-
-        // Store the difference between data at input_index + 1 and input_index to length_data
-        c.vpsubq(length_data, auxiliary_data, index_data);
-
-        // Subtract header_size from length_data
-        c.mov(auxiliary_scalar, header_size);
-        c.movq(auxiliary_data.xmm(), auxiliary_scalar);
-        c.vpbroadcastq(auxiliary_data, auxiliary_data.xmm());
-        c.vpsubq(length_data, length_data, auxiliary_data);
-
-        // Compare the entire length_data with zero, store the results into auxiliary_scalar
-        auto auxiliary_scalar_32 = auxiliary_scalar.r32();
-        c.vpxor(auxiliary_data, auxiliary_data, auxiliary_data);
-        c.vpcmpeqq(auxiliary_data, length_data, auxiliary_data);
-        c.vpmovmskb(auxiliary_scalar_32, auxiliary_data);
-
-        // Each byte in auxiliary_scalar_32 tells if the corresponding qword of auxiliary_data
-        // is zero. A zero byte means "the qword is non-zero". Check whether all the qwords
-        // are non-zero.
-        c.test(auxiliary_scalar_32, auxiliary_scalar_32);
-        c.jz(l_nonzero);
-
-        // Slow path: some value lengths are zero, load all the headers. The value in the header
-        // may be either 0 (empty value) or -1 (NULL value) and we must distinguish the two.
-        // index_data contains four items of the varlen_index column. The items are offsets into
-        // the data column (based at column_address). For each offset:
-        // 1: move the offset into a Gp register
-        // 2: load the header at column_address + offset
-        // 3: put the loaded header into the matching position in length_data
-
-        Gp header_0 = c.newInt64("header_0");
-        Gp header_1 = c.newInt64("header_1");
-        Gp header_2 = c.newInt64("header_2");
-        Gp header_3 = c.newInt64("header_3");
-
-        c.vmovq(header_0, index_data.xmm());
-        // Rotate right the qwords in index_data
-        c.vpermq(index_data, index_data, 0b00111001);
-        c.vmovq(header_1, index_data.xmm());
-        c.vpermq(index_data, index_data, 0b00111001);
-        c.vmovq(header_2, index_data.xmm());
-        c.vpermq(index_data, index_data, 0b00111001);
-        c.vmovq(header_3, index_data.xmm());
-
-        // Now perform all the data-dependent loads. Hopefully there'll be some
-        // parallelism because the four loads are independent from each other.
-        if (header_size == 4) {
-            c.movsxd(header_0, ptr(column_address, header_0, 0, 0, header_size));
-            c.movsxd(header_1, ptr(column_address, header_1, 0, 0, header_size));
-            c.movsxd(header_2, ptr(column_address, header_2, 0, 0, header_size));
-            c.movsxd(header_3, ptr(column_address, header_3, 0, 0, header_size));
+        // Simple case: a fixed-width column
+        Mem m;
+        uint32_t shift = type_shift(type);
+        if (shift < 4) {
+            m = ymmword_ptr(column_address, input_index, shift);
         } else {
-            c.mov(header_0, ptr(column_address, header_0, 0, 0, header_size));
-            c.mov(header_1, ptr(column_address, header_1, 0, 0, header_size));
-            c.mov(header_2, ptr(column_address, header_2, 0, 0, header_size));
-            c.mov(header_3, ptr(column_address, header_3, 0, 0, header_size));
+            Gp offset = c.newInt64("row_offset");
+            c.mov(offset, input_index);
+            c.sal(offset, shift);
+            m = ymmword_ptr(column_address, offset, 0);
         }
-
-        // Combine the four header values into length_data
-        c.pinsrq(length_data.xmm(), header_0, 0);
-        c.pinsrq(length_data.xmm(), header_1, 1);
-        c.pinsrq(auxiliary_data.xmm(), header_2, 0);
-        c.pinsrq(auxiliary_data.xmm(), header_3, 1);
-        c.vinserti128(length_data, length_data, auxiliary_data.xmm(), 1);
-
-        c.bind(l_nonzero);
-        return {length_data, data_type_t::i64, data_kind_t::kMemory};
+        Ymm row_data = c.newYmm();
+        switch (type) {
+            case data_type_t::i8:
+            case data_type_t::i16:
+            case data_type_t::i32:
+            case data_type_t::i64:
+            case data_type_t::i128:
+                c.vmovdqu(row_data, m);
+                break;
+            case data_type_t::f32:
+                c.vmovups(row_data, m);
+                break;
+            case data_type_t::f64:
+                c.vmovupd(row_data, m);
+                break;
+            default:
+                __builtin_unreachable();
+        }
+        return {row_data, type, data_kind_t::kMemory};
     }
 
     jit_value_t read_imm(Compiler &c, const instruction_t &instr) {
