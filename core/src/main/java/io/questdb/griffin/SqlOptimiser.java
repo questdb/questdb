@@ -4669,14 +4669,15 @@ public class SqlOptimiser implements Mutable {
             }
         }
 
-        boolean translationIsRedundant = checkIfTranslatingModelIsRedundant(useInnerModel, useGroupByModel, useWindowModel, forceTranslatingModel, false, translatingModel);
-        // If it wasn't redundant, we might be able to make it redundant. The redundancy check requires the translation model to be akin to:
-        // (select x x from y)
-        // Taking a query such as:
-        // (select x1 from (select x x1 from y)
-        // In this simple case, the nested select need not exist, since the alias can be applied directly to the enclosing node.
-        // Merging this child model into one of the parent models can elide the node:
-        // (select x x1 from y)
+        boolean translationIsRedundant = checkIfTranslatingModelIsRedundant(useInnerModel, useGroupByModel, useWindowModel, forceTranslatingModel, true, translatingModel);
+        // If it wasn't redundant, we might be able to make it redundant.
+        // Taking the query:
+        // select a, b, c as z, count(*) as views from x where a = 1 group by a,b,z
+        // A translation model is generated like  (select-choose a, b, c z from x)
+        // A group by model is generated like     (select-group-by a, b, z, count views)
+        // Since the select-choose node's purpose is just to alias the column c, this can be lifted into the parent node in this case, the group by node.
+        // This makes the final query like        (select-group-by a, b, c z, count views from (select-choose a, b, c from x))
+        // The translation model is now vestigial and can be elided.
         if (useGroupByModel && sampleBy == null && !translationIsRedundant && !model.containsJoin() && !useWindowModel && SqlUtil.isPlainSelect(model.getNestedModel())) {
             QueryModel selectedModel = useInnerModel ? innerVirtualModel : groupByModel;
             ObjList<QueryColumn> translationColumns = translatingModel.getColumns();
@@ -4684,12 +4685,12 @@ public class SqlOptimiser implements Mutable {
             for (int i = 0; i < translationColumns.size(); i++) {
                 QueryColumn col = translationColumns.getQuick(i);
                 if (!col.getAst().token.equals(col.getAlias())) {
-                    appears |= GroupByUtils.aliasAppearsInColsAndFuncArgs(selectedModel, col.getAlias());
+                    appears |= aliasAppearsInColsAndFuncArgs(selectedModel, col.getAlias(), sqlNodeStack);
                 }
             }
             if (!appears) {
                 mergeInnerVirtualModel(translatingModel, selectedModel);
-                translationIsRedundant = checkIfTranslatingModelIsRedundant(useInnerModel, useGroupByModel, useWindowModel, forceTranslatingModel, true, translatingModel);
+                translationIsRedundant = checkIfTranslatingModelIsRedundant(useInnerModel, useGroupByModel, useWindowModel, forceTranslatingModel, false, translatingModel);
             }
         }
 
@@ -4812,11 +4813,11 @@ public class SqlOptimiser implements Mutable {
     }
 
 
-    private boolean checkIfTranslatingModelIsRedundant(boolean useInnerModel, boolean useGroupByModel, boolean useWindowModel, boolean forceTranslatingModel, boolean checkTranslatingFunction, QueryModel translatingModel) {
+    private boolean checkIfTranslatingModelIsRedundant(boolean useInnerModel, boolean useGroupByModel, boolean useWindowModel, boolean forceTranslatingModel, boolean checkTranslatingModel, QueryModel translatingModel) {
         // check if translating model is redundant, e.g.
         // that it neither chooses between tables nor renames columns
         boolean translationIsRedundant = (useInnerModel || useGroupByModel || useWindowModel) && !forceTranslatingModel;
-        if (translationIsRedundant && !checkTranslatingFunction) {
+        if (translationIsRedundant && checkTranslatingModel) {
             for (int i = 0, n = translatingModel.getBottomUpColumns().size(); i < n; i++) {
                 QueryColumn column = translatingModel.getBottomUpColumns().getQuick(i);
                 if (!column.getAst().token.equals(column.getAlias())) {
@@ -4827,6 +4828,82 @@ public class SqlOptimiser implements Mutable {
         }
         return translationIsRedundant;
     }
+
+    /**
+     * Checks if an alias appears in the columns and function args of a model.
+     * <p>
+     * Consider a query:<br>
+     * (select x1, sum(x1) from (select x as x1 from y))<br>
+     * If you were to move lift the column from the RHS to the LHS, you might get:<br>
+     * (select x x1, sum(x1) from y)<br>
+     * Now x1 is invalid.
+     * @param model
+     * @param alias
+     * @param sqlNodeStack
+     * @return
+     */
+    public static boolean aliasAppearsInColsAndFuncArgs(QueryModel model, CharSequence alias, ArrayDeque<ExpressionNode> sqlNodeStack) {
+        if (model == null) {
+            return false;
+        }
+
+        boolean appearsInCols = false;
+        boolean appearsInArgs = false;
+        ObjList<QueryColumn> modelColumns = model.getColumns();
+        for (int i = 0; i < modelColumns.size(); i++) {
+            QueryColumn col = modelColumns.get(i);
+            if (col.getAst().type == ExpressionNode.FUNCTION) {
+                // function
+                if (searchExpressionNodeForAlias(col.getAst(), alias, sqlNodeStack)) {
+                    appearsInArgs = true;
+                }
+            }
+            if (Chars.equals(col.getAst().token,alias)) {
+                appearsInCols = true;
+            }
+        }
+        return appearsInCols && appearsInArgs;
+    }
+
+    /**
+     * Recurse down expression node tree looking for an alias.
+     * @param node
+     * @param alias
+     * @param sqlNodeStack
+     * @return
+     */
+    private static boolean searchExpressionNodeForAlias(ExpressionNode node, CharSequence alias, ArrayDeque<ExpressionNode> sqlNodeStack) {
+        sqlNodeStack.clear();
+
+        // pre-order iterative tree traversal
+        // see: http://en.wikipedia.org/wiki/Tree_traversal
+
+        while (!sqlNodeStack.isEmpty() || node != null) {
+            if (node != null) {
+                switch (node.type) {
+                    case LITERAL:
+                        if (Chars.equals(node.token, alias)) {
+                            return true;
+                        }
+                    case ExpressionNode.FUNCTION:
+                        for (int i = 0; i < node.args.size(); i++) {
+                            sqlNodeStack.add(node.args.getQuick(i));
+                        }
+                    default:
+                        if (node.rhs != null) {
+                            sqlNodeStack.push(node.rhs);
+                        }
+                        break;
+                }
+
+                node = node.lhs;
+            } else {
+                node = sqlNodeStack.poll();
+            }
+        }
+        return false;
+    }
+
 
     // the intent is to either validate top-level columns in select columns or replace them with function calls
     // if columns do not exist
@@ -5397,3 +5474,5 @@ public class SqlOptimiser implements Mutable {
         limitTypes.add(ColumnType.INT);
     }
 }
+
+
