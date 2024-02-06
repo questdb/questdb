@@ -185,15 +185,16 @@ namespace questdb::avx2 {
         c.vpcmpeqq(auxiliary_data, length_data, auxiliary_data);
         c.vpmovmskb(auxiliary_scalar_32, auxiliary_data);
 
-        // Each bit in auxiliary_scalar_32 tells if the corresponding byte of auxiliary_data is zero.
-        // A zero-bit means "the byte is non-zero". Check whether all the bytes are non-zero.
+        // Each byte in auxiliary_scalar_32 tells if the corresponding qword of auxiliary_data
+        // is zero. A zero byte means "the qword is non-zero". Check whether all the qwords
+        // are non-zero.
         c.test(auxiliary_scalar_32, auxiliary_scalar_32);
         c.jz(l_nonzero);
 
-        // Slow path: some value lengths are zero, load all the headers. The value in the header may
-        // be either 0 (empty value) or -1 (NULL value) and we must distinguish the two.
-        // index_data contains four items of the varlen_index column. The items are offsets into the
-        // data column (based at column_address). For each offset:
+        // Slow path: some value lengths are zero, load all the headers. The value in the header
+        // may be either 0 (empty value) or -1 (NULL value) and we must distinguish the two.
+        // index_data contains four items of the varlen_index column. The items are offsets into
+        // the data column (based at column_address). For each offset:
         // 1: move the offset into a Gp register
         // 2: load the header at column_address + offset
         // 3: put the loaded header into the matching position in length_data
