@@ -2959,8 +2959,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             for (int i = 0; i < selectColumnCount; i++) {
                 QueryColumn qc = columns.getQuick(i);
                 if (
-                        !Chars.equals(metadata.getColumnName(i), qc.getAst().token) ||
-                                qc.getAlias() != null && !(Chars.equalsIgnoreCase(qc.getAlias(), qc.getAst().token))
+                        !Chars.equalsIgnoreCase(metadata.getColumnName(i), qc.getAst().token) ||
+                                (qc.getAlias() != null && !Chars.equalsIgnoreCase(qc.getAlias(), qc.getAst().token))
                 ) {
                     entity = false;
                     break;
