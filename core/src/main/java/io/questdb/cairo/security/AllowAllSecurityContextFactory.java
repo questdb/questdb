@@ -25,6 +25,7 @@
 package io.questdb.cairo.security;
 
 import io.questdb.cairo.SecurityContext;
+import io.questdb.std.ObjList;
 
 public class AllowAllSecurityContextFactory implements SecurityContextFactory {
     public static final AllowAllSecurityContextFactory INSTANCE = new AllowAllSecurityContextFactory();
@@ -33,7 +34,7 @@ public class AllowAllSecurityContextFactory implements SecurityContextFactory {
     }
 
     @Override
-    public SecurityContext getInstance(CharSequence principal, byte authType, byte interfaceId) {
+    public SecurityContext getInstance(CharSequence principal, ObjList<CharSequence> groups, byte authType, byte interfaceId) {
         return AllowAllSecurityContext.INSTANCE;
     }
 }

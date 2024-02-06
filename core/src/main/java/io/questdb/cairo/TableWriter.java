@@ -582,7 +582,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try {
             // open _meta file
             openMetaFile(ff, path, rootLen, metaMem);
-
             // remove _todo
             clearTodoLog();
         } catch (CairoException e) {
