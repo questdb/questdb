@@ -26,10 +26,12 @@ package io.questdb.test.cairo;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RowCursor;
-import io.questdb.cairo.vm.MemorySRImpl;
 import io.questdb.cairo.vm.NullMemoryMR;
 import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.*;
+import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.cairo.vm.api.MemoryMA;
+import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.griffin.engine.table.LatestByArguments;
 import io.questdb.std.*;
@@ -1051,34 +1053,6 @@ public class BitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testIntIndex() throws Exception {
-        final int plen = path.size();
-        final Rnd rnd = new Rnd();
-        int N = 100000000;
-        final int MOD = 1024;
-        TestUtils.assertMemoryLeak(() -> {
-            try (MemoryMAR mem = Vm.getMARInstance(CommitMode.NOSYNC)) {
-
-                mem.wholeFile(configuration.getFilesFacade(), path.concat("x.dat").$(), MemoryTag.MMAP_DEFAULT);
-
-                for (int i = 0; i < N; i++) {
-                    mem.putInt(rnd.nextPositiveInt() & (MOD - 1));
-                }
-
-                try (MemorySRImpl rwin = new MemorySRImpl()) {
-                    rwin.of(mem, MemoryTag.MMAP_DEFAULT);
-
-                    create(configuration, path.trimTo(plen), "x", N / MOD / 128);
-                    try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration)) {
-                        writer.of(path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE);
-                        indexInts(rwin, writer, N);
-                    }
-                }
-            }
-        });
-    }
-
-    @Test
     public void testLimitBackwardCursor() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             create(configuration, path.trimTo(plen), "x", 128);
@@ -1495,14 +1469,6 @@ public class BitmapIndexTest extends AbstractCairoTest {
             }
             assertWriterConstructorFail("Key count");
         });
-    }
-
-    private static void indexInts(MemorySRImpl srcMem, BitmapIndexWriter writer, long hi) {
-        srcMem.updateSize();
-        for (long r = 0L; r < hi; r++) {
-            final long offset = r * 4;
-            writer.add(srcMem.getInt(offset), offset);
-        }
     }
 
     private void assertBackwardCursorLimit(BitmapIndexBwdReader reader, int min, int max, LongList tmp, int nExpectedNulls, boolean cached) {

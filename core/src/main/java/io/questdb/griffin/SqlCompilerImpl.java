@@ -100,7 +100,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final QueryLogger queryLogger;
     private final ObjectPool<QueryModel> queryModelPool;
-    private final IndexBuilder rebuildIndex;
     private final Path renamePath = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
     private final ObjectPool<ExpressionNode> sqlNodePool;
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
@@ -129,7 +128,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         this.configuration = engine.getConfiguration();
         this.ff = configuration.getFilesFacade();
         this.messageBus = engine.getMessageBus();
-        this.rebuildIndex = new IndexBuilder(configuration);
         this.sqlNodePool = new ObjectPool<>(ExpressionNode.FACTORY, configuration.getSqlExpressionPoolCapacity());
         this.queryColumnPool = new ObjectPool<>(QueryColumn.FACTORY, configuration.getSqlColumnPoolCapacity());
         this.queryModelPool = new ObjectPool<>(QueryModel.FACTORY, configuration.getSqlModelPoolCapacity());
@@ -220,7 +218,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         Misc.free(vacuumColumnVersions);
         Misc.free(path);
         Misc.free(renamePath);
-        Misc.free(rebuildIndex);
         Misc.free(codeGenerator);
         Misc.free(mem);
         Misc.freeObjList(tableWriters);
@@ -1479,7 +1476,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             switch (executionModel.getModelType()) {
                 case ExecutionModel.QUERY:
                     LOG.info().$("plan [q=`").$((QueryModel) executionModel).$("`, fd=").$(executionContext.getRequestFd()).$(']').$();
-                    RecordCursorFactory factory = generateWithRetries((QueryModel) executionModel, executionContext, true);
+                    RecordCursorFactory factory = generateWithRetries((QueryModel) executionModel, executionContext);
                     compiledQuery.of(factory);
                     break;
                 case ExecutionModel.CREATE_TABLE:
@@ -2513,53 +2510,55 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             tok = GenericLexer.unquote(tok);
         }
         TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
-        rebuildIndex.of(path.of(configuration.getRoot()).concat(tableToken.getDirName()));
+        try (IndexBuilder indexBuilder = new IndexBuilder(configuration)) {
+            indexBuilder.of(path.of(configuration.getRoot()).concat(tableToken.getDirName()));
 
-        tok = SqlUtil.fetchNext(lexer);
-        CharSequence columnName = null;
-
-        if (tok != null && SqlKeywords.isColumnKeyword(tok)) {
             tok = SqlUtil.fetchNext(lexer);
-            if (Chars.isQuoted(tok)) {
-                tok = GenericLexer.unquote(tok);
+            CharSequence columnName = null;
+
+            if (tok != null && SqlKeywords.isColumnKeyword(tok)) {
+                tok = SqlUtil.fetchNext(lexer);
+                if (Chars.isQuoted(tok)) {
+                    tok = GenericLexer.unquote(tok);
+                }
+                if (tok == null || TableUtils.isValidColumnName(tok, configuration.getMaxFileNameLength())) {
+                    columnName = GenericLexer.immutableOf(tok);
+                    tok = SqlUtil.fetchNext(lexer);
+                }
             }
-            if (tok == null || TableUtils.isValidColumnName(tok, configuration.getMaxFileNameLength())) {
-                columnName = GenericLexer.immutableOf(tok);
+
+            CharSequence partition = null;
+            if (tok != null && SqlKeywords.isPartitionKeyword(tok)) {
+                tok = SqlUtil.fetchNext(lexer);
+
+                if (Chars.isQuoted(tok)) {
+                    tok = GenericLexer.unquote(tok);
+                }
+                partition = tok;
                 tok = SqlUtil.fetchNext(lexer);
             }
-        }
 
-        CharSequence partition = null;
-        if (tok != null && SqlKeywords.isPartitionKeyword(tok)) {
-            tok = SqlUtil.fetchNext(lexer);
-
-            if (Chars.isQuoted(tok)) {
-                tok = GenericLexer.unquote(tok);
+            if (tok == null || !isLockKeyword(tok)) {
+                throw SqlException.$(lexer.getPosition(), "LOCK EXCLUSIVE expected");
             }
-            partition = tok;
+
             tok = SqlUtil.fetchNext(lexer);
-        }
+            if (tok == null || !isExclusiveKeyword(tok)) {
+                throw SqlException.$(lexer.getPosition(), "LOCK EXCLUSIVE expected");
+            }
 
-        if (tok == null || !isLockKeyword(tok)) {
-            throw SqlException.$(lexer.getPosition(), "LOCK EXCLUSIVE expected");
-        }
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok != null && !isSemicolon(tok)) {
+                throw SqlException.$(lexer.getPosition(), "EOF expected");
+            }
 
-        tok = SqlUtil.fetchNext(lexer);
-        if (tok == null || !isExclusiveKeyword(tok)) {
-            throw SqlException.$(lexer.getPosition(), "LOCK EXCLUSIVE expected");
+            columnNames.clear();
+            if (columnName != null) {
+                columnNames.add(columnName);
+            }
+            executionContext.getSecurityContext().authorizeTableReindex(tableToken, columnNames);
+            indexBuilder.reindex(partition, columnName);
         }
-
-        tok = SqlUtil.fetchNext(lexer);
-        if (tok != null && !isSemicolon(tok)) {
-            throw SqlException.$(lexer.getPosition(), "EOF expected");
-        }
-
-        columnNames.clear();
-        if (columnName != null) {
-            columnNames.add(columnName);
-        }
-        executionContext.getSecurityContext().authorizeTableReindex(tableToken, columnNames);
-        rebuildIndex.reindex(partition, columnName);
         compiledQuery.ofRepair();
     }
 
@@ -2866,14 +2865,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     RecordCursorFactory generateWithRetries(
             @Transient QueryModel initialQueryModel,
-            @Transient SqlExecutionContext executionContext,
-            boolean isSelect
+            @Transient SqlExecutionContext executionContext
     ) throws SqlException {
         QueryModel queryModel = initialQueryModel;
         int remainingRetries = maxRecompileAttempts;
         for (; ; ) {
             try {
-                return generateFactory(queryModel, executionContext, isSelect);
+                return generateFactory(queryModel, executionContext, true);
             } catch (TableReferenceOutOfDateException e) {
                 if (--remainingRetries < 0) {
                     throw SqlException.$(0, e.getFlyweightMessage());
@@ -2998,7 +2996,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     @FunctionalInterface
-    protected interface KeywordBasedExecutor {
+    public interface KeywordBasedExecutor {
         void execute(SqlExecutionContext executionContext) throws SqlException;
     }
 

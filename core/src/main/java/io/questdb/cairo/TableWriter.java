@@ -125,7 +125,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final Utf8StringSink fileNameSink = new Utf8StringSink();
     private final int fileOperationRetryCount;
     private final SOCountDownLatch indexLatch = new SOCountDownLatch();
-    private final MemoryMR indexMem = Vm.getMRInstance();
     private final LongList indexSequences = new LongList();
     private final ObjList<ColumnIndexer> indexers;
     // This is the same message bus. When TableWriter instance created via CairoEngine, message bus is shared
@@ -658,6 +657,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 path.trimTo(rootLen);
             }
         } catch (Throwable e) {
+            Misc.free(indexer);
             LOG.error().$("rolling back index created so far [path=").$(path).I$();
             removeIndexFiles(columnName, columnIndex);
             throw e;
@@ -3596,11 +3596,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // destroy() may have already closed everything
         boolean tx = inTransaction();
         freeSymbolMapWriters();
-        freeIndexers();
+        Misc.freeObjList(indexers);
+        denseIndexers.clear();
         Misc.free(txWriter);
         Misc.free(metaMem);
         Misc.free(ddlMem);
-        Misc.free(indexMem);
         Misc.free(other);
         Misc.free(todoMem);
         Misc.free(attachMetaMem);
@@ -3865,7 +3865,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (indexers != null) {
             // Don't change items of indexers, they are re-used
             for (int i = 0, n = indexers.size(); i < n; i++) {
-                Misc.free(indexers.getQuick(i));
+                ColumnIndexer indexer = indexers.getQuick(i);
+                if (indexer != null) {
+                    indexers.getQuick(i).releaseIndexWriter();
+                }
             }
             denseIndexers.clear();
         }
@@ -4021,7 +4024,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long ts = this.txWriter.getMaxTimestamp();
         if (ts > Numbers.LONG_NaN) {
             final int columnIndex = metadata.getColumnIndex(columnName);
-            try (final MemoryMR roMem = indexMem) {
+            try {
                 // Index last partition separately
                 for (int i = 0, n = txWriter.getPartitionCount() - 1; i < n; i++) {
 
@@ -4046,16 +4049,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                             if (columnTop > -1L && partitionSize > columnTop) {
                                 TableUtils.dFile(path.trimTo(plen), columnName, columnNameTxn);
-                                final long columnSize = (partitionSize - columnTop) << ColumnType.pow2SizeOf(ColumnType.INT);
-                                roMem.of(ff, path, columnSize, columnSize, MemoryTag.MMAP_TABLE_WRITER);
-                                indexer.configureWriter(path.trimTo(plen), columnName, columnNameTxn, columnTop);
-                                indexer.index(roMem, columnTop, partitionSize);
+                                int columnDataFd = TableUtils.openRO(ff, path, LOG);
+                                try {
+                                    indexer.configureWriter(path.trimTo(plen), columnName, columnNameTxn, columnTop);
+                                    indexer.index(ff, columnDataFd, columnTop, partitionSize);
+                                } finally {
+                                    ff.close(columnDataFd);
+                                }
                             }
                         }
                     }
                 }
             } finally {
-                Misc.free(indexer);
+                indexer.releaseIndexWriter();
             }
         }
     }
@@ -5729,7 +5735,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // we have to create files before columns are open
                         // because we are reusing MAMemoryImpl object from columns list
                         createIndexFiles(name, columnNameTxn, metadata.getIndexValueBlockCapacity(i), plen, txWriter.getTransientRowCount() < 1);
-                        indexer.closeSlider();
                     }
 
                     openColumnFiles(name, columnNameTxn, i, plen);
@@ -7501,11 +7506,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         if (partitionBy != PartitionBy.NONE) {
             freeColumns(false);
-            if (indexers != null) {
-                for (int i = 0, n = indexers.size(); i < n; i++) {
-                    Misc.free(indexers.getQuick(i));
-                }
-            }
+            releaseIndexerWriters();
             // Schedule removal of all partitions
             scheduleRemoveAllPartitions();
             rowAction = ROW_ACTION_OPEN_PARTITION;
@@ -7526,6 +7527,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         processPartitionRemoveCandidates();
 
         LOG.info().$("truncated [name=").utf8(tableToken.getTableName()).I$();
+    }
+
+    private void releaseIndexerWriters() {
+        for (int i = 0, n = denseIndexers.size(); i < n; i++) {
+            ColumnIndexer indexer = denseIndexers.getQuick(i);
+            if (indexer != null) {
+                indexer.releaseIndexWriter();
+            }
+        }
+        denseIndexers.clear();
     }
 
     private void truncateColumns() {
@@ -7842,8 +7853,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             Misc.free(getPrimaryColumn(i));
             Misc.free(getSecondaryColumn(i));
         }
-        Misc.freeObjList(denseIndexers);
-        denseIndexers.clear();
+        releaseIndexerWriters();
     }
 
     BitmapIndexWriter getBitmapIndexWriter(int columnIndex) {

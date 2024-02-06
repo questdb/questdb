@@ -3382,18 +3382,6 @@ public class IODispatcherTest extends AbstractTest {
         );
     }
 
-    @Ignore// CTAS statements don't time out anymore but can be cancelled manually
-    @Test
-    public void testJsonQueryCreateTableAsSelectTimeoutNoWal() throws Exception {
-        testJsonQueryCreateTableAsSelectTimeout(false);
-    }
-
-    @Ignore// CTAS statements don't time out anymore but can be cancelled manually
-    @Test
-    public void testJsonQueryCreateTableAsSelectTimeoutWal() throws Exception {
-        testJsonQueryCreateTableAsSelectTimeout(true);
-    }
-
     @Test
     public void testJsonQueryDataError() throws Exception {
         assertMemoryLeak(() -> {
@@ -6156,7 +6144,6 @@ public class IODispatcherTest extends AbstractTest {
                 try (Path path = new Path().of(baseDir).concat("questdb-temp.txt").$()) {
                     try {
                         Rnd rnd = new Rnd();
-                        final int diskBufferLen = 1024 * 1024;
 
                         writeRandomFile(path, rnd, 122222212222L);
 
@@ -8754,7 +8741,7 @@ public class IODispatcherTest extends AbstractTest {
                                                     ".*dataset.*",
                                                     "select query_id from query_activity() where query = '" + command.replace("'", "''") + "'",
                                                     null, null, null,
-                                                    new CharSequenceObjHashMap<String>() {{
+                                                    new CharSequenceObjHashMap<>() {{
                                                         put("nm", "true");
                                                     }},
                                                     "200"
@@ -8903,66 +8890,6 @@ public class IODispatcherTest extends AbstractTest {
                         .withHttpProtocolVersion(http1 ? "HTTP/1.0 " : "HTTP/1.1 "));
         builder.run(code);
         return builder;
-    }
-
-    private void testJsonQueryCreateTableAsSelectTimeout(boolean withWal) throws Exception {
-        final String ddlAsSelectSuffix = withWal ? " wal" : " bypass wal";
-        final String ddlSuffix = withWal ? " bypass wal" : " wal";
-        new HttpQueryTestBuilder()
-                .withTempFolder(root)
-                .withWorkerCount(1)
-                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                .withTelemetry(false)
-                .withQueryTimeout(SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK)
-                .run((engine) -> {
-                    final String ddlAsSelect = "create table x as (select x::timestamp as ts, x as l from long_sequence(100)) timestamp(ts) partition by day" + ddlAsSelectSuffix;
-                    final String expectedErrorResponse = "HTTP/1.1 400 Bad request";
-                    new SendAndReceiveRequestBuilder()
-                            .withCompareLength(expectedErrorResponse.length())
-                            .execute(
-                                    "GET /exec?query=" + HttpUtils.urlEncodeQuery(ddlAsSelect) + " HTTP/1.1\r\n" +
-                                            "Host: localhost:9000\r\n" +
-                                            "Connection: keep-alive\r\n" +
-                                            "Accept: */*\r\n" +
-                                            "X-Requested-With: XMLHttpRequest\r\n" +
-                                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
-                                            "Sec-Fetch-Site: same-origin\r\n" +
-                                            "Sec-Fetch-Mode: cors\r\n" +
-                                            "Referer: http://localhost:9000/index.html\r\n" +
-                                            "Accept-Encoding: gzip, deflate, br\r\n" +
-                                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                                            "\r\n",
-                                    expectedErrorResponse
-                            );
-                    // We should be able to create table with the same name.
-                    final String ddl = "create table x (ts timestamp, x long) timestamp(ts) partition by day" + ddlSuffix;
-                    sendAndReceive(
-                            NetworkFacadeImpl.INSTANCE,
-                            "GET /exec?query=" + HttpUtils.urlEncodeQuery(ddl) + " HTTP/1.1\r\n" +
-                                    "Host: localhost:9000\r\n" +
-                                    "Connection: keep-alive\r\n" +
-                                    "Accept: */*\r\n" +
-                                    "X-Requested-With: XMLHttpRequest\r\n" +
-                                    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
-                                    "Sec-Fetch-Site: same-origin\r\n" +
-                                    "Sec-Fetch-Mode: cors\r\n" +
-                                    "Referer: http://localhost:9000/index.html\r\n" +
-                                    "Accept-Encoding: gzip, deflate, br\r\n" +
-                                    "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                                    "\r\n",
-                            "HTTP/1.1 200 OK\r\n" +
-                                    "Server: questDB/1.0\r\n" +
-                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                                    "Transfer-Encoding: chunked\r\n" +
-                                    "Content-Type: application/json; charset=utf-8\r\n" +
-                                    "Keep-Alive: timeout=5, max=10000\r\n" +
-                                    "\r\n" +
-                                    JSON_DDL_RESPONSE,
-                            1,
-                            0,
-                            false
-                    );
-                });
     }
 
     private void testMaxConnections0(

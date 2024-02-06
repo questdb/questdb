@@ -25,7 +25,6 @@
 package io.questdb.test.griffin.wal;
 
 import io.questdb.PropertyKey;
-import io.questdb.std.Files;
 import io.questdb.std.Rnd;
 import io.questdb.test.cairo.Overrides;
 import org.junit.Assert;

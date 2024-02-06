@@ -46,7 +46,6 @@ import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.BeforeClass;
-import org.junit.Ignore;
 import org.junit.Test;
 
 
@@ -116,76 +115,6 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
                 1,
                 16,
                 (engine, compiler, sqlExecutionContext) -> testTimeoutInLatestByAllIndexed(compiler, sqlExecutionContext)
-        );
-    }
-
-    @Ignore // create table as select doesn't time out anymore but can be cancelled manually
-    @Test
-    public void testTimeoutInCreateTableAsSelectFromRealTable() throws Exception {
-        unsetTimeout();
-        try {
-            assertTimeout(
-                    "create table instest as (select rnd_int(), rnd_long(), rnd_double() from long_sequence(10000))",
-                    "create table instest2 as (select * from instest);"
-            );
-        } finally {
-            resetTimeout();
-        }
-
-        try {
-            compile("select * from instest2");
-            Assert.fail();
-        } catch (SqlException e) {
-            TestUtils.assertContains(e.getMessage(), "table does not exist");
-        }
-    }
-
-    @Ignore // create table as select doesn't time out anymore but can be cancelled manually
-    @Test
-    public void testTimeoutInCreateTableAsSelectFromVirtualTable() throws Exception {
-        assertTimeout("create table instest as (select rnd_int(), rnd_long(), rnd_double() from long_sequence(10000000))");
-
-        try {
-            compile("select * from instest");
-            Assert.fail();
-        } catch (SqlException e) {
-            TestUtils.assertContains(e.getMessage(), "table does not exist");
-        }
-    }
-
-    @Ignore // insert as select doesn't time out anymore but can be cancelled manually
-    @Test
-    public void testTimeoutInInsertAsSelect() throws Exception {
-        assertTimeout(
-                "create table instest ( i int, l long, d double ) ",
-                "insert into instest select rnd_int(), rnd_long(), rnd_double() from long_sequence(10000000)"
-        );
-    }
-
-    @Ignore // insert as select doesn't time out anymore but can be cancelled manually
-    @Test
-    public void testTimeoutInInsertAsSelectBatchedAndOrderedByTs() throws Exception {
-        assertTimeout(
-                "create table instest ( i int, l long, d double, ts timestamp ) timestamp(ts) ",
-                "insert batch 100 into instest select rnd_int(), rnd_long(), rnd_double(), cast(x as timestamp) from long_sequence(10000000)"
-        );
-    }
-
-    @Ignore // insert as select doesn't time out anymore but can be cancelled manually
-    @Test
-    public void testTimeoutInInsertAsSelectBatchedAndOrderedByTsAsString() throws Exception {
-        assertTimeout(
-                "create table instest ( i int, l long, d double, ts timestamp ) timestamp(ts) ",
-                "insert batch 100 into instest select rnd_int(), rnd_long(), rnd_double(), cast(cast(x as timestamp) as string) from long_sequence(10000000)"
-        );
-    }
-
-    @Ignore // insert as select doesn't time out anymore but can be cancelled manually
-    @Test
-    public void testTimeoutInInsertAsSelectOrderedByTs() throws Exception {
-        assertTimeout(
-                "create table instest ( i int, l long, d double, ts timestamp ) timestamp(ts) ",
-                "insert into instest select rnd_int(), rnd_long(), rnd_double(), cast(x as timestamp) from long_sequence(10000000)"
         );
     }
 
@@ -506,16 +435,6 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
         );
     }
 
-    @Ignore// update table doesn't time out anymore but can be cancelled manually
-    @Test
-    public void testTimeoutInUpdateTable() throws Exception {
-        assertTimeout(
-                "create table updtest as (select rnd_int() i, rnd_long() l, rnd_double() d from long_sequence(10000))",
-                "update updtest  set i = rnd_int(), l = i * l, d = d/7 *31",
-                null
-        );
-    }
-
     @Test
     public void testTimeoutInVectorizedKeyedGroupBy() throws Exception {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
@@ -595,11 +514,6 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
                 16,
                 (engine, compiler, sqlExecutionContext) -> testTimeoutInVectorizedNonKeyedGroupBy(compiler, sqlExecutionContext)
         );
-    }
-
-    @SuppressWarnings("SameParameterValue")
-    private void assertTimeout(String ddl) throws Exception {
-        assertTimeout(ddl, null, null);
     }
 
     private void assertTimeout(String ddl, String query) throws Exception {

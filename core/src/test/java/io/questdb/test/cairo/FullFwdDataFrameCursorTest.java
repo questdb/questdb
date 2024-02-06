@@ -47,7 +47,6 @@ import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
@@ -103,8 +102,11 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
                 // create partition on disk but do not commit transaction nor row
 
-                try (TableReader reader = newOffPoolReader(configuration, "x")) {
-                    FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
+                try (
+                        TableReader reader = newOffPoolReader(configuration, "x");
+                        FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor()
+                ) {
+
 
                     int frameCount = 0;
                     cursor.of(reader);
@@ -141,15 +143,6 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
     @Test
     public void testFailToRemoveDistressFileByYear() throws Exception {
         testFailToRemoveDistressFile(PartitionBy.YEAR, 10000000L * 32 * 12);
-    }
-
-    @Test
-    @Ignore
-    // todo: test key write failure
-    // to test this scenario we need large number of keys to overwhelm single memory buffer
-    // which is at odds when testing value failure.
-    public void testIndexFailAtRuntimeByDay1k() throws Exception {
-        testIndexFailureAtRuntime(PartitionBy.DAY, 10L, false, "1970-01-01" + Files.SEPARATOR + "a.k", 1);
     }
 
     @Test
@@ -1558,6 +1551,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
                 if (workerPool != null) {
                     workerPool.halt();
+                    Misc.free(workerPool);
                 }
 
                 try (TableReader reader = createTableReader(configuration, "ABC")) {
@@ -1705,6 +1699,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
 
                 workerPool.halt();
+                Misc.free(workerPool);
 
                 // let's see what we can read after this catastrophe
                 try (TableReader reader = createTableReader(AbstractCairoTest.configuration, "ABC")) {
