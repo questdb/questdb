@@ -132,15 +132,11 @@ namespace questdb::avx2 {
         c.pinsrq(next_index_data.xmm(), next_index_qword, 0);
         c.vpermq(next_index_data, next_index_data, 0b00111001);
 
-        // Store the difference between data at input_index + 1 and input_index to length_data
+        // Subtract the data at input_index from data at input_index + 1
         c.vpsubq(length_data, next_index_data, index_data);
-
-        // Subtract header_size from length_data
-        Gp gp_header_size = c.newInt64("gp_header_size");
-        c.mov(gp_header_size, header_size);
+        // Subtract the header size from the result
         Ymm broadcast_header_size = c.newYmm();
-        c.movq(broadcast_header_size.xmm(), gp_header_size);
-        c.vpbroadcastq(broadcast_header_size, broadcast_header_size.xmm());
+        c.vmovdqa(broadcast_header_size, vec_broadcast_long(c, header_size));
         c.vpsubq(length_data, length_data, broadcast_header_size);
 
         // Compare the entire length_data with zero
