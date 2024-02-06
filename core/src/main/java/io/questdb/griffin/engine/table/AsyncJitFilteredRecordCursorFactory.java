@@ -312,7 +312,6 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                 columns.getAddress(),
                 columns.size(),
                 varLenIndexes.getAddress(),
-                varLenIndexes.size(),
                 atom.bindVarMemory.getAddress(),
                 atom.bindVarFunctions.size(),
                 rows.getAddress(),

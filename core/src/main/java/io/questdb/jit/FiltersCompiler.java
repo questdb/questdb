@@ -35,7 +35,6 @@ final class FiltersCompiler {
                                            long colsAddress,
                                            long colsSize,
                                            long varLenIndexesAddress,
-                                           long varLenIndexesSize,
                                            long varsAddress,
                                            long varsSize,
                                            long rowsAddress,

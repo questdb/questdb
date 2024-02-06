@@ -38,14 +38,13 @@ public class CompiledFilter implements Closeable {
 
     public long call(
             long colsAddress, long colsSize,
-            long varLenIndexesAddress, long varLenIndexesSize,
+            long varLenIndexesAddress,
             long varsAddress, long varsSize, long rowsAddress, long rowsSize, long rowsStartOffset) {
         return FiltersCompiler.callFunction(
                 fnAddress,
                 colsAddress,
                 colsSize,
                 varLenIndexesAddress,
-                varLenIndexesSize,
                 varsAddress,
                 varsSize,
                 rowsAddress,

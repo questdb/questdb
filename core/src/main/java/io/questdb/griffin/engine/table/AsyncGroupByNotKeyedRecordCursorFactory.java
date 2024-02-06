@@ -250,7 +250,6 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
                 columns.getAddress(),
                 columns.size(),
                 varLenIndexes.getAddress(),
-                varLenIndexes.size(),
                 bindVarMemory.getAddress(),
                 bindVarFunctions.size(),
                 rows.getAddress(),
