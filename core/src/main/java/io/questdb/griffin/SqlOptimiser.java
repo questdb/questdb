@@ -2910,8 +2910,9 @@ public class SqlOptimiser implements Mutable {
             // the designated timestamp. This case is handled by the DistinctTimeSeriesRecordCursorFactory,
             // which does not expose information about following the advice to the factories relying on it
             // (so it's up to them to handle the ORDER BY clause). It only exposes the scanning direction,
-            // controlled by the advice. If the scanning direction aligns with the ORDER BY clause and the
-            // clause includes only the designated timestamp, the factories skip unnecessary sorting.
+            // controlled by the advice. If the ORDER BY clause includes only the designated timestamp, and
+            // the scanning direction aligns with the ordering specified in this clause, the factories skip
+            // unnecessary sorting.
             CharSequence timestampAlias = findTimestamp(model);
             return timestampAlias != null
                     && orderByAdvice.size() == 1
