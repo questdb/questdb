@@ -4684,7 +4684,7 @@ public class SqlOptimiser implements Mutable {
             boolean appears = false;
             for (int i = 0; i < translationColumns.size(); i++) {
                 QueryColumn col = translationColumns.getQuick(i);
-                if (!col.getAst().token.equals(col.getAlias())) {
+                if (!Chars.equalsIgnoreCase(col.getAst().token, col.getAlias())) {
                     appears |= aliasAppearsInColsAndFuncArgs(selectedModel, col.getAlias(), sqlNodeStack);
                 }
             }
@@ -4812,7 +4812,6 @@ public class SqlOptimiser implements Mutable {
         return root;
     }
 
-
     private boolean checkIfTranslatingModelIsRedundant(boolean useInnerModel, boolean useGroupByModel, boolean useWindowModel, boolean forceTranslatingModel, boolean checkTranslatingModel, QueryModel translatingModel) {
         // check if translating model is redundant, e.g.
         // that it neither chooses between tables nor renames columns
@@ -4820,7 +4819,7 @@ public class SqlOptimiser implements Mutable {
         if (translationIsRedundant && checkTranslatingModel) {
             for (int i = 0, n = translatingModel.getBottomUpColumns().size(); i < n; i++) {
                 QueryColumn column = translatingModel.getBottomUpColumns().getQuick(i);
-                if (!column.getAst().token.equals(column.getAlias())) {
+                if (!Chars.equalsIgnoreCase(column.getAst().token, column.getAlias())) {
                     translationIsRedundant = false;
                     break;
                 }
@@ -4846,20 +4845,19 @@ public class SqlOptimiser implements Mutable {
         if (model == null) {
             return false;
         }
-
         boolean appearsInCols = false;
         boolean appearsInArgs = false;
         ObjList<QueryColumn> modelColumns = model.getColumns();
-        for (int i = 0; i < modelColumns.size(); i++) {
+        for (int i = 0, n = modelColumns.size(); i < n; i++) {
             QueryColumn col = modelColumns.get(i);
-            if (col.getAst().type == ExpressionNode.FUNCTION) {
-                // function
-                if (searchExpressionNodeForAlias(col.getAst(), alias, sqlNodeStack)) {
-                    appearsInArgs = true;
-                }
-            }
-            if (Chars.equals(col.getAst().token,alias)) {
-                appearsInCols = true;
+            switch (col.getAst().type) {
+                case FUNCTION:
+                case OPERATION:
+                    appearsInArgs |= searchExpressionNodeForAlias(col.getAst(), alias, sqlNodeStack);
+                    break;
+                case LITERAL:
+                    appearsInCols |= Chars.equalsIgnoreCase(col.getAst().token,alias);
+                    break;
             }
         }
         return appearsInCols && appearsInArgs;
@@ -4880,22 +4878,15 @@ public class SqlOptimiser implements Mutable {
 
         while (!sqlNodeStack.isEmpty() || node != null) {
             if (node != null) {
-                switch (node.type) {
-                    case LITERAL:
-                        if (Chars.equals(node.token, alias)) {
-                            return true;
-                        }
-                    case ExpressionNode.FUNCTION:
-                        for (int i = 0; i < node.args.size(); i++) {
-                            sqlNodeStack.add(node.args.getQuick(i));
-                        }
-                    default:
-                        if (node.rhs != null) {
-                            sqlNodeStack.push(node.rhs);
-                        }
-                        break;
+                if (Chars.equalsIgnoreCase(node.token, alias)) {
+                    return true;
                 }
-
+                for (int i = 0, n = node.args.size(); i < n; i++) {
+                    sqlNodeStack.add(node.args.getQuick(i));
+                }
+                if (node.rhs != null) {
+                    sqlNodeStack.push(node.rhs);
+                }
                 node = node.lhs;
             } else {
                 node = sqlNodeStack.poll();

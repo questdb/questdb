@@ -2232,6 +2232,66 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLiftAliasesFromInnerSelect11() throws Exception {
+        // test output naming
+        assertMemoryLeak(() -> {
+            ddl("create table x ( a int, b int, c symbol, ts timestamp ) timestamp(ts) partition by DAY WAL;");
+            insert("insert into x values (1,2,'3', now()), (2,3, '3', now()), (5,6,'4', now())");
+            drainWalQueue();
+            String query =
+                    "select a, b as B, c as z, count(*) as views\n" +
+                            "from x\n" +
+                            "where a = 1\n" +
+                            "group by a,b,z\n";
+            assertPlan(query, "" +
+                    "Async JIT Group By workers: 1\n" +
+                    "  keys: [a,b,z]\n" +
+                    "  values: [count(*)]\n" +
+                    "  filter: a=1\n" +
+                    "    DataFrame\n" +
+                    "        Row forward scan\n" +
+                    "        Frame forward scan on: x\n");
+            assertQuery("" +
+                            "a\tb\tz\tviews\n" +
+                            "1\t2\t3\t1\n",
+                    query,
+                    null,
+                    true,
+                    true);
+        });
+    }
+
+    @Test
+    public void testLiftAliasesFromInnerSelect12() throws Exception {
+        // test output naming
+        assertMemoryLeak(() -> {
+            ddl("create table x ( a int, b int, c symbol, ts timestamp ) timestamp(ts) partition by DAY WAL;");
+            insert("insert into x values (1,2,'3', now()), (2,3, '3', now()), (5,6,'4', now())");
+            drainWalQueue();
+            String query =
+                    "select a, b as B, c as z, count(*) as views\n" +
+                            "from x\n" +
+                            "where a = 1\n" +
+                            "group by a,B,z\n";
+            assertPlan(query, "" +
+                    "Async JIT Group By workers: 1\n" +
+                    "  keys: [a,B,z]\n" +
+                    "  values: [count(*)]\n" +
+                    "  filter: a=1\n" +
+                    "    DataFrame\n" +
+                    "        Row forward scan\n" +
+                    "        Frame forward scan on: x\n");
+            assertQuery("" +
+                            "a\tB\tz\tviews\n" +
+                            "1\t2\t3\t1\n",
+                    query,
+                    null,
+                    true,
+                    true);
+        });
+    }
+
+    @Test
     public void testStarIsNotAllowedInGroupBy() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table tab as (select x, x%2 as y from long_sequence(2))");
