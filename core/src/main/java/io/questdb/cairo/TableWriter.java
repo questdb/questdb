@@ -2428,13 +2428,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (ff.exists(from)) {
             if (ff.hardLink(from, to) == FILES_RENAME_OK) {
                 LOG.debug().$("renamed [from=").$(from).$(", to=").$(to).I$();
-            } else {
-                throw CairoException.critical(ff.errno())
-                        .put("could not create hard link [errno=").put(ff.errno())
-                        .put(", from=").put(from)
-                        .put(", to=").put(to)
-                        .put(']');
+                return;
+            } else if (ff.exists(to)) {
+                LOG.info().$("rename destination file exists, assuming failed rename attempt [path=").$(to).I$();
+                ff.remove(to);
+                if (ff.hardLink(from, to) == FILES_RENAME_OK) {
+                    LOG.debug().$("renamed [from=").$(from).$(", to=").$(to).I$();
+                    return;
+                }
             }
+
+            throw CairoException.critical(ff.errno())
+                    .put("could not create hard link [errno=").put(ff.errno())
+                    .put(", from=").put(from)
+                    .put(", to=").put(to)
+                    .put(']');
         }
     }
 
@@ -3517,8 +3525,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             mapWriter.updateNullFlag(true);
         }
 
+        int count = 0;
         SymbolMapDiffEntry entry;
         while ((entry = symbolMapDiff.nextEntry()) != null) {
+            count++;
             final CharSequence symbolValue = entry.getSymbol();
             final int newKey = mapWriter.put(symbolValue);
             identical &= newKey == entry.getKey();
