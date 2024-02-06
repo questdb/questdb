@@ -5,7 +5,6 @@ import io.questdb.cutlass.json.JsonException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.std.Os;
 import io.questdb.test.tools.TestUtils;
 
 import org.jetbrains.annotations.NotNull;
@@ -53,23 +52,28 @@ public class ReloadingPropServerConfigurationTest {
 
     @Test
     public void testConcurrentReload() throws Exception {
+        int concurrencyLevel = 4;
+        int numValues = 10;
+        AtomicInteger values = new AtomicInteger(numValues);
+
         Properties properties = new Properties();
         properties.setProperty(String.valueOf(PropertyKey.HTTP_CONNECTION_POOL_INITIAL_CAPACITY), "99");
         ReloadingPropServerConfiguration configuration = newReloadingPropServerConfiguration(root, properties, null, new BuildInformationHolder());
 
-        int concurrencyLevel = 4;
-        AtomicInteger values = new AtomicInteger(10);
-
-        CyclicBarrier startBarrier = new CyclicBarrier(concurrencyLevel + 1);
+        CyclicBarrier startBarrier = new CyclicBarrier(concurrencyLevel);
         CyclicBarrier valueBarrier = new CyclicBarrier(concurrencyLevel + 1);
+        CyclicBarrier decrementBarrier = new CyclicBarrier(concurrencyLevel + 1);
         SOCountDownLatch endLatch = new SOCountDownLatch(concurrencyLevel);
 
         new Thread(() -> {
-            TestUtils.await(startBarrier);
             while (values.get() >= 0) {
-                properties.setProperty(String.valueOf(PropertyKey.HTTP_CONNECTION_POOL_INITIAL_CAPACITY), Integer.toString(values.decrementAndGet()));
-                configuration.reload(properties, null);
+                Properties newProperties = new Properties();
+                newProperties.setProperty(String.valueOf(PropertyKey.HTTP_CONNECTION_POOL_INITIAL_CAPACITY), Integer.toString(values.get()));
+                Assert.assertNotEquals(newProperties, properties);
+                configuration.reload(newProperties, null);
                 TestUtils.await(valueBarrier);
+                values.decrementAndGet();
+                TestUtils.await(decrementBarrier);
             }
         }).start();
 
@@ -80,8 +84,8 @@ public class ReloadingPropServerConfigurationTest {
                     while (true) {
                         if (configuration.getHttpServerConfiguration().getHttpContextConfiguration().getConnectionPoolInitialCapacity() == values.get()) {
                             TestUtils.await(valueBarrier);
+                            TestUtils.await(decrementBarrier);
                         }
-                        Os.pause();
                         if (values.get() == -1) {
                             break;
                         }
