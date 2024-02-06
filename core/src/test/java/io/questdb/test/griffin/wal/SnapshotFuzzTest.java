@@ -41,29 +41,29 @@ import java.util.concurrent.atomic.AtomicReference;
 
 public class SnapshotFuzzTest extends AbstractFuzzTest {
     public TableToken createInitialTable(String tableName, boolean isWal, int rowCount) throws SqlException {
-//        return fuzzer.createInitialTable(tableName, isWal, rowCount);
-        if (engine.getTableTokenIfExists(tableName) == null) {
-            engine.ddl(
-                    "create table " + tableName + " as (" +
-                            "select x as c1, " +
-                            " rnd_symbol('AB', 'BC', 'CD') c2, " +
-                            " timestamp_sequence('2022-02-24', 1000000L) ts, " +
-                            " cast(x as int) c3," +
-                            " rnd_bin() c4," +
-                            " to_long128(3 * x, 6 * x) c5," +
-                            " rnd_str('a', 'bdece', null, ' asdflakji idid', 'dk')," +
-                            " rnd_boolean() bool1 " +
-                            " from long_sequence(" + rowCount + ")" +
-                            ") timestamp(ts) partition by DAY " + (isWal ? "WAL" : "BYPASS WAL"),
-                    sqlExecutionContext
-            );
-        }
-        return engine.verifyTableName(tableName);
+        return fuzzer.createInitialTable(tableName, isWal, rowCount);
+//        if (engine.getTableTokenIfExists(tableName) == null) {
+//            engine.ddl(
+//                    "create table " + tableName + " as (" +
+//                            "select x as c1, " +
+//                            " rnd_symbol('AB', 'BC', 'CD') c2, " +
+//                            " timestamp_sequence('2022-02-24', 1000000L) ts, " +
+//                            " cast(x as int) c3," +
+//                            " rnd_bin() c4," +
+//                            " to_long128(3 * x, 6 * x) c5," +
+//                            " rnd_str('a', 'bdece', null, ' asdflakji idid', 'dk')," +
+//                            " rnd_boolean() bool1 " +
+//                            " from long_sequence(" + rowCount + ")" +
+//                            ") timestamp(ts) partition by DAY " + (isWal ? "WAL" : "BYPASS WAL"),
+//                    sqlExecutionContext
+//            );
+//        }
+//        return engine.verifyTableName(tableName);
     }
 
     @Test
-    public void testWalTableSnapshot() throws Exception {
-        Rnd rnd = generateRandom(LOG);
+    public void testFullFuzz() throws Exception {
+        Rnd rnd = generateRandom(LOG, 258822422220250L, 1707249008916L);
         fullFuzz(rnd);
         runFuzzWithSnapshot(rnd);
     }
@@ -129,6 +129,7 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
 
         LOG.info().$("recovering from snapshot").$();
         engine.recoverSnapshot();
+        engine.getTableSequencerAPI().releaseAll();
     }
 
     protected void runFuzzWithSnapshot(Rnd rnd) throws Exception {
@@ -174,7 +175,12 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
 
             // Restore snapshot here
             restoreSnapshot();
-            fuzzer.applyWal(afterSnapshot, tableNameWal, 1, rnd);
+            engine.notifyWalTxnRepublisher(walTable);
+            if (afterSnapshot.size() > 0) {
+                fuzzer.applyWal(afterSnapshot, tableNameWal, 1, rnd);
+            } else {
+                drainWalQueue();
+            }
 
             Assert.assertFalse("table suspended", engine.getTableSequencerAPI().isSuspended(walTable));
 

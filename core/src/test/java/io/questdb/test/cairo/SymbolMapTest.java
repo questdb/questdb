@@ -72,6 +72,54 @@ public class SymbolMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRollbackFuzz() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        int symbols = rnd.nextInt(1024);
+
+        int resets = rnd.nextInt(10);
+
+        TestUtils.assertMemoryLeak(() -> {
+            int N = 1000;
+            try (Path path = new Path().of(configuration.getRoot())) {
+                create(path, "x", N, true);
+
+                SymbolMapWriter w = new SymbolMapWriter(
+                        configuration,
+                        path,
+                        "x",
+                        COLUMN_NAME_TXN_NONE,
+                        0,
+                        -1,
+                        NOOP_COLLECTOR
+                );
+                addRange(w, 0, symbols);
+
+                for (int i = 0; i < resets; i++) {
+                    int resetTo = Math.max(0, rnd.nextInt(symbols + 100) - 100);
+                    w.close();
+                    w = new SymbolMapWriter(
+                            configuration,
+                            path,
+                            "x",
+                            COLUMN_NAME_TXN_NONE,
+                            resetTo,
+                            -1,
+                            NOOP_COLLECTOR
+                    );
+                    addRange(w, resetTo, symbols);
+                }
+                w.close();
+            }
+        });
+    }
+
+    private void addRange(SymbolMapWriter w, int lo, int hi) {
+        for (int i = lo; i < hi; i++) {
+            w.put("sym" + i + 100);
+        }
+    }
+
+    @Test
     public void testAppend() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int N = 1000;
