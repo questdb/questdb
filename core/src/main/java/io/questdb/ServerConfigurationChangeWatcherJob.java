@@ -35,13 +35,23 @@ import java.nio.file.Paths;
 
 public class ServerConfigurationChangeWatcherJob extends SynchronizedJob implements Closeable {
     private final long watcherAddress;
-    private final ReloadingPropServerConfiguration config;
-    private final String configFilePath;
+    private final Bootstrap bootstrap;
+    private ServerMain serverMain;
     private final static Log LOG = LogFactory.getLog(ServerConfigurationChangeWatcherJob.class);
+    private final boolean addShutdownhook;
+    private ReloadingPropServerConfiguration configuration;
 
-    public ServerConfigurationChangeWatcherJob(ReloadingPropServerConfiguration config) {
-        this.config = config;
-        this.configFilePath =config.getCairoConfiguration().getConfRoot() + Bootstrap.CONFIG_FILE;
+    public ServerConfigurationChangeWatcherJob(Bootstrap bootstrap, ServerMain serverMain, boolean addShutdownHook) throws IllegalArgumentException {
+        if (!(bootstrap.getConfiguration() instanceof ReloadingPropServerConfiguration)) {
+            throw new IllegalArgumentException("bootstrap.getConfiguration() must return a ReloadingPropServerConfiguration");
+        }
+
+        this.bootstrap = bootstrap;
+        this.configuration = (ReloadingPropServerConfiguration) bootstrap.getConfiguration();
+        this.serverMain = serverMain;
+        this.addShutdownhook = addShutdownHook;
+
+        final String configFilePath = this.bootstrap.getConfiguration().getCairoConfiguration().getConfRoot() + Bootstrap.CONFIG_FILE;
 
         try (Path path = new Path()) {
             path.of(configFilePath).$();
@@ -55,9 +65,16 @@ public class ServerConfigurationChangeWatcherJob extends SynchronizedJob impleme
 
     @Override
     protected boolean runSerially() {
+        if (serverMain == null) {
+            return true;
+        }
+
         if (Filewatcher.changed(this.watcherAddress)) {
-            if (this.config.reload()) {
+            if (this.configuration.reload()) {
                 LOG.info().$("config successfully reloaded").$();
+                serverMain.close();
+                serverMain = new ServerMain(this.bootstrap);
+                serverMain.start(this.addShutdownhook);
             }
         }
         return true;

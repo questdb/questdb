@@ -311,17 +311,6 @@ public class ServerMain implements Closeable {
                         }
                     }
 
-                    // config hot reload
-                    if (config instanceof ReloadingPropServerConfiguration) {
-                        final ServerConfigurationChangeWatcherJob configWatcherJob = new ServerConfigurationChangeWatcherJob(
-                                (ReloadingPropServerConfiguration) config
-                        );
-                        freeOnExit.register(configWatcherJob);
-                        sharedPool.assign(configWatcherJob);
-                    }
-
-
-
                 } catch (Throwable thr) {
                     throw new Bootstrap.BootstrapException(thr);
                 }
