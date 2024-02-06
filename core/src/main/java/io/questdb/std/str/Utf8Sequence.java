@@ -24,6 +24,7 @@
 
 package io.questdb.std.str;
 
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -56,4 +57,14 @@ public interface Utf8Sequence {
      * This is named `size` instead of `length` to avoid collision withs the `CharSequence` interface.
      */
     int size();
+
+    default void writeTo(long addr) {
+        writeTo(addr, 0, size());
+    }
+
+    default void writeTo(long addr, int lo, int hi) {
+        for (int i = lo; i < hi; i++) {
+            Unsafe.getUnsafe().putByte(addr++, byteAt(i));
+        }
+    }
 }

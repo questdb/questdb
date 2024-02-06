@@ -99,7 +99,14 @@ public interface MemoryA extends Closeable {
      * @param value any utf8 sequence
      * @return offset at the start of the written sequence.
      */
-    long putUtf8(@Nullable Utf8Sequence value);
+    default long putVarchar(@Nullable Utf8Sequence value) {
+        if (value != null) {
+            return putVarchar(value, 0, value.size());
+        }
+        return getAppendOffset();
+    }
+
+    long putVarchar(@NotNull Utf8Sequence value, int lo, int hi);
 
     void skip(long bytes);
 

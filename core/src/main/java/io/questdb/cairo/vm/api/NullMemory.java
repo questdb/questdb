@@ -31,7 +31,6 @@ import io.questdb.std.Long256Acceptor;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 public class NullMemory implements MemoryMAR, MemoryCARW {
 
@@ -334,7 +333,7 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     }
 
     @Override
-    public long putUtf8(@Nullable Utf8Sequence value) {
+    public long putVarchar(@NotNull Utf8Sequence value, int lo, int hi) {
         throw new UnsupportedOperationException();
     }
 

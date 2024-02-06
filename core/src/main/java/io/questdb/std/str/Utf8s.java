@@ -1,6 +1,8 @@
 package io.questdb.std.str;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -14,6 +16,66 @@ import org.jetbrains.annotations.Nullable;
 public final class Utf8s {
 
     private Utf8s() {
+    }
+
+    public static void appendVarchar(MemoryA dataMem, MemoryA auxMem, @Nullable Utf8Sequence value, boolean isAscii) {
+        if (value != null) {
+            int size = value.size();
+            if (size < 16) {
+                // we can inline up to 15 bytes, which is what we do here
+                int flags = 1; // flags are 4 bits, 1 = inlined
+                if (isAscii) {
+                    flags |= 2; // ascii flag
+                }
+                // size is compressed to 4 bits
+                auxMem.putShort((short) ((flags << 4) | size));
+                auxMem.putVarchar(value, 0, size);
+            } else {
+                if (size >= 268435456) {
+                    throw CairoException.critical(0).put("varchar value is too long [size=").put(size).put(", max=").put(268435456).put(']');
+                }
+
+                int flags = 0;  // not inlined
+                if (isAscii) {
+                    flags |= 2; // ascii flag
+                }
+                auxMem.putInt((flags << 28) | size);
+
+                // value size is over 8 bytes
+                auxMem.putVarchar(value, 0, 8);
+                long offset = dataMem.putVarchar(value, 8, size);
+                if (offset >= 281474976710656L) {
+                    throw CairoException.critical(0).put("varchar data column is too large [offset=").put(offset).put(", max=").put(281474976710656L).put(']');
+                }
+                // write 48 bit offset
+                auxMem.putShort((short) (offset >> 32));
+                auxMem.putInt((int) offset);
+            }
+        } else {
+            // 4 = NULL
+            auxMem.putShort((short) 4);
+        }
+    }
+
+    public static Utf8Sequence readVarchar(long offset, MemoryR dataMem, MemoryR auxMem, int ab) {
+        int flags = auxMem.getByte(offset) >> 4; // 4 bit flags
+
+        if ((flags & 4) == 4) {
+            // null flag is set
+            return null;
+        }
+
+        if ((flags & 1) == 1) {
+            // inlined string
+            int size = auxMem.getShort(offset + Short.BYTES);
+            return auxMem.getUtf8(offset + 8, size);
+        } else {
+            // string is split, prefix is in auxMem and the suffix is in data mem
+
+        }
+
+        return null;
+
     }
 
     public static boolean containsAscii(Utf8Sequence sequence, CharSequence term) {

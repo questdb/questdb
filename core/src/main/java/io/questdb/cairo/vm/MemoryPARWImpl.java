@@ -843,23 +843,21 @@ public class MemoryPARWImpl implements MemoryARW {
     }
 
     @Override
-    public long putUtf8(@Nullable Utf8Sequence value) {
-        final int n;
-        if (value != null && (n = value.size()) != 0) {
+    public long putVarchar(@NotNull Utf8Sequence value, int lo, int hi) {
+        final int n = hi - lo;
+        final long offset = getAppendOffset();
+        if (n > 0) {
             if (pageHi - appendPointer < n) {
                 for (int i = 0; i < n; i++) {
                     putByte(value.byteAt(i));
                 }
             } else {
-                long p = appendPointer;
-                for (int i = 0; i < n; i++) {
-                    Unsafe.getUnsafe().putByte(p++, value.byteAt(i));
-                }
-                appendPointer = p;
+                value.writeTo(appendPointer, lo, hi);
+                appendPointer += n;
 
             }
         }
-        return getAppendOffset();
+        return offset;
     }
 
     @Override

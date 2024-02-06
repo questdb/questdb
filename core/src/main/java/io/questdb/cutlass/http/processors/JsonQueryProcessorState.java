@@ -42,7 +42,10 @@ import io.questdb.mp.SCSequence;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.*;
-import io.questdb.std.str.*;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8s;
 
 import java.io.Closeable;
 
@@ -628,15 +631,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         }
     }
 
-    private void putVarcharValue(HttpChunkedResponse response, int columnIdx) {
-        Utf8Sequence str = record.getVarcharA(columnIdx);
-        if (str == null) {
-            response.putAscii("null");
-        } else {
-            response.putQuote().escapeJsonStr(str).putQuote();
-        }
-    }
-
     private void doQueryRecordPrefix(HttpChunkedResponse response) {
         queryState = QUERY_RECORD_PREFIX;
         response.bookmark();
@@ -818,6 +812,15 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         response.put(rec.getFloat(col), floatScale);
     }
 
+    private void putVarcharValue(HttpChunkedResponse response, int columnIdx) {
+        Utf8Sequence str = record.getVarcharA(columnIdx);
+        if (str == null) {
+            response.putAscii("null");
+        } else {
+            response.putQuote().escapeJsonStr(str).putQuote();
+        }
+    }
+
     private void setupFirstRecord() {
         if (skip > 0) {
             final RecordCursor cursor = this.cursor;
@@ -864,7 +867,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         response.putAscii('{')
                 .putAsciiQuoted("query").putAscii(':').putQuote().escapeJsonStr(query == null ? "" : query).putQuote().putAscii(',')
-                .putAsciiQuoted("error").putAscii(':').putQuote().escapeJsonStr(message).putQuote().putAscii(',')
+                .putAsciiQuoted("error").putAscii(':').putQuote().escapeJsonStr(message == null ? "" : message).putQuote().putAscii(',')
                 .putAsciiQuoted("position").putAscii(':').put(position)
                 .putAscii('}');
         response.sendChunk(true);

@@ -8101,11 +8101,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         void putTimestamp(int columnIndex, long value);
 
-        void putUtf8(int columnIndex, Utf8Sequence value);
-
         void putUuid(int columnIndex, CharSequence uuid);
 
         void putUuidUtf8(int columnIndex, DirectUtf8Sequence uuid);
+
+        void putVarchar(int columnIndex, Utf8Sequence value, boolean isAscii);
     }
 
     private static class NoOpRow implements Row {
@@ -8265,17 +8265,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         @Override
-        public void putUtf8(int columnIndex, Utf8Sequence value) {
-            // no-op
-        }
-
-        @Override
         public void putUuid(int columnIndex, CharSequence uuid) {
             // no-op
         }
 
         @Override
         public void putUuidUtf8(int columnIndex, DirectUtf8Sequence uuid) {
+            // no-op
+        }
+
+        @Override
+        public void putVarchar(int columnIndex, Utf8Sequence value, boolean isAscii) {
             // no-op
         }
     }
@@ -8464,25 +8464,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         @Override
-        public void putUtf8(int columnIndex, Utf8Sequence value) {
-            MemoryA memA = getPrimaryColumn(columnIndex);
-            // 20 bit length, 44 bit offset
-            // length is base 1, e.g. 0 length is stored as 1, 0 = null
-
-            final long len;
-            final long offset;
-            if (value != null) {
-                len = value.size() + 1;
-                offset = memA.putUtf8(value);
-            } else {
-                len = 0;
-                offset = memA.getAppendOffset();
-            }
-            getSecondaryColumn(columnIndex).putLong((len << 44) | offset);
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
         public void putUuid(int columnIndex, CharSequence uuidStr) {
             SqlUtil.implicitCastStrAsUuid(uuidStr, uuid);
             putLong128(columnIndex, uuid.getLo(), uuid.getHi());
@@ -8492,6 +8473,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         public void putUuidUtf8(int columnIndex, DirectUtf8Sequence uuidStr) {
             SqlUtil.implicitCastStrAsUuid(uuidStr, uuid);
             putLong128(columnIndex, uuid.getLo(), uuid.getHi());
+        }
+
+        @Override
+        public void putVarchar(int columnIndex, Utf8Sequence value, boolean isAscii) {
+            Utf8s.appendVarchar(
+                    getPrimaryColumn(columnIndex),
+                    getSecondaryColumn(columnIndex),
+                    value,
+                    isAscii
+            );
+            setRowValueNotNull(columnIndex);
         }
 
         private MemoryA getPrimaryColumn(int columnIndex) {
