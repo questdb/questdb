@@ -5474,5 +5474,3 @@ public class SqlOptimiser implements Mutable {
         limitTypes.add(ColumnType.INT);
     }
 }
-
-

@@ -39,7 +39,6 @@ import static io.questdb.griffin.SqlOptimiser.aliasAppearsInColsAndFuncArgs;
 
 public class SqlOptimiserTest extends AbstractSqlParserTest {
 
-
     @Test
     public void testAliasAppearsInColsAndFuncArgs1() throws Exception, SqlException {
         assertMemoryLeak(() -> {
@@ -49,7 +48,6 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             TestUtils.assertEquals("select-group-by x1, sum(x1) sum from (select-choose [x x1] x x1 from (select [x] from y))", model.toString0());
             ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<ExpressionNode>();
             assert aliasAppearsInColsAndFuncArgs(model, "x1", sqlNodeStack);
-
             assertPlan(query,
                     "" +
                             "GroupBy vectorized: true workers: 1\n" +
@@ -61,7 +59,6 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "            Frame forward scan on: y\n");
         });
     }
-
 
     @Test
     public void testAliasAppearsInColsAndFuncArgs2() throws Exception {
