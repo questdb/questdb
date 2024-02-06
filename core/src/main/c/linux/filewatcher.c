@@ -90,7 +90,7 @@ static uintptr_t setup(const char *filepath) {
     *wd = inotify_add_watch(
         fd, 
         d,
-        IN_ALL_EVENTS
+        IN_MODIFY | IN_CLOSE_WRITE | IN_CREATE
     );
     if (wd == NULL) {
         return 0;
@@ -188,7 +188,7 @@ main(int argc, char* argv[]) {
     for(;;) {
         a = changed(fw_ptr);
         printf("%d\n", a);
-        sleep(4);
+        sleep(1);
     }
    
     teardown(fw_ptr);

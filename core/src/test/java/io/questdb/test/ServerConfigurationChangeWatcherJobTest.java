@@ -120,15 +120,6 @@ public class ServerConfigurationChangeWatcherJobTest {
 
         }
 
-
-
-
-
-
-
-
-
-
     }
 
 }

@@ -56,7 +56,6 @@ public class ServerConfigurationChangeWatcherJob extends SynchronizedJob impleme
     @Override
     protected boolean runSerially() {
         if (Filewatcher.changed(this.watcherAddress)) {
-            LOG.info().$("config file changed. path=").$(this.configFilePath).$();
             if (this.config.reload()) {
                 LOG.info().$("config successfully reloaded").$();
             }

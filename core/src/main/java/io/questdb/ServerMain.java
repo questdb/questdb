@@ -310,6 +310,15 @@ public class ServerMain implements Closeable {
                             sharedPool.assign(telemetryJob);
                         }
                     }
+
+                    // config hot reload
+                    final ServerConfigurationChangeWatcherJob configWatcherJob = new ServerConfigurationChangeWatcherJob(
+                            (ReloadingPropServerConfiguration) config
+                    );
+                    freeOnExit.register(configWatcherJob);
+                    sharedPool.assign(configWatcherJob);
+
+
                 } catch (Throwable thr) {
                     throw new Bootstrap.BootstrapException(thr);
                 }

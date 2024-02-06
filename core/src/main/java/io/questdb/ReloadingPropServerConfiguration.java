@@ -59,6 +59,7 @@ public class ReloadingPropServerConfiguration implements ServerConfiguration {
 
     private ServerConfiguration config;
     private final String root;
+    private Properties properties;
     private final Log log;
     private final BuildInformation buildInformation;
     private final FilesFacade filesFacade;
@@ -75,6 +76,7 @@ public class ReloadingPropServerConfiguration implements ServerConfiguration {
             final BuildInformation buildInformation
     ) throws ServerConfigurationException, JsonException {
         this.config = new PropServerConfiguration(root, properties, env, log, buildInformation);
+        this.properties = properties;
         this.root = root;
         this.log = log;
         this.buildInformation = buildInformation;
@@ -94,6 +96,7 @@ public class ReloadingPropServerConfiguration implements ServerConfiguration {
             FactoryProviderFactory fpf
     ) throws ServerConfigurationException, JsonException {
         this.config = new PropServerConfiguration(root, properties, env, log, buildInformation, filesFacade, microsecondClock, fpf);
+        this.properties = properties;
         this.root = root;
         this.log = log;
         this.buildInformation = buildInformation;
@@ -190,6 +193,10 @@ public class ReloadingPropServerConfiguration implements ServerConfiguration {
             Properties properties,
             @Nullable Map<String, String> env
     ) {
+        if (properties.equals(this.properties)) {
+            return false;
+        }
+
         try {
             this.config = new PropServerConfiguration(
                     this.root,
@@ -206,6 +213,8 @@ public class ReloadingPropServerConfiguration implements ServerConfiguration {
             this.log.error().$(exc.toString());
             return false;
         }
+
+        this.properties = properties;
 
         return true;
     }
