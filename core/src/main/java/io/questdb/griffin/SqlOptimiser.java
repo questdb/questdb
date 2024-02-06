@@ -4682,7 +4682,7 @@ public class SqlOptimiser implements Mutable {
             QueryModel selectedModel = useInnerModel ? innerVirtualModel : groupByModel;
             ObjList<QueryColumn> translationColumns = translatingModel.getColumns();
             boolean appears = false;
-            for (int i = 0; i < translationColumns.size(); i++) {
+            for (int i = 0, n = translationColumns.size(); i < n; i++) {
                 QueryColumn col = translationColumns.getQuick(i);
                 if (!Chars.equalsIgnoreCase(col.getAst().token, col.getAlias())) {
                     appears |= aliasAppearsInColsAndFuncArgs(selectedModel, col.getAlias(), sqlNodeStack);
