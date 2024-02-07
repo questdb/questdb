@@ -4677,7 +4677,7 @@ public class SqlOptimiser implements Mutable {
         // Since the select-choose node's purpose is just to alias the column c, this can be lifted into the parent node in this case, the group by node.
         // This makes the final query like        (select-group-by a, b, c z, count views from (select-choose a, b, c from x))
         // The translation model is now vestigial and can be elided.
-        if (useGroupByModel && sampleBy == null && !translationIsRedundant && !model.containsJoin() && !useWindowModel && SqlUtil.isPlainSelect(model.getNestedModel())) {
+        if (useGroupByModel && sampleBy == null && !translationIsRedundant && !model.containsJoin() && SqlUtil.isPlainSelect(model.getNestedModel())) {
             QueryModel selectedModel = useInnerModel ? innerVirtualModel : groupByModel;
             ObjList<QueryColumn> translationColumns = translatingModel.getColumns();
             boolean appearsInFuncArgs = false;
@@ -4689,7 +4689,7 @@ public class SqlOptimiser implements Mutable {
             }
             if (!appearsInFuncArgs) {
                 mergeInnerVirtualModel(translatingModel, selectedModel);
-                translationIsRedundant = checkIfTranslatingModelIsRedundant(useInnerModel, useGroupByModel, useWindowModel, forceTranslatingModel, false, translatingModel);
+                translationIsRedundant = checkIfTranslatingModelIsRedundant(useInnerModel, true, false, false, false, translatingModel);
             }
         }
 

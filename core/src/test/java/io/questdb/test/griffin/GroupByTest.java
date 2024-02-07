@@ -1686,15 +1686,16 @@ public class GroupByTest extends AbstractCairoTest {
                             "from x\n" +
                             "where a = 1\n" +
                             "group by a,b,z\n";
-            assertPlan(query, "Async JIT Group By workers: 1\n" +
-                    "  keys: [a,b,z]\n" +
-                    "  values: [count(*)]\n" +
-                    "  filter: a=1\n" +
-                    "    DataFrame\n" +
-                    "        Row forward scan\n" +
-                    "        Frame forward scan on: x\n");
-            assertQuery("" +
-                            "a\tb\tz\tviews\n" +
+            assertPlan(
+                    query,
+                    "Async JIT Group By workers: 1\n" +
+                            "  keys: [a,b,z]\n" +
+                            "  values: [count(*)]\n" +
+                            "  filter: a=1\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n");
+            assertQuery("a\tb\tz\tviews\n" +
                             "1\t2\t3\t1\n",
                     query,
                     null,
@@ -1714,15 +1715,17 @@ public class GroupByTest extends AbstractCairoTest {
                             "from x\n" +
                             "where a = 1\n" +
                             "group by a,b,c\n";
-            assertPlan(query, "VirtualRecord\n" +
-                    "  functions: [a,b,c,views]\n" +
-                    "    Async JIT Group By workers: 1\n" +
-                    "      keys: [a,b,c]\n" +
-                    "      values: [count(*)]\n" +
-                    "      filter: a=1\n" +
-                    "        DataFrame\n" +
-                    "            Row forward scan\n" +
-                    "            Frame forward scan on: x\n");
+            assertPlan(
+                    query,
+                    "VirtualRecord\n" +
+                            "  functions: [a,b,c,views]\n" +
+                            "    Async JIT Group By workers: 1\n" +
+                            "      keys: [a,b,c]\n" +
+                            "      values: [count(*)]\n" +
+                            "      filter: a=1\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: x\n");
             assertQuery("a\tb\tz\tviews\n"
                             + "1\t2\t3\t1\n",
                     query,
@@ -1743,13 +1746,15 @@ public class GroupByTest extends AbstractCairoTest {
                             "from x\n" +
                             "where a = 1\n" +
                             "group by a,b,c\n";
-            assertPlan(query, "Async JIT Group By workers: 1\n" +
-                    "  keys: [a,b,c]\n" +
-                    "  values: [count(*)]\n" +
-                    "  filter: a=1\n" +
-                    "    DataFrame\n" +
-                    "        Row forward scan\n" +
-                    "        Frame forward scan on: x\n");
+            assertPlan(
+                    query,
+                    "Async JIT Group By workers: 1\n" +
+                            "  keys: [a,b,c]\n" +
+                            "  values: [count(*)]\n" +
+                            "  filter: a=1\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n");
             assertQuery("" +
                             "a\tb\tc\tviews\n" +
                             "1\t2\t3\t1\n",
@@ -1877,17 +1882,19 @@ public class GroupByTest extends AbstractCairoTest {
                     true
             );
 
-            assertPlan(query, "Sort light\n" +
-                    "  keys: [y_utc_15m]\n" +
-                    "    GroupBy vectorized: false\n" +
-                    "      keys: [y_utc_15m]\n" +
-                    "      values: [sum(case([seller='sf',-1.0*volume_mw,buyer='sf',1.0*volume_mw,0.0]))]\n" +
-                    "        SelectedRecord\n" +
-                    "            Async JIT Filter workers: 1\n" +
-                    "              filter: (seller='sf' or buyer='sf')\n" +
-                    "                DataFrame\n" +
-                    "                    Row forward scan\n" +
-                    "                    Frame forward scan on: trades\n");
+            assertPlan(
+                    query,
+                    "Sort light\n" +
+                            "  keys: [y_utc_15m]\n" +
+                            "    GroupBy vectorized: false\n" +
+                            "      keys: [y_utc_15m]\n" +
+                            "      values: [sum(case([seller='sf',-1.0*volume_mw,buyer='sf',1.0*volume_mw,0.0]))]\n" +
+                            "        SelectedRecord\n" +
+                            "            Async JIT Filter workers: 1\n" +
+                            "              filter: (seller='sf' or buyer='sf')\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: trades\n");
         });
 
 
@@ -1907,19 +1914,20 @@ public class GroupByTest extends AbstractCairoTest {
                             "where a = 1\n" +
                             "group by a,b,z\n" +
                             "order by a,b,z\n";
-            assertPlan(query,"" +
+            assertPlan(
+                    query,
                     "SelectedRecord\n" +
-                    "    Sort light\n" +
-                    "      keys: [a, b, z]\n" +
-                    "        VirtualRecord\n" +
-                    "          functions: [a,sum,z,views,b]\n" +
-                    "            Async JIT Group By workers: 1\n" +
-                    "              keys: [a,z,b]\n" +
-                    "              values: [sum(b),count(*)]\n" +
-                    "              filter: a=1\n" +
-                    "                DataFrame\n" +
-                    "                    Row forward scan\n" +
-                    "                    Frame forward scan on: x\n");
+                            "    Sort light\n" +
+                            "      keys: [a, b, z]\n" +
+                            "        VirtualRecord\n" +
+                            "          functions: [a,sum,z,views,b]\n" +
+                            "            Async JIT Group By workers: 1\n" +
+                            "              keys: [a,z,b]\n" +
+                            "              values: [sum(b),count(*)]\n" +
+                            "              filter: a=1\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: x\n");
             assertQuery("" +
                             "a\tsum\tz\tviews\n" +
                             "1\t2\t3\t1\n" +
@@ -1954,19 +1962,20 @@ public class GroupByTest extends AbstractCairoTest {
                             "GROUP BY TraficSourceID, SearchEngineID, AdvEngineID, Src, Dst\n" +
                             "ORDER BY PageViews DESC\n" +
                             "LIMIT 1000, 1010;";
-            assertPlan(query1, "" +
+            assertPlan(
+                    query1,
                     "Sort light lo: 1000 hi: 1010\n" +
-                    "  keys: [PageViews desc]\n" +
-                    "    VirtualRecord\n" +
-                    "      functions: [TraficSourceID,SearchEngineID,AdvEngineID,Src,Dst,PageViews]\n" +
-                    "        Async JIT Group By workers: 1\n" +
-                    "          keys: [TraficSourceID,SearchEngineID,AdvEngineID,Src,Dst]\n" +
-                    "          values: [count(*)]\n" +
-                    "          filter: (CounterID=62 and IsRefresh=0)\n" +
-                    "            DataFrame\n" +
-                    "                Row forward scan\n" +
-                    "                Interval forward scan on: hits\n" +
-                    "                  intervals: [(\"2013-07-01T00:00:00.000000Z\",\"2013-07-31T23:59:59.000000Z\")]\n");
+                            "  keys: [PageViews desc]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [TraficSourceID,SearchEngineID,AdvEngineID,Src,Dst,PageViews]\n" +
+                            "        Async JIT Group By workers: 1\n" +
+                            "          keys: [TraficSourceID,SearchEngineID,AdvEngineID,Src,Dst]\n" +
+                            "          values: [count(*)]\n" +
+                            "          filter: (CounterID=62 and IsRefresh=0)\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Interval forward scan on: hits\n" +
+                            "                  intervals: [(\"2013-07-01T00:00:00.000000Z\",\"2013-07-31T23:59:59.000000Z\")]\n");
             String query2 =
                     "SELECT TraficSourceID, SearchEngineID, AdvEngineID, CASE WHEN (SearchEngineID = 0 AND AdvEngineID = 0) THEN Referer ELSE '' END AS Src, URL, COUNT(*) AS PageViews\n" +
                             "FROM hits\n" +
@@ -1974,38 +1983,40 @@ public class GroupByTest extends AbstractCairoTest {
                             "GROUP BY TraficSourceID, SearchEngineID, AdvEngineID, Src, URL\n" +
                             "ORDER BY PageViews DESC\n" +
                             "LIMIT 1000, 1010;";
-            assertPlan(query2, "" +
+            assertPlan(
+                    query2,
                     "Sort light lo: 1000 hi: 1010\n" +
-                    "  keys: [PageViews desc]\n" +
-                    "    VirtualRecord\n" +
-                    "      functions: [TraficSourceID,SearchEngineID,AdvEngineID,Src,URL,PageViews]\n" +
-                    "        Async JIT Group By workers: 1\n" +
-                    "          keys: [TraficSourceID,SearchEngineID,AdvEngineID,Src,URL]\n" +
-                    "          values: [count(*)]\n" +
-                    "          filter: (CounterID=62 and IsRefresh=0)\n" +
-                    "            DataFrame\n" +
-                    "                Row forward scan\n" +
-                    "                Interval forward scan on: hits\n" +
-                    "                  intervals: [(\"2013-07-01T00:00:00.000000Z\",\"2013-07-31T23:59:59.000000Z\")]\n");
+                            "  keys: [PageViews desc]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [TraficSourceID,SearchEngineID,AdvEngineID,Src,URL,PageViews]\n" +
+                            "        Async JIT Group By workers: 1\n" +
+                            "          keys: [TraficSourceID,SearchEngineID,AdvEngineID,Src,URL]\n" +
+                            "          values: [count(*)]\n" +
+                            "          filter: (CounterID=62 and IsRefresh=0)\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Interval forward scan on: hits\n" +
+                            "                  intervals: [(\"2013-07-01T00:00:00.000000Z\",\"2013-07-31T23:59:59.000000Z\")]\n");
             String query3 = "SELECT TraficSourceID, SearchEngineID, AdvEngineID, CASE WHEN (SearchEngineID = 0 AND AdvEngineID = 0) THEN Referer ELSE '' END AS Src, URL, COUNT(*) AS PageViews, concat(lpad(cast(TraficSourceId as string), 10, '0'), lpad(cast(Referer as string), 32, '0')) as cat\n" +
                     "FROM hits\n" +
                     "WHERE CounterID = 62 AND EventTime >= '2013-07-01T00:00:00Z' AND EventTime <= '2013-07-31T23:59:59Z' AND IsRefresh = 0\n" +
                     "GROUP BY TraficSourceID, SearchEngineID, AdvEngineID, Src, URL, cat\n" +
                     "ORDER BY PageViews DESC\n" +
                     "LIMIT 1000, 1010;";
-            assertPlan(query3, "" +
+            assertPlan(
+                    query3,
                     "Sort light lo: 1000 hi: 1010\n" +
-                    "  keys: [PageViews desc]\n" +
-                    "    VirtualRecord\n" +
-                    "      functions: [TraficSourceID,SearchEngineID,AdvEngineID,Src,URL,PageViews,cat]\n" +
-                    "        Async JIT Group By workers: 1\n" +
-                    "          keys: [TraficSourceID,SearchEngineID,AdvEngineID,Src,URL,cat]\n" +
-                    "          values: [count(*)]\n" +
-                    "          filter: (CounterID=62 and IsRefresh=0)\n" +
-                    "            DataFrame\n" +
-                    "                Row forward scan\n" +
-                    "                Interval forward scan on: hits\n" +
-                    "                  intervals: [(\"2013-07-01T00:00:00.000000Z\",\"2013-07-31T23:59:59.000000Z\")]\n");
+                            "  keys: [PageViews desc]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [TraficSourceID,SearchEngineID,AdvEngineID,Src,URL,PageViews,cat]\n" +
+                            "        Async JIT Group By workers: 1\n" +
+                            "          keys: [TraficSourceID,SearchEngineID,AdvEngineID,Src,URL,cat]\n" +
+                            "          values: [count(*)]\n" +
+                            "          filter: (CounterID=62 and IsRefresh=0)\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Interval forward scan on: hits\n" +
+                            "                  intervals: [(\"2013-07-01T00:00:00.000000Z\",\"2013-07-31T23:59:59.000000Z\")]\n");
         });
     }
 
@@ -2015,7 +2026,8 @@ public class GroupByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table t as ( select x%2 key1, x%4 key2, x as value from long_sequence(10));");
             String query = "select key1 as k1, key2, key2, count(*) from t group by key2, k1 order by 1, 2";
-            assertQuery("k1\tkey2\tkey21\tcount\n" +
+            assertQuery(
+                    "k1\tkey2\tkey21\tcount\n" +
                     "0\t0\t0\t2\n" +
                     "0\t2\t2\t3\n" +
                     "1\t1\t1\t3\n" +
@@ -2024,19 +2036,19 @@ public class GroupByTest extends AbstractCairoTest {
                     null,
                     true,
                     true);
-            assertPlan(query,
-                    "" +
+            assertPlan(
+                    query,
                     "Sort light\n" +
-                    "  keys: [k1, key2]\n" +
-                    "    VirtualRecord\n" +
-                    "      functions: [k1,key2,key2,count]\n" +
-                    "        Async Group By workers: 1\n" +
-                    "          keys: [k1,key2]\n" +
-                    "          values: [count(*)]\n" +
-                    "          filter: null\n" +
-                    "            DataFrame\n" +
-                    "                Row forward scan\n" +
-                    "                Frame forward scan on: t\n");
+                            "  keys: [k1, key2]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [k1,key2,key2,count]\n" +
+                            "        Async Group By workers: 1\n" +
+                            "          keys: [k1,key2]\n" +
+                            "          values: [count(*)]\n" +
+                            "          filter: null\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: t\n");
         });
     }
 
@@ -2053,9 +2065,9 @@ public class GroupByTest extends AbstractCairoTest {
                     null,
                     true,
                     true);
-            assertPlan(query,
-                    "" +
-                            "Sort light\n" +
+            assertPlan(
+                    query,
+                    "Sort light\n" +
                             "  keys: [column, key, key1 desc]\n" +
                             "    VirtualRecord\n" +
                             "      functions: [key+1,key,key,count]\n" +
@@ -2165,29 +2177,30 @@ public class GroupByTest extends AbstractCairoTest {
                     query1
             );
 
-            assertPlan(query1, "" +
+            assertPlan(
+                    query1,
                     "Sort light\n" +
-                    "  keys: [i]\n" +
-                    "    VirtualRecord\n" +
-                    "      functions: [ts,i,avg,sum,first_value]\n" +
-                    "        GroupBy vectorized: false\n" +
-                    "          keys: [i]\n" +
-                    "          values: [max(ts),avg(j),sum(j::double),first(j::double)]\n" +
-                    "            SelectedRecord\n" +
-                    "                Filter filter: data.ts>=cnt.max-80000\n" +
-                    "                    Hash Join Light\n" +
-                    "                      condition: data.i=cnt.i\n" +
-                    "                        Async Group By workers: 1\n" +
-                    "                          keys: [i]\n" +
-                    "                          values: [max(ts)]\n" +
-                    "                          filter: null\n" +
-                    "                            DataFrame\n" +
-                    "                                Row forward scan\n" +
-                    "                                Frame forward scan on: tab\n" +
-                    "                        Hash\n" +
-                    "                            DataFrame\n" +
-                    "                                Row forward scan\n" +
-                    "                                Frame forward scan on: tab\n"
+                            "  keys: [i]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [ts,i,avg,sum,first_value]\n" +
+                            "        GroupBy vectorized: false\n" +
+                            "          keys: [i]\n" +
+                            "          values: [max(ts),avg(j),sum(j::double),first(j::double)]\n" +
+                            "            SelectedRecord\n" +
+                            "                Filter filter: data.ts>=cnt.max-80000\n" +
+                            "                    Hash Join Light\n" +
+                            "                      condition: data.i=cnt.i\n" +
+                            "                        Async Group By workers: 1\n" +
+                            "                          keys: [i]\n" +
+                            "                          values: [max(ts)]\n" +
+                            "                          filter: null\n" +
+                            "                            DataFrame\n" +
+                            "                                Row forward scan\n" +
+                            "                                Frame forward scan on: tab\n" +
+                            "                        Hash\n" +
+                            "                            DataFrame\n" +
+                            "                                Row forward scan\n" +
+                            "                                Frame forward scan on: tab\n"
             );
 
             String query2 = "select last(ts) as ts, " +
@@ -2214,9 +2227,9 @@ public class GroupByTest extends AbstractCairoTest {
                     false
             );
 
-            assertPlan(query2,
-                    "" +
-                            "Sort light\n" +
+            assertPlan(
+                    query2,
+                    "Sort light\n" +
                             "  keys: [i]\n" +
                             "    GroupBy vectorized: false\n" +
                             "      keys: [i]\n" +
@@ -2243,16 +2256,17 @@ public class GroupByTest extends AbstractCairoTest {
                             "from x\n" +
                             "where a = 1\n" +
                             "group by a,b,z\n";
-            assertPlan(query, "" +
+            assertPlan(
+                    query,
                     "Async JIT Group By workers: 1\n" +
-                    "  keys: [a,b,z]\n" +
-                    "  values: [count(*)]\n" +
-                    "  filter: a=1\n" +
-                    "    DataFrame\n" +
-                    "        Row forward scan\n" +
-                    "        Frame forward scan on: x\n");
-            assertQuery("" +
-                            "a\tb\tz\tviews\n" +
+                            "  keys: [a,b,z]\n" +
+                            "  values: [count(*)]\n" +
+                            "  filter: a=1\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n");
+            assertQuery(
+                    "a\tb\tz\tviews\n" +
                             "1\t2\t3\t1\n",
                     query,
                     null,
@@ -2273,14 +2287,15 @@ public class GroupByTest extends AbstractCairoTest {
                             "from x\n" +
                             "where a = 1\n" +
                             "group by a,B,z\n";
-            assertPlan(query, "" +
+            assertPlan(
+                    query,
                     "Async JIT Group By workers: 1\n" +
-                    "  keys: [a,B,z]\n" +
-                    "  values: [count(*)]\n" +
-                    "  filter: a=1\n" +
-                    "    DataFrame\n" +
-                    "        Row forward scan\n" +
-                    "        Frame forward scan on: x\n");
+                            "  keys: [a,B,z]\n" +
+                            "  values: [count(*)]\n" +
+                            "  filter: a=1\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n");
             assertQuery("" +
                             "a\tB\tz\tviews\n" +
                             "1\t2\t3\t1\n",

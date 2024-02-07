@@ -48,9 +48,9 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             TestUtils.assertEquals("select-group-by x1, sum(x1) sum from (select-choose [x x1] x x1 from (select [x] from y))", model.toString0());
             ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<ExpressionNode>();
             assert aliasAppearsInFuncArgs(model, "x1", sqlNodeStack);
-            assertPlan(query,
-                    "" +
-                            "GroupBy vectorized: true workers: 1\n" +
+            assertPlan(
+                    query,
+                    "GroupBy vectorized: true workers: 1\n" +
                             "  keys: [x1]\n" +
                             "  values: [sum(x1)]\n" +
                             "    SelectedRecord\n" +
@@ -71,9 +71,9 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assert aliasAppearsInFuncArgs(model, "x1", sqlNodeStack);
             assert aliasAppearsInFuncArgs(model.getNestedModel(), "x1", sqlNodeStack);
             assert !aliasAppearsInFuncArgs(model.getNestedModel().getNestedModel(), "x1", sqlNodeStack);
-            assertPlan(query,
-                    "" +
-                            "GroupBy vectorized: false\n" +
+            assertPlan(
+                    query,
+                    "GroupBy vectorized: false\n" +
                             "  keys: [concat,x1]\n" +
                             "  values: [sum(x1)]\n" +
                             "    VirtualRecord\n" +
@@ -94,9 +94,9 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             TestUtils.assertEquals("select-virtual concat(lpad(cast(x1,string),5)) concat, x1 from (select-group-by [x1] x1 from (select-choose [x x1] x x1 from (select [x] from y)))", model.toString0());
             ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<ExpressionNode>();
             assert aliasAppearsInFuncArgs(model, "x1", sqlNodeStack);
-            assertPlan(query,
-                    "" +
-                           "VirtualRecord\n" +
+            assertPlan(
+                    query,
+                    "VirtualRecord\n" +
                             "  functions: [concat([lpad(x1::string,5)]),x1]\n" +
                             "    GroupBy vectorized: true workers: 1\n" +
                             "      keys: [x1]\n" +
@@ -118,9 +118,9 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             TestUtils.assertEquals("select-group-by x1, sum(x1) sum, max(x1) max from (select-choose [x X1] x X1 from (select [x] from y))", model.toString0());
             ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<ExpressionNode>();
             assert aliasAppearsInFuncArgs(model, "x1", sqlNodeStack);
-            assertPlan(query,
-                    "" +
-                            "GroupBy vectorized: true workers: 1\n" +
+            assertPlan(
+                    query,
+                    "GroupBy vectorized: true workers: 1\n" +
                             "  keys: [X1]\n" +
                             "  values: [sum(X1),max(X1)]\n" +
                             "    SelectedRecord\n" +
@@ -140,9 +140,9 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             TestUtils.assertEquals("select-group-by sum(x1) sum from (select-choose [x x1] x x1 from (select [x] from y))", model.toString0());
             ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<ExpressionNode>();
             assert aliasAppearsInFuncArgs(model, "x1", sqlNodeStack);
-            assertPlan(query,
-                    "" +
-                            "GroupBy vectorized: true\n" +
+            assertPlan(
+                    query,
+                    "GroupBy vectorized: true\n" +
                             "  values: [sum(x1)]\n" +
                             "    SelectedRecord\n" +
                             "        DataFrame\n" +
@@ -161,9 +161,9 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             TestUtils.assertEquals("select-choose x1 from (select-choose [x x1] x x1 from (select [x] from y))", model.toString0());
             ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<ExpressionNode>();
             assert !aliasAppearsInFuncArgs(model, "x1", sqlNodeStack);
-            assertPlan(query,
-                    "" +
-                            "SelectedRecord\n" +
+            assertPlan(
+                    query,
+                    "SelectedRecord\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: y\n");
