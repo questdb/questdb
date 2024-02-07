@@ -163,7 +163,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             LOG.debug().$("offsetMem.of [columnName=").$(path).$(",offsetMemSize=").$(offsetMemSize).I$();
             this.offsetMem.of(ff, path, offsetMemSize, offsetMemSize, MemoryTag.MMAP_INDEX_READER);
             this.symbolCapacity = offsetMem.getInt(SymbolMapWriter.HEADER_CAPACITY);
-            assert this.symbolCapacity > 0;
+            assert this.symbolCapacity > 0 : "symbol capacity must be greater than zero: " + this.symbolCapacity;
             this.cached = offsetMem.getBool(SymbolMapWriter.HEADER_CACHE_ENABLED);
             this.nullValue = offsetMem.getBool(SymbolMapWriter.HEADER_NULL_FLAG);
 

@@ -71,15 +71,121 @@ public class SymbolMapTest extends AbstractCairoTest {
         }
     }
 
+    public static void create2(Path path, CharSequence name, int symbolCapacity, boolean useCache) {
+        int plen = path.size();
+        try {
+            try (
+                    MemoryCMARW mem = Vm.getCMARWInstance()
+            ) {
+                FilesFacade ff = configuration.getFilesFacade();
+                MapWriter.createSymbolMapFiles(ff, mem, path, name, -1, symbolCapacity, true);
+            }
+        } finally {
+            path.trimTo(plen);
+        }
+    }
+
+    @Test
+    public void testRollback2() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            int N = 4096;
+            try (Path path = new Path().of(configuration.getRoot())) {
+                create2(path, "x", N, true);
+                SymbolMapWriter w = new SymbolMapWriter(
+                        configuration,
+                        path,
+                        "x",
+                        COLUMN_NAME_TXN_NONE,
+                        0,
+                        -1,
+                        NOOP_COLLECTOR
+                );
+                w.put("DCW");
+                w.put("");
+                w.put("NS");
+                w.put("");
+                w.put("DCW");
+                w.put("G");
+                w.put("");
+                w.put("LK");
+                w.put("RFX");
+                w.put("");
+                w.put("M");
+                w.put("UXX");
+                w.put("QNN");
+                w.put("");
+                w.put("");
+                w.put("");
+                w.put("E");
+                w.put("HD");
+                w.put("FR");
+                w.put("MOH");
+                w.put("XZI");
+                w.put("");
+                w.put("HN");
+                w.put("J");
+                w.put("");
+                w.put("H");
+                w.put("IM");
+                w.put("");
+                w.put("QNN");
+                w.put("");
+
+                w.close();
+                w = new SymbolMapWriter(
+                        configuration,
+                        path,
+                        "x",
+                        COLUMN_NAME_TXN_NONE,
+                        0,
+                        -1,
+                        NOOP_COLLECTOR
+                );
+                w.put("DCW");
+                w.put("");
+                w.put("NS");
+                w.put("");
+                w.put("DCW");
+                w.put("G");
+                w.put("");
+                w.put("LK");
+                w.put("RFX");
+                w.put("");
+                w.put("M");
+                w.put("UXX");
+                w.put("QNN");
+                w.put("");
+                w.put("");
+                w.put("");
+                w.put("E");
+                w.put("HD");
+                w.put("FR");
+                w.put("MOH");
+                w.put("XZI");
+                w.put("");
+                w.put("HN");
+                w.put("J");
+                w.put("");
+                w.put("H");
+                w.put("IM");
+                w.put("");
+                w.put("QNN");
+                w.put("");
+
+                w.close();
+            }
+        });
+    }
+
     @Test
     public void testRollbackFuzz() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
-        int symbols = rnd.nextInt(1024);
+        int symbols = 64 + rnd.nextInt(1024);
 
-        int resets = rnd.nextInt(10);
+        int resets = 10 + rnd.nextInt(10);
 
         TestUtils.assertMemoryLeak(() -> {
-            int N = 1000;
+            int N = 128;
             try (Path path = new Path().of(configuration.getRoot())) {
                 create(path, "x", N, true);
 
@@ -92,10 +198,10 @@ public class SymbolMapTest extends AbstractCairoTest {
                         -1,
                         NOOP_COLLECTOR
                 );
-                addRange(w, 0, symbols);
+                addRange(w, 0, rnd.nextInt(symbols), rnd);
 
                 for (int i = 0; i < resets; i++) {
-                    int resetTo = Math.max(0, rnd.nextInt(symbols + 100) - 100);
+                    int resetTo = 0;//Math.max(0, rnd.nextInt(symbols + 100) - 100);
                     w.close();
                     w = new SymbolMapWriter(
                             configuration,
@@ -106,16 +212,21 @@ public class SymbolMapTest extends AbstractCairoTest {
                             -1,
                             NOOP_COLLECTOR
                     );
-                    addRange(w, resetTo, symbols);
+                    addRange(w, resetTo, Math.max(resetTo, rnd.nextInt(symbols)), rnd);
                 }
                 w.close();
             }
         });
     }
 
-    private void addRange(SymbolMapWriter w, int lo, int hi) {
+    private void addRange(SymbolMapWriter w, int lo, int hi, Rnd rnd) {
         for (int i = lo; i < hi; i++) {
-            w.put("sym" + i + 100);
+            int id = i + rnd.nextInt(hi * 2);
+            if (id % 3 == 0) {
+                w.put("");
+            } else {
+                w.put("sym" + id);
+            }
         }
     }
 

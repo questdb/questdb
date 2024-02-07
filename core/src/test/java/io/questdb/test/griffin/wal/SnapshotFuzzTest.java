@@ -63,7 +63,7 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testFullFuzz() throws Exception {
-        Rnd rnd = generateRandom(LOG, 258822422220250L, 1707249008916L);
+        Rnd rnd = generateRandom(LOG);
         fullFuzz(rnd);
         runFuzzWithSnapshot(rnd);
     }
@@ -175,7 +175,7 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
 
             // Restore snapshot here
             restoreSnapshot();
-            engine.notifyWalTxnRepublisher(walTable);
+            engine.notifyWalTxnRepublisher(engine.verifyTableName(tableNameWal));
             if (afterSnapshot.size() > 0) {
                 fuzzer.applyWal(afterSnapshot, tableNameWal, 1, rnd);
             } else {

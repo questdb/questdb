@@ -33,6 +33,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.SingleCharCharSequence;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
@@ -85,6 +86,8 @@ public class SymbolMapWriter implements Closeable, MapWriter {
                 throw CairoException.critical(0).put("SymbolMap is too short: ").put(path);
             }
 
+            LOG.info().$("opening symbol [path=").$(path).$(", symbolCount=").$(symbolCount).$(']').$();
+
             // open "offset" memory and make sure we start appending from where
             // we left off. Where we left off is stored externally to symbol map
             this.offsetMem = Vm.getWholeMARWInstance(
@@ -96,6 +99,11 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             );
             // formula for calculating symbol capacity needs to be in agreement with symbol reader
             this.symbolCapacity = offsetMem.getInt(HEADER_CAPACITY);
+
+            LOG.info().$("opening symbol [path=").$(path).$(", symbolCount=").$(symbolCount).$(", capacity=").$(symbolCapacity).$();
+            if (Utf8s.containsAscii(path, "new_col_100")) {
+                int i = 0;
+            }
             assert symbolCapacity > 0;
             final boolean useCache = offsetMem.getBool(HEADER_CACHE_ENABLED);
             this.offsetMem.jumpTo(keyToOffset(symbolCount) + Long.BYTES);
@@ -105,8 +113,6 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             this.indexWriter = new BitmapIndexWriter(configuration);
             this.indexWriter.of(path.trimTo(plen), name, columnNameTxn);
 
-            // trust _txn file, not the key count in the files
-            indexWriter.rollbackValues(keyToOffset(symbolCount - 1));
 
             // this is the place where symbol values are stored
             this.charMem = Vm.getWholeMARWInstance(
@@ -139,6 +145,13 @@ public class SymbolMapWriter implements Closeable, MapWriter {
                     .$(", cache=").$(cache != null)
                     .$(", capacity=").$(symbolCapacity)
                     .I$();
+
+            if (symbolCount == 0) {
+                indexWriter.reset();
+            } else {
+                // trust _txn file, not the key count in the files
+                indexWriter.rollbackValues(keyToOffset(symbolCount - 1));
+            }
         } catch (Throwable e) {
             close();
             throw e;
