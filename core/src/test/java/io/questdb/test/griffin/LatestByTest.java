@@ -39,7 +39,8 @@ public class LatestByTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllFilteredResolvesSymbol() throws Exception {
-        assertQuery("devid\taddress\tvalue\tvalue_decimal\tcreated_at\tts\n",
+        assertQuery(
+                "devid\taddress\tvalue\tvalue_decimal\tcreated_at\tts\n",
                 "SELECT * FROM history_P4v\n" +
                         "WHERE\n" +
                         "  devid = 'LLLAHFZHYA'\n" +
@@ -51,7 +52,10 @@ public class LatestByTest extends AbstractCairoTest {
                         "  value_decimal BYTE,\n" +
                         "  created_at DATE,\n" +
                         "  ts TIMESTAMP\n" +
-                        ") timestamp(ts) PARTITION BY DAY;", "ts", true, false
+                        ") timestamp(ts) PARTITION BY DAY;",
+                "ts",
+                true,
+                false
         );
     }
 
@@ -115,17 +119,21 @@ public class LatestByTest extends AbstractCairoTest {
     @Test
     public void testLatestByAllIndexedWithPrefixes() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table pos_test\n" +
-                    "( \n" +
-                    "  ts timestamp,\n" +
-                    "  device_id symbol index,\n" +
-                    "  g8c geohash(8c)\n" +
-                    ") timestamp(ts) partition by day;");
+            compile(
+                    "create table pos_test\n" +
+                            "( \n" +
+                            "  ts timestamp,\n" +
+                            "  device_id symbol index,\n" +
+                            "  g8c geohash(8c)\n" +
+                            ") timestamp(ts) partition by day;"
+            );
 
-            compile("insert into pos_test values " +
-                    "('2021-09-02T00:00:00.000000', 'device_1', #46swgj10)," +
-                    "('2021-09-02T00:00:00.000001', 'device_2', #46swgj10)," +
-                    "('2021-09-02T00:00:00.000002', 'device_1', #46swgj12)");
+            compile(
+                    "insert into pos_test values " +
+                            "('2021-09-02T00:00:00.000000', 'device_1', #46swgj10)," +
+                            "('2021-09-02T00:00:00.000001', 'device_2', #46swgj10)," +
+                            "('2021-09-02T00:00:00.000002', 'device_1', #46swgj12)"
+            );
 
             String query = "SELECT *\n" +
                     "FROM pos_test\n" +
@@ -143,10 +151,14 @@ public class LatestByTest extends AbstractCairoTest {
                             "      intervals: [(\"2021-09-02T00:00:00.000000Z\",\"2021-09-02T23:59:59.999999Z\")]\n"
             );
 
-            //prefix filter is applied AFTER latest on 
-            assertQuery("ts\tdevice_id\tg8c\n" +
+            //prefix filter is applied AFTER latest on
+            assertQuery(
+                    "ts\tdevice_id\tg8c\n" +
                             "2021-09-02T00:00:00.000001Z\tdevice_2\t46swgj10\n",
-                    query, "ts", true, true
+                    query,
+                    "ts",
+                    true,
+                    true
             );
         });
     }
@@ -498,6 +510,54 @@ public class LatestByTest extends AbstractCairoTest {
                     "2020-05-06T00:00:00.000000Z\t2020-05-05T00:00:00.000000Z\t142.0\n";
 
             assertQuery(expected, query, "version", true, true);
+        });
+    }
+
+    @Test
+    public void testLatestBySubQueryInitializesSymbolTables() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE 'offer_exchanges' (" +
+                    "pair SYMBOL CAPACITY 100000 INDEX, " +
+                    "rate DOUBLE, " +
+                    "volume_a DOUBLE, " +
+                    "volume_b DOUBLE, " +
+                    "buyer STRING, " +
+                    "seller STRING, " +
+                    "taker STRING, " +
+                    "provider STRING, " +
+                    "autobridged STRING, " +
+                    "tx_hash STRING, " +
+                    "ledger_index INT, " +
+                    "sequence INT, " +
+                    "ts TIMESTAMP" +
+                    ") TIMESTAMP(ts) PARTITION BY MONTH;");
+            insert("insert into offer_exchanges values ('abc', 1.1, 1.1, 1.1, 'abc', 'def', 'zxy', 'a', 'some hash', 'foo', 123, 5, '2024-01-29T15:00:00.000Z')");
+            insert("insert into offer_exchanges values ('abc', 1.1, 1.1, 1.1, 'abc', 'def', 'zxy', 'a', 'some hash', 'foo', 123, 5, '2024-01-30T15:01:00.000Z')");
+
+            assertQuery(
+                    "pair\topen\tclose\tlow\thigh\tbase_volume\tcounter_volume\texchanges\tprev_rate\tprev_ts\n" +
+                            "abc\t1.1\t1.1\t1.1\t1.1\t1.1\t1.1\t1\t1.1\t2024-01-29T15:00:00.000000Z\n",
+                    "WITH first_selection as (" +
+                            "  SELECT pair, first(rate) AS open, last(rate) AS close, min(rate) AS low, max(rate) AS high, " +
+                            "         sum(volume_a) AS base_volume, sum(volume_b) AS counter_volume, count(*) AS exchanges " +
+                            "  FROM 'offer_exchanges' " +
+                            "  WHERE ts >= '2024-01-30T15:00:00.000Z'" +
+                            "), " +
+                            "second_selection as (" +
+                            "  SELECT pair, rate as prev_rate, ts as prev_ts " +
+                            "  FROM 'offer_exchanges' " +
+                            "  WHERE ts < '2024-01-30T15:00:00.000Z' and pair in (SELECT pair FROM first_selection) " +
+                            "  LATEST ON ts PARTITION BY pair " +
+                            ") " +
+                            "SELECT first_selection.pair, first_selection.open, first_selection.close, first_selection.low, first_selection.high," +
+                            "       first_selection.base_volume, first_selection.counter_volume, first_selection.exchanges, second_selection.prev_rate, " +
+                            "       second_selection.prev_ts " +
+                            "FROM first_selection " +
+                            "JOIN second_selection on (pair);",
+                    null,
+                    false,
+                    true
+            );
         });
     }
 

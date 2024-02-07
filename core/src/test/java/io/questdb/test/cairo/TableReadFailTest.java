@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -46,7 +47,7 @@ import org.junit.Test;
 public class TableReadFailTest extends AbstractCairoTest {
     @Test
     public void testMetaFileCannotOpenConstructor() throws Exception {
-        spinLockTimeout = 1;
+        node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 1);
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public int openRO(LPSZ name) {
@@ -61,7 +62,7 @@ public class TableReadFailTest extends AbstractCairoTest {
 
     @Test
     public void testMetaFileMissingConstructor() throws Exception {
-        spinLockTimeout = 1;
+        node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 1);
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public int openRO(LPSZ path) {
@@ -77,7 +78,7 @@ public class TableReadFailTest extends AbstractCairoTest {
     @Test
     public void testReloadTimeout() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            spinLockTimeout = 1;
+            node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 1);
             String x = "x";
             try (TableModel model = new TableModel(configuration, x, PartitionBy.NONE)
                     .col("a", ColumnType.INT)

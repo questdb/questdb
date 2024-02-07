@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.wal;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.log.Log;
@@ -96,7 +97,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
     }
 
     private static void setZeroWalPurgeInterval() {
-        node1.getConfigurationOverrides().setWalPurgeInterval(0);
+        node1.setProperty(PropertyKey.CAIRO_WAL_PURGE_INTERVAL, 0L);
     }
 
     protected void fullRandomFuzz(Rnd rnd) throws Exception {
@@ -172,7 +173,8 @@ public class AbstractFuzzTest extends AbstractCairoTest {
             sharedWorkerPool.start(LOG);
 
             try {
-                configOverrideO3ColumnMemorySize(rnd.nextInt(16 * 1024 * 1024));
+                int size = rnd.nextInt(16 * 1024 * 1024);
+                node1.setProperty(PropertyKey.DEBUG_CAIRO_O3_COLUMN_MEMORY_SIZE, size);
                 setZeroWalPurgeInterval();
                 fuzzer.runFuzz(getTestName(), rnd);
             } finally {
@@ -204,22 +206,22 @@ public class AbstractFuzzTest extends AbstractCairoTest {
     }
 
     protected void setFuzzProperties(long maxApplyTimePerTable, long splitPartitionThreshold, int o3PartitionSplitMaxCount) {
-        node1.getConfigurationOverrides().setWalApplyTableTimeQuota(maxApplyTimePerTable);
-        node1.getConfigurationOverrides().setPartitionO3SplitThreshold(splitPartitionThreshold);
-        node1.getConfigurationOverrides().setO3PartitionSplitMaxCount(o3PartitionSplitMaxCount);
+        node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, maxApplyTimePerTable);
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, splitPartitionThreshold);
+        node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, o3PartitionSplitMaxCount);
     }
 
     protected void setFuzzProperties(long maxApplyTimePerTable, long splitPartitionThreshold, int o3PartitionSplitMaxCount, long walMaxLagSize, int maxWalFdCache) {
-        node1.getConfigurationOverrides().setWalApplyTableTimeQuota(maxApplyTimePerTable);
-        node1.getConfigurationOverrides().setPartitionO3SplitThreshold(splitPartitionThreshold);
-        node1.getConfigurationOverrides().setO3PartitionSplitMaxCount(o3PartitionSplitMaxCount);
-        node1.getConfigurationOverrides().setWalMaxLagSize(walMaxLagSize);
-        node1.getConfigurationOverrides().setWalMaxSegmentFileDescriptorsCache(maxWalFdCache);
+        node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, maxApplyTimePerTable);
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, splitPartitionThreshold);
+        node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, o3PartitionSplitMaxCount);
+        node1.setProperty(PropertyKey.CAIRO_WAL_MAX_LAG_SIZE, walMaxLagSize);
+        node1.setProperty(PropertyKey.CAIRO_WAL_MAX_SEGMENT_FILE_DESCRIPTORS_CACHE, maxWalFdCache);
     }
 
     protected void setRandomAppendPageSize(Rnd rnd) {
         int minPage = 18;
-        dataAppendPageSize = 1L << (minPage + rnd.nextInt(22 - minPage)); // MAX page size 4Mb
-        LOG.info().$("dataAppendPageSize=").$(dataAppendPageSize).$();
+        setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, 1L << (minPage + rnd.nextInt(22 - minPage))); // MAX page size 4Mb
+        LOG.info().$("dataAppendPageSize=").$(configuration.getDataAppendPageSize()).$();
     }
 }
