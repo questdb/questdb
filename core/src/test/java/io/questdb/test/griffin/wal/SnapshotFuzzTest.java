@@ -130,6 +130,7 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
         LOG.info().$("recovering from snapshot").$();
         engine.recoverSnapshot();
         engine.getTableSequencerAPI().releaseAll();
+        engine.reloadTableNames();
     }
 
     protected void runFuzzWithSnapshot(Rnd rnd) throws Exception {
