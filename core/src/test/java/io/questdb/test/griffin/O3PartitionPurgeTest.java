@@ -24,12 +24,14 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.Overrides;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -397,7 +399,8 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
     @Test
     public void testPartitionSplitWithReaders() throws Exception {
         assertMemoryLeak(() -> {
-            node1.getConfigurationOverrides().setPartitionO3SplitThreshold(100);
+            Overrides overrides = node1.getConfigurationOverrides();
+            overrides.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 100);
 
             TableToken token;
             try (TableModel tm = new TableModel(configuration, "tbl", PartitionBy.DAY)

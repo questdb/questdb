@@ -354,7 +354,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.latest.by.row.count\tQDB_CAIRO_SQL_LATEST_BY_ROW_COUNT\t1000\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.map.max.pages\tQDB_CAIRO_SQL_MAP_MAX_PAGES\t2147483647\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.map.max.resizes\tQDB_CAIRO_SQL_MAP_MAX_RESIZES\t2147483647\tdefault\tfalse\tfalse\n" +
-                                    "cairo.sql.unordered.map.max.entry.size\tQDB_CAIRO_SQL_UNORDERED_MAP_MAX_ENTRY_SIZE\t24\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.unordered.map.max.entry.size\tQDB_CAIRO_SQL_UNORDERED_MAP_MAX_ENTRY_SIZE\t32\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.max.negative.limit\tQDB_CAIRO_SQL_MAX_NEGATIVE_LIMIT\t10000\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.max.symbol.not.equals.count\tQDB_CAIRO_SQL_MAX_SYMBOL_NOT_EQUALS_COUNT\t100\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.page.frame.max.rows\tQDB_CAIRO_SQL_PAGE_FRAME_MAX_ROWS\t1000000\tdefault\tfalse\tfalse\n" +
@@ -424,9 +424,6 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "circuit.breaker.buffer.size\tQDB_CIRCUIT_BREAKER_BUFFER_SIZE\t64\tdefault\tfalse\tfalse\n" +
                                     "circuit.breaker.throttle\tQDB_CIRCUIT_BREAKER_THROTTLE\t2000000\tdefault\tfalse\tfalse\n" +
                                     "config.validation.strict\tQDB_CONFIG_VALIDATION_STRICT\tfalse\tdefault\tfalse\tfalse\n" +
-                                    "debug.force.recv.fragmentation.chunk.size\tQDB_DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE\t2147483647\tdefault\tfalse\tfalse\n" +
-                                    "debug.wal.purge.wait.before.delete\tQDB_DEBUG_WAL_PURGE_WAIT_BEFORE_DELETE\t0\tdefault\tfalse\tfalse\n" +
-                                    "debug.force.send.fragmentation.chunk.size\tQDB_DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE\t2147483647\tdefault\tfalse\tfalse\n" +
                                     "http.allow.deflate.before.send\tQDB_HTTP_ALLOW_DEFLATE_BEFORE_SEND\tfalse\tdefault\tfalse\tfalse\n" +
                                     "http.bind.to\tQDB_HTTP_BIND_TO\t0.0.0.0:9010\tconf\tfalse\tfalse\n" +
                                     "http.busy.retry.exponential.wait.multiplier\tQDB_HTTP_BUSY_RETRY_EXPONENTIAL_WAIT_MULTIPLIER\t2.0\tdefault\tfalse\tfalse\n" +
@@ -627,7 +624,8 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "wal.apply.worker.haltOnError\tQDB_WAL_APPLY_WORKER_HALTONERROR\tfalse\tdefault\tfalse\tfalse\n" +
                                     "wal.apply.worker.sleep.threshold\tQDB_WAL_APPLY_WORKER_SLEEP_THRESHOLD\t10000\tdefault\tfalse\tfalse\n" +
                                     "wal.apply.worker.sleep.timeout\tQDB_WAL_APPLY_WORKER_SLEEP_TIMEOUT\t10\tdefault\tfalse\tfalse\n" +
-                                    "wal.apply.worker.yield.threshold\tQDB_WAL_APPLY_WORKER_YIELD_THRESHOLD\t10\tdefault\tfalse\tfalse")
+                                    "wal.apply.worker.yield.threshold\tQDB_WAL_APPLY_WORKER_YIELD_THRESHOLD\t10\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.max.recompile.attempts\tQDB_CAIRO_SQL_MAX_RECOMPILE_ATTEMPTS\t10\tdefault\tfalse\tfalse")
                                     .split("\n");
 
                     final Set<String> missingProps = new HashSet<>();

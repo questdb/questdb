@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.wal;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericTableRecordMetadata;
 import io.questdb.cairo.PartitionBy;
@@ -46,7 +47,7 @@ import java.util.concurrent.atomic.AtomicReference;
 public class TableSequencerImplTest extends AbstractCairoTest {
     @BeforeClass
     public static void setUpStatic() throws Exception {
-        recreateDistressedSequencerAttempts = Integer.MAX_VALUE;
+        setProperty(PropertyKey.CAIRO_WAL_RECREATE_DISTRESSED_SEQUENCER_ATTEMPTS, Integer.MAX_VALUE);
         AbstractCairoTest.setUpStatic();
     }
 

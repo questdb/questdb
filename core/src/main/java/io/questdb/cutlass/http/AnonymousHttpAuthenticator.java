@@ -24,12 +24,20 @@
 
 package io.questdb.cutlass.http;
 
+import io.questdb.std.ObjList;
+import org.jetbrains.annotations.Nullable;
+
 public class AnonymousHttpAuthenticator implements HttpAuthenticator {
     public static final AnonymousHttpAuthenticator INSTANCE = new AnonymousHttpAuthenticator();
 
     @Override
     public boolean authenticate(HttpRequestHeader headers) {
         return true;
+    }
+
+    @Override
+    public @Nullable ObjList<CharSequence> getGroups() {
+        return null;
     }
 
     @Override

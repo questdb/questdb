@@ -29,15 +29,11 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.map.MapKey;
-import io.questdb.cairo.map.MapRecord;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.map.Unordered16Map;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.std.Chars;
-import io.questdb.std.Long256Impl;
-import io.questdb.std.LongList;
-import io.questdb.std.Rnd;
+import io.questdb.std.*;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -45,7 +41,6 @@ import org.junit.Test;
 
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Objects;
 
 public class Unordered16MapTest extends AbstractCairoTest {
 
@@ -216,74 +211,37 @@ public class Unordered16MapTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFirstLongZero() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            ArrayColumnTypes keyTypes = new ArrayColumnTypes();
-            keyTypes.add(ColumnType.LONG);
-            keyTypes.add(ColumnType.LONG);
-
-            SingleColumnType valueTypes = new SingleColumnType(ColumnType.LONG);
-
-            try (Unordered16Map map = new Unordered16Map(keyTypes, valueTypes, 64, 0.8, Integer.MAX_VALUE)) {
-                final int N = 100000;
-                for (int i = 0; i < N; i++) {
-                    MapKey keyA = map.withKey();
-                    keyA.putLong(0);
-                    keyA.putLong(i);
-
-                    MapValue valueA = keyA.createValue();
-                    Assert.assertTrue(valueA.isNew());
-                    valueA.putLong(0, i);
-                }
-
-                // assert map contents
-                RecordCursor cursor = map.getCursor();
-                MapRecord record = map.getRecord();
-                while (cursor.hasNext()) {
-                    Assert.assertEquals(0, record.getLong(1));
-                    Assert.assertEquals(record.getLong(0), record.getLong(2));
-                }
-            }
-        });
-    }
-
-    @Test
     public void testFuzz() throws Exception {
         final Rnd rnd = TestUtils.generateRandom(LOG);
         TestUtils.assertMemoryLeak(() -> {
-            ArrayColumnTypes keyTypes = new ArrayColumnTypes();
-            keyTypes.add(ColumnType.LONG);
-            keyTypes.add(ColumnType.LONG);
-
+            SingleColumnType keyTypes = new SingleColumnType(ColumnType.LONG128);
             SingleColumnType valueTypes = new SingleColumnType(ColumnType.LONG);
 
-            HashMap<LongTuple, Long> oracle = new HashMap<>();
+            HashMap<Uuid, Long> oracle = new HashMap<>();
             try (Unordered16Map map = new Unordered16Map(keyTypes, valueTypes, 64, 0.8, Integer.MAX_VALUE)) {
                 final int N = 100000;
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
                     long l0 = rnd.nextLong();
                     long l1 = rnd.nextLong();
-                    key.putLong(l0);
-                    key.putLong(l1);
+                    key.putLong128(l0, l1);
 
                     MapValue value = key.createValue();
-                    value.putLong(0, l0 + l1);
+                    value.putLong(0, l1);
 
-                    oracle.put(new LongTuple(l0, l1), l0 + l1);
+                    oracle.put(new Uuid(l0, l1), l1);
                 }
 
                 Assert.assertEquals(oracle.size(), map.size());
 
                 // assert map contents
-                for (Map.Entry<LongTuple, Long> e : oracle.entrySet()) {
+                for (Map.Entry<Uuid, Long> e : oracle.entrySet()) {
                     MapKey key = map.withKey();
-                    key.putLong(e.getKey().l0);
-                    key.putLong(e.getKey().l1);
+                    key.putLong128(e.getKey().getLo(), e.getKey().getHi());
 
                     MapValue value = key.findValue();
                     Assert.assertFalse(value.isNew());
-                    Assert.assertEquals(e.getKey().l0 + e.getKey().l1, value.getLong(0));
+                    Assert.assertEquals(e.getKey().getHi(), value.getLong(0));
                     Assert.assertEquals((long) e.getValue(), value.getLong(0));
                 }
             }
@@ -318,7 +276,7 @@ public class Unordered16MapTest extends AbstractCairoTest {
 
     @Test
     public void testTwoKeysIncludingZero() {
-        try (Unordered16Map map = new Unordered16Map(new SingleColumnType(ColumnType.LONG128), new SingleColumnType(ColumnType.LONG), 16, 0.8, 24)) {
+        try (Unordered16Map map = new Unordered16Map(new SingleColumnType(ColumnType.UUID), new SingleColumnType(ColumnType.LONG), 16, 0.8, 24)) {
             MapKey key = map.withKey();
             key.putLong128(0, 0);
             MapValue value = key.createValue();
@@ -358,62 +316,20 @@ public class Unordered16MapTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testUnsupportedKeyBinary() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (Unordered16Map ignore = new Unordered16Map(new SingleColumnType(ColumnType.BINARY), new SingleColumnType(ColumnType.LONG), 64, 0.5, 1)) {
-                Assert.fail();
-            } catch (CairoException e) {
-                Assert.assertTrue(Chars.contains(e.getMessage(), "unexpected key size"));
-            }
-        });
-    }
-
-    @Test
-    public void testUnsupportedKeyLong256() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (Unordered16Map ignore = new Unordered16Map(new SingleColumnType(ColumnType.LONG256), new SingleColumnType(ColumnType.LONG), 64, 0.5, 1)) {
-                Assert.fail();
-            } catch (CairoException e) {
-                Assert.assertTrue(Chars.contains(e.getMessage(), "unexpected key size"));
-            }
-        });
-    }
-
-    @Test
-    public void testUnsupportedKeyString() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (Unordered16Map ignore = new Unordered16Map(new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), 64, 0.5, 1)) {
-                Assert.fail();
-            } catch (CairoException e) {
-                Assert.assertTrue(Chars.contains(e.getMessage(), "unexpected key size"));
-            }
-        });
-    }
-
-    private static class LongTuple {
-        final long l0;
-        final long l1;
-
-        private LongTuple(long l0, long l1) {
-            this.l0 = l0;
-            this.l1 = l1;
-        }
-
-        @Override
-        public boolean equals(Object o) {
-            if (this == o) {
-                return true;
-            }
-            if (o == null || getClass() != o.getClass()) {
-                return false;
-            }
-            LongTuple longTuple = (LongTuple) o;
-            return l0 == longTuple.l0 && l1 == longTuple.l1;
-        }
-
-        @Override
-        public int hashCode() {
-            return Objects.hash(l0, l1);
+    public void testUnsupportedKeyTypes() throws Exception {
+        short[] columnTypes = new short[]{
+                ColumnType.BINARY,
+                ColumnType.STRING,
+                ColumnType.LONG256,
+        };
+        for (short columnType : columnTypes) {
+            TestUtils.assertMemoryLeak(() -> {
+                try (Unordered16Map ignore = new Unordered16Map(new SingleColumnType(columnType), new SingleColumnType(ColumnType.LONG), 64, 0.5, 1)) {
+                    Assert.fail();
+                } catch (CairoException e) {
+                    Assert.assertTrue(Chars.contains(e.getMessage(), "unexpected key size"));
+                }
+            });
         }
     }
 }

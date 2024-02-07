@@ -208,6 +208,7 @@ public class Unordered16Map implements Map, Reopenable {
         return cursor.init(memStart, memLimit, 0, size);
     }
 
+    @Override
     public int getKeyCapacity() {
         return keyCapacity;
     }
@@ -220,20 +221,27 @@ public class Unordered16Map implements Map, Reopenable {
     @Override
     public void merge(Map srcMap, MapValueMergeFunction mergeFunc) {
         assert this != srcMap;
-        if (srcMap.size() == 0) {
+        long srcSize = srcMap.size();
+        if (srcSize == 0) {
             return;
         }
         Unordered16Map src16Map = (Unordered16Map) srcMap;
 
         // First, we handle zero key.
-        if (src16Map.hasZero && hasZero) {
-            mergeFunc.merge(
-                    valueAt(zeroMemStart),
-                    src16Map.valueAt(src16Map.zeroMemStart)
-            );
-        } else if (src16Map.hasZero) {
-            Vect.memcpy(zeroMemStart, src16Map.zeroMemStart, entrySize);
-            hasZero = true;
+        if (src16Map.hasZero) {
+            if (hasZero) {
+                mergeFunc.merge(
+                        valueAt(zeroMemStart),
+                        src16Map.valueAt(src16Map.zeroMemStart)
+                );
+            } else {
+                Vect.memcpy(zeroMemStart, src16Map.zeroMemStart, entrySize);
+                hasZero = true;
+            }
+            // Check if zero was the only element in the source map.
+            if (srcSize == 1) {
+                return;
+            }
         }
 
         // Then we handle all non-zero keys.

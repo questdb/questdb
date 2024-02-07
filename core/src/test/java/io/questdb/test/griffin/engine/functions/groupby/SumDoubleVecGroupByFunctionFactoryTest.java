@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.Record;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
@@ -33,7 +34,7 @@ public class SumDoubleVecGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testAddColumn() throws Exception {
         // fix page frame size, because it affects AVG accuracy
-        pageFrameMaxRows = 10_000;
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 10_000);
 
         Record[] expected = new Record[]{
                 new Record() {

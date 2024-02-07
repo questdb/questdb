@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.line.tcp;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.griffin.SqlException;
@@ -60,7 +61,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
     @Before
     public void setUp() {
         super.setUp();
-        configOverrideDefaultTableWriteMode(SqlWalMode.WAL_ENABLED);
+        node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, true);
     }
 
     @Test

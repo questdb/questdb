@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropServerConfiguration;
+import io.questdb.PropertyKey;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SqlWalMode;
 import io.questdb.cairo.sql.RecordCursor;
@@ -79,7 +80,7 @@ public class CopyTest extends AbstractCairoTest {
     @Before
     public void setUp() {
         super.setUp();
-        configOverrideDefaultTableWriteMode(walEnabled ? SqlWalMode.WAL_ENABLED : SqlWalMode.WAL_DISABLED);
+        node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, walEnabled);
     }
 
     @Test
@@ -390,7 +391,7 @@ public class CopyTest extends AbstractCairoTest {
 
     @Test
     public void testParallelCopyIntoNewTableWithUringDisabled() throws Exception {
-        configOverrideIoURingEnabled(false);
+        node1.setProperty(PropertyKey.CAIRO_IO_URING_ENABLED, false);
 
         CopyRunnable stmt = () -> runAndFetchCopyID("copy x from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
                 "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ", sqlExecutionContext);
@@ -741,7 +742,7 @@ public class CopyTest extends AbstractCairoTest {
     public void testSerialCopyCancelChecksImportId() throws Exception {
         try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, sqlExecutionContext.getWorkerCount())) {
             // decrease smaller buffer otherwise the whole file imported in one go without ever checking the circuit breaker
-            sqlCopyBufferSize = 1024;
+            setProperty(PropertyKey.CAIRO_SQL_COPY_BUFFER_SIZE, 1024);
             String copyID = runAndFetchCopyID("copy x from 'test-import.csv' with header true delimiter ',' " +
                     "on error ABORT;", sqlExecutionContext);
 
@@ -930,7 +931,7 @@ public class CopyTest extends AbstractCairoTest {
         // And later when rows are being written to a table then it will throw an error and skip the row,
         // because "(099)889-776" cannot be stored in a string.
 
-        sqlCopyBufferSize = 1024;
+        setProperty(PropertyKey.CAIRO_SQL_COPY_BUFFER_SIZE, 1024);
         CopyRunnable insert = () -> runAndFetchCopyID("copy x from '/test-import.csv'", sqlExecutionContext);
         final String expected = "StrSym\tIntSym\tInt_Col\tDoubleCol\tIsoDate\tFmt1Date\tFmt2Date\tPhone\tboolean\tlong\n" +
                 "CMP1\t1\t6992\t2.12060110410675\t2015-01-05T19:15:09.000Z\t2015-01-05T19:15:09.000Z\t2015-01-05T00:00:00.000Z\t6992\ttrue\t4952743\n" +

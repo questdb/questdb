@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
@@ -111,7 +112,7 @@ public class MaxStrGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testLargeStrings() throws Exception {
-        configOverrideGroupByAllocatorDefaultChunkSize(128);
+        node1.setProperty(PropertyKey.CAIRO_SQL_GROUPBY_ALLOCATOR_DEFAULT_CHUNK_SIZE, 128);
         assertQuery(
                 "a\tlength\n" +
                         "a\t7439\n" +
