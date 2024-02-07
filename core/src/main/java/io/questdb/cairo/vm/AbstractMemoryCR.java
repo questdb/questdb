@@ -29,6 +29,7 @@ import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.std.*;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8SplitString;
 import org.jetbrains.annotations.NotNull;
 
 // contiguous readable
@@ -39,8 +40,10 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
     private final MemoryCR.CharSequenceView csview2 = new MemoryCR.CharSequenceView();
     private final Long256Impl long256 = new Long256Impl();
     private final Long256Impl long256B = new Long256Impl();
-    private final DirectUtf8String u8view1 = new DirectUtf8String();
-    private final DirectUtf8String u8view2 = new DirectUtf8String();
+    private final Utf8SplitString utf8SplitViewA = new Utf8SplitString();
+    private final Utf8SplitString utf8SplitViewB = new Utf8SplitString();
+    private final DirectUtf8String utf8viewA = new DirectUtf8String();
+    private final DirectUtf8String utf8viewB = new DirectUtf8String();
     protected int fd = -1;
     protected FilesFacade ff;
     protected long lim;
@@ -84,6 +87,16 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
     }
 
     @Override
+    public Utf8SplitString borrowUtf8SplitStringA() {
+        return utf8SplitViewA;
+    }
+
+    @Override
+    public Utf8SplitString borrowUtf8SplitStringB() {
+        return utf8SplitViewB;
+    }
+
+    @Override
     public long getPageAddress(int pageIndex) {
         return pageAddress;
     }
@@ -103,13 +116,13 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
 
     @Override
     @NotNull
-    public Utf8Sequence getUtf8(long offset, int size) {
-        return getU8(offset, size, u8view1);
+    public Utf8Sequence getVarcharA(long offset, int size) {
+        return getU8(offset, size, utf8viewA);
     }
 
     @Override
-    public @NotNull Utf8Sequence getUtf8B(long offset, int size) {
-        return getU8(offset, size, u8view2);
+    public @NotNull Utf8Sequence getVarcharB(long offset, int size) {
+        return getU8(offset, size, utf8viewB);
     }
 
     @Override

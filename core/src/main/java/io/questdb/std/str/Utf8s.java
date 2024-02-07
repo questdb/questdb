@@ -15,21 +15,25 @@ import org.jetbrains.annotations.Nullable;
  */
 public final class Utf8s {
 
+    public static final int UTF8_STORAGE_INLINE_BYTES = 15;
+    public static final int UTF8_STORAGE_SPLIT_BYTE = 6;
+
     private Utf8s() {
     }
 
     public static void appendVarchar(MemoryA dataMem, MemoryA auxMem, @Nullable Utf8Sequence value, boolean isAscii) {
         if (value != null) {
             int size = value.size();
-            if (size < 16) {
+            if (size <= UTF8_STORAGE_INLINE_BYTES) {
                 // we can inline up to 15 bytes, which is what we do here
                 int flags = 1; // flags are 4 bits, 1 = inlined
                 if (isAscii) {
                     flags |= 2; // ascii flag
                 }
                 // size is compressed to 4 bits
-                auxMem.putShort((short) ((flags << 4) | size));
+                auxMem.putByte((byte) ((size << 4) | flags));
                 auxMem.putVarchar(value, 0, size);
+                auxMem.skip(UTF8_STORAGE_INLINE_BYTES - size);
             } else {
                 if (size >= 268435456) {
                     throw CairoException.critical(0).put("varchar value is too long [size=").put(size).put(", max=").put(268435456).put(']');
@@ -39,11 +43,11 @@ public final class Utf8s {
                 if (isAscii) {
                     flags |= 2; // ascii flag
                 }
-                auxMem.putInt((flags << 28) | size);
+                auxMem.putInt((size << 4) | flags);
 
                 // value size is over 8 bytes
-                auxMem.putVarchar(value, 0, 8);
-                long offset = dataMem.putVarchar(value, 8, size);
+                auxMem.putVarchar(value, 0, UTF8_STORAGE_SPLIT_BYTE);
+                long offset = dataMem.putVarchar(value, UTF8_STORAGE_SPLIT_BYTE, size);
                 if (offset >= 281474976710656L) {
                     throw CairoException.critical(0).put("varchar data column is too large [offset=").put(offset).put(", max=").put(281474976710656L).put(']');
                 }
@@ -54,28 +58,8 @@ public final class Utf8s {
         } else {
             // 4 = NULL
             auxMem.putShort((short) 4);
+            auxMem.skip(14);
         }
-    }
-
-    public static Utf8Sequence readVarchar(long offset, MemoryR dataMem, MemoryR auxMem, int ab) {
-        int flags = auxMem.getByte(offset) >> 4; // 4 bit flags
-
-        if ((flags & 4) == 4) {
-            // null flag is set
-            return null;
-        }
-
-        if ((flags & 1) == 1) {
-            // inlined string
-            int size = auxMem.getShort(offset + Short.BYTES);
-            return auxMem.getUtf8(offset + 8, size);
-        } else {
-            // string is split, prefix is in auxMem and the suffix is in data mem
-
-        }
-
-        return null;
-
     }
 
     public static boolean containsAscii(Utf8Sequence sequence, CharSequence term) {
@@ -482,6 +466,31 @@ public final class Utf8s {
         return h;
     }
 
+    public static Utf8Sequence readVarchar(long offset, MemoryR dataMem, MemoryR auxMem, int ab) {
+        int raw = auxMem.getInt(offset);
+        int flags = raw & 0x0f; // 4 bit flags
+
+        if ((flags & 4) == 4) {
+            // null flag is set
+            return null;
+        }
+
+        if ((flags & 1) == 1) {
+            // inlined string
+            int size = (raw >> 4) & 0x0f;
+            return ab == 1 ? auxMem.getVarcharA(offset + 1, size) : auxMem.getVarcharB(offset + 1, size);
+        }
+        // string is split, prefix is in auxMem and the suffix is in data mem
+        Utf8SplitString utf8SplitString = ab == 1 ? auxMem.borrowUtf8SplitStringA() : auxMem.borrowUtf8SplitStringB();
+        int size = (raw >> 4) & 0xffffff;
+        long lo1 = auxMem.addressOf(offset + 4);
+        long raw2 = auxMem.getShort(offset + 10);
+        raw2 <<= 32;
+        raw2 |= auxMem.getInt(offset + 12);
+        long lo2 = dataMem.addressOf(raw2);
+        return utf8SplitString.of(lo1, lo2, size);
+    }
+
     public static boolean startsWith(@NotNull Utf8Sequence seq, @NotNull Utf8Sequence term) {
         final int size = term.size();
         return seq.size() >= size && equalsBytes(seq, term, size);
@@ -589,7 +598,7 @@ public final class Utf8s {
     }
 
     public static int utf8DecodeMultiByte(long lo, long hi, byte b, Utf16Sink sink) {
-        if (b >> 5 == -2 && (b & 30) != 0) {
+        if (b >> 5 == -2 /*&& (b & 30) != 0*/) {
             return utf8Decode2Bytes(lo, hi, b, sink);
         }
         if (b >> 4 == -2) {
@@ -650,9 +659,6 @@ public final class Utf8s {
         while (i < seqHi) {
             byte b = seq.byteAt(i);
             if (b < 0) {
-                if (i == 50) {
-                    System.out.println("ok");
-                }
                 int n = utf8DecodeMultiByte(seq, i, b, sink);
                 if (n == -1) {
                     // UTF-8 error
@@ -999,7 +1005,7 @@ public final class Utf8s {
     }
 
     private static int utf8DecodeMultiByteZ(long lo, byte b, @NotNull Utf16Sink sink) {
-        if (b >> 5 == -2 && (b & 30) != 0) {
+        if (b >> 5 == -2 /*&& (b & 30) != 0*/) {
             return utf8Decode2BytesZ(lo, b, sink);
         }
         if (b >> 4 == -2) {

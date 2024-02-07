@@ -167,14 +167,14 @@ public class NullMemoryMR implements MemoryMR {
     }
 
     @Override
-    public @NotNull Utf8Sequence getUtf8(long offset, int size) {
+    public @NotNull Utf8Sequence getVarcharA(long offset, int size) {
         // memory on its own does not have concept of null
         // for null values the outer code must not be making trips here
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public @NotNull Utf8Sequence getUtf8B(long offset, int size) {
+    public @NotNull Utf8Sequence getVarcharB(long offset, int size) {
         // memory on its own does not have concept of null
         // for null values the outer code must not be making trips here
         throw new UnsupportedOperationException();

@@ -310,7 +310,7 @@ public class TableReaderRecord implements Record, Sinkable {
         long offsetIsh = memB.getLong(offset);
         int size = (int) (offsetIsh >>> 44);
         if (size > 0) {
-            return memA.getUtf8(offsetIsh & (1L << 44), size - 1);
+            return memA.getVarcharA(offsetIsh & (1L << 44), size - 1);
         }
         return null;
     }
@@ -328,7 +328,7 @@ public class TableReaderRecord implements Record, Sinkable {
         long offsetIsh = memB.getLong(offset);
         int size = (int) (offsetIsh >>> 44);
         if (size > 0) {
-            return memA.getUtf8B(offsetIsh & (1L << 44), size - 1);
+            return memA.getVarcharB(offsetIsh & (1L << 44), size - 1);
         }
         return null;
     }

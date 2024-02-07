@@ -30,10 +30,12 @@ import io.questdb.std.ObjectFactory;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
+import static io.questdb.std.str.Utf8s.UTF8_STORAGE_SPLIT_BYTE;
+
 /**
  * An immutable flyweight for a UTF-8 string stored in native memory.
  */
-public class SplitUtf8String implements Utf8Sequence, Mutable {
+public class Utf8SplitString implements Utf8Sequence, Mutable {
     public static final Factory FACTORY = new Factory();
     private final AsciiCharSequence asciiCharSequence = new AsciiCharSequence();
     private long lo1;
@@ -47,7 +49,7 @@ public class SplitUtf8String implements Utf8Sequence, Mutable {
 
     @Override
     public byte byteAt(int index) {
-        return Unsafe.getUnsafe().getByte(index < 16 ? lo1 + index : lo2 + index - 15);
+        return Unsafe.getUnsafe().getByte(index < UTF8_STORAGE_SPLIT_BYTE ? lo1 + index : lo2 + index - UTF8_STORAGE_SPLIT_BYTE);
     }
 
     @Override
@@ -56,7 +58,7 @@ public class SplitUtf8String implements Utf8Sequence, Mutable {
     }
 
 
-    public SplitUtf8String of(long lo1, long lo2, int size) {
+    public Utf8SplitString of(long lo1, long lo2, int size) {
         this.lo1 = lo1;
         this.lo2 = lo2;
         this.size = size;
@@ -72,15 +74,14 @@ public class SplitUtf8String implements Utf8Sequence, Mutable {
     @Override
     public String toString() {
         Utf16Sink utf16Sink = Misc.getThreadLocalSink();
-        Utf8s.utf8ToUtf16(lo1, lo1 + 15, utf16Sink);
-        Utf8s.utf8ToUtf16(lo2, lo2 + size - 15, utf16Sink);
+        Utf8s.utf8ToUtf16(this, utf16Sink);
         return utf16Sink.toString();
     }
 
-    public static final class Factory implements ObjectFactory<SplitUtf8String> {
+    public static final class Factory implements ObjectFactory<Utf8SplitString> {
         @Override
-        public SplitUtf8String newInstance() {
-            return new SplitUtf8String();
+        public Utf8SplitString newInstance() {
+            return new Utf8SplitString();
         }
     }
 }

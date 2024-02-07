@@ -47,6 +47,13 @@ public class MemoryPARWImpl implements MemoryARW {
     private final Long256Impl long256 = new Long256Impl();
     private final Long256Impl long256B = new Long256Impl();
     private final int maxPages;
+
+    @Override
+    public Utf8SplitString borrowUtf8SplitStringA() {
+        // paged memory does not support reading UTF8 strings from
+        throw new UnsupportedOperationException();
+    }
+
     private final StraddlingPageLong256FromCharSequenceDecoder straddlingPageLong256Decoder = new StraddlingPageLong256FromCharSequenceDecoder();
     private final Utf8SequenceView u8view1 = new Utf8SequenceView();
     private final Utf8SequenceView u8view2 = new Utf8SequenceView();
@@ -363,12 +370,12 @@ public class MemoryPARWImpl implements MemoryARW {
     }
 
     @Override
-    public @NotNull Utf8Sequence getUtf8(long offset, int size) {
+    public @NotNull Utf8Sequence getVarcharA(long offset, int size) {
         return u8view1.of(offset, size);
     }
 
     @Override
-    public @NotNull Utf8Sequence getUtf8B(long offset, int size) {
+    public @NotNull Utf8Sequence getVarcharB(long offset, int size) {
         return u8view2.of(offset, size);
     }
 

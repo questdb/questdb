@@ -1,5 +1,7 @@
 package io.questdb.test.std.str;
 
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryAR;
 import io.questdb.std.*;
 import io.questdb.std.str.*;
 import io.questdb.test.tools.TestUtils;
@@ -214,6 +216,48 @@ public class Utf8sTest {
         Assert.assertTrue(copyToSinkWithTextUtil(query, text, false));
 
         Assert.assertEquals(text, query.toString());
+    }
+
+    @Test
+    public void testReadWriteVarchar() {
+        try (
+                MemoryAR auxMem = Vm.getARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                MemoryAR dataMem = Vm.getARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
+        ) {
+            final Rnd rnd = TestUtils.generateRandom(null);
+            final Utf8StringSink utf8Sink = new Utf8StringSink();
+            int n = rnd.nextInt(1000);
+            ObjList<String> expectedValues = new ObjList<>(n);
+            BitSet asciiBitSet = new BitSet();
+            for (int i = 0; i < n; i++) {
+                boolean ascii = rnd.nextBoolean();
+                boolean ab = rnd.nextBoolean();
+                if (ascii) {
+                    asciiBitSet.set(i);
+                }
+
+                if (rnd.nextInt(10) == 0) {
+                    Utf8s.appendVarchar(dataMem, auxMem, null, ascii);
+                    expectedValues.add(null);
+                } else {
+                    utf8Sink.clear();
+                    rnd.nextUtf8Str(Math.max(1, rnd.nextInt(25)), utf8Sink);
+                    expectedValues.add(utf8Sink.toString());
+                    Utf8s.appendVarchar(dataMem, auxMem, utf8Sink, ascii);
+                }
+            }
+
+            for (int i = 0; i < n; i++) {
+                Utf8Sequence varchar = Utf8s.readVarchar(i * 16L, dataMem, auxMem, rnd.nextBoolean() ? 1 : 2);
+                String expectedValue = expectedValues.getQuick(i);
+                if (expectedValue == null) {
+                    Assert.assertNull(varchar);
+                } else {
+                    Assert.assertNotNull(varchar);
+                    Assert.assertEquals(expectedValue, varchar.toString());
+                }
+            }
+        }
     }
 
     @Test
