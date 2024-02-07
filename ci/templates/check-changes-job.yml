@@ -9,7 +9,7 @@ jobs:
           echo $PRID
           if [[ $PRID == ?(-)+([0-9]) ]]
             then
-              CHANGED_CORE_FILES=$(curl https://api.github.com/repos/questdb/questdb/pulls/$PRID/files -s  | grep -oP 'filename": "(core|benchmarks)/*\/\K[^.]+')
+              CHANGED_CORE_FILES=$(curl https://api.github.com/repos/questdb/questdb/pulls/$PRID/files -s  | grep -oP 'filename": "(core|benchmarks|compat|utils)/*\/\K[^.]+')
               if [ -z "$CHANGED_CORE_FILES" ]
                 then
                   echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]false"

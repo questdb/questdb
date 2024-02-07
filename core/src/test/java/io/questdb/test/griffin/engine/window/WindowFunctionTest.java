@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.window;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
@@ -2733,8 +2734,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testWindowBufferExceedsLimit() throws Exception {
-        configOverrideSqlWindowStorePageSize(4096);
-        configOverrideSqlWindowStoreMaxPages(10);
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 4096);
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_MAX_PAGES, 10);
 
         try {
             assertMemoryLeak(() -> {
@@ -2756,8 +2757,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
             });
         } finally {
             //disable
-            configOverrideSqlWindowStorePageSize(0);
-            configOverrideSqlWindowStoreMaxPages(0);
+            node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 0);
+            node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_MAX_PAGES, 0);
         }
     }
 

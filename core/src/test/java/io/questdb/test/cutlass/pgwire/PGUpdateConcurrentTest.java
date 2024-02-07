@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.pgwire;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
@@ -47,19 +48,22 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT;
+import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT;
+
 public class PGUpdateConcurrentTest extends BasePGTest {
     private static final ThreadLocal<StringSink> readerSink = new ThreadLocal<>(StringSink::new);
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
-        writerCommandQueueCapacity = 256;
+        setProperty(PropertyKey.CAIRO_WRITER_COMMAND_QUEUE_CAPACITY, 256);
         AbstractCairoTest.setUpStatic();
     }
 
     @Override
     @Before
     public void setUp() {
-        writerCommandQueueCapacity = 256;
+        node1.setProperty(PropertyKey.CAIRO_WRITER_COMMAND_QUEUE_CAPACITY, 256);
         super.setUp();
     }
 
@@ -162,8 +166,8 @@ public class PGUpdateConcurrentTest extends BasePGTest {
     @Test
     public void testUpdateWithQueryTimeout() throws Exception {
         assertMemoryLeak(() -> {
-            writerAsyncCommandBusyWaitTimeout = 20_000L; // On in CI Windows updates are particularly slow
-            writerAsyncCommandMaxTimeout = 90_000L;
+            node1.setProperty(CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 20_000L);
+            node1.setProperty(CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT, 90_000L);
             try (
                     PGWireServer server1 = createPGServer(1);
                     WorkerPool workerPool = server1.getWorkerPool()) {
@@ -272,9 +276,9 @@ public class PGUpdateConcurrentTest extends BasePGTest {
     }
 
     private void testConcurrency(int numOfWriters, int numOfReaders, int numOfUpdates, PartitionMode partitionMode) throws Exception {
-        writerAsyncCommandBusyWaitTimeout = 20_000L; // On in CI Windows updates are particularly slow
-        writerAsyncCommandMaxTimeout = 90_000L;
-        spinLockTimeout = 20_000L;
+        setProperty(CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 20_000L); // On in CI Windows updates are particularly slow
+        node1.setProperty(CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT, 90_000L);
+        node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 20_000L);
         assertMemoryLeak(() -> {
             CyclicBarrier barrier = new CyclicBarrier(numOfWriters + numOfReaders);
             ConcurrentLinkedQueue<Throwable> exceptions = new ConcurrentLinkedQueue<>();

@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.cutlass.http.line;
+package io.questdb.compat;
 
 import io.questdb.ServerMain;
 import io.questdb.mp.SOCountDownLatch;
@@ -45,7 +45,8 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.test.tools.TestUtils.assertEventually;
 
-public class LineHttpStreamingTest extends AbstractBootstrapTest {
+public class InfluxDBClientStreamingTest extends AbstractBootstrapTest {
+
     @Before
     public void setUp() {
         super.setUp();
@@ -110,7 +111,6 @@ public class LineHttpStreamingTest extends AbstractBootstrapTest {
                             "count\n" + pointCounter.get() + "\n"
                     );
                 });
-
             } finally {
                 Misc.free(serverMain);
             }
@@ -129,7 +129,7 @@ public class LineHttpStreamingTest extends AbstractBootstrapTest {
         new Thread(() -> {
             int points = 0;
             try {
-                try (final InfluxDB influxDB = IlpHttpUtils.getConnection(serverMain)) {
+                try (final InfluxDB influxDB = InfluxDBUtils.getConnection(serverMain)) {
                     influxDB.setLogLevel(InfluxDB.LogLevel.BASIC);
 
                     countDownLatch.countDown();

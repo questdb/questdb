@@ -120,6 +120,15 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
         private class QueryActivityRecord implements Record {
 
             @Override
+            public boolean getBool(int col) {
+                if (col == 7) {
+                    return entry.isWAL();
+                }
+
+                return false;
+            }
+
+            @Override
             public long getLong(int col) {
                 if (col == 0) {
                     return entryIds.getQuick(entryIndex);
@@ -138,7 +147,7 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
                     return entry.getPrincipal();
                 } else if (col == 6) {
                     return entry.getStateText();
-                } else if (col == 7) {
+                } else if (col == 8) {
                     return entry.getQuery();
                 }
 
@@ -204,6 +213,7 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
         metadata.add(new TableColumnMetadata("query_start", ColumnType.TIMESTAMP));
         metadata.add(new TableColumnMetadata("state_change", ColumnType.TIMESTAMP));
         metadata.add(new TableColumnMetadata("state", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("is_wal", ColumnType.BOOLEAN));
         metadata.add(new TableColumnMetadata("query", ColumnType.STRING));
         METADATA = metadata;
     }

@@ -294,6 +294,8 @@ public class SecurityTest extends AbstractCairoTest {
                 Assert.fail();
             } catch (Exception ex) {
                 Assert.assertTrue(ex.toString().contains("Interrupting SQL processing"));
+            } finally {
+                circuitBreakerTimeoutDeadline = Long.MAX_VALUE;
             }
         });
     }
@@ -555,7 +557,7 @@ public class SecurityTest extends AbstractCairoTest {
                             " rnd_symbol(3,3,3,20000) sym2," +
                             " rnd_double(2) d2," +
                             " timestamp_sequence(0, 1000000000) ts2" +
-                            " from long_sequence(10)) timestamp(ts2)"
+                            " from long_sequence(1000)) timestamp(ts2)"
             );
 
             assertQueryFullFat(
@@ -601,7 +603,7 @@ public class SecurityTest extends AbstractCairoTest {
                             " rnd_symbol(3,3,3,20000) sym2," +
                             " rnd_double(2) d2," +
                             " timestamp_sequence(0, 1000000000) ts2" +
-                            " from long_sequence(10)) timestamp(ts2)"
+                            " from long_sequence(1000)) timestamp(ts2)"
             );
 
             assertQueryFullFat(
@@ -645,7 +647,7 @@ public class SecurityTest extends AbstractCairoTest {
                     " rnd_symbol(3,3,3,20000) sym2," +
                     " rnd_double(2) d2," +
                     " timestamp_sequence(0, 1000000000) ts2" +
-                    " from long_sequence(10)) timestamp(ts2)");
+                    " from long_sequence(1000)) timestamp(ts2)");
             assertQuery(
                     "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
                     "select sym1, sym2 from tb1 inner join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
@@ -719,7 +721,7 @@ public class SecurityTest extends AbstractCairoTest {
                     " rnd_symbol(3,3,3,20000) sym2," +
                     " rnd_double(2) d2," +
                     " timestamp_sequence(0, 1000000000) ts2" +
-                    " from long_sequence(10)) timestamp(ts2)");
+                    " from long_sequence(1000)) timestamp(ts2)");
 
             assertQuery(
                     "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
@@ -1058,16 +1060,20 @@ public class SecurityTest extends AbstractCairoTest {
     private void assertLeftHashJoin(boolean fullFat) throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
-            ddl("create table tb1 as (select" +
-                    " rnd_symbol(4,4,4,20000) sym1," +
-                    " rnd_double(2) d1," +
-                    " timestamp_sequence(0, 1000000000) ts1" +
-                    " from long_sequence(10)) timestamp(ts1)");
-            ddl("create table tb2 as (select" +
-                    " rnd_symbol(3,3,3,20000) sym2," +
-                    " rnd_double(2) d2," +
-                    " timestamp_sequence(0, 1000000000) ts2" +
-                    " from long_sequence(10)) timestamp(ts2)");
+            ddl(
+                    "create table tb1 as (select" +
+                            " rnd_symbol(4,4,4,20000) sym1," +
+                            " rnd_double(2) d1," +
+                            " timestamp_sequence(0, 1000000000) ts1" +
+                            " from long_sequence(10)) timestamp(ts1)"
+            );
+            ddl(
+                    "create table tb2 as (select" +
+                            " rnd_symbol(3,3,3,20000) sym2," +
+                            " rnd_double(2) d2," +
+                            " timestamp_sequence(0, 1000000000) ts2" +
+                            " from long_sequence(1000)) timestamp(ts2)"
+            );
 
             assertQuery(
                     "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",

@@ -95,6 +95,7 @@ final class Unordered16MapRecord implements MapRecord {
             offset += size;
         }
 
+        assert offset <= Unordered16Map.KEY_SIZE;
         offset = Unordered16Map.KEY_SIZE;
         if (valueTypes != null) {
             for (int i = 0, n = valueTypes.getColumnCount(); i < n; i++) {

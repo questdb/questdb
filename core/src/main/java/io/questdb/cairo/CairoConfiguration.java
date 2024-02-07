@@ -205,6 +205,8 @@ public interface CairoConfiguration {
 
     int getMaxFileNameLength();
 
+    int getMaxSqlRecompileAttempts();
+
     int getMaxSwapFileCount();
 
     int getMaxSymbolNotEqualsCount();
@@ -590,4 +592,7 @@ public interface CairoConfiguration {
      * @return true if mangling of directory names for non-WAL tables is enabled, false otherwise.
      */
     boolean mangleTableDirNames();
+
+    default void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
+    }
 }

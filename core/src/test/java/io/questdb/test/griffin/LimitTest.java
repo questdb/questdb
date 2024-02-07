@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -269,8 +270,8 @@ public class LimitTest extends AbstractCairoTest {
         // Here we verify that the implicit timestamp descending order is preserved
         // by negative limit clause even if it spans multiple page frames.
 
-        pageFrameMaxRows = 64;
-        final int N = pageFrameMaxRows * 5;
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 64);
+        final int N = 64 * 5;
 
         ddl("create table y as (" +
                 "select" +
@@ -305,8 +306,8 @@ public class LimitTest extends AbstractCairoTest {
         // Here we verify that the implicit timestamp descending order is preserved
         // by negative limit clause even if it spans multiple page frames.
 
-        pageFrameMaxRows = 64;
-        final int N = pageFrameMaxRows * 5;
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 64);
+        final int N = 64 * 5;
 
         ddl("create table y as (" +
                 "select" +

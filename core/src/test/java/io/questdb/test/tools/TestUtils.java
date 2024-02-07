@@ -69,6 +69,7 @@ import java.sql.Timestamp;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -807,6 +808,13 @@ public final class TestUtils {
         }
     }
 
+    public static void await(CountDownLatch latch) {
+        try {
+            latch.await();
+        } catch (Throwable ignore) {
+        }
+    }
+
     public static long connect(int fd, long sockAddr) {
         Assert.assertTrue(fd > -1);
         return Net.connect(fd, sockAddr);
@@ -1209,6 +1217,19 @@ public final class TestUtils {
                 Chars.toString(root),
                 Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION
         };
+    }
+
+    public static int getSystemTablesCount(CairoEngine engine) {
+        final ObjHashSet<TableToken> tableBucket = new ObjHashSet<>();
+        engine.getTableTokens(tableBucket, false);
+        int systemTableCount = 0;
+        for (int i = 0, n = tableBucket.size(); i < n; i++) {
+            final TableToken tt = tableBucket.get(i);
+            if (tt.isSystem()) {
+                systemTableCount++;
+            }
+        }
+        return systemTableCount;
     }
 
     public static String getTestResourcePath(String resourceName) {

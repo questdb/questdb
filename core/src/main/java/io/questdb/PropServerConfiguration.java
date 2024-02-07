@@ -72,6 +72,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     public static final String SNAPSHOT_DIRECTORY = "snapshot";
     public static final String TMP_DIRECTORY = "tmp";
     private static final LowerCaseCharSequenceIntHashMap WRITE_FO_OPTS = new LowerCaseCharSequenceIntHashMap();
+    protected final byte httpHealthCheckAuthType;
+    protected final byte httpStaticContentAuthType;
     private final ObjObjHashMap<ConfigPropertyKey, ConfigPropertyValue> allPairs = new ObjObjHashMap<>();
     private final DateFormat backupDirTimestampFormat;
     private final int backupMkdirMode;
@@ -121,24 +123,20 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean httpAllowDeflateBeforeSend;
     private final PropHttpContextConfiguration httpContextConfiguration = new PropHttpContextConfiguration();
     private final boolean httpFrozenClock;
-    private final boolean httpHealthCheckAuthRequired;
     private final IODispatcherConfiguration httpIODispatcherConfiguration = new PropHttpIODispatcherConfiguration();
     private final PropHttpMinIODispatcherConfiguration httpMinIODispatcherConfiguration = new PropHttpMinIODispatcherConfiguration();
-    private final PropHttpMinServerConfiguration httpMinServerConfiguration = new PropHttpMinServerConfiguration();
     private final boolean httpMinServerEnabled;
     private final boolean httpNetConnectionHint;
     private final boolean httpPessimisticHealthCheckEnabled;
     private final boolean httpReadOnlySecurityContext;
     private final int httpRecvBufferSize;
     private final int httpSendBufferSize;
-    private final HttpServerConfiguration httpServerConfiguration = new PropHttpServerConfiguration();
     private final boolean httpServerCookiesEnabled;
     private final boolean httpServerEnabled;
     private final boolean httpServerKeepAlive;
     private final int httpSqlCacheBlockCount;
     private final boolean httpSqlCacheEnabled;
     private final int httpSqlCacheRowCount;
-    private final boolean httpStaticAuthRequired;
     private final WaitProcessorConfiguration httpWaitProcessorConfiguration = new PropWaitProcessorConfiguration();
     private final int[] httpWorkerAffinity;
     private final int httpWorkerCount;
@@ -163,7 +161,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean isReadOnlyInstance;
     private final int jsonCacheLimit;
     private final int jsonCacheSize;
-    private final JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new PropJsonQueryProcessorConfiguration();
     private final String keepAliveHeader;
     private final int latestByQueueCapacity;
     private final boolean lineHttpEnabled;
@@ -194,6 +191,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final double maxRequiredDelimiterStdDev;
     private final double maxRequiredLineLengthStdDev;
     private final long maxRerunWaitCapMs;
+    private final int maxSqlRecompileAttempts;
     private final int maxSwapFileCount;
     private final int maxUncommittedRows;
     private final int metadataStringPoolCapacity;
@@ -319,7 +317,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlWindowTreeKeyMaxPages;
     private final int sqlWindowTreeKeyPageSize;
     private final int sqlWithClauseModelPoolCapacity;
-    private final StaticContentProcessorConfiguration staticContentProcessorConfiguration = new PropStaticContentProcessorConfiguration();
     private final int systemO3ColumnMemorySize;
     private final String systemTableNamePrefix;
     private final long systemWalWriterDataAppendPageSize;
@@ -357,7 +354,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int walPurgeWaitBeforeDelete;
     private final int walRecreateDistressedSequencerAttempts;
     private final long walSegmentRolloverRowCount;
-    private final long walSegmentRolloverSize;
     private final double walSquashUncommittedRowsMultiplier;
     private final boolean walSupported;
     private final int walTxnNotificationQueueCapacity;
@@ -376,7 +372,14 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long writerMiscAppendPageSize;
     private final boolean writerMixedIOEnabled;
     private final int writerTickRowsCountMod;
+    protected HttpMinServerConfiguration httpMinServerConfiguration = new PropHttpMinServerConfiguration();
+    protected HttpServerConfiguration httpServerConfiguration = new PropHttpServerConfiguration();
+    protected JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new PropJsonQueryProcessorConfiguration();
+    protected StaticContentProcessorConfiguration staticContentProcessorConfiguration;
+    private boolean allowTableRegistrySharedWrite;
+    protected long walSegmentRolloverSize;
     private long cairoSqlCopyMaxIndexChunkSize;
+    private boolean enableTestFactories;
     private FactoryProvider factoryProvider;
     private short floatDefaultColumnType;
     private int forceRecvFragmentationChunkSize;
@@ -489,7 +492,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     public PropServerConfiguration(
             String root,
             Properties properties,
-            @Nullable Map<String, String> env,
+            @Nullable    Map<String, String> env,
             Log log,
             final BuildInformation buildInformation
     ) throws ServerConfigurationException, JsonException {
@@ -501,7 +504,8 @@ public class PropServerConfiguration implements ServerConfiguration {
                 buildInformation,
                 FilesFacadeImpl.INSTANCE,
                 MicrosecondClockImpl.INSTANCE,
-                (configuration, engine, freeOnExitList) -> DefaultFactoryProvider.INSTANCE
+                (configuration, engine, freeOnExitList) -> DefaultFactoryProvider.INSTANCE,
+                true
         );
     }
 
@@ -515,11 +519,36 @@ public class PropServerConfiguration implements ServerConfiguration {
             MicrosecondClock microsecondClock,
             FactoryProviderFactory fpf
     ) throws ServerConfigurationException, JsonException {
+        this(
+                root,
+                properties,
+                env,
+                log,
+                buildInformation,
+                filesFacade,
+                microsecondClock,
+                fpf,
+                true
+        );
+    }
+
+    public PropServerConfiguration(
+            String root,
+            Properties properties,
+            @Nullable Map<String, String> env,
+            Log log,
+            final BuildInformation buildInformation,
+            FilesFacade filesFacade,
+            MicrosecondClock microsecondClock,
+            FactoryProviderFactory fpf,
+            boolean loadAdditionalConfigurations
+    ) throws ServerConfigurationException, JsonException {
         this.log = log;
         this.filesFacade = filesFacade;
         this.fpf = fpf;
         this.microsecondClock = microsecondClock;
         this.validator = newValidator();
+        this.staticContentProcessorConfiguration = new PropStaticContentProcessorConfiguration();
         boolean configValidationStrict = getBoolean(properties, env, PropertyKey.CONFIG_VALIDATION_STRICT, false);
         validateProperties(properties, configValidationStrict);
 
@@ -679,7 +708,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.httpWorkerSleepThreshold = getLong(properties, env, PropertyKey.HTTP_WORKER_SLEEP_THRESHOLD, 10_000);
             this.httpWorkerSleepTimeout = getLong(properties, env, PropertyKey.HTTP_WORKER_SLEEP_TIMEOUT, 10);
             this.indexFileName = getString(properties, env, PropertyKey.HTTP_STATIC_INDEX_FILE_NAME, "index.html");
-            this.httpStaticAuthRequired = getBoolean(properties, env, PropertyKey.HTTP_STATIC_AUTHENTICATION_REQUIRED, true);
+            final boolean httpStaticAuthRequired = getBoolean(properties, env, PropertyKey.HTTP_STATIC_AUTHENTICATION_REQUIRED, true);
+            this.httpStaticContentAuthType = httpStaticAuthRequired ? SecurityContext.AUTH_TYPE_CREDENTIALS : SecurityContext.AUTH_TYPE_NONE;
             this.httpFrozenClock = getBoolean(properties, env, PropertyKey.HTTP_FROZEN_CLOCK, false);
             this.httpAllowDeflateBeforeSend = getBoolean(properties, env, PropertyKey.HTTP_ALLOW_DEFLATE_BEFORE_SEND, false);
             this.httpServerKeepAlive = getBoolean(properties, env, PropertyKey.HTTP_SERVER_KEEP_ALIVE, true);
@@ -742,12 +772,13 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.utf8SinkSize = getIntSize(properties, env, PropertyKey.HTTP_TEXT_UTF8_SINK_SIZE, 4096);
 
             this.httpPessimisticHealthCheckEnabled = getBoolean(properties, env, PropertyKey.HTTP_PESSIMISTIC_HEALTH_CHECK, false);
-            this.httpHealthCheckAuthRequired = getBoolean(properties, env, PropertyKey.HTTP_HEALTH_CHECK_AUTHENTICATION_REQUIRED, true);
+            final boolean httpHealthCheckAuthRequired = getBoolean(properties, env, PropertyKey.HTTP_HEALTH_CHECK_AUTHENTICATION_REQUIRED, true);
+            this.httpHealthCheckAuthType = httpHealthCheckAuthRequired ? SecurityContext.AUTH_TYPE_CREDENTIALS : SecurityContext.AUTH_TYPE_NONE;
             this.httpReadOnlySecurityContext = getBoolean(properties, env, PropertyKey.HTTP_SECURITY_READONLY, false);
             this.maxHttpQueryResponseRowLimit = getLong(properties, env, PropertyKey.HTTP_SECURITY_MAX_RESPONSE_ROWS, Long.MAX_VALUE);
             this.interruptOnClosedConnection = getBoolean(properties, env, PropertyKey.HTTP_SECURITY_INTERRUPT_ON_CLOSED_CONNECTION, true);
 
-            if (httpServerEnabled) {
+            if (loadAdditionalConfigurations && httpServerEnabled) {
                 this.jsonQueryConnectionCheckFrequency = getInt(properties, env, PropertyKey.HTTP_JSON_QUERY_CONNECTION_CHECK_FREQUENCY, 1_000_000);
                 this.jsonQueryFloatScale = getInt(properties, env, PropertyKey.HTTP_JSON_QUERY_FLOAT_SCALE, 4);
                 this.jsonQueryDoubleScale = getInt(properties, env, PropertyKey.HTTP_JSON_QUERY_DOUBLE_SCALE, 12);
@@ -878,7 +909,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlLexerPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_LEXER_POOL_CAPACITY, 2048);
             this.sqlSmallMapKeyCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY, 32);
             this.sqlSmallMapPageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_SMALL_MAP_PAGE_SIZE, 32 * 1024);
-            this.sqlUnorderedMapMaxEntrySize = getInt(properties, env, PropertyKey.CAIRO_SQL_UNORDERED_MAP_MAX_ENTRY_SIZE, 24);
+            this.sqlUnorderedMapMaxEntrySize = getInt(properties, env, PropertyKey.CAIRO_SQL_UNORDERED_MAP_MAX_ENTRY_SIZE, 32);
             this.sqlMapMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_MAP_MAX_PAGES, Integer.MAX_VALUE);
             this.sqlMapMaxResizes = getIntSize(properties, env, PropertyKey.CAIRO_SQL_MAP_MAX_RESIZES, Integer.MAX_VALUE);
             this.sqlExplainModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_EXPLAIN_MODEL_POOL_CAPACITY, 32);
@@ -906,7 +937,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlRenameTableModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_RENAME_TABLE_MODEL_POOL_CAPACITY, 16);
             this.sqlWithClauseModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_WITH_CLAUSE_MODEL_POOL_CAPACITY, 128);
             this.sqlInsertModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_INSERT_MODEL_POOL_CAPACITY, 64);
-            this.sqlCopyModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_COPY_MODEL_POOL_CAPACITY, 32);
             this.sqlCopyBufferSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_COPY_BUFFER_SIZE, 2 * Numbers.SIZE_1MB);
             this.columnPurgeQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_QUEUE_CAPACITY, 128);
             this.columnPurgeTaskPoolCapacity = getIntSize(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_TASK_POOL_CAPACITY, 256);
@@ -951,6 +981,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlJitBindVarsMemoryMaxPages = getInt(properties, env, PropertyKey.CAIRO_SQL_JIT_BIND_VARS_MEMORY_MAX_PAGES, 8);
             this.sqlJitPageAddressCacheThreshold = getIntSize(properties, env, PropertyKey.CAIRO_SQL_JIT_PAGE_ADDRESS_CACHE_THRESHOLD, 1024 * 1024);
             this.sqlJitDebugEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_JIT_DEBUG_ENABLED, false);
+            this.maxSqlRecompileAttempts = getInt(properties, env, PropertyKey.CAIRO_SQL_MAX_RECOMPILE_ATTEMPTS, 10);
 
             String value = getString(properties, env, PropertyKey.CAIRO_WRITER_FO_OPTS, "o_none");
             long lopts = CairoConfiguration.O_NONE;
@@ -963,7 +994,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
             this.writerFileOpenOpts = lopts;
 
-            this.writerMixedIOEnabled = ff.allowMixedIO(this.root);
+            this.writerMixedIOEnabled = getBoolean(properties, env, PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, ff.allowMixedIO(this.root));
 
             this.inputFormatConfiguration = new InputFormatConfiguration(
                     new DateFormatFactory(),
@@ -1017,7 +1048,12 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.o3CopyQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_O3_COPY_QUEUE_CAPACITY, 128);
             this.o3LagCalculationWindowsSize = getIntSize(properties, env, PropertyKey.CAIRO_O3_LAG_CALCULATION_WINDOW_SIZE, 4);
             this.o3PurgeDiscoveryQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_O3_PURGE_DISCOVERY_QUEUE_CAPACITY, 128));
-            this.o3ColumnMemorySize = (int) Files.ceilPageSize(getIntSize(properties, env, PropertyKey.CAIRO_O3_COLUMN_MEMORY_SIZE, 8 * Numbers.SIZE_1MB));
+            int debugO3MemSize = getInt(properties, env, PropertyKey.DEBUG_CAIRO_O3_COLUMN_MEMORY_SIZE, 0);
+            if (debugO3MemSize != 0) {
+                this.o3ColumnMemorySize = debugO3MemSize;
+            } else {
+                this.o3ColumnMemorySize = (int) Files.ceilPageSize(getIntSize(properties, env, PropertyKey.CAIRO_O3_COLUMN_MEMORY_SIZE, 8 * Numbers.SIZE_1MB));
+            }
             this.systemO3ColumnMemorySize = (int) Files.ceilPageSize(getIntSize(properties, env, PropertyKey.CAIRO_SYSTEM_O3_COLUMN_MEMORY_SIZE, 256 * 1024));
             this.maxUncommittedRows = getInt(properties, env, PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 500_000);
 
@@ -1201,6 +1237,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             final int defaultReduceShardCount = Math.min(sharedWorkerCount, 4);
             this.cairoPageFrameReduceShardCount = getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, defaultReduceShardCount);
             this.sqlParallelFilterPreTouchEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_ENABLED, true);
+            this.sqlCopyModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_COPY_MODEL_POOL_CAPACITY, 32);
 
             boolean defaultParallelSqlEnabled = sharedWorkerCount >= 4;
             this.sqlParallelFilterEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED, defaultParallelSqlEnabled);
@@ -1216,6 +1253,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.buildInformation = buildInformation;
             this.binaryEncodingMaxLength = getInt(properties, env, PropertyKey.BINARYDATA_ENCODING_MAXLENGTH, 32768);
         }
+        this.allowTableRegistrySharedWrite = getBoolean(properties, env, PropertyKey.DEBUG_ALLOW_TABLE_REGISTRY_SHARED_WRITE, false);
+        this.enableTestFactories = getBoolean(properties, env, PropertyKey.DEBUG_ENABLE_TEST_FACTORIES, false);
     }
 
     public static String rootSubdir(CharSequence dbRoot, CharSequence subdir) {
@@ -1503,7 +1542,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
         }
 
-        allPairs.put(key, new ConfigPropertyValueImpl(result, valueSource, false));
+        if (!key.isDebug()) {
+            allPairs.put(key, new ConfigPropertyValueImpl(result, valueSource, false));
+        }
         return result;
     }
 
@@ -1831,7 +1872,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public boolean enableTestFactories() {
-            return false;
+            return enableTestFactories;
         }
 
         @Override
@@ -1841,7 +1882,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public boolean getAllowTableRegistrySharedWrite() {
-            return false;
+            return allowTableRegistrySharedWrite;
         }
 
         @Override
@@ -2125,6 +2166,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getMaxFileNameLength() {
             return maxFileNameLength;
+        }
+
+        @Override
+        public int getMaxSqlRecompileAttempts() {
+            return maxSqlRecompileAttempts;
         }
 
         @Override
@@ -3093,7 +3139,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private class PropHttpMinServerConfiguration implements HttpMinServerConfiguration {
+    public class PropHttpMinServerConfiguration implements HttpMinServerConfiguration {
 
         @Override
         public IODispatcherConfiguration getDispatcherConfiguration() {
@@ -3113,6 +3159,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public String getPoolName() {
             return "minhttp";
+        }
+
+        @Override
+        public byte getRequiredAuthType() {
+            return httpHealthCheckAuthType;
         }
 
         @Override
@@ -3156,17 +3207,12 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean isHealthCheckAuthenticationRequired() {
-            return httpHealthCheckAuthRequired;
-        }
-
-        @Override
         public boolean isPessimisticHealthCheckEnabled() {
             return httpPessimisticHealthCheckEnabled;
         }
     }
 
-    private class PropHttpServerConfiguration implements HttpServerConfiguration {
+    public class PropHttpServerConfiguration implements HttpServerConfiguration {
 
         @Override
         public IODispatcherConfiguration getDispatcherConfiguration() {
@@ -3206,6 +3252,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getQueryCacheRowCount() {
             return httpSqlCacheRowCount;
+        }
+
+        @Override
+        public byte getRequiredAuthType() {
+            return httpHealthCheckAuthType;
         }
 
         @Override
@@ -3254,11 +3305,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean isHealthCheckAuthenticationRequired() {
-            return httpHealthCheckAuthRequired;
-        }
-
-        @Override
         public boolean isPessimisticHealthCheckEnabled() {
             return httpPessimisticHealthCheckEnabled;
         }
@@ -3269,7 +3315,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private class PropJsonQueryProcessorConfiguration implements JsonQueryProcessorConfiguration {
+    public class PropJsonQueryProcessorConfiguration implements JsonQueryProcessorConfiguration {
 
         @Override
         public MillisecondClock getClock() {
@@ -4127,7 +4173,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private class PropStaticContentProcessorConfiguration implements StaticContentProcessorConfiguration {
+    public class PropStaticContentProcessorConfiguration implements StaticContentProcessorConfiguration {
 
         @Override
         public FilesFacade getFilesFacade() {
@@ -4160,8 +4206,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean isAuthenticationRequired() {
-            return httpStaticAuthRequired;
+        public byte getRequiredAuthType() {
+            return httpStaticContentAuthType;
         }
     }
 
