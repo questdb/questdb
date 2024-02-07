@@ -40,7 +40,7 @@ public class TableReaderTimeFrameCursor implements TimeFrameRecordCursor {
     private final TableReaderRecord recordB = new TableReaderRecord();
     private final TableReaderTimeFrame timeFrame = new TableReaderTimeFrame();
     private DataFrameCursor dataFrameCursor;
-    private int partitionBy;
+    private PartitionBy.PartitionCeilMethod partitionCeilMethod;
     private int partitionHi;
     private TableReader reader;
 
@@ -93,7 +93,7 @@ public class TableReaderTimeFrameCursor implements TimeFrameRecordCursor {
         recordA.of(reader);
         recordB.of(reader);
         partitionHi = reader.getPartitionCount();
-        partitionBy = reader.getPartitionedBy();
+        partitionCeilMethod = PartitionBy.getPartitionCeilMethod(reader.getPartitionedBy());
         toTop();
         return this;
     }
@@ -133,12 +133,8 @@ public class TableReaderTimeFrameCursor implements TimeFrameRecordCursor {
     }
 
     private long estimatePartitionHi(long partitionTimestamp) {
-        if (partitionBy == PartitionBy.NONE) {
-            return Long.MAX_VALUE;
-        }
-        final PartitionBy.PartitionCeilMethod partitionCeilMethod = PartitionBy.getPartitionCeilMethod(partitionBy);
-        assert partitionCeilMethod != null;
-        return partitionCeilMethod.ceil(partitionTimestamp);
+        // partitionCeilMethod is null in case of partition by NONE
+        return partitionCeilMethod != null ? partitionCeilMethod.ceil(partitionTimestamp) : Long.MAX_VALUE;
     }
 
     private static class TableReaderTimeFrame implements TimeFrame, Mutable {
