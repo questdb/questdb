@@ -104,6 +104,13 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         return value;
     }
 
+    public static CharSequence removeSquareBrackets(CharSequence value) {
+        if (Chars.isSquareBracket(value)) {
+            return value.subSequence(1, value.length() - 1);
+        }
+        return immutableOf(value);
+    }
+
     public static CharSequence unquote(CharSequence value) {
         if (Chars.isQuoted(value)) {
             return value.subSequence(1, value.length() - 1);

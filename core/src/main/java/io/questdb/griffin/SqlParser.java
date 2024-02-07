@@ -35,6 +35,8 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
+import java.util.Stack;
+
 import static io.questdb.cairo.SqlWalMode.*;
 import static io.questdb.griffin.SqlKeywords.*;
 
@@ -2622,6 +2624,18 @@ public class SqlParser {
             checkSupportedJoinType(lexer, tok);
             if (SqlKeywords.isAsKeyword(tok)) {
                 tok = tok(lexer, "alias");
+                if (tok.equals("[")) {
+                    Stack<CharSequence> sequenceStack = new Stack<>();
+                    while (!tok.equals("]")) {
+                        tok = SqlUtil.fetchNext(lexer);
+                        if (tok instanceof GenericLexer.InternalFloatingSequence) {
+                            CharSequence abc = tok.toString();
+                            sequenceStack.add(abc);
+                        }
+                    }
+                    tok = sequenceStack.isEmpty() ? tok : sequenceStack.pop();
+                    sequenceStack.clear();
+                }
             }
             if (tok.length() == 0 || SqlKeywords.isEmptyAlias(tok)) {
                 throw SqlException.position(lexer.lastTokenPosition()).put("Empty table alias");

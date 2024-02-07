@@ -648,6 +648,18 @@ public final class Chars {
         return isQuote(open) && open == s.charAt(s.length() - 1);
     }
 
+    public static boolean isSquareBracket(char c, boolean front) {
+        return front ? c == '[' : c == ']';
+    }
+
+    public static boolean isSquareBracket(CharSequence s) {
+        if (s == null || s.length() < 2) {
+            return false;
+        }
+        char open = s.charAt(0);
+        return isSquareBracket(open, true) && isSquareBracket(s.charAt(s.length() - 1), false);
+    }
+
     public static int lastIndexOf(CharSequence sequence, char term) {
         for (int i = sequence.length() - 1; i > -1; i--) {
             if (sequence.charAt(i) == term) {
@@ -736,7 +748,8 @@ public final class Chars {
             }
 
             @Override
-            @NotNull public CharSequence subSequence(int start, int end) {
+            @NotNull
+            public CharSequence subSequence(int start, int end) {
                 throw new UnsupportedOperationException();
             }
         };

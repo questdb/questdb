@@ -250,7 +250,7 @@ public class ExpressionParser {
                         break;
                     case '.':
                         // Check what is on stack. If we have 'a .b' we have to stop processing
-                        if (thisBranch == BRANCH_LITERAL || thisBranch == BRANCH_CONSTANT) {//here
+                        if (thisBranch == BRANCH_LITERAL || thisBranch == BRANCH_CONSTANT || thisBranch == BRANCH_RIGHT_BRACKET) {//here
                             char c = lexer.getContent().charAt(lastPos - 1);
                             if (GenericLexer.WHITESPACE_CH.contains(c)) {
                                 lexer.unparseLast();
@@ -263,6 +263,12 @@ public class ExpressionParser {
                                 // table prefix cannot be unquoted keywords
                                 CharacterStoreEntry cse = characterStore.newEntry();
                                 cse.put(GenericLexer.unquote(en.token)).put('.');
+                                opStack.push(expressionNodePool.next().of(ExpressionNode.LITERAL, cse.toImmutable(), Integer.MIN_VALUE, en.position));
+                            } else if (Chars.isSquareBracket(c, false)) {
+                                ExpressionNode en = opStack.pop();
+                                // table prefix cannot be unquoted keywords
+                                CharacterStoreEntry cse = characterStore.newEntry();
+                                cse.put(GenericLexer.removeSquareBrackets(en.token)).put('.');
                                 opStack.push(expressionNodePool.next().of(ExpressionNode.LITERAL, cse.toImmutable(), Integer.MIN_VALUE, en.position));
                             } else {
                                 // attach dot to existing literal or constant
@@ -367,6 +373,14 @@ public class ExpressionParser {
                             }
 
                             bracketCount--;
+                            if (prevBranch == BRANCH_LITERAL) {
+                                ExpressionNode literalNode = opStack.peek();
+                                while ((node = opStack.pop()) != null && (node.type != ExpressionNode.CONTROL || node.token.charAt(0) != '[')) {
+                                }
+                                node = expressionNodePool.next().of(ExpressionNode.LITERAL, GenericLexer.immutableOf("[" + literalNode.token + "]"), Integer.MIN_VALUE, lastPos);
+                                opStack.push(node);
+                                break;
+                            }
 
                             // pop the array index from the stack, it could be an operator
                             while ((node = opStack.pop()) != null && (node.type != ExpressionNode.CONTROL || node.token.charAt(0) != '[')) {

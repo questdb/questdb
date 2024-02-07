@@ -447,6 +447,30 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCastWhere() throws Exception {
+        String ddl = "create table a ( xa int, da double )";
+        assertMemoryLeak(() -> {
+            ddl(ddl);
+            insert("insert into a values ( 2, 2 )");
+            insert("insert into a values ( 3, 214748 )");
+            insert("insert into a values ( 4, 3 )");
+            insert("insert into a values ( 5, 4.9 )");
+
+            TestUtils.assertSql(
+                    engine,
+                    sqlExecutionContext,
+                    "select [a1].xa, [a1].da from a as [a1];",
+                    sink,
+                    "xa\tda\n" +
+                            "2\t2.0\n" +
+                            "3\t214748.0\n" +
+                            "4\t3.0\n" +
+                            "5\t4.9\n"
+            );
+        });
+    }
+
+    @Test
     public void testCg() throws Exception {
         assertQuery(
                 "title\tcurrent\told\tdifference\tdifference_percentage\tcolors\n" +
