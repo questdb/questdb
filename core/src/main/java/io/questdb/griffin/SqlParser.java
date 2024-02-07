@@ -2629,8 +2629,8 @@ public class SqlParser {
                     while (!tok.equals("]")) {
                         tok = SqlUtil.fetchNext(lexer);
                         if (tok instanceof GenericLexer.InternalFloatingSequence) {
-                            CharSequence abc = tok.toString();
-                            sequenceStack.add(abc);
+                            CharSequence literal = tok.toString();
+                            sequenceStack.add(literal);
                         }
                     }
                     tok = sequenceStack.isEmpty() ? tok : sequenceStack.pop();
