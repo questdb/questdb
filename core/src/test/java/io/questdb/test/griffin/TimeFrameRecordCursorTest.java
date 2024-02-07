@@ -24,12 +24,14 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
 import io.questdb.std.Rows;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -100,7 +102,7 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
                             Assert.assertEquals(-1, frame.getRowHi());
                             timeFrameCursor.open();
                             for (long row = frame.getRowHi() - 1; row >= frame.getRowLo(); row--) {
-                                timeFrameCursor.recordAt(record, Rows.toRowID(frame.getPartitionIndex(), row));
+                                timeFrameCursor.recordAt(record, Rows.toRowID(frame.getIndex(), row));
                                 actualSink.put(record.getInt(0));
                                 actualSink.put('\t');
                                 actualSink.put(record.getStr(1));
@@ -156,7 +158,7 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
                             Assert.assertEquals(-1, frame.getRowHi());
                             timeFrameCursor.open();
                             for (long row = frame.getRowLo(); row < frame.getRowHi(); row++) {
-                                timeFrameCursor.recordAt(record, Rows.toRowID(frame.getPartitionIndex(), row));
+                                timeFrameCursor.recordAt(record, Rows.toRowID(frame.getIndex(), row));
                                 actualSink.put(record.getInt(0));
                                 actualSink.put('\t');
                                 actualSink.put(record.getStr(1));
@@ -171,7 +173,7 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
                             Assert.assertEquals(-1, frame.getRowHi());
                             timeFrameCursor.open();
                             for (long row = frame.getRowHi() - 1; row >= frame.getRowLo(); row--) {
-                                timeFrameCursor.recordAt(record, Rows.toRowID(frame.getPartitionIndex(), row));
+                                timeFrameCursor.recordAt(record, Rows.toRowID(frame.getIndex(), row));
                                 actualSink.put(record.getInt(0));
                                 actualSink.put('\t');
                                 actualSink.put(record.getStr(1));
@@ -227,7 +229,7 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
                             Assert.assertEquals(-1, frame.getRowHi());
                             timeFrameCursor.open();
                             for (long row = frame.getRowLo(); row < frame.getRowHi(); row++) {
-                                timeFrameCursor.recordAt(record, Rows.toRowID(frame.getPartitionIndex(), row));
+                                timeFrameCursor.recordAt(record, Rows.toRowID(frame.getIndex(), row));
                                 actualSink.put(record.getInt(0));
                                 actualSink.put('\t');
                                 actualSink.put(record.getStr(1));
@@ -279,7 +281,7 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
                         Assert.assertEquals(-1, frame.getRowHi());
                         timeFrameCursor.open();
                         for (long row = frame.getRowLo(); row < frame.getRowHi(); row++) {
-                            timeFrameCursor.recordAt(record, Rows.toRowID(frame.getPartitionIndex(), row));
+                            timeFrameCursor.recordAt(record, Rows.toRowID(frame.getIndex(), row));
                             actualSink.put(record.getLong(0));
                             actualSink.put('\t');
                             actualSink.put(record.getBool(1));
@@ -339,6 +341,63 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
                 try (RecordCursorFactory factory = select(tc.query)) {
                     Assert.assertFalse("time frame cursor shouldn't be supported for " + tc.table, factory.supportsTimeFrameCursor());
                 }
+            });
+        }
+    }
+
+    @Test
+    public void testTimeFrameBoundaries() throws Exception {
+        final int[] partitionBys = new int[]{
+                PartitionBy.NONE,
+                PartitionBy.HOUR,
+                PartitionBy.DAY,
+                PartitionBy.WEEK,
+                PartitionBy.MONTH,
+                PartitionBy.YEAR,
+        };
+
+        for (int partitionBy : partitionBys) {
+            assertMemoryLeak(() -> {
+                ddl(
+                        "create table x as (select" +
+                                " timestamp_sequence(100000000, " + 365 * Timestamps.DAY_MICROS + ") t" +
+                                " from long_sequence(3)" +
+                                ") timestamp (t) partition by " + PartitionBy.toString(partitionBy)
+                );
+
+                TestUtils.printSql(
+                        engine,
+                        sqlExecutionContext,
+                        "x",
+                        sink
+                );
+
+                try (RecordCursorFactory factory = select("x")) {
+                    Assert.assertTrue(factory.supportsTimeFrameCursor());
+                    try (TimeFrameRecordCursor timeFrameCursor = factory.getTimeFrameCursor(sqlExecutionContext)) {
+                        Record record = timeFrameCursor.getRecord();
+                        TimeFrame frame = timeFrameCursor.getTimeFrame();
+                        // forward scan
+                        while (timeFrameCursor.next()) {
+                            Assert.assertEquals(-1, frame.getRowLo());
+                            Assert.assertEquals(-1, frame.getRowHi());
+                            timeFrameCursor.open();
+                            timeFrameCursor.recordAt(record, Rows.toRowID(frame.getIndex(), 0));
+                            long ts = record.getTimestamp(0);
+
+                            PartitionBy.PartitionFloorMethod floorMethod = PartitionBy.getPartitionFloorMethod(partitionBy);
+                            PartitionBy.PartitionCeilMethod ceilMethod = PartitionBy.getPartitionCeilMethod(partitionBy);
+
+                            long expectedLo = floorMethod != null ? floorMethod.floor(ts) : 0;
+                            long expectedHi = ceilMethod != null ? ceilMethod.ceil(ts) : Long.MAX_VALUE;
+
+                            Assert.assertEquals(expectedLo, frame.getTimestampLo());
+                            Assert.assertEquals(expectedHi, frame.getTimestampHi());
+                        }
+                    }
+                }
+
+                drop("drop table x");
             });
         }
     }

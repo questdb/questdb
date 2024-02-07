@@ -29,14 +29,10 @@ import io.questdb.std.Rows;
 public interface TimeFrame {
 
     /**
-     * @return numeric index of the current partition
+     * @return numeric index of the current time frame; not guaranteed
+     * to be sequentially growing
      */
-    int getPartitionIndex();
-
-    /**
-     * @return timestamp of the current partition
-     */
-    long getPartitionTimestamp();
+    int getIndex();
 
     /**
      * Make sure to call {@link TimeFrameRecordCursor#open()} prior to this method.
@@ -45,7 +41,7 @@ public interface TimeFrame {
      * to any row id in the [rowLo, rowHi) range. {@link Rows#toRowID(int, long)}
      * method should be used to obtain final row id.
      *
-     * @return upper boundary for the last row of a data frame, i.e. last row + 1
+     * @return upper boundary for row number within the frame, exclusive
      */
     long getRowHi();
 
@@ -56,12 +52,22 @@ public interface TimeFrame {
      * to any row id in the [rowLo, rowHi) range. {@link Rows#toRowID(int, long)}
      * method should be used to obtain final row id.
      *
-     * @return first row of a data frame
+     * @return lower boundary for row number within the frame, potentially inclusive
      */
     long getRowLo();
 
     /**
-     * @return whether the partition was previously open
+     * @return upper boundary of timestamps present in the time frame, exclusive
+     */
+    long getTimestampHi();
+
+    /**
+     * @return lower boundary of timestamps present in the time frame, inclusive
+     */
+    long getTimestampLo();
+
+    /**
+     * @return whether the frame was previously open
      */
     boolean isOpen();
 }

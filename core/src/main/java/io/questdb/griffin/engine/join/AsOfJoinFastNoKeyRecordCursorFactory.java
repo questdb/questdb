@@ -192,10 +192,10 @@ public class AsOfJoinFastNoKeyRecordCursorFactory extends AbstractJoinRecordCurs
         }
 
         private void findTimeFrame(TimeFrame timeFrame, long masterTimestamp) {
-            if (timeFrame.getPartitionTimestamp() > masterTimestamp) {
+            if (timeFrame.getTimestampLo() > masterTimestamp) {
                 // Current time frame is already after the master timestamp,
                 // so we should go no further.
-                latestSlavePartitionIndex = timeFrame.getPartitionIndex();
+                latestSlavePartitionIndex = timeFrame.getIndex();
                 latestSlaveRow = timeFrame.getRowLo();
                 markEntered(latestSlavePartitionIndex);
                 return;
@@ -203,9 +203,9 @@ public class AsOfJoinFastNoKeyRecordCursorFactory extends AbstractJoinRecordCurs
             // Navigate to the first time frame that contains timestamps
             // after the master timestamp and then enter the previous one.
             while (slaveCursor.next()) {
-                if (timeFrame.getPartitionTimestamp() > masterTimestamp) {
+                if (timeFrame.getTimestampLo() > masterTimestamp) {
                     slaveCursor.prev();
-                    latestSlavePartitionIndex = timeFrame.getPartitionIndex();
+                    latestSlavePartitionIndex = timeFrame.getIndex();
                     latestSlaveRow = timeFrame.getRowLo();
                     markEntered(latestSlavePartitionIndex);
                     return;
@@ -228,7 +228,7 @@ public class AsOfJoinFastNoKeyRecordCursorFactory extends AbstractJoinRecordCurs
             }
             final TimeFrame timeFrame = slaveCursor.getTimeFrame();
             while (true) {
-                if (latestSlavePartitionIndex >= 0 && latestSlavePartitionIndex == timeFrame.getPartitionIndex()) {
+                if (latestSlavePartitionIndex >= 0 && latestSlavePartitionIndex == timeFrame.getIndex()) {
                     if (!timeFrame.isOpen()) {
                         slaveCursor.open();
                     }

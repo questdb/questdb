@@ -24,10 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.DataUnavailableException;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableReaderRecord;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.std.Misc;
@@ -43,6 +40,7 @@ public class TableReaderTimeFrameCursor implements TimeFrameRecordCursor {
     private final TableReaderRecord recordB = new TableReaderRecord();
     private final TableReaderTimeFrame timeFrame = new TableReaderTimeFrame();
     private DataFrameCursor dataFrameCursor;
+    private int partitionBy;
     private int partitionHi;
     private TableReader reader;
 
@@ -80,12 +78,12 @@ public class TableReaderTimeFrameCursor implements TimeFrameRecordCursor {
     public boolean next() {
         int partitionIndex = timeFrame.partitionIndex;
         if (++partitionIndex < partitionHi) {
-            long partitionTs = reader.getPartitionTimestampByIndex(partitionIndex);
-            timeFrame.of(partitionIndex, partitionTs);
+            long timestampLo = reader.getPartitionTimestampByIndex(partitionIndex);
+            timeFrame.of(partitionIndex, timestampLo, estimatePartitionHi(timestampLo));
             return true;
         }
         // Update frame index in case of subsequent prev() call.
-        timeFrame.of(partitionHi, Long.MIN_VALUE);
+        timeFrame.of(partitionHi, Long.MIN_VALUE, Long.MIN_VALUE);
         return false;
     }
 
@@ -95,6 +93,7 @@ public class TableReaderTimeFrameCursor implements TimeFrameRecordCursor {
         recordA.of(reader);
         recordB.of(reader);
         partitionHi = reader.getPartitionCount();
+        partitionBy = reader.getPartitionedBy();
         toTop();
         return this;
     }
@@ -114,12 +113,12 @@ public class TableReaderTimeFrameCursor implements TimeFrameRecordCursor {
     public boolean prev() {
         int partitionIndex = timeFrame.partitionIndex;
         if (--partitionIndex >= 0) {
-            long partitionTs = reader.getPartitionTimestampByIndex(partitionIndex);
-            timeFrame.of(partitionIndex, partitionTs);
+            long timestampLo = reader.getPartitionTimestampByIndex(partitionIndex);
+            timeFrame.of(partitionIndex, timestampLo, estimatePartitionHi(timestampLo));
             return true;
         }
         // Update frame index in case of subsequent next() call.
-        timeFrame.of(-1, Long.MIN_VALUE);
+        timeFrame.of(-1, Long.MIN_VALUE, Long.MIN_VALUE);
         return false;
     }
 
@@ -133,28 +132,34 @@ public class TableReaderTimeFrameCursor implements TimeFrameRecordCursor {
         timeFrame.clear();
     }
 
+    private long estimatePartitionHi(long partitionTimestamp) {
+        if (partitionBy == PartitionBy.NONE) {
+            return Long.MAX_VALUE;
+        }
+        final PartitionBy.PartitionCeilMethod partitionCeilMethod = PartitionBy.getPartitionCeilMethod(partitionBy);
+        assert partitionCeilMethod != null;
+        return partitionCeilMethod.ceil(partitionTimestamp);
+    }
+
     private static class TableReaderTimeFrame implements TimeFrame, Mutable {
         private int partitionIndex;
-        private long partitionTs;
         private long rowHi;
         private long rowLo;
+        private long timestampHi;
+        private long timestampLo;
 
         @Override
         public void clear() {
             partitionIndex = -1;
-            partitionTs = Long.MIN_VALUE;
+            timestampLo = Long.MIN_VALUE;
+            timestampHi = Long.MIN_VALUE;
             rowLo = -1;
             rowHi = -1;
         }
 
         @Override
-        public int getPartitionIndex() {
+        public int getIndex() {
             return partitionIndex;
-        }
-
-        @Override
-        public long getPartitionTimestamp() {
-            return partitionTs;
         }
 
         @Override
@@ -168,13 +173,24 @@ public class TableReaderTimeFrameCursor implements TimeFrameRecordCursor {
         }
 
         @Override
+        public long getTimestampHi() {
+            return timestampHi;
+        }
+
+        @Override
+        public long getTimestampLo() {
+            return timestampLo;
+        }
+
+        @Override
         public boolean isOpen() {
             return rowLo != -1 && rowHi != -1;
         }
 
-        public void of(int partitionIndex, long partitionTs) {
+        public void of(int partitionIndex, long timestampLo, long timestampHi) {
             this.partitionIndex = partitionIndex;
-            this.partitionTs = partitionTs;
+            this.timestampLo = timestampLo;
+            this.timestampHi = timestampHi;
             rowLo = -1;
             rowHi = -1;
         }
