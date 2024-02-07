@@ -6000,7 +6000,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             // no where clause, distinct column
             assertPlan("SELECT count_distinct(s) FROM test",
                     "Count\n" +
-                            "    Async Group By workers: 1\n" +
+                            "    Async JIT Group By workers: 1\n" +
                             "      keys: [s]\n" +
                             "      filter: s is not null\n" +
                             "        DataFrame\n" +
@@ -8190,6 +8190,19 @@ public class ExplainPlanTest extends AbstractCairoTest {
         );
     }
 
+    @Test
+    public void testSelectWithJittedFilter27() throws Exception {
+        assertPlan(
+                "create table tab ( s string, ts timestamp);",
+                "select * from tab where s = null ",
+                "Async JIT Filter workers: 1\n" +
+                        "  filter: s is null\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: tab\n"
+        );
+    }
+
     @Test // TODO: this one should use jit !
     public void testSelectWithJittedFilter3() throws Exception {
         assertPlan(
@@ -8552,19 +8565,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where s = 'test' ",
                 "Async Filter workers: 1\n" +
                         "  filter: s='test'\n" +
-                        "    DataFrame\n" +
-                        "        Row forward scan\n" +
-                        "        Frame forward scan on: tab\n"
-        );
-    }
-
-    @Test // jit filter doesn't work for string type
-    public void testSelectWithNonJittedFilter8() throws Exception {
-        assertPlan(
-                "create table tab ( s string, ts timestamp);",
-                "select * from tab where s = null ",
-                "Async Filter workers: 1\n" +
-                        "  filter: s is null\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
