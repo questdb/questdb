@@ -38,7 +38,8 @@ public class LtJoinNoKeyRecordCursorFactory extends AbstractJoinRecordCursorFact
             RecordMetadata metadata,
             RecordCursorFactory masterFactory,
             RecordCursorFactory slaveFactory,
-            int columnSplit) {
+            int columnSplit
+    ) {
         super(metadata, null, masterFactory, slaveFactory);
         this.cursor = new LtJoinNoKeyJoinRecordCursor(
                 columnSplit,

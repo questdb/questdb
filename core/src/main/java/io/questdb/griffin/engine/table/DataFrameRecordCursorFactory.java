@@ -124,7 +124,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         if (framingSupported) {
             DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor(executionContext, ORDER_ASC);
             if (timeFrameCursor == null) {
-                timeFrameCursor = new TableReaderTimeFrameCursor();
+                timeFrameCursor = new TableReaderTimeFrameCursor(columnIndexes);
             }
             return timeFrameCursor.of(dataFrameCursor);
         }

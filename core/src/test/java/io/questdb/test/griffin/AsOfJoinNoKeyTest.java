@@ -31,15 +31,35 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+
+import java.util.Arrays;
+import java.util.Collection;
 
 /**
- * Verifies correctness of both AsOfJoinNoKeyRecordCursorFactory and AsOfJoinFastNoKeyRecordCursorFactory factories.
- * The latter skips full scan of right hand table by lazy time frame navigation.
+ * Verifies correctness of both slow and fast non-keyed ASOF/LT join factories.
+ * Fast factories skip full scan of right hand table by lazy time frame navigation.
  */
+@RunWith(Parameterized.class)
 public class AsOfJoinNoKeyTest extends AbstractCairoTest {
+    private final JoinType joinType;
+
+    public AsOfJoinNoKeyTest(JoinType joinType) {
+        this.joinType = joinType;
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {JoinType.ASOF},
+                {JoinType.LT},
+        });
+    }
 
     @Test
     public void testFuzz() throws Exception {
+        // TODO: fails with 349859082475539L, 1707408869864L
         final Rnd rnd = TestUtils.generateRandom(LOG);
         assertMemoryLeak(() -> {
             final int table1Size = rnd.nextPositiveInt() % 100;
@@ -223,13 +243,29 @@ public class AsOfJoinNoKeyTest extends AbstractCairoTest {
     }
 
     private void assertResultSetsMatch(String leftTable, String rightTable) throws Exception {
+        final String join;
+        switch (joinType) {
+            case ASOF:
+                join = "ASOF";
+                break;
+            case LT:
+                join = "LT";
+                break;
+            default:
+                throw new IllegalArgumentException("Unexpected join type: " + joinType);
+        }
+
         final StringSink expectedSink = new StringSink();
         // equivalent of the below query, but uses slow factory
-        printSql("select * from " + leftTable + " asof join (" + rightTable + " where i >= 0)", expectedSink);
+        printSql("select * from " + leftTable + " " + join + " join (" + rightTable + " where i >= 0)", expectedSink);
 
         final StringSink actualSink = new StringSink();
-        printSql("select * from " + leftTable + " asof join " + rightTable, actualSink);
+        printSql("select * from " + leftTable + " " + join + " join " + rightTable, actualSink);
 
         TestUtils.assertEquals(expectedSink, actualSink);
+    }
+
+    public enum JoinType {
+        ASOF, LT
     }
 }

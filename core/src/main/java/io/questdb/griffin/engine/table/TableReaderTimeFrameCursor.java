@@ -28,6 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Rows;
@@ -37,14 +38,21 @@ import io.questdb.std.Rows;
  * should start with a {@link #next()} call.
  */
 public class TableReaderTimeFrameCursor implements TimeFrameRecordCursor {
-    private final TableReaderRecord recordA = new TableReaderRecord();
-    private final TableReaderRecord recordB = new TableReaderRecord();
+    private final IntList columnIndexes;
+    private final TableReaderSelectedColumnRecord recordA;
+    private final TableReaderSelectedColumnRecord recordB;
     private final TableReaderTimeFrame timeFrame = new TableReaderTimeFrame();
     private DataFrameCursor dataFrameCursor;
     private PartitionBy.PartitionCeilMethod partitionCeilMethod;
     private int partitionHi;
     private TableReader reader;
     private int timestampIndex;
+
+    public TableReaderTimeFrameCursor(IntList columnIndexes) {
+        this.columnIndexes = columnIndexes;
+        recordA = new TableReaderSelectedColumnRecord(columnIndexes);
+        recordB = new TableReaderSelectedColumnRecord(columnIndexes);
+    }
 
     @Override
     public void close() {
@@ -63,7 +71,7 @@ public class TableReaderTimeFrameCursor implements TimeFrameRecordCursor {
 
     @Override
     public SymbolTable getSymbolTable(int columnIndex) {
-        return dataFrameCursor.getSymbolTable(columnIndex);
+        return reader.getSymbolTable(columnIndexes.getQuick(columnIndex));
     }
 
     @Override
@@ -73,7 +81,7 @@ public class TableReaderTimeFrameCursor implements TimeFrameRecordCursor {
 
     @Override
     public SymbolTable newSymbolTable(int columnIndex) {
-        return dataFrameCursor.newSymbolTable(columnIndex);
+        return reader.newSymbolTable(columnIndexes.getQuick(columnIndex));
     }
 
     @Override
@@ -136,7 +144,7 @@ public class TableReaderTimeFrameCursor implements TimeFrameRecordCursor {
 
     @Override
     public void recordAt(Record record, long atRowId) {
-        ((TableReaderRecord) record).jumpTo(Rows.toPartitionIndex(atRowId), Rows.toLocalRowID(atRowId));
+        ((TableReaderSelectedColumnRecord) record).jumpTo(Rows.toPartitionIndex(atRowId), Rows.toLocalRowID(atRowId));
     }
 
     @Override

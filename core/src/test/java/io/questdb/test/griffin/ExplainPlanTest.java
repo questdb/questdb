@@ -4389,7 +4389,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             compile("CREATE TABLE tab ( created timestamp, value int ) timestamp(created)");
 
             String[] joinTypes = {"LEFT", "LT", "ASOF"};
-            String[] joinFactoryTypes = {"Hash Outer Join Light", "Lt Join", "AsOf Join Fast Scan"};
+            String[] joinFactoryTypes = {"Hash Outer Join Light", "Lt Join Fast Scan", "AsOf Join Fast Scan"};
 
             for (int i = 0; i < joinTypes.length; i++) {
                 // do not push down predicate to the 'right' table of left join but apply it after join
@@ -4613,7 +4613,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select ts1, ts2, i1, i2 from (select a.i as i1, a.ts as ts1, b.i as i2, b.ts as ts2 from a lt join b on ts) where ts1::long*i1<ts2::long*i2",
                     "SelectedRecord\n" +
                             "    Filter filter: a.ts::long*a.i<b.ts::long*b.i\n" +
-                            "        Lt Join\n" +
+                            "        Lt Join Fast Scan\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
@@ -4633,7 +4633,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan(
                     "select * from a lt join b on ts",
                     "SelectedRecord\n" +
-                            "    Lt Join\n" +
+                            "    Lt Join Fast Scan\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
@@ -4656,7 +4656,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * from a lt join b on ts where a.i = b.ts",
                     "SelectedRecord\n" +
                             "    Filter filter: a.i=b.ts\n" +
-                            "        Lt Join\n" +
+                            "        Lt Join Fast Scan\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
@@ -4677,7 +4677,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * from a lt join b on ts where a.i = b.ts",
                     "SelectedRecord\n" +
                             "    Filter filter: a.i=b.ts\n" +
-                            "        Lt Join\n" +
+                            "        Lt Join Fast Scan\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
@@ -4698,7 +4698,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * from a lt join b where a.i = b.ts",
                     "SelectedRecord\n" +
                             "    Filter filter: a.i=b.ts\n" +
-                            "        Lt Join\n" +
+                            "        Lt Join Fast Scan\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
@@ -4767,7 +4767,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan(
                     "select * from a lt join b where a.i > 0",
                     "SelectedRecord\n" +
-                            "    Lt Join\n" +
+                            "    Lt Join Fast Scan\n" +
                             "        Async JIT Filter workers: 1\n" +
                             "          filter: 0<i\n" +
                             "            DataFrame\n" +
@@ -4789,7 +4789,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan(
                     "select * from a lt join b",
                     "SelectedRecord\n" +
-                            "    Lt Join\n" +
+                            "    Lt Join Fast Scan\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
@@ -4809,7 +4809,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan(
                     "select * from a lt join b on(ts)",
                     "SelectedRecord\n" +
-                            "    Lt Join\n" +
+                            "    Lt Join Fast Scan\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
@@ -4829,7 +4829,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan(
                     "select * from a lt join b on(ts)",
                     "SelectedRecord\n" +
-                            "    Lt Join\n" +
+                            "    Lt Join Fast Scan\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
@@ -4874,8 +4874,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "lt join b on ts " +
                             "lt join a c on ts",
                     "SelectedRecord\n" +
-                            "    Lt Join\n" +
-                            "        Lt Join\n" +
+                            "    Lt Join Fast Scan\n" +
+                            "        Lt Join Fast Scan\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
@@ -6478,7 +6478,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select count(*) from (select * from a lt join a b) ",
                 "Count\n" +
                         "    SelectedRecord\n" +
-                        "        Lt Join\n" +
+                        "        Lt Join Fast Scan\n" +
                         "            DataFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: a\n" +
@@ -8945,7 +8945,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan(
                     "select * from (select * from a order by ts asc, l limit 10) lt join (select * from a) order by ts asc",
                     "SelectedRecord\n" +
-                            "    Lt Join\n" +
+                            "    Lt Join Fast Scan\n" +
                             "        Sort light lo: 10 partiallySorted: true\n" +
                             "          keys: [ts, l]\n" +
                             "            DataFrame\n" +
@@ -8969,7 +8969,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "lt join " +
                             "(select * from a) order by ts asc",
                     "SelectedRecord\n" +
-                            "    Lt Join\n" +
+                            "    Lt Join Fast Scan\n" +
                             "        Limit lo: 10\n" +
                             "            Sort light\n" +
                             "              keys: [ts, l]\n" +
@@ -9021,7 +9021,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "lt join (select * from a) " +
                             "order by ts asc",
                     "SelectedRecord\n" +
-                            "    Lt Join\n" +
+                            "    Lt Join Fast Scan\n" +
                             "        Limit lo: 10\n" +
                             "            Sort\n" +
                             "              keys: [ts, l]\n" +
