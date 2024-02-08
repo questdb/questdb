@@ -30,6 +30,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.test.fuzz.FuzzTransaction;
@@ -40,31 +41,47 @@ import org.junit.Test;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class SnapshotFuzzTest extends AbstractFuzzTest {
-    public TableToken createInitialTable(String tableName, boolean isWal, int rowCount) throws SqlException {
-        return fuzzer.createInitialTable(tableName, isWal, rowCount);
-//        if (engine.getTableTokenIfExists(tableName) == null) {
-//            engine.ddl(
-//                    "create table " + tableName + " as (" +
-//                            "select x as c1, " +
-//                            " rnd_symbol('AB', 'BC', 'CD') c2, " +
-//                            " timestamp_sequence('2022-02-24', 1000000L) ts, " +
-//                            " cast(x as int) c3," +
-//                            " rnd_bin() c4," +
-//                            " to_long128(3 * x, 6 * x) c5," +
-//                            " rnd_str('a', 'bdece', null, ' asdflakji idid', 'dk')," +
-//                            " rnd_boolean() bool1 " +
-//                            " from long_sequence(" + rowCount + ")" +
-//                            ") timestamp(ts) partition by DAY " + (isWal ? "WAL" : "BYPASS WAL"),
-//                    sqlExecutionContext
-//            );
-//        }
-//        return engine.verifyTableName(tableName);
-    }
+//    public TableToken createInitialTable(String tableName, boolean isWal, int rowCount) throws SqlException {
+//        return fuzzer.createInitialTable(tableName, isWal, rowCount);
+//    }
 
     @Test
     public void testFullFuzz() throws Exception {
-        Rnd rnd = generateRandom(LOG, 319384652217708L, 1707406079199L);
+        Rnd rnd = generateRandom(LOG);
         fullFuzz(rnd);
+        setFuzzProperties(rnd.nextLong(50), getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd));
+        runFuzzWithSnapshot(rnd);
+    }
+
+    @Test
+    public void testFullFuzzEjectedTransactions() throws Exception {
+        Rnd rnd = generateRandom(LOG, 325343665726833L, 1707412038195L);
+        fuzzer.setFuzzProbabilities(
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0.5,
+                0
+        );
+
+        fuzzer.setFuzzCounts(
+                rnd.nextBoolean(),
+                rnd.nextInt(2_000_000),
+                rnd.nextInt(1000),
+                rnd.nextInt(3),
+                rnd.nextInt(5),
+                rnd.nextInt(1000),
+                rnd.nextInt(1_000_000),
+                5 + rnd.nextInt(10)
+        );
+
+        setFuzzProperties(1, getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd));
         runFuzzWithSnapshot(rnd);
     }
 
@@ -138,20 +155,24 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
         node1.setProperty(PropertyKey.DEBUG_CAIRO_O3_COLUMN_MEMORY_SIZE, size);
 
         String tableNameNonWal = testName.getMethodName() + "_non_wal";
-        createInitialTable(tableNameNonWal, false, 0);
+        fuzzer.createInitialTable(tableNameNonWal, false, fuzzer.initialRowCount);
         String tableNameWal = testName.getMethodName();
-        TableToken walTable = createInitialTable(tableNameWal, true, fuzzer.initialRowCount);
+        TableToken walTable = fuzzer.createInitialTable(tableNameWal, true, fuzzer.initialRowCount);
 
         assertMemoryLeak(() -> {
+            if (rnd.nextBoolean()) {
+                drainWalQueue();
+            }
+
             ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableNameNonWal, rnd);
-            int snapshotIndex = rnd.nextInt(transactions.size());
+            int snapshotIndex = 1 + rnd.nextInt(transactions.size() - 1);
 
             ObjList<FuzzTransaction> beforeSnapshot = new ObjList<>();
             beforeSnapshot.addAll(transactions, 0, snapshotIndex);
             ObjList<FuzzTransaction> afterSnapshot = new ObjList<>();
             afterSnapshot.addAll(transactions, snapshotIndex, transactions.size());
 
-            fuzzer.applyToWal(beforeSnapshot, tableNameWal, 1, rnd);
+            fuzzer.applyToWal(beforeSnapshot, tableNameWal, rnd.nextInt(2) + 1, rnd);
 
             AtomicReference<Throwable> ex = new AtomicReference<>();
             Thread asyncWalApply = new Thread(() -> {
@@ -165,6 +186,7 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
             });
             asyncWalApply.start();
 
+            Os.sleep(rnd.nextLong(snapshotIndex * 100L));
             // Make snapshot here
             createSnapshot();
 
@@ -178,7 +200,7 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
             restoreSnapshot();
             engine.notifyWalTxnRepublisher(engine.verifyTableName(tableNameWal));
             if (afterSnapshot.size() > 0) {
-                fuzzer.applyWal(afterSnapshot, tableNameWal, 1, rnd);
+                fuzzer.applyWal(afterSnapshot, tableNameWal, rnd.nextInt(2) + 1, rnd);
             } else {
                 drainWalQueue();
             }
@@ -188,7 +210,7 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
             // Write same data to non-wal table
             fuzzer.applyNonWal(transactions, tableNameNonWal, rnd);
 
-            String limit = "";
+            String limit = " limit 136700, 136800";
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, tableNameNonWal + limit, tableNameWal + limit, LOG);
             fuzzer.assertRandomIndexes(tableNameNonWal, tableNameWal, rnd);
         });

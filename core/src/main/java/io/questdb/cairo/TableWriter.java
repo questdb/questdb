@@ -6750,10 +6750,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 !Utf8s.endsWithAscii(fileNameSink, configuration.getAttachPartitionSuffix())
         ) {
             try {
-                long txn = 0;
+                long txn;
                 int txnSep = Utf8s.indexOfAscii(fileNameSink, '.');
                 if (txnSep < 0) {
                     txnSep = fileNameSink.size();
+                    txn = -1;
                 } else {
                     txn = Numbers.parseLong(fileNameSink, txnSep + 1, fileNameSink.size());
                 }

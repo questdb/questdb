@@ -70,7 +70,7 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
     private final SymbolMapUtil symbolMapUtil = new SymbolMapUtil();
     private ColumnVersionReader columnVersionReader = null;
     private TableReaderMetadata tableMetadata = null;
-    private TxReader txReader = null;
+    private TxWriter txWriter = null;
 
     DatabaseSnapshotAgentImpl(CairoEngine engine) {
         this.engine = engine;
@@ -137,7 +137,35 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
         }
     }
 
-    private void rebuildTableSymbolFiles(Path tablePath, AtomicInteger recoveredSymbolFiles) {
+    private void rebuildSymbolFiles(Path tablePath, AtomicInteger recoveredSymbolFiles, int pathTableLen) {
+        int denseSymbolIndex = 0;
+        tablePath.trimTo(pathTableLen);
+        for (int i = 0; i < tableMetadata.getColumnCount(); i++) {
+
+            int columnType = tableMetadata.getColumnType(i);
+            if (ColumnType.isSymbol(columnType)) {
+                int cleanSymbolCount = txWriter.getSymbolValueCount(denseSymbolIndex++);
+                String columnName = tableMetadata.getColumnName(i);
+                LOG.info().$("rebuilding symbol files [table=").$(tablePath)
+                        .$(", column=").$(columnName)
+                        .$(", count=").$(cleanSymbolCount)
+                        .I$();
+
+                int writerIndex = tableMetadata.getWriterIndex(i);
+                symbolMapUtil.rebuildSymbolFiles(
+                        configuration,
+                        tablePath,
+                        columnName,
+                        columnVersionReader.getDefaultColumnNameTxn(writerIndex),
+                        cleanSymbolCount,
+                        -1
+                );
+                recoveredSymbolFiles.incrementAndGet();
+            }
+        }
+    }
+
+    private void rebuildTableFiles(Path tablePath, AtomicInteger recoveredSymbolFiles) {
         int pathTableLen = tablePath.size();
         try {
             if (tableMetadata == null) {
@@ -145,11 +173,11 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
             }
             tableMetadata.load(tablePath.concat(TableUtils.META_FILE_NAME).$());
 
-            if (txReader == null) {
-                txReader = new TxReader(configuration.getFilesFacade());
+            if (txWriter == null) {
+                txWriter = new TxWriter(configuration.getFilesFacade(), configuration);
             }
-            txReader.ofRO(tablePath.trimTo(pathTableLen).concat(TXN_FILE_NAME).$(), tableMetadata.getPartitionBy());
-            txReader.unsafeLoadAll();
+            txWriter.ofRW(tablePath.trimTo(pathTableLen).concat(TXN_FILE_NAME).$(), tableMetadata.getPartitionBy());
+            txWriter.unsafeLoadAll();
 
             if (columnVersionReader == null) {
                 columnVersionReader = new ColumnVersionReader();
@@ -158,28 +186,14 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
             columnVersionReader.ofRO(configuration.getFilesFacade(), tablePath);
             columnVersionReader.readUnsafe();
 
-            int denseSymbolIndex = 0;
-            tablePath.trimTo(pathTableLen);
-            for (int i = 0; i < tableMetadata.getColumnCount(); i++) {
+            // Symbols are not append only data structures, they can be corrupt
+            // when symbol files are copied while written to. We need to rebuild them.
+            rebuildSymbolFiles(tablePath, recoveredSymbolFiles, pathTableLen);
 
-                int columnType = tableMetadata.getColumnType(i);
-                if (ColumnType.isSymbol(columnType)) {
-                    int cleanSymbolCount = txReader.getSymbolValueCount(denseSymbolIndex++);
-                    LOG.info().$("rebuilding symbol files [table=").$(tablePath)
-                            .$(", column=").$(tableMetadata.getColumnName(i))
-                            .$(", count=").$(cleanSymbolCount)
-                            .I$();
-
-                    symbolMapUtil.rebuildSymbolFiles(
-                            configuration,
-                            tablePath,
-                            tableMetadata.getColumnName(i),
-                            columnVersionReader.getDefaultColumnNameTxn(i),
-                            cleanSymbolCount,
-                            -1
-                    );
-                    recoveredSymbolFiles.incrementAndGet();
-                }
+            if (tableMetadata.isWalEnabled()) {
+                // WAL Lag values is not strictly append only data structures, it can be overwritten
+                // while the snapshot was copied. Resetting it will re-apply data from copied WAL files
+                txWriter.resetLagAppliedRows();
             }
 
         } finally {
@@ -272,6 +286,7 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
                                         mem.close(false);
                                         // Copy _txn file.
                                         path.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).$();
+                                        LOG.info().$("copying txn file [table=").utf8(tableName).$(", to=").$(path).I$();
                                         mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
                                         reader.getTxFile().dumpTo(mem);
                                         mem.close(false);
@@ -484,9 +499,7 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
                         }
                     }
 
-                    // Symbols are not strictly append only data structures, they can be corrupt
-                    // when symbol files are copied while written to. We need to rebuild them.
-                    rebuildTableSymbolFiles(dstPath.trimTo(dstPathLen), symbolFilesCount);
+                    rebuildTableFiles(dstPath.trimTo(dstPathLen), symbolFilesCount);
 
                     // Go inside SEQ_DIR
                     srcPath.trimTo(srcPathLen).concat(WalUtils.SEQ_DIR);
@@ -566,7 +579,7 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
         } finally {
             tableMetadata = Misc.free(tableMetadata);
             columnVersionReader = Misc.free(columnVersionReader);
-            txReader = Misc.free(txReader);
+            txWriter = Misc.free(txWriter);
         }
     }
 }

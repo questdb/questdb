@@ -85,8 +85,6 @@ public class SymbolMapWriter implements Closeable, MapWriter {
                 throw CairoException.critical(0).put("SymbolMap is too short: ").put(path);
             }
 
-            LOG.info().$("opening symbol [path=").$(path).$(", symbolCount=").$(symbolCount).$(']').$();
-
             // open "offset" memory and make sure we start appending from where
             // we left off. Where we left off is stored externally to symbol map
             this.offsetMem = Vm.getWholeMARWInstance(
