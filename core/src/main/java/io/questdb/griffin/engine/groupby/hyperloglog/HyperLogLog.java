@@ -65,17 +65,34 @@ public class HyperLogLog {
         this.precision = precision;
     }
 
-    public void add(long hash) {
+    /**
+     * Adds the provided hash to this instance of HyperLogLog and, if it is
+     * computationally inexpensive, calculates the current cardinality.
+     * Combining these two operations in one method allows us to take advantage of
+     * the data that is already in the CPU cache and avoid cache misses while
+     * performing deferred cardinality computation using the
+     * {@link HyperLogLog#computeCardinality()} method.
+     *
+     * @param hash hash to be added to this instance of HyperLogLog
+     * @return estimated cardinality or -1
+     */
+    public long addAndComputeCardinalityFast(long hash) {
         if (getType() == SPARSE) {
             sparse.add(hash);
             ptr = sparse.ptr();
             if (sparse.isFull()) {
                 convertToDense();
+                setCachedCardinality(CARDINALITY_NULL_VALUE);
+                return -1;
             }
+            long cardinality = sparse.computeCardinality();
+            setCachedCardinality(cardinality);
+            return cardinality;
         } else {
             dense.add(hash);
+            setCachedCardinality(CARDINALITY_NULL_VALUE);
+            return -1;
         }
-        setCachedCardinality(CARDINALITY_NULL_VALUE);
     }
 
     private void convertToDense() {

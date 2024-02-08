@@ -66,7 +66,7 @@ public class HyperLogLogTest extends AbstractTest {
                     int exactCardinality = 10000000;
 
                     for (int i = 0; i < exactCardinality; i++) {
-                        hll.add(Hash.murmur3ToLong(i));
+                        hll.addAndComputeCardinalityFast(Hash.murmur3ToLong(i));
                     }
 
                     long estimatedCardinality = hll.computeCardinality();
@@ -99,7 +99,7 @@ public class HyperLogLogTest extends AbstractTest {
                     for (int i = 0; i < exactCardinality; i++) {
                         int n = rnd.nextInt(maxRepetitions) + 1;
                         for (int j = 0; j < n; j++) {
-                            hll.add(Hash.murmur3ToLong(i));
+                            hll.addAndComputeCardinalityFast(Hash.murmur3ToLong(i));
                         }
                     }
 
@@ -132,7 +132,7 @@ public class HyperLogLogTest extends AbstractTest {
                     int N = 10000000;
                     for (int i = 0; i < N; i++) {
                         int value = rnd.nextInt();
-                        hll.add(Hash.murmur3ToLong(value));
+                        hll.addAndComputeCardinalityFast(Hash.murmur3ToLong(value));
                         oracle.add(value);
                     }
 
@@ -167,8 +167,8 @@ public class HyperLogLogTest extends AbstractTest {
                     hllA.of(0);
                     while (hllA.isSparse()) {
                         long hash = rnd.nextLong();
-                        expectedHll.add(hash);
-                        hllA.add(hash);
+                        expectedHll.addAndComputeCardinalityFast(hash);
+                        hllA.addAndComputeCardinalityFast(hash);
                     }
 
                     HyperLogLog hllB = new HyperLogLog(finalPrecision);
@@ -176,8 +176,8 @@ public class HyperLogLogTest extends AbstractTest {
                     hllB.of(0);
                     while (hllB.isSparse()) {
                         long hash = rnd.nextLong();
-                        expectedHll.add(hash);
-                        hllB.add(hash);
+                        expectedHll.addAndComputeCardinalityFast(hash);
+                        hllB.addAndComputeCardinalityFast(hash);
                     }
 
                     long mergedPtr = HyperLogLog.merge(hllA, hllB);
@@ -214,8 +214,8 @@ public class HyperLogLogTest extends AbstractTest {
                     larger.of(0);
                     for (int i = 0; i < 150; i++) {
                         long hash = rnd.nextLong();
-                        expectedHll.add(hash);
-                        larger.add(hash);
+                        expectedHll.addAndComputeCardinalityFast(hash);
+                        larger.addAndComputeCardinalityFast(hash);
                     }
                     assertTrue(larger.isSparse());
 
@@ -224,8 +224,8 @@ public class HyperLogLogTest extends AbstractTest {
                     smaller.of(0);
                     for (int i = 0; i < 100; i++) {
                         long hash = rnd.nextLong();
-                        expectedHll.add(hash);
-                        smaller.add(hash);
+                        expectedHll.addAndComputeCardinalityFast(hash);
+                        smaller.addAndComputeCardinalityFast(hash);
                     }
                     assertTrue(smaller.isSparse());
 
@@ -268,8 +268,8 @@ public class HyperLogLogTest extends AbstractTest {
                     sparse.of(0);
                     for (int i = 0; i < 100; i++) {
                         long hash = rnd.nextLong();
-                        expectedHll.add(hash);
-                        sparse.add(hash);
+                        expectedHll.addAndComputeCardinalityFast(hash);
+                        sparse.addAndComputeCardinalityFast(hash);
                     }
                     assertTrue(sparse.isSparse());
 
@@ -278,8 +278,8 @@ public class HyperLogLogTest extends AbstractTest {
                     dense.of(0);
                     while (dense.isSparse()) {
                         long hash = rnd.nextLong();
-                        expectedHll.add(hash);
-                        dense.add(hash);
+                        expectedHll.addAndComputeCardinalityFast(hash);
+                        dense.addAndComputeCardinalityFast(hash);
                     }
 
                     // Test if merging sparse with dense works correctly.
@@ -316,13 +316,44 @@ public class HyperLogLogTest extends AbstractTest {
                     hll.setAllocator(allocator);
                     hll.of(0);
 
-                    hll.add(Hash.murmur3ToLong(rnd.nextLong()));
+                    hll.addAndComputeCardinalityFast(Hash.murmur3ToLong(rnd.nextLong()));
                     assertEquals(1, hll.computeCardinality());
                     assertEquals(1, hll.computeCardinality());
 
                     // add should invalidate cache
-                    hll.add(Hash.murmur3ToLong(rnd.nextLong()));
+                    hll.addAndComputeCardinalityFast(Hash.murmur3ToLong(rnd.nextLong()));
                     assertEquals(2, hll.computeCardinality());
+                }
+            });
+        }
+    }
+
+    @Test
+    public void testFastCardinalityComputation() throws Exception {
+        CairoConfiguration config = new DefaultCairoConfiguration(root) {
+            @Override
+            public long getGroupByAllocatorDefaultChunkSize() {
+                return 64;
+            }
+        };
+        for (int precision = 4; precision <= 18; precision++) {
+            int finalPrecision = precision;
+            assertMemoryLeak(() -> {
+                try (GroupByAllocator allocator = new GroupByAllocator(config)) {
+                    HyperLogLog hll = new HyperLogLog(finalPrecision);
+                    hll.setAllocator(allocator);
+                    hll.of(0);
+
+                    int exactCardinality = 10000;
+
+                    for (int i = 0; i < exactCardinality; i++) {
+                        long estimated = hll.addAndComputeCardinalityFast(Hash.murmur3ToLong(i));
+                        if (hll.isSparse()) {
+                            assertCardinality(i + 1, finalPrecision, estimated);
+                        } else {
+                            assertEquals(-1, estimated);
+                        }
+                    }
                 }
             });
         }

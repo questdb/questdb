@@ -96,7 +96,7 @@ public class HyperLogLogBenchmark {
     public void testHyperLogLog() {
         long value = rnd.nextLong(N);
         long hash = Hash.murmur3ToLong(value);
-        hll.of(hllPtr).add(hash);
+        hll.of(hllPtr).addAndComputeCardinalityFast(hash);
         hllPtr = hll.ptr();
     }
 }

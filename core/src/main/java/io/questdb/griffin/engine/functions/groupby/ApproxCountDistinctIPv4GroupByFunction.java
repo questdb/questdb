@@ -38,6 +38,8 @@ import io.questdb.std.Hash;
 import io.questdb.std.Numbers;
 
 public class ApproxCountDistinctIPv4GroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
+    private static final long NULL_VALUE = -1;
+
     private final Function arg;
     private final HyperLogLog hllA;
     private final HyperLogLog hllB;
@@ -62,10 +64,12 @@ public class ApproxCountDistinctIPv4GroupByFunction extends LongFunction impleme
         final int val = arg.getIPv4(record);
         if (val != Numbers.IPv4_NULL) {
             final long hash = Hash.murmur3ToLong(val);
-            hllA.of(0).add(hash);
+            long cardinality = hllA.of(0).addAndComputeCardinalityFast(hash);
             mapValue.putLong(hllPtrIndex, hllA.ptr());
+            mapValue.putLong(valueIndex, cardinality);
         } else {
             mapValue.putLong(hllPtrIndex, 0);
+            mapValue.putLong(valueIndex, NULL_VALUE);
         }
         mapValue.putBool(overwrittenFlagIndex, false);
     }
@@ -76,8 +80,9 @@ public class ApproxCountDistinctIPv4GroupByFunction extends LongFunction impleme
         if (val != Numbers.IPv4_NULL) {
             final long hash = Hash.murmur3ToLong(val);
             long ptr = mapValue.getLong(hllPtrIndex);
-            hllA.of(ptr).add(hash);
+            long cardinality = hllA.of(ptr).addAndComputeCardinalityFast(hash);
             mapValue.putLong(hllPtrIndex, hllA.ptr());
+            mapValue.putLong(valueIndex, cardinality);
         }
     }
 
@@ -100,6 +105,10 @@ public class ApproxCountDistinctIPv4GroupByFunction extends LongFunction impleme
         long ptr = rec.getLong(hllPtrIndex);
         if (ptr == 0) {
             return 0;
+        }
+        long val = rec.getLong(valueIndex);
+        if (val != NULL_VALUE) {
+            return val;
         }
         hllA.of(ptr);
         return hllA.computeCardinality();
@@ -136,7 +145,7 @@ public class ApproxCountDistinctIPv4GroupByFunction extends LongFunction impleme
             // associated with SAMPLE BY. However, since merge() is called only when the execution
             // is parallel, this cannot happen. To produce the correct result, interpolation can
             // only run on merged data (yielded by the merge phase), not on individual partitions.
-            assert false: "merging overwritten values with HyperLogLog is unsupported";
+            assert false : "merging overwritten values with HyperLogLog is unsupported";
         }
 
         long srcPtr = srcValue.getLong(hllPtrIndex);
@@ -152,7 +161,7 @@ public class ApproxCountDistinctIPv4GroupByFunction extends LongFunction impleme
                 return;
             }
             // See the comment above. The same applies here.
-            assert false: "merging overwritten values with HyperLogLog is unsupported";
+            assert false : "merging overwritten values with HyperLogLog is unsupported";
         }
 
         long destPtr = destValue.getLong(hllPtrIndex);
