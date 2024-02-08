@@ -542,6 +542,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlAsOfJoinLookahead() {
+        return delegate.getSqlAsOfJoinLookahead();
+    }
+
+    @Override
     public int getSqlCharacterStoreCapacity() {
         return delegate.getSqlCharacterStoreCapacity();
     }

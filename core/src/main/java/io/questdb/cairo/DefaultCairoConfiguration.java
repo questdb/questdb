@@ -545,6 +545,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlAsOfJoinLookahead() {
+        return 100;
+    }
+
+    @Override
     public int getSqlCharacterStoreCapacity() {
         // 1024 seems like a good fit, but tests need
         // smaller capacity so that resize is tested correctly

@@ -64,7 +64,7 @@ public class BinarySearch {
             } else if (midVal > value)
                 high = mid;
             else {
-                // In case of multiple equal values, find the first
+                // In case of multiple equal values, find the first/last (UP/DOWN)
                 mid += scanDirection;
                 while (mid > 0 && mid <= high && midVal == column.getLong(mid * Long.BYTES)) {
                     mid += scanDirection;

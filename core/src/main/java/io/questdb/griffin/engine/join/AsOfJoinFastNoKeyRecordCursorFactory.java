@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.join;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
@@ -36,6 +37,7 @@ public class AsOfJoinFastNoKeyRecordCursorFactory extends AbstractJoinRecordCurs
     private final AsOfJoinFastRecordCursor cursor;
 
     public AsOfJoinFastNoKeyRecordCursorFactory(
+            CairoConfiguration configuration,
             RecordMetadata metadata,
             RecordCursorFactory masterFactory,
             RecordCursorFactory slaveFactory,
@@ -47,7 +49,8 @@ public class AsOfJoinFastNoKeyRecordCursorFactory extends AbstractJoinRecordCurs
                 columnSplit,
                 NullRecordFactory.getInstance(slaveFactory.getMetadata()),
                 masterFactory.getMetadata().getTimestampIndex(),
-                slaveFactory.getMetadata().getTimestampIndex()
+                slaveFactory.getMetadata().getTimestampIndex(),
+                configuration.getSqlAsOfJoinLookahead()
         );
     }
 
@@ -96,6 +99,7 @@ public class AsOfJoinFastNoKeyRecordCursorFactory extends AbstractJoinRecordCurs
 
     private static class AsOfJoinFastRecordCursor implements NoRandomAccessRecordCursor {
         private final int columnSplit;
+        private final int lookahead;
         private final int masterTimestampIndex;
         private final OuterJoinRecord record;
         private final int slaveTimestampIndex;
@@ -117,12 +121,14 @@ public class AsOfJoinFastNoKeyRecordCursorFactory extends AbstractJoinRecordCurs
                 int columnSplit,
                 Record nullRecord,
                 int masterTimestampIndex,
-                int slaveTimestampIndex
+                int slaveTimestampIndex,
+                int lookahead
         ) {
             this.columnSplit = columnSplit;
             this.record = new OuterJoinRecord(columnSplit, nullRecord);
             this.masterTimestampIndex = masterTimestampIndex;
             this.slaveTimestampIndex = slaveTimestampIndex;
+            this.lookahead = lookahead;
         }
 
         @Override
@@ -194,20 +200,75 @@ public class AsOfJoinFastNoKeyRecordCursorFactory extends AbstractJoinRecordCurs
             isSlaveForwardScan = true;
         }
 
+        private long binarySearch(long masterTimestamp, long rowLo, long rowHi) {
+            while (rowLo < rowHi) {
+                long rowMid = (rowLo + rowHi) >>> 1;
+                slaveCursor.recordAt(slaveRecA, Rows.toRowID(slaveFrameIndex, rowMid));
+                long midTimestamp = slaveRecA.getTimestamp(slaveTimestampIndex);
+
+                if (midTimestamp < masterTimestamp) {
+                    if (rowLo < rowMid) {
+                        rowLo = rowMid;
+                    } else {
+                        slaveCursor.recordAt(slaveRecA, Rows.toRowID(slaveFrameIndex, rowHi));
+                        if (slaveRecA.getTimestamp(slaveTimestampIndex) > masterTimestamp) {
+                            return rowLo;
+                        }
+                        return rowHi;
+                    }
+                } else if (midTimestamp > masterTimestamp)
+                    rowHi = rowMid;
+                else {
+                    // In case of multiple equal values, find the last
+                    rowMid += 1;
+                    while (rowMid > 0 && rowMid <= rowHi) {
+                        slaveCursor.recordAt(slaveRecA, Rows.toRowID(slaveFrameIndex, rowMid));
+                        if (midTimestamp != slaveRecA.getTimestamp(slaveTimestampIndex)) {
+                            break;
+                        }
+                        rowMid += 1;
+                    }
+                    return rowMid - 1;
+                }
+            }
+
+            slaveCursor.recordAt(slaveRecA, Rows.toRowID(slaveFrameIndex, rowLo));
+            if (slaveRecA.getTimestamp(slaveTimestampIndex) > masterTimestamp) {
+                return rowLo - 1;
+            }
+            return rowLo;
+        }
+
+        private boolean linearScan(TimeFrame frame, long masterTimestamp) {
+            final long scanHi = Math.min(slaveFrameRow + lookahead, frame.getRowHi());
+            while (slaveFrameRow < scanHi) {
+                slaveCursor.recordAt(slaveRecA, Rows.toRowID(slaveFrameIndex, slaveFrameRow));
+                slaveTimestamp = slaveRecA.getTimestamp(slaveTimestampIndex);
+                if (slaveTimestamp > masterTimestamp) {
+                    return true;
+                }
+                record.hasSlave(true);
+                slaveCursor.recordAt(slaveRecB, Rows.toRowID(slaveFrameIndex, slaveFrameRow));
+                slaveFrameRow++;
+            }
+            return false;
+        }
+
         private void nextSlave(long masterTimestamp) {
             final TimeFrame frame = slaveCursor.getTimeFrame();
             while (true) {
                 if (slaveFrameIndex >= 0 && slaveFrameIndex == frame.getIndex()) {
-                    // TODO we can do binary search here
-                    while (slaveFrameRow < frame.getRowHi()) {
-                        slaveCursor.recordAt(slaveRecA, Rows.toRowID(slaveFrameIndex, slaveFrameRow));
-                        slaveTimestamp = slaveRecA.getTimestamp(slaveTimestampIndex);
-                        if (slaveTimestamp > masterTimestamp) {
-                            return;
-                        }
+                    // Scan a few rows to speed up self-join/identical tables cases.
+                    if (linearScan(frame, masterTimestamp)) {
+                        return;
+                    }
+                    if (slaveFrameRow < frame.getRowHi()) {
+                        // Fallback to binary search.
+                        slaveFrameRow = binarySearch(masterTimestamp, slaveFrameRow, frame.getRowHi() - 1);
                         record.hasSlave(true);
                         slaveCursor.recordAt(slaveRecB, Rows.toRowID(slaveFrameIndex, slaveFrameRow));
-                        slaveFrameRow++;
+                        slaveTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
+                        return;
                     }
                 }
                 if (!openSlaveFrame(frame, masterTimestamp)) {
@@ -233,7 +294,7 @@ public class AsOfJoinFastNoKeyRecordCursorFactory extends AbstractJoinRecordCurs
             while (true) {
                 if (isSlaveOpenPending) {
                     if (slaveCursor.open() < 1) {
-                        // Empty frame, so scan further.
+                        // Empty frame, scan further.
                         isSlaveOpenPending = false;
                         continue;
                     }
@@ -241,6 +302,7 @@ public class AsOfJoinFastNoKeyRecordCursorFactory extends AbstractJoinRecordCurs
                     isSlaveOpenPending = false;
                     if (isSlaveForwardScan) {
                         if (masterTimestamp < frame.getTimestampLo()) {
+                            // The frame is after the master timestamp, we need the previous frame.
                             isSlaveForwardScan = false;
                             continue;
                         }
@@ -248,7 +310,7 @@ public class AsOfJoinFastNoKeyRecordCursorFactory extends AbstractJoinRecordCurs
                         slaveFrameIndex = frame.getIndex();
                         slaveFrameRow = masterTimestamp < frame.getTimestampHi() ? frame.getRowLo() : frame.getRowHi() - 1;
                     } else {
-                        // We were going backwards, so start with the last row.
+                        // We were scanning backwards, so position to the last row.
                         slaveFrameIndex = frame.getIndex();
                         slaveFrameRow = frame.getRowHi() - 1;
                         isSlaveForwardScan = true;
@@ -264,7 +326,7 @@ public class AsOfJoinFastNoKeyRecordCursorFactory extends AbstractJoinRecordCurs
                         continue;
                     }
                     if (masterTimestamp >= frame.getTimestampEstimateLo() && masterTimestamp < frame.getTimestampEstimateHi()) {
-                        // The frame looks promising, let's try to open it.
+                        // The frame looks promising, let's open it.
                         isSlaveOpenPending = true;
                     }
                 } else {
@@ -273,7 +335,7 @@ public class AsOfJoinFastNoKeyRecordCursorFactory extends AbstractJoinRecordCurs
                         isSlaveForwardScan = true;
                         return false;
                     }
-                    // The frame looks promising, let's try to open it.
+                    // The frame looks promising, let's open it.
                     isSlaveOpenPending = true;
                 }
             }

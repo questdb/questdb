@@ -1714,6 +1714,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     } else {
                                         if (slave.supportsTimeFrameCursor()) {
                                             master = new AsOfJoinFastNoKeyRecordCursorFactory(
+                                                    configuration,
                                                     createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
                                                     master,
                                                     slave,

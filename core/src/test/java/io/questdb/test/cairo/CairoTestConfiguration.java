@@ -95,12 +95,6 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
-    public int getMaxSqlRecompileAttempts() {
-        return overrides.getMaxSqlRecompileAttempts() > 0 ? overrides.getMaxSqlRecompileAttempts() : super.getMaxSqlRecompileAttempts();
-    }
-
-
-    @Override
     public int getCopyPoolCapacity() {
         return overrides.getCapacity() == -1 ? super.getCopyPoolCapacity() : overrides.getCapacity();
     }
@@ -149,6 +143,11 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     @Override
     public int getMaxFileNameLength() {
         return overrides.getMaxFileNameLength() > 0 ? overrides.getMaxFileNameLength() : super.getMaxFileNameLength();
+    }
+
+    @Override
+    public int getMaxSqlRecompileAttempts() {
+        return overrides.getMaxSqlRecompileAttempts() > 0 ? overrides.getMaxSqlRecompileAttempts() : super.getMaxSqlRecompileAttempts();
     }
 
     @Override
@@ -255,6 +254,11 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     @Override
     public long getSpinLockTimeout() {
         return overrides.getSpinLockTimeout() > -1 ? overrides.getSpinLockTimeout() : 5000L;
+    }
+
+    @Override
+    public int getSqlAsOfJoinLookahead() {
+        return 3000;
     }
 
     @Override

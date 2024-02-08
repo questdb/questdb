@@ -97,14 +97,15 @@ public class AsOfJoinNoKeyTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
             insert("INSERT INTO t1 values ('2022-10-05T08:15:00.000000Z', 0, 'a');");
-            insert("INSERT INTO t1 values ('2022-10-05T08:16:00.000000Z', 1, 'b');");
-            insert("INSERT INTO t1 values ('2022-10-05T08:17:00.000000Z', 2, 'c');");
+            insert("INSERT INTO t1 values ('2022-10-05T08:17:00.000000Z', 1, 'b');");
+            insert("INSERT INTO t1 values ('2022-10-05T08:21:00.000000Z', 2, 'c');");
+            insert("INSERT INTO t1 values ('2022-10-10T01:01:00.000000Z', 3, 'd');");
 
             ddl("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
-            insert("INSERT INTO t2 values ('2023-10-01T01:00:00.000000Z', 3, 'd');");
-            insert("INSERT INTO t2 values ('2022-10-05T08:16:00.000000Z', 4, 'e');");
-            insert("INSERT INTO t2 values ('2023-10-05T09:00:00.000000Z', 5, 'f');");
-            insert("INSERT INTO t2 values ('2023-10-06T01:00:00.000000Z', 6, 'g');");
+            insert("INSERT INTO t2 values ('2022-10-05T08:18:00.000000Z', 4, 'e');");
+            insert("INSERT INTO t2 values ('2022-10-05T08:19:00.000000Z', 5, 'f');");
+            insert("INSERT INTO t2 values ('2023-10-05T09:00:00.000000Z', 6, 'g');");
+            insert("INSERT INTO t2 values ('2023-10-06T01:00:00.000000Z', 7, 'h');");
 
             assertResultSetsMatch("t1", "t2");
         });

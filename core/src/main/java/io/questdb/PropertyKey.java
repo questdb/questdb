@@ -83,6 +83,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_LATEST_BY_ROW_COUNT("cairo.sql.latest.by.row.count"),
     CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_PAGE_SIZE("cairo.sql.hash.join.light.value.page.size"),
     CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_MAX_PAGES("cairo.sql.hash.join.light.value.max.pages"),
+    CAIRO_SQL_ASOF_JOIN_LOOKAHEAD("cairo.sql.asof.join.lookahead"),
     CAIRO_SQL_SORT_VALUE_PAGE_SIZE("cairo.sql.sort.value.page.size"),
     CAIRO_SQL_SORT_VALUE_MAX_PAGES("cairo.sql.sort.value.max.pages"),
     CAIRO_WORK_STEAL_TIMEOUT_NANOS("cairo.work.steal.timeout.nanos"),
