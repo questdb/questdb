@@ -58,8 +58,8 @@ public interface Utf8Sequence {
      */
     int size();
 
-    default void writeTo(long addr) {
-        writeTo(addr, 0, size());
+    default boolean isAscii() {
+        return false;
     }
 
     default void writeTo(long addr, int lo, int hi) {

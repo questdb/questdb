@@ -45,11 +45,18 @@ public class Path implements Utf8Sink, LPSZ, Closeable {
     public static final ThreadLocal<Path> PATH = new ThreadLocal<>(Path::new);
     public static final ThreadLocal<Path> PATH2 = new ThreadLocal<>(Path::new);
     public static final Closeable THREAD_LOCAL_CLEANER = Path::clearThreadLocals;
+
+    @Override
+    public boolean isAscii() {
+        return ascii;
+    }
+
     private static final byte NULL = (byte) 0;
     private static final int OVERHEAD = 4;
     private final static ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
     private final AsciiCharSequence asciiCharSequence = new AsciiCharSequence();
     private final int memoryTag;
+    private boolean ascii;
     private int capacity;
     private long headPtr;
     private long tailPtr;
@@ -158,8 +165,7 @@ public class Path implements Utf8Sink, LPSZ, Closeable {
 
     public Path concat(CharSequence str, int from, int to) {
         ensureSeparator();
-        put(str, from, to);
-        return this;
+        return put(str, from, to);
     }
 
     public void extend(int newCapacity) {
@@ -175,12 +181,14 @@ public class Path implements Utf8Sink, LPSZ, Closeable {
     }
 
     public Path of(CharSequence str) {
+        ascii = true;
         checkClosed();
         tailPtr = headPtr;
         return concat(str);
     }
 
     public Path of(Utf8Sequence str) {
+        ascii = str.isAscii();
         checkClosed();
         if (str == this) {
             tailPtr = headPtr + str.size();
@@ -192,10 +200,12 @@ public class Path implements Utf8Sink, LPSZ, Closeable {
     }
 
     public Path of(Path other) {
+        ascii = other.isAscii();
         return of((LPSZ) other);
     }
 
-    public Path of(LPSZ other) {
+    public Path of(LPSZ other, boolean isAscii) {
+        this.ascii = isAscii;
         // This is different from of(CharSequence str) because
         // another Path is already UTF8 encoded and cannot be treated as CharSequence.
         // Copy binary array representation instead of trying to UTF8 encode it
@@ -215,6 +225,7 @@ public class Path implements Utf8Sink, LPSZ, Closeable {
     }
 
     public Path of(CharSequence str, int from, int to) {
+        ascii = true;
         checkClosed();
         tailPtr = headPtr;
         return concat(str, from, to);
@@ -273,13 +284,8 @@ public class Path implements Utf8Sink, LPSZ, Closeable {
 
     @Override
     public Path put(byte b) {
-        assert b != NULL;
-        int requiredCapacity = size() + 1;
-        if (requiredCapacity >= capacity) {
-            extend(requiredCapacity + 15);
-        }
-        Unsafe.getUnsafe().putByte(tailPtr++, b);
-        return this;
+        ascii = false;
+        return putByte0(b);
     }
 
     @Override
@@ -298,15 +304,6 @@ public class Path implements Utf8Sink, LPSZ, Closeable {
     public Path put(@NotNull CharSequence cs, int lo, int hi) {
         checkExtend(hi - lo + 1);
         Utf8Sink.super.put(cs, lo, hi);
-        return this;
-    }
-
-    @Override
-    public Path putUtf8(long lo, long hi) {
-        final int size = Bytes.checkedLoHiSize(lo, hi, this.size());
-        checkExtend(size);
-        Vect.memcpy(tailPtr, lo, size);
-        tailPtr += size;
         return this;
     }
 
@@ -348,10 +345,17 @@ public class Path implements Utf8Sink, LPSZ, Closeable {
     @Override
     public Path putAscii(char c) {
         if (c == '/' && Os.isWindows()) {
-            Utf8Sink.super.putAscii('\\');
-        } else {
-            Utf8Sink.super.putAscii(c);
+            return putByte0((byte) '\\');
         }
+        return putByte0((byte) c);
+    }
+
+    @Override
+    public Path putUtf8(long lo, long hi) {
+        final int size = Bytes.checkedLoHiSize(lo, hi, this.size());
+        checkExtend(size);
+        Vect.memcpy(tailPtr, lo, size);
+        tailPtr += size;
         return this;
     }
 
@@ -423,6 +427,16 @@ public class Path implements Utf8Sink, LPSZ, Closeable {
         if (requiredCapacity > capacity) {
             extend(requiredCapacity);
         }
+    }
+
+    @NotNull
+    private Path putByte0(byte b) {
+        int requiredCapacity = size() + 1;
+        if (requiredCapacity >= capacity) {
+            extend(requiredCapacity + 15);
+        }
+        Unsafe.getUnsafe().putByte(tailPtr++, b);
+        return this;
     }
 
     protected final void ensureSeparator() {

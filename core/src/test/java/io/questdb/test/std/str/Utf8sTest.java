@@ -231,7 +231,6 @@ public class Utf8sTest {
             BitSet asciiBitSet = new BitSet();
             for (int i = 0; i < n; i++) {
                 boolean ascii = rnd.nextBoolean();
-                boolean ab = rnd.nextBoolean();
                 if (ascii) {
                     asciiBitSet.set(i);
                 }
@@ -255,6 +254,7 @@ public class Utf8sTest {
                 } else {
                     Assert.assertNotNull(varchar);
                     Assert.assertEquals(expectedValue, varchar.toString());
+                    Assert.assertEquals(varchar.isAscii(), asciiBitSet.get(i));
                 }
             }
         }

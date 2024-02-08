@@ -8,6 +8,7 @@
 package io.questdb.std.histogram.org.HdrHistogram;
 
 import io.questdb.cairo.CairoException;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.*;
 import java.lang.reflect.Constructor;
@@ -323,23 +324,6 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
     //
     // Construction:
     //
-
-    /**
-     * Copy this histogram, corrected for coordinated omission, into the target histogram, overwriting it's contents.
-     * (see {@link #copyCorrectedForCoordinatedOmission} for more detailed explanation about how correction is applied)
-     *
-     * @param targetHistogram                     the histogram to copy into
-     * @param expectedIntervalBetweenValueSamples If expectedIntervalBetweenValueSamples is larger than 0, add
-     *                                            auto-generated value records as appropriate if value is larger
-     *                                            than expectedIntervalBetweenValueSamples
-     */
-    public void copyIntoCorrectedForCoordinatedOmission(final AbstractHistogram targetHistogram,
-                                                        final long expectedIntervalBetweenValueSamples) {
-        targetHistogram.reset();
-        targetHistogram.addWhileCorrectingForCoordinatedOmission(this, expectedIntervalBetweenValueSamples);
-        targetHistogram.setStartTimeStamp(this.startTimeStampMsec);
-        targetHistogram.setEndTimeStamp(this.endTimeStampMsec);
-    }
 
     public int countsArrayIndex(final long value) {
         if (value < 0) {
@@ -773,8 +757,7 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
             double deviation = (medianEquivalentValue(iterationValue.getValueIteratedTo()) * 1.0) - mean;
             geometric_deviation_total += (deviation * deviation) * iterationValue.getCountAddedInThisIterationStep();
         }
-        double std_deviation = Math.sqrt(geometric_deviation_total / getTotalCount());
-        return std_deviation;
+        return Math.sqrt(geometric_deviation_total / getTotalCount());
     }
 
     public int getSubBucketIndex(final long value, final int bucketIndex) {
@@ -942,8 +925,7 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
     public long lowestEquivalentValue(final long value) {
         final int bucketIndex = getBucketIndex(value);
         final int subBucketIndex = getSubBucketIndex(value, bucketIndex);
-        long thisValueBaseLevel = valueFromIndex(bucketIndex, subBucketIndex);
-        return thisValueBaseLevel;
+        return valueFromIndex(bucketIndex, subBucketIndex);
     }
 
     //    ######   #######  ##     ## ########     ###    ########  ####  ######   #######  ##    ##
@@ -1146,19 +1128,6 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
     }
 
     /**
-     * @param value                               The value to record
-     * @param expectedIntervalBetweenValueSamples If expectedIntervalBetweenValueSamples is larger than 0, add
-     *                                            auto-generated value records as appropriate if value is larger
-     *                                            than expectedIntervalBetweenValueSamples
-     * @throws CairoException (may throw) if value exceeds highestTrackableValue
-     * @deprecated Record a value in the histogram. This deprecated method has identical behavior to
-     * <b><code>recordValueWithExpectedInterval()</code></b>. It was renamed to avoid ambiguity.
-     */
-    public void recordValue(final long value, final long expectedIntervalBetweenValueSamples) throws CairoException {
-        recordValueWithExpectedInterval(value, expectedIntervalBetweenValueSamples);
-    }
-
-    /**
      * Record a value in the histogram (adding to the value's current count)
      *
      * @param value The value to be recorded
@@ -1336,8 +1305,7 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
      */
     public long sizeOfEquivalentValueRange(final long value) {
         final int bucketIndex = getBucketIndex(value);
-        long distanceToNextValue = 1L << (unitMagnitude + bucketIndex);
-        return distanceToNextValue;
+        return 1L << (unitMagnitude + bucketIndex);
     }
 
     /**
@@ -1644,7 +1612,7 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
         final long largestValueWithSingleUnitResolution = 2 * (long) Math.pow(10, numberOfSignificantValueDigits);
 
         unitMagnitude = (int) (Math.log(lowestDiscernibleValue) / Math.log(2));
-        unitMagnitudeMask = (1 << unitMagnitude) - 1;
+        unitMagnitudeMask = (1L << unitMagnitude) - 1;
 
         // We need to maintain power-of-two subBucketCount (for clean direct indexing) that is large enough to
         // provide unit resolution to at least largestValueWithSingleUnitResolution. So figure out
@@ -1952,8 +1920,7 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
         // provide unit resolution to at least largestValueWithSingleUnitResolution. So figure out
         // largestValueWithSingleUnitResolution's nearest power-of-two (rounded up), and use that:
         int subBucketCountMagnitude = (int) Math.ceil(Math.log(largestValueWithSingleUnitResolution) / Math.log(2));
-        int subBucketCount = (int) Math.pow(2, subBucketCountMagnitude);
-        return subBucketCount;
+        return (int) Math.pow(2, subBucketCountMagnitude);
     }
 
     abstract int _getEstimatedFootprintInBytes();
@@ -1970,8 +1937,7 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
                     ") cannot be < (2 * lowestDiscernibleValue)");
         }
         //determine counts array length needed:
-        int countsArrayLength = getLengthForNumberOfBuckets(getBucketsNeededToCoverValue(highestTrackableValue));
-        return countsArrayLength;
+        return getLengthForNumberOfBuckets(getBucketsNeededToCoverValue(highestTrackableValue));
     }
 
     void establishInternalTackingValues() {
@@ -2087,8 +2053,7 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
      * value if we consider the sub-bucket length to be halved.
      */
     int getLengthForNumberOfBuckets(final int numberOfBuckets) {
-        final int lengthNeeded = (numberOfBuckets + 1) * (subBucketHalfCount);
-        return lengthNeeded;
+        return (numberOfBuckets + 1) * (subBucketHalfCount);
     }
 
     int getNeededByteBufferCapacity(final int relevantLength) {
@@ -2337,7 +2302,7 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
      * An {@link java.lang.Iterable}{@literal <}{@link HistogramIterationValue}{@literal >} through
      * the histogram using a {@link AllValuesIterator}
      */
-    public class AllValues implements Iterable<HistogramIterationValue> {
+    public static class AllValues implements Iterable<HistogramIterationValue> {
         final AbstractHistogram histogram;
 
         private AllValues(final AbstractHistogram histogram) {
@@ -2347,7 +2312,7 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
         /**
          * @return A {@link AllValuesIterator}{@literal <}{@link HistogramIterationValue}{@literal >}
          */
-        public Iterator<HistogramIterationValue> iterator() {
+        public @NotNull Iterator<HistogramIterationValue> iterator() {
             return new AllValuesIterator(histogram);
         }
     }
@@ -2356,7 +2321,7 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
      * An {@link java.lang.Iterable}{@literal <}{@link HistogramIterationValue}{@literal >} through
      * the histogram using a {@link LinearIterator}
      */
-    public class LinearBucketValues implements Iterable<HistogramIterationValue> {
+    public static class LinearBucketValues implements Iterable<HistogramIterationValue> {
         final AbstractHistogram histogram;
         final long valueUnitsPerBucket;
 
@@ -2368,7 +2333,7 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
         /**
          * @return A {@link LinearIterator}{@literal <}{@link HistogramIterationValue}{@literal >}
          */
-        public Iterator<HistogramIterationValue> iterator() {
+        public @NotNull Iterator<HistogramIterationValue> iterator() {
             return new LinearIterator(histogram, valueUnitsPerBucket);
         }
     }
@@ -2377,7 +2342,7 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
      * An {@link java.lang.Iterable}{@literal <}{@link HistogramIterationValue}{@literal >} through
      * the histogram using a {@link LogarithmicIterator}
      */
-    public class LogarithmicBucketValues implements Iterable<HistogramIterationValue> {
+    public static class LogarithmicBucketValues implements Iterable<HistogramIterationValue> {
         final AbstractHistogram histogram;
         final double logBase;
         final long valueUnitsInFirstBucket;
@@ -2392,7 +2357,7 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
         /**
          * @return A {@link LogarithmicIterator}{@literal <}{@link HistogramIterationValue}{@literal >}
          */
-        public Iterator<HistogramIterationValue> iterator() {
+        public @NotNull Iterator<HistogramIterationValue> iterator() {
             return new LogarithmicIterator(histogram, valueUnitsInFirstBucket, logBase);
         }
     }
@@ -2401,7 +2366,7 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
      * An {@link java.lang.Iterable}{@literal <}{@link HistogramIterationValue}{@literal >} through
      * the histogram using a {@link PercentileIterator}
      */
-    public class Percentiles implements Iterable<HistogramIterationValue> {
+    public static class Percentiles implements Iterable<HistogramIterationValue> {
         final AbstractHistogram histogram;
         final int percentileTicksPerHalfDistance;
 
@@ -2414,7 +2379,7 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
          * @return A {@link PercentileIterator}{@literal <}{@link HistogramIterationValue}{@literal >}
          */
         @Override
-        public Iterator<HistogramIterationValue> iterator() {
+        public @NotNull Iterator<HistogramIterationValue> iterator() {
             return new PercentileIterator(histogram, percentileTicksPerHalfDistance);
         }
     }
@@ -2423,7 +2388,7 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
      * An {@link java.lang.Iterable}{@literal <}{@link HistogramIterationValue}{@literal >} through
      * the histogram using a {@link RecordedValuesIterator}
      */
-    public class RecordedValues implements Iterable<HistogramIterationValue> {
+    public static class RecordedValues implements Iterable<HistogramIterationValue> {
         final AbstractHistogram histogram;
 
         private RecordedValues(final AbstractHistogram histogram) {
@@ -2433,7 +2398,7 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
         /**
          * @return A {@link RecordedValuesIterator}{@literal <}{@link HistogramIterationValue}{@literal >}
          */
-        public Iterator<HistogramIterationValue> iterator() {
+        public @NotNull Iterator<HistogramIterationValue> iterator() {
             return new RecordedValuesIterator(histogram);
         }
     }

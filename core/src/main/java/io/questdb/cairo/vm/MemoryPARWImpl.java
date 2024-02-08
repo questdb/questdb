@@ -47,16 +47,7 @@ public class MemoryPARWImpl implements MemoryARW {
     private final Long256Impl long256 = new Long256Impl();
     private final Long256Impl long256B = new Long256Impl();
     private final int maxPages;
-
-    @Override
-    public Utf8SplitString borrowUtf8SplitStringA() {
-        // paged memory does not support reading UTF8 strings from
-        throw new UnsupportedOperationException();
-    }
-
     private final StraddlingPageLong256FromCharSequenceDecoder straddlingPageLong256Decoder = new StraddlingPageLong256FromCharSequenceDecoder();
-    private final Utf8SequenceView u8view1 = new Utf8SequenceView();
-    private final Utf8SequenceView u8view2 = new Utf8SequenceView();
     private final StringSink utf16Sink = new StringSink();
     private final FlyweightDirectUtf16Sink utf8FloatingSink = new FlyweightDirectUtf16Sink();
     protected int memoryTag;
@@ -70,7 +61,6 @@ public class MemoryPARWImpl implements MemoryARW {
     private long pageLo = -1;
     private long roOffsetHi = 0;
     private long roOffsetLo = 0;
-
     public MemoryPARWImpl(long pageSize, int maxPages, int memoryTag) {
         setExtendSegmentSize(pageSize);
         this.maxPages = maxPages;
@@ -96,6 +86,12 @@ public class MemoryPARWImpl implements MemoryARW {
 
     @Override
     public long appendAddressFor(long offset, long bytes) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public Utf8SplitString borrowUtf8SplitStringA() {
+        // paged memory does not support reading UTF8 strings from
         throw new UnsupportedOperationException();
     }
 
@@ -367,16 +363,6 @@ public class MemoryPARWImpl implements MemoryARW {
 
     public final int getStrLen(long offset) {
         return getInt(offset);
-    }
-
-    @Override
-    public @NotNull Utf8Sequence getVarcharA(long offset, int size) {
-        return u8view1.of(offset, size);
-    }
-
-    @Override
-    public @NotNull Utf8Sequence getVarcharB(long offset, int size) {
-        return u8view2.of(offset, size);
     }
 
     public boolean isMapped(long offset, long len) {
@@ -1345,33 +1331,6 @@ public class MemoryPARWImpl implements MemoryARW {
             } else {
                 putLong256(hexString.asAsciiCharSequence(), 2, size);
             }
-        }
-    }
-
-    public class Utf8SequenceView implements Utf8Sequence {
-        private final AsciiCharSequence asciiCharSequence = new AsciiCharSequence();
-        private long offset;
-        private int size;
-
-        @Override
-        public @NotNull CharSequence asAsciiCharSequence() {
-            return asciiCharSequence.of(this);
-        }
-
-        @Override
-        public byte byteAt(int index) {
-            return getByte(offset + index);
-        }
-
-        @Override
-        public int size() {
-            return size;
-        }
-
-        Utf8SequenceView of(long offset, int size) {
-            this.offset = offset;
-            this.size = size;
-            return this;
         }
     }
 }

@@ -21,6 +21,14 @@ public final class Utf8s {
     private Utf8s() {
     }
 
+    /**
+     * Appends UTF8 varchar type to the data and aux vectors.
+     *
+     * @param dataMem data vector, contains UTF8 bytes
+     * @param auxMem  aux vector, contains pointer to data vector, size, flags and statistics about UTF8 string
+     * @param value   the UTF8 string to be stored
+     * @param isAscii true is string is definitely ASCII, false otherwise.
+     */
     public static void appendVarchar(MemoryA dataMem, MemoryA auxMem, @Nullable Utf8Sequence value, boolean isAscii) {
         if (value != null) {
             int size = value.size();
@@ -475,10 +483,12 @@ public final class Utf8s {
             return null;
         }
 
+        boolean ascii = (flags & 2) == 2;
+
         if ((flags & 1) == 1) {
             // inlined string
             int size = (raw >> 4) & 0x0f;
-            return ab == 1 ? auxMem.getVarcharA(offset + 1, size) : auxMem.getVarcharB(offset + 1, size);
+            return ab == 1 ? auxMem.getVarcharA(offset + 1, size, ascii) : auxMem.getVarcharB(offset + 1, size, ascii);
         }
         // string is split, prefix is in auxMem and the suffix is in data mem
         Utf8SplitString utf8SplitString = ab == 1 ? auxMem.borrowUtf8SplitStringA() : auxMem.borrowUtf8SplitStringB();
@@ -488,7 +498,7 @@ public final class Utf8s {
         raw2 <<= 32;
         raw2 |= auxMem.getInt(offset + 12);
         long lo2 = dataMem.addressOf(raw2);
-        return utf8SplitString.of(lo1, lo2, size);
+        return utf8SplitString.of(lo1, lo2, size, ascii);
     }
 
     public static boolean startsWith(@NotNull Utf8Sequence seq, @NotNull Utf8Sequence term) {

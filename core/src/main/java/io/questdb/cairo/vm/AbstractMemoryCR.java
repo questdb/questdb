@@ -116,13 +116,13 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
 
     @Override
     @NotNull
-    public Utf8Sequence getVarcharA(long offset, int size) {
-        return getU8(offset, size, utf8viewA);
+    public Utf8Sequence getVarcharA(long offset, int size, boolean ascii) {
+        return getVarchar(offset, size, utf8viewA, ascii);
     }
 
     @Override
-    public @NotNull Utf8Sequence getVarcharB(long offset, int size) {
-        return getU8(offset, size, utf8viewB);
+    public @NotNull Utf8Sequence getVarcharB(long offset, int size, boolean ascii) {
+        return getVarchar(offset, size, utf8viewB, ascii);
     }
 
     @Override
@@ -150,11 +150,11 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
         return size;
     }
 
-    private DirectUtf8String getU8(long offset, int size, DirectUtf8String u8view) {
+    private DirectUtf8String getVarchar(long offset, int size, DirectUtf8String u8view, boolean ascii) {
         long addr = addressOf(offset);
         assert addr > 0;
         if (size + offset <= size()) {
-            return u8view.of(addr, addr + size);
+            return u8view.of(addr, addr + size, ascii);
         }
         throw CairoException.critical(0)
                 .put("String is outside of file boundary [offset=")

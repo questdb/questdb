@@ -97,6 +97,12 @@ public class Utf8StringSink implements MutableUtf8Sink {
 
     @Override
     public Utf8StringSink put(byte b) {
+
+        return putByte0(b);
+    }
+
+    @NotNull
+    private Utf8StringSink putByte0(byte b) {
         checkCapacity(1);
         buffer[pos++] = b;
         return this;

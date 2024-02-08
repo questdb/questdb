@@ -25,7 +25,6 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long128;
 import io.questdb.std.Long256;
@@ -33,7 +32,9 @@ import io.questdb.std.Rows;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public class TableReaderRecord implements Record, Sinkable {
 
@@ -299,38 +300,12 @@ public class TableReaderRecord implements Record, Sinkable {
 
     @Override
     public Utf8Sequence getVarcharA(int col) {
-        final long offset = getAdjustedRecordIndex(col) * Long.BYTES;
-        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(
-                offset,
-                TableReader.getPrimaryColumnIndex(columnBase, col)
-        );
-
-        MemoryR memA = reader.getColumn(absoluteColumnIndex);
-        MemoryR memB = reader.getColumn(absoluteColumnIndex + 1);
-        long offsetIsh = memB.getLong(offset);
-        int size = (int) (offsetIsh >>> 44);
-        if (size > 0) {
-            return memA.getVarcharA(offsetIsh & (1L << 44), size - 1);
-        }
-        return null;
+        return getVarchar(col, 1);
     }
 
     @Override
     public Utf8Sequence getVarcharB(int col) {
-        final long offset = getAdjustedRecordIndex(col) * Long.BYTES;
-        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(
-                offset,
-                TableReader.getPrimaryColumnIndex(columnBase, col)
-        );
-
-        MemoryR memA = reader.getColumn(absoluteColumnIndex);
-        MemoryR memB = reader.getColumn(absoluteColumnIndex + 1);
-        long offsetIsh = memB.getLong(offset);
-        int size = (int) (offsetIsh >>> 44);
-        if (size > 0) {
-            return memA.getVarcharB(offsetIsh & (1L << 44), size - 1);
-        }
-        return null;
+        return getVarchar(col, 2);
     }
 
     public void incrementRecordIndex() {
@@ -358,5 +333,20 @@ public class TableReaderRecord implements Record, Sinkable {
     private long getAdjustedRecordIndex(int col) {
         assert col > -1 && col < reader.getColumnCount() : "Column index out of bounds: " + col + " >= " + reader.getColumnCount();
         return recordIndex - reader.getColumnTop(columnBase, col);
+    }
+
+    @Nullable
+    private Utf8Sequence getVarchar(int col, int ab) {
+        final long offset = getAdjustedRecordIndex(col) * Long.BYTES;
+        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(
+                offset,
+                TableReader.getPrimaryColumnIndex(columnBase, col)
+        );
+        return Utf8s.readVarchar(
+                offset,
+                reader.getColumn(absoluteColumnIndex),
+                reader.getColumn(absoluteColumnIndex + 1),
+                ab
+        );
     }
 }

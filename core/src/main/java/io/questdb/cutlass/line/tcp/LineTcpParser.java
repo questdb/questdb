@@ -473,7 +473,7 @@ public class LineTcpParser {
         tagsComplete = endOfEntityByte == (byte) ' ';
         if (endOfEntityByte == (byte) ',' || tagsComplete) {
             long hi = bufAt - nEscapedChars;
-            measurementName.of(entityLo, hi);
+            measurementName.of(entityLo, hi, !hasNonAscii);
             entityHandler = ENTITY_HANDLER_NAME;
             return true;
         }
@@ -491,7 +491,7 @@ public class LineTcpParser {
             if (endOfEntityByte == '\n') {
                 final long entityHi = bufAt - nEscapedChars;
                 if (entityLo < entityHi) {
-                    charSeq.of(entityLo, entityHi);
+                    charSeq.of(entityLo, entityHi, !hasNonAscii);
                     final int charSeqLen = charSeq.size();
                     final byte last = charSeq.byteAt(charSeqLen - 1);
                     switch (last) {
@@ -726,7 +726,7 @@ public class LineTcpParser {
                             type = ENTITY_TYPE_SYMBOL;
                         }
                     } else {
-                        charSeq.of(value.lo(), value.hi());
+                        charSeq.of(value.lo(), value.hi(), !hasNonAscii);
                         if (SqlKeywords.isTrueKeyword(charSeq)) {
                             booleanValue = true;
                             type = ENTITY_TYPE_BOOLEAN;
@@ -762,7 +762,7 @@ public class LineTcpParser {
 
         private boolean parseLong(byte entityType) {
             try {
-                charSeq.of(value.lo(), value.hi() - 1);
+                charSeq.of(value.lo(), value.hi() - 1, true);
                 longValue = Numbers.parseLong(charSeq);
                 value.decHi(); // remove the suffix ('i', 'n', 't', 'm')
                 type = entityType;
@@ -774,18 +774,18 @@ public class LineTcpParser {
         }
 
         private void setName() {
-            name.of(entityLo, bufAt - nEscapedChars);
+            name.of(entityLo, bufAt - nEscapedChars, !hasNonAscii);
         }
 
         private void setName(long hi) {
-            name.of(entityLo, hi - nEscapedChars);
+            name.of(entityLo, hi - nEscapedChars, !hasNonAscii);
         }
 
         private boolean setValueAndUnit() {
             assert type == ENTITY_TYPE_NONE;
             long bufHi = bufAt - nEscapedChars;
             int valueLen = (int) (bufHi - entityLo);
-            value.of(entityLo, bufHi);
+            value.of(entityLo, bufHi, !hasNonAscii);
             if (tagsComplete) {
                 if (valueLen > 0) {
                     byte lastByte = value.byteAt(valueLen - 1);

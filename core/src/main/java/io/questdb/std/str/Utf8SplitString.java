@@ -38,6 +38,7 @@ import static io.questdb.std.str.Utf8s.UTF8_STORAGE_SPLIT_BYTE;
 public class Utf8SplitString implements Utf8Sequence, Mutable {
     public static final Factory FACTORY = new Factory();
     private final AsciiCharSequence asciiCharSequence = new AsciiCharSequence();
+    private boolean ascii;
     private long lo1;
     private long lo2;
     private int size;
@@ -55,13 +56,19 @@ public class Utf8SplitString implements Utf8Sequence, Mutable {
     @Override
     public void clear() {
         this.lo1 = this.lo2 = 0;
+        this.ascii = false;
     }
 
+    @Override
+    public boolean isAscii() {
+        return ascii;
+    }
 
-    public Utf8SplitString of(long lo1, long lo2, int size) {
+    public Utf8SplitString of(long lo1, long lo2, int size, boolean ascii) {
         this.lo1 = lo1;
         this.lo2 = lo2;
         this.size = size;
+        this.ascii = ascii;
         return this;
     }
 

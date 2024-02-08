@@ -91,9 +91,17 @@ public interface MemoryR extends Closeable {
 
     CharSequence getStr(long offset);
 
-    @NotNull Utf8Sequence getVarcharA(long offset, int size);
+    default @NotNull Utf8Sequence getVarcharA(long offset, int size, boolean ascii) {
+        // paged memory and NULL memory do not support reading varchar columns
+        // use contiguous memory implementation
+        throw new UnsupportedOperationException();
+    }
 
-    @NotNull Utf8Sequence getVarcharB(long offset, int size);
+    default @NotNull Utf8Sequence getVarcharB(long offset, int size, boolean ascii) {
+        // paged memory and NULL memory do not support reading varchar columns
+        // use contiguous memory implementation
+        throw new UnsupportedOperationException();
+    }
 
     CharSequence getStr2(long offset);
 
