@@ -2325,7 +2325,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getSqlAsOfJoinLookahead() {
+        public int getSqlAsOfJoinLookAhead() {
             return sqlAsOfJoinLookahead;
         }
 

@@ -397,7 +397,7 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
                             Assert.assertEquals(tsLo, frame.getTimestampLo());
                             timeFrameCursor.recordAt(record, Rows.toRowID(frame.getIndex(), frame.getRowHi() - 1));
                             long tsHi = record.getTimestamp(0);
-                            Assert.assertEquals(tsHi, frame.getTimestampHi());
+                            Assert.assertEquals(tsHi + 1, frame.getTimestampHi());
                         }
                     }
                 }

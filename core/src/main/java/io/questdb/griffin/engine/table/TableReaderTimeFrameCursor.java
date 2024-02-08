@@ -121,11 +121,13 @@ public class TableReaderTimeFrameCursor implements TimeFrameRecordCursor {
             timeFrame.rowHi = size;
             final MemoryR column = reader.getColumn(TableReader.getPrimaryColumnIndex(reader.getColumnBase(timeFrame.partitionIndex), timestampIndex));
             timeFrame.timestampLo = column.getLong(0);
-            timeFrame.timestampHi = column.getLong((size - 1) * 8);
+            timeFrame.timestampHi = column.getLong((size - 1) * 8) + 1;
             return size;
         }
         timeFrame.rowLo = 0;
         timeFrame.rowHi = 0;
+        timeFrame.timestampLo = timeFrame.estimateTimestampLo;
+        timeFrame.timestampHi = timeFrame.estimateTimestampLo;
         return 0;
     }
 
@@ -221,6 +223,8 @@ public class TableReaderTimeFrameCursor implements TimeFrameRecordCursor {
             this.partitionIndex = partitionIndex;
             this.estimateTimestampLo = estimateTimestampLo;
             this.estimateTimestampHi = estimateTimestampHi;
+            timestampLo = Long.MIN_VALUE;
+            timestampHi = Long.MIN_VALUE;
             rowLo = -1;
             rowHi = -1;
         }

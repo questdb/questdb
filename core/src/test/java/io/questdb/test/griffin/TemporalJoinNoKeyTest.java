@@ -42,10 +42,10 @@ import java.util.Collection;
  * Fast factories skip full scan of right hand table by lazy time frame navigation.
  */
 @RunWith(Parameterized.class)
-public class AsOfJoinNoKeyTest extends AbstractCairoTest {
+public class TemporalJoinNoKeyTest extends AbstractCairoTest {
     private final JoinType joinType;
 
-    public AsOfJoinNoKeyTest(JoinType joinType) {
+    public TemporalJoinNoKeyTest(JoinType joinType) {
         this.joinType = joinType;
     }
 
@@ -58,62 +58,37 @@ public class AsOfJoinNoKeyTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFuzz() throws Exception {
-        // TODO: fails with 349859082475539L, 1707408869864L
-        final Rnd rnd = TestUtils.generateRandom(LOG);
-        assertMemoryLeak(() -> {
-            final int table1Size = rnd.nextPositiveInt() % 100;
-            final int table2Size = rnd.nextPositiveInt() % 100;
-
-            ddl("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
-            long ts = TimestampFormatUtils.parseTimestamp("2000-01-01T00:00:00.000Z");
-            ts += Timestamps.HOUR_MICROS * (rnd.nextLong() % 48);
-            for (int i = 0; i < table1Size; i++) {
-                ts += Timestamps.HOUR_MICROS * rnd.nextLong(24);
-                insert("INSERT INTO t1 values (" + ts + ", " + i + ", 't1_" + i + "');");
-            }
-
-            ddl("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
-            ts = TimestampFormatUtils.parseTimestamp("2000-01-01T00:00:00.000Z");
-            ts += Timestamps.HOUR_MICROS * rnd.nextLong(48);
-            for (int i = 0; i < table2Size; i++) {
-                ts += Timestamps.HOUR_MICROS * rnd.nextLong(24);
-                insert("INSERT INTO t2 values (" + ts + ", " + i + ", 't2_" + i + "');");
-            }
-
-            assertResultSetsMatch("t1", "t2");
-        });
+    public void testFuzzManyDuplicates() throws Exception {
+        testFuzz(50);
     }
 
     @Test
-    public void testFuzzPartitionByNone() throws Exception {
-        final Rnd rnd = TestUtils.generateRandom(LOG);
-        assertMemoryLeak(() -> {
-            final int table1Size = rnd.nextPositiveInt() % 100;
-            final int table2Size = rnd.nextPositiveInt() % 100;
-
-            ddl("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts)");
-            long ts = TimestampFormatUtils.parseTimestamp("2000-01-01T00:00:00.000Z");
-            ts += Timestamps.HOUR_MICROS * (rnd.nextLong() % 48);
-            for (int i = 0; i < table1Size; i++) {
-                ts += Timestamps.HOUR_MICROS * rnd.nextLong(24);
-                insert("INSERT INTO t1 values (" + ts + ", " + i + ", 't1_" + i + "');");
-            }
-
-            ddl("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts)");
-            ts = TimestampFormatUtils.parseTimestamp("2000-01-01T00:00:00.000Z");
-            ts += Timestamps.HOUR_MICROS * rnd.nextLong(48);
-            for (int i = 0; i < table2Size; i++) {
-                ts += Timestamps.HOUR_MICROS * rnd.nextLong(24);
-                insert("INSERT INTO t2 values (" + ts + ", " + i + ", 't2_" + i + "');");
-            }
-
-            assertResultSetsMatch("t1", "t2");
-        });
+    public void testFuzzNoDuplicates() throws Exception {
+        testFuzz(0);
     }
 
     @Test
-    public void testInterleaved() throws Exception {
+    public void testFuzzPartitionByNoneManyDuplicates() throws Exception {
+        testFuzzPartitionByNone(50);
+    }
+
+    @Test
+    public void testFuzzPartitionByNoneNoDuplicates() throws Exception {
+        testFuzzPartitionByNone(0);
+    }
+
+    @Test
+    public void testFuzzPartitionByNoneSomeDuplicates() throws Exception {
+        testFuzzPartitionByNone(10);
+    }
+
+    @Test
+    public void testFuzzSomeDuplicates() throws Exception {
+        testFuzz(10);
+    }
+
+    @Test
+    public void testInterleaved1() throws Exception {
         assertMemoryLeak(() -> {
             ddl("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
             insert("INSERT INTO t1 values ('2022-10-05T08:15:00.000000Z', 0, 'a');");
@@ -126,6 +101,31 @@ public class AsOfJoinNoKeyTest extends AbstractCairoTest {
             insert("INSERT INTO t2 values ('2022-10-05T08:19:00.000000Z', 5, 'f');");
             insert("INSERT INTO t2 values ('2023-10-05T09:00:00.000000Z', 6, 'g');");
             insert("INSERT INTO t2 values ('2023-10-06T01:00:00.000000Z', 7, 'h');");
+
+            assertResultSetsMatch("t1", "t2");
+        });
+    }
+
+    @Test
+    public void testInterleaved2() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            insert("INSERT INTO t1 values ('2000-02-07T22:00:00.000000Z', 1, 't1_1');");
+            insert("INSERT INTO t1 values ('2000-02-08T06:00:00.000000Z', 2, 't1_2');");
+            insert("INSERT INTO t1 values ('2000-02-08T19:00:00.000000Z', 3, 't1_3');");
+            insert("INSERT INTO t1 values ('2000-02-09T16:00:00.000000Z', 4, 't1_4');");
+            insert("INSERT INTO t1 values ('2000-02-09T16:00:00.000000Z', 5, 't1_5');");
+            insert("INSERT INTO t1 values ('2000-02-10T06:00:00.000000Z', 6, 't1_6');");
+            insert("INSERT INTO t1 values ('2000-02-10T19:00:00.000000Z', 7, 't1_7');");
+
+            ddl("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            insert("INSERT INTO t1 values ('2000-02-07T14:00:00.000000Z', 8, 't2_1');");
+            insert("INSERT INTO t1 values ('2000-02-08T02:00:00.000000Z', 9, 't2_2');");
+            insert("INSERT INTO t1 values ('2000-02-08T02:00:00.000000Z', 10, 't2_3');");
+            insert("INSERT INTO t1 values ('2000-02-08T21:00:00.000000Z', 11, 't2_4');");
+            insert("INSERT INTO t1 values ('2000-02-09T15:00:00.000000Z', 12, 't2_5');");
+            insert("INSERT INTO t1 values ('2000-02-09T20:00:00.000000Z', 13, 't2_6');");
+            insert("INSERT INTO t1 values ('2000-02-10T16:00:00.000000Z', 14, 't2_7');");
 
             assertResultSetsMatch("t1", "t2");
         });
@@ -263,6 +263,66 @@ public class AsOfJoinNoKeyTest extends AbstractCairoTest {
         printSql("select * from " + leftTable + " " + join + " join " + rightTable, actualSink);
 
         TestUtils.assertEquals(expectedSink, actualSink);
+    }
+
+    private void testFuzz(int tsDuplicatePercentage) throws Exception {
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        assertMemoryLeak(() -> {
+            final int table1Size = rnd.nextPositiveInt() % 1000;
+            final int table2Size = rnd.nextPositiveInt() % 1000;
+
+            ddl("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            long ts = TimestampFormatUtils.parseTimestamp("2000-01-01T00:00:00.000Z");
+            ts += Timestamps.HOUR_MICROS * (rnd.nextLong() % 48);
+            for (int i = 0; i < table1Size; i++) {
+                if (rnd.nextInt(100) >= tsDuplicatePercentage) {
+                    ts += Timestamps.HOUR_MICROS * rnd.nextLong(24);
+                }
+                insert("INSERT INTO t1 values (" + ts + ", " + i + ", 't1_" + i + "');");
+            }
+
+            ddl("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            ts = TimestampFormatUtils.parseTimestamp("2000-01-01T00:00:00.000Z");
+            ts += Timestamps.HOUR_MICROS * rnd.nextLong(48);
+            for (int i = 0; i < table2Size; i++) {
+                if (rnd.nextInt(100) >= tsDuplicatePercentage) {
+                    ts += Timestamps.HOUR_MICROS * rnd.nextLong(24);
+                }
+                insert("INSERT INTO t2 values (" + ts + ", " + i + ", 't2_" + i + "');");
+            }
+
+            assertResultSetsMatch("t1", "t2");
+        });
+    }
+
+    private void testFuzzPartitionByNone(int tsDuplicatePercentage) throws Exception {
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        assertMemoryLeak(() -> {
+            final int table1Size = rnd.nextPositiveInt() % 1000;
+            final int table2Size = rnd.nextPositiveInt() % 1000;
+
+            ddl("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts)");
+            long ts = TimestampFormatUtils.parseTimestamp("2000-01-01T00:00:00.000Z");
+            ts += Timestamps.HOUR_MICROS * (rnd.nextLong() % 48);
+            for (int i = 0; i < table1Size; i++) {
+                if (rnd.nextInt(100) >= tsDuplicatePercentage) {
+                    ts += Timestamps.HOUR_MICROS * rnd.nextLong(24);
+                }
+                insert("INSERT INTO t1 values (" + ts + ", " + i + ", 't1_" + i + "');");
+            }
+
+            ddl("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts)");
+            ts = TimestampFormatUtils.parseTimestamp("2000-01-01T00:00:00.000Z");
+            ts += Timestamps.HOUR_MICROS * rnd.nextLong(48);
+            for (int i = 0; i < table2Size; i++) {
+                if (rnd.nextInt(100) >= tsDuplicatePercentage) {
+                    ts += Timestamps.HOUR_MICROS * rnd.nextLong(24);
+                }
+                insert("INSERT INTO t2 values (" + ts + ", " + i + ", 't2_" + i + "');");
+            }
+
+            assertResultSetsMatch("t1", "t2");
+        });
     }
 
     public enum JoinType {

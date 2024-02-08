@@ -257,7 +257,7 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
-    public int getSqlAsOfJoinLookahead() {
+    public int getSqlAsOfJoinLookAhead() {
         return 3;
     }
 

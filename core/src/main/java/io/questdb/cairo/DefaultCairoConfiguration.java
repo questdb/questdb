@@ -545,7 +545,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlAsOfJoinLookahead() {
+    public int getSqlAsOfJoinLookAhead() {
         return 100;
     }
 
