@@ -8741,7 +8741,7 @@ public class IODispatcherTest extends AbstractTest {
                                                     ".*dataset.*",
                                                     "select query_id from query_activity() where query = '" + command.replace("'", "''") + "'",
                                                     null, null, null,
-                                                    new CharSequenceObjHashMap<>() {{
+                                                    new CharSequenceObjHashMap<String>() {{
                                                         put("nm", "true");
                                                     }},
                                                     "200"
