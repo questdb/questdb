@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Rows;
@@ -43,6 +44,7 @@ public class TableReaderTimeFrameCursor implements TimeFrameRecordCursor {
     private PartitionBy.PartitionCeilMethod partitionCeilMethod;
     private int partitionHi;
     private TableReader reader;
+    private int timestampIndex;
 
     @Override
     public void close() {
@@ -94,19 +96,29 @@ public class TableReaderTimeFrameCursor implements TimeFrameRecordCursor {
         recordB.of(reader);
         partitionHi = reader.getPartitionCount();
         partitionCeilMethod = PartitionBy.getPartitionCeilMethod(reader.getPartitionedBy());
+        timestampIndex = reader.getMetadata().getTimestampIndex();
         toTop();
         return this;
     }
 
     @Override
-    public void open() throws DataUnavailableException {
+    public long open() throws DataUnavailableException {
         int partitionIndex = timeFrame.partitionIndex;
         if (partitionIndex < 0 || partitionIndex > partitionHi - 1) {
             throw CairoException.nonCritical().put("open call on uninitialized time frame");
         }
         long size = reader.openPartition(timeFrame.partitionIndex);
+        if (size > 0) {
+            timeFrame.rowLo = 0;
+            timeFrame.rowHi = size;
+            final MemoryR column = reader.getColumn(TableReader.getPrimaryColumnIndex(reader.getColumnBase(timeFrame.partitionIndex), timestampIndex));
+            timeFrame.timestampLo = column.getLong(0);
+            timeFrame.timestampHi = column.getLong((size - 1) * 8);
+            return size;
+        }
         timeFrame.rowLo = 0;
-        timeFrame.rowHi = size;
+        timeFrame.rowHi = 0;
+        return 0;
     }
 
     @Override
@@ -138,6 +150,8 @@ public class TableReaderTimeFrameCursor implements TimeFrameRecordCursor {
     }
 
     private static class TableReaderTimeFrame implements TimeFrame, Mutable {
+        private long estimateTimestampHi;
+        private long estimateTimestampLo;
         private int partitionIndex;
         private long rowHi;
         private long rowLo;
@@ -147,6 +161,8 @@ public class TableReaderTimeFrameCursor implements TimeFrameRecordCursor {
         @Override
         public void clear() {
             partitionIndex = -1;
+            estimateTimestampLo = Long.MIN_VALUE;
+            estimateTimestampHi = Long.MIN_VALUE;
             timestampLo = Long.MIN_VALUE;
             timestampHi = Long.MIN_VALUE;
             rowLo = -1;
@@ -169,6 +185,16 @@ public class TableReaderTimeFrameCursor implements TimeFrameRecordCursor {
         }
 
         @Override
+        public long getTimestampEstimateHi() {
+            return estimateTimestampHi;
+        }
+
+        @Override
+        public long getTimestampEstimateLo() {
+            return estimateTimestampLo;
+        }
+
+        @Override
         public long getTimestampHi() {
             return timestampHi;
         }
@@ -183,10 +209,10 @@ public class TableReaderTimeFrameCursor implements TimeFrameRecordCursor {
             return rowLo != -1 && rowHi != -1;
         }
 
-        public void of(int partitionIndex, long timestampLo, long timestampHi) {
+        public void of(int partitionIndex, long estimateTimestampLo, long estimateTimestampHi) {
             this.partitionIndex = partitionIndex;
-            this.timestampLo = timestampLo;
-            this.timestampHi = timestampHi;
+            this.estimateTimestampLo = estimateTimestampLo;
+            this.estimateTimestampHi = estimateTimestampHi;
             rowLo = -1;
             rowHi = -1;
         }

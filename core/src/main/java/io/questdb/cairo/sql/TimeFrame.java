@@ -52,16 +52,38 @@ public interface TimeFrame {
      * to any row id in the [rowLo, rowHi) range. {@link Rows#toRowID(int, long)}
      * method should be used to obtain final row id.
      *
-     * @return lower boundary for row number within the frame, potentially inclusive
+     * @return lower boundary for row number within the frame, inclusive
      */
     long getRowLo();
 
     /**
+     * Unlike {@link #getTimestampHi()} this value is not precise, i.e. it may
+     * be larger than the actual boundary. Yet, it doesn't require the frame
+     * to be open.
+     *
+     * @return upper range boundary of timestamps in the time frame, exclusive
+     */
+    long getTimestampEstimateHi();
+
+    /**
+     * Unlike {@link #getTimestampLo()} this value is not precise, i.e. it may
+     * be smaller than the actual boundary. Yet, it doesn't require the frame
+     * to be open.
+     *
+     * @return lower range boundary of timestamps in the time frame, inclusive
+     */
+    long getTimestampEstimateLo();
+
+    /**
+     * Make sure to call {@link TimeFrameRecordCursor#open()} prior to this method.
+     *
      * @return upper boundary of timestamps present in the time frame, exclusive
      */
     long getTimestampHi();
 
     /**
+     * Make sure to call {@link TimeFrameRecordCursor#open()} prior to this method.
+     *
      * @return lower boundary of timestamps present in the time frame, inclusive
      */
     long getTimestampLo();

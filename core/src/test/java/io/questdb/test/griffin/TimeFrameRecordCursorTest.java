@@ -382,17 +382,22 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
                             Assert.assertEquals(-1, frame.getRowLo());
                             Assert.assertEquals(-1, frame.getRowHi());
                             timeFrameCursor.open();
-                            timeFrameCursor.recordAt(record, Rows.toRowID(frame.getIndex(), 0));
-                            long ts = record.getTimestamp(0);
+                            timeFrameCursor.recordAt(record, Rows.toRowID(frame.getIndex(), frame.getRowLo()));
+                            long tsLo = record.getTimestamp(0);
 
                             PartitionBy.PartitionFloorMethod floorMethod = PartitionBy.getPartitionFloorMethod(partitionBy);
                             PartitionBy.PartitionCeilMethod ceilMethod = PartitionBy.getPartitionCeilMethod(partitionBy);
 
-                            long expectedLo = floorMethod != null ? floorMethod.floor(ts) : 0;
-                            long expectedHi = ceilMethod != null ? ceilMethod.ceil(ts) : Long.MAX_VALUE;
+                            long expectedEstimateTsLo = floorMethod != null ? floorMethod.floor(tsLo) : 0;
+                            long expectedEstimateTsHi = ceilMethod != null ? ceilMethod.ceil(tsLo) : Long.MAX_VALUE;
 
-                            Assert.assertEquals(expectedLo, frame.getTimestampLo());
-                            Assert.assertEquals(expectedHi, frame.getTimestampHi());
+                            Assert.assertEquals(expectedEstimateTsLo, frame.getTimestampEstimateLo());
+                            Assert.assertEquals(expectedEstimateTsHi, frame.getTimestampEstimateHi());
+
+                            Assert.assertEquals(tsLo, frame.getTimestampLo());
+                            timeFrameCursor.recordAt(record, Rows.toRowID(frame.getIndex(), frame.getRowHi() - 1));
+                            long tsHi = record.getTimestamp(0);
+                            Assert.assertEquals(tsHi, frame.getTimestampHi());
                         }
                     }
                 }

@@ -53,7 +53,13 @@ public interface TimeFrameRecordCursor extends QuietCloseable, SymbolTableSource
 
     boolean next();
 
-    void open() throws DataUnavailableException;
+    /**
+     * Opens frame rows for record navigation and updates frame's row lo/hi fields.
+     *
+     * @return frame size in rows
+     * @throws DataUnavailableException when the queried frame belongs to a partition in the cold storage
+     */
+    long open() throws DataUnavailableException;
 
     boolean prev();
 

@@ -66,7 +66,34 @@ public class AsOfJoinNoKeyTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMixed() throws Exception {
+    public void testFuzzPartitionByNone() throws Exception {
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        assertMemoryLeak(() -> {
+            final int table1Size = rnd.nextPositiveInt() % 100;
+            final int table2Size = rnd.nextPositiveInt() % 100;
+
+            ddl("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts)");
+            long ts = TimestampFormatUtils.parseTimestamp("2000-01-01T00:00:00.000Z");
+            ts += Timestamps.HOUR_MICROS * (rnd.nextLong() % 48);
+            for (int i = 0; i < table1Size; i++) {
+                ts += Timestamps.HOUR_MICROS * rnd.nextLong(24);
+                insert("INSERT INTO t1 values (" + ts + ", " + i + ", 't1_" + i + "');");
+            }
+
+            ddl("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts)");
+            ts = TimestampFormatUtils.parseTimestamp("2000-01-01T00:00:00.000Z");
+            ts += Timestamps.HOUR_MICROS * rnd.nextLong(48);
+            for (int i = 0; i < table2Size; i++) {
+                ts += Timestamps.HOUR_MICROS * rnd.nextLong(24);
+                insert("INSERT INTO t2 values (" + ts + ", " + i + ", 't2_" + i + "');");
+            }
+
+            assertResultSetsMatch("t1", "t2");
+        });
+    }
+
+    @Test
+    public void testInterleaved() throws Exception {
         assertMemoryLeak(() -> {
             ddl("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
             insert("INSERT INTO t1 values ('2022-10-05T08:15:00.000000Z', 0, 'a');");
@@ -107,7 +134,9 @@ public class AsOfJoinNoKeyTest extends AbstractCairoTest {
             insert("INSERT INTO t1 values ('2022-10-05T08:16:00.000000Z', 2, 'c');");
 
             ddl("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
-            insert("INSERT INTO t2 values ('2021-10-05T04:00:00.000000Z', 3, 'd');");
+            insert("INSERT INTO t2 values ('2021-10-01T00:00:00.000000Z', 3, 'd');");
+            insert("INSERT INTO t2 values ('2021-10-03T01:00:00.000000Z', 4, 'e');");
+            insert("INSERT INTO t2 values ('2021-10-05T04:00:00.000000Z', 5, 'f');");
 
             assertResultSetsMatch("t1", "t2");
         });
