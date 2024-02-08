@@ -91,6 +91,10 @@ public class AsOfJoinFastNoKeyRecordCursorFactory extends AbstractJoinRecordCurs
         slaveFactory.close();
     }
 
+    private enum ScanDirection {
+        FORWARD, BACKWARD
+    }
+
     private static class AsOfJoinFastRecordCursor implements NoRandomAccessRecordCursor {
         private final int columnSplit;
         private final BoolList enteredFrames = new BoolList();
@@ -98,15 +102,15 @@ public class AsOfJoinFastNoKeyRecordCursorFactory extends AbstractJoinRecordCurs
         private final OuterJoinRecord record;
         private final int slaveTimestampIndex;
         private boolean isMasterHasNextPending;
-        private boolean isSlaveEmpty;
-        private int latestSlavePartitionIndex = -1;
-        private long latestSlaveRow = Long.MIN_VALUE;
         private RecordCursor masterCursor;
         private boolean masterHasNext;
         private Record masterRecord;
         private TimeFrameRecordCursor slaveCursor;
+        private int slaveFrameIndex = -1;
+        private long slaveFrameRow = Long.MIN_VALUE;
         private Record slaveRecA;
         private Record slaveRecB;
+        private ScanDirection slaveScanDirection;
         private long slaveTimestamp = Long.MIN_VALUE;
 
         public AsOfJoinFastRecordCursor(
@@ -152,7 +156,6 @@ public class AsOfJoinFastNoKeyRecordCursorFactory extends AbstractJoinRecordCurs
                 isMasterHasNextPending = false;
             }
             if (masterHasNext) {
-                // great, we have a record no matter what
                 final long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
                 if (masterTimestamp < slaveTimestamp) {
                     isMasterHasNextPending = true;
@@ -181,37 +184,42 @@ public class AsOfJoinFastNoKeyRecordCursorFactory extends AbstractJoinRecordCurs
         @Override
         public void toTop() {
             slaveTimestamp = Long.MIN_VALUE;
-            latestSlaveRow = Long.MIN_VALUE;
-            latestSlavePartitionIndex = -1;
+            slaveFrameIndex = -1;
+            slaveFrameRow = Long.MIN_VALUE;
+            slaveScanDirection = ScanDirection.FORWARD;
             record.hasSlave(false);
             masterCursor.toTop();
             slaveCursor.toTop();
-            isSlaveEmpty = slaveCursor.next();
             isMasterHasNextPending = true;
             enteredFrames.clear();
         }
 
-        private void findTimeFrame(TimeFrame timeFrame, long masterTimestamp) {
-            if (timeFrame.getTimestampLo() > masterTimestamp) {
-                // Current time frame is already after the master timestamp,
-                // so we should go no further.
-                latestSlavePartitionIndex = timeFrame.getIndex();
-                latestSlaveRow = timeFrame.getRowLo();
-                markEntered(latestSlavePartitionIndex);
-                return;
+        private boolean findTimeFrame(TimeFrame timeFrame, long masterTimestamp) {
+            if (slaveCursor.next()) {
+                slaveFrameIndex = timeFrame.getIndex();
+                return true;
             }
-            // Navigate to the first time frame that contains timestamps
-            // after the master timestamp and then enter the previous one.
-            while (slaveCursor.next()) {
-                if (timeFrame.getTimestampLo() > masterTimestamp) {
-                    slaveCursor.prev();
-                    latestSlavePartitionIndex = timeFrame.getIndex();
-                    latestSlaveRow = timeFrame.getRowLo();
-                    markEntered(latestSlavePartitionIndex);
-                    return;
-                }
-            }
-            slaveTimestamp = Long.MAX_VALUE;
+            return false;
+//            if (timeFrame.getTimestampLo() > masterTimestamp) {
+//                // Current time frame is already after the master timestamp,
+//                // so we should go no further.
+//                slaveFrameIndex = timeFrame.getIndex();
+//                slaveFrameRow = timeFrame.getRowLo();
+//                markEntered(slaveFrameIndex);
+//                return;
+//            }
+//            // Navigate to the first time frame that contains timestamps
+//            // after the master timestamp and then enter the previous one.
+//            while (slaveCursor.next()) {
+//                if (timeFrame.getTimestampLo() > masterTimestamp) {
+//                    slaveCursor.prev();
+//                    slaveFrameIndex = timeFrame.getIndex();
+//                    slaveFrameRow = timeFrame.getRowLo();
+//                    markEntered(slaveFrameIndex);
+//                    return;
+//                }
+//            }
+//            slaveTimestamp = Long.MAX_VALUE;
         }
 
         private boolean isEntered(int partitionIndex) {
@@ -223,43 +231,42 @@ public class AsOfJoinFastNoKeyRecordCursorFactory extends AbstractJoinRecordCurs
         }
 
         private void nextSlave(long masterTimestamp) {
-            if (isSlaveEmpty) {
-                return;
-            }
             final TimeFrame timeFrame = slaveCursor.getTimeFrame();
             while (true) {
-                if (latestSlavePartitionIndex >= 0 && latestSlavePartitionIndex == timeFrame.getIndex()) {
+                if (slaveFrameIndex >= 0 && slaveFrameIndex == timeFrame.getIndex()) {
                     if (!timeFrame.isOpen()) {
                         slaveCursor.open();
+                        slaveFrameRow = timeFrame.getRowLo();
+                        // TODO we can do binary search for the very first row of entered time frame
                     }
-                    // TODO we can do binary search for the very first row of entered time frame
-                    while (latestSlaveRow < timeFrame.getRowHi()) {
-                        record.hasSlave(true);
-                        slaveCursor.recordAt(slaveRecB, Rows.toRowID(latestSlavePartitionIndex, latestSlaveRow));
-                        slaveCursor.recordAt(slaveRecA, Rows.toRowID(latestSlavePartitionIndex, ++latestSlaveRow));
+                    while (slaveFrameRow < timeFrame.getRowHi()) {
+                        slaveCursor.recordAt(slaveRecA, Rows.toRowID(slaveFrameIndex, slaveFrameRow));
                         slaveTimestamp = slaveRecA.getTimestamp(slaveTimestampIndex);
                         if (slaveTimestamp > masterTimestamp) {
                             return;
                         }
+                        record.hasSlave(true);
+                        slaveCursor.recordAt(slaveRecB, Rows.toRowID(slaveFrameIndex, slaveFrameRow));
+                        slaveFrameRow++;
                     }
                 }
-                findTimeFrame(timeFrame, masterTimestamp);
+                if (!findTimeFrame(timeFrame, masterTimestamp)) {
+                    return;
+                }
             }
         }
 
         private void of(RecordCursor masterCursor, TimeFrameRecordCursor slaveCursor) {
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;
-            slaveTimestamp = Long.MIN_VALUE;
-            latestSlaveRow = Long.MIN_VALUE;
-            latestSlavePartitionIndex = -1;
             masterRecord = masterCursor.getRecord();
             slaveRecA = slaveCursor.getRecord();
             slaveRecB = slaveCursor.getRecordB();
             record.of(masterRecord, slaveRecB);
-            record.hasSlave(false);
-            isMasterHasNextPending = true;
-            enteredFrames.clear();
+            slaveTimestamp = Long.MIN_VALUE;
+            slaveFrameRow = Long.MIN_VALUE;
+            slaveFrameIndex = -1;
+            toTop();
         }
     }
 }
