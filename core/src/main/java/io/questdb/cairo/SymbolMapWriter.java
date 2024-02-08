@@ -33,7 +33,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.SingleCharCharSequence;
-import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
@@ -99,11 +98,6 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             );
             // formula for calculating symbol capacity needs to be in agreement with symbol reader
             this.symbolCapacity = offsetMem.getInt(HEADER_CAPACITY);
-
-            LOG.info().$("opening symbol [path=").$(path).$(", symbolCount=").$(symbolCount).$(", capacity=").$(symbolCapacity).$();
-            if (Utf8s.containsAscii(path, "new_col_100")) {
-                int i = 0;
-            }
             assert symbolCapacity > 0;
             final boolean useCache = offsetMem.getBool(HEADER_CACHE_ENABLED);
             this.offsetMem.jumpTo(keyToOffset(symbolCount) + Long.BYTES);
@@ -146,18 +140,27 @@ public class SymbolMapWriter implements Closeable, MapWriter {
                     .$(", capacity=").$(symbolCapacity)
                     .I$();
 
-            if (symbolCount == 0) {
-                indexWriter.reset();
-            } else {
-                // trust _txn file, not the key count in the files
-                indexWriter.rollbackValues(keyToOffset(symbolCount - 1));
-            }
+
+            // trust _txn file, not the key count in the files
+            indexWriter.rollbackValues(keyToOffset(symbolCount - 1));
         } catch (Throwable e) {
             close();
             throw e;
         } finally {
             path.trimTo(plen);
         }
+    }
+
+    public static long keyToOffset(int key) {
+        return HEADER_SIZE + key * 8L;
+    }
+
+    public static void mergeSymbols(final MapWriter dst, final SymbolMapReader src, final MemoryMARW map) {
+        map.jumpTo(0);
+        for (int srcId = 0, symbolCount = src.getSymbolCount(); srcId < symbolCount; srcId++) {
+            map.putInt(dst.put(src.valueOf(srcId)));
+        }
+        dst.updateNullFlag(dst.getNullFlag() || src.containsNullValue());
     }
 
     public static boolean mergeSymbols(final MapWriter dst, final SymbolMapReader src) {
@@ -169,14 +172,6 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         }
         dst.updateNullFlag(dst.getNullFlag() || src.containsNullValue());
         return remapped;
-    }
-
-    public static void mergeSymbols(final MapWriter dst, final SymbolMapReader src, final MemoryMARW map) {
-        map.jumpTo(0);
-        for (int srcId = 0, symbolCount = src.getSymbolCount(); srcId < symbolCount; srcId++) {
-            map.putInt(dst.put(src.valueOf(srcId)));
-        }
-        dst.updateNullFlag(dst.getNullFlag() || src.containsNullValue());
     }
 
     @Override
@@ -317,10 +312,6 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         final int symIndex = offsetToKey(offsetOffset);
         countCollector.collectValueCount(symbolIndexInTxWriter, symIndex + 1);
         return symIndex;
-    }
-
-    static long keyToOffset(int key) {
-        return HEADER_SIZE + key * 8L;
     }
 
     static int offsetToKey(long offset) {

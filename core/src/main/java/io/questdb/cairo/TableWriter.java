@@ -3508,6 +3508,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 denseSymbolMapWriters.size(),
                 txWriter
         );
+        // In case there are some dirty files left from rolled back transaction
+        // clean the newly created symbol files.
+        w.truncate();
         denseSymbolMapWriters.add(w);
         symbolMapWriters.extendAndSet(columnCount, w);
     }
@@ -3525,15 +3528,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             mapWriter.updateNullFlag(true);
         }
 
-        int count = 0;
-        boolean log = Chars.equals(metadata.getColumnName(columnIndex), "new_col_100");
         SymbolMapDiffEntry entry;
         while ((entry = symbolMapDiff.nextEntry()) != null) {
-            count++;
             final CharSequence symbolValue = entry.getSymbol();
-            if (log) {
-                LOG.info().$("================  [symbol=").$(symbolValue).I$();
-            }
             final int newKey = mapWriter.put(symbolValue);
             identical &= newKey == entry.getKey();
             symbolMap.setQuick(entry.getKey() - cleanSymbolCount, newKey);

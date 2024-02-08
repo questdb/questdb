@@ -63,7 +63,7 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testFullFuzz() throws Exception {
-        Rnd rnd = generateRandom(LOG);
+        Rnd rnd = generateRandom(LOG, 319384652217708L, 1707406079199L);
         fullFuzz(rnd);
         runFuzzWithSnapshot(rnd);
     }
@@ -140,7 +140,7 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
         String tableNameNonWal = testName.getMethodName() + "_non_wal";
         createInitialTable(tableNameNonWal, false, 0);
         String tableNameWal = testName.getMethodName();
-        TableToken walTable = createInitialTable(tableNameWal, true, 0);
+        TableToken walTable = createInitialTable(tableNameWal, true, fuzzer.initialRowCount);
 
         assertMemoryLeak(() -> {
             ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableNameNonWal, rnd);
