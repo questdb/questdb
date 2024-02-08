@@ -81,7 +81,7 @@ public class AsOfJoinFastNoKeyRecordCursorFactory extends AbstractJoinRecordCurs
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("AsOf Join");
+        sink.type("AsOf Join Fast Scan");
         sink.child(masterFactory);
         sink.child(slaveFactory);
     }

@@ -1691,7 +1691,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 validateOuterJoinExpressions(slaveModel, "ASOF");
                                 processJoinContext(index == 1, slaveModel.getContext(), masterMetadata, slaveMetadata);
                                 if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
-                                    if (listColumnFilterA.size() > 0 && listColumnFilterB.size() > 0) {
+                                    if (isKeyedTimeBasedJoin(masterMetadata, slaveMetadata)) {
                                         master = createAsOfJoin(
                                                 createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
                                                 master,
@@ -1752,7 +1752,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 validateOuterJoinExpressions(slaveModel, "LT");
                                 processJoinContext(index == 1, slaveModel.getContext(), masterMetadata, slaveMetadata);
                                 if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
-                                    if (listColumnFilterA.size() > 0 && listColumnFilterB.size() > 0) {
+                                    if (isKeyedTimeBasedJoin(masterMetadata, slaveMetadata)) {
                                         master = createLtJoin(
                                                 createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
                                                 master,
@@ -5067,6 +5067,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return timestampIndex;
         }
         return metadata.getTimestampIndex();
+    }
+
+    private boolean isKeyedTimeBasedJoin(RecordMetadata masterMetadata, RecordMetadata slaveMetadata) {
+        // Check if we can simplify ASOF JOIN ON (ts) to ASOF JOIN.
+        if (listColumnFilterA.size() == 1 && listColumnFilterB.size() == 1) {
+            int masterIndex = listColumnFilterB.getColumnIndex(0);
+            final int masterFactor = listColumnFilterB.getIndexFactor(masterIndex);
+            masterIndex = (masterIndex * masterFactor - 1);
+            int slaveIndex = listColumnFilterA.getColumnIndex(0);
+            final int slaveFactor = listColumnFilterA.getIndexFactor(slaveIndex);
+            slaveIndex = (slaveIndex * slaveFactor - 1);
+            return masterIndex != masterMetadata.getTimestampIndex() || slaveIndex != slaveMetadata.getTimestampIndex();
+        }
+        return listColumnFilterA.size() > 0 && listColumnFilterB.size() > 0;
     }
 
     private boolean isOrderByDesignatedTimestampOnly(QueryModel model) {
