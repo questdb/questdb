@@ -4955,50 +4955,31 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         try {
             if (columnIndex > -1) {
-                MemoryCR o3SrcDataMem = o3Columns.get(getPrimaryColumnIndex(columnIndex));
-                MemoryCR o3SrcIndexMem = o3Columns.get(getSecondaryColumnIndex(columnIndex));
-                MemoryARW o3DstDataMem = o3MemColumns1.get(getPrimaryColumnIndex(columnIndex));
-                MemoryARW o3DstIndexMem = o3MemColumns1.get(getSecondaryColumnIndex(columnIndex));
+                MemoryCR srcDataMem = o3Columns.get(getPrimaryColumnIndex(columnIndex));
+                MemoryCR srcAuxMem = o3Columns.get(getSecondaryColumnIndex(columnIndex));
+                MemoryARW dstDataMem = o3MemColumns1.get(getPrimaryColumnIndex(columnIndex));
+                MemoryARW dstAuxMem = o3MemColumns1.get(getSecondaryColumnIndex(columnIndex));
 
-                if (o3SrcDataMem == o3DstDataMem && excludeSymbols > 0 && columnType == ColumnType.SYMBOL) {
+                if (srcDataMem == dstDataMem && excludeSymbols > 0 && columnType == ColumnType.SYMBOL) {
                     // nothing to do. This is the case when WAL symbols are remapped to the correct place in LAG buffers.
                     return;
                 }
 
-                long size;
-                long sourceOffset;
-                long destOffset;
-                if (!ColumnType.isVarSize(columnType)) {
+                if (ColumnType.isVarSize(columnType)) {
+                    // Var size column
+                    // todo: ask alex
+                    ColumnType.getDriver(columnType).o3MoveLag(copyToLagRowCount, columnDataRowOffset, existingLagRows, srcAuxMem, srcDataMem, dstAuxMem, dstDataMem);
+                } else {
                     final int shl = ColumnType.pow2SizeOf(columnType);
                     // Fixed size column
-                    sourceOffset = columnDataRowOffset << shl;
-                    size = copyToLagRowCount << shl;
-                    destOffset = existingLagRows << shl;
-                } else {
-                    // Var size column
-                    long committedIndexOffset = columnDataRowOffset << 3;
-                    sourceOffset = o3SrcIndexMem.getLong(committedIndexOffset);
-                    size = o3SrcIndexMem.getLong((columnDataRowOffset + copyToLagRowCount) << 3) - sourceOffset;
-                    destOffset = existingLagRows == 0 ? 0L : o3DstIndexMem.getLong(existingLagRows << 3);
-
-                    // adjust append position of the index column to
-                    // maintain n+1 number of entries
-                    o3DstIndexMem.jumpTo((existingLagRows + copyToLagRowCount + 1) << 3);
-
-                    // move count + 1 rows, to make sure index column remains n+1
-                    // the data is copied back to start of the buffer, no need to set size first
-                    O3Utils.shiftCopyFixedSizeColumnData(
-                            sourceOffset - destOffset,
-                            o3SrcIndexMem.addressOf(committedIndexOffset),
-                            0,
-                            copyToLagRowCount, // No need to do +1 here, hi is inclusive
-                            o3DstIndexMem.addressOf(existingLagRows << 3)
-                    );
+                    long sourceOffset = columnDataRowOffset << shl;
+                    long size = copyToLagRowCount << shl;
+                    long destOffset = existingLagRows << shl;
+                    dstDataMem.jumpTo(destOffset + size);
+                    assert srcDataMem.size() >= size;
+                    Vect.memmove(dstDataMem.addressOf(destOffset), srcDataMem.addressOf(sourceOffset), size);
                 }
 
-                o3DstDataMem.jumpTo(destOffset + size);
-                assert o3SrcDataMem.size() >= size;
-                Vect.memmove(o3DstDataMem.addressOf(destOffset), o3SrcDataMem.addressOf(sourceOffset), size);
                 // the data is copied back to start of the buffer, no need to set size first
             } else {
                 MemoryCR o3SrcDataMem = o3Columns.get(getPrimaryColumnIndex(-columnIndex - 1));

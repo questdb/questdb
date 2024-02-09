@@ -98,12 +98,6 @@ public class O3Utils {
         Vect.copyFromTimestampIndex(src, srcLo, srcHi, dstAddr);
     }
 
-    static long findVarOffset(long srcFixAddr, long srcLo) {
-        long result = Unsafe.getUnsafe().getLong(srcFixAddr + srcLo * Long.BYTES);
-        assert (srcLo == 0 && result == 0) || result > 0;
-        return result;
-    }
-
     static void shiftCopyFixedSizeColumnData(
             long shift,
             long src,

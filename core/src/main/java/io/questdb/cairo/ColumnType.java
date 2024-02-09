@@ -24,13 +24,11 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.Long256;
 import io.questdb.std.LowerCaseAsciiCharSequenceIntHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8s;
 
 // ColumnType layout - 32bit
 //
@@ -120,8 +118,9 @@ public final class ColumnType {
     public static ColumnTypeDriver getDriver(int columnType) {
         switch (columnType) {
             case STRING:
-            case BINARY:
                 return StringTypeDriver.INSTANCE;
+            case BINARY:
+                return BinaryTypeDriver.INSTANCE;
             case VARCHAR:
                 return VarcharTypeDriver.INSTANCE;
             default:
@@ -178,7 +177,7 @@ public final class ColumnType {
     }
 
     public static boolean isDesignatedTimestamp(int type) {
-        return (type & TYPE_FLAG_DESIGNATED_TIMESTAMP) != 0;
+        return  tagOf(type) == TIMESTAMP && (type & TYPE_FLAG_DESIGNATED_TIMESTAMP) != 0;
     }
 
     public static boolean isDouble(int columnType) {
