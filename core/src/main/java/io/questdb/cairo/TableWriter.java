@@ -993,6 +993,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             columnVersionWriter.commit();
             txWriter.setSeqTxn(seqTxn);
             txWriter.setLagTxnCount(0);
+            txWriter.setLagOrdered(true);
 
             syncColumns();
             txWriter.setColumnVersion(columnVersionWriter.getVersion());
@@ -1682,10 +1683,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 boolean copiedToMemory;
 
                 long totalUncommitted = walLagRowCount + commitRowCount;
-                boolean copyToLagOnly = commitToTimestamp < newMinLagTs
-                        || (commitToTimestamp != WalTxnDetails.FORCE_FULL_COMMIT && totalUncommitted < maxLagRows);
+                long newMaxLagTimestamp = Math.max(o3TimestampMax, txWriter.getLagMaxTimestamp());
+                boolean needFullCommit = totalUncommitted > maxLagRows
+                        || commitToTimestamp > newMaxLagTimestamp
+                        || (!isDeduplicationEnabled() && commitToTimestamp >= newMaxLagTimestamp);
 
-                if (copyToLagOnly && totalUncommitted <= maxLagRows) {
+                if (!needFullCommit) {
                     // Don't commit anything, move everything to memory instead.
                     // This usually happens when WAL transactions are very small, so it's faster
                     // to squash several of them together before writing anything to disk.
@@ -1704,10 +1707,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     return false;
                 }
 
-                // We could commit some rows from lag into the last partition by simply changing
-                // transientRowCount if the lag is ordered. But it would create a dirty commit
-                // where half of the data is visible in partitions and half in the lag. This is
-                // breaks snapshot assumptions and this optimization is removed in the next release after v7.3.9.
+                // Try to fast apply records from LAG to last partition which are before o3TimestampMin and commitToTimestamp.
+                // This application will not include the current transaction data, only what's already in WAL lag.
+                if (applyFromWalLagToLastPartition(Math.min(o3TimestampMin, commitToTimestamp), false) != Long.MIN_VALUE) {
+                    walLagRowCount = txWriter.getLagRowCount();
+                    totalUncommitted = walLagRowCount + commitRowCount;
+                }
 
                 // Re-valuate WAL lag min/max with impact of the current transaction.
                 txWriter.setLagMinTimestamp(Math.min(o3TimestampMin, txWriter.getLagMinTimestamp()));
@@ -2473,6 +2478,98 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ddlMem.close(true, Vm.TRUNCATE_TO_POINTER);
         }
         return index;
+    }
+
+    private long applyFromWalLagToLastPartition(long commitToTimestamp, boolean commitTerminates) {
+        long lagMinTimestamp = txWriter.getLagMinTimestamp();
+        if (!isDeduplicationEnabled()
+                && txWriter.getLagRowCount() > 0
+                && txWriter.isLagOrdered()
+                && txWriter.getMaxTimestamp() <= lagMinTimestamp
+                && txWriter.getPartitionTimestampByTimestamp(lagMinTimestamp) == lastPartitionTimestamp) {
+            // There is some data in LAG, it's ordered, and it's already written to the last partition.
+            // We can simply increase the last partition transient row count to make it committed.
+
+            long lagMaxTimestamp = txWriter.getLagMaxTimestamp();
+            commitToTimestamp = Math.min(commitToTimestamp, partitionTimestampHi);
+            if (lagMaxTimestamp <= commitToTimestamp) {
+                // Easy case, all lag data can be marked as committed in the last partition
+                LOG.debug().$("fast apply full lag to last partition [table=").$(tableToken).I$();
+                applyLagToLastPartition(lagMaxTimestamp, txWriter.getLagRowCount(), Long.MAX_VALUE, commitTerminates);
+                return lagMaxTimestamp;
+            } else if (lagMinTimestamp <= commitToTimestamp) {
+                // Find the max row which can be marked as committed in the last timestamp
+                long lagRows = txWriter.getLagRowCount();
+                long timestampMapOffset = txWriter.getTransientRowCount() * Long.BYTES;
+                long timestampMapSize = lagRows * Long.BYTES;
+                long timestampMaAddr = mapAppendColumnBuffer(
+                        getPrimaryColumn(metadata.getTimestampIndex()),
+                        timestampMapOffset,
+                        timestampMapSize,
+                        false
+                );
+                try {
+                    final long timestampAddr = Math.abs(timestampMaAddr);
+                    final long binarySearchInsertionPoint = Vect.binarySearch64Bit(
+                            timestampAddr,
+                            commitToTimestamp,
+                            0,
+                            lagRows - 1,
+                            BinarySearch.SCAN_DOWN
+                    );
+                    long applyCount = (binarySearchInsertionPoint < 0) ? -binarySearchInsertionPoint - 1 : binarySearchInsertionPoint + 1;
+
+                    long newMinLagTimestamp = Unsafe.getUnsafe().getLong(timestampAddr + applyCount * Long.BYTES);
+                    long newMaxTimestamp = Unsafe.getUnsafe().getLong(timestampAddr + (applyCount - 1) * Long.BYTES);
+                    assert newMinLagTimestamp > commitToTimestamp && commitToTimestamp >= newMaxTimestamp;
+
+                    applyLagToLastPartition(newMaxTimestamp, (int) applyCount, newMinLagTimestamp, commitTerminates);
+
+                    LOG.debug().$("partial apply lag to last partition [table=").$(tableToken)
+                            .$(" ,lagSize=").$(lagRows)
+                            .$(" ,rowApplied=").$(applyCount)
+                            .$(", commitToTimestamp=").$(commitToTimestamp)
+                            .$(", newMaxTimestamp=").$(newMaxTimestamp)
+                            .$(", newMinLagTimestamp=").$(newMinLagTimestamp)
+                            .I$();
+                    return newMaxTimestamp;
+                } finally {
+                    mapAppendColumnBufferRelease(timestampMaAddr, timestampMapOffset, timestampMapSize);
+                }
+            }
+        }
+        return Long.MIN_VALUE;
+    }
+
+    private void applyLagToLastPartition(long maxTimestamp, int lagRowCount, long lagMinTimestamp, boolean commitTerminates) {
+        long initialTransientRowCount = txWriter.transientRowCount;
+        txWriter.transientRowCount += lagRowCount;
+        txWriter.updatePartitionSizeByTimestamp(lastPartitionTimestamp, txWriter.transientRowCount);
+        txWriter.setMinTimestamp(Math.min(txWriter.getMinTimestamp(), txWriter.getLagMinTimestamp()));
+        txWriter.setLagMinTimestamp(lagMinTimestamp);
+        if (txWriter.getLagRowCount() == lagRowCount) {
+            txWriter.setLagMaxTimestamp(Long.MIN_VALUE);
+        }
+        txWriter.setLagRowCount(txWriter.getLagRowCount() - lagRowCount);
+        txWriter.setMaxTimestamp(maxTimestamp);
+        if (indexCount > 0) {
+            // To index correctly, we need to set append offset of symbol columns first.
+            // So that re-indexing can read symbol values to the correct limits.
+            final long newTransientRowCount = txWriter.getTransientRowCount();
+            final int shl = ColumnType.pow2SizeOf(ColumnType.SYMBOL);
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                if (metadata.getColumnType(i) == ColumnType.SYMBOL && metadata.isColumnIndexed(i)) {
+                    getPrimaryColumn(i).jumpTo(newTransientRowCount << shl);
+                }
+            }
+            updateIndexesParallel(initialTransientRowCount, newTransientRowCount);
+        }
+        // set append position on columns so that the files are truncated to the correct size
+        // if the partition is closed after the commit.
+        // If wal commit terminates here, column positions should include lag to not truncate the WAL lag data.
+        // Otherwise, lag will be copied out and ok to truncate to the transient row count.
+        long partitionTruncateRowCount = txWriter.getTransientRowCount() + (commitTerminates ? txWriter.getLagRowCount() : 0);
+        setAppendPosition(partitionTruncateRowCount, false);
     }
 
     private boolean assertColumnPositionIncludeWalLag() {
