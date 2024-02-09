@@ -103,6 +103,13 @@ public class SymbolMapUtil {
             truncate(symbolCapacity);
 
             // open .c file
+            charFileName(path.trimTo(plen), name, columnNameTxn);
+            long charFileLen = ff.length(path);
+            if (charFileLen == 0) {
+                // .c file is empty, nothing to do
+                return;
+            }
+
             if (this.charMem == null) {
                 this.charMem = Vm.getWholeMARWInstance(
                         ff,
@@ -122,6 +129,7 @@ public class SymbolMapUtil {
             }
 
             // Read .c file and rebuild symbol map
+            charMem.jumpTo(0);
             long strOffset = 0;
             for (int i = 0; i < symbolCount; i++) {
                 // read symbol value

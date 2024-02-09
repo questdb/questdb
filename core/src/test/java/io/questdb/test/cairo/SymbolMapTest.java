@@ -768,7 +768,7 @@ public class SymbolMapTest extends AbstractCairoTest {
             ObjList<CharSequence> symbolList = new ObjList<>();
             try (Path path = new Path().of(configuration.getRoot())) {
 
-                var smu = new SymbolMapUtil();
+                SymbolMapUtil smu = new SymbolMapUtil();
                 create(path, "x", N, true);
 
                 SymbolMapWriter w = new SymbolMapWriter(

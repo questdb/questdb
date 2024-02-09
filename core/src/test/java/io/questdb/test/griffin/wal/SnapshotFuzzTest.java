@@ -33,6 +33,7 @@ import io.questdb.std.str.Path;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicReference;
@@ -144,6 +145,9 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
     }
 
     protected void runFuzzWithSnapshot(Rnd rnd) throws Exception {
+        // Snapshot is not supported on Windows.
+        Assume.assumeFalse(Os.isWindows());
+
         int size = rnd.nextInt(16 * 1024 * 1024);
         node1.setProperty(PropertyKey.DEBUG_CAIRO_O3_COLUMN_MEMORY_SIZE, size);
 
