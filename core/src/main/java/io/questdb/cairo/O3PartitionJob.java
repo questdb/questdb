@@ -506,7 +506,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 oldPartitionTimestamp = partitionTimestamp;
                 boolean partitionSplit = false;
 
-                if (prefixType == O3_BLOCK_DATA
+                if (
+                        prefixType == O3_BLOCK_DATA
                         && prefixHi >= tableWriter.getPartitionO3SplitThreshold()
                         && prefixHi > 2 * (mergeDataHi - mergeDataLo + suffixHi - suffixLo + mergeO3Hi - mergeO3Lo)
                 ) {

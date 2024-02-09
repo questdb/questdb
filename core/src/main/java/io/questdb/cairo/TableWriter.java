@@ -4189,7 +4189,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                         iFile(walPath, metadata.getColumnName(columnIndex), -1L);
                         LOG.debug().$("reusing file descriptor for WAL files [fd=").$(auxFd).$(", path=").$(walPath).$(", walSegment=").$(walSegmentId).I$();
-                        columnTypeDriver.configureAuxMem(
+                        columnTypeDriver.configureAuxMemOM(
                                 configuration.getFilesFacade(),
                                 auxMem,
                                 auxFd,
@@ -4203,7 +4203,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                         dFile(walPath, metadata.getColumnName(columnIndex), -1L);
                         LOG.debug().$("reusing file descriptor for WAL files [fd=").$(dataFd).$(", path=").$(walPath).$(", walSegment=").$(walSegmentId).I$();
-                        columnTypeDriver.configureDataMem(
+                        columnTypeDriver.configureDataMemOM(
                                 configuration.getFilesFacade(),
                                 auxMem,
                                 dataMem,
@@ -4968,8 +4968,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 long size;
                 long sourceOffset;
                 long destOffset;
-                final int shl = ColumnType.pow2SizeOf(columnType);
-                if (null == o3SrcIndexMem) {
+                if (!ColumnType.isVarSize(columnType)) {
+                    final int shl = ColumnType.pow2SizeOf(columnType);
                     // Fixed size column
                     sourceOffset = columnDataRowOffset << shl;
                     size = copyToLagRowCount << shl;
@@ -5059,7 +5059,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try {
             if (colIndex > -1) {
                 MemoryMA srcDataMem = getPrimaryColumn(colIndex);
-                int shl = ColumnType.pow2SizeOf(columnType);
                 long srcFixOffset;
                 final MemoryARW o3DataMem = o3MemColumns1.get(getPrimaryColumnIndex(colIndex));
                 final MemoryARW o3IndexMem = o3MemColumns1.get(getSecondaryColumnIndex(colIndex));
@@ -5078,8 +5077,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             .I$();
                 }
 
-                if (null == o3IndexMem) {
+                if (!ColumnType.isVarSize(columnType)) {
                     // Fixed size
+                    int shl = ColumnType.pow2SizeOf(columnType);
                     extendedSize = transientRowsAdded << shl;
                     srcFixOffset = (committedTransientRowCount - columnTop) << shl;
                 } else {
@@ -5216,7 +5216,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long size;
             long sourceOffset;
             long destOffset;
-            if (o3SrcIndexMem == null) {
+            if (!ColumnType.isVarSize(columnType)) {
                 // Fixed size column
                 final int shl = ColumnType.pow2SizeOf(columnType);
                 sourceOffset = isDesignatedTimestamp ? columnDataRowOffset << 4 : columnDataRowOffset << shl;
@@ -5587,36 +5587,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return;
         }
         try {
+
             final int primaryIndex = getPrimaryColumnIndex(columnIndex);
             final int secondaryIndex = primaryIndex + 1;
-            final MemoryCR dataMem = o3Columns.getQuick(primaryIndex);
-            final MemoryCR indexMem = o3Columns.getQuick(secondaryIndex);
-            final MemoryCARW dataMem2 = o3MemColumns2.getQuick(primaryIndex);
-            final MemoryCARW indexMem2 = o3MemColumns2.getQuick(secondaryIndex);
-            // ensure we have enough memory allocated
-            final long srcDataAddr = dataMem.addressOf(0);
-            final long srcIndxAddr = indexMem.addressOf(0);
-            // exclude the trailing offset from shuffling
-            final long tgtDataAddr = dataMem2.resize(dataMem.size());
-            final long tgtIndxAddr = indexMem2.resize(valueCount * Long.BYTES);
 
-            assert srcDataAddr != 0;
-            assert srcIndxAddr != 0;
-            assert tgtDataAddr != 0;
-            assert tgtIndxAddr != 0;
-
-            // add max offset so that we do not have conditionals inside loop
-            final long offset = Vect.sortVarColumn(
+            ColumnType.getDriver(columnType).o3sort(
                     mergedTimestampsAddr,
                     valueCount,
-                    srcDataAddr,
-                    srcIndxAddr,
-                    tgtDataAddr,
-                    tgtIndxAddr
+                    o3Columns.getQuick(primaryIndex),
+                    o3Columns.getQuick(secondaryIndex),
+                    o3MemColumns2.getQuick(primaryIndex),
+                    o3MemColumns2.getQuick(secondaryIndex)
             );
-            dataMem2.jumpTo(offset);
-            indexMem2.jumpTo(valueCount * Long.BYTES);
-            indexMem2.putLong(offset);
+
         } catch (Throwable th) {
             handleWorkStealingException("sort variable size column failed", columnIndex, columnType, mergedTimestampsAddr, valueCount, ignore1, ignore2, th);
         }

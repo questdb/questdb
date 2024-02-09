@@ -117,18 +117,6 @@ public final class ColumnType {
     private ColumnType() {
     }
 
-    public static long getDataOffset(int columnType, MemoryR auxMem, long row) {
-        switch (columnType) {
-            case STRING:
-            case BINARY:
-                return auxMem.getLong(row << LEGACY_VAR_SIZE_AUX_SHL);
-            case VARCHAR:
-                return Utf8s.varcharGetDataVectorSize(auxMem, row << VARCHAR_AUX_SHL);
-            default:
-                throw CairoException.critical(0).put("unsupported var size column type: ").put(columnType);
-        }
-    }
-
     public static ColumnTypeDriver getDriver(int columnType) {
         switch (columnType) {
             case STRING:

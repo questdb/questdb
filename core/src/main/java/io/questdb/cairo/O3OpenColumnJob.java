@@ -706,7 +706,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             }
         }
 
-        final long dstLen = srcOooHi - srcOooLo + 1 + srcDataMax - srcDataTop;
+        final long dstRowCount = srcOooHi - srcOooLo + 1 + srcDataMax - srcDataTop;
         switch (ColumnType.tagOf(columnType)) {
             case ColumnType.BINARY:
             case ColumnType.STRING:
@@ -755,7 +755,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         dstVarFd,
                         null,
                         null,
-                        dstLen,
+                        dstRowCount,
                         srcDataNewPartitionSize,
                         srcDataOldPartitionSize,
                         o3SplitPartitionSize,
@@ -782,7 +782,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                             srcTimestampAddr,
                             srcTimestampSize,
                             null,
-                            dstLen,
+                            dstRowCount,
                             srcDataNewPartitionSize,
                             srcDataOldPartitionSize,
                             o3SplitPartitionSize,
@@ -834,7 +834,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcTimestampSize,
                         dstFixFd,
                         null,
-                        dstLen,
+                        dstRowCount,
                         tableWriter,
                         srcDataNewPartitionSize,
                         srcDataOldPartitionSize,
@@ -886,12 +886,15 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             if (ColumnType.isVarSize(columnType)) {
                 iFile(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn);
                 dstFixFd = openRW(ff, pathToNewPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
-                dstFixSize = (srcOooHi - srcOooLo + 1 + 1) * Long.BYTES;
+
+                ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
+
+                dstFixSize = columnTypeDriver.getAuxVectorSize(srcOooHi - srcOooLo + 1);
                 dstFixAddr = mapRW(ff, dstFixFd, dstFixSize, MemoryTag.MMAP_O3);
 
                 dFile(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn);
                 dstVarFd = openRW(ff, pathToNewPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
-                dstVarSize = O3Utils.getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr);
+                dstVarSize = columnTypeDriver.getDataVectorSize(srcOooFixAddr, srcOooLo, srcOooHi);
                 dstVarAddr = mapRW(ff, dstVarFd, dstVarSize, MemoryTag.MMAP_O3);
             } else {
                 dFile(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn);
@@ -1115,7 +1118,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             int activeVarFd,
             MemoryMA dstFixMem,
             MemoryMA dstVarMem,
-            long dstLen,
+            long dstRowCount,
             long srcDataNewPartitionSize,
             long srcDataOldPartitionSize,
             long o3SplitPartitionSize,
@@ -1132,8 +1135,10 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         long dstFixSize = 0;
         final FilesFacade ff = tableWriter.getFilesFacade();
         try {
-            long l = O3Utils.getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr);
-            dstFixSize = (dstLen + 1) * Long.BYTES;
+            ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
+
+            long l = columnTypeDriver.getDataVectorSize(srcOooFixAddr, srcOooLo, srcOooHi);
+            dstFixSize = (dstRowCount + 1) * Long.BYTES;
             if (dstFixMem == null || dstFixMem.getAppendAddressSize() < dstFixSize || dstVarMem.getAppendAddressSize() < l) {
                 assert dstFixMem == null || dstFixMem.getAppendOffset() - Long.BYTES == (srcDataMax - srcDataTop) * Long.BYTES;
 
@@ -1350,7 +1355,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     if (prefixType != O3_BLOCK_NONE) {
                         // Set column top if it's not split partition.
                         Unsafe.getUnsafe().putLong(colTopSinkAddr, srcDataTop);
-                        // If it's split partition, do nothing. Old partiton will have the old column top
+                        // If it's split partition, do nothing. Old partition will have the old column top
                         // New partition will have 0 column top, since srcDataTop <= prefixHi.
                     }
                     srcDataFixSize = srcDataActualBytes;
@@ -1927,6 +1932,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         final long initialSrcDataTop = srcDataTop;
 
         try {
+            ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
             pathToNewPartition.trimTo(pplen);
             if (srcDataTop > 0) {
                 // Size of data actually in the index (fixed) file.
@@ -2041,12 +2047,12 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             dFile(pathToNewPartition.trimTo(pplen), columnName, columnNameTxn);
             dstVarFd = openRW(ff, pathToNewPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
             dstVarSize = srcDataVarSize - srcDataVarOffset
-                    + O3Utils.getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr);
+                    + columnTypeDriver.getDataVectorSize(srcOooFixAddr, srcOooLo, srcOooHi);
 
             if (prefixType == O3_BLOCK_NONE && prefixHi > initialSrcDataTop) {
                 // split partition
                 assert prefixLo == 0;
-                dstVarSize -= O3Utils.getVarColumnLength(prefixLo, prefixHi - initialSrcDataTop, srcDataFixAddr);
+                dstVarSize -= columnTypeDriver.getDataVectorSize(srcDataFixAddr, prefixLo, prefixHi - initialSrcDataTop);
             }
 
             dstVarAddr = mapRW(ff, dstVarFd, dstVarSize, MemoryTag.MMAP_O3);
@@ -2072,11 +2078,15 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             // configure offsets
             switch (prefixType) {
                 case O3_BLOCK_O3:
-                    dstVarAppendOffset1 = O3Utils.getVarColumnLength(prefixLo, prefixHi, srcOooFixAddr);
+                    dstVarAppendOffset1 = columnTypeDriver.getDataVectorSize(srcOooFixAddr, prefixLo, prefixHi);
                     partCount++;
                     break;
                 case O3_BLOCK_DATA:
-                    dstVarAppendOffset1 = O3Utils.getVarColumnLength(prefixLo, prefixHi, srcDataFixAddr + srcDataFixOffset);
+                    dstVarAppendOffset1 = columnTypeDriver.getDataVectorSize(
+                            srcDataFixAddr + srcDataFixOffset,
+                            prefixLo,
+                            prefixHi
+                    );
                     partCount++;
                     break;
                 default:
@@ -2089,15 +2099,15 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 if (mergeLen == mergeDataHi - mergeDataLo + 1 + mergeOOOHi - mergeOOOLo + 1) {
                     // No deduplication, all rows from O3 and column data will be written.
                     // In this case var col length is calculated as o3 var col len + data var col len
-                    long oooLen = O3Utils.getVarColumnLength(
+                    long oooLen = columnTypeDriver.getDataVectorSize(
+                            srcOooFixAddr,
                             mergeOOOLo,
-                            mergeOOOHi,
-                            srcOooFixAddr
+                            mergeOOOHi
                     );
-                    long dataLen = O3Utils.getVarColumnLength(
-                            mergeDataLo,
-                            mergeDataHi,
-                            srcDataFixAddr + srcDataFixOffset - srcDataTop * 8
+                    long dataLen = columnTypeDriver.getDataVectorSize(
+                            srcDataFixAddr + srcDataFixOffset,
+                            mergeDataLo - srcDataTop,
+                            mergeDataHi - srcDataTop
                     );
                     dstVarAppendOffset2 = dstVarAppendOffset1 + oooLen + dataLen;
                 } else {
@@ -2227,7 +2237,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         );
     }
 
-    private static void publishCopyTask(
+    public static void publishCopyTask(
             AtomicInteger columnCounter,
             @Nullable AtomicInteger partCounter,
             int columnType,

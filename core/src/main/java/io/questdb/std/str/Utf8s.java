@@ -809,6 +809,22 @@ public final class Utf8s {
         return dataOffset + size - UTF8_STORAGE_SPLIT_BYTE;
     }
 
+    public static long varcharGetDataVectorSize(long auxEntry) {
+        int raw = Unsafe.getUnsafe().getInt(auxEntry);
+        long dataOffset = Unsafe.getUnsafe().getShort(auxEntry + 10);
+        dataOffset <<= 32;
+        dataOffset |= Unsafe.getUnsafe().getInt(auxEntry + 12);
+        int flags = raw & 0x0f; // 4 bit flags
+
+        if ((flags & 4) == 4 || (flags & 1) == 1) {
+            // null flag is set or fully inlined value
+            return dataOffset;
+        }
+        // size of the string at this offset
+        final int size = (raw >> 4) & 0xffffff;
+        return dataOffset + size - UTF8_STORAGE_SPLIT_BYTE;
+    }
+
     public static Utf8Sequence varcharRead(long offset, MemoryR dataMem, MemoryR auxMem, int ab) {
         int raw = auxMem.getInt(offset);
         int flags = raw & 0x0f; // 4 bit flags

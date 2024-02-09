@@ -669,12 +669,12 @@ public class WalWriter implements TableWriterAPI {
         nullSetters.setQuick(columnIndex, NOOP);
     }
 
-    private static int getDataColumnOffset(int columnIndex) {
-        return columnIndex * 2;
-    }
-
     private static int getAuxColumnOffset(int index) {
         return getDataColumnOffset(index) + 1;
+    }
+
+    private static int getDataColumnOffset(int columnIndex) {
+        return columnIndex * 2;
     }
 
     private int acquireSegmentLock() {
@@ -1091,6 +1091,11 @@ public class WalWriter implements TableWriterAPI {
         Misc.freeObjListIfCloseable(symbolMapReaders);
     }
 
+    private MemoryMA getAuxColumn(int column) {
+        assert column < columnCount : "Column index is out of bounds: " + column + " >= " + columnCount;
+        return columns.getQuick(getAuxColumnOffset(column));
+    }
+
     private long getColumnStructureVersion() {
         // Sequencer metadata version is the same as column structure version of the table.
         return metadata.getMetadataVersion();
@@ -1099,11 +1104,6 @@ public class WalWriter implements TableWriterAPI {
     private MemoryMA getDataColumn(int column) {
         assert column < columnCount : "Column index is out of bounds: " + column + " >= " + columnCount;
         return columns.getQuick(getDataColumnOffset(column));
-    }
-
-    private MemoryMA getAuxColumn(int column) {
-        assert column < columnCount : "Column index is out of bounds: " + column + " >= " + columnCount;
-        return columns.getQuick(getAuxColumnOffset(column));
     }
 
     private long getSequencerTxn() {
@@ -1169,13 +1169,13 @@ public class WalWriter implements TableWriterAPI {
         path.trimTo(walDirLength);
     }
 
-    private void openColumnFiles(CharSequence name, int columnIndex, int pathTrimToLen) {
+    private void openColumnFiles(CharSequence columnName, int columnType, int columnIndex, int pathTrimToLen) {
         try {
             final MemoryMA dataMem = getDataColumn(columnIndex);
             dataMem.close(isTruncateFilesOnClose(), Vm.TRUNCATE_TO_POINTER);
             dataMem.of(
                     ff,
-                    dFile(path.trimTo(pathTrimToLen), name),
+                    dFile(path.trimTo(pathTrimToLen), columnName),
                     dataAppendPageSize,
                     -1,
                     MemoryTag.MMAP_TABLE_WRITER,
@@ -1186,16 +1186,16 @@ public class WalWriter implements TableWriterAPI {
             final MemoryMA auxMem = getAuxColumn(columnIndex);
             if (auxMem != null) {
                 auxMem.close(isTruncateFilesOnClose(), Vm.TRUNCATE_TO_POINTER);
-                auxMem.of(
+                ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
+                columnTypeDriver.configureAuxMemMA(
                         ff,
-                        iFile(path.trimTo(pathTrimToLen), name),
+                        auxMem,
+                        iFile(path.trimTo(pathTrimToLen), columnName),
                         dataAppendPageSize,
-                        -1,
                         MemoryTag.MMAP_TABLE_WRITER,
                         configuration.getWriterFileOpenOpts(),
                         Files.POSIX_MADV_RANDOM
                 );
-                auxMem.putLong(0L);
             }
         } finally {
             path.trimTo(pathTrimToLen);
@@ -1222,12 +1222,12 @@ public class WalWriter implements TableWriterAPI {
             }
 
             for (int i = 0; i < columnCount; i++) {
-                int type = metadata.getColumnType(i);
-                if (type > 0) {
-                    final CharSequence name = metadata.getColumnName(i);
-                    openColumnFiles(name, i, segmentPathLen);
+                int columnType = metadata.getColumnType(i);
+                if (columnType > 0) {
+                    final CharSequence columnName = metadata.getColumnName(i);
+                    openColumnFiles(columnName, columnType, i, segmentPathLen);
 
-                    if (type == ColumnType.SYMBOL && symbolMapReaders.size() > 0) {
+                    if (columnType == ColumnType.SYMBOL && symbolMapReaders.size() > 0) {
                         final SymbolMapReader reader = symbolMapReaders.getQuick(i);
                         initialSymbolCounts.set(i, reader.getSymbolCount());
                         localSymbolIds.set(i, 0);
@@ -1421,11 +1421,28 @@ public class WalWriter implements TableWriterAPI {
 
     private void setAppendPosition(final long segmentRowCount) {
         for (int i = 0; i < columnCount; i++) {
-            setColumnSize(i, segmentRowCount);
+            setAppendPosition0(i, segmentRowCount);
             int type = metadata.getColumnType(i);
             if (type > 0) {
                 rowValueIsNotNull.setQuick(i, segmentRowCount - 1);
             }
+        }
+    }
+
+    private void setAppendPosition0(int columnIndex, long segmentRowCount) {
+        MemoryMA dataMem = getDataColumn(columnIndex);
+        MemoryMA auxMem = getAuxColumn(columnIndex);
+        int columnType = metadata.getColumnType(columnIndex);
+        if (columnType > 0) { // Not deleted
+            final long rowCount = Math.max(0, segmentRowCount);
+            final long dataMemOffset;
+            if (ColumnType.isVarSize(columnType)) {
+                assert auxMem != null;
+                dataMemOffset = ColumnType.getDriver(columnType).setAppendAuxMemAppendPosition(auxMem, rowCount);
+            } else {
+                dataMemOffset = rowCount << ColumnType.getWalDataColumnShl(columnType, columnIndex == metadata.getTimestampIndex());
+            }
+            dataMem.jumpTo(dataMemOffset);
         }
     }
 
@@ -1435,43 +1452,6 @@ public class WalWriter implements TableWriterAPI {
             setVarColumnFixedFileNull(columnType, columnIndex, rowCount, commitMode);
         } else {
             setFixColumnNulls(columnType, columnIndex, rowCount);
-        }
-    }
-
-    private void setColumnSize(int columnIndex, long size) {
-        MemoryMA dataMem = getDataColumn(columnIndex);
-        MemoryMA auxMem = getAuxColumn(columnIndex);
-        int type = metadata.getColumnType(columnIndex);
-        if (type > 0) { // Not deleted
-            if (size > 0) {
-                // subtract column top
-                final long m1pos;
-                switch (ColumnType.tagOf(type)) {
-                    case ColumnType.BINARY:
-                    case ColumnType.STRING:
-                        assert auxMem != null;
-                        // Jump to the number of records written to read length of var column correctly
-                        auxMem.jumpTo(size * Long.BYTES);
-                        m1pos = Unsafe.getUnsafe().getLong(auxMem.getAppendAddress());
-                        // Jump to the end of file to correctly trim the file
-                        auxMem.jumpTo((size + 1) * Long.BYTES);
-                        break;
-                    default:
-                        if (columnIndex == metadata.getTimestampIndex()) {
-                            m1pos = size << 4;
-                        } else {
-                            m1pos = size << ColumnType.pow2SizeOf(type);
-                        }
-                        break;
-                }
-                dataMem.jumpTo(m1pos);
-            } else {
-                dataMem.jumpTo(0);
-                if (auxMem != null) {
-                    auxMem.jumpTo(0);
-                    auxMem.putLong(0);
-                }
-            }
         }
     }
 
@@ -1713,7 +1693,7 @@ public class WalWriter implements TableWriterAPI {
                         path.trimTo(rootLen).slash().put(segmentId);
                         // this will close old _meta file and create the new one
                         metadata.switchTo(path, path.size(), isTruncateFilesOnClose());
-                        openColumnFiles(columnName, columnIndex, path.size());
+                        openColumnFiles(columnName, columnType, columnIndex, path.size());
                         path.trimTo(rootLen);
                     }
                     // if we did not have to roll uncommitted rows to a new segment

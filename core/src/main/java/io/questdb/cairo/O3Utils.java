@@ -104,10 +104,6 @@ public class O3Utils {
         return result;
     }
 
-    static long getVarColumnLength(long srcLo, long srcHi, long srcFixAddr) {
-        return findVarOffset(srcFixAddr, srcHi + 1) - findVarOffset(srcFixAddr, srcLo);
-    }
-
     static void shiftCopyFixedSizeColumnData(
             long shift,
             long src,

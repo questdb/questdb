@@ -24,13 +24,70 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.api.MemoryOM;
-import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.cairo.vm.api.*;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
 
 public interface ColumnTypeDriver {
-    void configureAuxMem(FilesFacade ff, MemoryOM auxMem, int fd, LPSZ fileName, long rowLo, long rowHi, int memoryTag, long opts);
+    void configureAuxMemMA(FilesFacade ff, MemoryMA auxMem, LPSZ fileName, long dataAppendPageSize, int memoryTag, long opts, int madviseOpts);
 
-    void configureDataMem(FilesFacade ff, MemoryR auxMem, MemoryOM dataMem, int dataFd, LPSZ fileName, long rowLo, long rowHi, int memoryTag, long opts);
+    /**
+     * Configures AUX memory used by TableWriter to read WAL data. The mapping size will
+     * depend on the size of entry for each row.
+     *
+     * @param ff        files facade
+     * @param auxMem    the memory to configure
+     * @param fd        the fd of the file of the memory, could be -1
+     * @param fileName  the file name for the memory
+     * @param rowLo     the first row of the mapping
+     * @param rowHi     the last row of the mapping
+     * @param memoryTag the memory tag to help identify sources of memory leaks
+     * @param opts      mapping options
+     */
+    void configureAuxMemOM(FilesFacade ff, MemoryOM auxMem, int fd, LPSZ fileName, long rowLo, long rowHi, int memoryTag, long opts);
+
+    void configureDataMemOM(FilesFacade ff, MemoryR auxMem, MemoryOM dataMem, int dataFd, LPSZ fileName, long rowLo, long rowHi, int memoryTag, long opts);
+
+    long getAuxVectorSize(long storageRowCount);
+
+    /**
+     * Data vector size between two rows. Rows are inclusive.
+     *
+     * @param auxMemAddr pointer to the aux vector
+     * @param rowLo      start row
+     * @param rowHi      end row, inclusive.
+     * @return size of data vector in bytes between these two rows.
+     */
+    long getDataVectorSize(long auxMemAddr, long rowLo, long rowHi);
+
+    /**
+     * Sorts var size vectors. This method is also responsible for sizing the destination vectors and ensuring the
+     * append position after sorting is correct.
+     *
+     * @param timestampIndex     array of 128-bit entries, second 64 bits are row numbers that drive ordering.
+     * @param timestampIndexSize size of the timestamp index
+     * @param srcDataMem         source data vector
+     * @param srcAuxMem          source aux vector
+     * @param dstDataMem         destination data vector
+     * @param dstAuxMem          destination aux vector
+     */
+    void o3sort(
+            long timestampIndex,
+            long timestampIndexSize,
+            MemoryCR srcDataMem,
+            MemoryCR srcAuxMem,
+            MemoryCARW dstDataMem,
+            MemoryCARW dstAuxMem
+    );
+
+    /**
+     * For now this method is called by WAL writer when data is rolled back (or row is cancelled). The
+     * expectation of the WAL writer is to have append position set correctly on aux mem and size of data vector
+     * provided correctly.
+     *
+     * @param auxMem
+     * @param rowCount
+     * @return
+     */
+    long setAppendAuxMemAppendPosition(MemoryMA auxMem, long rowCount);
 }
