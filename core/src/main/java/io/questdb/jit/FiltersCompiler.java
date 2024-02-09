@@ -34,6 +34,7 @@ final class FiltersCompiler {
     public static native long callFunction(long fnAddress,
                                            long colsAddress,
                                            long colsSize,
+                                           long varLenIndexesAddress,
                                            long varsAddress,
                                            long varsSize,
                                            long rowsAddress,

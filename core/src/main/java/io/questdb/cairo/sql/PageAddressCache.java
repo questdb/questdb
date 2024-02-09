@@ -80,6 +80,10 @@ public class PageAddressCache implements Mutable {
         return columnCount;
     }
 
+    public boolean isVarLenColumn(int columnIndex) {
+        return varLenColumnIndexes.getQuick(columnIndex) > -1;
+    }
+
     public long getIndexPageAddress(int frameIndex, int columnIndex) {
         assert indexPageAddresses.size() >= varLenColumnCount * (frameIndex + 1);
         int varLenColumnIndex = varLenColumnIndexes.getQuick(columnIndex);
